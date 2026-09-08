@@ -145,4 +145,83 @@ describe('code reads require trusted local context while remote authorization is
     expect(JSON.stringify(defs.defs)).toContain('beta');
     expect(JSON.stringify(refs.refs)).toContain('beta');
   });
+
+  test('trusted local code_blast and code_flow carry the readiness envelope on a miss', async () => {
+    // A bare {result:'not_found'} conflates "graph not built" with "zero
+    // callers". The graph IS built for srcalpha (symbol-bearing chunks exist),
+    // so a miss on a symbol that lives only in srcbeta must read as a trusted
+    // miss: status 'ready', ready true — the same contract the four siblings
+    // (code_callers/callees/def/refs) already carry.
+    await seedTwoSourceCodeGraph();
+    const ctx = localAlpha();
+    const blast = await operationsByName.code_blast.handler(ctx, { symbol: 'betaSecretFn' }) as { result: string; status?: string; ready?: boolean };
+    const flow = await operationsByName.code_flow.handler(ctx, { entry_point: 'betaSecretFn' }) as { result: string; status?: string; ready?: boolean };
+    expect(blast.result).toBe('not_found');
+    expect(blast.status).toBe('ready');
+    expect(blast.ready).toBe(true);
+    expect(flow.result).toBe('not_found');
+    expect(flow.status).toBe('ready');
+    expect(flow.ready).toBe(true);
+  });
+});
+
+// ─── attachWalkReadiness branches (src/core/ops/code-intel.ts → code-graph-readiness.ts) ───
+
+type WalkEnvelope = {
+  result: string;
+  status?: string;
+  ready?: boolean;
+  scoped_source_id?: string;
+  depth_groups?: { nodes: unknown[] }[];
+};
+
+describe('code_blast / code_flow readiness envelope distinguishes unbuilt, out-of-scope, and ready graphs', () => {
+  test('unseeded brain (no code anywhere) → status not_built, ready false, no scoped_source_id', async () => {
+    // Nothing seeded: beforeEach left every table empty. A miss here is NOT
+    // a trusted miss — the graph was never built — so the envelope must say
+    // so instead of the bare {result:'not_found'} an agent reads as "no callers".
+    const ctx = localAlpha();
+    const blast = await operationsByName.code_blast.handler(ctx, { symbol: 'alphaTargetFn' }) as WalkEnvelope;
+    const flow = await operationsByName.code_flow.handler(ctx, { entry_point: 'alphaCallerFn' }) as WalkEnvelope;
+    for (const walk of [blast, flow]) {
+      expect(walk.result).toBe('not_found');
+      expect(walk.status).toBe('not_built');
+      expect(walk.ready).toBe(false);
+      expect(walk.scoped_source_id).toBeUndefined();
+    }
+  });
+
+  test('ctx scoped to a code-less source while code exists elsewhere → status out_of_scope naming the scoped source', async () => {
+    // The graph IS built (srcalpha + srcbeta hold code) but the caller's
+    // resolved scope is srcgamma, which holds none. That is a scope/grant
+    // problem, not an indexing one: the envelope must carry `scoped_source_id`
+    // so the hint can name the scope instead of misdirecting to `gbrain sync`.
+    await seedTwoSourceCodeGraph();
+    await registerSource('srcgamma');
+    const ctx = ctxOf({ remote: false, sourceId: 'srcgamma' });
+    const blast = await operationsByName.code_blast.handler(ctx, { symbol: 'alphaTargetFn' }) as WalkEnvelope;
+    const flow = await operationsByName.code_flow.handler(ctx, { entry_point: 'alphaCallerFn' }) as WalkEnvelope;
+    for (const walk of [blast, flow]) {
+      expect(walk.result).toBe('not_found');
+      expect(walk.status).toBe('out_of_scope');
+      expect(walk.ready).toBe(false);
+      expect(walk.scoped_source_id).toBe('srcgamma');
+    }
+  });
+
+  test('a walk that returns nodes → status ready, ready true, no scoped_source_id', async () => {
+    await seedTwoSourceCodeGraph();
+    const ctx = localAlpha();
+    // callers of alphaTargetFn in srcalpha: alphaCallerFn + sharedCallerFn
+    const blast = await operationsByName.code_blast.handler(ctx, { symbol: 'alphaTargetFn' }) as WalkEnvelope;
+    // callees of alphaCallerFn in srcalpha: alphaTargetFn
+    const flow = await operationsByName.code_flow.handler(ctx, { entry_point: 'alphaCallerFn' }) as WalkEnvelope;
+    for (const walk of [blast, flow]) {
+      expect(walk.result).toBe('ok');
+      expect((walk.depth_groups ?? []).reduce((n, g) => n + g.nodes.length, 0)).toBeGreaterThan(0);
+      expect(walk.status).toBe('ready');
+      expect(walk.ready).toBe(true);
+      expect(walk.scoped_source_id).toBeUndefined();
+    }
+  });
 });

@@ -234,6 +234,14 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
 });
 
 describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
+  /** Persist injected atoms as pages: provenance edges need both endpoints
+   *  (the batch JOIN drops absent slugs, and an all-dropped batch is a warn). */
+  async function persistAtoms(atoms: Array<{ slug: string; title: string; body: string }>): Promise<void> {
+    for (const a of atoms) {
+      await engine.putPage(a.slug, { type: 'atom', title: a.title, compiled_truth: a.body, timeline: '' });
+    }
+  }
+
   test('no-op when no atoms have concept refs', async () => {
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: [] });
     expect(result.status).toBe('skipped');
@@ -267,6 +275,7 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       });
     }
 
+    await persistAtoms(atoms);
     const chat = stubChat('AI agents are software factories.');
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat });
     expect(result.status).toBe('ok');
@@ -411,6 +420,7 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       body: `Empty body ${i}`,
       concept_refs: ['empty-theme'],
     }));
+    await persistAtoms(atoms);
     const result = await runPhaseSynthesizeConcepts(engine, {
       _atoms: atoms,
       _chat: stubChat(''),
@@ -683,8 +693,8 @@ describe('#2123: extractor stamps concepts → synthesize_concepts consumes via 
     expect(extract.details?.atoms_extracted).toBe(2);
 
     // Frontmatter really carries the label (a jsonb array, not a string).
-    const stamped = await engine.executeRaw<{ concepts: unknown }>(
-      `SELECT frontmatter->'concepts' AS concepts FROM pages WHERE type = 'atom'`,
+    const stamped = await engine.executeRaw<{ slug: string; concepts: unknown }>(
+      `SELECT slug, frontmatter->'concepts' AS concepts FROM pages WHERE type = 'atom'`,
     );
     expect(stamped.length).toBe(2);
     for (const row of stamped) {
@@ -701,5 +711,185 @@ describe('#2123: extractor stamps concepts → synthesize_concepts consumes via 
       `SELECT slug FROM pages WHERE slug = 'concepts/captive-portal' AND type = 'concept'`,
     );
     expect(concept.length).toBe(1);
+
+    // #4589 on the REAL path: the provenance edges are keyed on the atom slugs
+    // the DB query returned (not `_atoms` seam input), so each extracted atom
+    // must point back at the concept — 2 atoms, 2 'synthesizes' backlinks.
+    const back = (await engine.getBacklinks('concepts/captive-portal', { sourceId: 'default' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(back.length).toBe(2);
+    expect(back.every((l) => l.link_type === 'synthesizes')).toBe(true);
+    expect(back.map((l) => l.from_slug).sort()).toEqual(stamped.map((r) => r.slug).sort());
+  });
+});
+
+// #4589 — synthesize_concepts held every member atom's slug in memory at write
+// time and dropped it: the concept page was written through importFromContent
+// (which links code refs only), the prompt forbids enumerating atoms in the
+// body, and no frontmatter field maps to a link verb — so every concept page
+// landed with 0 inbound + 0 outbound edges and dragged doctor's
+// graph_signals_coverage / orphans down. The phase now banks
+// concept -> atom ('synthesized_from') and atom -> concept ('synthesizes')
+// edges under a dedicated link_source ('concept-provenance', so reconcile
+// passes never prune them), scoped to the cycle's source. Mirrors #3961.
+describe('#4589: synthesize_concepts persists concept<->atom provenance edges', () => {
+  const CONCEPT = 'dive-entry-mechanics';
+  const CONCEPT_SLUG = `concepts/${CONCEPT}`;
+  const memberSlugs = [0, 1, 2].map((i) => `atoms/2026-01-01/member-${i}`);
+  const memberAtoms = memberSlugs.map((slug, i) => ({
+    slug,
+    title: `Member ${i}`,
+    body: `Body of member ${i}.`,
+    concept_refs: [CONCEPT],
+  }));
+
+  async function seedMembers(sourceId?: string): Promise<void> {
+    for (const a of memberAtoms) {
+      await engine.putPage(
+        a.slug,
+        { type: 'atom', title: a.title, compiled_truth: a.body, timeline: '' },
+        sourceId ? { sourceId } : undefined,
+      );
+    }
+  }
+
+  async function provenanceCount(): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM links WHERE link_source = 'concept-provenance'`,
+    );
+    return rows[0].n;
+  }
+
+  test('writes synthesized_from (concept->atom) and synthesizes (atom->concept) edges', async () => {
+    await seedMembers();
+    // 3 atoms = T3 → deterministic path, no LLM call.
+    const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+    expect(result.status).toBe('ok');
+
+    const out = (await engine.getLinks(CONCEPT_SLUG, { sourceId: 'default' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(out.map((l) => l.to_slug).sort()).toEqual([...memberSlugs].sort());
+    expect(out.every((l) => l.link_type === 'synthesized_from')).toBe(true);
+
+    const back = (await engine.getBacklinks(CONCEPT_SLUG, { sourceId: 'default' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(back.map((l) => l.from_slug).sort()).toEqual([...memberSlugs].sort());
+    expect(back.every((l) => l.link_type === 'synthesizes')).toBe(true);
+  });
+
+  test('re-running the phase is idempotent (ON CONFLICT DO NOTHING keeps 3+3 rows)', async () => {
+    await seedMembers();
+    await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+    expect(await provenanceCount()).toBe(6);
+    const second = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+    expect(second.status).toBe('ok');
+    expect(await provenanceCount()).toBe(6);
+  });
+
+  test('dry-run writes zero provenance edges', async () => {
+    await seedMembers();
+    const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms, dryRun: true });
+    expect(result.details?.concepts_written).toBe(1);
+    expect(await provenanceCount()).toBe(0);
+  });
+
+  test('edges land in the cycle source only; an atom in another source drops out (no cross-source edge)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('repo-a', 'Repo A') ON CONFLICT (id) DO NOTHING`,
+    );
+    await seedMembers('repo-a');
+    // A same-concept atom that lives in 'default' — the INNER JOIN on
+    // (slug, source_id) must silently drop it rather than link across sources.
+    const stray = { slug: 'atoms/2026-01-01/stray', title: 'Stray', body: 'b', concept_refs: [CONCEPT] };
+    await engine.putPage(stray.slug, { type: 'atom', title: stray.title, compiled_truth: stray.body, timeline: '' });
+
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: [...memberAtoms, stray],
+      sourceId: 'repo-a',
+    });
+    expect(result.status).toBe('ok');
+
+    const inRepo = (await engine.getLinks(CONCEPT_SLUG, { sourceId: 'repo-a' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(inRepo.map((l) => l.to_slug).sort()).toEqual([...memberSlugs].sort());
+    expect(inRepo.every((l) => l.to_source_id === 'repo-a' && l.from_source_id === 'repo-a')).toBe(true);
+    expect(
+      (await engine.getLinks(CONCEPT_SLUG, { sourceId: 'default' }))
+        .filter((l) => l.link_source === 'concept-provenance'),
+    ).toHaveLength(0);
+    expect((await engine.getLinks(stray.slug, { sourceId: 'default' })).length).toBe(0);
+    expect(await provenanceCount()).toBe(6);
+  });
+
+  test('every member atom outside the cycle source → zero edges is warn, not a silent ok (wave review)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('repo-a', 'Repo A') ON CONFLICT (id) DO NOTHING`,
+    );
+    await seedMembers(); // atoms live in 'default' …
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: memberAtoms,
+      sourceId: 'repo-a', // … but the phase writes to repo-a, so the batch JOIN drops every edge.
+    });
+    expect(await provenanceCount()).toBe(0);
+    expect(result.status).toBe('warn');
+    // Provenance problems ride `link_warnings`, not `failures` (which means
+    // "LLM-failed → template fallback" downstream and would count a halt).
+    expect(result.details?.failures).toEqual([]);
+    const warnings = result.details?.link_warnings as Array<{ concept: string; warning: string }>;
+    expect(warnings.some((w) => w.concept === CONCEPT && /0 of 6/.test(w.warning))).toBe(true);
+    // The page write stands (best-effort edges, mirrors the thrown case below).
+    expect(await engine.getPage(CONCEPT_SLUG, { sourceId: 'repo-a' })).not.toBeNull();
+  });
+
+  test('a failed edge write is reported as warn, not swallowed; the concept page still lands', async () => {
+    await seedMembers();
+    const orig = engine.addLinksBatch.bind(engine);
+    engine.addLinksBatch = async () => { throw new Error('links table unavailable'); };
+    try {
+      const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+      expect(result.status).toBe('warn');
+      expect(result.details?.failures).toEqual([]);
+      const warnings = result.details?.link_warnings as Array<{ concept: string; warning: string }>;
+      expect(warnings.some((w) => w.concept === CONCEPT && /links table unavailable/.test(w.warning))).toBe(true);
+      expect(await engine.getPage(CONCEPT_SLUG, { sourceId: 'default' })).not.toBeNull();
+    } finally {
+      engine.addLinksBatch = orig;
+    }
+  });
+});
+
+// ─── wave review: provenance-link problems are warnings, not LLM failures ──
+describe('synthesize_concepts — provenance-link warnings stay out of `failures`', () => {
+  test('zero provenance edges landed → status warn, link_warnings recorded, narrative kept, no halt', async () => {
+    // Atoms are NOT persisted, so the provenance batch JOIN drops every edge.
+    // Pre-fix that was pushed into `failures`, which downstream reads as
+    // "LLM-failed → template fallback": the summary lied about the narrative
+    // (the LLM call succeeded and was persisted as-is), the rollup counted a
+    // halt, and round_completed_delta flipped to 0.
+    const atoms = Array.from({ length: 5 }, (_, i) => ({
+      slug: `orphan-${i}`,
+      title: `Orphan ${i}`,
+      body: `Orphan body ${i}`,
+      concept_refs: ['orphan-theme'],
+    }));
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: stubChat('A real narrative.'),
+    });
+    expect(result.status).toBe('warn');
+    expect(result.details?.failures).toEqual([]);
+    const linkWarnings = result.details?.link_warnings as Array<{ concept: string; warning: string }>;
+    expect(linkWarnings).toHaveLength(1);
+    expect(linkWarnings[0].concept).toBe('orphan-theme');
+    expect(linkWarnings[0].warning).toContain('provenance links');
+    expect(result.summary).not.toContain('template fallback');
+    expect((await engine.getPage('concepts/orphan-theme'))?.frontmatter.synthesis_mode).toBe('llm');
+
+    const rollup = await engine.executeRaw<{ halt_count: number; round_completed_count: number }>(
+      `SELECT halt_count, round_completed_count FROM extract_rollup_7d WHERE kind = 'concepts'`,
+    );
+    expect(rollup).toHaveLength(1);
+    expect(Number(rollup[0].halt_count)).toBe(0);
+    expect(Number(rollup[0].round_completed_count)).toBe(1);
   });
 });

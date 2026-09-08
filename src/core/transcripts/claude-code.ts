@@ -36,6 +36,22 @@ const CLAUDE_CONTROL_TYPES = new Set([
   'attachment',
 ]);
 
+/**
+ * True for a Claude Code SUBAGENT log:
+ * `<project>/<session-uuid>/subagents/agent-<id>.jsonl`. Every line in one is
+ * `isSidechain` (the parser skips them all, so the file parses to zero turns)
+ * and carries the PARENT session's id — it is not a session and can never
+ * import. Discovery and explicit-path expansion both skip these so they stop
+ * reading as a permanent not-yet-imported backlog + host-format drift (#4796).
+ * STRICT shape (parent dir literally `subagents` AND basename `agent-*.jsonl`)
+ * so a user project whose slug merely contains "subagents" is never hidden.
+ */
+export function isClaudeCodeSubagentFile(path: string): boolean {
+  const segs = path.split(/[/\\]/);
+  const base = segs[segs.length - 1] ?? '';
+  return segs[segs.length - 2] === 'subagents' && /^agent-[^/\\]+\.jsonl$/.test(base);
+}
+
 /** Keys that mark a Claude Code project transcript. */
 function looksLikeClaudeLine(obj: Record<string, unknown>): boolean {
   if (

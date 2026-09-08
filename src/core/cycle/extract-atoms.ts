@@ -68,13 +68,16 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
-import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
+import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
+import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
+import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
+import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -305,7 +308,7 @@ quote, or short essay angle. Each atom must:
   - Have a clear point (not just descriptive)
   - Be specific (not a generic platitude)
 
-Output a JSON array of atoms (1-3 per transcript, never more than 3).
+Output a JSON array of atoms (0-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
 source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
 (1-3 topic labels), virality_score (0-100), emotional_register (one of:
@@ -317,6 +320,10 @@ concepts are kebab-case English TOPIC labels used to cluster atoms into
 concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
 entity or brand names. Use the same label for the same topic across atoms;
 prefer a label you already used over coining a near-synonym.
+
+If the transcript has no extractable idea (metadata rows, status dumps,
+empty fields, boilerplate), output exactly [] — never invent an atom and
+never explain in prose.
 
 Output ONLY the JSON array, no prose.`;
 
@@ -530,6 +537,57 @@ export async function atomsExistingForHashes(
 }
 
 /**
+ * Composite key for the transcript-state Set. A transcript is identified by
+ * BOTH path and content hash (the table's PK carries both), so neither alone
+ * is a safe Set member: two files can share content, and one file changes hash
+ * when edited. NUL is the separator because it cannot occur in a POSIX path.
+ */
+export function transcriptStateKey(filePath: string, contentHash16: string): string {
+  return `${filePath}\u0000${contentHash16}`;
+}
+
+/**
+ * Batch-read the v146 transcript tombstones for this source, mirroring
+ * `atomsExistingForHashes` — ONE query for the whole corpus rather than N
+ * per-file probes, same fail-soft posture (on error return empty, i.e. treat
+ * everything as live and re-attempt, which is the pre-v146 behaviour).
+ *
+ * Only TOMBSTONED rows are returned. A row carrying an in-progress failure
+ * streak (fail_count 1 or 2) is deliberately still live: those items must keep
+ * being retried until the streak reaches MAX_DETERMINISTIC_FAILURES, exactly as
+ * a page with `atoms_fail_count` below the bound stays in the page backlog.
+ */
+export async function tombstonedTranscriptsForHashes(
+  engine: BrainEngine,
+  sourceId: string,
+  contentHash16s: string[],
+): Promise<Set<string>> {
+  if (contentHash16s.length === 0) return new Set();
+  try {
+    const rows = await engine.executeRaw<{ file_path: string; content_hash: string }>(
+      `SELECT file_path, content_hash
+         FROM extract_atoms_transcript_state
+        WHERE source_id = $1
+          AND tombstoned
+          AND content_hash = ANY($2::text[])`,
+      [sourceId, contentHash16s],
+    );
+    return new Set(rows.map(r => transcriptStateKey(r.file_path, r.content_hash)));
+  } catch (err) {
+    if (isUndefinedTableError(err)) {
+      // Un-migrated brain: the table lands with v146. Once per process, not a
+      // full error line on every cycle until the operator migrates.
+      warnOncePerProcess('extract_atoms.transcript_state_missing',
+        `[extract_atoms] extract_atoms_transcript_state is missing (run gbrain migrate); transcript failure counts and tombstones are off until then.`);
+      return new Set();
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[extract_atoms] transcript tombstone check failed (assuming none tombstoned): ${msg}`);
+    return new Set();
+  }
+}
+
+/**
  * The exact two-step model resolution `runPhaseExtractAtoms` uses:
  * `models.dream.extract_atoms` DB config wins if set (same plain-`||`
  * truthiness as always — a whitespace-only value IS "configured"), else the
@@ -642,8 +700,23 @@ export async function runPhaseExtractAtoms(
   // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
   opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
   const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
+  // v146 READ SIDE. The counter written above is inert without this: transcript
+  // eligibility was gated ONLY by "does an atom row exist for this hash", so a
+  // tombstone nothing consults would leave the item in the pool forever. Pages
+  // need no equivalent edit — their tombstone (`atoms_scan_hash`) is already
+  // read by discoverExtractablePages' SQL, which this change does not touch.
+  const tombstonedTranscriptKeys = await tombstonedTranscriptsForHashes(
+    engine,
+    sourceId,
+    allHashes16,
+  );
   for (const t of transcripts) {
-    if (existingHashes.has(t.contentHash.slice(0, 16))) {
+    const hash16 = t.contentHash.slice(0, 16);
+    if (existingHashes.has(hash16)) {
+      duplicatesSkipped++;
+      continue;
+    }
+    if (tombstonedTranscriptKeys.has(transcriptStateKey(t.filePath, hash16))) {
       duplicatesSkipped++;
       continue;
     }
@@ -699,6 +772,27 @@ export async function runPhaseExtractAtoms(
     if (i < transcriptItems.length) work.push(transcriptItems[i]);
   }
 
+  // #3961 follow-up: transcript-origin atoms get provenance edges too. The
+  // original implementation skipped them ("transcripts are files, not pages,
+  // so there is no from-endpoint to link") — but an imported transcript IS a
+  // page: the conversation page it was rendered into. Resolving it here (one
+  // frontmatter-only query, only when transcript work exists) gives those
+  // atoms the same source-page → atom edge that page-origin atoms get, so the
+  // graph can navigate from a conversation to what was learned from it.
+  let transcriptPageIndex: TranscriptPageIndex | null = null;
+  let resolveTranscriptPages: ((filePath: string, index: TranscriptPageIndex) => string[]) | null = null;
+  if (transcriptItems.length > 0) {
+    try {
+      const { indexTranscriptPages, resolveTranscriptPageSlugs } = await import('../transcripts/discover.ts');
+      transcriptPageIndex = await indexTranscriptPages(engine, sourceId);
+      resolveTranscriptPages = resolveTranscriptPageSlugs;
+    } catch {
+      // Index unavailable — atoms still import, they just carry no edge.
+      transcriptPageIndex = null;
+      resolveTranscriptPages = null;
+    }
+  }
+
   // Phase-level no-op: nothing to extract today.
   if (work.length === 0 && transcripts.length === 0 && pages.length === 0) {
     return {
@@ -740,6 +834,7 @@ export async function runPhaseExtractAtoms(
   // matching the pre-refactor fail-soft behavior exactly.
   let extractModel = resolveTierDefault('utility');
   let budgetCap = DEFAULT_BUDGET_USD;
+  let explicitBudget = false; // operator SET cycle.extract_atoms.budget_usd
   // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +
   // maxTokens: 4096). Operators on small-context or thinking models need to
   // shrink/grow both without a code change; defaults are unchanged.
@@ -751,7 +846,7 @@ export async function runPhaseExtractAtoms(
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
     if (configuredBudget) {
       const n = Number(configuredBudget);
-      if (Number.isFinite(n) && n > 0) budgetCap = n;
+      if (Number.isFinite(n) && n > 0) { budgetCap = n; explicitBudget = true; }
     }
     // #4529: legacy input-cap key (its own floor of 500 chars, as landed).
     // Read FIRST so the newer #4540 max_input_chars key below wins when
@@ -786,22 +881,54 @@ export async function runPhaseExtractAtoms(
     // Keep safe defaults on any config-read failure: key-aware utility-tier
     // model, $0.30 cap, default input cap (max_input_chars).
   }
-  // A cost cap is only meaningful for a model the tracker can price.
-  // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')
-  // when the model is absent from the pricing maps AND a cap is set; with no cap
-  // it warns once and proceeds. Because this phase always set a cap, every
-  // non-Anthropic model tripped that hard-fail on the first item, latched
-  // `budgetExhausted`, and skipped the entire workload while reporting ok.
-  const priceable = isModelPriceable(extractModel, 'chat');
-  if (!priceable) {
+  // A cost cap is only meaningful when the tracker can price EVERY call made
+  // under it. BudgetTracker.reserve() hard-fails with
+  // BudgetExhausted(reason:'no_pricing') when a model is absent from the pricing
+  // maps AND a cap is set; with no cap it warns once and proceeds. Because this
+  // phase always set a cap, every non-Anthropic chat model tripped that
+  // hard-fail on the first item, latched `budgetExhausted`, and skipped the
+  // entire workload while reporting ok.
+  //
+  // The chat model is not the only call under this tracker: the atom write
+  // site below goes through importFromContent, which chunks AND embeds inside
+  // the same withBudgetTracker scope. So the embedding model must be priceable
+  // too. Pre-fix, a $0 local chat model (ollama/llama-server) kept the cap on
+  // while an unpriced embedding route (e.g. `litellm:*`, which is deliberately
+  // NOT assumed free because a proxy can front a paid provider) threw
+  // no_pricing on the FIRST atom import — 0 atoms, `budget_exhausted: true`,
+  // $0 spent, on every run. The operator escape hatch the error message
+  // advertises (`pricing.overrides`, #4312) was also never loaded here, unlike
+  // enrich / ingest-facts / extract-conversation-facts.
+  //
+  // Only a DEFAULT cap may be dropped that way. When the operator set
+  // `cycle.extract_atoms.budget_usd` they asked for a ceiling; the gate keeps
+  // it and bills the unpriced embed route at $0 (warned once, below).
+  const pricingOverrides = await loadPricingOverrides(engine);
+  const costGate = resolveExtractAtomsCostGate(
+    extractModel,
+    resolveEmbedModelForCostGate(),
+    pricingOverrides,
+    { explicitBudget },
+  );
+  if (!costGate.enforceCap) {
     console.error(
-      `[extract_atoms] model "${extractModel}" is not in the pricing maps; ` +
-        `running without a cost gate (a cap cannot be enforced on an unpriced model).`,
+      `[extract_atoms] ${costGate.unpricedKind} model "${costGate.unpricedModel}" is not in the pricing maps; ` +
+        `running without a cost gate (a cap cannot be enforced on an unpriced model). ` +
+        `Declare an operator rate to restore the cap: ` +
+        `gbrain config set pricing.overrides '{"${costGate.unpricedModel}": <usd-per-1M-tokens>}' (0 for local inference).`,
+    );
+  } else if (costGate.zeroPricedEmbedModel) {
+    console.error(
+      `[extract_atoms] embed model "${costGate.zeroPricedEmbedModel}" is not in the pricing maps; ` +
+        `cycle.extract_atoms.budget_usd is set, so the $${budgetCap.toFixed(2)} cap stays enforced and embeds bill at $0 under it. ` +
+        `Declare its real rate to meter them: ` +
+        `gbrain config set pricing.overrides '{"${costGate.zeroPricedEmbedModel}": <usd-per-1M-tokens>}'.`,
     );
   }
   const budgetTracker = new BudgetTracker({
-    maxCostUsd: priceable ? budgetCap : undefined,
+    maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
+    pricingOverrides: costGate.pricingOverrides ?? pricingOverrides,
   });
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
@@ -830,6 +957,11 @@ export async function runPhaseExtractAtoms(
   // ── gbrain#4148 helpers ────────────────────────────────────────────
   let malformedOutputs = 0;
   const tombstonedForFailures: string[] = [];
+  // v146: transcript tombstones ride a SEPARATE array. `tombstoned_for_failures`
+  // is a list of page SLUGS; transcripts are filesystem paths, and mixing the two
+  // into one array would be a silent type confusion for any future consumer that
+  // resolves those strings as slugs. Both are report-only today.
+  const tombstonedTranscripts: string[] = [];
   // #3044 adoption: shared halt policy — auth/billing halt on the first hit,
   // a rate_limit streak halts after 3 consecutive failures, a successful
   // chat call resets the streak.
@@ -854,12 +986,68 @@ export async function runPhaseExtractAtoms(
   }
 
   /**
+   * Stamp the transcript-side tombstone (v146). The file-backed mirror of
+   * `stampAtomsScanHash`: transcripts have no frontmatter, and their discovery
+   * is gated ONLY by `atomsExistingForHashes`, so a transcript that yields no
+   * atom row has nothing to mark it done and is re-attempted every cycle.
+   * Row is (source_id, file_path, content_hash)-keyed, so an edited transcript
+   * is a different row and re-eligibilizes automatically.
+   */
+  async function stampTranscriptTombstone(filePath: string, contentHash: string): Promise<void> {
+    try {
+      await engine.executeRaw(
+        `INSERT INTO extract_atoms_transcript_state
+           (source_id, file_path, content_hash, fail_count, tombstoned, updated_at)
+         VALUES ($1, $2, $3, 0, TRUE, now())
+         ON CONFLICT (source_id, file_path, content_hash)
+         DO UPDATE SET tombstoned = TRUE, updated_at = now()`,
+        [sourceId, filePath, contentHash.slice(0, 16)],
+      );
+    } catch { /* fail-soft: transcript stays rediscoverable */ }
+  }
+
+  /**
    * Durable per-item failure count, keyed to the CURRENT content hash so a
    * content edit resets the streak. Returns the new consecutive count, or
-   * null for transcripts / on write failure (never blocks the phase).
+   * null on write failure (never blocks the phase).
+   *
+   * v146: transcripts are covered too. Pages keep their frontmatter counter;
+   * transcripts are files with no frontmatter, so theirs lives in
+   * `extract_atoms_transcript_state`. Both reset on a content change for the
+   * same reason — the page counter is hash-keyed, the transcript row IS
+   * hash-keyed — and both feed the same MAX_DETERMINISTIC_FAILURES bound.
    */
-  async function recordPageFailureCount(item: { kind: string; slug?: string; contentHash: string }): Promise<number | null> {
-    if (item.kind !== 'page' || !item.slug || opts.dryRun) return null;
+  async function recordItemFailureCount(
+    item: { kind: string; slug?: string; filePath?: string; contentHash: string },
+  ): Promise<number | null> {
+    if (opts.dryRun) return null;
+    const hash16 = item.contentHash.slice(0, 16);
+    if (item.kind === 'transcript') {
+      if (!item.filePath) return null;
+      try {
+        const rows = await engine.executeRaw<{ cnt: number | string }>(
+          `INSERT INTO extract_atoms_transcript_state
+             (source_id, file_path, content_hash, fail_count, updated_at)
+           VALUES ($1, $2, $3, 1, now())
+           ON CONFLICT (source_id, file_path, content_hash)
+           DO UPDATE SET fail_count = extract_atoms_transcript_state.fail_count + 1,
+                         updated_at = now()
+           RETURNING fail_count AS cnt`,
+          [sourceId, item.filePath, hash16],
+        );
+        const cnt = rows[0]?.cnt;
+        return cnt == null ? null : Number(cnt);
+      } catch (err) {
+        // A strike that never lands means this transcript never tombstones and
+        // re-spends budget forever (#4916's class) — say so. A missing table
+        // was already warned once by the tombstone check above.
+        if (!isUndefinedTableError(err)) {
+          console.error(`[extract_atoms] transcript failure-count write failed for ${item.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        return null;
+      }
+    }
+    if (item.kind !== 'page' || !item.slug) return null;
     try {
       const rows = await engine.executeRaw<{ cnt: number | string }>(
         `UPDATE pages
@@ -871,7 +1059,7 @@ export async function runPhaseExtractAtoms(
                         ELSE 1 END)
           WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
           RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
-        [item.contentHash.slice(0, 16), sourceId, item.slug],
+        [hash16, sourceId, item.slug],
       );
       const cnt = rows[0]?.cnt;
       return cnt == null ? null : Number(cnt);
@@ -925,7 +1113,7 @@ export async function runPhaseExtractAtoms(
       if (!parseOutcome.ok) {
         malformedOutputs++;
         hardFailureCount++;
-        const failCount = await recordPageFailureCount(item);
+        const failCount = await recordItemFailureCount(item);
         failures.push({
           source: originLabel,
           error: `malformed model output: ${parseOutcome.reason}` +
@@ -936,9 +1124,15 @@ export async function runPhaseExtractAtoms(
         // content hash, tombstone so the backlog floor clears; a content
         // edit re-eligibilizes (stamp is hash-keyed). Transient provider
         // errors never reach here — they throw and take the catch path.
-        if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun && item.kind === 'page') {
-          await stampAtomsScanHash(item);
-          tombstonedForFailures.push(item.slug);
+        // v146: transcripts get the identical bound, via their own store.
+        if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun) {
+          if (item.kind === 'page') {
+            await stampAtomsScanHash(item);
+            tombstonedForFailures.push(item.slug);
+          } else {
+            await stampTranscriptTombstone(item.filePath, item.contentHash);
+            tombstonedTranscripts.push(item.filePath);
+          }
         }
         continue;
       }
@@ -954,8 +1148,17 @@ export async function runPhaseExtractAtoms(
         // Only stamped after a SUCCESSFUL chat call — LLM failures take the
         // catch path below and stay retryable, and malformed output is
         // counted above (gbrain#4148), never stamped as success.
-        if (!opts.dryRun && item.kind === 'page') {
-          await stampAtomsScanHash(item);
+        //
+        // v146: transcripts now stamp too, IMMEDIATELY, exactly as pages do —
+        // a zero-yield is a settled answer about this content, not a failure,
+        // so it needs no streak. Pre-fix transcripts were the one item kind
+        // with no zero-yield marker at all, so an honestly-empty transcript
+        // re-entered the pool and re-spent budget on every cycle forever. The
+        // row is (source_id, file_path, content_hash)-keyed, so editing the
+        // file re-eligibilizes it — which is what makes the permanence safe.
+        if (!opts.dryRun) {
+          if (item.kind === 'page') await stampAtomsScanHash(item);
+          else await stampTranscriptTombstone(item.filePath, item.contentHash);
         }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
@@ -1057,6 +1260,19 @@ export async function runPhaseExtractAtoms(
               from_source_id: sourceId,
               to_source_id: sourceId,
             });
+          } else if (transcriptPageIndex && resolveTranscriptPages) {
+            // A split session renders one page per part, all sharing a
+            // session id; without per-part offsets the honest attribution is
+            // the whole session, so every part gets the edge.
+            for (const fromSlug of resolveTranscriptPages(item.filePath, transcriptPageIndex)) {
+              provenanceLinks.push({
+                from_slug: fromSlug,
+                to_slug: slug,
+                link_source: 'atom-provenance',
+                from_source_id: sourceId,
+                to_source_id: sourceId,
+              });
+            }
           }
           totalAtomsExtracted++;
         }
@@ -1108,7 +1324,7 @@ export async function runPhaseExtractAtoms(
       // suppress a page's atoms.
       const message = err instanceof Error ? err.message : String(err);
       // #3044: a whole-run LLM outage halts the phase. No
-      // recordPageFailureCount here — a global outage says nothing about the
+      // recordItemFailureCount here — a global outage says nothing about the
       // content, so it must not pre-charge the per-page tombstone counter.
       const decision = llmHalt.observe(err);
       if (decision !== 'continue') {
@@ -1123,7 +1339,7 @@ export async function runPhaseExtractAtoms(
       const transient =
         llmHalt.lastClass() === 'rate_limit' || TRANSIENT_EXTRACT_ERROR_RE.test(message);
       if (!transient) {
-        await recordPageFailureCount(item);
+        await recordItemFailureCount(item);
         hardFailureCount++;
       }
       failures.push({
@@ -1207,6 +1423,7 @@ export async function runPhaseExtractAtoms(
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       malformed_outputs: malformedOutputs,
       tombstoned_for_failures: tombstonedForFailures,
+      tombstoned_transcripts: tombstonedTranscripts,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
       model: extractModel,
@@ -1247,33 +1464,101 @@ export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
   return direct;
 }
 
+/**
+ * Bound on how many `[` offsets the anchor scan will try. Completions are
+ * already capped by `max_output_tokens`, so this is a belt-and-braces guard
+ * against a pathological bracket-dense response, not a functional limit —
+ * every failing candidate fails at ~offset 0 of its own slice, so the scan is
+ * cheap. Reached-the-cap behaves exactly like found-nothing: the FIRST
+ * offset's outcome is returned, i.e. today's behaviour.
+ */
+const MAX_ARRAY_ANCHOR_CANDIDATES = 64;
+
+/**
+ * Parse the JSON array anchored at ONE `[` offset, reproducing the historical
+ * two-step exactly: whole-slice parse, then a trim-back to the last `]` to
+ * recover from trailing prose. Split out of parseAtomsOutcomeInner so the
+ * anchor scan can try successive offsets without duplicating the reason
+ * strings — those are asserted by tests and ride the drain's `last_error`.
+ */
+function parseArrayAtOffset(
+  cleaned: string,
+  start: number,
+): { ok: true; parsed: unknown[] } | { ok: false; reason: string } {
+  const slice = cleaned.slice(start);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(slice);
+  } catch {
+    // Try trimming back from the end to recover from trailing prose.
+    const arrayEnd = slice.lastIndexOf(']');
+    if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
+    try {
+      parsed = JSON.parse(slice.slice(0, arrayEnd + 1));
+    } catch {
+      return { ok: false, reason: 'unparseable JSON array' };
+    }
+  }
+  if (!Array.isArray(parsed)) return { ok: false, reason: 'JSON value is not an array' };
+  return { ok: true, parsed };
+}
+
 function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   // Strip markdown code fences if the LLM wrapped JSON in them.
   let cleaned = raw.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) cleaned = fenceMatch[1].trim();
 
-  // Find the first JSON array bracket.
-  const arrayStart = cleaned.indexOf('[');
-  if (arrayStart === -1) return { ok: false, reason: 'no JSON array in response' };
-  cleaned = cleaned.slice(arrayStart);
+  const firstStart = cleaned.indexOf('[');
+  if (firstStart === -1) return { ok: false, reason: 'no JSON array in response' };
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    // Try trimming back from the end to recover from trailing prose.
-    const arrayEnd = cleaned.lastIndexOf(']');
-    if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
-    try {
-      parsed = JSON.parse(cleaned.slice(0, arrayEnd + 1));
-    } catch {
-      return { ok: false, reason: 'unparseable JSON array' };
+  // ANCHOR SCAN. Pre-fix this committed to `indexOf('[')` — the FIRST bracket
+  // anywhere in the response. Any bracket in a preamble hijacked the anchor,
+  // and a brain whose house style mandates inline `[Source: …]` citations and
+  // `[[wikilink]]` backlinks (or whose transcripts carry `[user]` / `[tool: …]`
+  // role markers) makes the model echo one while narrating, so a response
+  // carrying a perfectly good array was reported `unparseable JSON array`.
+  //
+  // Acceptance requires the candidate to parse AND to yield >= 1 atom-shaped
+  // element (`atomsFromParsedArray` is the single source of truth for
+  // "atom-shaped"). Parseability alone is NOT enough: a zero-yield result is
+  // exactly what TOMBSTONES an item (#2144), so only ONE parseable shape may
+  // produce it — the literal `[]` the #4948 prompt asks for when nothing is
+  // extractable, accepted at ANY offset (a model that echoes a `[Source: …]`
+  // citation before obeying must not lose its honest `[]` to this gate and
+  // burn three strikes into a tombstone + halt). A NON-empty array whose
+  // elements all fail the shape gate is malformed output: it rides the
+  // failure streak like every other parse failure instead of tombstoning the
+  // item forever on the first try.
+  let firstAttempt: ReturnType<typeof parseArrayAtOffset> | null = null;
+  let sawEmptyArray = false;
+  let candidates = 0;
+  for (
+    let start = firstStart;
+    start !== -1 && candidates < MAX_ARRAY_ANCHOR_CANDIDATES;
+    start = cleaned.indexOf('[', start + 1)
+  ) {
+    candidates++;
+    const attempt = parseArrayAtOffset(cleaned, start);
+    // Captured on the FIRST iteration only — every reason string this function
+    // can return still describes the first bracket, unchanged.
+    if (firstAttempt === null) firstAttempt = attempt;
+    if (attempt.ok) {
+      if (attempt.parsed.length === 0) { sawEmptyArray = true; continue; }
+      const atoms = atomsFromParsedArray(attempt.parsed);
+      if (atoms.length > 0) return { ok: true, atoms };
     }
   }
 
-  if (!Array.isArray(parsed)) return { ok: false, reason: 'JSON value is not an array' };
-  return { ok: true, atoms: atomsFromParsedArray(parsed) };
+  // Nothing yielded a real atom. An honest `[]` anywhere is the zero-yield
+  // success (#4148 keeps "found nothing" distinct from "malformed"); otherwise
+  // fall back to the FIRST offset's outcome — never a later one — so the
+  // failure reason the drain surfaces as `last_error` still describes the
+  // first bracket.
+  if (sawEmptyArray) return { ok: true, atoms: [] };
+  if (firstAttempt === null) return { ok: false, reason: 'no JSON array in response' };
+  if (firstAttempt.ok) return { ok: false, reason: 'array had no atom-shaped elements' };
+  return firstAttempt;
 }
 
 /**

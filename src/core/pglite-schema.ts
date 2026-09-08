@@ -1035,6 +1035,25 @@ CREATE TABLE IF NOT EXISTS session_context_state (
 CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
   ON session_context_state (updated_at);
 
+-- extract_atoms_transcript_state (migration v146 — #4148 follow-on).
+-- Failure streak + tombstone for TRANSCRIPT extraction items, which are files
+-- and so have no page frontmatter to carry it. See src/schema.sql for the full
+-- rationale (why not raw_data, why not dream_verdicts columns, why source_id is
+-- in the key). content_hash is the 16-char prefix, matching
+-- atoms.frontmatter->>'source_hash'.
+CREATE TABLE IF NOT EXISTS extract_atoms_transcript_state (
+  source_id    TEXT        NOT NULL DEFAULT 'default',
+  file_path    TEXT        NOT NULL,
+  content_hash TEXT        NOT NULL,
+  fail_count   INTEGER     NOT NULL DEFAULT 0,
+  tombstoned   BOOLEAN     NOT NULL DEFAULT FALSE,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, file_path, content_hash)
+);
+CREATE INDEX IF NOT EXISTS extract_atoms_transcript_state_tombstoned_idx
+  ON extract_atoms_transcript_state (source_id, content_hash)
+  WHERE tombstoned;
+
 -- chat_usage_log (#4218 / migration v140). See src/schema.sql for rationale.
 CREATE TABLE IF NOT EXISTS chat_usage_log (
   id                 BIGSERIAL PRIMARY KEY,

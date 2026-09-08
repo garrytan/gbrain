@@ -51,7 +51,7 @@ import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning } from './facts-fence.ts';
+import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 
 /**
@@ -113,19 +113,6 @@ function fenceTagToPseudoPath(lang: string | undefined): string | null {
 // MAX_FENCES_PER_PAGE (fence-bomb DOS cap, GBRAIN_MAX_FENCES_PER_PAGE env
 // override) moved to fence-scan.ts with the #2862 linear scanner.
 
-function replaceOrAppendFactsFence(body: string, fenceBlock: string): string {
-  const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
-  if (beginIdx !== -1) {
-    const endIdx = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
-    if (endIdx !== -1) {
-      return body.slice(0, beginIdx) + fenceBlock + body.slice(endIdx + FACTS_FENCE_END.length);
-    }
-  }
-
-  const sep = body.endsWith('\n') ? '\n' : '\n\n';
-  return `${body}${sep}## Facts\n\n${fenceBlock}\n`;
-}
-
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
  * column on the remote write-back boundary. Restores non-'world' fence
@@ -159,7 +146,9 @@ function mergeHiddenFactRowsIntoBody(
         `the hidden row(s) keep their original numbers.`,
       );
     }
-    return replaceOrAppendFactsFence(incomingBody, renderFactsTable(merge.merged));
+    // Shared #4756 placement rule (the column is already split at the
+    // sentinel here, so this is dedup, not a behaviour change for the importer).
+    return replaceOrInsertFactsFence(incomingBody, renderFactsTable(merge.merged));
   }
   const gapWarning = factsGapWarning(slug, incomingFacts, existingFacts, false);
   if (gapWarning) console.warn(gapWarning);
@@ -1263,7 +1252,7 @@ export async function importFromFile(
     return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
   }
 
-  let content = readFileSync(filePath, 'utf-8');
+  let content = readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, ''); // #4798: a BOM is encoding noise, not content
 
   // Defense-in-depth for callers that bypass the sync/import classifiers
   // (direct importFromFile, reindex, capture paths): a malformed filename is
@@ -1570,6 +1559,14 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
+      // A code page MUST carry its path. The full-sync reconcile finds a
+      // deleted file's page by matching `source_path` against the git tree;
+      // with the column NULL the page is invisible to it and is served
+      // forever. Markdown pages already set it, which is why only the code
+      // walk grew ghosts. Written on every import, not just the first:
+      // putPage COALESCEs, so a NULL here would never overwrite a good value
+      // but would also never backfill a row imported before this line existed.
+      source_path: relativePath,
       // `content` is authoritative source text (disk file, or the row's own
       // body via reindex-code): an emptied file is a deliberate clear.
     }, { ...txOpts, allowEmptyOverwrite: true });

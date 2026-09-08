@@ -125,6 +125,34 @@ describe('buildBrainTools', () => {
     expect(slug.pattern).toBeUndefined();
   });
 
+  test('execute() names a missing required parameter instead of crashing', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const search = tools.find(t => t.name === 'brain_search');
+    expect(search).toBeDefined();
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await expect(search!.execute({}, ctx)).rejects.toThrow(/brain_search: Missing required parameter: query/);
+    await expect(search!.execute(undefined, ctx)).rejects.toThrow(/Missing required parameter/);
+  });
+
+  test('execute() rejects a type mismatch and an unknown enum value by name (wave review)', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const search = tools.find(t => t.name === 'brain_search')!;
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await expect(search.execute({ query: 'x', limit: 'ten' }, ctx)).rejects.toThrow(/brain_search: Parameter "limit" must be a number/);
+    await expect(search.execute({ query: 'x', salience: 'loud' }, ctx)).rejects.toThrow(/brain_search: Parameter "salience" must be one of: off, on, strong/);
+  });
+
+  test('execute() normalizes optional absent idioms (null / "") before validation and the handler (wave review)', async () => {
+    // Same order the MCP dispatchers keep. `updated_after: ""` raw would reach
+    // list_pages' ::timestamptz filter; `type: null` is the JSON-client spelling
+    // of "omitted". Both must land as a plain empty listing, not a crash.
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const listPages = tools.find(t => t.name === 'brain_list_pages')!;
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    const res = await listPages.execute({ updated_after: '', type: null, limit: 5 }, ctx) as unknown;
+    expect(res).toBeDefined();
+  });
+
   test('execute() on put_page with valid namespace slug succeeds', async () => {
     const tools = buildBrainTools({ subagentId: 42, engine, config });
     const putPage = tools.find(t => t.name === 'brain_put_page');

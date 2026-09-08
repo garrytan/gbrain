@@ -1757,7 +1757,7 @@ export interface BrainEngine {
   /** Meta-ontology: which dimensions exist across the brain, and how widely. */
   discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]>;
   /** Dimensions with ≥2 distinct current-open values from ≥2 provenances. */
-  findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]>;
+  findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number }): Promise<OntologyConflict[]>;
 
   // Raw data
   /**
@@ -2147,11 +2147,18 @@ export interface BrainEngine {
     opts?: FactListOpts,
   ): Promise<FactRow[]>;
 
-  /** List facts created since a given timestamp within a source. */
+  /**
+   * List facts since a given timestamp within a source (creation time by
+   * default; event time with `eventTime: true`, see FactListOpts). The
+   * optional `entitySlug` / `sessionId` filters AND onto the time window in
+   * the same SQL query, before LIMIT, so a caller composing "this entity (or
+   * session) since T" gets the newest matching rows rather than a
+   * post-filtered slice of the newest-N.
+   */
   listFactsSince(
     source_id: string,
     since: Date,
-    opts?: FactListOpts & { entitySlug?: string },
+    opts?: FactListOpts & { entitySlug?: string; sessionId?: string },
   ): Promise<FactRow[]>;
 
   /** List facts captured under a session id within a source. */

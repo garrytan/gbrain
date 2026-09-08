@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 export type AutopilotLockHolder =
@@ -26,15 +26,36 @@ export function isPidAlive(pid: number): boolean {
 export interface ProcessCommandProbeDeps {
   /** Injected for tests; defaults to fs.readFileSync of /proc/<pid>/cmdline. */
   readCmdlineFile?: (path: string) => Buffer | string;
+  /** Injected for tests; defaults to process.platform. */
+  platform?: NodeJS.Platform;
+  /** Injected for tests; defaults to child_process.execFileSync (ps / powershell). */
+  execFile?: (file: string, args: string[], options: ExecFileSyncOptionsWithStringEncoding) => string;
 }
 
 /**
  * Best-effort process command lookup. On Linux, /proc/<pid>/cmdline is read
  * first (no subprocess, works even when `ps` is unavailable or restricted —
  * e.g. minimal containers), falling back to `ps -o args=` elsewhere (#4300).
+ * Windows has neither /proc nor `ps`, so it asks CIM via powershell instead
+ * (#4563) — without this every holder classified as alive-unknown there.
  */
 export function readProcessCommand(pid: number, deps: ProcessCommandProbeDeps = {}): string | null {
   if (!Number.isFinite(pid) || pid <= 0) return null;
+  const exec = deps.execFile ?? execFileSync;
+  if ((deps.platform ?? process.platform) === 'win32') {
+    // Get-CimInstance, not wmic (removed on Win11 24H2). pid is validated
+    // finite/positive above, so the WQL filter is injection-safe. Return
+    // early: the POSIX probes below are guaranteed to throw on Windows.
+    try {
+      const out = exec('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        `Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" | Select-Object -ExpandProperty CommandLine`,
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, windowsHide: true }).trim();
+      return out.length > 0 ? out : null;
+    } catch {
+      return null;
+    }
+  }
   const readCmdline = deps.readCmdlineFile ?? readFileSync;
   try {
     const raw = readCmdline(`/proc/${pid}/cmdline`);
@@ -45,7 +66,7 @@ export function readProcessCommand(pid: number, deps: ProcessCommandProbeDeps = 
     // Not Linux (no /proc) or unreadable — fall through to ps.
   }
   try {
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
+    const out = exec('ps', ['-p', String(pid), '-o', 'args='], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 1000,
@@ -59,7 +80,8 @@ export function readProcessCommand(pid: number, deps: ProcessCommandProbeDeps = 
 export function looksLikeGbrainAutopilotCommand(command: string): boolean {
   const normalized = command.replace(/\\/g, '/').trim();
   if (!/(^|\s)autopilot(\s|$)/i.test(normalized)) return false;
-  if (/(^|[\/\s])gbrain(?:\.exe)?(\s|$)/i.test(normalized)) return true;
+  // Win32_Process.CommandLine quotes executables under paths with spaces: `"C:/Program Files/gbrain/gbrain.exe" autopilot`.
+  if (/(^|[\/\s])"?gbrain(?:\.exe)?"?(\s|$)/i.test(normalized)) return true;
   return /(^|\s)(?:\S+\/)?(?:\.{1,2}\/)?(?:src\/)?cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized)
     || /(^|\s)\S*\/src\/cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized);
 }

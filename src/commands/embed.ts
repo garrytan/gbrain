@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { currentEmbeddingSignature } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
-import { carryChunkMetadata, probeEmbedder } from '../core/embed-stale.ts';
+import { carryChunkMetadata, probeEmbedder, resolveProvenanceStamp, stampIfPageProvenanceComplete } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { resolveMaxChunkTokens } from '../core/embedding-input-limit.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from '../core/embed-oversize-heal.ts';
@@ -1849,6 +1849,7 @@ async function embedAllStale(
     return true;
   };
 
+  const stamp = await resolveProvenanceStamp(engine, signature); // column resolved once per drain, not per page
   try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -1972,16 +1973,13 @@ async function embedAllStale(
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
           await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
-          // v0.41.31: stamp provenance after the page's chunks are embedded —
-          // but only when EVERY chunk was stale (fully re-embedded this pass).
-          // A partially-stale page keeps preserved chunks of unknown/old
-          // provenance, so don't claim it's current. (After invalidate, a
-          // signature-drifted page IS fully stale → this stamps it.)
-          // #3037: not on partial failure — failed chunks stay NULL.
-          if (signature && failed === 0 && stale.length === existing.length) {
-            await observed(pacer, () =>
-              engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
-            );
+          // Stamp provenance from DB state, not this batch (#4825): the keyset
+          // drain has no page alignment, so a page straddling a batch boundary
+          // is never wholly in one batch — the batch that lands its last chunk
+          // stamps it. Preserved chunks of other provenance keep the page
+          // unstamped; #3037: failed chunks stay NULL, so skip the round trip.
+          if (stamp && failed === 0) {
+            await observed(pacer, () => stampIfPageProvenanceComplete(engine, slug, keySourceId, stamp));
           }
           // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
           // title tier — keep the stamped mode honest. Partially-stale pages

@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import { EventEmitter } from 'events';
 import { spawnSync } from 'node:child_process';
+import { PassThrough } from 'node:stream';
 import {
   runServe,
   isPidAlive,
@@ -408,6 +409,37 @@ describe('runServe stdio lifecycle', () => {
     h.signals.emit('SIGTERM');
     await h.exited;
     expect(h.engine.disconnectCalls).toBe(1);
+  });
+
+  test('--stdio-idle-timeout leaves stdin paused until the MCP transport listener is attached', async () => {
+    const h = makeHarness();
+    const stdin = new PassThrough();
+    h.opts.stdin = stdin;
+    const initializeFrame = '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n';
+    let sdkReceived = '';
+
+    h.opts.startMcpServer = async () => {
+      // Model a fast MCP client: it writes initialize while startMcpServer is
+      // still booting, immediately before StdioServerTransport adds its data
+      // listener. A paused Readable buffers this frame for the SDK. Any earlier
+      // lifecycle data listener flips the stream to flowing mode and consumes
+      // the frame before the SDK can observe it.
+      stdin.write(initializeFrame);
+      stdin.on('data', (chunk: Buffer) => { sdkReceived += chunk.toString('utf8'); });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    };
+
+    await runServe(
+      h.engine as unknown as BrainEngine,
+      ['--stdio-idle-timeout', '60'],
+      h.opts,
+    );
+
+    expect(sdkReceived).toBe(initializeFrame);
+
+    h.signals.emit('SIGTERM');
+    await h.exited;
+    stdin.destroy();
   });
 
   test('idle timer is reset on every stdin data chunk', async () => {

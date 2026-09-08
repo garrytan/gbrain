@@ -26,7 +26,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -308,8 +308,17 @@ describe('runDream — output format', () => {
   test('--json emits parsable CycleReport JSON with schema_version', async () => {
     const lines: string[] = [];
     const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
-    await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
-    logSpy.mockRestore();
+    // The JSON payload itself goes through console.log (captured above), so a
+    // raw process.stdout.write during the run can only be a progress/summary
+    // leak that would corrupt the payload — progress belongs on stderr.
+    const stdoutSpy = spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
+      expect(stdoutSpy).not.toHaveBeenCalled();
+    } finally {
+      stdoutSpy.mockRestore();
+      logSpy.mockRestore();
+    }
     const parsed = JSON.parse(lines.join('\n'));
     expect(parsed.schema_version).toBe('1');
     expect(parsed).toHaveProperty('status');
@@ -342,6 +351,26 @@ describe('runDream — output format', () => {
     expect(parsed.phases[0].phase).toBe('embed');
     // The stale chunk was still counted in the structured report.
     expect(parsed.phases[0].details.would_embed).toBe(1);
+  });
+
+  // The extract phase's `Links: created ...` / `Extract --stale: ...` summaries
+  // must not leak onto stdout ahead of the JSON CycleReport either.
+  test('--phase extract --json emits only JSON when the checkout has pages', async () => {
+    mkdirSync(join(repo, 'concepts'), { recursive: true });
+    writeFileSync(join(repo, 'concepts', 'testing.md'), '# Testing\nSee [[concepts/contracts]].\n');
+    writeFileSync(join(repo, 'concepts', 'contracts.md'), '# Contracts\nStay honest.\n');
+
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
+    await runDream(engine, ['--dir', repo, '--phase', 'extract', '--json']);
+    logSpy.mockRestore();
+
+    const output = lines.join('\n');
+    expect(output.trimStart().startsWith('{')).toBe(true);
+    const parsed = JSON.parse(output);
+    expect(parsed.phases[0].phase).toBe('extract');
+    expect(parsed.phases[0].details.pages_processed).toBe(2);
+    expect(parsed.totals.pages_extracted).toBe(2);
   });
 
   test('human output for clean status mentions "Brain is healthy"', async () => {

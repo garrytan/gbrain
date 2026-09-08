@@ -109,6 +109,7 @@ describe('applyDbPlaneReadSideMerge — batched read (D2)', () => {
     const { engine } = makeBatchEngine({
       openai_api_key: 'sk-db-example',
       voyage_api_key: 'vg-db-example',
+      deepseek_api_key: 'ds-db-example',
       expansion_model: 'openai:gpt-5-mini',
       chat_model: 'anthropic:claude-haiku-4-5',
       chat_fallback_chain: 'anthropic:claude-haiku-4-5, openai:gpt-5-mini',
@@ -120,6 +121,7 @@ describe('applyDbPlaneReadSideMerge — batched read (D2)', () => {
 
     expect(merged.openai_api_key).toBe('sk-db-example');
     expect(merged.voyage_api_key).toBe('vg-db-example');
+    expect(merged.deepseek_api_key).toBe('ds-db-example');
     expect(merged.expansion_model).toBe('openai:gpt-5-mini');
     expect(merged.chat_model).toBe('anthropic:claude-haiku-4-5');
     expect(merged.chat_fallback_chain).toEqual([

@@ -44,7 +44,7 @@ export async function loadChronicleContext(
 
   const ontologies: Record<string, OntologyValue[]> = {};
   for (const slug of opts.entities ?? []) {
-    let vals = await engine.getOntology(slug, scope);
+    let vals = await engine.getOntology(slug, { ...scope, excludePrivate: opts.excludePrivate });
     if (opts.remote) vals = vals.filter((v) => !(v.source ?? '').startsWith('life/diary/'));
     if (vals.length) ontologies[slug] = vals;
   }

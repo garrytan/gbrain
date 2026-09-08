@@ -11,8 +11,12 @@ Two supported shapes, both stdio.
 
 GBrain ships [`openclaw.plugin.json`](../../openclaw.plugin.json) at the repo
 root. Installing the bundle plugin registers the MCP server for you — the
-manifest carries an `mcpServers.gbrain` entry (`./bin/gbrain serve`) plus the
-bundled skills — and declares the `gbrain-context` context engine. To route
+manifest carries an `mcpServers.gbrain` entry that runs the bundled
+`.agents/gbrain-launcher serve` (the same launcher the Codex and Claude Code
+plugins use; it resolves your installed `gbrain` via `GBRAIN_BIN`, then
+`~/.bun/bin/gbrain`, then `PATH`, so it works under launchd's bare PATH and
+never needs a build step) plus the bundled skills — and declares the
+`gbrain-context` context engine. To route
 OpenClaw's context-engine slot through gbrain, set:
 
 ```

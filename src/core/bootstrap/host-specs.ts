@@ -371,6 +371,19 @@ export function codexSessionsDir(): string {
 }
 
 /**
+ * Codex ARCHIVED rollout store — (CODEX_HOME || ~/.codex)/archived_sessions/
+ * rollout-*.jsonl. Codex moves a rollout here when a session is archived, and
+ * the store is FLAT: no YYYY/MM/DD nesting, unlike codexSessionsDir (verified
+ * on a live 0.147.0 host — 363 rollouts, zero subdirectories). It is the same
+ * codex-owned trust boundary as the live store, so the hook lane confines to
+ * BOTH; a moved rollout is otherwise refused as outside_projects_dir and is
+ * invisible to the discovery fallback.
+ */
+export function codexArchivedSessionsDir(): string {
+  return join(codexHome(), 'archived_sessions');
+}
+
+/**
  * Codex hooks file — (CODEX_HOME || ~/.codex)/hooks.json, USER-GLOBAL (no
  * per-project scope for the user layer gbrain writes). Written by
  * codex-hooks.ts together with its config.toml trust-state entry; see

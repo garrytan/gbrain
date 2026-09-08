@@ -19,6 +19,7 @@ import {
   getSourcePrefix,
   slog,
   serr,
+  withHumanLogsToStderr,
   withSourcePrefix,
 } from '../src/core/console-prefix.ts';
 
@@ -149,5 +150,39 @@ describe('slog / serr line prefixing', () => {
       // eslint-disable-next-line no-console
       console.log = origLog;
     }
+  });
+});
+
+describe('withHumanLogsToStderr (#4888: CLI --json keeps stdout pure)', () => {
+  test('unprefixed slog inside the wrap goes to console.error, never console.log', async () => {
+    const origLog = console.log;
+    const origErr = console.error;
+    const logged: unknown[][] = [];
+    const errored: unknown[][] = [];
+    // eslint-disable-next-line no-console
+    console.log = (...args: unknown[]) => { logged.push(args); };
+    // eslint-disable-next-line no-console
+    console.error = (...args: unknown[]) => { errored.push(args); };
+    try {
+      await withHumanLogsToStderr(async () => { slog('human line'); });
+      expect(logged).toEqual([]);
+      expect(errored).toEqual([['human line']]);
+      // Outside the wrap the back-compat fast path is untouched.
+      slog('after');
+      expect(logged).toEqual([['after']]);
+    } finally {
+      // eslint-disable-next-line no-console
+      console.log = origLog;
+      // eslint-disable-next-line no-console
+      console.error = origErr;
+    }
+  });
+
+  test('prefixed slog inside the wrap writes the prefixed line to stderr; stdout stays untouched', async () => {
+    const { stdout, stderr } = await captureStdio(async () => {
+      await withHumanLogsToStderr(() => withSourcePrefix('foo', async () => { slog('y'); }));
+    });
+    expect(stdout).toBe('');
+    expect(stderr).toBe('[foo] y\n');
   });
 });

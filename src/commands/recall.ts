@@ -450,13 +450,28 @@ async function fetchRowsLocal(
       limit: flags.limit,
     });
   }
+  // An explicit `--since DURATION` / `--today` cutoff is a "what happened in
+  // this window" question and keeps event-time ordering; `--since-last-run`
+  // resolves from a creation-time cursor (see the since-only arm below).
+  const windowEventTime = !flags.sinceLastRun;
   if (flags.entity) {
     const slug = (await resolveEntitySlug(engine, sourceId, flags.entity)) ?? flags.entity;
-    const rows = await engine.listFactsByEntity(sourceId, slug, {
-      activeOnly: !flags.includeExpired,
-      limit: flags.limit,
-      excludeAuditRows: true,
-    });
+    // With a window, entity ANDs onto since in one query (before LIMIT);
+    // without one, the entity arm keeps its valid_from ordering.
+    const rows = resolvedSince
+      ? await engine.listFactsSince(sourceId, resolvedSince, {
+          eventTime: windowEventTime,
+          entitySlug: slug,
+          sessionId: flags.sessionId || undefined,
+          activeOnly: !flags.includeExpired,
+          limit: flags.limit,
+          excludeAuditRows: true,
+        })
+      : await engine.listFactsByEntity(sourceId, slug, {
+          activeOnly: !flags.includeExpired,
+          limit: flags.limit,
+          excludeAuditRows: true,
+        });
     // #4720: the bare positional is entity-first, but keyless/casual usage
     // treats it as a literal word from fact text (`gbrain recall commas`).
     // resolveEntitySlug never returns null for non-empty input (slugify is
@@ -468,8 +483,8 @@ async function fetchRowsLocal(
     // semantics (their filter already ran; no fallback surprise). Gating +
     // note are shared with the thin-client mirror in runRecallOnce.
     if (entityTextFallbackApplies(flags, rows.length)) {
-      const textRows = await engine.listFactsSince(sourceId, new Date(0), {
-        eventTime: true,
+      const textRows = await engine.listFactsSince(sourceId, resolvedSince ?? new Date(0), {
+        eventTime: resolvedSince ? windowEventTime : true,
         activeOnly: !flags.includeExpired,
         limit: flags.limit,
         grep: flags.entity.toLowerCase(),
@@ -483,6 +498,15 @@ async function fetchRowsLocal(
     return rows;
   }
   if (flags.sessionId) {
+    if (resolvedSince) {
+      return engine.listFactsSince(sourceId, resolvedSince, {
+        eventTime: windowEventTime,
+        sessionId: flags.sessionId,
+        activeOnly: !flags.includeExpired,
+        limit: flags.limit,
+        excludeAuditRows: true,
+      });
+    }
     return engine.listFactsBySession(sourceId, flags.sessionId, {
       activeOnly: !flags.includeExpired,
       limit: flags.limit,

@@ -218,6 +218,32 @@ describe('gbrain frontmatter CLI (B4)', () => {
     });
   });
 
+  test('generate --fix on a BOM-prefixed file infers the heading title and writes a BOM-free body (#4798)', async () => {
+    // Under `docs/guides/` the rule's titleStrategy is `heading`, so the title
+    // comes from `# …`. A leading U+FEFF used to defeat the `^#` match (title
+    // fell back to the filename) and then get written back INSIDE the body,
+    // diverging from what `gbrain sync` / `import` produce.
+    const dir = join(tmp, 'docs', 'guides');
+    mkdirSync(dir, { recursive: true });
+    const f = join(dir, 'bom-example.md');
+    writeFileSync(f, '\uFEFF# Title From Heading\n\nbody');
+
+    await withEnv({ GBRAIN_HOME: join(tmp, 'home') }, async () => {
+      const { out, verdict } = await runFm(['generate', tmp, '--fix', '--json']);
+      expect(verdict).toBe(0);
+      const env = JSON.parse(out);
+      expect(env.generated).toBe(1);
+      expect(env.written).toBe(1);
+      expect(env.results[0].title).toBe('Title From Heading');
+    });
+
+    const written = readFileSync(f, 'utf8');
+    expect(written).not.toContain('\uFEFF');
+    expect(written.startsWith('---\n')).toBe(true);
+    expect(written).toContain('title: Title From Heading');
+    expect(written.endsWith('\n# Title From Heading\n\nbody')).toBe(true);
+  });
+
   test('validate missing path errors clearly', async () => {
     const { err, verdict } = await runFm(['validate', join(tmp, 'does-not-exist.md')]);
     expect(verdict).toBe(1);

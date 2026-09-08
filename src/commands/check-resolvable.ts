@@ -301,7 +301,7 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
     autoFix = autoFixDryViolations(skillsDir, { dryRun: flags.dryRun });
   }
 
-  const report = checkResolvable(skillsDir);
+  const report = checkResolvable(skillsDir, { skillsDirSource: source === 'explicit' ? null : source });
 
   // Exit semantics (D-CX-3):
   //   default mode: fail iff any errors

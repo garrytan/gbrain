@@ -72,11 +72,12 @@ function seedNotes(prefix: string): string {
   return dir;
 }
 
-describe('import --json stdout is parseable JSON (#3637)', () => {
+describe('import --json stdout is parseable JSON (#3637) and lists per-file failures', () => {
   test('--json puts one JSON document on stdout and the progress lines on stderr; human mode is unchanged', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-3637-'));
     const jsonNotes = seedNotes('gbrain-3637-json-');
     const humanNotes = seedNotes('gbrain-3637-human-');
+    const mixedNotes = mkdtempSync(join(tmpdir(), 'gbrain-import-failures-'));
     try {
       mkdirSync(join(home, '.gbrain'), { recursive: true });
       writeFileSync(
@@ -114,6 +115,54 @@ describe('import --json stdout is parseable JSON (#3637)', () => {
       expect(json.stdout).not.toContain('Found 2 markdown files');
       expect(json.stderr).toContain('Found 2 markdown files');
 
+      // Per-file failures are listed in the payload. Pre-fix, a file whose
+      // import returned status='skipped' with an error (invalid frontmatter
+      // here) was indistinguishable from a content-hash no-op: `skipped`
+      // counted both, `errors` counted neither, exit code was 0, and the
+      // failure ledger is only written for git-repo dirs. gstack's
+      // memory-ingest stamped such pages as ingested and never retried them.
+      writeFileSync(join(mixedNotes, 'good.md'), '# good\n\nbody\n');
+      writeFileSync(
+        join(mixedNotes, 'broken.md'),
+        '---\ntitle: a: b\ntags: [\n---\n\n# broken\n',
+      );
+      const mixed = await runCli(['import', mixedNotes, '--no-embed', '--json'], env, 120_000);
+      if (mixed.exitCode !== 0) {
+        console.error('--- import mixed stdout ---\n' + mixed.stdout);
+        console.error('--- import mixed stderr ---\n' + mixed.stderr);
+      }
+      expect(mixed.exitCode).toBe(0);
+      const mixedJson = JSON.parse(mixed.stdout);
+      expect(mixedJson.imported).toBe(1);
+      expect(mixedJson.skipped).toBe(1);
+      expect(mixedJson.errors).toBe(0);
+      expect(mixedJson.unchanged).toBe(0);
+      expect(mixedJson.malformed_skipped).toBe(0);
+      expect(mixedJson.failures).toHaveLength(1);
+      expect(mixedJson.failures[0].path).toBe('broken.md');
+      expect(mixedJson.failures[0].error).toContain('Invalid YAML frontmatter');
+
+      // Re-import the same dir: the good note is now a content-hash no-op and
+      // must land in `unchanged` (not `imported`, not `failures`), while the
+      // broken note fails again and stays a named failure. Pins the
+      // `unchanged = skipped - failures - malformed_skipped` derivation and
+      // that a repeat run still lists the failing file by path.
+      const again = await runCli(['import', mixedNotes, '--no-embed', '--json'], env, 120_000);
+      if (again.exitCode !== 0) {
+        console.error('--- import mixed (re-run) stdout ---\n' + again.stdout);
+        console.error('--- import mixed (re-run) stderr ---\n' + again.stderr);
+      }
+      expect(again.exitCode).toBe(0);
+      const againJson = JSON.parse(again.stdout);
+      expect(againJson.total_files).toBe(2);
+      expect(againJson.imported).toBe(0);
+      expect(againJson.skipped).toBe(2);
+      expect(againJson.errors).toBe(0);
+      expect(againJson.unchanged).toBe(1);
+      expect(againJson.malformed_skipped).toBe(0);
+      expect(againJson.failures.map((f: { path: string }) => f.path)).toEqual(['broken.md']);
+      expect(againJson.failures[0].error).toContain('Invalid YAML frontmatter');
+
       // Guard the other direction: without --json the human line stays on
       // stdout, so this fix cannot be "fixed" by deleting the output.
       const human = await runCli(['import', humanNotes, '--no-embed'], env, 120_000);
@@ -125,7 +174,7 @@ describe('import --json stdout is parseable JSON (#3637)', () => {
       expect(human.stdout).toContain('Found 2 markdown files');
       expect(human.stdout).toContain('Import complete');
     } finally {
-      for (const d of [home, jsonNotes, humanNotes]) {
+      for (const d of [home, jsonNotes, humanNotes, mixedNotes]) {
         try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ }
       }
     }

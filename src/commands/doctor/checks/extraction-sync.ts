@@ -412,7 +412,7 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
         if (sourcePath) {
-          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath);
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug);
           if (filePath && existsSync(filePath)) continue;
         } else {
           backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);
@@ -509,11 +509,17 @@ type ExtractAtomsBacklogCounter = (engine: BrainEngine, sourceId?: string) => Pr
 async function countExtractAtomsBacklogBySource(
   engine: BrainEngine,
   countBacklog: ExtractAtomsBacklogCounter,
+  sourceIds?: string[],
 ): Promise<Array<{ source_id: string; backlog: number }> | null> {
   try {
-    const sources = await engine.executeRaw<{ source_id: string }>(
-      `SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL ORDER BY source_id`,
-    );
+    // Source isolation: a scoped caller (remote run_doctor with a source
+    // grant) only ever sees its own ids — the brain-wide roster is for the
+    // unscoped local/host path.
+    const sources = sourceIds
+      ? [...sourceIds].sort().map((source_id) => ({ source_id }))
+      : await engine.executeRaw<{ source_id: string }>(
+        `SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL ORDER BY source_id`,
+      );
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
       const backlog = await countBacklog(engine, src.source_id);
@@ -524,6 +530,22 @@ async function countExtractAtomsBacklogBySource(
   } catch {
     return null;
   }
+}
+
+/** Total backlog: brain-wide when unscoped, else the sum over the granted ids. */
+async function countExtractAtomsBacklogScoped(
+  engine: BrainEngine,
+  countBacklog: ExtractAtomsBacklogCounter,
+  sourceIds?: string[],
+): Promise<number | null> {
+  if (!sourceIds) return countBacklog(engine);
+  let total = 0;
+  for (const id of sourceIds) {
+    const n = await countBacklog(engine, id);
+    if (n === null) return null;
+    total += n;
+  }
+  return total;
 }
 
 function buildExtractAtomsDrainCommand(
@@ -635,12 +657,15 @@ async function brainShapeCanCarryCycleStamps(engine: BrainEngine): Promise<boole
  */
 export async function computeExtractAtomsBacklogCheck(
   engine: BrainEngine,
+  opts: { sourceIds?: string[] } = {},
 ): Promise<Check> {
   const name = 'extract_atoms_backlog';
   const approx = 'page backlog only; transcript corpus not counted';
   try {
     const { countExtractAtomsBacklog } = await import('../../../core/cycle/extract-atoms.ts');
-    const backlog = await countExtractAtomsBacklog(engine); // brain-wide
+    // undefined = brain-wide (local doctor); an array = the remote caller's
+    // source grant — counts, roster and drain hints all stay inside it.
+    const backlog = await countExtractAtomsBacklogScoped(engine, countExtractAtomsBacklog, opts.sourceIds);
     if (backlog === null) {
       return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
     }
@@ -660,7 +685,7 @@ export async function computeExtractAtomsBacklogCheck(
     // The incident: pack does NOT run the phase but a real backlog exists →
     // it will grow forever without a signal. WARN with the drain command.
     if (!declared && backlog > 10) {
-      const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog);
+      const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
       const fix = buildExtractAtomsBacklogFixHint(backlogBySource);
       return {
         name, status: 'warn',
@@ -690,7 +715,7 @@ export async function computeExtractAtomsBacklogCheck(
         };
       }
       if (evidence && (evidence.state === 'never' || evidence.state === 'stale')) {
-        const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog);
+        const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
         const drain = buildExtractAtomsDrainCommand(backlogBySource);
         const since = evidence.state === 'never'
           ? 'no full cycle has ever completed'
@@ -738,13 +763,20 @@ export async function computeExtractAtomsBacklogCheck(
  * The mirror of extract_atoms_backlog. That check counts pages waiting to be
  * extracted; this one counts atoms whose provenance no longer resolves.
  *
- * extract_atoms stamps `frontmatter.source_hash` with the first 16 chars of the
- * source page's content_hash, and discovery skips a page while an atom with the
- * matching hash exists. Editing the page moves its content_hash, so the atom is
- * left pointing at a hash no live page carries. Nothing reclaims those atoms:
- * re-extraction mints under a deterministic slug built from the atom TITLE, so
- * it only upserts in place when the new pass happens to produce the same title.
- * A reworded claim lands on a new slug and the old atom stays, unreferenced.
+ * Scope: PAGE-BOUND atoms only (those stamped with a `source_slug`). The page
+ * lane of extract_atoms stamps `frontmatter.source_hash` with the first 16
+ * chars of the source page's content_hash, and discovery skips a page while an
+ * atom with the matching hash exists. Editing the page moves its content_hash,
+ * so the atom is left pointing at a hash no live page carries. The transcript
+ * lane binds atoms to a FILE instead (`source_path`, no `source_slug`) and
+ * stamps sha256(raw file)[:16] — a different function over different input
+ * that can never equal a page's content_hash — so those atoms are counted
+ * separately as `slug_unbound` and excluded from the drift population (#4799
+ * named the bucket, #4806 took it out of the ratio). Nothing reclaims drifted
+ * atoms: re-extraction mints under a deterministic slug built from the atom
+ * TITLE, so it only upserts in place when the new pass happens to produce the
+ * same title. A reworded claim lands on a new slug and the old atom stays,
+ * unreferenced.
  *
  * Why this needs a signal: a drifted atom is still returned by search, still
  * carries a `source_quote`, and still reads as sourced — but its quote can no
@@ -760,7 +792,11 @@ export async function computeExtractAtomsBacklogCheck(
  * Diagnostic only. It reports and hints; it never deletes. `source_gone` and
  * `source_changed` are split because they warrant different handling and the
  * second is by far the larger group — a naive GC keyed on drift alone would
- * delete mostly-recoverable knowledge.
+ * delete mostly-recoverable knowledge. The third bucket, `slug_unbound`, holds
+ * atoms with no `source_slug` at all (transcript-origin atoms bind by
+ * `source_path`, pre-binding-era atoms by neither); their page liveness cannot
+ * be resolved by slug, so they are reported as their own informational count
+ * and never as drift, gone, or part of the WARN ratio.
  */
 export async function computeAtomProvenanceDriftCheck(
   engine: BrainEngine,
@@ -772,7 +808,7 @@ export async function computeAtomProvenanceDriftCheck(
   const WARN_RATIO = 0.1;
   try {
     const rows = await engine.executeRaw<{
-      total: string | number; drifted: string | number;
+      total: string | number; slug_unbound: string | number; drifted: string | number;
       source_changed: string | number; source_gone: string | number;
       oldest_ext: string | null;
     }>(
@@ -786,7 +822,10 @@ export async function computeAtomProvenanceDriftCheck(
       `WITH atom AS (
          SELECT a.source_id,
                 a.frontmatter->>'source_hash' AS sh,
-                a.frontmatter->>'source_slug' AS ss,
+                -- NULL = slug-unbound: transcript-minted (source_path only) or
+                -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
+                -- population everywhere below (#4799 / #4806).
+                NULLIF(a.frontmatter->>'source_slug', '') AS ss,
                 CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                      THEN a.frontmatter->>'extracted_at' END AS ext
            FROM pages a
@@ -795,23 +834,33 @@ export async function computeAtomProvenanceDriftCheck(
             AND a.frontmatter->>'source_hash' IS NOT NULL
             -- in-flight marker written before the extraction commits
             AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
+       -- Lookup sets are built ONCE and joined (#4937). A correlated EXISTS in
+       -- the SELECT list is not rewritten to a semi-join — Postgres re-runs it
+       -- per atom over substring(content_hash), which no index serves, so the
+       -- check went O(atoms x same-source pages) and blew health-check budgets.
+       -- DISTINCT is load-bearing: duplicate live content_hash values are a
+       -- real state and would otherwise fan one atom out into several rows.
+       ), live_hashes AS MATERIALIZED (
+         SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh
+           FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+       ), live_slugs AS MATERIALIZED (
+         SELECT DISTINCT source_id, slug FROM pages WHERE deleted_at IS NULL
        ), drift AS (
          SELECT atom.*,
-                NOT EXISTS (
-                  SELECT 1 FROM pages p
-                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
-                     AND substring(p.content_hash from 1 for 16) = atom.sh
-                ) AS drifted,
-                EXISTS (
-                  SELECT 1 FROM pages p
-                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
-                     AND p.slug = atom.ss
-                ) AS src_alive
+                -- a slug-unbound atom is never drift: its hash is over a file,
+                -- not a page, so the page probe is meaningless (#4806)
+                (atom.ss IS NOT NULL AND h.sh IS NULL) AS drifted,
+                (s.slug IS NOT NULL) AS src_alive
            FROM atom
+           LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
+           LEFT JOIN live_slugs  s ON s.source_id = atom.source_id AND s.slug = atom.ss
        )
-       SELECT count(*) AS total,
+       SELECT count(*) FILTER (WHERE ss IS NOT NULL) AS total,
+              count(*) FILTER (WHERE ss IS NULL) AS slug_unbound,
               count(*) FILTER (WHERE drifted) AS drifted,
               count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
+              -- drifted implies a slug binding, so "gone" is always a binding
+              -- that failed to resolve — never a slug-unbound atom (#4799)
               count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
               -- lexicographic min of ISO-shaped strings ≈ chronological min
               -- (oldest); informational only, never verdict-bearing
@@ -824,6 +873,7 @@ export async function computeAtomProvenanceDriftCheck(
 
     const num = (v: string | number | null | undefined) => (v == null ? 0 : Number(v));
     const total = num(r.total);
+    const slugUnbound = num(r.slug_unbound);
     const drifted = num(r.drifted);
     const sourceChanged = num(r.source_changed);
     const sourceGone = num(r.source_gone);
@@ -834,6 +884,7 @@ export async function computeAtomProvenanceDriftCheck(
     const ratio = total > 0 ? drifted / total : 0;
     const details = {
       total_atoms: total,
+      slug_unbound: slugUnbound,
       drifted,
       source_changed: sourceChanged,
       source_gone: sourceGone,
@@ -841,21 +892,28 @@ export async function computeAtomProvenanceDriftCheck(
       oldest_drifted_days: oldestDays ?? undefined,
     };
 
-    if (total === 0) return { name, status: 'ok', message: 'no atoms to check', details };
-    if (drifted === 0) return { name, status: 'ok', message: `${total} atom(s), all provenance-resolved`, details };
+    // Slug-unbound atoms cannot be page-checked; say so instead of hiding them.
+    const su = slugUnbound > 0
+      ? `; ${slugUnbound} slug-unbound atom(s) (no source_slug: transcript-minted source_path-only, or pre-binding-era) are file-bound and not page-checked`
+      : '';
+    if (total === 0) {
+      return { name, status: 'ok', message: (slugUnbound > 0 ? 'no page-bound atoms to check' : 'no atoms to check') + su, details };
+    }
+    if (drifted === 0) return { name, status: 'ok', message: `${total} atom(s), all provenance-resolved${su}`, details };
 
     if (drifted >= MIN_DRIFTED && ratio > WARN_RATIO) {
       const fix =
         "review before acting — most drift is an edited source, not a dead one. " +
         "List them with: SELECT slug, frontmatter->>'source_slug' FROM pages a WHERE a.type='atom' " +
-        "AND a.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id " +
+        "AND a.deleted_at IS NULL AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL " +
+        "AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id " +
         "AND p.deleted_at IS NULL AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')";
       return {
         name, status: 'warn',
         message:
           `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
           `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
-          (oldestDays != null ? `; oldest ${oldestDays}d` : '') +
+          (oldestDays != null ? `; oldest ${oldestDays}d` : '') + su +
           `. These still surface in search with a source_quote that no current page contains. Fix: ${fix}`,
         details,
       };
@@ -863,7 +921,7 @@ export async function computeAtomProvenanceDriftCheck(
 
     return {
       name, status: 'ok',
-      message: `${drifted}/${total} atom(s) drifted (below warn threshold)`,
+      message: `${drifted}/${total} atom(s) drifted (below warn threshold)${su}`,
       details,
     };
   } catch (err) {

@@ -1196,7 +1196,10 @@ async function processPage(
     process.stderr.write(
       `[extract-conversation-facts] ${page.slug} changed during extraction; leaving it unfinished for replay\n`,
     );
-    newestEnd = null;
+    // #4869: no terminal, no checkpoint — this claim did not reach a durable
+    // outcome, so it counts as failed (CLI exit 1 / cycle 'warn'), not processed.
+    state.result.pages_failed++;
+    return { newEndIso: null };
   }
 
   if (!state.dryRun && newestEnd !== null) {

@@ -215,6 +215,15 @@ describe('buildGatewayConfig config-plane API-key folding', () => {
     );
   });
 
+  test('deepseek_api_key folds into gateway env as DEEPSEEK_API_KEY (#4808)', async () => {
+    await withEnv({ DEEPSEEK_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        deepseek_api_key: 'sk-deepseek-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.DEEPSEEK_API_KEY).toBe('sk-deepseek-config-plane');
+    });
+  });
+
   // Recurring-class guard: EVERY *_api_key field declared in
   // KNOWN_CONFIG_KEYS must reach the gateway env dict. Adding a new
   // provider key field to GBrainConfig without folding it in

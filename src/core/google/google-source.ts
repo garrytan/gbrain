@@ -611,6 +611,26 @@ async function applyLoopDetection(
 const MAX_THREAD_FAILURES = 3;
 
 /**
+ * A rate-limit failure is transient and self-clearing (Google's own quota
+ * window, not a problem with this thread) — it must NOT count toward
+ * MAX_THREAD_FAILURES. The google-clients.ts retry loop already retries a
+ * rate-limited request patiently (DEFAULT_RATE_LIMIT_RETRIES, backoff +
+ * jitter) before giving up and throwing this; reaching here means the
+ * client's own retry budget was exhausted, not that the thread is bad.
+ */
+function isRateLimitFailure(e: unknown): boolean {
+  return isCredentialError(e) && e.code === 'rate_limited';
+}
+
+/** One wording for a failed thread fetch, shared by the backfill and delta lanes. */
+function threadFailureMessage(tid: string, rateLimited: boolean, e: unknown): string {
+  return (
+    `[google] thread ${tid} failed${rateLimited ? ' (rate limited; not counted toward the poison threshold)' : ''}: ` +
+    `${e instanceof Error ? e.message : String(e)}`
+  );
+}
+
+/**
  * Returns true when every gmail thread this run either imported or was
  * deliberately skipped (404-vanished, poison ledger). False = real failures
  * remain, and the caller must NOT stamp `last_sync_at` — a poison thread
@@ -698,11 +718,21 @@ async function sweepGmail(
               progressTick(`thread ${tid} gone`);
               continue;
             }
-            failCounts[tid] = (failCounts[tid] ?? 0) + 1;
+            // Rate-limited failures don't count toward the poison threshold
+            // (transient, self-clearing) — but they still fail the batch so
+            // the floor doesn't skip past a thread nothing has actually
+            // imported yet.
+            const rateLimited = isRateLimitFailure(e);
+            if (!rateLimited) failCounts[tid] = (failCounts[tid] ?? 0) + 1;
             batchFailed = true;
             summary.failedFiles++;
             summary.status = 'partial';
-            deps.log(`[google] thread ${tid} failed: ${e instanceof Error ? e.message : String(e)}`);
+            deps.log(threadFailureMessage(tid, rateLimited, e));
+            // A rate limit is per-user, not per-thread: the rest of this batch
+            // would hit the same exhausted quota, and its work is never banked
+            // anyway (batchFailed already holds the floor), so defer it to the
+            // next run instead of burning the retry budget once per thread.
+            if (rateLimited) break;
           }
         }
         // Monotone forward progress: the floor commits per FULLY-SUCCESSFUL
@@ -799,11 +829,19 @@ async function sweepGmail(
         progressTick(`thread ${tid} gone`);
         continue;
       }
-      failCounts[tid] = (failCounts[tid] ?? 0) + 1;
+      // Same rate-limit carve-out as the backfill batch loop above: transient,
+      // self-clearing, must not count toward the poison threshold — but it
+      // still holds the delta cursor back (failed++) so nothing is dropped.
+      const rateLimited = isRateLimitFailure(e);
+      if (!rateLimited) failCounts[tid] = (failCounts[tid] ?? 0) + 1;
       failed++;
       summary.failedFiles++;
       summary.status = 'partial';
-      deps.log(`[google] thread ${tid} failed: ${e instanceof Error ? e.message : String(e)}`);
+      deps.log(threadFailureMessage(tid, rateLimited, e));
+      // Per-user quota, same as the backfill: the remaining threads would burn
+      // the client's retry budget against the same exhausted window, and the
+      // cursor is already held (failed > 0) so the next run re-lists them.
+      if (rateLimited) break;
     }
   }
   // The delta cursor advances only when every flagged thread landed —

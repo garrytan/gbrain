@@ -634,10 +634,8 @@ async function runPhaseSynthesizeInner(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
-    const successfulLegacyKeys = await loadSuccessfulLegacySynthesisKeys(
-      engine,
-      cycleSourceId,
-    );
+    const successfulLegacyKeys = await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth:');
+    const successfulV2Keys = await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth-v2:');
 
     // Per-source daily submission cap (D2D: default 0 = disabled; opt-in
     // backstop via dream.synthesize.max_submissions_per_source_per_day).
@@ -699,6 +697,25 @@ async function runPhaseSynthesizeInner(
           reason: legacyCompletion === 'chunked'
             ? 'already_synthesized_legacy_chunked'
             : 'already_synthesized_legacy_single_chunk',
+        });
+        continue;
+      }
+
+      // Same rule for the synth-v2 key family. Without it a transcript whose
+      // children already COMPLETED coalesced onto them via queue.add's
+      // idempotency key — free for the daily cap, but only AFTER the link
+      // manifest (up to 20 searches) was built — and the coalesced children
+      // re-entered writtenRefs, so their old pages were quote-repaired,
+      // restamped and re-embedded every night with nothing new written.
+      const v2Completion = findSynthV2Completion(
+        successfulV2Keys, t.filePath, hash16, opts.sourceId ?? 'default',
+      );
+      if (v2Completion) {
+        skipReports.push({
+          filePath: t.filePath,
+          reason: v2Completion === 'chunked'
+            ? 'already_synthesized_v2_chunked'
+            : 'already_synthesized_v2_single_chunk',
         });
         continue;
       }
@@ -795,6 +812,7 @@ async function runPhaseSynthesizeInner(
             // #4117: validated per-lane namespaces.
             config.reflectionsPrefix,
             config.originalsPrefix,
+            config.mode,
           ),
           model: subagentModel,
           max_turns: config.maxTurns,
@@ -2613,6 +2631,7 @@ function buildSynthesisPrompt(
   // config-resolved values.
   reflectionsPrefix = `${outputRoot}/personal/reflections`,
   originalsPrefix = `${outputRoot}/originals/ideas`,
+  mode: 'agentic' | 'oneshot' = 'agentic',
 ): string {
   // #4348: UTC projection retained here on purpose — this is a slug-name
   // hint for undated sources, not calendar provenance.
@@ -2629,12 +2648,18 @@ function buildSynthesisPrompt(
     ? `${t.filePath} (chunk ${chunkIdx + 1}/${chunkTotal})`
     : t.filePath;
   // #4216 rule-2 wording: with a manifest present, the model is pointed at the
-  // pre-resolved candidates FIRST (the search tool stays available on the
-  // agentic path; the oneshot path has no tools, and this same prompt must be
-  // byte-identical across a oneshot attempt and its agentic fallback).
-  const crossRefRule = linkManifestBlock
-    ? 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`) to existing brain content. Pick targets from the LINK CANDIDATES above (or another page you write in this response); use the search tool, if available, only when no candidate fits.'
-    : 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`) to existing brain content. Use the search tool to find existing pages first.';
+  // pre-resolved candidates FIRST. The agentic prompt keeps its search-tool
+  // guidance; oneshot has no tools, so it may use only pre-resolved candidates
+  // or pages in the same JSON batch. (A oneshot child's prompt is stored as
+  // data.prompt and reused verbatim by its in-job agentic fallback, which
+  // keeps its tools in the schema and merely loses the search hint.)
+  const crossRefRule = mode === 'agentic'
+    ? (linkManifestBlock
+      ? 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`) to existing brain content. Pick targets from the LINK CANDIDATES above (or another page you write in this response); use the search tool, if available, only when no candidate fits.'
+      : 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`) to existing brain content. Use the search tool to find existing pages first.')
+    : (linkManifestBlock
+      ? 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`). Pick its target from the LINK CANDIDATES above or another page in this response.'
+      : 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`) to another page in this response.');
   // OV-7: the write allow-list must live in the PROMPT, not only in the
   // put_page tool schema — the oneshot path never sees a tool schema.
   const allowedPathsBlock = allowedSlugPrefixes.length > 0
@@ -2650,7 +2675,7 @@ CONTEXT
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible EXACTLY from the transcript below — if you cannot reproduce a span exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase memorable phrasings you can quote exactly.
 2. ${crossRefRule}
-3. Do NOT write to any path outside the ALLOWED WRITE PATHS above${allowedSlugPrefixes.length > 0 ? '' : ' (shown in the put_page schema)'}.
+3. Do NOT write to any path outside the ALLOWED WRITE PATHS above${allowedSlugPrefixes.length > 0 ? '' : mode === 'agentic' ? ' (shown in the put_page schema)' : '; if none are listed, return the Task D skip response'}.
 4. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated segments. NO underscores, NO file extensions.
 5. Self-contained opening: begin every new page's body with a 2-3 sentence summary that a reader unfamiliar with this transcript could understand on its own, before any quotes or detail. Do not assume the reader has the source conversation for context.
 6. Preserve concrete facts: carry the specific numbers, dates, dollar amounts, names, and who-decided-what OF the salient content you write about, exactly as the transcript states them. Do not add routine logistics for their own sake.
@@ -2663,16 +2688,18 @@ A. Reflections (self-knowledge, pattern recognition, emotional processing):
 B. Originals (new ideas, frames, theses, mental models):
    slug: \`${originalsPrefix}/${dateHint}-<idea-slug>-${hashSuffix}\`
 
-C. People mentions: ${linkManifestBlock ? 'check LINK CANDIDATES (and the search tool, when available) first' : 'search first, when a search tool is available'}; never write over an existing person page (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
+C. People mentions: ${mode === 'agentic'
+    ? (linkManifestBlock ? 'check LINK CANDIDATES (and the search tool, when available) first' : 'search first, when a search tool is available')
+    : (linkManifestBlock ? 'check LINK CANDIDATES first' : 'do not create or modify person pages')}; never write over an existing person page (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 
 D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), return without writing anything.
 
 TRANSCRIPT (${transcriptHeader})
 ---
 ${chunkText}
----
-
-When done, briefly list the slugs you wrote in your final message so the orchestrator can audit.`;
+---${mode === 'agentic'
+    ? '\n\nWhen done, briefly list the slugs you wrote in your final message so the orchestrator can audit.'
+    : ''}`;
 }
 
 function sanitizeForSlug(s: string): string {
@@ -2752,12 +2779,15 @@ async function collectChildPutPageSlugs(
 }
 
 /**
- * D8: load every `completed` legacy job key in the pre-v2 path-based
- * family `dream:synth:<filePath>:<hash16>[:c<i>of<n>]`. Used at fan-out
- * time to detect transcripts already synthesized under an old key shape;
- * those should NOT be re-submitted under v2 keys. (v2 keys start with
- * `dream:synth-v2:` and don't match the LIKE prefix — the queue's own
- * idempotency dedupe already covers them.)
+ * Load every `completed` subagent job key in one synthesis key family for
+ * one source. Called once per phase per family so the submit loop can skip
+ * transcripts already synthesized BEFORE building their link manifest:
+ *  - D8 legacy `dream:synth:<filePath>:<hash16>[:c<i>of<n>]` (pre-v2 shape;
+ *    must not be re-submitted under v2 keys);
+ *  - current `dream:synth-v2:<source>:filename:<basename>:<hash16>[:c<i>of<n>]`
+ *    (the queue's idempotency dedupe would coalesce these too, but only after
+ *    the manifest build, and the coalesced children would re-enter writtenRefs).
+ * `dream:synth:%` does not match `dream:synth-v2:` keys.
  *
  * Plain `status = 'completed'` deliberately mirrors the queue-level
  * idempotency semantics the legacy keys relied on: a completed job blocks
@@ -2769,9 +2799,10 @@ async function collectChildPutPageSlugs(
  * Loads source-scoped completions once per phase; no schema additions
  * and no repeated history scan for each transcript.
  */
-async function loadSuccessfulLegacySynthesisKeys(
+async function loadSuccessfulSynthesisKeys(
   engine: BrainEngine,
   sourceId: string,
+  keyPrefix: 'dream:synth:' | 'dream:synth-v2:',
 ): Promise<string[]> {
   const rows = await engine.executeRaw<{ idempotency_key: string }>(
     `SELECT idempotency_key
@@ -2779,10 +2810,44 @@ async function loadSuccessfulLegacySynthesisKeys(
       WHERE name = 'subagent'
         AND status = 'completed'
         AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
-        AND idempotency_key LIKE 'dream:synth:%'`,
-    [sourceId],
+        AND idempotency_key LIKE $2`,
+    [sourceId, `${keyPrefix}%`],
   );
   return rows.map(row => row.idempotency_key);
+}
+
+/**
+ * Mirror of findLegacyCompletion for the synth-v2 key family (grammar as
+ * produced by the submit loop / parsed by `parseSynthV2Key`): `'single'` when
+ * the unchunked key completed, `'chunked'` when a FULL `:c0of<n>`..`:c<n-1>of<n>`
+ * set completed, null otherwise (a cancelled row never counts).
+ */
+function findSynthV2Completion(
+  successfulKeys: string[],
+  filePath: string,
+  hash16: string,
+  sourceId: string,
+): 'single' | 'chunked' | null {
+  const prefix =
+    `dream:synth-v2:${encodeURIComponent(sourceId)}` +
+    `:filename:${encodeURIComponent(basename(filePath))}:${hash16}`;
+  const chunkSets = new Map<number, Set<number>>();
+  for (const key of successfulKeys) {
+    if (key === prefix) return 'single';
+    if (!key.startsWith(prefix + ':c')) continue;
+    const chunk = /:c(\d+)of(\d+)$/.exec(key);
+    if (!chunk) continue;
+    const i = Number(chunk[1]);
+    const n = Number(chunk[2]);
+    if (n < 1 || i < 0 || i >= n) continue;
+    let seen = chunkSets.get(n);
+    if (!seen) chunkSets.set(n, seen = new Set());
+    seen.add(i);
+  }
+  for (const [n, seen] of chunkSets) {
+    if (seen.size === n) return 'chunked';
+  }
+  return null;
 }
 
 /**

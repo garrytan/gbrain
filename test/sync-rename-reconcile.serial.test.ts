@@ -2695,3 +2695,47 @@ describe('#3942: the rename lane must not repoint a foreign-origin page', () => 
       .toBe('legacy body');
   });
 });
+
+describe('#4597: a fallback rename\'s own stale duplicate converges under incremental sync', () => {
+  // Negative control lives above: "the anchor tree is enumerated on its own
+  // paths" (from=people/alpha.md, anchor proof at the emoji path) pins that
+  // anchor proof from a DIFFERENT path than the reconciled rename's from
+  // still spares the row. This case is the self-referential sub-case only.
+  test('the anchor blob at the rename\'s own from-path is not liveness proof: the pre-rename row is removed and the next run is quiet', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      '\u{1F389}.md': exoticMd,
+      'people/alpha.md': personMd('Alpha', 'Alpha is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('party-notes')).not.toBeNull();
+
+    // Occupied destination forces the fallback lane (updateSlug throws).
+    await engine.putPage('notes/party', {
+      type: 'person', title: 'Occupant', compiled_truth: 'occupies the destination slug',
+    }, { sourceId: 'default' });
+
+    // The exotic file moves to an ORDINARY path and drops its slug: line
+    // (identical body, so `diff -M` reports a rename, not delete + add).
+    // The destination derives its slug from the path now; the only state
+    // still naming `party-notes` is the anchor blob at the rename's own
+    // from-path — the pre-rename content of the file just re-imported.
+    mkdirSync(join(repo, 'notes'), { recursive: true });
+    execSync('git mv "\u{1F389}.md" notes/party.md', { cwd: repo, stdio: 'pipe' });
+    writeFileSync(join(repo, 'notes/party.md'), exoticMd.replace('slug: Party-Notes\n', ''));
+    execSync('git add -A && git commit -m "move party notes to an ordinary path"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+    const dest = await engine.getPage('notes/party');
+    expect(dest).not.toBeNull();
+    expect(dest!.compiled_truth).toContain('Party notes live here.');
+    // The stale half of the rename is gone (soft-deleted, 72h recoverable)...
+    expect(await engine.getPage('party-notes')).toBeNull();
+
+    // ...and the incremental path is converged: no sentinel, no wedge.
+    const quiet = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(quiet.status).toBe('up_to_date');
+    expect(await engine.getPage('party-notes')).toBeNull();
+  });
+});

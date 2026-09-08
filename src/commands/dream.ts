@@ -31,7 +31,7 @@ import {
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
-import { isResolverUserError, resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
+import { ALL_SOURCES, isResolverUserError, resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
@@ -427,6 +427,8 @@ Options:
                       (explicit phases are honored verbatim). A bare
                       no --source dream against the default-like source,
                       and --source default, still run the full cycle.
+                      GBRAIN_SOURCE=<id> is equivalent when --source is
+                      omitted.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
 
@@ -709,6 +711,14 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // `--source <id>` and the autopilot fanout keep the freshness boundary.
   let implicitDefaultSourceId: string | null = null;
   let fullImplicitSourceCycle = false;
+  // #4778: GBRAIN_SOURCE is tier 2 of the shared resolver, but dream only
+  // entered the resolver behind the --source gate, so an env-scoped bare run
+  // cycled the unscoped brain and never stamped the intended source. The
+  // __all__ sentinel is excluded: unscoped dream already spans every source,
+  // and a '__all__' scope has no local_path (every filesystem phase would be
+  // skipped as no_brain_dir).
+  const envSource = process.env.GBRAIN_SOURCE ?? '';
+  const envScoped = envSource !== '' && envSource !== ALL_SOURCES;
   if (opts.source === null && engine !== null) {
     try {
       implicitDefaultSourceId = await resolveImplicitDefaultSourceId(engine);
@@ -719,20 +729,24 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       }
       throw e;
     }
-    if (opts.dir === null && implicitDefaultSourceId && implicitDefaultSourceId !== 'default') {
+    // Gated on an EMPTY env, not on !envScoped: an explicit GBRAIN_SOURCE=__all__
+    // asks for the whole brain and must not be narrowed to the implicit default.
+    if (opts.dir === null && envSource === '' && implicitDefaultSourceId && implicitDefaultSourceId !== 'default') {
       resolvedSourceId = implicitDefaultSourceId;
       fullImplicitSourceCycle = true;
     }
   }
-  if (opts.source !== null) {
+  if (opts.source !== null || envScoped) {
     if (engine === null) {
       console.error(
-        'gbrain dream --source <id> requires a connected brain ' +
-        '(no engine available); omit --source or run `gbrain init` first',
+        'gbrain dream --source <id> / GBRAIN_SOURCE=<id> requires a connected brain ' +
+        '(no engine available); omit the source scope or run `gbrain init` first',
       );
       process.exit(1);
     }
     try {
+      // A null explicit falls through to tier 2 (GBRAIN_SOURCE: validate +
+      // assertSourceExists) — the recall.ts pattern.
       resolvedSourceId = await resolveSourceId(engine, opts.source);
     } catch (e) {
       if (isResolverUserError(e)) {
@@ -741,6 +755,12 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       }
       throw e; // genuine bugs propagate with stack trace
     }
+    // #4700 mirror of the path-derived branch below: an env scope naming the
+    // brain's default-like source is still the canonical default cycle, not
+    // a freshness-only --source cycle.
+    fullImplicitSourceCycle = opts.source === null
+      && implicitDefaultSourceId === resolvedSourceId
+      && resolvedSourceId !== 'default';
     // Archived-source guard via fetchSource from sources-load.ts
     // (single-row SELECT that projects `archived` and falls back to
     // pre-v0.26.5 schemas via isUndefinedColumnError catch — same

@@ -26,8 +26,7 @@ import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
-import { chat as gatewayChat, probeChatModel, isThinkingByDefaultModel, type ChatResult } from '../ai/gateway.ts';
-import { getProviderCapabilities } from '../ai/capabilities.ts';
+import { chat as gatewayChat, probeChatModel, isThinkingModel, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
@@ -220,9 +219,11 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
 // on internal reasoning before emitting any answer, so the 4000 default leaves
 // `think` with empty or truncated text. Give those models headroom; providers
 // bill actual tokens, not the cap. Everything else keeps 4000. Detection is
-// shared with the gateway (`isThinkingByDefaultModel`) so provider-prefixed
-// spellings (openrouter:anthropic/claude-*-5, claude-cli:*) get the same
-// treatment; think keeps its own smaller 16000 cap.
+// the gateway's `isThinkingModel` (Claude 5 by name behind any provider
+// prefix, or a recipe-declared `thinking_by_default` capability — #4172,
+// e.g. DeepSeek v4; fail-closed for unknown providers), so `think` and the
+// gateway's own output-cap default cannot drift; think keeps its own
+// smaller 16000 cap.
 const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
 // OpenAI reasoning models spend output budget on internal reasoning tokens
 // the same way — reasoning tokens are billed as output and count against
@@ -242,22 +243,13 @@ const ANTHROPIC_CLAUDE_4X_MODEL_RE = /(?:^|[:/])(?:anthropic[:/])?claude-(?:opus
 export function maxOutputTokensFor(modelStr: string): number {
   const openaiReasoning =
     OPENAI_REASONING_MODEL_RE.test(modelStr) && !OPENAI_CHAT_SNAPSHOT_RE.test(modelStr);
-  // Shared name-based predicate (#4087: one source of truth in gateway.ts —
-  // provider-prefixed + bare Claude 5 spellings, never 3.5-era models).
-  if (isThinkingByDefaultModel(modelStr) || openaiReasoning || ANTHROPIC_CLAUDE_4X_MODEL_RE.test(modelStr)) {
-    return THINKING_DEFAULT_MAX_OUTPUT_TOKENS;
-  }
-  // Recipe-declared thinking-by-default (gbrain#4172, e.g. DeepSeek v4):
-  // keyed on the capability, not a model-name regex, so a provider's model
-  // renames don't silently drop the headroom. Reasoning bills as output and
+  // Shared predicate (#4087 one source of truth in gateway.ts: Claude 5 by
+  // name — provider-prefixed or bare, never 3.5-era — OR the recipe-declared
+  // thinking_by_default capability, #4172). Reasoning bills as output and
   // counts against max_tokens; without headroom the 4000 cap is spent on
   // reasoning and think returns truncated/empty JSON.
-  try {
-    if (getProviderCapabilities(modelStr).supportsThinking) {
-      return THINKING_DEFAULT_MAX_OUTPUT_TOKENS;
-    }
-  } catch {
-    // Unknown provider / chat-less recipe — keep the conservative default.
+  if (isThinkingModel(modelStr) || openaiReasoning || ANTHROPIC_CLAUDE_4X_MODEL_RE.test(modelStr)) {
+    return THINKING_DEFAULT_MAX_OUTPUT_TOKENS;
   }
   return DEFAULT_MAX_OUTPUT_TOKENS;
 }

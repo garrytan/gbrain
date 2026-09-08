@@ -2502,7 +2502,7 @@ export async function registerBuiltinHandlers(
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
     const page = await engine.getPage(slug, { sourceId });
     if (!page) return { skipped: 'page_missing', slug, sourceId };
-    const { runFactsBackstop } = await import('../core/facts/backstop.ts');
+    const { runFactsBackstop, coerceNotabilityFilter } = await import('../core/facts/backstop.ts');
     const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import', 'hook:writeback'] as const;
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
       ? (job.data.source as typeof KNOWN_SOURCES[number])
@@ -2520,7 +2520,7 @@ export async function registerBuiltinHandlers(
         sessionId: typeof job.data.sessionId === 'string' ? job.data.sessionId : null,
         source,
         mode: 'inline',
-        notabilityFilter: job.data.notabilityFilter === 'high-only' ? 'high-only' : 'all',
+        notabilityFilter: coerceNotabilityFilter(job.data.notabilityFilter),
         visibility: job.data.visibility === 'world' ? 'world' : 'private',
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
       },
@@ -2925,7 +2925,8 @@ export async function registerBuiltinHandlers(
   // the per-source lock) the job completes `{ deferred: true }` and retries
   // next tick instead of failing — cooperative interleave (CODEX accepted).
   registerBuiltinJob(worker, engine, 'extract-atoms-drain', async (job) => {
-    const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
+    const { formatDrainProviderFailure, runExtractAtomsDrainForSource } =
+      await import('../core/cycle/extract-atoms-drain.ts');
     const { LockUnavailableError } = await import('../core/db-lock.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     const windowSeconds =
@@ -2949,10 +2950,7 @@ export async function registerBuiltinHandlers(
       // handler failure. Partial success (>=1 item extracted) keeps
       // completing normally, unchanged.
       if (result.status === 'provider_failure') {
-        throw new Error(
-          `extract-atoms-drain: all provider calls failed this batch ` +
-          `(batches=${result.batches}, remaining=${result.remaining ?? '?'}) — retrying`,
-        );
+        throw new Error(formatDrainProviderFailure(result));
       }
       return result;
     } catch (e) {

@@ -214,6 +214,65 @@ describe('daily cap — engaged', () => {
     }
   }, 60_000);
 
+  test('a transcript whose synth-v2 child already completed is skipped before any work; a cancelled row does not count', async () => {
+    const rig = await setupRig();
+    try {
+      const done = await seedPassingFile(rig, '2026-08-05-done.txt');
+      const redo = await seedPassingFile(rig, '2026-08-06-redo.txt');
+      const key = (name: string) => {
+        const content = `conversation in ${name}\n`.repeat(200);
+        const hash16 = createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
+        return `dream:synth-v2:default:filename:${name}:${hash16}`;
+      };
+      await rig.engine.executeRaw(
+        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, created_at, finished_at)
+         VALUES ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1, now() - interval '2 days', now() - interval '2 days'),
+                ('subagent', 'dream-inline-old-run', 'cancelled', '{"source_id":"default"}'::jsonb, $2, now() - interval '2 days', now() - interval '2 days')`,
+        [key('2026-08-05-done.txt'), key('2026-08-06-redo.txt')],
+      );
+      const details = await runPhase(rig);
+      const doneSkip = details.skips.find(s => s.filePath === done);
+      expect(doneSkip?.reason).toBe('already_synthesized_v2_single_chunk');
+      expect(details.skips.find(s => s.filePath === redo)).toBeUndefined();
+      expect(details.children_submitted).toBe(1);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+
+  test('a transcript whose synth-v2 CHUNKED set fully completed is skipped; a partial chunk set is resubmitted', async () => {
+    const rig = await setupRig();
+    try {
+      const full = await seedPassingFile(rig, '2026-08-07-chunked-full.txt');
+      const partial = await seedPassingFile(rig, '2026-08-08-chunked-partial.txt');
+      const chunkKey = (name: string, i: number, n: number) => {
+        const content = `conversation in ${name}\n`.repeat(200);
+        const hash16 = createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
+        return `dream:synth-v2:default:filename:${name}:${hash16}:c${i}of${n}`;
+      };
+      // full: c0of2 + c1of2 completed (a whole set). partial: only c0of3 —
+      // the transcript would ship with holes, so it must be re-synthesized.
+      await rig.engine.executeRaw(
+        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, created_at, finished_at)
+         VALUES ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1, now() - interval '2 days', now() - interval '2 days'),
+                ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $2, now() - interval '2 days', now() - interval '2 days'),
+                ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $3, now() - interval '2 days', now() - interval '2 days')`,
+        [
+          chunkKey('2026-08-07-chunked-full.txt', 0, 2),
+          chunkKey('2026-08-07-chunked-full.txt', 1, 2),
+          chunkKey('2026-08-08-chunked-partial.txt', 0, 3),
+        ],
+      );
+      const details = await runPhase(rig);
+      expect(details.skips.find(s => s.filePath === full)?.reason).toBe('already_synthesized_v2_chunked');
+      expect(details.skips.find(s => s.filePath === partial)).toBeUndefined();
+      // Only the partial transcript submits (small fixture → one chunk).
+      expect(details.children_submitted).toBe(1);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+
   test('24h window: a >24h-old submission row does not eat the budget', async () => {
     const rig = await setupRig();
     try {

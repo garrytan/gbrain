@@ -358,6 +358,73 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   });
 
   // =========================================================================
+  // RFC 9728: protected-resource metadata describes /mcp, not the issuer root
+  // =========================================================================
+
+  // The MCP auth spec layers RFC 9728 on top of AS metadata: the *protected
+  // resource* is the streamable-HTTP endpoint the client actually POSTs to
+  // (/mcp), not the authorization-server root. Passing no resourceServerUrl
+  // made the SDK fall back to issuerUrl (AS == RS) and advertise
+  // `resource: "https://host/"`. A client that binds its grant to the
+  // canonical resource URI (RFC 8707) compares that against the
+  // "https://host/mcp" it was configured with, sees a mismatch, and refuses to
+  // treat the connection as authorized — re-running discovery and registering
+  // a fresh DCR client on every attempt, even though the issued bearer works
+  // fine on the wire.
+
+  test('protected-resource metadata advertises /mcp as the resource', async () => {
+    const res = await fetch(`${BASE}/.well-known/oauth-protected-resource/mcp`);
+    expect(res.ok).toBe(true);
+    const meta = await res.json() as any;
+    // The resource is the MCP endpoint, NOT the issuer root.
+    expect(meta.resource).toBe(`${BASE}/mcp`);
+    expect(meta.resource).not.toBe(`${BASE}/`);
+    expect(meta.authorization_servers).toContain(`${BASE}/`);
+    expect(meta.scopes_supported).toEqual(
+      expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
+    );
+  });
+
+  // Setting resourceServerUrl moves the SDK's document to the path-inserted
+  // location only. Clients that probe the bare root (the pre-RFC-9728
+  // convention, and what gbrain advertised before this fix) must keep
+  // discovering us instead of getting a 404 mid-flight.
+  test('legacy root protected-resource path serves the same resource value', async () => {
+    const res = await fetch(`${BASE}/.well-known/oauth-protected-resource`);
+    expect(res.ok).toBe(true);
+    // Served by the SDK's metadataHandler (URL rewrite, not a hand-built
+    // document), so the root keeps the cors() origin it always had.
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    const meta = await res.json() as any;
+    expect(meta.resource).toBe(`${BASE}/mcp`);
+  });
+
+  // The 401 challenge must name a metadata URL that actually resolves: with
+  // resourceServerUrl set, the SDK mounts the document at the path-inserted
+  // location and no longer at the bare root, so a hardcoded root URL in the
+  // challenge would send clients to a 404. Advertised URL and mounted
+  // document have to move together.
+  test('401 challenge advertises a resource_metadata URL that resolves', async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(res.status).toBe(401);
+
+    const challenge = res.headers.get('www-authenticate') ?? '';
+    const advertised = challenge.match(/resource_metadata="([^"]+)"/)?.[1];
+    expect(advertised).toBeTruthy();
+
+    const meta = await fetch(advertised!);
+    expect(meta.ok).toBe(true);
+    expect((await meta.json() as any).resource).toBe(`${BASE}/mcp`);
+  });
+
+  // =========================================================================
   // Fix 3: Express 5 compatibility
   // =========================================================================
 

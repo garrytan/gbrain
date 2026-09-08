@@ -11,9 +11,10 @@ import type { Recipe } from '../types.ts';
  * pick per call: `anthropic:claude-sonnet-4-6` (API key + per-token billing)
  * vs `claude-cli:claude-sonnet-4-6` (OAuth subscription, no API key).
  *
- * Chat-only. Claude has no first-party embedding model; users wanting an
- * Anthropic chat path with embeddings still combine this with openai/google/
- * voyage for embedding the way the existing `anthropic` recipe documents.
+ * Chat + expansion; no embedding. Claude has no first-party embedding model;
+ * users wanting an Anthropic chat path with embeddings still combine this with
+ * openai/google/voyage for embedding the way the existing `anthropic` recipe
+ * documents.
  *
  * Auth: `auth_env.required: []` because the CLI handles auth itself. The
  * `claude` binary on PATH (or `GBRAIN_CLAUDE_CLI_BIN`) IS the auth surface;
@@ -32,10 +33,47 @@ export const claudeCli: Recipe = {
     required: [],
   },
   touchpoints: {
-    // No embedding or expansion touchpoints — chat-only.
+    // No embedding touchpoint — Claude has no first-party embedding model.
+    //
+    // `expansion` IS declared (it was not, pre-fix). Without it,
+    // `isAvailable('expansion')` in gateway.ts returns false for every
+    // claude-cli model, so `expandQuery()` in src/core/search/expansion.ts
+    // returns [query] before any model call — query expansion silently
+    // disappears with no error and no log line, and `gbrain models doctor`
+    // still reports the touchpoint green because its probe calls `chat()`
+    // with an explicit `model:` override and never consults the recipe.
+    // A brain whose tier.utility points at claude-cli therefore lost the
+    // multi-query recall arm that `query` exists to provide.
+    //
+    // instantiateExpansion() in gateway.ts already had a `case 'claude-cli'`
+    // waiting for this declaration; it returns the same
+    // ClaudeCliLanguageModel that chat uses.
+    expansion: {
+      // Cheap model first: `providers explain` / init auto-pick advertise
+      // models[0] for this touchpoint (same convention as the openai recipe).
+      models: [
+        'claude-haiku-4-5-20251001',
+        'claude-fable-5',
+        'claude-fable-5-1',
+        'claude-opus-5',
+        'claude-opus-4-8',
+        'claude-opus-4-7',
+        'claude-sonnet-5',
+        'claude-sonnet-4-6',
+      ],
+      // Nominal — the subscription bears the actual bill. Mirrors the chat
+      // touchpoint's rationale below.
+      cost_per_1m_tokens_usd: 3.0,
+      price_last_verified: '2026-06-17',
+      // Same subprocess cold start as chat: `claude -p` routinely takes 5-6s
+      // before emitting a token. The probe's flat 5000ms default would
+      // false-fail on every run.
+      default_timeout_ms: 30_000,
+    },
     chat: {
       models: [
         'claude-fable-5',
+        'claude-fable-5-1',
         'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',

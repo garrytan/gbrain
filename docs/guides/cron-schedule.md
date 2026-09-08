@@ -198,7 +198,9 @@ Above the triage cascade sit the execution dials:
   backfilled at phase end by a bounded pass over just the pages the phase
   wrote — never a source-wide sweep). A response that fails any check automatically
   falls back to the classic agentic loop **in the same job** — no lost work,
-  no resubmission. Typical effect: 10+ provider round-trips per transcript
+  no resubmission. The oneshot attempt and its fallback calls are both paid
+  provider work and both are included in synthesis token/spend telemetry.
+  Typical effect: 10+ provider round-trips per transcript
   (up to the 16-turn default cap, more on raised `max_turns`) → 1. Revert
   dial: `gbrain config set dream.synthesize.mode agentic`.
 - `dream.synthesize.link_manifest` (default on) — the zero-embed
@@ -214,7 +216,9 @@ Above the triage cascade sit the execution dials:
 Reading the phase report (`details.synthesis`): `mode`, `oneshot_jobs` /
 `fallback_jobs` / `agentic_jobs` + a `fallback_reasons` histogram (a rising
 fallback rate means the model is failing the output contract — check the
-top reason before considering the agentic revert), `queue_wait_ms_p50/p95`
+top reason before considering the agentic revert; `length` includes malformed
+responses whose output usage reached the requested output cap even when the
+provider stop reason was ambiguous), `queue_wait_ms_p50/p95`
 and `child_runtime_ms_p50/p95` (a slow-but-healthy drain is visible instead
 of indistinguishable from a stuck one), and `dead_jobs`/`degraded`. A run
 with any non-completed child does NOT stamp the cooldown, so the next

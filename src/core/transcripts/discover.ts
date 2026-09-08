@@ -23,6 +23,7 @@ import type { TranscriptFormat } from './types.ts';
 import { harnessRoots, type HarnessRoot } from './detect.ts';
 import { isOpenclawCheckpointFile } from './openclaw.ts';
 import { isGrokChatHistoryFile } from './grok.ts';
+import { isClaudeCodeSubagentFile } from './claude-code.ts';
 import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
 
 export interface DiscoveredFile {
@@ -92,6 +93,11 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
       // bare-UUID directory segment in another harness's tree must never
       // hide that harness's legitimate sessions.
       if (format === 'grok' && !isGrokChatHistoryFile(p)) continue;
+      // #4796: Claude Code subagent logs (<session>/subagents/agent-*.jsonl)
+      // are all-isSidechain — they parse to zero turns and carry the PARENT
+      // session id, so they can never import. Left in, each one is a
+      // permanent gap-table phantom + a false DRIFT WARNING every ingest.
+      if (format === 'claude-code' && isClaudeCodeSubagentFile(p)) continue;
       // #4472: skip gbrain's own claude-cli subprocess sessions (see
       // DiscoverOpts.includeSelf) — the scratch-cwd fingerprint survives
       // Claude Code's project-dir slugification.
@@ -147,6 +153,81 @@ export async function indexImportedSessions(
     set.add(ti.session_id);
   }
   return { byHarness, pagesScanned };
+}
+
+/**
+ * Normalize a session identifier so the two names the pipeline gives the same
+ * session compare equal. The conversation page stamps
+ * `transcript_import.session_id` (`20260720_071844_e91dbe`); the corpus file
+ * on disk is named from the same parts with a different separator
+ * (`2026-07-20-071844-e91dbe.md`). Dropping separators and case makes them
+ * comparable without teaching this module either harness's naming scheme.
+ * Identity-safe for the JSONL harnesses too, where the basename stem already
+ * IS the session id (normalizing both sides is a no-op on a match).
+ */
+function sessionKey(raw: string): string {
+  return raw.toLowerCase().replace(/[-_]/g, '');
+}
+
+export interface TranscriptPageIndex {
+  /**
+   * normalized session key → conversation page slugs. A session that split
+   * across parts renders one page per part, all stamped with the same
+   * session_id, so this is one-to-many by design.
+   */
+  bySessionKey: Map<string, string[]>;
+  pagesScanned: number;
+}
+
+/**
+ * Reverse of `indexImportedSessions`: maps a session back to the conversation
+ * PAGE(S) it was rendered into, so a caller holding only a transcript file
+ * path can find the page to attribute it to. Same one-query, frontmatter-only
+ * discipline — conversation bodies run to ~300KB per part and must not be
+ * streamed to read two keys.
+ */
+export async function indexTranscriptPages(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<TranscriptPageIndex> {
+  const bySessionKey = new Map<string, string[]>();
+  let pagesScanned = 0;
+  const rows = await engine.executeRaw<{ slug: string; frontmatter: unknown }>(
+    `SELECT slug, frontmatter FROM pages
+     WHERE type = 'conversation' AND source_id = $1 AND deleted_at IS NULL`,
+    [sourceId],
+  );
+  for (const row of rows) {
+    pagesScanned++;
+    const fm = (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as
+      | Record<string, unknown>
+      | null;
+    const ti = fm?.transcript_import as { session_id?: string } | undefined;
+    if (!ti || typeof ti.session_id !== 'string' || ti.session_id === '') continue;
+    const key = sessionKey(ti.session_id);
+    if (key === '') continue;
+    const slugs = bySessionKey.get(key);
+    if (slugs) slugs.push(row.slug);
+    else bySessionKey.set(key, [row.slug]);
+  }
+  return { bySessionKey, pagesScanned };
+}
+
+/**
+ * The conversation page(s) a transcript file was rendered into, or [] when the
+ * transcript has not been imported as a page. Matches on the basename stem,
+ * which every supported harness derives from the session id. That
+ * includes the `<session_id>.txt` corpus files gbrain's own hook capture writes
+ * (hook.ts); compaction segments (`<sid>.seg-<hash>.txt`) are not matched.
+ */
+export function resolveTranscriptPageSlugs(
+  filePath: string,
+  index: TranscriptPageIndex,
+): string[] {
+  const base = filePath.split(/[/\\]/).pop() ?? '';
+  const stem = base.replace(/\.(md|markdown|txt|jsonl|json)$/i, '');
+  if (stem === '') return [];
+  return index.bySessionKey.get(sessionKey(stem)) ?? [];
 }
 
 /**

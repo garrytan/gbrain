@@ -56,6 +56,7 @@ import {
   syncLockId,
 } from '../core/db-lock.ts';
 import {
+  withHumanLogsToStderr,
   withSourcePrefix,
   slog,
   serr,
@@ -592,7 +593,8 @@ See also:
     },
   );
 
-  console.log(`job_id=${job.id}`);
+  // --json: stdout is JSON lines (the same contract runSync keeps).
+  console.log(args.includes('--json') ? JSON.stringify({ job_id: job.id }) : `job_id=${job.id}`);
 }
 
 // The lock layer minus performSync (SyncLockBusyError, formatLockBusyMessage,
@@ -738,10 +740,23 @@ interface TrackedSlugIndex {
    */
   slugs: Set<string>;
   complete: boolean;
+  /**
+   * Slugs proven ONLY by the anchor tree (no current tracked file derives
+   * to them) -> the anchor paths that proved them, in the caller's path
+   * mode (`pathKey`). Lets the reconcile tell "another file owned this slug
+   * at the anchor" from "the pre-rename state of the very file this rename
+   * just re-imported" (#4597).
+   */
+  anchorOnlyPaths: Map<string, Set<string>>;
 }
 
-function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): TrackedSlugIndex {
+function trackedSlugIndex(
+  gitContextRoot: string,
+  anchorCommit?: string,
+  pathKey: (rel: string) => string = (rel) => rel,
+): TrackedSlugIndex {
   const slugs = new Set<string>();
+  const anchorOnlyPaths = new Map<string, Set<string>>();
   let complete = true;
   const addSlug = (slug: string): void => { slugs.add(slug); };
   // --cached --others --exclude-standard mirrors gitListSyncableFiles (see
@@ -792,6 +807,7 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
   // tree is safe; reads stay bounded by the same size gates and only fire
   // for fallback-regime paths.
   if (anchorCommit && anchorCommit !== 'HEAD') {
+    const currentSlugs = new Set(slugs);
     try {
       const epochs = attributeEpochCommits(gitContextRoot, anchorCommit);
       const historicalFilter = epochs === null || anyFilterAtAttributeEpochs(gitContextRoot, epochs);
@@ -800,7 +816,13 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
         if (!rel) continue;
         if (resolveSlugForPath(rel) !== '' || isCodeFilePath(rel)) continue;
         const res = anchorBlobSlugs(gitContextRoot, anchorCommit, rel, historicalFilter);
-        for (const s of res.slugs) addSlug(s);
+        for (const s of res.slugs) {
+          addSlug(s);
+          if (currentSlugs.has(s)) continue;
+          let at = anchorOnlyPaths.get(s);
+          if (!at) anchorOnlyPaths.set(s, (at = new Set()));
+          at.add(pathKey(rel));
+        }
         if (!res.proofIntact) {
           complete = false;
           serr(
@@ -819,7 +841,7 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
       );
     }
   }
-  return { slugs, complete };
+  return { slugs, complete, anchorOnlyPaths };
 }
 
 /**
@@ -1346,6 +1368,28 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       typeof cfgRows[0]?.config === 'string'
         ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
         : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+    // #4899: EVERY caller that is not the `--all` fan-out passes no strategy —
+    // the autopilot freshness lane (commands/autopilot.ts -> jobs.ts), the dream
+    // cycle (core/cycle.ts), the MCP `sync` op (core/operations.ts) and the
+    // single-source CLI path below. `isSyncable` then falls back to 'markdown'
+    // (core/sync.ts), which drops every code file in the range. Two consequences:
+    // the run imports nothing yet still advances the anchor (`Update sync state
+    // even with no syncable changes`), freezing the index at HEAD forever; and
+    // every MODIFIED code file reaches the un-syncable delete loop, whose only
+    // exemptions are 'metafile' (#1433) and 'pruned-dir' (#2404), so its page is
+    // soft-deleted.
+    //
+    // Resolve the source's own strategy when the caller states none. An explicit
+    // --strategy still wins, so the `--all` fan-out and the CLI flag are unchanged.
+    if (opts.strategy === undefined && typeof cfg.strategy === 'string') {
+      const persisted = cfg.strategy;
+      if (persisted === 'markdown' || persisted === 'code' || persisted === 'auto') {
+        // Assign the PROPERTY, never `opts = {...opts}`: this block runs inside
+        // `if (opts.sourceId)`, and replacing the object discards that narrowing,
+        // so three downstream call sites stop compiling.
+        opts.strategy = persisted;
+      }
+    }
     const remoteUrl = typeof cfg.remote_url === 'string' ? cfg.remote_url : null;
     if (remoteUrl) {
       const ownSrc = {
@@ -2659,11 +2703,24 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // unreadable fallback-regime file — see trackedSlugIndex), an index miss
     // proves nothing, so the row is spared as 'unknown' rather than deleted.
     let treeSlugIndex: TrackedSlugIndex | undefined;
-    const slugLiveness = (s: string): 'live' | 'stale' | 'unknown' => {
+    const slugLiveness = (s: string, from: string): 'live' | 'stale' | 'unknown' => {
       // lastCommit = the commit the brain reflects; its blob is one of the
-      // consulted content states (see fallbackSlugsForFile).
-      treeSlugIndex ??= trackedSlugIndex(gitContextRoot, lastCommit);
-      if (treeSlugIndex.slugs.has(s)) return 'live';
+      // consulted content states (see fallbackSlugsForFile). Anchor paths
+      // are keyed through modePath so they compare against `from` under
+      // #4342 source-root mode too.
+      treeSlugIndex ??= trackedSlugIndex(gitContextRoot, lastCommit, modePath);
+      if (treeSlugIndex.slugs.has(s)) {
+        // #4597: when the ONLY liveness proof is the anchor blob at THIS
+        // rename's own from-path, that proof is the pre-rename state of the
+        // file just re-imported at `to` (the reconcile only runs once the
+        // destination materialized) — the exact duplicate it exists to
+        // remove. Sparing it checkpointed the rename as converged, so the
+        // duplicate never re-entered an incremental diff. Any current-tree
+        // hit, or anchor proof from a DIFFERENT path (the #3583 data-loss
+        // shapes), still spares the row.
+        const onlyAt = treeSlugIndex.anchorOnlyPaths.get(s);
+        if (!onlyAt || ![...onlyAt].every(p => p === from)) return 'live';
+      }
       return treeSlugIndex.complete ? 'stale' : 'unknown';
     };
 
@@ -2877,9 +2934,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       //   2. Locate the stale row POSITIVELY by `source_path = from`, never
       //      by the oldSlug guess — after a collision, a path-derived
       //      fallback slug could name an unrelated (e.g. manually curated)
-      //      row. No source_path match → nothing is deleted (this also means
-      //      code-strategy imports, which don't populate source_path, fall
-      //      back safely to leaving the old row rather than guessing).
+      //      row. No source_path match → nothing is deleted (code pages
+      //      imported before `importCodeFile` wrote `source_path` (#4900)
+      //      still carry NULL until their next import and fall back safely
+      //      to leaving the old row rather than guessing).
       //
       // A failed delete records a `<rename:…>` SENTINEL (not an ordinary
       // path failure): the gate hard-blocks the bookmark, and — unlike a
@@ -2938,7 +2996,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
                 );
                 continue;
               }
-              const verdict = slugLiveness(s);
+              const verdict = slugLiveness(s, from);
               if (verdict === 'live') {
                 serr(
                   `  [sync] rename reconcile: skipping live row ${s} — a tracked ` +
@@ -4353,6 +4411,16 @@ function manageGitignoreAtGitRoot(path: string, engineKind?: 'pglite' | 'postgre
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
+  // #4888: under --json, stdout is reserved for JSON lines (the envelope and
+  // any JSON status lines); every slog() human line from performSync and its
+  // callees routes to stderr instead. serr/progress are stderr already, and
+  // the console.log(JSON.stringify(..)) sites are untouched by the wrap.
+  return args.includes('--json')
+    ? withHumanLogsToStderr(() => runSyncInner(engine, args))
+    : runSyncInner(engine, args);
+}
+
+async function runSyncInner(engine: BrainEngine, args: string[]) {
   // v0.40 Federated Sync v2: `gbrain sync trigger` subcommand
   // Routes to runSyncTrigger which queues a 'sync' minion job with
   // auto_embed_backfill=true. Falls through to the normal sync path
@@ -4449,8 +4517,9 @@ Options:
                        ok_count, error_count, skipped_count}). Sources
                        skipped by --missing-path skip appear with
                        status 'skipped_missing_path' and their
-                       local_path. Human banners route to stderr so
-                       '--json | jq' parses cleanly.
+                       local_path. All human output routes to stderr
+                       (single-source runs too) so '--json | jq'
+                       parses cleanly.
                        Exit codes: 0 = all sources ok or skipped,
                        1 = any error, 2 = cost-prompt-not-confirmed.
   --yes                Accept any interactive prompts (CI / non-TTY).
@@ -4763,7 +4832,7 @@ See also:
   // refusal is lifted below.
   if (skipFailed) {
     const acked = syncAll ? acknowledgeFailures() : acknowledgeFailures(sourceId);
-    if (acked.count > 0) console.log(`Acknowledged ${acked.count} pre-existing failure(s).`);
+    if (acked.count > 0) slog(`Acknowledged ${acked.count} pre-existing failure(s).`);
   }
 
   // v0.19.0 — `sync --all` iterates all registered sources with a
@@ -4796,7 +4865,7 @@ See also:
       );
     }
     if (!sources || sources.length === 0) {
-      console.log('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
+      slog('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
       return;
     }
 
@@ -5223,9 +5292,9 @@ See also:
     // another source's failures.
     const failures = unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
     if (failures.length === 0) {
-      console.log('No unacknowledged sync failures to retry.');
+      slog('No unacknowledged sync failures to retry.');
     } else {
-      console.log(`Retrying ${failures.length} previously-failed file(s)...`);
+      slog(`Retrying ${failures.length} previously-failed file(s)...`);
       // Don't acknowledge them yet — they must succeed to clear.
     }
   }
@@ -5307,7 +5376,7 @@ See also:
 
   // Watch mode
   let consecutiveErrors = 0;
-  console.log(`Watching for changes every ${interval}s... (Ctrl+C to stop)`);
+  slog(`Watching for changes every ${interval}s... (Ctrl+C to stop)`);
 
   while (true) {
     try {
@@ -5315,7 +5384,7 @@ See also:
       consecutiveErrors = 0;
       if (result.status === 'synced') {
         const ts = new Date().toISOString().slice(11, 19);
-        console.log(`[${ts}] Synced: +${result.added} ~${result.modified} -${result.deleted} R${result.renamed}`);
+        slog(`[${ts}] Synced: +${result.added} ~${result.modified} -${result.deleted} R${result.renamed}`);
       }
       // Same gate as non-watch: only manage .gitignore on successful sync.
       // v0.41.13.0 (T7 / D-V3-5): partial joins the deferred posture.

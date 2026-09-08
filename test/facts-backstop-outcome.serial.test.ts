@@ -28,6 +28,7 @@ import {
   resetGateway,
   __setChatTransportForTests,
 } from '../src/core/ai/gateway.ts';
+import { AIConfigError } from '../src/core/ai/errors.ts';
 import {
   runFactsBackstop,
   runFactsPipeline,
@@ -164,7 +165,8 @@ describe('keyless vs keyed chat_unavailable', () => {
     // Global default would be Anthropic (unservable), but the DB-plane
     // extraction override IS servable with the OpenAI key — the engine-aware
     // gate must admit the work. Short-lived mode routes to the durable minion
-    // (no LLM call executes in-test) so we can also pin the retry policy.
+    // (no LLM call executes in-test) so we can also pin the retry policy and
+    // the handler-default timeout stamped on the submitted row.
     process.env.OPENAI_API_KEY = 'sk-test';
     await engine.setConfig('facts.extraction_model', 'openai:gpt-4o-mini');
     configureGateway({ env: { OPENAI_API_KEY: 'sk-test' } });
@@ -176,13 +178,14 @@ describe('keyless vs keyed chat_unavailable', () => {
     expect(r.mode).toBe('queue');
     expect((r as { enqueued: boolean }).enqueued).toBe(true);
     expect((r as { skipped?: string }).skipped).toBeUndefined();
-    const jobs = await engine.executeRaw<{ max_attempts: number; backoff_delay: number }>(
-      `SELECT max_attempts, backoff_delay FROM minion_jobs WHERE name = 'facts-absorb'`,
+    const jobs = await engine.executeRaw<{ max_attempts: number; backoff_delay: number; timeout_ms: number | string }>(
+      `SELECT max_attempts, backoff_delay, timeout_ms FROM minion_jobs WHERE name = 'facts-absorb'`,
     );
     expect(jobs).toHaveLength(1);
     // Slow-retry policy (R2-5): config drift is fixed on human timescales.
     expect(Number(jobs[0].max_attempts)).toBe(5);
     expect(Number(jobs[0].backoff_delay)).toBe(60_000);
+    expect(Number(jobs[0].timeout_ms)).toBe(10 * 60 * 1000);
   });
 });
 
@@ -351,5 +354,71 @@ describe('coverage-gap additions (ship review)', () => {
     expect(err.message).not.toContain('sk-proj');
     // The cause stays reachable for local debugging.
     expect(String((err as { cause?: unknown }).cause)).toContain('401');
+  });
+
+  test('FactsExtractionError surfaces the cause CONSTRUCTOR name, never its .name or .message', () => {
+    class FakeApiCallError extends Error {
+      constructor(message: string) {
+        super(message);
+        // Deliberately different from the class name, so a test that reads
+        // `.name` instead of `.constructor.name` would fail here — pinning
+        // WHICH property the breadcrumb reads, not just that some name shows up.
+        this.name = 'org_abc123_over_quota';
+      }
+    }
+    const err = new FactsExtractionError('provider_error', 'claude-cli:claude-sonnet-5',
+      new FakeApiCallError('connection reset by peer (org_abc123)'));
+    // The class name is a diagnostic breadcrumb — it survives into the
+    // persisted message so a durable job's `error_text` (which is all that
+    // remains once the in-process `cause` is gone) can still distinguish
+    // "which kind of provider failure" across occurrences.
+    expect(err.message).toContain('(cause=FakeApiCallError)');
+    // The message-carried breadcrumb is the CONSTRUCTOR name, never `.name`
+    // and never `.message` — no room for a provider body to leak through it.
+    expect(err.message).not.toContain('org_abc123');
+    expect(err.message).not.toContain('connection reset');
+    expect(JSON.stringify(err)).not.toContain('org_abc123');
+  });
+
+  test('FactsExtractionError drops a cause-constructor name that is not a plain identifier', () => {
+    // A dependency could in principle construct an Error whose
+    // `constructor.name` is an attacker-chosen string (this needs the
+    // dependency to already run arbitrary code — not a normal provider
+    // error path). The breadcrumb is validated against a plain-identifier
+    // shape and DROPPED (not substituted) rather than trusted verbatim.
+    class WeirdError extends Error {}
+    Object.defineProperty(WeirdError, 'name', { value: 'org_example_secret sk-proj-fake123' });
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2', new WeirdError('x'));
+    expect(err.message).not.toContain('cause=');
+    expect(err.message).not.toContain('org_example_secret');
+    expect(err.message).not.toContain('sk-proj');
+  });
+
+  test('FactsExtractionError appends the whole-run failure class the gateway already computes', () => {
+    // normalizeAIError wraps every provider failure as AIConfigError or
+    // AITransientError, so the class name alone can't tell a 401 from a 400.
+    // classifyGlobalLlmError (the vocabulary ingest_log already uses) walks
+    // the cause chain for the status, so a dead job's error_text reads
+    // `(cause=AIConfigError auth)` while the provider body — and the key it
+    // echoes — still never reaches the message.
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2',
+      new AIConfigError('401 Incorrect API key sk-proj-x', undefined,
+        Object.assign(new Error('x'), { statusCode: 401 })));
+    expect(err.message).toContain('(cause=AIConfigError auth)');
+    expect(err.message).not.toContain('sk-proj');
+    expect(err.message).not.toContain('Incorrect API key');
+  });
+
+  test('FactsExtractionError omits the cause breadcrumb when there is no cause', () => {
+    const err = new FactsExtractionError('truncated_output', 'openai:gpt-5.2');
+    expect(err.message).toBe('[facts-extract] truncated_output (model=openai:gpt-5.2)');
+    expect(err.message).not.toContain('cause=');
+  });
+
+  test('FactsExtractionError omits the cause breadcrumb when cause is not an Error', () => {
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2', 'a raw string cause');
+    expect(err.message).not.toContain('cause=');
+    // The raw cause still stays reachable for local debugging.
+    expect((err as { cause?: unknown }).cause).toBe('a raw string cause');
   });
 });

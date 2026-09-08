@@ -177,7 +177,7 @@ const recall: Operation = {
     entity: { type: 'string', description: 'Entity slug (canonical). Returns facts about this entity newest first.' },
     query: { type: 'string', description: 'MEMORY_VERBS v1: free-text retrieval over pages (hybrid search arm). Response adds results[] (slug, title, chunk, evidence, create_safety, provenance). Combinable with entity (both arms run). Degrades to keyword-only search when no embedding provider is configured (search_degraded notes it; never an error).' },
     budget_tokens: { type: 'number', description: 'MEMORY_VERBS v1: server-side token budget (char/4 estimate). Facts pack first, then results. Response adds budget_tokens, budget_used, dropped_count.' },
-    since: { type: 'string', description: 'ISO 8601 datetime or duration shorthand (e.g. "8 hours ago"). Filters the FACTS arm only.' },
+    since: { type: 'string', description: 'ISO 8601 datetime or duration shorthand (e.g. "8 hours ago"). Filters the FACTS arm only, on event time (valid_from, falling back to created_at); composes with `entity` and `session_id`. An unparseable value is rejected (invalid_params).' },
     session_id: { type: 'string', description: 'Source session id (e.g. topic-A). Returns facts captured in that session.' },
     include_expired: { type: 'boolean', description: 'When true, include expired_at IS NOT NULL rows. Default false.' },
     supersessions: { type: 'boolean', description: 'When true, return only the supersession audit log (facts with superseded_by set), newest first by COALESCE(expired_at, valid_until).' },
@@ -248,8 +248,32 @@ const recall: Operation = {
 
     let rows: FactRows = [];
 
+    // `since` is parsed once, up front, and a value that does not parse is
+    // rejected instead of silently widening the window: a caller that asked
+    // for "facts since T" must never receive every fact (or none) because
+    // T was malformed.
+    const since = p.since !== undefined ? parseSinceParam(p.since) : null;
+    if (p.since !== undefined && !since) {
+      throw verbError(
+        'invalid_params',
+        `since is not a parseable timestamp or duration: "${String(p.since).slice(0, 60)}"`,
+        'Pass an ISO 8601 datetime (e.g. "2026-08-11T00:00:00Z"), Unix epoch millis, or a duration such as "8 hours ago" / "2d".',
+      );
+    }
+    const entityParam = typeof p.entity === 'string' && p.entity.length > 0 ? (p.entity as string) : null;
+    const sessionParam = typeof p.session_id === 'string' && p.session_id.length > 0 ? (p.session_id as string) : null;
+    // Shared per-source opts for the fact-list arms (visibility, grep and the
+    // audit exclusion all filter at the ENGINE level, before each source's
+    // LIMIT, so a hidden newest row never consumes a slot).
+    const listOpts = {
+      activeOnly: !includeExpired,
+      limit,
+      visibility,
+      grep: grep ?? undefined,
+      excludeAuditRows: true,
+    };
+
     if (p.supersessions === true) {
-      const since = parseSinceParam(p.since);
       // Visibility filters at the ENGINE level (before each source's LIMIT),
       // same as the sibling fact-list arms — a post-merge filter would let a
       // private newest row consume a limit slot and hide an older world row.
@@ -261,63 +285,49 @@ const recall: Operation = {
         // valid_until) — ontology supersessions carry valid_until only.
         (rec) => rec.expired_at ?? rec.valid_until ?? rec.created_at,
       );
-    } else if (typeof p.entity === 'string' && p.entity.length > 0) {
+    } else if (since) {
+      // Composed window: `since` ANDs onto `entity` and/or `session_id` in
+      // ONE engine query, so the time cutoff lands before the SQL LIMIT. The
+      // window is measured on EVENT time, COALESCE(valid_from, created_at),
+      // exactly like the since-only arm: "what happened to this entity (or
+      // in this session) since T" is a question about when the underlying
+      // events occurred, not about when a batch extraction wrote the rows.
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
       rows = mergeNewest(
         await Promise.all(factSources.map(async (src) => {
-          const slug = (await resolveEntitySlug(ctx.engine, src, p.entity as string)) ?? (p.entity as string);
-          return ctx.engine.listFactsByEntity(src, slug, {
-            activeOnly: !includeExpired,
-            limit,
-            visibility,
-            grep: grep ?? undefined,
-            excludeAuditRows: true,
+          const entitySlug = entityParam
+            ? ((await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam)
+            : undefined;
+          return ctx.engine.listFactsSince(src, since, {
+            ...listOpts,
+            eventTime: true,
+            entitySlug,
+            sessionId: sessionParam ?? undefined,
           });
+        })),
+        byEventTime,
+      );
+    } else if (entityParam) {
+      const { resolveEntitySlug } = await import('../entities/resolve.ts');
+      rows = mergeNewest(
+        await Promise.all(factSources.map(async (src) => {
+          const slug = (await resolveEntitySlug(ctx.engine, src, entityParam)) ?? entityParam;
+          return ctx.engine.listFactsByEntity(src, slug, listOpts);
         })),
         (rec) => rec.valid_from ?? rec.created_at,
       );
-    } else if (typeof p.session_id === 'string' && p.session_id.length > 0) {
+    } else if (sessionParam) {
       rows = mergeNewest(
         await Promise.all(factSources.map(src =>
-          ctx.engine.listFactsBySession(src, p.session_id as string, {
-            activeOnly: !includeExpired,
-            limit,
-            visibility,
-            grep: grep ?? undefined,
-            excludeAuditRows: true,
-          }),
+          ctx.engine.listFactsBySession(src, sessionParam, listOpts),
         )),
         byCreated,
       );
-    } else if (p.since !== undefined) {
-      const since = parseSinceParam(p.since);
-      if (since) {
-        rows = mergeNewest(
-          await Promise.all(factSources.map(src =>
-            ctx.engine.listFactsSince(src, since, {
-              eventTime: true,
-              activeOnly: !includeExpired,
-              limit,
-              visibility,
-              grep: grep ?? undefined,
-              excludeAuditRows: true,
-            }),
-          )),
-          byEventTime,
-        );
-      }
     } else {
       // No filter: return recent across the granted source(s).
       rows = mergeNewest(
         await Promise.all(factSources.map(src =>
-          ctx.engine.listFactsSince(src, new Date(0), {
-            eventTime: true,
-            activeOnly: !includeExpired,
-            limit,
-            visibility,
-            grep: grep ?? undefined,
-            excludeAuditRows: true,
-          }),
+          ctx.engine.listFactsSince(src, new Date(0), { ...listOpts, eventTime: true }),
         )),
         byEventTime,
       );
@@ -624,8 +634,30 @@ const delta: Operation = {
     }
     // NORMALIZE to ISO immediately (red-team F4): the raw string is echoed
     // into the injectable `text` block, so an attacker-shaped-but-parseable
-    // `since` must never reach rendering verbatim.
-    const explicitSince = rawSince !== null ? new Date(Date.parse(rawSince)).toISOString() : null;
+    // `since` must never reach rendering verbatim. A value already in the
+    // canonical microsecond shape `listPages` projects (`next_cursor.since`
+    // passed back) is kept verbatim: rounding it through a JS Date would
+    // re-select every same-millisecond row on the resumed wake.
+    // The verbatim passthrough must round-trip: a calendar-invalid but
+    // Date.parse-able value (2026-02-31T…) would otherwise reach the
+    // ::timestamptz cast raw and surface as an engine error, not invalid_params.
+    if (
+      rawSince !== null &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(rawSince) &&
+      new Date(rawSince).toISOString().slice(0, 19) !== rawSince.slice(0, 19)
+    ) {
+      throw verbError(
+        'invalid_params',
+        `delta: since is not a valid ISO 8601 calendar timestamp: "${rawSince.slice(0, 60)}"`,
+        'Pass a real calendar datetime, e.g. since: "2026-08-11T00:00:00Z".',
+      );
+    }
+    const explicitSince =
+      rawSince === null
+        ? null
+        : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(rawSince)
+          ? rawSince
+          : new Date(Date.parse(rawSince)).toISOString();
     const sessionId = typeof p.session_id === 'string' && p.session_id.trim() ? p.session_id : null;
     // Cursor namespace (pre-landing review, fail-closed): 'local' is RESERVED
     // for the trusted CLI/hook lane, gated on STRICT ctx.remote === false —

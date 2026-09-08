@@ -306,7 +306,7 @@ export async function resolvePageWriteTarget(
     }
     filePath = recordedPath
       // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
-      ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath) ?? join(sourceLocalPath, `${slug}.md`)
+      ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath, slug) ?? join(sourceLocalPath, `${slug}.md`)
       : join(sourceLocalPath, recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
     writeRoot = sourceLocalPath;
     scanRoot = sourceLocalPath;

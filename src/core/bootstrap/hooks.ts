@@ -42,8 +42,12 @@ import {
 
 /** Env vars embedded in each hook command string [G1, CX-P1.4]. */
 export interface ClaudeHookEnv {
-  /** Workspace source binding — required so hook context is source-scoped [G1]. */
-  GBRAIN_SOURCE: string;
+  /** Workspace source binding so hook context is source-scoped [G1]. Omitted
+   * ONLY by the harness lane when a live PGLite serve hides which source it
+   * resolves: an unpinned hook names no source, so the serve answers with its
+   * own binding instead of rejecting a wrong claim as `source_mismatch`. The
+   * committed carrier (buildPortableClaudeHookCommand) always requires it. */
+  GBRAIN_SOURCE?: string;
   /** Set only for --isolated installs (PARENT dir; config appends `.gbrain`). */
   GBRAIN_HOME?: string;
   /**
@@ -155,7 +159,8 @@ export function buildClaudeHookCommand(
   event: ClaudeHookEvent,
   env: ClaudeHookEnv,
 ): string {
-  const assignments: string[] = [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`];
+  const assignments: string[] = [];
+  if (env.GBRAIN_SOURCE !== undefined) assignments.push(`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`);
   if (env.GBRAIN_HOME) assignments.push(`GBRAIN_HOME=${env.GBRAIN_HOME}`);
   if (env.GBRAIN_HOOK_LANE) assignments.push(`GBRAIN_HOOK_LANE=${env.GBRAIN_HOOK_LANE}`);
   const parts = ['env', ...assignments, gbrainBin, 'hook', CLAUDE_HOOK_SUBCOMMAND[event]];
@@ -173,6 +178,9 @@ export function claudeCommittedSettingsPath(workspaceDir: string): string {
  * instead of erroring every turn.
  */
 export function buildPortableClaudeHookCommand(event: ClaudeHookEvent, env: ClaudeHookEnv): string {
+  if (env.GBRAIN_SOURCE === undefined) {
+    throw new Error('the committed hook carrier must be source-scoped [G1] — GBRAIN_SOURCE is required');
+  }
   const assignments: string[] = [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`];
   if (env.GBRAIN_HOME) assignments.push(`GBRAIN_HOME=${env.GBRAIN_HOME}`);
   const invoke = ['env', ...assignments, 'gbrain', 'hook', CLAUDE_HOOK_SUBCOMMAND[event]]

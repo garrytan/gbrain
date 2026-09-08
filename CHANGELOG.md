@@ -2,6 +2,445 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.5.0] - 2026-09-07
+
+**The community fix wave: 57 contributor pull requests adopted or reworked
+with credit, 42 verified open issues fixed directly, and a hostile review
+pass over the whole set.** Your nightly extraction stops re-spending money on
+transcripts that never yield anything, code repositories registered as code
+sources are indexed the way you registered them instead of silently skipped,
+Chinese, Japanese and Korean pages get real overlap between search chunks,
+tool calls from the Claude CLI lane stop being dropped, and the doctor stops
+crying wolf about transcript-minted atoms. Every adopted fix carries a
+regression test proven red before the fix.
+
+### Behavior changes (read before you upgrade)
+
+- **Code sources sync as code everywhere.** A source registered with
+  `--strategy code` is now indexed as code from autopilot, the dream cycle,
+  the MCP sync tool and a plain `gbrain sync`, not only from `sync --all`.
+  Markdown pages that were imported into such a source under the old
+  fallback will be soft-deleted (72 hours recoverable) on the next sync when
+  they are modified; switch the source to `auto` if you want both kinds.
+  Code pages imported before this release pick up their file path on the
+  next change, `sync --force`, or `gbrain reindex-code --force`. (#4903,
+  contributed by @Jey2311; fixes #4899, #4900)
+- **Migration v146** adds a small table that remembers which transcripts
+  returned nothing from atom extraction. The first run after upgrading
+  tombstones every transcript that yields zero atoms (editing the file makes
+  it eligible again), so the nightly work pool shrinks and stays shrunk.
+  (#4916, contributed by @mariokarras)
+- **`gbrain serve` refuses an unknown `GBRAIN_SOURCE`.** A stdio serve whose
+  environment names a source that is missing or archived now exits with the
+  value and the fix instead of silently serving an empty scope. Unset,
+  `__all__`, and malformed values behave as before. (#4851, contributed by
+  @NothoiMatt; fixes #4850)
+- **`gbrain think` and `gbrain graph-query` resolve their source like
+  search does.** A bare `think` gathers from your resolved default source
+  plus federated sources, honoring `GBRAIN_SOURCE`, `.gbrain-source` and
+  `sources.default`; a bare `graph-query` walks only the resolved source and
+  `--include-foreign` genuinely widens it. `--source __all__` spans the brain
+  on both. Single-source brains see identical output. (#4652, #4765)
+- **`recall` honors `since` together with an entity.** `gbrain recall
+  <entity> --since` (and `--watch` / `--since-last-run`) now returns only
+  facts from that window, ordered by event time, instead of the full entity
+  card every tick; an unparseable `since` is rejected instead of silently
+  widening the window. (#4882, contributed by @bhattman-dev)
+- **`delta` cursors carry microseconds.** `since` and `next_cursor.since`
+  now keep the stored timestamp's six fractional digits, so pages saved in
+  the same millisecond are never re-delivered. Callers that pattern-match a
+  three-digit fraction see the longer form. (#4681, contributed by
+  @jeanpierre121)
+- **`gbrain sync --json` keeps stdout pure.** Human progress lines go to
+  stderr, so `sync --json | jq` works as documented. Runs without `--json`
+  are unchanged. (#4888)
+- **Autopilot skips checkouts that are not on this machine.** Sources
+  registered elsewhere or with an unmounted path are reported as
+  `skipped_unavailable_path` once per tick instead of enqueuing jobs that
+  fail every tick; managed remote clones still dispatch. (#4865,
+  contributed by @javieraldape; fixes #4729)
+- **CJK chunk overlap applies to pages chunked from now on.** Existing
+  Chinese, Japanese and Korean pages keep their current chunks until the
+  chunker version is bumped (a whole-brain re-embed, tracked in TODOS.md);
+  English and Latin pages are byte-identical. (#4871, contributed by
+  @G0-0000)
+- **Entity slugs for names with Latin stroke letters changed grammar.**
+  Names containing d-stroke, l-stroke, o-slash, eth, thorn, sharp s, ae or
+  oe now fold to their ASCII form when an entity slug is minted (`duc-example`
+  where the old code produced `uc-example`). Entity pages minted under the old
+  spelling keep their slug; new facts about the same person resolve to the
+  folded slug, so a brain with such names can grow a second page until the
+  old one is renamed (tracked in TODOS.md). (#4855, contributed by @LongPV)
+- **`gbrain import --source <id>` now requires a registered source.** A typo
+  fails with the same one-line error `sync --source` gives instead of one
+  foreign-key failure per file; a bare `--source` with no value is refused.
+- **`gbrain bootstrap harness --source <id>` is validated**, and an implicit
+  source resolves through the same ladder `gbrain serve` uses (environment,
+  dotfile, working directory, brain default), so hooks stop binding to a
+  source the serve never resolved. Under a live PGLite serve the harness
+  cannot read that ladder: without a token it refuses with the two escape
+  hatches (pre-mint a token, or stop the serve), and the `--token` lane, when
+  no `--source` is given, wires the hooks unpinned with a warning, since an
+  unpinned hook resolves through the live serve's own binding (the receipt
+  records `source_pinned: false`).
+- **Smaller contract changes.** `gbrain import --json` gains additive
+  `failures`, `unchanged` and `malformed_skipped` keys (#4803, contributed by
+  @afshaker); `code_blast` and `code_flow` gain additive `status` and
+  `ready` fields (#4773, contributed by @armandovargash);
+  `extract-conversation-facts` exits 1 when a page changed mid-extraction
+  (#4869); subagent tool calls are validated like MCP calls, so a
+  wrong-typed argument is rejected with a named error (#4925, contributed by
+  @Walliiee); a persistently rate-limited Gmail request now waits out the
+  limit for up to two minutes instead of six seconds (#4894, contributed by
+  @johnerik); concept synthesis on a thinking-by-default model requests
+  8,000 output tokens instead of 500 (#4889, contributed by @awilhite); the
+  cwd `.env` guard now also ignores a project `DATABASE_URL` in
+  `.env.development.local`, `.env.production.local` and `.env.test.local`
+  (#4895); atom extraction may now legitimately return zero atoms for a
+  thin page (#4948, contributed by @gagecane).
+
+### AI providers
+
+- Claude Fable 5.1 is accepted by the Anthropic and claude-cli recipes and
+  priced with its published 0.025x cache-read rate, so pinning a tier to it
+  no longer silently degrades. (#4794, contributed by @morven-ai)
+- The DeepSeek API key can be stored in gbrain config and is picked up in
+  launchd, cron and MCP contexts with no shell environment. (#4843,
+  contributed by @javieraldape; fixes #4808)
+- Thinking-by-default models such as DeepSeek v4 get the same output
+  headroom as Claude 5 in subagent jobs, skillopt rollouts and any chat call
+  without its own cap, so they stop returning empty answers after spending
+  the budget on reasoning. (#4847, contributed by @awilhite)
+- Query expansion works when your utility or expansion model runs through
+  the Claude CLI subscription lane. (#4861, contributed by @LongPV)
+- Gemini embedding models reached through OpenRouter or another
+  OpenAI-compatible router honor your configured embedding dimensions.
+  (#4868, contributed by @morven-ai)
+- Claude CLI tool calls are no longer dropped when the model mentions the
+  tool tag in prose before the real block (#4898, contributed by
+  @mariokarras), and calls that put their arguments beside the name instead
+  of inside a wrapper now reach the tool with those arguments (#4924,
+  contributed by @Walliiee; fixes #4922).
+- Voyage's preview `rerank-3` and `rerank-3-lite` rerankers can be selected;
+  the default stays `rerank-2.5`. (#4940, contributed by @malachany; fixes
+  #4938)
+- Short model aliases such as `claude-cli:haiku` price like the model they
+  resolve to under a cost cap, so `gbrain enrich` no longer stops at the
+  first call. (#4942, contributed by @johnerik)
+- Documents sent to the reranker are capped by size and token count, so a
+  self-hosted reranker with a small batch no longer fails and silently
+  serves unranked order. (#4947, contributed by @gagecane)
+- MiniMax M2 and M3 are recognized as tool-capable, so capability checks
+  and the doctor give the accurate reason when the subagent loop is refused.
+  (#4782)
+
+### Dream / cycle
+
+- Nightly dream stops rebuilding link manifests and re-repairing,
+  re-stamping and re-embedding pages for transcripts whose synthesis
+  already completed. (#4805, contributed by @jeanpierre121)
+- On durability-hardened brains, cycle lint and `gbrain lint --fix` commit
+  each repaired page so the post-commit hook pushes it. (#4815, contributed
+  by @mike-tech-ship-it)
+- Oneshot synthesis children get a prompt that matches their tool-less
+  JSON-only contract, and a reply that hit the output cap is reported as a
+  length fallback instead of unparseable, so fewer transcripts double-bill
+  through the agentic fallback. (#4886, contributed by @mvanhorn; fixes
+  #4785)
+- Concept synthesis gives reasoning-by-default models enough output headroom
+  to actually answer, so concept pages stop coming back as stubs. (#4889,
+  contributed by @awilhite)
+- `gbrain dream --json` stdout stays parseable through the extract phase,
+  and `totals.pages_extracted` counts pages, not links. (#4890, contributed
+  by @tomatkins)
+- Dream reports `exclude_patterns` hits in one stderr line instead of
+  silently saying there was nothing to process. (#4926, contributed by
+  @Walliiee; fixes #4923)
+- Installs whose only chat provider is not Anthropic or OpenAI now run
+  `extract_atoms` and the other default-model phases on the provider they
+  configured instead of stopping with a provider failure. (#3813)
+- Concept pages written by `synthesize_concepts` carry graph edges to and
+  from every atom they were synthesized from, so they appear in backlinks,
+  relational recall and graph coverage instead of landing as orphans;
+  re-running the phase backfills existing brains. (#4589)
+- `gbrain dream` with `GBRAIN_SOURCE` set scopes the cycle to that source
+  exactly like `--source`. (#4778)
+
+### Atoms / extraction / facts
+
+- The mention scan honours the `link_resolution.cross_source` opt-in the
+  same way wikilink resolution does, and a same-name entity in the page's
+  own source always wins over a cross-source twin. (#4793, contributed by
+  @paul-0320)
+- Fact reconciliation runs under the same per-page lock the fence writers
+  use and refuses to delete rows when the Markdown on disk is newer than the
+  page cache, so a fact you just remembered is no longer wiped by a sweep
+  that runs before sync. (#4835, contributed by @bhattman-dev)
+- Atoms distilled from an imported transcript link back to the conversation
+  page the session was rendered into. (#4853, contributed by @Natetgmaxwell)
+- Names containing Latin stroke letters (d-stroke, eth, o-slash, l-stroke,
+  dotless i, sharp s, ae, oe, thorn) get the ASCII entity slug and wikilink
+  key you would expect. (#4855, contributed by @LongPV)
+- Atom extraction no longer produces zero atoms when a free local chat model
+  is paired with an unpriced embedding route; the cost cap checks both models
+  and honors `pricing.overrides`. (#4878, contributed by @NothoiMatt; fixes
+  #4877)
+- Durable facts-absorb jobs honor the 10-minute handler default instead of a
+  hard-coded 3-minute timeout. (#4887, contributed by @javieraldape; fixes
+  #4864)
+- Models that emit a `<thinking>` block before their JSON answer are
+  recovered the same way as `<think>` (#4912), and the atoms array is found
+  even when the reply opens with bracketed prose (#4913; both contributed by
+  @mariokarras).
+- `extract_atoms` stops re-spending budget on transcripts that keep returning
+  malformed or empty output; they get the same bounded retry and tombstone
+  as pages. (#4916, contributed by @mariokarras)
+- Meeting pages your agent wrote directly are found by `gbrain extract
+  timeline --from-meetings` and dated from their frontmatter. (#4943,
+  contributed by @johnerik)
+- Atom extraction no longer burns retries on metadata-only pages; the model
+  is told to return an empty list when there is nothing to extract. (#4948,
+  contributed by @gagecane)
+- Failed facts extraction jobs record a bounded error-type label (auth,
+  rate limit, and so on) in the job error text. (#4950, contributed by
+  @Masashi-Ono0611)
+- The maintenance sweep honors the cross-source link opt-in and your
+  configured default source, so cross-source links extract created are kept
+  instead of dropped (#3757, #4611), and relative `./page.md` links count as
+  live references so their edges are no longer pruned (#4873).
+- Forgetting a fact sticks: the next reconcile no longer brings it back
+  (#4696). Facts whose entity came back as the literal text `null` are
+  filed as unparented (#4755). A page's first Facts fence lands above a bare
+  `---` + `## Timeline` separator, so template-shaped pages stop freezing
+  with `FACTS_FENCE_BELOW_SENTINEL` (#4756). Facts extracted on a thin-client
+  brain record the page they came from (#4819). Queued fact extraction
+  honors a medium-and-up notability filter (#4870). `gbrain remember` keeps
+  the database page body in sync with the fence it wrote to disk, so a
+  get-and-put round trip no longer drops the fact (#4872).
+  `migrate-embeddings --status` stops counting checkpoint rows as pending
+  fact embeddings (#4875).
+
+### Doctor / brain health
+
+- `atom_provenance_drift` no longer reports transcript-minted atoms as
+  drifted or as missing their source page; they are counted in their own
+  slug-unbound bucket outside the warning ratio, and the check finishes in
+  seconds on large brains instead of stalling health monitors. (#4799,
+  contributed by @Masashi-Ono0611; #4806, #4937)
+- A failed binary self-update no longer leaves a permanent doctor warning.
+  (#4814, contributed by @mike-tech-ship-it)
+- Skill triggers written in non-Latin scripts match intents in
+  `check-resolvable` and the doctor skill checks instead of being stripped
+  to nothing. (#4820, contributed by @hyunje-ethan-jang)
+- The resolver health check reports a skills folder that belongs to another
+  tool as a warning instead of a failure (#4822, contributed by
+  @Masashi-Ono0611), and raises one orphan warning per unregistered skill
+  pointing at `manifest.json` instead of one per trigger blaming
+  `RESOLVER.md` (#4831).
+- Pages whose recorded source path is only a basename while the slug lives
+  in a directory are no longer flagged as DB-only, and write-through
+  resolves them to the real file. (#4933, contributed by @javieraldape;
+  fixes #4744)
+- `eval_drift` inspects gbrain's own source checkout instead of whatever
+  repository you ran the doctor from, and says so on an installed CLI.
+  (#4606)
+
+### Google / open loops
+
+- Google connect via paste or `--code` accepts a real loopback redirect URL
+  again, which Google now stamps with `iss=accounts.google.com`. (#4891,
+  contributed by @johnerik; fixes #4917)
+- Gmail backfill waits out rate limits with a patient retry budget, never
+  marks a rate-limited thread as poisoned, and defers the rest of a
+  throttled batch to the next run. (#4894, contributed by @johnerik)
+
+### Search / eval
+
+- Search-mode settings load from your brain in one query instead of one per
+  setting, so every search on a hosted Postgres brain starts sooner. (#4781,
+  contributed by @hpamike)
+- Chinese, Japanese and Korean pages get a real, bounded overlap between
+  search chunks, and emoji are no longer split in half at chunk boundaries.
+  (#4871, contributed by @G0-0000)
+
+### MCP / schema / auth
+
+- Listing pages sorted by slug pages deterministically across federated
+  sources that share a slug, and `list_pages` rejects a malformed
+  `source_id` loudly instead of silently widening to every source. (#4857,
+  contributed by @proxynico)
+- Remote MCP OAuth discovery advertises `/mcp` as the protected resource and
+  serves RFC 9728 path-based metadata, with the root path kept as an alias.
+  (#4866, contributed by @amirelion)
+- Ontology reads hide values whose provenance page is private from untrusted
+  callers and resolve the newest value they are allowed to see. (#4881,
+  contributed by @bhattman-dev)
+- A stdio serve started with `--stdio-idle-timeout` no longer risks a hung
+  handshake when the client's first frame arrives before boot finishes.
+  (#4935, contributed by @Masashi-Ono0611)
+- The thin-client doctor report confines its page count and brain score to
+  the caller's granted sources (#4592); reading with an explicit `source_id`
+  that names a removed source fails with a clear `unknown_source` error
+  (#4620); the `sources_list` and `sources_status` tool descriptions state
+  that results are scope-filtered (#4811); and the OpenClaw bundle plugin
+  starts its MCP server through the shipped launcher, so a global install
+  works without building a binary (#4841).
+
+### Sync / import
+
+- `gbrain import --json` lists each rejected file with its error, so a
+  scripted import can tell a failed file from an unchanged one. (#4803,
+  contributed by @afshaker)
+- Empty code files such as a package `__init__.py` are reindexed by
+  `gbrain reindex-code` instead of being reported as failures. (#4904,
+  contributed by @Jey2311; fixes #4902)
+- Incremental sync removes the stale duplicate a renamed frontmatter-slug
+  file leaves behind (#4597); `gbrain features` stops telling a multi-source
+  brain to configure sync (#4767); Markdown files saved with a UTF-8 byte
+  order mark get their title from the first heading (#4798); and
+  `gbrain import` accepts `--source <id>` like every other command (#4862).
+
+### Transcripts / code intel
+
+- `code_blast` and `code_flow` report whether the code graph is ready, so an
+  empty blast radius on an unbuilt graph is no longer mistaken for zero
+  callers. (#4773, contributed by @armandovargash)
+- The Codex session-end hook recovers rollouts Codex has moved into its
+  archived store. (#4929, contributed by @mariokarras)
+- Repos with YAML files stop logging a false "semantic parsing unavailable"
+  warning on every sync (#4669); `transcripts ingest` honors `--limit` under
+  `--dry-run` (#4762); Claude Code subagent logs are no longer treated as
+  sessions, ending a permanent not-yet-imported backlog and a false drift
+  warning (#4796); and transcript pages no longer inherit a facts fence from
+  a page the session quoted (#4821).
+
+### CLI
+
+- `gbrain get <slug> --json` returns the page as JSON, and an ambiguous slug
+  returns a machine-readable error envelope. (#4813, contributed by
+  @mike-tech-ship-it)
+
+### Minions / autopilot
+
+- Live minion workers no longer vanish from `gbrain jobs` and the doctor on
+  hosts whose timezone differs from the runtime's. (#4856, contributed by
+  @proxynico; fixes #4885)
+- Contextual re-embed jobs on Postgres release their rate lease as soon as
+  each call finishes, so backfills run at the configured concurrency.
+  (#4880, contributed by @spiky02plateau)
+- Subagent tool calls that omit a required parameter get back a message
+  naming it, so the model can retry instead of hitting an opaque crash.
+  (#4925, contributed by @Walliiee)
+- The autopilot lock check recognizes a live process on Windows (#4563), and
+  the autopilot wrapper falls back to the gbrain on PATH when the binary it
+  was installed against has moved, instead of failing silently on every boot
+  (#4728).
+
+### Bootstrap / hooks
+
+- On Windows, `gbrain serve` binds its resolve-IPC socket again after an
+  unclean exit or reboot (#4333); a short-lived serve for the same brain no
+  longer takes down the long-lived serve's socket (#4896); and `gbrain
+  bootstrap harness` without `--source` binds its hooks to the source the
+  serve actually resolves (#4897).
+
+### Other
+
+- Pages whose chunks straddle a stale-embedding batch boundary get their
+  embedding signature stamped by whichever batch finishes them, so they are
+  no longer skipped by later model-swap checks. (#4825, contributed by
+  @morven-ai)
+
+### For contributors
+
+- Cancelling a running test suite stops every shard instead of leaving them
+  holding memory until the shard timeout. (#4774, contributed by
+  @armandovargash)
+- `bun run ci:local` on a stock macOS shell no longer aborts with an
+  unbound-variable error in a plain clone. (#4930, contributed by
+  @arisgysel-design; fixes #4911)
+- The local CI lane's timeout multiplier reaches the CLI-spawning unit tests
+  (#4659), and the open-loops reopen test no longer depends on the database
+  clock advancing between statements (#4928).
+
+### Review hardening
+
+A hostile review over the composed set (eight lenses, two independent
+refuters per finding) confirmed thirteen defects that were only visible in
+composition, all fixed before ship: `gbrain sync --source <id> --json` kept
+stdout pure on the full-sync path too, not only for incremental runs;
+`gbrain graph-query --source <id>` on a thin-client install now errors
+instead of silently walking the wrong scope; a pasted Google consent-page
+URL with no scheme is rejected by host again instead of being taken as an
+authorization code; `gbrain remember` and `forget` keep the page's content
+hash so the next sync re-chunks the new or struck fact text instead of
+skipping the page; an implicit `default` source in `gbrain bootstrap
+harness` is treated as the federated floor, matching dream and doctor; and
+three reference doc entries brought back to current state. The slug-extension
+change proposed in #4807 was tried, found to need a data migration with
+collision rules the maintainer should decide, and returned to the queue.
+
+A second pass with independent reviewers (including an outside model) then
+closed the interactions between fixes: an honest empty atoms array is accepted
+at any offset of the model's reply while a non-atom-shaped array is a failure
+rather than a permanent tombstone; an explicitly configured extraction budget
+stays enforced even when the embedding route is unpriced; `extract timeline
+--from-meetings` never dates a meeting from its import timestamp, skips
+private meetings, and honors the cross-source gate on attendee edges as well as
+mentions; a remote `run_doctor` on a source-scoped token no longer reveals
+other sources' ids or backlog; concept synthesis on a thinking model uses the
+same output headroom as every other call; `forget` strikes the page body under
+the page lock and stamps a hash that makes the next sync re-chunk; every
+Facts-fence writer places the first fence above the timeline sentinel;
+`gbrain import --source` validates the source like `sync` does and refuses a
+missing value; `sync trigger --json` prints JSON; `GBRAIN_SOURCE=__all__` makes
+`dream` span the brain; `graph-query` refuses `--source` with
+`--include-foreign` instead of silently dropping the scope; and the bootstrap
+harness binds hooks to the source the serve actually resolves.
+
+With thanks to every contributor whose pull request this wave adopts:
+@afshaker, @amirelion, @arisgysel-design, @armandovargash, @awilhite,
+@bhattman-dev, @G0-0000, @gagecane, @hpamike, @hyunje-ethan-jang,
+@javieraldape, @jeanpierre121, @Jey2311, @johnerik, @LongPV, @malachany,
+@mariokarras, @Masashi-Ono0611, @mike-tech-ship-it, @morven-ai, @mvanhorn,
+@Natetgmaxwell, @noelboss, @NothoiMatt, @paul-0320, @proxynico,
+@spiky02plateau, @tomatkins, @Walliiee, and to the reporters whose verified
+issues drove the direct fixes.
+
+## To take advantage of 0.48.5.0
+
+`gbrain upgrade` runs migration v146 for you. If it did not, or if
+`gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Verify the upgrade:**
+   ```bash
+   gbrain --version
+   gbrain doctor
+   ```
+3. **Code sources:** the stored strategy now applies to every sync entry
+   point. If a source registered as `code` also holds Markdown you want kept,
+   an explicit flag always wins for that run:
+   ```bash
+   gbrain sync --source <id> --strategy auto
+   ```
+   Autopilot and cycle syncs use the stored strategy, so modified Markdown
+   pages under a `code` source are soft-deleted on their next sync and stay
+   recoverable for 72 hours (`gbrain sources archived`, `gbrain sources
+   restore`).
+4. **CJK brains:** new pages chunk with overlap automatically. To re-chunk
+   existing Chinese, Japanese or Korean pages, wait for the chunker version
+   bump in a later release or re-import the pages you care about.
+
+**Say to your agent:** *"check my brain's health"* (your agent runs
+`gbrain doctor`) — *"sync my code repo into the brain"* (your agent runs
+`gbrain sync --source <id>`; code sources now index as code from every
+entry point) — *"show me only what changed for this person since Monday"*
+(your agent runs `gbrain recall <entity> --since <date>`).
+
 ## [0.48.4.0] - 2026-09-06
 
 **The ranker wave: search stops burying graph answers and concept pages, `gbrain eval longmemeval` becomes the like-for-like receipt producer, and every ranking default that moved carries a pre-registered receipt.**

@@ -65,8 +65,7 @@ export interface GBrainConfig {
    * memorableGateAllowed in core/context/hook-heartbeat.ts.
    */
   integrations?: { memorable?: { enabled?: boolean } };
-  /** Monthly backup-coverage check (src/core/backup/). File-plane: read by
-   * engine-free render sites (hook children, the cli.ts startup rail). */
+  /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   database_url?: string;
   database_path?: string;
@@ -111,6 +110,7 @@ export interface GBrainConfig {
    * voyage_api_key above.
    */
   dashscope_api_key?: string;
+  deepseek_api_key?: string;
   /**
    * LiteLLM proxy API key. File-plane slot folded into the gateway env as
    * LITELLM_API_KEY (optional in the litellm recipe — proxies may run
@@ -142,9 +142,8 @@ export interface GBrainConfig {
    * auth alternative to the Entra flow below.
    */
   azure_openai_api_key?: string;
-  /** Azure OpenAI (keyless/Entra). Non-secret endpoint + deployment + Entra opt-in,
-   * folded into the gateway env so the azure-openai recipe works in any shell.
-   * The bearer token is minted at request time via `az` — no secret stored here. */
+  /** Azure OpenAI (keyless/Entra). Non-secret endpoint/deployment + Entra opt-in;
+   * bearer token is minted at request time via `az` — no secret stored here. */
   azure_openai_endpoint?: string;
   azure_openai_deployment?: string;
   azure_openai_use_entra?: string;
@@ -656,7 +655,12 @@ export function loadConfigFileOnly(): GBrainConfig | null {
  * The file list is a superset of Bun's auto-load set across NODE_ENV values
  * so the guard doesn't depend on replicating Bun's exact selection logic.
  */
-const CWD_DOTENV_FILES = ['.env', '.env.local', '.env.development', '.env.production', '.env.test'];
+const CWD_DOTENV_FILES = [
+  '.env', '.env.local',
+  '.env.development', '.env.development.local',
+  '.env.production', '.env.production.local',
+  '.env.test', '.env.test.local',
+];
 
 /**
  * All values assigned to `key` across the .env files in `dir`. Collecting
@@ -1242,6 +1246,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'openrouter_api_key',
   'voyage_api_key',
   'dashscope_api_key',
+  'deepseek_api_key',
   'litellm_api_key',
   'together_api_key',
   'google_api_key',

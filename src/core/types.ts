@@ -96,6 +96,14 @@ export interface Page {
   created_at: Date;
   updated_at: Date;
   /**
+   * `updated_at` at the column's microsecond precision, as an ISO string
+   * (`2026-08-10T12:00:00.000123Z`). Projected by `listPages` so keyset
+   * callers can resume from the exact row (`updatedAfterKeyset.updatedAt`);
+   * a JS Date holds milliseconds only and would re-select every row in the
+   * last row's millisecond. Absent on paths that do not project it.
+   */
+  updated_at_iso?: string;
+  /**
    * v0.26.5: when present, the page is soft-deleted. Hidden from search and
    * from `getPage` / `listPages` by default; surface via `include_deleted: true`.
    * The autopilot purge phase hard-deletes rows where `deleted_at < now() - 72h`.
@@ -305,9 +313,12 @@ export interface PageFilters {
    * v0.45.7 — keyset cursor for deterministic pagination through pages sharing
    * one `updated_at`. `WHERE p.updated_at > ts OR (p.updated_at = ts AND
    * p.slug > slug)`. Supersedes `updated_after` when set; pair with
-   * `sort: 'updated_asc'` (total order). Used by the `delta` verb's session
+   * `sort: 'updated_asc'` (a total order: updated_at, slug, source_id, id —
+   * slug alone is unique only per source). Used by the `delta` verb's session
    * cursor so a >limit same-timestamp cluster pages cleanly instead of
-   * livelocking. `slug` empty ⇒ start of the `ts` bucket.
+   * livelocking. `slug` empty ⇒ start of the `ts` bucket. `updatedAt` should
+   * be the row's `updated_at_iso` (column precision); a millisecond-rounded
+   * value re-selects same-millisecond rows.
    */
   updatedAfterKeyset?: { updatedAt: string; slug: string };
   /**
@@ -396,9 +407,16 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // cluster of pages sharing one updated_at (bulk syncs stamp identical
   // now() across a transaction). Without the tiebreaker, rows at the same
   // timestamp order arbitrarily and a >limit tie cluster is unpageable.
-  updated_asc:  'p.updated_at ASC, p.slug ASC',
+  // The cursor must carry the column's microsecond precision to be exact:
+  // resume from `Page.updated_at_iso`, never from a JS Date. Slug is unique
+  // only per source, so a federated listing needs source_id + id behind it to
+  // stay a total order (same tiebreakers as `slug` below).
+  updated_asc:  'p.updated_at ASC, p.slug ASC, p.source_id ASC, p.id ASC',
   created_desc: 'p.created_at DESC',
-  slug:         'p.slug ASC',
+  // Slug uniqueness is per (source_id, slug), so a federated listing can hold
+  // the same slug from several sources; source_id + id make slug+offset paging
+  // a TOTAL order (same class as the updated_asc tiebreaker above).
+  slug:         'p.slug ASC, p.source_id ASC, p.id ASC',
 };
 
 /**
@@ -1605,7 +1623,12 @@ export interface OntologyConflict {
   dimension: string;
   values: { value: string; source: string | null; confidence: number; fact_id: number }[];
 }
-export interface OntologyReadOpts {
+// excludePrivate (from PageReadScope) drops observations whose provenance page
+// is `visibility: private` BEFORE per-dimension resolution, so an untrusted
+// caller resolves the newest value they may see — never a private one, never
+// a hole where one was. Set by the op layer (readPolicyOpts); engines never
+// decide trust.
+export interface OntologyReadOpts extends PageReadScope {
   asof?: string;
   minConfidence?: number;
   includeQuarantined?: boolean;

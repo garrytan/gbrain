@@ -10,7 +10,12 @@
 
 import { describe, test, expect } from 'bun:test';
 import { join } from 'node:path';
-import { chunkCodeText, resetChunkerWarnings } from '../../src/core/chunkers/code.ts';
+import {
+  chunkCodeText,
+  registerLanguage,
+  resetChunkerWarnings,
+  unregisterLanguage,
+} from '../../src/core/chunkers/code.ts';
 import { DEF_TYPES } from '../../src/commands/code-def.ts';
 
 const ASSETS = join(import.meta.dir, '../../src/assets/wasm');
@@ -118,20 +123,56 @@ describe('chunkCodeText — Dart', () => {
 
 describe('chunker fallback is no longer silent', () => {
   test('warns once per language when a grammar cannot be used', async () => {
-    // elm and ql still fail to LOAD under the pinned runtime today, which is
-    // the same silent shape Dart had. One warning per language, not per file.
+    // Force a LOAD failure on a language that has real semantic support (bash
+    // is in TOP_LEVEL_TYPES) — that is the shape Dart had. Languages without
+    // a TOP_LEVEL_TYPES entry never load a grammar at all (#4669), so they are
+    // not a valid fixture here. unregister FIRST: registerLanguage does not
+    // evict languageCache, so a bash grammar loaded by an earlier test would
+    // otherwise be served from cache and the forced failure would never fire.
     resetChunkerWarnings();
+    unregisterLanguage('bash');
+    registerLanguage('bash', { displayName: 'Bash', embeddedPath: '/nonexistent/tree-sitter-bash.wasm' });
     const seen: string[] = [];
     const original = console.warn;
     console.warn = (...args: unknown[]) => { seen.push(String(args[0])); };
     try {
-      await chunkCodeText('type alias A = { b : Int }\n', 'a.elm');
-      await chunkCodeText('type alias B = { c : Int }\n', 'b.elm');
+      await chunkCodeText('foo() {\n  echo a\n}\n', 'a.sh');
+      await chunkCodeText('bar() {\n  echo b\n}\n', 'b.sh');
+    } finally {
+      console.warn = original;
+      unregisterLanguage('bash'); // restore the manifest entry + drop the poisoned cache
+    }
+    const bash = seen.filter(l => l.includes('[gbrain chunker] bash'));
+    expect(bash.length).toBe(1);
+    expect(bash[0]).toContain('semantic parsing unavailable');
+  });
+
+  test('yaml never emits the semantic-parsing-unavailable warning (#4669)', async () => {
+    // yaml has no TOP_LEVEL_TYPES entry, so even a successful parse ends in
+    // text-fallback chunks. The vendored grammar also cannot run under the
+    // pinned runtime, so every .yaml file (and every ```yaml fence, which
+    // import-file routes through 'fence.yaml') used to pay a doomed WASM
+    // parse AND log a false "semantic parsing unavailable" alarm.
+    resetChunkerWarnings();
+    const yamlSrc = 'a: 1\nb:\n  c: 2\n';
+    const seen: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { seen.push(String(args[0])); };
+    let file: Awaited<ReturnType<typeof chunkCodeText>>;
+    let fence: Awaited<ReturnType<typeof chunkCodeText>>;
+    try {
+      file = await chunkCodeText(yamlSrc, 'x.yaml');
+      fence = await chunkCodeText(yamlSrc, 'fence.yaml');
     } finally {
       console.warn = original;
     }
-    const elm = seen.filter(l => l.includes('[gbrain chunker] elm'));
-    expect(elm.length).toBe(1);
-    expect(elm[0]).toContain('semantic parsing unavailable');
+    expect(seen.filter(l => l.includes('[gbrain chunker] yaml'))).toEqual([]);
+    // Output is the text fallback, exactly as before the short-circuit.
+    for (const chunks of [file, fence]) {
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0].text).toContain(yamlSrc.trim());
+      expect(chunks[0].metadata.symbolName).toBeNull();
+      expect(chunks[0].metadata.symbolType).toBe('module');
+    }
   });
 });

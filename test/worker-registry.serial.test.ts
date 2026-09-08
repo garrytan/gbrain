@@ -13,6 +13,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { withEnv } from './helpers/with-env.ts';
 
 let home: string;
 const origHome = process.env.GBRAIN_HOME;
@@ -43,6 +44,26 @@ describe('classifyLiveness (Codex #9)', () => {
   });
 });
 
+describe('parseEtimeToMs (PID-reuse guard, timezone-free)', () => {
+  test('parses every portable ps etime shape', async () => {
+    const { parseEtimeToMs } = await reg();
+    expect(parseEtimeToMs('00:00')).toBe(0);
+    expect(parseEtimeToMs('00:42')).toBe(42_000);
+    expect(parseEtimeToMs('01:23')).toBe(83_000);
+    expect(parseEtimeToMs('12:34:56')).toBe(((12 * 3600) + (34 * 60) + 56) * 1000);
+    expect(parseEtimeToMs('3-04:05:06')).toBe(((3 * 86400) + (4 * 3600) + (5 * 60) + 6) * 1000);
+    expect(parseEtimeToMs('  01:00  ')).toBe(60_000);
+  });
+
+  test('returns null when elapsed time cannot be determined', async () => {
+    const { parseEtimeToMs } = await reg();
+    expect(parseEtimeToMs('')).toBeNull();
+    expect(parseEtimeToMs('garbage')).toBeNull();
+    expect(parseEtimeToMs('not:a:number:at:all')).toBeNull();
+    expect(parseEtimeToMs('Mon Sep  7 00:30:32 2026')).toBeNull(); // the old lstart shape
+  });
+});
+
 describe('register + read round trip', () => {
   test('registerWorker writes under gbrainPath; readWorkers returns the live worker', async () => {
     const { registerWorker, readWorkers, workerRegistryDir } = await reg();
@@ -65,6 +86,23 @@ describe('register + read round trip', () => {
 
     cleanup();
     expect(readWorkers(() => 10).length).toBe(0);
+  });
+
+  test('#4885: a live worker survives a runtime zone that differs from the one ps prints in', async () => {
+    const { registerWorker, readWorkers } = await reg();
+    // Bun re-resolves the runtime zone on reassignment but does not hand the
+    // mutation to the ps child, so a zone-dependent start-time parse drifts by
+    // the offset (+12h here) and drops a live worker. etime is zone-free.
+    await withEnv({ TZ: 'Etc/GMT+12' }, async () => {
+      const cleanup = registerWorker({
+        pid: process.pid, queue: 'default', nice_requested: 10, nice_effective: 10, started_at: Date.now(),
+      });
+      try {
+        expect(readWorkers(() => 10).length).toBe(1);
+      } finally {
+        cleanup();
+      }
+    });
   });
 
   test('cleanup unlinks the entry file', async () => {

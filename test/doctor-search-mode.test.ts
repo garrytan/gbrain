@@ -15,6 +15,10 @@
  * still warns.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { execSync } from 'child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { checkSearchMode, checkEvalDrift } from '../src/commands/doctor.ts';
 import {
@@ -167,5 +171,31 @@ describe('checkEvalDrift [CDX-6]', () => {
     const c = await checkEvalDrift(engine);
     expect(c.message).toBeTruthy();
     expect(c.message.length).toBeGreaterThan(0);
+  });
+
+  test("probes gbrain's own checkout, not whatever repo the operator stood in (#4606)", async () => {
+    // Unrelated scratch repo with a staged file that happens to match the
+    // retrieval watch list. Doctor must not report it as gbrain drift.
+    const tmp = mkdtempSync(join(tmpdir(), 'gb-drift-cwd-'));
+    const git = (args: string) =>
+      execSync(`git -c user.email=t@example.com -c user.name=t -c commit.gpgsign=false ${args}`, {
+        cwd: tmp,
+        stdio: 'pipe',
+      });
+    git('init -q');
+    git('commit -q --allow-empty -m init');
+    mkdirSync(join(tmp, 'src/core/search'), { recursive: true });
+    writeFileSync(join(tmp, 'src/core/search/zz-unrelated-repo.ts'), 'export {};\n');
+    git('add -A');
+    const prev = process.cwd();
+    process.chdir(tmp);
+    try {
+      const c = await checkEvalDrift(engine);
+      expect(c.status).toBe('ok');
+      expect(c.message).not.toContain('zz-unrelated-repo.ts');
+    } finally {
+      process.chdir(prev);
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

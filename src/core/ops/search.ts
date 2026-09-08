@@ -28,6 +28,7 @@ import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-description
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
+  assertExplicitSourceLive,
   federatedSearchScope,
   parseSourceIdParam,
   resolvePerCallMode,
@@ -206,6 +207,8 @@ const search: Operation = {
     // trusted-local federated span is unchanged.
     const sourceIdParam = parseSourceIdParam(p.source_id, 'search', { allowAll: true });
     const scope = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     // #4352 — untrusted callers never see `visibility: private` pages
     // (config-gated; trusted local CLI unchanged).
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
@@ -418,6 +421,8 @@ const query: Operation = {
     // #2561: unqualified trusted-local query spans federated sources (per-call
     // source_id / remote grants still resolve through resolveRequestedScope).
     const querySourceScope = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     // #4352 — same enforcement for the full-control query op (both the image
     // searchVector branch and the text hybrid path below).
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);

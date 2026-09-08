@@ -55,6 +55,7 @@ import type { ConnectProbeResult } from '../src/core/connect-probe.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { SourceTargetError } from '../src/core/source-resolver.ts';
 
 const TOKEN_A = `gbrain_${'a'.repeat(64)}`;
 const TOKEN_B = `gbrain_${'b'.repeat(64)}`;
@@ -82,6 +83,12 @@ function makeFake(opts: {
   probeOk?: boolean;
   mintQueue?: Array<{ token: string; id: string }>;
   pgliteLive?: boolean;
+  /** What the brain's ambient resolution (no --source) lands on (absent = the seeded default). */
+  implicitSource?: string;
+  /** The federated read set the ambient resolution carries (default: [implicitSource]). */
+  implicitGrant?: string[];
+  /** Make the hook-source lookup throw (a typo'd --source, or an unopenable engine). */
+  hookSourceError?: Error;
 } = {}): Fake {
   const dir = mkdtempSync(join(tmpdir(), 'gb-harness-'));
   const home = join(dir, '.gbrain');
@@ -142,6 +149,12 @@ function makeFake(opts: {
       return true;
     },
     pgliteLiveServe: () => opts.pgliteLive ?? false,
+    resolveHookSource: async (explicit) => {
+      if (opts.hookSourceError) throw opts.hookSourceError;
+      if (explicit) return { source_id: explicit, grant: [explicit] };
+      const id = opts.implicitSource ?? 'default';
+      return { source_id: id, grant: opts.implicitGrant ?? [id] };
+    },
     detectClaude: () => true,
     detectCodex: () => true,
     detectOpencode: () => true,
@@ -172,6 +185,10 @@ describe('parseHarnessArgs', () => {
     expect(parseHarnessArgs(['--harness', 'cursor']).error).toMatch(/unknown --harness/);
     expect(parseHarnessArgs(['--port', 'nope']).error).toMatch(/invalid --port/);
     expect(parseHarnessArgs(['--name', 'My Server']).error).toMatch(/invalid --name/);
+    // --source was the one flag that skipped validation (wave review).
+    expect(parseHarnessArgs(['--source', 'Not Valid']).error).toMatch(/invalid --source/);
+    expect(parseHarnessArgs(['--source', '__all__']).error).toMatch(/invalid --source/);
+    expect(parseHarnessArgs(['--source', 'wiki']).source).toBe('wiki');
   });
   test('--project is repeatable and resolved', () => {
     const f = parseHarnessArgs(['--project', '/a', '--project', '/b']);
@@ -527,6 +544,130 @@ describe('outside-voice hardening (X-batch)', () => {
     const f2 = makeFake();
     expect(await applyHarness(flags(['--harness', 'codex']), f2.deps)).toBe(0);
     expect(f2.mintCalls[0].sourceGrant).toBeUndefined();
+  });
+
+  test('#4897 no --source: hooks, receipt and token bind to the serve\'s implicit default source', async () => {
+    // A brain whose only populated source is 'workspace' (default = 0 pages):
+    // the serve binds its resolve-IPC listener to 'workspace' via the same
+    // resolver, so a hook claiming 'default' is source_mismatch on every turn.
+    const f = makeFake({ implicitSource: 'workspace' });
+    expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+    const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
+    const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd).toContain('GBRAIN_SOURCE=workspace');
+    expect(cmd).not.toContain('GBRAIN_SOURCE=default');
+    const state = readHarnessReceiptState(f.home) as { receipt: { source_id: string } };
+    expect(state.receipt.source_id).toBe('workspace');
+    // The token gets the same scalar grant `--source workspace` produces —
+    // the federated-default mint cannot read a non-federated sole source.
+    expect(f.mintCalls[0].sourceGrant).toEqual(['workspace']);
+    expect(f.out.join('\n')).toContain("source 'workspace'");
+
+    // Explicit --source still wins over the implicit default.
+    const f2 = makeFake({ implicitSource: 'workspace' });
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--source', 'wiki']), f2.deps)).toBe(0);
+    const hooks2 = readJson(f2.userSettings).hooks as Record<string, unknown[]>;
+    const cmd2 = ((hooks2.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd2).toContain('GBRAIN_SOURCE=wiki');
+    expect(f2.mintCalls[0].sourceGrant).toEqual(['wiki']);
+    expect((readHarnessReceiptState(f2.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('wiki');
+  });
+
+  test("#4897 implicit 'default' is the federated floor, not a scalar grant (wave review)", async () => {
+    // `sources.default = default` is a valid config value: the resolver echoes
+    // it back, but it means "the seeded default" — the same thing the absent
+    // case means. Binding the token to a scalar ['default'] grant would hide
+    // every federated source from the hook lane (allowedSources set → no span).
+    const f = makeFake({ implicitSource: 'default' });
+    expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+    expect(f.mintCalls[0].sourceGrant).toBeUndefined();
+    const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
+    const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd).toContain('GBRAIN_SOURCE=default');
+    expect((readHarnessReceiptState(f.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('default');
+    expect(f.out.join('\n')).not.toContain('binding hooks + token');
+  });
+
+  // Wave review: the hook lane binds through the SAME resolver the serve
+  // runs, an ambient non-default source carries its federated read set, and
+  // a failed lookup is never papered over with 'default'.
+  test("a typo'd --source fails loudly before any mint or receipt (wave review)", async () => {
+    const f = makeFake({
+      hookSourceError: new SourceTargetError('Source "wikk" not found or is archived. Available active sources: run `gbrain sources list`.'),
+    });
+    await expect(applyHarness(flags(['--harness', 'codex', '--source', 'wikk']), f.deps)).rejects.toThrow(/wikk/);
+    expect(f.mintCalls).toHaveLength(0);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  test('no --source and the lookup fails: refuse with "pass --source" instead of binding default (wave review)', async () => {
+    const f = makeFake({ hookSourceError: new Error('PGLite data dir is held by a live serve') });
+    await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.toThrow(/pass --source/);
+    expect(f.mintCalls).toHaveLength(0);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  test('explicit --source with an unopenable engine binds unverified, with a warning (the --token + live-serve path)', async () => {
+    const f = makeFake({ hookSourceError: new Error('PGLite data dir is held by a live serve') });
+    expect(await applyHarness(flags(['--harness', 'codex', '--source', 'wiki']), f.deps)).toBe(0);
+    expect(f.mintCalls[0].sourceGrant).toEqual(['wiki']);
+    expect(f.err.join('\n')).toContain("could not verify --source 'wiki'");
+  });
+
+  // CI e2e (bootstrap-harness-lifecycle): under a LIVE PGLite serve the
+  // documented --token lane must keep working without --source, and the
+  // no-token case must surface the mint's two escape hatches, not a
+  // source-resolution error for what is a lock problem.
+  test('live PGLite serve + no token + no --source: the LIVE_SERVE refusal with both escape hatches, before any mint', async () => {
+    const f = makeFake({
+      pgliteLive: true,
+      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+    });
+    await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.toThrow(/pre-mint.*--token|stop the serve/);
+    await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.not.toThrow(/pass --source/);
+    expect(f.mintCalls).toHaveLength(0);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  test('live PGLite serve + --token + no --source: wires unpinned with a warning (the documented PGLite lane)', async () => {
+    const f = makeFake({
+      pgliteLive: true,
+      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+    });
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--token', TOKEN_A]), f.deps)).toBe(0);
+    expect(f.mintCalls).toHaveLength(0);
+    expect(f.err.join('\n')).toMatch(/could not read which source it serves/);
+    expect(f.err.join('\n')).toMatch(/--source <id>/);
+    const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
+    const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd).not.toContain('GBRAIN_SOURCE=');
+    const receipt = (readHarnessReceiptState(f.home) as { receipt: { source_id: string; source_pinned?: boolean } }).receipt;
+    expect(receipt.source_id).toBe('default');
+    expect(receipt.source_pinned).toBe(false);
+  });
+
+  test('a pinned install records no source_pinned flag (absent = pinned to source_id)', async () => {
+    const f = makeFake({ implicitSource: 'workspace', implicitGrant: ['default', 'workspace'] });
+    expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+    const receipt = (readHarnessReceiptState(f.home) as { receipt: { source_id: string; source_pinned?: boolean } }).receipt;
+    expect(receipt.source_id).toBe('workspace');
+    expect(receipt.source_pinned).toBeUndefined();
+  });
+
+  test('--token with a NON-live-serve lookup failure still refuses with "pass --source" (fail-closed stays for real errors)', async () => {
+    const f = makeFake({ hookSourceError: new Error('connection refused: postgres is down') });
+    await expect(applyHarness(flags(['--harness', 'codex', '--token', TOKEN_A]), f.deps)).rejects.toThrow(/pass --source/);
+    expect(f.mintCalls).toHaveLength(0);
+  });
+
+  test('implicit non-default source: the token grant is its federated read set, not a scalar (wave review)', async () => {
+    const f = makeFake({ implicitSource: 'workspace', implicitGrant: ['default', 'workspace'] });
+    expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+    expect(f.mintCalls[0].sourceGrant).toEqual(['default', 'workspace']);
+    const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
+    const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd).toContain('GBRAIN_SOURCE=workspace');
+    expect((readHarnessReceiptState(f.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('workspace');
   });
 
   test('[X3] --no-capture RE-RUN unwires the capture events it previously wired', async () => {

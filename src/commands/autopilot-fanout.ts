@@ -20,6 +20,8 @@
  *   - P1-5: archive recheck happens in the handler (jobs.ts:1146), not
  *     here, so a source archived between fan-out and worker claim still
  *     skips cleanly.
+ *   - Missing checkout paths are skipped at dispatch time; sources.local_path
+ *     is machine-specific shared state and can legitimately point elsewhere.
  *
  * Phase-scope caveat (codex r1 P0-1): per-source cycle LOCKS let two cycles
  * RUN concurrently, but several phases (embed, orphans, purge,
@@ -30,10 +32,11 @@
  * row layer; cost duplication is the visible tradeoff).
  */
 
+import { existsSync } from 'fs';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
-import { sourceConfigHasRemoteUrl } from '../core/sources-load.ts';
+import { sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
@@ -66,6 +69,8 @@ export interface FanoutOpts {
   emit?: (line: string) => void;
   /** Sink for non-JSON human log lines; defaults to console.log. */
   log?: (line: string) => void;
+  /** Test seam for source checkout availability. */
+  pathExists?: (path: string) => boolean;
 }
 
 export interface FanoutResult {
@@ -82,11 +87,15 @@ export interface FanoutResult {
   skipped_cap: string[];
   /** Source ids skipped because they're in failure cooldown (#2194 fix #2). */
   skipped_cooldown: string[];
+  /** Source ids skipped because local_path is unavailable from this machine. */
+  skipped_unavailable_path: string[];
   /** True when this tick fell back to the legacy single-job path
    *  (no sources rows / engine empty). */
   legacy_fallback: boolean;
   /** True when every enumerated source is inside the freshness window. */
   all_sources_fresh: boolean;
+  /** True when every enumerated source is either fresh or skipped locally. */
+  all_sources_handled: boolean;
 }
 
 /**
@@ -341,11 +350,26 @@ export function selectSourcesForDispatch(
   floorMin = AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES,
   recentFailures: Map<string, SourceFailure> = new Map(),
   cooldownOpts: CooldownOpts = { baseMin: FAILURE_COOLDOWN_BASE_MIN, capMin: FAILURE_COOLDOWN_CAP_MIN },
-): { dispatch: SourceRow[]; skippedFresh: SourceRow[]; skippedCap: SourceRow[]; skippedCooldown: SourceRow[] } {
+  pathExists: (path: string) => boolean = () => true,
+): {
+  dispatch: SourceRow[];
+  skippedFresh: SourceRow[];
+  skippedCap: SourceRow[];
+  skippedCooldown: SourceRow[];
+  /** Each row carries the warning that excluded it, so the caller logs it
+   *  directly instead of recomputing (a second existsSync per row). */
+  skippedUnavailablePath: Array<SourceRow & { skip_warning: string }>;
+} {
   const stale: SourceRow[] = [];
   const fresh: SourceRow[] = [];
   const cooldown: SourceRow[] = [];
+  const unavailablePath: Array<SourceRow & { skip_warning: string }> = [];
   for (const s of sources) {
+    const skipWarning = s.local_path ? sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config) : null;
+    if (skipWarning) {
+      unavailablePath.push({ ...s, skip_warning: skipWarning });
+      continue;
+    }
     if (!isSourceStale(s, now, floorMin)) { fresh.push(s); continue; }
     // #2194 fix #2: a stale source that recently failed is held in cooldown so
     // it can't re-dispatch every tick (the storm). Success clears it.
@@ -364,7 +388,7 @@ export function selectSourcesForDispatch(
   });
   const dispatch = stale.slice(0, fanoutMax);
   const skippedCap = stale.slice(fanoutMax);
-  return { dispatch, skippedFresh: fresh, skippedCap, skippedCooldown: cooldown };
+  return { dispatch, skippedFresh: fresh, skippedCap, skippedCooldown: cooldown, skippedUnavailablePath: unavailablePath };
 }
 
 /**
@@ -434,8 +458,10 @@ export async function dispatchPerSource(
       skipped_fresh: [],
       skipped_cap: [],
       skipped_cooldown: [],
+      skipped_unavailable_path: [],
       legacy_fallback: true,
       all_sources_fresh: false,
+      all_sources_handled: false,
     };
   }
 
@@ -455,7 +481,8 @@ export async function dispatchPerSource(
     cooldownOpts = { baseMin: 0, capMin: FAILURE_COOLDOWN_CAP_MIN };
   }
 
-  const { dispatch, skippedFresh, skippedCap, skippedCooldown } =
+  const pathExists = opts.pathExists ?? existsSync;
+  const { dispatch, skippedFresh, skippedCap, skippedCooldown, skippedUnavailablePath } =
     selectSourcesForDispatch(
       sources,
       opts.fanoutMax,
@@ -463,7 +490,16 @@ export async function dispatchPerSource(
       AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES,
       recentFailures,
       cooldownOpts,
+      pathExists,
     );
+
+  for (const src of skippedUnavailablePath) {
+    if (opts.jsonMode) {
+      emit(JSON.stringify({ event: 'fanout_source_path_skipped', source_id: src.id, reason: src.skip_warning }));
+    } else {
+      log(src.skip_warning);
+    }
+  }
 
   const dispatched: string[] = [];
   const coalesced: string[] = [];
@@ -563,8 +599,10 @@ export async function dispatchPerSource(
     skipped_fresh: skippedFresh.map(s => s.id),
     skipped_cap: skippedCap.map(s => s.id),
     skipped_cooldown: skippedCooldown.map(s => s.id),
+    skipped_unavailable_path: skippedUnavailablePath.map(s => s.id),
     legacy_fallback: false,
     all_sources_fresh: skippedFresh.length === sources.length,
+    all_sources_handled: skippedFresh.length + skippedUnavailablePath.length === sources.length,
   };
 }
 

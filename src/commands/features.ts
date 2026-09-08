@@ -199,10 +199,12 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
       });
     }
 
-    // No sync configured
+    // No sync configured. Modern sync anchors on sources.local_path; the global
+    // sync.repo_path is only the legacy single-source fallback, which non-default
+    // sources never set (#4767). Legacy key first so it short-circuits the query.
     try {
       const syncRepo = await engine.getConfig('sync.repo_path');
-      if (!syncRepo) {
+      if (!syncRepo && (await engine.listAllSources({ localPathOnly: true })).length === 0) {
         recommendations.push({
           id: 'no-sync', priority: 2,
           title: 'Configure Sync',

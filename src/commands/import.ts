@@ -28,6 +28,7 @@ import {
   resumeFilter,
 } from '../core/import-checkpoint.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
+import { slog } from '../core/console-prefix.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -213,9 +214,13 @@ export async function runImport(
   // always writes to stderr. Stdout stays clean for data output (--json
   // payloads)"). Pre-fix, `import --json` prefixed the payload with
   // "Found N markdown files", so JSON.parse of stdout failed outright.
+  // The human branch goes through slog() so an in-process caller running in
+  // its own --json mode (`sync --json` → performFullSync → runImport, wrapped
+  // in withHumanLogsToStderr) keeps its stdout clean too; outside any wrap
+  // slog IS console.log.
   const info = (msg: string): void => {
     if (jsonOutput) console.error(msg);
-    else console.log(msg);
+    else slog(msg);
   };
 
   // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
@@ -273,17 +278,47 @@ export async function runImport(
   // callers (performFullSync, future Step 6 paths) can route to a named
   // source.
   //
-  // v0.37.7.0 #1167+#1222: the CLI surface now also accepts a
-  // `--source-id <id>` flag (named to avoid colliding with `--source`
-  // which other commands use for different axes). Pre-fix, users
-  // passing `gbrain import --source dept-x ...` silently fell back to
-  // default because the parser ignored the flag. Now an explicit
-  // `--source-id <id>` opt-in routes the import to that source.
-  // Programmatic callers continue passing `opts.sourceId` directly;
-  // CLI callers' flag wins over opts when both are set.
+  // #1167: the CLI flag shipped as `--source-id <id>`. #4862: `--source <id>`
+  // is an alias — it is what every sibling command and the resolver's own
+  // nudge tell users to pass, import has no competing --source axis, and the
+  // flag registry already accepted it, so pre-alias it was silently IGNORED
+  // (pages landed in default). Both spellings with different values abort.
+  // Programmatic callers continue passing `opts.sourceId` directly; CLI
+  // flags win over opts when both are set. Both the `--source value` and
+  // `--source=value` spellings are accepted (same for --source-id); a missing
+  // value (or a value that is itself a flag) is refused the way sync-delegate
+  // refuses it, never read as "no scope".
   const sourceIdIdx = args.indexOf('--source-id');
-  const flagSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
-  let sourceId: string | undefined = flagSourceId ?? opts.sourceId;
+  const sourceIdx = args.indexOf('--source');
+  const readSourceFlag = (flag: string, idx: number): string | null => {
+    const eq = args.find((a) => a.startsWith(`${flag}=`));
+    const v = eq !== undefined ? eq.slice(flag.length + 1) : idx !== -1 ? args[idx + 1] : null;
+    if (v === null) return null;
+    if (v === undefined || v === '' || v.startsWith('--')) {
+      console.error(`${flag} (missing value)`);
+      throw new ImportAbortError(`${flag} (missing value)`);
+    }
+    return v;
+  };
+  const viaSourceId = readSourceFlag('--source-id', sourceIdIdx);
+  const viaSource = readSourceFlag('--source', sourceIdx);
+  if (viaSourceId && viaSource && viaSourceId !== viaSource) {
+    console.error('Pass either --source or --source-id, not both.');
+    throw new ImportAbortError('conflicting source flags');
+  }
+  const flagSourceId = viaSourceId ?? viaSource;
+  let sourceId: string | undefined = opts.sourceId;
+  if (flagSourceId) {
+    // Validate + assert existence through the shared resolver (tier 1), so an
+    // invalid or unregistered id fails once with the same SourceTargetError
+    // sync gives — not once per file on the pages.source_id foreign key.
+    const { resolveSourceWithTier, ALL_SOURCES } = await import('../core/source-resolver.ts');
+    if (flagSourceId === ALL_SOURCES) {
+      console.error(`import writes to one source; \`${ALL_SOURCES}\` is not a write target.`);
+      throw new ImportAbortError('__all__ is not an import target');
+    }
+    sourceId = (await resolveSourceWithTier(engine, flagSourceId)).source_id;
+  }
 
   // v0.41.13 (#1434): when no explicit source / env / opts.sourceId is set,
   // fall through to the resolver so the new sole_non_default tier (5.5) can
@@ -360,10 +395,11 @@ export async function runImport(
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
   if (sourceIdIdx !== -1) flagValues.add(sourceIdIdx + 1);
+  if (sourceIdx !== -1) flagValues.add(sourceIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--allow-noncanonical-root] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--include-gitignored] [--allow-noncanonical-root] [--json]');
     throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
@@ -748,16 +784,26 @@ export async function runImport(
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
   if (jsonOutput) {
+    // `skipped` includes every per-file failure importFile RETURNS (invalid
+    // frontmatter, oversize, symlink, slug mismatch) as well as content-hash
+    // no-ops, and `errors` counts only the thrown ones — so a caller cannot
+    // tell "unchanged" from "failed" by counts alone. The failure ledger is
+    // written only for git-repo dirs (see the gitHead gate below), so a caller
+    // importing a scratch directory has no other channel. Emit the per-file
+    // list so state can be gated per file.
     console.log(JSON.stringify({
       status: 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
       total_files: allFiles.length,
+      unchanged: skipped - failures.length - malformedFileSkips,
+      malformed_skipped: malformedFileSkips,
+      failures,
     }));
   } else {
-    console.log(`\nImport complete (${totalTime}s):`);
-    console.log(`  ${imported} pages imported`);
-    console.log(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
-    console.log(`  ${chunksCreated} chunks created`);
+    slog(`\nImport complete (${totalTime}s):`);
+    slog(`  ${imported} pages imported`);
+    slog(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
+    slog(`  ${chunksCreated} chunks created`);
   }
 
   // v0.39 T7 — end-of-run schema mismatch warn. Fires ONCE per import,

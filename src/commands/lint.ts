@@ -17,7 +17,7 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
-import { join, relative } from 'path';
+import { join, relative, dirname } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import {
@@ -27,6 +27,7 @@ import {
 } from '../core/content-sanity.ts';
 import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
 import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
+import { isDurabilityHardened, commitWriteThroughFile } from '../core/brain-repo-durability.ts';
 import type { BrainEngine } from '../core/engine.ts';
 
 export interface LintIssue {
@@ -544,6 +545,19 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   const contentSanity = opts.contentSanity ?? await resolveLintContentSanity(opts.engine);
   const lintOpts: LintContentOpts = { contentSanity };
 
+  // Durability-hardened brains (`gbrain sources harden`) promise every write
+  // is committed AND pushed. An uncommitted lint repair would otherwise sit
+  // as drift the cycle's sync phase flags and the post-commit hook never
+  // pushes. Same gate + path-limited helper as put_page write-through
+  // (#2426); covers the cycle, the lint/lint-fix minion handlers and the CLI
+  // alike. Known ceiling: one commit + one backgrounded hook spawn per
+  // repaired page on a large first run (the hook's flock coalesces pushes on
+  // Linux; on macOS a losing concurrent push can log a spurious LOCAL-ONLY
+  // line even though the later push landed) — a single end-of-run
+  // multi-path commit would need a new helper.
+  const repoProbe = isSingleFile ? dirname(opts.target) : opts.target;
+  const commitFixes = !!opts.fix && !opts.dryRun && isDurabilityHardened(repoProbe);
+
   let totalIssues = 0;
   let totalFixable = 0;
   let totalFixed = 0;
@@ -576,6 +590,9 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
         totalFixed += fixCount;
         if (!opts.dryRun) {
           writeFileSync(page, fixed);
+          if (commitFixes) {
+            commitWriteThroughFile(repoProbe, page, relative(repoProbe, page).replace(/\.md$/u, ''));
+          }
         }
       }
     }

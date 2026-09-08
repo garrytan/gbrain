@@ -40,13 +40,15 @@ import { dirname, isAbsolute, relative } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility, FactKind } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
-import { inferTypeFromPack } from '../markdown.ts';
+import { inferTypeFromPack, parseMarkdown } from '../markdown.ts';
+import { sanitizeText } from '../batch-rows.ts';
 import { loadActivePackBestEffort } from '../schema-pack/best-effort.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
+import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
 
@@ -463,6 +465,28 @@ export async function writeFactsToFence(
       // 5. Rename .tmp → file. POSIX atomic; the canonical file is
       //    either the old content or the new content, never partial.
       renameSync(tmpPath, filePath);
+
+      // #4872: mirror the rewritten file into pages.compiled_truth. get_page
+      // and the extract_facts reconcile read the DB body, not the file — left
+      // stale, a plain get→put round-trip flattens the new row off disk and
+      // the next reconcile deletes it from the facts table. Same recipe as
+      // forget.ts (#4696): parse + sanitize the FILE bytes as import-file.ts
+      // does. Body-only: content_chunks are untouched, so the row KEEPS its
+      // old content_hash and the next sync re-imports + re-chunks. Stamping
+      // the importer's hash here made sync skip the page and left search
+      // blind to the new row forever. Never persist an EMPTY hash: a row
+      // that had none gets a row-shaped hash of its pre-mirror content,
+      // which the rewritten file can't match. Best-effort: the file is
+      // already committed; a stub page with no DB row is created by sync.
+      try {
+        const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
+        const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
+        if (existing) {
+          await engine.refreshPageBody(target.slug, target.sourceId,
+            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
+            existing.content_hash || contentHash(existing));
+        }
+      } catch { /* degrades to the pre-#4872 window (stale until the next sync) */ }
 
       // 6. Stamp the DB. extractFactsFromFenceText handles the
       //    validFrom/validUntil date derivation + the strikethrough

@@ -155,6 +155,25 @@ consecutive failures instead of wedging the sync forever;
 `gbrain sync --source <id> --full` retries skipped threads with a fresh
 ledger.
 
+### Rate limits during backfill
+
+A large mailbox backfilling a wide `--history-days` window can trip Gmail's
+per-user rate limit in bursts — Google answers with HTTP 403
+(`rateLimitExceeded` / `userRateLimitExceeded`) or 429, and it clears on its
+own within seconds to low minutes. The client retries a rate-limited request
+patiently — 6 attempts by default, exponential backoff with jitter capped at
+60s, honoring `Retry-After` when Google sends one — before finally giving up
+and reporting `rate_limited`. That budget is deliberately much larger than
+the 2-attempt budget used for other retryable failures (like a 401 needing a
+token refresh): giving up too early used to mean a thread that would have
+succeeded a few seconds later was instead skipped for the rest of the sync.
+
+Even when a thread's retry budget IS exhausted, a rate-limit failure is never
+counted toward the poison-skip threshold — unlike a genuine per-thread
+failure (a malformed message, a permissions edge case), a rate limit says
+nothing about that specific thread, so the sweep keeps retrying it on every
+future run instead of silently giving up on it.
+
 ## Other ways to reach Google (no gbrain OAuth)
 
 If your stack already holds Google access another way — a Google CLI with its

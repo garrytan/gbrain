@@ -790,6 +790,47 @@ CREATE TABLE IF NOT EXISTS session_context_state (
 CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
   ON session_context_state (updated_at);
 
+-- extract_atoms_transcript_state (migration v146 — #4148 follow-on): failure
+-- streak + tombstone for TRANSCRIPT extraction items. Pages carry this in
+-- frontmatter (atoms_fail_count / atoms_fail_hash / atoms_scan_hash), but
+-- transcripts are files with no frontmatter, so pre-fix a transcript that
+-- deterministically produced malformed output — or that honestly yielded zero
+-- atoms — re-entered discovery and re-spent LLM budget on every cycle forever.
+--
+-- Why its own table. raw_data is page-scoped (page_id NOT NULL REFERENCES
+-- pages(id)) and transcripts aren't pages, exactly as dream_verdicts' own
+-- comment notes. And NOT columns on dream_verdicts: that cache is documented
+-- rebuildable via `gbrain dream retriage --force`, which clears it wholesale,
+-- so extraction state stored there would be swept away as collateral.
+--
+-- Why source_id is in the key, unlike dream_verdicts. That table caches a
+-- content-level judgment ("is this transcript worth processing"), which does
+-- not vary by source. A failure streak and a tombstone GATE EXTRACTION, and
+-- extraction is source-scoped throughout the phase — discovery SQL, the NOT
+-- EXISTS idempotency subquery, and every putPage take sourceId. An unscoped
+-- tombstone would let one source permanently suppress another source's
+-- extraction of the same file.
+--
+-- content_hash is the 16-char prefix, matching atoms.frontmatter->>'source_hash'
+-- and the page-side atoms_fail_hash. Having it in the PK is what makes "a
+-- content edit resets the streak" fall out for free: an edited transcript is a
+-- different row, mirroring the page-side hash-keyed reset.
+--
+-- RLS: covered by the v35 auto_rls_on_create_table event trigger, same posture
+-- as session_context_state (v126) and chat_usage_log (v140).
+CREATE TABLE IF NOT EXISTS extract_atoms_transcript_state (
+  source_id    TEXT        NOT NULL DEFAULT 'default',
+  file_path    TEXT        NOT NULL,
+  content_hash TEXT        NOT NULL,
+  fail_count   INTEGER     NOT NULL DEFAULT 0,
+  tombstoned   BOOLEAN     NOT NULL DEFAULT FALSE,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, file_path, content_hash)
+);
+CREATE INDEX IF NOT EXISTS extract_atoms_transcript_state_tombstoned_idx
+  ON extract_atoms_transcript_state (source_id, content_hash)
+  WHERE tombstoned;
+
 -- chat_usage_log (#4218 / migration v140): durable per-call chat usage
 -- ledger. One row per SUCCESSFUL gateway.chat() call, written fire-and-forget
 -- by the chat-usage sink (src/core/ai/chat-usage.ts). cost_usd is a

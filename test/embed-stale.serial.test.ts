@@ -63,6 +63,16 @@ function fakeEmbedFn(texts: string[]): Promise<Float32Array[]> {
   );
 }
 
+/** The model `upsertChunks` recorded for `slug`'s chunks (gateway-resolved in
+ *  this process). A signature must name it for the provenance stamp to land. */
+async function recordedModel(slug: string): Promise<string> {
+  const rows = await engine.executeRaw<{ model: string }>(
+    `SELECT cc.model FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = $1 LIMIT 1`,
+    [slug],
+  );
+  return rows[0]!.model;
+}
+
 describe('embedStaleForSource', () => {
   test('empty stale set returns done:true with zero embedded', async () => {
     const result = await embedStaleForSource(engine, 'default', {
@@ -417,9 +427,12 @@ describe('signature invalidation is probe-gated (#4283)', () => {
   test('working embedder → probe fires once, drifted chunks are invalidated, re-embedded, and counted', async () => {
     const { EMBED_PROBE_TEXT } = await import('../src/core/embed-stale.ts');
     await seedEmbeddedPage('p1', 3, 'old:model:1536');
+    // The re-embed stamps only a signature naming the model the vectors were
+    // actually written under (#4825), so the target names the recorded model.
+    const target = `${await recordedModel('p1')}:1536`;
     const seen: string[] = [];
     const result = await embedStaleForSource(engine, 'default', {
-      embeddingSignature: 'new:model:1536',
+      embeddingSignature: target,
       embedFn: async (texts) => {
         seen.push(...texts);
         return fakeEmbedFn(texts);
@@ -433,7 +446,7 @@ describe('signature invalidation is probe-gated (#4283)', () => {
     const sig = await engine.executeRaw<{ s: string | null }>(
       `SELECT embedding_signature AS s FROM pages WHERE slug = 'p1'`,
     );
-    expect(sig[0]!.s).toBe('new:model:1536');
+    expect(sig[0]!.s).toBe(target);
   });
 
   test('no signature drift → no probe call (no embed spend on the common path)', async () => {
@@ -590,5 +603,73 @@ describe('embedStalePages (#4216 phase-end closure)', () => {
     const sig = await engine.executeRaw<{ s: string | null }>(
       `SELECT embedding_signature AS s FROM pages WHERE slug = 'wiki/target-page'`);
     expect(sig[0]!.s).toBe('test:model:1536');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #4825 — listStaleChunks pages by ROW with no page alignment, so a page
+// whose chunks straddle a batch boundary is never wholly in one batch. The
+// old stamp gate compared the batch subset against the whole page and left
+// such pages unstamped forever (a NULL signature is grandfathered).
+// ────────────────────────────────────────────────────────────────
+
+describe('signature stamp for a page split across a cursor batch (#4825)', () => {
+  test('page straddling the batch boundary is stamped once its last chunk lands', async () => {
+    await engine.putPage('probe', { type: 'note', title: 'probe', compiled_truth: 'probe' });
+    await engine.upsertChunks('probe', [{
+      chunk_index: 0, chunk_text: 'probe', chunk_source: 'compiled_truth',
+      token_count: 1, embedding: new Float32Array(1536).fill(0.1),
+    }]);
+    const signature = `${await recordedModel('probe')}:1536`;
+
+    await seedPageWithStaleChunks('a', 1);
+    await seedPageWithStaleChunks('b', 2);
+    // Stale rows drain as (a.0, b.0) then (b.1): 'b' is never whole in one batch.
+    const result = await embedStaleForSource(engine, 'default', {
+      embedFn: fakeEmbedFn,
+      batchSize: 2,
+      embeddingSignature: signature,
+    });
+    expect(result.embedded).toBe(3);
+
+    const sigs = await engine.executeRaw<{ slug: string; s: string | null }>(
+      `SELECT slug, embedding_signature AS s FROM pages WHERE slug IN ('a', 'b') ORDER BY slug`,
+    );
+    expect(sigs.map((r) => r.s)).toEqual([signature, signature]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// wave review — the provenance stamp resolved the registry-active column on
+// EVERY page it stamped (a config round-trip per page per batch, from both
+// keyset drains). The drain now resolves it once (`resolveProvenanceStamp`)
+// and hands the stamp helper a ProvenanceStamp.
+// ────────────────────────────────────────────────────────────────
+describe('provenance stamp resolves the active embedding column once per drain', () => {
+  test('the config lookups the signature ADDS do not grow with the page count', async () => {
+    const orig = engine.executeRaw.bind(engine);
+    const calls: string[] = [];
+    engine.executeRaw = (async (sql: string, ...rest: any[]) => {
+      calls.push(sql);
+      return orig(sql, ...(rest as []));
+    }) as any;
+    try {
+      // getChunks & co. resolve the column per call whether or not a
+      // signature is set, so measure what the signature adds at a FIXED
+      // page count: pre-fix that was one lookup per stamped page.
+      const configLookups = async (pages: number, signature?: string): Promise<number> => {
+        await resetPgliteState(engine);
+        for (let i = 0; i < pages; i++) await seedPageWithStaleChunks(`p${i}`, 1);
+        calls.length = 0;
+        await embedStaleForSource(engine, 'default', { embedFn: fakeEmbedFn, embeddingSignature: signature });
+        return calls.filter((sql) => sql.includes("'search_embedding_column'")).length;
+      };
+      const sig = 'new:model:1536';
+      const oneSigCost = (await configLookups(1, sig)) - (await configLookups(1));
+      const fourSigCost = (await configLookups(4, sig)) - (await configLookups(4));
+      expect(fourSigCost).toBe(oneSigCost);
+    } finally {
+      engine.executeRaw = orig;
+    }
   });
 });

@@ -1,5 +1,23 @@
 # TODOS
 
+## Community fix wave follow-ups (filed 2026-09-07, search-eval train)
+
+- [ ] **P2 — bump MARKDOWN_CHUNKER_VERSION to 5 so already-indexed CJK-dominant pages pick up the CJK overlap fix.**
+  **What:** #4871 (wave adoption) made `extractTrailingContext` count chars for CJK-dominant chunks (the unit `countCJKAwareWords` uses) instead of whitespace tokens, so CJK pages get a real, bounded overlap instead of none / a near-total duplicate; the L4 char-slice fallback also stopped halving astral pairs. Both change chunk boundaries for CJK-dominant text only and apply to pages chunked from now on — pages already in the index keep their old boundaries until the chunker version moves. **How:** `export const MARKDOWN_CHUNKER_VERSION = 5;` in `src/core/chunkers/recursive.ts`, DECOUPLED from `SAFE_FENCE_CHUNKER_VERSION` (stays 4 as the safe-chunks provenance floor; `safeChunksFilter` is `>= 4`, so 5 passes); update the `MARKDOWN_CHUNKER_VERSION is 4` pin in `test/chunkers/recursive.test.ts`. **Cost (why this is a maintainer decision, not a fix-wave change):** the post-upgrade sweep re-chunks AND re-embeds every markdown page in every brain (markdown import has no embedding reuse) — the same full-brain re-embed shape as the v4 bump in 0.48.3.0, for a boundary change that only affects CJK-dominant pages. Coalescing it with the next planned chunker bump spares a standalone sweep. English output is byte-identical (pinned by `test/chunkers/recursive-cjk-overlap.test.ts`). **Effort:** S.
+## Community fix wave follow-ups (filed 2026-09-07, sync-import train)
+- [ ] **P3 — `gbrain import` human summary labels returned per-file failures as "unchanged".**
+  **What:** the non-`--json` summary line in `src/commands/import.ts` prints `${skipped - errors} unchanged`, but `skipped` also counts the failures `importFile` RETURNS (invalid frontmatter, oversize, symlink, slug mismatch) while `errors` counts only the thrown ones, so a returned failure reads as an unchanged no-op. The `--json` payload was fixed in #4803 (`unchanged` / `malformed_skipped` / `failures`); the human line was deliberately left alone in that wave. **How:** reuse the same `skipped - failures.length - malformedFileSkips` arithmetic and print the returned-failure count as its own term. **Effort:** S. **Priority:** P3.
+## Community fix wave follow-ups (filed 2026-09-07, minions-autopilot train)
+- [ ] **P3 — pglite-lock `readProcessArgs` has the same win32 gap as #4563, failing the other way.** **What:** `src/core/pglite-lock.ts` `readProcessArgs` probes `ps` then `/proc` with no Windows branch; on win32 it returns null, which that caller treats as "unknowable => alive", so a recycled-pid PGLite lock is never reaped and `acquire` waits out its timeout instead of stealing. Distinct symptom from the autopilot classifier (which now has the CIM branch in `src/core/autopilot-lock.ts` `readProcessCommand`). **How:** route `readProcessArgs` through the shared `readProcessCommand(pid)` (already handles /proc, ps, and win32 CIM) and delete the duplicate probe. **Effort:** S. **Priority:** P3.
+
+## Community fix wave follow-ups (filed 2026-09-07, atoms/extraction/facts train)
+
+- [ ] **P3 — stamp `effective_date` at the `put_page` write seam.**
+  **What:** `put_page` -> `writePageThrough` -> `engine.putPage` stores `effective_date ?? null` and never runs `computeEffectiveDate`, so every agent/MCP-written page carries a NULL column until `gbrain backfill effective_date` runs. `extract timeline --from-meetings` now derives the date itself (#4943); the sibling gate at `src/core/onboard/checks.ts` (`effective_date IS NOT NULL` on meetings, the `onboard.extract_timeline_from_meetings` remediation) still under-counts those pages, and recency/salience ranking COALESCEs to `updated_at` for them. **How:** compute in `writePageThrough` (or `putPage`) when the caller supplies none, using the backfill-registry recipe; it changes recency ranking for internally-written pages, so it goes behind the eval gate, and both consumers above drop their local workarounds once it lands. **Effort:** S. **Priority:** P3.
+
+- [ ] **P3 — extract_atoms parser: bracketed prose AFTER the array, and the sibling first-`[` anchors.**
+  **What:** `parseAtomsOutcomeInner` (`src/core/cycle/extract-atoms.ts`) now scans successive `[` offsets so bracketed preamble (`[Source: …]`, `[[wikilink]]`, `[user]`) no longer hijacks the anchor (#4913). The symmetric case still fails: bracketed prose AFTER the array (e.g. `[atoms]\nSee [Source: X].`) because the trim-back runs to the LAST `]`. The sibling first-`[` anchors in `propose-takes.ts`, `extract-events.ts`, and `calibration-profile.ts` are independent copies and remain unfixed. **How:** a shared "find the first parseable array that yields >= 1 shaped element" helper (scan forward on `[`, trim back over candidate `]`s) that all four callers route through. **Effort:** S. **Priority:** P3.
+
 ## Ranker wave follow-ups (filed 2026-09-06, v0.48.4.0 wave; plan: ~/.claude/plans/do-a-gbrain-evals-fix-snug-starlight.md)
 
 - [ ] **P2 — session-aware autocut (the next pre-registered mechanism for `search.autocut`).**
@@ -156,18 +174,77 @@
 
 ## Community fix wave follow-ups (filed 2026-09-01, v0.48.1.0 wave)
 
-- [ ] **P1 — Fix-wave 2: the 27 deferred M-effort verified issues.**
-  **What:** the v0.48.1.0 community fix wave triaged every open issue; 22
-  were fixed in-wave and 27 verified M-effort issues were deferred to a
-  second wave. Full triage records (verdict, rationale, fix sketch, key
-  files per issue) live in `.context/fix-wave-triage.json` (gitignored —
-  wave working state, not repo content). Deferred issue numbers: #4744
-  #4741 #4738 #4732 #4729 #4728 #4696 #4684 #4679 #4653 #4652 #4649 #4620
-  #4616 #4609 #4606 #4605 #4603 #4601 #4597 #4589 #4588 #4586 #4578 #4563
-  #4558 #4359. (#4636 and #4564 were also triaged M but got fixed in-wave —
-  #4636 by the #4279 adoption, #4564 by the #4583 default-write guard.)
-  **How:** same discipline as wave 1 — red-proven regression test per fix,
-  themed trains, per-train targeted sweeps.
+- [ ] **P3 — Share the #4728 baked-CLI-path guard with the brain-repo durability cron wrapper.**
+  **What:** `src/core/brain-repo-durability.ts` `renderCronWrapper` bakes a
+  CLI path at install time the same way the autopilot wrapper did before
+  #4728 (private resolver at `resolveGbrainCliPath` in that file; it degrades
+  to bare `gbrain`, so PATH resolution partially happens today, but a vanished
+  absolute path still fails as a bare bash exec error with no remediation).
+  A follow-up can lift the `[ ! -x <baked> ] -> type -P gbrain -> re-run
+  --install` bash snippet out of `writeWrapperScript` into one shared helper
+  and render it from both wrappers. **Why:** same ephemeral-container wipe
+  class; one guard, two callers. **Context:** #4728 deliberately did not widen
+  into `core/`. **Effort:** S. **Priority:** P3.
+- [ ] **P1 — Fix-wave 3: the 27 verified issues deferred by the 0.48.5.0 wave.**
+  **What:** the 0.48.5.0 community fix wave re-verified every open issue
+  against master (first-pass verifier + adversarial refuter per issue) and
+  fixed 42 directly; 26 verified M-effort bugs and one S-effort bug on the
+  retrieval-gate path were deferred. Triage records (verdict, evidence, fix
+  sketch, key files per issue) live in the wave workspace
+  `.context/wave/triage/issue/` + `.context/wave/refute/issue/` (gitignored
+  wave working state, not repo content). Deferred: #4381 #4558 #4576 #4578
+  #4586 #4588 #4600 #4603 #4605 #4613 #4616 #4622 #4649 #4653 #4670 #4684
+  #4741 #4761 #4766 #4772 #4795 #4797 #4852 #4879 #4910 #4921, plus #4359
+  (S, but it lives in `search/hybrid.ts` and needs an eval-replay receipt).
+  Of the 0.48.1.0 wave's 27 deferrals, ten shipped in 0.48.5.0 (#4744 via
+  #4933, #4729 via #4865, #4728, #4696, #4652, #4620, #4606, #4597, #4589,
+  #4563), five were re-classified on verification (#4738 and #4732
+  needs-info, #4679 and #4609 feature requests, #4601 docs-only), and the
+  rest carry forward above.
+  **How:** same discipline — red-proven regression test per fix, themed
+  trains in isolated worktrees, composed-collector `verify` + full suite,
+  composite hostile review before ship.
+- [ ] **P2 — Wave-review follow-ups (0.48.5.0): eleven INVESTIGATE items the
+  composite and ship reviews confirmed but deliberately left for a design call.**
+  (1) `src/core/context/resolve-ipc.ts` — a serve that defers to a live
+  provider never re-probes; when the provider exits cleanly nothing takes over
+  the socket until a restart (re-probe on EOF or retry the bind on an interval).
+  (2) `src/core/ai/recipes/minimax.ts` — M2/M3 are tool-capable now; confirm with
+  a live probe whether they reason by default and, if so, declare
+  `thinking_by_default` so #4847's headroom applies. (3) `gbrain graph-query`
+  default scope walks only the resolved source while `search`/`think` walk the
+  resolved source plus its federated set; decide one contract. (4)
+  `src/core/cycle/synthesize.ts` — the synth-v2 completion skip treats a
+  transcript as done when its children are `completed`, which happens before
+  the parent verifies quotes and writes markdown; an interrupted parent leaves
+  the transcript permanently skipped. (5) `src/core/entities/resolve.ts` — the
+  #4855 fold changes the minted slug for names with stroke letters; brains that
+  already hold `uc-example`-style pages need an alias/remap pass before facts
+  stop forking. (6) `src/core/creds/redirect.ts` — a scheme-less loopback paste
+  (`127.0.0.1:41999/?code=…`) is rejected because `URLSearchParams` never sees
+  `code=`. (7) `src/core/legacy-token-scope.ts` — legacy scalar-string grants
+  carry no `allowedSources`, so `assertExplicitSourceLive` cannot enforce them
+  (mirror the OAuth synthesis). (8) `src/commands/sync.ts` — the
+  `carriedByOtherRename` guard compares raw manifest paths while the
+  #4597 index is mode-normalized; under source-root mode the spare never fires.
+  (9) `sync --source-id` is accepted by the flag registry and ignored. (10) the
+  `(updated_at, slug)` keyset cursor cannot distinguish same-slug rows across
+  sources (order is now total; the cursor is not). (11) `bootstrap harness`
+  resolves the implicit source from its own cwd while the serve resolves from
+  its cwd at boot; the shared ladder narrows but does not close the gap.
+- [ ] **P3 — Simplification advisories from the wave review (structure, not
+  defects).** One `mirrorFenceBodyToDb` helper for the three pasted fence-mirror
+  recipes (fence-write.ts, forget.ts x2); static import of
+  `transcripts/discover.ts` in extract-atoms.ts instead of the runtime
+  `import()` + nullable pointer; fold `src/mcp/source-preflight.ts` into
+  `assertSourceExists`; trim the doc-heavy `extract-atoms-cost-gate.ts`; one
+  chunk-set tally for `findSynthV2Completion`/`findLegacyCompletion`; share the
+  sentence-alignment tail between the Latin and CJK trailing-context branches;
+  `new URL().hostname` for the consent-host check; drop the identity `pathKey`
+  default and the `compileExcludePatterns` wrapper; `basenameSlugForms` shared
+  by the FS and DB resolvers; `PAGE_LOCK_TIMEOUT_MS` shared by the four writers;
+  `parseEmbeddingSignature` beside `currentEmbeddingSignature`; the
+  `drift-watch.ts` walk-up should reuse `repo-root.ts`.
 - [ ] **P2 — Enforce pack vocabulary at the put_page choke point, not
   per-surface.** **What:** #4655's write-time vocabulary enforcement
   (`src/core/schema-pack/write-vocabulary.ts`) is wired at three surfaces
@@ -499,7 +576,13 @@ deferred M-effort issues above are NOT repeated here.
   `stripReasoningBlocks`, but ~13 hand-rolled brace-scan sites remain
   (judges, grade-takes, drift, voice-gate, calibration-profile, chronicle,
   facts/classify, loops-extract, skillopt x3, eval json-repair, think/index);
-  propose-takes.ts carries its own duplicate regex to converge.
+  propose-takes.ts carries its own duplicate regex to converge. Caveat for
+  the propose-takes.ts pair: they are PRE-FILTERS (strip before any parse, no
+  `i` flag, no unclosed-tag arm), so routing them through
+  `stripReasoningBlocks` (which since #4912 also strips `<thinking>`) is a
+  semantic change — it would eat an unclosed `<think` tail before the raw parse
+  and add case-insensitivity. Needs its own ladder-shaped rework with a
+  red-first test, not a mechanical swap.
 - [ ] **P2 — verify gpt-5.6-terra / gpt-5.6-sol canonical prices.** **What:**
   while live-verifying luna (#4560), OpenAI's official pricing page listed
   terra at $2.00/$12.00 and sol at $4.00/$20.00 vs CANONICAL_PRICING's
@@ -753,7 +836,11 @@ deferred M-effort issues above are NOT repeated here.
   defaults to Anthropic (unservable) and degrades to the honest keyless path
   instead of using the key it has; and every static entry rots the way the
   openai gpt-5.2 pin did. **Context:** the mechanism is done — one table
-  entry per provider; the work is choosing tier grammar per provider and
+  entry per provider; `resolveTierDefault` already falls back to a SERVABLE
+  file-plane pin (`expansion_model` / `chat_model`) below the key walk, so a
+  single-provider install that pinned its model at init is covered (#3813);
+  the table work remains for installs with a key but NO pin. The rest of the
+  work is choosing tier grammar per provider and
   asserting recipe capability fit (tool support for subagent). Start:
   `PROVIDER_TIER_DEFAULTS` + `test/model-config.serial.test.ts` matrix +
   the openai-latest ranking pattern. **Effort:** S-M per provider.
@@ -2569,8 +2656,12 @@ and the scope record at `~/.gstack/projects/garrytan-gbrain/ceo-plans/2026-06-12
   `src/core/verbs/entity-card.ts` open-threads assembly + a new schema table
   (additive — the card field already exists, so this is a quality upgrade, not
   a contract change).
-- [ ] **P2 — `recall` filter composition vs the spec (found by the v0.43.0.0
-  cross-model doc review).** The handler dispatch is first-match
+- [x] **P2 — `recall` filter composition vs the spec (found by the v0.43.0.0
+  cross-model doc review).** **Completed: v0.48.5.0 (2026-09-07)** — #4882: the
+  `recall` handler composes `since` with `entity`/`session_id` before the SQL
+  LIMIT and rejects unparseable values (`src/core/ops/facts.ts`), the composition
+  is spelled out in `docs/protocol/MEMORY_VERBS_v1.md`, and the server-side `limit`
+  cap landed earlier (`clampRecallLimit`, v0.46.13.0). Original text: The handler dispatch is first-match
   (`supersessions` > `entity` > `session_id` > `since`), so `since` is
   silently ignored when `entity`/`session_id` is supplied, and `limit` has no
   server-side cap. Either compose the filters (additive — the spec's "filters
@@ -4990,10 +5081,12 @@ into one committed wave with a target version.
   Switch to `\p{Script=Han}` / `\p{Script=Hiragana}` / `\p{Script=Katakana}`
   / `\p{Script=Hangul}`. Astral-plane support also requires
   `Array.from(str)` codepoint iteration in chunker's char-slice fallback.
-- [ ] **v0.42 — CJK-aware overlap context in chunker.** `extractTrailingContext`
+- [x] **v0.42 — CJK-aware overlap context in chunker.** `extractTrailingContext`
   is whitespace-token-based today; CJK chunks under maxChars cap have no
   useful overlap with previous chunk. Switch to char-count when
-  `countCJKAwareWords` would have triggered the CJK branch.
+  `countCJKAwareWords` would have triggered the CJK branch. Landed via
+  #4871 (wave adoption) for newly chunked pages; already-indexed pages
+  re-chunk on the MARKDOWN_CHUNKER_VERSION bump filed at the top of this file.
 - [ ] **v0.42 — Thai / Arabic / Cyrillic / Devanagari script support.**
   Same five-layer fix pattern as CJK: slugify ranges, chunker density
   threshold, PGLite keyword fallback with script-aware tokenization.
@@ -5686,14 +5779,16 @@ contributor traps.
   Affects `src/commands/sync.ts:buildDetachedWorkingTreeManifest` +
   `buildSyncManifest`. Defer until someone files a tab-in-filename issue.
 
-- [ ] **v0.33+: CJK-aware overlap context in chunker.** v0.32.7
+- [x] **v0.33+: CJK-aware overlap context in chunker.** v0.32.7
   `extractTrailingContext` is still whitespace-token-based, so CJK chunks
   under the maxChars cap have no useful overlap with the previous chunk.
   Search continuity across chunk boundaries degrades for pure CJK content.
   The maxChars sliding-window in v0.32.7 IS overlap-protected for the
   hard-cap path, so this only affects normal-size chunks. Plan: switch
   `extractTrailingContext` to char-count when `countCJKAwareWords` would
-  have triggered the CJK branch.
+  have triggered the CJK branch. Landed via #4871 (wave adoption) for newly
+  chunked pages; the version bump that re-chunks existing pages is filed at
+  the top of this file.
 
 - [ ] **v0.33+: other non-Latin scripts (Thai, Arabic, Cyrillic,
   Devanagari).** Same five-layer fix pattern as CJK applies: slugify
@@ -9109,3 +9204,20 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   **Context:** filed from the ranker wave R1 fix (v0.48.4.0); the per-brain
   opt-out is `gbrain config set search.relational_rerank_pin off`. **Effort:** M.
 
+
+- [ ] **P2 — ontology reads ignore fact-level `visibility` for remote
+  callers.** **What:** `getOntology` / `findOntologyConflicts` (both engines)
+  now hide observations whose PROVENANCE PAGE is `visibility: private`
+  (#4881 wave adoption), but they still return facts regardless of the
+  fact row's own `visibility` column, while every other facts read pushes
+  `visibility = 'world'` for untrusted callers (`pglite-engine/facts.ts`
+  listFacts, meta-hook, entity-card). `mergeOntologyFact` defaults
+  `visibility` to `'private'`, so nearly every ontology fact is
+  fact-private today. **Why:** the page-level gate closes the
+  "private page leaks through its extracted values + slug" hole; the
+  fact-level column is the larger remaining gap and deserves its own
+  fail-closed fix (thread `excludePrivate` into a `visibility = 'world'`
+  predicate on the same two queries, mirror in `loadChronicleContext`,
+  pin in `test/chronicle-ontology-private-visibility.test.ts` and the
+  e2e content-privacy suite). **Context:** filed from the #4881 adoption
+  (refuter amendment). **Effort:** S.

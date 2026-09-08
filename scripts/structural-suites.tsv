@@ -14,7 +14,7 @@ test/auto-link-targeted-probe-2544.test.ts	#2544 — auto-link behavior through 
 test/autopilot-auto-drain-wiring.test.ts	autopilot auto-drain wiring	8	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	autopilot cycle-failure classification — only 'failed' trips the circuit breaker	2	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	runPhaseOrphans ratio threshold — no more absolute count > 20	3	readFileSync
-test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	13	readFileSync
+test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	15	readFileSync
 test/autopilot-install.test.ts	autopilot install — reload-safety (#2608)	1	readFileSync
 test/autopilot-install.test.ts	autopilot showStatus — wrapper-path detection	1	readFileSync
 test/autopilot-install.test.ts	autopilot wiring: chat-unavailable boot warning (#2608)	1	readFileSync
@@ -53,10 +53,11 @@ test/check-bootstrap-guards.test.ts	verify + workflow wiring	6	readFileSync
 test/check-update.test.ts	check-update CLI	3	bun-file
 test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killChild liveness fix	3	readFileSync
 test/chronicle-extract.test.ts	runChronicleExtract	9	readFileSync
+test/ci-local-empty-mounts.test.ts	(file-level)	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
-test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	11	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
 test/cli-force-exit-teardown-arming.test.ts	cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body	1	readFileSync
 test/cli.test.ts	BigInt-safe output normalization (#2450)	5	readFileSync
@@ -94,6 +95,7 @@ test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
 test/destructive-guard.test.ts	formatters (display helpers)	4	readFileSync
 test/destructive-guard.test.ts	purgeExpiredSources — clone cleanup containment	1	readFileSync
 test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	readFileSync
+test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	18	doctor-source-helper
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
 test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — load-bearing render strings	5	doctor-source-helper

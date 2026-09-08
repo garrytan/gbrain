@@ -184,13 +184,30 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
  */
 export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
   try {
-    const { watchedFilesDrifted } = await import('../../../core/eval/drift-watch.ts');
-    // Working tree vs HEAD (uncommitted retrieval changes). The fuller
+    const { watchedFilesDrifted, resolveGbrainSourceRoot } = await import('../../../core/eval/drift-watch.ts');
+    // Working tree vs HEAD (uncommitted retrieval changes) in gbrain's OWN
+    // source checkout — never process.cwd(), which is whatever repo the
+    // operator (or the serving process) happens to stand in. The fuller
     // version (vs the commit of the last published eval) is wired when
-    // eval_results lands; today we just probe for uncommitted retrieval
-    // changes so the operator sees them before re-running evals.
-    const repoRoot = process.cwd();
+    // eval_results lands.
+    const repoRoot = resolveGbrainSourceRoot();
+    if (repoRoot === null) {
+      return {
+        name: 'eval_drift',
+        status: 'ok',
+        message: 'Not applicable — gbrain is running as an installed package, not a source checkout; retrieval code changes arrive as version bumps (gbrain --version), not as a git diff.',
+      };
+    }
     const drifted = watchedFilesDrifted(repoRoot);
+    if (drifted === null) {
+      return {
+        name: 'eval_drift',
+        status: 'ok',
+        // No path here: this check is remote-reachable (run_doctor) and the
+        // server's absolute source root is not the caller's business.
+        message: 'Could not probe retrieval drift (git unavailable or the gbrain source root is not a git work tree).',
+      };
+    }
     if (drifted.length === 0) {
       return {
         name: 'eval_drift',

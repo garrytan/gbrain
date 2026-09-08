@@ -154,6 +154,22 @@ export interface ExtractAtomsDrainResult {
   last_error: string | null;
 }
 
+/**
+ * #3813: the Minion handler's provider_failure throw IS the job's error_text
+ * once it dead-letters, so it carries the representative `last_error` (already
+ * secret-redacted + bounded above) — a missing provider key is a one-line
+ * diagnosis instead of an opaque batches/remaining.
+ */
+export function formatDrainProviderFailure(
+  result: Pick<ExtractAtomsDrainResult, 'batches' | 'remaining' | 'last_error'>,
+): string {
+  return (
+    `extract-atoms-drain: all provider calls failed this batch ` +
+    `(batches=${result.batches}, remaining=${result.remaining ?? '?'})` +
+    `${result.last_error ? `; last error: ${result.last_error}` : ''} — retrying`
+  );
+}
+
 export async function runExtractAtomsDrain(
   deps: ExtractAtomsDrainDeps,
   opts: ExtractAtomsDrainOpts,

@@ -8,9 +8,10 @@
  * Never import from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
 import { OperationError } from './contract.ts';
 import { routeCodeIntelScope } from './context.ts';
+import type { WalkResult } from '../code-intel/recursive-walk.ts';
 import {
   CODE_CALLERS_DESCRIPTION,
   CODE_CALLEES_DESCRIPTION,
@@ -155,9 +156,37 @@ const code_refs: Operation = {
 
 // --- v0.34 W3: recursive code_blast + code_flow ---
 
+/**
+ * Stamp the same typed readiness contract code_callers/callees/def/refs carry
+ * onto a recursive walk result. Without it a bare `{result:"not_found"}` (or an
+ * `ok` walk with zero nodes) conflates a genuine miss with an unbuilt or
+ * still-indexing graph, and agents read absence of evidence as "no blast
+ * radius". Runs AFTER the traversal cache so readiness is never cached.
+ * `unsupported_language` is left untouched — it says nothing about the graph.
+ * `ambiguous` (2+ candidates) short-circuits to ready without a query.
+ */
+async function attachWalkReadiness(ctx: OperationContext, walk: WalkResult, sourceId: string | undefined) {
+  if (walk.result === 'unsupported_language') return walk;
+  const count = walk.result === 'ok'
+    ? walk.depth_groups.reduce((total, group) => total + group.nodes.length, 0)
+    : walk.result === 'ambiguous' ? walk.candidates.length : 0;
+  const { resolveCodeReadiness } = await import('../code-graph-readiness.ts');
+  // not_found = the seed symbol never resolved → symbol grain; anything else
+  // is about edge resolution → edge grain. Trust threaded like the siblings.
+  const readiness = await resolveCodeReadiness(ctx.engine, {
+    kind: walk.result === 'not_found' ? 'symbol' : 'edge', count, sourceId, remote: ctx.remote,
+  });
+  return {
+    ...walk,
+    status: readiness.status,
+    ready: readiness.ready,
+    ...(readiness.scoped_source_id ? { scoped_source_id: readiness.scoped_source_id } : {}),
+  };
+}
+
 const code_blast: Operation = {
   name: 'code_blast',
-  description: 'BEFORE editing any function, run code_blast with the symbol name to surface every transitive caller grouped by depth (direct → 2-hop → 3-hop). Use this during plan-mode to size the change. Returns up to 200 nodes. Returns: {result, depth_groups?, truncation?, cycles_detected?, did_you_mean?, candidates?}. Example ok: {result:"ok", depth_groups:[{depth:1, nodes:[{symbol,chunk_id}], confidence:0.77}], truncation:"none"}.',
+  description: 'BEFORE editing any function, run code_blast with the symbol name to surface every transitive caller grouped by depth (direct → 2-hop → 3-hop). Use this during plan-mode to size the change. Returns up to 200 nodes. Trust an empty/not_found result only when ready=true; ready=false means impact is unknown and requires a safe fallback. Returns: {result, status, ready, depth_groups?, truncation?, cycles_detected?, did_you_mean?, candidates?}. Example ok: {result:"ok", status:"ready", ready:true, depth_groups:[{depth:1, nodes:[{symbol,chunk_id}], confidence:0.77}], truncation:"none"}.',
   params: {
     symbol: { type: 'string', required: true, description: 'Bare or qualified symbol name (e.g. "performSync" or "src/foo::performSync")' },
     depth: { type: 'number', description: 'Hop cap (default 5, max 8)' },
@@ -179,7 +208,7 @@ const code_blast: Operation = {
     // exactly preserving pre-fix local behavior.
     const { sourceId: scopedSourceId } = await routeCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sourceId = scopedSourceId ?? ctx.sourceId;
-    return getCachedOrCompute(
+    const walk = await getCachedOrCompute(
       ctx.engine,
       { symbol_qualified: symbol, depth, source_id: sourceId },
       () => runRecursiveWalk(ctx.engine, symbol, {
@@ -190,6 +219,7 @@ const code_blast: Operation = {
         exact,
       }),
     );
+    return attachWalkReadiness(ctx, walk, sourceId);
   },
   cliHints: { name: 'code_blast', hidden: true },
 };
@@ -215,7 +245,7 @@ const code_flow: Operation = {
     // Single trust+grant resolver (see code_blast).
     const { sourceId: scopedSourceId } = await routeCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sourceId = scopedSourceId ?? ctx.sourceId;
-    return getCachedOrCompute(
+    const walk = await getCachedOrCompute(
       ctx.engine,
       { symbol_qualified: symbol + ':flow', depth, source_id: sourceId },
       () => runRecursiveWalk(ctx.engine, symbol, {
@@ -226,6 +256,7 @@ const code_flow: Operation = {
         exact,
       }),
     );
+    return attachWalkReadiness(ctx, walk, sourceId);
   },
   cliHints: { name: 'code_flow', hidden: true },
 };

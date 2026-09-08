@@ -166,19 +166,39 @@ function realEnv(env: Record<string, string | undefined>): Record<string, string
 }
 
 /**
+ * Explicit tier→file-plane pin key map (utility→expansion_model, everything
+ * else→chat_model): an unmapped future caller mislabeling the warn would be a
+ * silent doc bug with a ternary.
+ */
+const PIN_KEY_BY_TIER: Record<ModelTier, 'expansion_model' | 'chat_model'> = {
+  utility: 'expansion_model', reasoning: 'chat_model', deep: 'chat_model', subagent: 'chat_model',
+};
+
+/**
  * Resolve the default model for a tier, honoring which provider keys are
  * actually present. When `env` is passed it is used EXCLUSIVELY (no config
  * read — hermetic for tests and pre-merged callers); when omitted, the merged
- * env is computed from the file-plane config + process.env.
+ * env is computed from the file-plane config + process.env, and a SERVABLE
+ * file-plane pin for the tier is consulted below the key walk (#3813).
  */
 export function resolveTierDefault(
   tier: ModelTier,
   env?: Record<string, string | undefined>,
 ): string {
-  const merged = env ? realEnv(env) : mergedProviderEnv(throwSafeLoadConfig(), process.env);
+  const fileCfg = env ? null : throwSafeLoadConfig();
+  const merged = env ? realEnv(env) : mergedProviderEnv(fileCfg, process.env);
   for (const entry of PROVIDER_TIER_DEFAULTS) {
     if (merged[entry.envKey]) return entry.tiers(tier);
   }
+  // #3813: no anthropic/openai key. PROVIDER_TIER_DEFAULTS knows only those
+  // two, so a single-provider install (deepseek, openrouter, together, ...)
+  // used to land on the Anthropic floor and every bare-default caller
+  // (extract_atoms, facts classify, page-summary, ...) called a provider with
+  // no key. A servable pin for this tier beats the floor. Sits BELOW the key
+  // walk so keyed installs route byte-for-byte as before.
+  const rawPin = fileCfg?.[PIN_KEY_BY_TIER[tier]]?.trim();
+  const pin = rawPin ? (DEFAULT_ALIASES[rawPin] ?? rawPin) : undefined;
+  if (pin && providerKeyReady(pin, merged)) return pin;
   return TIER_DEFAULTS[tier];
 }
 
@@ -250,11 +270,6 @@ function resolveEffectiveModelForTier(
     if (providerKeyReady(fullPin, merged)) return { model: fullPin, source: 'file_pin' };
     if (!_unservablePinWarningsEmitted.has(fullPin)) {
       _unservablePinWarningsEmitted.add(fullPin);
-      // Explicit tier→config-key map: an unmapped future caller mislabeling
-      // the warn would be a silent doc bug with a ternary.
-      const PIN_KEY_BY_TIER: Record<ModelTier, string> = {
-        utility: 'expansion_model', reasoning: 'chat_model', deep: 'chat_model', subagent: 'chat_model',
-      };
       // A prefix-less pin is a DIFFERENT problem than a missing key — saying
       // "no usable provider key" for `chat_model: "claude-sonnet-4-6"` sends
       // the user hunting for a key problem they may not have.

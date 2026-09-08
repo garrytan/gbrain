@@ -27,6 +27,7 @@ import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
 import type { Operation, OperationContext } from '../../operations.ts';
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
+import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
@@ -304,7 +305,16 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           sourceId: opts.sourceId,
           deferEmbeds: opts.deferEmbeds,
         });
-        const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        const raw = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        // Same order the MCP dispatchers keep: normalize the optional-param
+        // absent idioms (`null`, `''` on a string) FIRST — the validator's
+        // header calls this load-bearing — then validate, so a missing
+        // required param (or wrong type / unknown enum) is named back to the
+        // model instead of crashing inside the handler, and `since: ""` never
+        // reaches a handler raw.
+        const params = normalizeOptionalParams(op, raw);
+        const validationError = validateParams(op, params);
+        if (validationError) throw new Error(`${toolName}: ${validationError}`);
         return op.handler(opCtx, params);
       },
     };

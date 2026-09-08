@@ -26,6 +26,7 @@ import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descr
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
+  assertExplicitSourceLive,
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
   enforceClientSlugFence,
@@ -126,6 +127,8 @@ const get_page: Operation = {
     // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
     // read sees pages in `federated: true` sources, matching search/query.
     const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     const fuzzyScope = sourceOpts;
 
     // #4352 remediation: untrusted callers never read `visibility: private`
@@ -1275,9 +1278,14 @@ const list_pages: Operation = {
     // #3242 / #4400: federatedSearchScope so unqualified listing spans
     // federated sources (same visibility set as search / get_page); an
     // explicit per-call source_id (including '__all__') wins, same contract
-    // as search/query's sourceIdParam.
-    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    // as search/query's sourceIdParam. parseSourceIdParam (same as get_page)
+    // rejects whitespace/malformed/non-string ids loudly instead of letting
+    // them silently return [] or, for the CLI's `--source-id ""`, widen to
+    // every source.
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'list_pages', { allowAll: true });
     const scope = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     // #4352 remediation: untrusted listing never enumerates
     // `visibility: private` pages (slugs + titles are the leak surface here).
     // Composes with the #4400 per-call source_id and the v0.34.1 grant scope

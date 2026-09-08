@@ -2256,7 +2256,7 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Gmail + Calendar + Contacts (native)**: the google source kind syncs threads, events, and contacts through your own OAuth client and runs the open-loop engine on top (`gbrain waiting`). Setup: [`docs/guides/google-connect.md`](docs/guides/google-connect.md); recipes: [`recipes/email-to-brain.md`](recipes/email-to-brain.md), [`recipes/calendar-to-brain.md`](recipes/calendar-to-brain.md).
 - **Email + calendar (webhooks)**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: a dozen providers covered — Voyage (default: `voyage-4` @ 1024d), OpenAI, OpenRouter, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy, plus ZeroEntropy (deprecated — hosted API ends 2026-09-04). Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
-- **Rerankers**: Voyage `rerank-2.5` hosted (the default; reranking is on in `balanced` and `tokenmax` modes, same `VOYAGE_API_KEY` as embeddings), ZeroEntropy `zerank-2` (deprecated — hosted API ends 2026-09-04; an explicit config short-circuits past that date), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted zerank weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
+- **Rerankers**: Voyage `rerank-2.5` hosted (the default; reranking is on in `balanced` and `tokenmax` modes, same `VOYAGE_API_KEY` as embeddings; the preview `rerank-3` / `rerank-3-lite` are selectable with `gbrain config set search.reranker.model voyage:rerank-3`), ZeroEntropy `zerank-2` (deprecated — hosted API ends 2026-09-04; an explicit config short-circuits past that date), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted zerank weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
 - **Credential vault + gateway**: `gbrain creds` manages OAuth and API credentials in a local vault ([`recipes/credential-gateway.md`](recipes/credential-gateway.md)); agent-side vault-aware secret distribution: [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
 - **Memorable (procedural memory)**: optional, off by default. Your brain remembers *what* happened; Memorable makes your agent remember *how* — finished sessions become replayable procedures stored on your machine (in a standalone local store, or inside your brain database if you opt in), recalled when a similar task comes back. See the section below, and [`docs/memorable-agents.md`](docs/memorable-agents.md) for the agent-facing detail.
@@ -2814,7 +2814,9 @@ Reports (JSON `schema_version: 1`): the effective engine vs the config-file
 engine (they can differ under a transient env URL), `db_url_source`, an
 env-shadow note when a cwd-.env `DATABASE_URL` is being excluded by the
 cwd-.env guard (gbrain never adopts a `DATABASE_URL` that Bun auto-loaded
-from the working directory's `.env`; with the precedence note when both `GBRAIN_DATABASE_URL` and
+from the working directory's `.env` family: `.env`, `.env.local`, and the
+`.env.<NODE_ENV>` / `.env.<NODE_ENV>.local` variants for `development`,
+`production` and `test`; with the precedence note when both `GBRAIN_DATABASE_URL` and
 `DATABASE_URL` are set), redacted URLs only, and — on Postgres — a
 zero-round-trip pooler block (Supabase pooler detection, prepared-statement
 resolution, pool sizes, direct/session-pooler derivability). `--brain <id>`
@@ -3876,7 +3878,9 @@ Above the triage cascade sit the execution dials:
   backfilled at phase end by a bounded pass over just the pages the phase
   wrote — never a source-wide sweep). A response that fails any check automatically
   falls back to the classic agentic loop **in the same job** — no lost work,
-  no resubmission. Typical effect: 10+ provider round-trips per transcript
+  no resubmission. The oneshot attempt and its fallback calls are both paid
+  provider work and both are included in synthesis token/spend telemetry.
+  Typical effect: 10+ provider round-trips per transcript
   (up to the 16-turn default cap, more on raised `max_turns`) → 1. Revert
   dial: `gbrain config set dream.synthesize.mode agentic`.
 - `dream.synthesize.link_manifest` (default on) — the zero-embed
@@ -3892,7 +3896,9 @@ Above the triage cascade sit the execution dials:
 Reading the phase report (`details.synthesis`): `mode`, `oneshot_jobs` /
 `fallback_jobs` / `agentic_jobs` + a `fallback_reasons` histogram (a rising
 fallback rate means the model is failing the output contract — check the
-top reason before considering the agentic revert), `queue_wait_ms_p50/p95`
+top reason before considering the agentic revert; `length` includes malformed
+responses whose output usage reached the requested output cap even when the
+provider stop reason was ambiguous), `queue_wait_ms_p50/p95`
 and `child_runtime_ms_p50/p95` (a slow-but-healthy drain is visible instead
 of indistinguishable from a stuck one), and `dead_jobs`/`degraded`. A run
 with any non-completed child does NOT stamp the cooldown, so the next
@@ -5110,7 +5116,14 @@ ngrok http 3131 --url your-brain.ngrok.app
 
 Your OAuth issuer URL becomes `https://your-brain.ngrok.app`. The MCP SDK's
 router exposes the spec-compliant discovery endpoint at
-`/.well-known/oauth-authorization-server`.
+`/.well-known/oauth-authorization-server`. The protected resource is the
+`/mcp` endpoint itself: its RFC 9728 metadata is served at
+`/.well-known/oauth-protected-resource/mcp` (the bare
+`/.well-known/oauth-protected-resource` root stays as an alias for older
+clients), and every 401 carries `WWW-Authenticate: Bearer
+resource_metadata="<that URL>"`, so an MCP client pointed at
+`https://your-brain.ngrok.app/mcp` finds the token endpoint from a fresh
+connection without any pasted URLs.
 
 ### 4. Scopes and localOnly
 
@@ -5431,7 +5444,10 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   pages; both present ⇒ both arms run.
 - `since`: ISO 8601 date/datetime — filters the FACTS arm only in v1. (The
   reference implementation also accepts relative phrases like `"8 hours ago"`
-  as a convenience; only ISO 8601 is part of the frozen contract.)
+  as a convenience; only ISO 8601 is part of the frozen contract.) The window
+  is measured on event time (`valid_from`, falling back to `created_at`) and
+  composes with `entity` and `session_id` in the same query, before the
+  per-arm limit. An unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
 - `budget_tokens`: SERVER-side packing — facts pack first (limit-capped
   one-liners, so search-arm starvation is bounded), search results take the

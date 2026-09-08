@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { execFileSync, spawnSync } from 'child_process';
+import { execFileSync, spawn, spawnSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync, chmodSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join, resolve } from 'path';
@@ -173,6 +173,80 @@ describe('run-unit-parallel.sh timeout escalation contract', () => {
     const source = readFileSync(PARALLEL_SH_SRC, 'utf-8');
     expect(source).toContain('[ "$rc" = "124" ] || [ "$rc" = "137" ]');
   });
+});
+
+describe('run-unit-parallel.sh operator-interrupt cleanup', () => {
+  it('kills an interrupt-resistant shard when its terminal group receives SIGINT', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-parallel-interrupt-'));
+    let child: ReturnType<typeof spawn> | undefined;
+    let bunPid = 0;
+    try {
+      mkdirSync(join(root, 'scripts', 'lib'), { recursive: true });
+      mkdirSync(join(root, 'test'), { recursive: true });
+      mkdirSync(join(root, 'bin'), { recursive: true });
+      for (const s of ['run-unit-parallel.sh', 'run-unit-shard.sh', 'run-serial-tests.sh']) {
+        copyFileSync(resolve(REPO_ROOT, 'scripts', s), join(root, 'scripts', s));
+        chmodSync(join(root, 'scripts', s), 0o755);
+      }
+      copyFileSync(TESTENV_SH_SRC, join(root, 'scripts', 'lib', 'test-env.sh'));
+      writeFileSync(join(root, 'test', 'hang.test.ts'), '// discovered by the shard wrapper\n');
+
+      const fakeBun = join(root, 'bin', 'bun');
+      writeFileSync(fakeBun, `#!/usr/bin/env bash
+[ "${'$'}{1:-}" = "test" ] || exit 0
+echo "$$" > "${join(root, 'bun.pid')}"
+trap '' INT TERM
+while true; do sleep 1; done
+`);
+      chmodSync(fakeBun, 0o755);
+
+      child = spawn('bash', [join(root, 'scripts', 'run-unit-parallel.sh'), '--shards', '1'], {
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: `${join(root, 'bin')}:${process.env.PATH ?? ''}`,
+          GBRAIN_TEST_NO_MEM_ADAPT: '1',
+          GBRAIN_TEST_SHARD_TIMEOUT: '300',
+        },
+        detached: true,
+        stdio: 'ignore',
+      });
+
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(join(root, 'bun.pid')) && Date.now() < deadline) {
+        await Bun.sleep(25);
+      }
+      expect(existsSync(join(root, 'bun.pid'))).toBe(true);
+      bunPid = Number(readFileSync(join(root, 'bun.pid'), 'utf8').trim());
+
+      const proc = child;
+      const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+        proc.once('exit', (code, signal) => resolveExit({ code, signal }));
+        process.kill(-proc.pid!, 'SIGINT');
+      });
+      // handle_interrupt runs cleanup_children then `exit 130` — a raw SIGINT
+      // death would mean the trap never ran (cleanup skipped).
+      expect(exit.code).toBe(130);
+
+      const goneDeadline = Date.now() + 2_000;
+      let liveState = '';
+      do {
+        const probe = spawnSync('ps', ['-o', 'stat=', '-p', String(bunPid)], { encoding: 'utf8' });
+        liveState = (probe.stdout || '').trim();
+        if (!liveState || liveState.startsWith('Z')) break;
+        await Bun.sleep(25);
+      } while (Date.now() < goneDeadline);
+      // A zombie owns no memory and only awaits launchd reaping; any other
+      // state means the cancelled suite is still doing or retaining work.
+      expect(!liveState || liveState.startsWith('Z')).toBe(true);
+    } finally {
+      // Reap the detached tree BEFORE the fixture dir goes: a failed assertion
+      // above must not leave the fake-bun loop (its own process group) alive.
+      if (child?.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }
+      if (bunPid) { try { process.kill(bunPid, 'SIGKILL'); } catch { /* already gone */ } }
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
 
 describe('run-unit-parallel.sh no-timeout-binary fallback (rc from shard wait, not watchdog teardown)', () => {

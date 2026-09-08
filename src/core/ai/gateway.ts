@@ -59,6 +59,7 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -2917,7 +2918,27 @@ export async function expand(query: string): Promise<string[]> {
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
-    if (recipe.implementation !== 'openai-compatible') {
+    if (recipe.implementation === 'claude-cli') {
+      // claude-cli is NOT structured-output capable, despite being a 'native'
+      // tier recipe. ClaudeCliLanguageModel.doGenerate ignores
+      // `options.responseFormat` entirely (it renders prompt → `claude
+      // --print` subprocess → text), so generateObject's json_schema request
+      // is dropped on the floor and the CLI answers with markdown-fenced
+      // JSON as ordinary text. generateObject (ai@6) then throws
+      // NoObjectGeneratedError on the fenced text; the outer catch swallows
+      // it without a warn line (only AIConfigError is reported) and expansion
+      // silently degrades to the bare query — on EVERY call, after paying for
+      // the subprocess round trip. The native branch below has no viaText
+      // fallback to catch it.
+      //
+      // The schemaless text path handles this exact shape: parseLlmJson
+      // strips ```json fences (src/core/llm-json.ts) before the
+      // ExpansionSchema validation. Same recovery the openai-compatible
+      // branches already rely on, reached by implementation rather than by
+      // capability flag because claude-cli's transport — not its model — is
+      // what cannot carry a schema.
+      expansions = await viaText();
+    } else if (recipe.implementation !== 'openai-compatible') {
       // Native providers (Anthropic, OpenAI, Google) support generateObject's
       // structured output natively — unchanged path.
       // (Typed structurally: ReturnType<GenerateObjectFn> erases the schema
@@ -3187,18 +3208,25 @@ export interface ChatToolDef {
  * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
  */
 /**
- * Default per-call max output tokens. Thinking-by-default Claude 5 models
- * (`anthropic:claude-*-5`, including routed forms like
- * `openrouter:anthropic/claude-*-5`) burn a large chunk of the budget on internal
- * reasoning before emitting any text, so a 4096 default leaves them with empty
- * final text on the subagent tool loop. Give those models headroom; providers
- * bill actual tokens, not the cap, so it is free for the models that don't use
- * it. Everything else keeps 4096 on purpose: raising the default blanket-wide
- * would exceed some openai-compat providers' hard max-output caps (DeepSeek
- * 8192, gpt-4o 16384) and 400 on them — a regression for exactly the
- * non-Anthropic subagent users the gateway loop exists to serve.
+ * Default per-call max output tokens. Thinking-by-default models burn a large
+ * chunk of the budget on internal reasoning before emitting any text, so a
+ * 4096 default leaves them with empty final text (finish_reason "length") on
+ * the subagent tool loop and on any chat()/toolLoop() caller that omits
+ * maxTokens. Give those models headroom; providers bill actual tokens, not the
+ * cap, so it is free for the models that don't use it. Everything else keeps
+ * 4096 on purpose: raising the default blanket-wide would exceed some
+ * openai-compat providers' hard max-output caps (gpt-4o 16384) and 400 on
+ * them — a regression for exactly the non-Anthropic subagent users the
+ * gateway loop exists to serve.
+ *
+ * "Thinking-by-default" is decided by `isThinkingModel` below: Claude 5 by
+ * name, or any recipe whose chat touchpoint declares `thinking_by_default`
+ * (#4172, e.g. DeepSeek v4). The former "DeepSeek 8192" caveat here described
+ * the retired `deepseek-chat`; v4 accepts and honors a 32000 cap (verified
+ * 2026-09-02: max_tokens=32000 returned 19913 output tokens, finish_reason
+ * "stop"; the same prompt at 8192 truncated with finish_reason "length").
  */
-const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 export const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
 // Matches Claude 5-family ids behind ANY provider-prefix chain
 // (`anthropic:claude-sonnet-5`, `openrouter:anthropic/claude-sonnet-5`,
@@ -3209,10 +3237,26 @@ const THINKING_BY_DEFAULT_MODEL_RE = /(?:^|[:/])(?:anthropic[:/])?claude-[a-z]+-
 export function isThinkingByDefaultModel(modelStr: string | undefined): boolean {
   return !!modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr);
 }
-function defaultMaxOutputTokens(modelStr: string | undefined): number {
-  return isThinkingByDefaultModel(modelStr)
-    ? THINKING_MODEL_MAX_OUTPUT_TOKENS
-    : DEFAULT_MAX_OUTPUT_TOKENS;
+/**
+ * Name-matched Claude 5 OR recipe-declared `thinking_by_default` (#4172).
+ * Keyed on the declared capability rather than a model-name regex so a
+ * provider's model renames can't silently drop the headroom; `think`'s
+ * maxOutputTokensFor makes the same check. Fail-closed: unknown providers and
+ * chat-less recipes (getProviderCapabilities throws) count as non-thinking.
+ * Shared with the subagent handler's resolveMaxOutputTokens so the two
+ * output-cap defaults cannot drift.
+ */
+export function isThinkingModel(modelStr: string | undefined): boolean {
+  if (isThinkingByDefaultModel(modelStr)) return true;
+  if (!modelStr) return false;
+  try {
+    return getProviderCapabilities(modelStr).supportsThinking;
+  } catch {
+    return false;
+  }
+}
+export function defaultMaxOutputTokens(modelStr: string | undefined): number {
+  return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 /**
