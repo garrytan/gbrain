@@ -69,7 +69,10 @@ export const ollama: Recipe = {
       supports_tools: false,
       supports_subagent_loop: false,
       supports_prompt_cache: false,
-      supports_structured_outputs: false,
+      // Ollama has supported structured output natively since 0.5
+      // (format / response_format json_schema). Enabling this lets generateObject
+      // send a constrained JSON schema to /v1, forcing valid JSON.
+      supports_structured_outputs: true,
       // Reasoning-by-default local families spend output budget on internal
       // reasoning before emitting answer text, and Ollama bills it against
       // `max_tokens` — so callers that size output caps must grant headroom

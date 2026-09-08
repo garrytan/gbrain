@@ -3829,6 +3829,58 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
   }, {} as Record<string, any>);
 }
 
+/**
+ * Schema-constrained JSON generation for call sites that need reliable
+ * structured output from a chat provider (e.g. facts extraction). Resolves the
+ * model exactly like chat(), then routes through the AI SDK's generateObject
+ * with the given JSON Schema. THROWS when the resolved recipe does not declare
+ * structured-output support — callers are expected to fall back to a
+ * chat()+parse path.
+ */
+export async function generateObjectStructured(opts: {
+  model?: string;
+  system?: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+  schemaName: string;
+  schemaDescription?: string;
+  maxOutputTokens?: number;
+  abortSignal?: AbortSignal;
+}): Promise<{
+  object: Record<string, unknown>;
+  usage: { input_tokens: number; output_tokens: number };
+}> {
+  const modelStr = opts.model ?? getChatModel();
+  const { model, recipe } = await resolveChatProvider(modelStr);
+  // Mirror expand()'s capability gate: native providers (anthropic, native-
+  // openai, google) always support generateObject; openai-compatible backends
+  // (ollama, groq, …) only when the recipe declares supports_structured_outputs.
+  const supported =
+    recipe.implementation !== 'openai-compatible' || recipeSupportsStructuredOutputs(recipe);
+  if (!supported) {
+    throw new Error(`structured output not supported for provider "${recipe.id}"`);
+  }
+  const result = await _generateObjectTransport({
+    model,
+    // AI SDK v6 requires a Schema (carrying the schema symbol), not a plain
+    // object — a bare object is treated as a thunk and called, throwing
+    // "schema is not a function". Wrap with the SDK's jsonSchema() helper
+    // (same pattern as toAISDKTools below).
+    schema: jsonSchema(opts.schema as any),
+    schemaName: opts.schemaName,
+    schemaDescription: opts.schemaDescription,
+    system: opts.system,
+    prompt: opts.prompt,
+    maxOutputTokens: opts.maxOutputTokens,
+    abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
+  });
+  const usage = normalizeSdkUsage((result as any).usage ?? {});
+  return {
+    object: ((result as any).object ?? {}) as Record<string, unknown>,
+    usage: { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens },
+  };
+}
+
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
