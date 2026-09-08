@@ -1,11 +1,11 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterAll } from 'bun:test';
 import { versionRoot, maybeAttachVersionSuffixHint } from '../src/core/ai/base-url-probe.ts';
 import {
   probeModel,
   probeEmbeddingReachability,
   probeRerankerReachability,
 } from '../src/commands/models.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { AIGatewayConfig } from '../src/core/ai/types.ts';
 
 /**
@@ -52,6 +52,16 @@ type RouteSpec = number | 'error' | { auth: number; noauth: number };
 
 const LITELLM_CHAT = 'litellm:gpt-4o';
 const LITELLM_EMBED = 'litellm:text-embedding-3-large';
+
+// This file points the gateway at a litellm embedding model on
+// localhost:4000 (probeEmbeddingReachability, below). configureGateway is
+// PROCESS-GLOBAL and nothing here restored it, so every later file in the same
+// shard process inherited that embedding route. Nothing listens on :4000 in a
+// test run, so a downstream file that actually embeds — sweep-writeback-corpus
+// ingesting a writeback turn — blocked until the transport gave up and then
+// reported zero work done, a shard-composition-dependent failure that moves
+// whenever the LPT partition changes.
+afterAll(() => resetGateway());
 const LITELLM_RERANK = 'litellm:rerank-x';
 
 function cfg(base: string): AIGatewayConfig {
