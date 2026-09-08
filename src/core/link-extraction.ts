@@ -820,8 +820,15 @@ export async function extractPageLinks(
   // synthetic `nullResolver`; that pattern broke once the bare-wikilink
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
-  if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack);
+  // Pack-declared `frontmatter_links` are an explicit operator opt-in, so
+  // they run even when the caller suppresses the built-in field map. Pre-fix
+  // a DB-born page (extract_atoms, synthesize_concepts) was swept with
+  // `skipFrontmatter: true`, stamped `links_extracted_at`, and its
+  // pack-declared edges never appeared until someone hand-ran
+  // `gbrain extract links --include-frontmatter`.
+  const packOnly = Boolean(opts.skipFrontmatter);
+  if (!packOnly || (pack && pack.frontmatter_links.length > 0)) {
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack, packOnly);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1365,6 +1372,7 @@ export async function extractFrontmatterLinks(
   resolver: SlugResolver,
   globalBasename = false,
   pack?: LinkExtractionPack | null,
+  packOnly = false, // skip FRONTMATTER_LINK_MAP; only pack-declared rules run
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
@@ -1391,7 +1399,7 @@ export async function extractFrontmatterLinks(
     }
   }
 
-  for (const mapping of [...FRONTMATTER_LINK_MAP, ...packMappings]) {
+  for (const mapping of [...(packOnly ? [] : FRONTMATTER_LINK_MAP), ...packMappings]) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];

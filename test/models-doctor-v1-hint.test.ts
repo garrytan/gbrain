@@ -1,11 +1,19 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import { versionRoot, maybeAttachVersionSuffixHint } from '../src/core/ai/base-url-probe.ts';
 import {
   probeModel,
   probeEmbeddingReachability,
   probeRerankerReachability,
 } from '../src/commands/models.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+
+// The probe tests reconfigure the module-global gateway (litellm embedding at
+// localhost:4000). The preload's beforeEach only re-applies the baseline when
+// the gateway is UNconfigured, so without this reset the litellm config leaks
+// into every later file in the same shard (sweep-writeback-corpus timed out
+// its 5s budget retrying embeds against a dead port once LPT re-sharding put
+// the two files together).
+afterEach(() => resetGateway());
 import type { AIGatewayConfig } from '../src/core/ai/types.ts';
 
 /**
