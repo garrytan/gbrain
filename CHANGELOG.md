@@ -2,6 +2,53 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.6.0] - 2026-09-08
+
+**A preference or standing instruction can now survive a tool call at the end
+of a Claude Code turn.**
+
+When ambient writeback is enabled, Claude Code records tool results in entries
+that also carry a user role. GBrain previously treated the newest tool result as
+the person's prompt, then rejected its short placeholder before the real prompt
+could be banked. A large tool result could also push the prompt outside the fast
+transcript scan and suppress the existing wider retry. GBrain now identifies
+human text from the transcript structure, so the real prompt reaches the same
+notability, privacy, and extraction checks it already used.
+
+### How to use it
+
+Existing installations with `memory.auto_writeback: salient` benefit after the
+upgrade. There is no migration or new setting. Writeback remains opt-in, and its
+existing salience gates still decide which turns are worth keeping.
+
+### What you would see in a concrete example
+
+| End of the turn | Before | Now |
+|---|---|---|
+| Substantive preference, then a small tool result | Tool placeholder rejected as too short | Human preference is banked |
+| Substantive preference, then more than 128 KB of tool output | Prompt reported missing | Bounded wider scan finds the prompt |
+| Short thanks, question-only turn, bulk paste, or duplicate | Skipped | Still skipped |
+
+### Things to watch
+
+Transcript archives still retain tool placeholders so conversation history does
+not lose execution context. The prompt selector tracks human text separately;
+it does not infer authorship from text prefixes and does not bank tool output as
+a user preference. Secret scanning, source routing, and the two-second Stop-hook
+budget are unchanged.
+
+### Itemized changes
+
+- **Ambient writeback:** Claude transcript parsing now exposes the indexes of
+  structurally genuine user turns while preserving every archival placeholder.
+  The Stop hook selects the newest such turn and uses the existing 2 MB retry
+  when the 128 KB tail contains only tool results.
+- **Regression coverage:** Tests pin genuine prompts followed by tool results,
+  mixed text and result blocks, the large-output retry, and unchanged short,
+  question-only, bulk-paste, and idempotency controls.
+- **Documentation:** The transcript parser and Stop-hook writeback contracts now
+  describe structural prompt selection and bounded retry behavior.
+
 ## [0.48.5.0] - 2026-09-07
 
 **The community fix wave: 57 contributor pull requests adopted or reworked
