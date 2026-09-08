@@ -381,6 +381,33 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
   return files;
 }
 
+/**
+ * Slug → real on-disk relPath, for every markdown file under a brain dir.
+ *
+ * A slug is NOT a path. `pathToSlug` lowercases each segment and slugifies
+ * it, so rebuilding a file's path as `join(dir, slug + '.md')` only finds
+ * files whose names already happen to be slugs — `Meeting Notes.md` slugs to
+ * `meeting-notes`, and `Report.md` only appears to round-trip on a
+ * case-insensitive filesystem. Every per-slug extractor resolves through this
+ * index instead, so a legitimately-named file is never mistaken for a
+ * deleted one.
+ *
+ * Collisions are possible (two files can slug to one slug). The file whose
+ * name IS the slug wins, which is exactly what the old reconstructed path
+ * found; otherwise the first walked entry wins, so the choice never depends
+ * on directory-read order.
+ */
+export function buildSlugPathIndex(
+  files: ReadonlyArray<{ relPath: string }>,
+): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const file of files) {
+    const slug = pathToSlug(file.relPath);
+    if (!index.has(slug) || file.relPath === `${slug}.md`) index.set(slug, file.relPath);
+  }
+  return index;
+}
+
 // --- Link extraction ---
 
 /**
@@ -1284,7 +1311,11 @@ async function extractForSlugs(
   const stdoutQuiet = jsonMode || quiet;
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
-  const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
+  // Same real-path resolution the sync hooks use (see buildSlugPathIndex).
+  // Rebuilding `slug + '.md'` here made the cycle's incremental extract treat
+  // every non-slug filename as a deleted file and skip it without a word.
+  const slugToPath = buildSlugPathIndex(allFiles);
+  const allSlugs = new Set(slugToPath.keys());
 
   const doLinks = mode === 'links' || mode === 'all';
   const doTimeline = mode === 'timeline' || mode === 'all';
@@ -1375,10 +1406,10 @@ async function extractForSlugs(
       // #1972: bail before doing any work for this slug on abort. Trailing
       // flushLinks/flushTimeline still commit accumulated rows — no torn write.
       if (isAborted(signal)) return;
-      const relPath = slug + '.md';
+      const relPath = slugToPath.get(slug);
+      if (relPath === undefined) return; // deleted file — sync already handled removal
       const fullPath = join(brainDir, relPath);
       try {
-        if (!existsSync(fullPath)) return; // deleted file — sync already handled removal
         const content = readFileSync(fullPath, 'utf-8');
 
         if (doLinks) {
@@ -1603,14 +1634,48 @@ async function extractTimelineFromDir(
 
 // --- Sync integration hooks ---
 
+/**
+ * What a per-slug sync hook actually got done. `created` is the row count
+ * (unchanged reporting); `processed` is the subset of the requested slugs
+ * whose file was found on disk and read successfully.
+ *
+ * The split exists because the watermark stamp lives at the CALL SITE: the
+ * caller may only stamp `links_extracted_at` for slugs the extractor really
+ * read. Stamping the whole requested set marks silently-skipped pages fresh
+ * and hides them from `extract --stale` forever.
+ */
+export interface ExtractForSlugsResult {
+  created: number;
+  processed: string[];
+}
+
+/**
+ * The slugs both sync hooks read, in the order the caller asked for them.
+ * One `links_extracted_at` watermark covers link AND timeline extraction, so
+ * a slug is only fresh when both halves read it.
+ */
+export function slugsSafeToStamp(
+  links: ExtractForSlugsResult,
+  timeline: ExtractForSlugsResult,
+): string[] {
+  const timelineRead = new Set(timeline.processed);
+  return links.processed.filter((slug) => timelineRead.has(slug));
+}
+
 export async function extractLinksForSlugs(
   engine: BrainEngine,
   repoPath: string,
   slugs: string[],
   opts?: { sourceId?: string },
-): Promise<number> {
+): Promise<ExtractForSlugsResult> {
   const allFiles = walkMarkdownFiles(repoPath);
-  const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
+  // Resolve each requested slug to its REAL path (see buildSlugPathIndex).
+  // The old reconstructed path missed any file whose name is not already a
+  // slug: `existsSync` was false, the page was skipped in silence, and the
+  // caller stamped it extracted anyway — so `extract --stale` never came
+  // back for it and the edges were lost for good.
+  const slugToPath = buildSlugPathIndex(allFiles);
+  const allSlugs = new Set(slugToPath.keys());
   // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
   // Markdown→markdown links within one repo always live in the caller's
   // sourceId. Cross-source extraction (rare) would need a per-repo source
@@ -1623,17 +1688,23 @@ export async function extractLinksForSlugs(
   // #3190: pack-aware typing on the sync inline hook too.
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
   let created = 0;
+  // Only a slug whose file was found AND read counts as processed. The
+  // caller stamps the watermark for these and no others, so a silent skip
+  // leaves the page stale and `extract --stale` picks it up next run.
+  const processed: string[] = [];
   for (const slug of slugs) {
-    const filePath = join(repoPath, slug + '.md');
-    if (!existsSync(filePath)) continue;
+    const relPath = slugToPath.get(slug);
+    if (relPath === undefined) continue;
+    const filePath = join(repoPath, relPath);
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename, pack })) {
+      processed.push(slug);
+      for (const link of await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, pack })) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
-    } catch { /* skip */ }
+    } catch { /* skip: unreadable — not processed, stays stale */ }
   }
-  return created;
+  return { created, processed };
 }
 
 export async function extractTimelineForSlugs(
@@ -1641,23 +1712,29 @@ export async function extractTimelineForSlugs(
   repoPath: string,
   slugs: string[],
   opts?: { sourceId?: string },
-): Promise<number> {
+): Promise<ExtractForSlugsResult> {
+  // Real-path resolution, same as extractLinksForSlugs. Both halves come off
+  // one `links_extracted_at` stamp, so both must agree on what was read.
+  const slugToPath = buildSlugPathIndex(walkMarkdownFiles(repoPath));
   // v0.18.0+ multi-source: source-qualify so timeline rows don't fan out
   // across every source containing the slug (the addTimelineEntry's
   // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
   const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
   let created = 0;
+  const processed: string[] = [];
   for (const slug of slugs) {
-    const filePath = join(repoPath, slug + '.md');
-    if (!existsSync(filePath)) continue;
+    const relPath = slugToPath.get(slug);
+    if (relPath === undefined) continue;
+    const filePath = join(repoPath, relPath);
     try {
       const content = readFileSync(filePath, 'utf-8');
+      processed.push(slug);
       for (const entry of extractTimelineFromContent(content, slug)) {
         try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries
       }
-    } catch { /* skip */ }
+    } catch { /* skip: unreadable — not processed, stays stale */ }
   }
-  return created;
+  return { created, processed };
 }
 
 // ─── DB-source extractors (v0.10.3 graph layer) ────────────────────────────
