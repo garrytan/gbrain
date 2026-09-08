@@ -5,13 +5,13 @@ All notable changes to GBrain will be documented in this file.
 ## [0.48.5.1] - 2026-09-08
 
 **Release-notes corrections for 0.48.5.0, a contributor credit, and a privacy
-sweep.** No code changes. Two statements in the 0.48.5.0 notes were wrong and
+sweep.** No behavior changes. Two statements in the 0.48.5.0 notes were wrong and
 are corrected here: concept synthesis on a thinking-by-default model requests
 the gateway's shared thinking-model cap of 32,000 output tokens (the notes said
 8,000), and code pages imported before 0.48.5.0 pick up their file path on the
 next change or on `gbrain reindex-code --force` (the notes named a `sync
---force` flag that does not exist). The reference doc for the importer carried
-the same non-existent flag and is corrected too.
+--force` flag that does not exist). The importer's reference entry, the repair guide, and one `gbrain doctor`
+hint carried the same non-existent flag and are corrected too.
 
 ### Changed
 
@@ -22,17 +22,22 @@ the same non-existent flag and is corrected too.
   --force`; the `sync --force` flag named before does not exist.
 - 0.48.5.0 notes: the open-loops reopen-test bullet credits its contributor
   (#4930, contributed by @arisgysel-design; fixes #4928).
-- Five older entries no longer name a private agent deployment; they say
+- Five older mentions (across two entries) no longer name a private agent deployment; they say
   "your OpenClaw" (or "Garry's OpenClaw" where the origin story needs it), and
   the privacy guard now covers `CHANGELOG.md` and `.tsx` sources so the sweep
   stays done.
+- `gbrain doctor`'s truncated-page hint and `docs/integrations/reliability-repair.md`
+  now describe a re-import that works: edit the page body (whitespace is trimmed
+  before hashing), then `gbrain sync` (commit first on a git-backed brain, or
+  `gbrain sync --working-tree`), or `gbrain import <brain-root> --fresh`; the old
+  text named `sync --force` and a per-slug `import --force`, neither of which exists.
 - TODOS.md: the extract-atoms tombstone follow-up is marked done against #4916
   (migration v146's `extract_atoms_transcript_state` table).
 
 ## To take advantage of 0.48.5.1
 
-Nothing to run. `gbrain upgrade` picks up the version; the change is to the
-release notes and reference docs only.
+Nothing to run. `gbrain upgrade` picks up the version; the changes are to the
+release notes, the reference docs, one doctor hint, and the privacy guard.
 
 **Say to your agent:** *"what changed in gbrain 0.48.5.1"* — your agent reads
 this entry and the corrected 0.48.5.0 notes.
@@ -397,8 +402,8 @@ regression test proven red before the fix.
   @arisgysel-design; fixes #4911)
 - The local CI lane's timeout multiplier reaches the CLI-spawning unit tests
   (#4659), and the open-loops reopen test no longer depends on the database
-  clock advancing between statements (#4928, contributed by
-  @arisgysel-design).
+  clock advancing between statements (#4930, contributed by
+  @arisgysel-design; fixes #4928).
 
 ### Review hardening
 

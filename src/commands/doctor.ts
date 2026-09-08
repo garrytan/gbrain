@@ -2955,7 +2955,7 @@ export async function buildChecks(
       checks.push({
         name: 'markdown_body_completeness',
         status: 'warn',
-        message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import with: gbrain sync --force`,
+        message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import: edit each page body, then run gbrain sync (see docs/integrations/reliability-repair.md)`,
       });
     }
   } catch {

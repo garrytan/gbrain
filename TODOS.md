@@ -232,6 +232,18 @@
   sources (order is now total; the cursor is not). (11) `bootstrap harness`
   resolves the implicit source from its own cwd while the serve resolves from
   its cwd at boot; the shared ladder narrows but does not close the gap.
+- [ ] **P2 — Corrective-release follow-ups (0.48.5.1): two INVESTIGATE items
+  from the adversarial passes on the release-notes fix.** (a) The CLI flag
+  validator accepts `gbrain sync --force` although `sync` never reads it:
+  `scripts/generate-flag-registry.ts` harvests `--[a-z0-9-]*` tokens from
+  source text, and a comment in `src/commands/sync.ts` (`(--force skips …)`)
+  puts `--force` on the sync row. Either harvest from the parsed argv sites
+  only, or strip comments before scanning; then add a registry test that a
+  comment-only token does not register. (b) `scripts/check-privacy.sh
+  --staged` takes filenames from the index but greps their WORKING copies,
+  so a banned name staged for commit and then removed from the working copy
+  (without staging the removal) passes the pre-commit guard. Read the staged
+  blob (`git show :path`) in that mode. **Effort:** S each. **P2.**
 - [ ] **P3 — Simplification advisories from the wave review (structure, not
   defects).** One `mirrorFenceBodyToDb` helper for the three pasted fence-mirror
   recipes (fence-write.ts, forget.ts x2); static import of

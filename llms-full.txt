@@ -6303,7 +6303,8 @@ re-import:
 ```
 gbrain sync                  # git-backed brain: commit the edit first
 gbrain sync --working-tree   # or import the uncommitted working tree
-gbrain import <dir>          # or re-import the directory that holds the file
+gbrain import <brain-root> --fresh   # or re-import the root you originally imported;
+                                     # --fresh ignores a resume checkpoint that would skip the path
 ```
 
 gbrain cannot recover content that is already lost if you no longer have
