@@ -142,6 +142,7 @@ export function parseCodexHookTranscript(
   }
 
   const turns: WindowTurn[] = [];
+  const genuineUserTurnIndexes: number[] = [];
   const toolCalls: ToolCallRecord[] = [];
   const toolCallTurnIndexes: number[] = [];
   const boundaryTurnIndexes: number[] = [];
@@ -168,6 +169,9 @@ export function parseCodexHookTranscript(
         if (mapped.cwd) cwd = mapped.cwd;
         break;
       case 'user':
+        genuineUserTurnIndexes.push(turns.length);
+        turns.push({ role: mapped.message.role, text: mapped.message.text });
+        break;
       case 'assistant':
         turns.push({ role: mapped.message.role, text: mapped.message.text });
         break;
@@ -193,6 +197,7 @@ export function parseCodexHookTranscript(
 
   return {
     turns,
+    genuineUserTurnIndexes,
     injectedContextBlocks: [], // codex's injected context is dropped at mapCodexLine, not surfaced
     bytesRead,
     parsedLines,

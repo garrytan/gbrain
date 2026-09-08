@@ -164,6 +164,14 @@ export interface ParsedTranscript {
   /** Conversation turns, oldest → newest (WindowTurn — the IPC window shape). */
   turns: WindowTurn[];
   /**
+   * Turn indexes whose user-role content contains genuine text. Claude records
+   * tool results as user-role messages too, so role alone cannot identify a
+   * human prompt. Kept parallel to `turns` instead of removing placeholders:
+   * archival/corpus consumers still see that tools ran, while prompt-only
+   * consumers can select structurally without matching rendered text.
+   */
+  genuineUserTurnIndexes: number[];
+  /**
    * Context blocks a gbrain hook previously INJECTED this session, oldest →
    * newest. Claude Code records a UserPromptSubmit hook's additionalContext
    * as a structured `{"type":"attachment","attachment":{"type":
@@ -259,6 +267,7 @@ export function parseTranscript(
 
   const lines = raw.split('\n');
   const turns: WindowTurn[] = [];
+  const genuineUserTurnIndexes: number[] = [];
   const injectedContextBlocks: string[] = [];
   const boundaryTurnIndexes: number[] = [];
   const toolCalls: ToolCallWithId[] = [];
@@ -298,8 +307,11 @@ export function parseTranscript(
       for (const c of entryToToolCalls(entry)) { toolCalls.push(c); toolCallTurnIndexes.push(turns.length); }
       for (const r of entryToToolResults(entry)) toolResults.set(r.tool_use_id, r.ok);
     }
-    const turn = entryToTurn(entry);
-    if (turn) turns.push(turn);
+    const parsedTurn = entryToTurn(entry);
+    if (parsedTurn) {
+      if (parsedTurn.genuineUser) genuineUserTurnIndexes.push(turns.length);
+      turns.push(parsedTurn.turn);
+    }
   }
   // Join results to calls by tool_use_id, then strip the internal id field so
   // the public ToolCallRecord shape (and the receipt JSON derived from it)
@@ -308,7 +320,7 @@ export function parseTranscript(
     const ok = c.id !== undefined ? toolResults.get(c.id) : undefined;
     return { name: c.name, input: capToolCallInput(c.input), ...(ok !== undefined ? { result: { ok } } : {}) };
   });
-  return { turns, injectedContextBlocks, bytesRead, parsedLines, skippedLines, compactBoundaries, boundaryTurnIndexes, toolCalls: joinedToolCalls, toolCallTurnIndexes };
+  return { turns, genuineUserTurnIndexes, injectedContextBlocks, bytesRead, parsedLines, skippedLines, compactBoundaries, boundaryTurnIndexes, toolCalls: joinedToolCalls, toolCallTurnIndexes };
 }
 
 /** {type:'system', subtype:'compact_boundary'} — Claude Code's on-disk compaction marker (v0.45.7). */
@@ -354,8 +366,8 @@ function entryToInjectedBlock(entry: unknown): string | null {
   return GBRAIN_BLOCK_MARKERS.some((m) => text.includes(m)) ? text : null;
 }
 
-/** One transcript line → a WindowTurn, or null for non-turn/skipped shapes. */
-function entryToTurn(entry: unknown): WindowTurn | null {
+/** One transcript line → a turn plus its structural human-prompt origin. */
+function entryToTurn(entry: unknown): { turn: WindowTurn; genuineUser: boolean } | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const e = entry as Record<string, unknown>;
   if (e.isSidechain === true) return null; // subagent traffic — skipped
@@ -369,8 +381,10 @@ function entryToTurn(entry: unknown): WindowTurn | null {
 
   const content = m.content;
   let text = '';
+  let hasGenuineText = false;
   if (typeof content === 'string') {
     text = content;
+    hasGenuineText = content.trim().length > 0;
   } else if (Array.isArray(content)) {
     const parts: string[] = [];
     for (const block of content) {
@@ -378,7 +392,10 @@ function entryToTurn(entry: unknown): WindowTurn | null {
       const b = block as Record<string, unknown>;
       switch (b.type) {
         case 'text':
-          if (typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
+          if (typeof b.text === 'string' && b.text.trim()) {
+            parts.push(b.text);
+            hasGenuineText = true;
+          }
           break;
         case 'tool_use':
           parts.push(`[tool: ${typeof b.name === 'string' && b.name ? b.name : 'unknown'}]`);
@@ -400,7 +417,7 @@ function entryToTurn(entry: unknown): WindowTurn | null {
   }
   text = text.trim();
   if (!text) return null;
-  return { role, text };
+  return { turn: { role, text }, genuineUser: role === 'user' && hasGenuineText };
 }
 
 /**
@@ -568,7 +585,7 @@ export function parseClaudeSessionFile(
     const turn = entryToTurn(entry);
     if (!turn) continue;
     const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
-    turns.push({ role: turn.role, text: turn.text, timestamp });
+    turns.push({ role: turn.turn.role, text: turn.turn.text, timestamp });
   }
   return {
     sessionId,
@@ -591,4 +608,3 @@ export function toCorpusText(turns: WindowTurn[]): string {
   if (!turns.length) return '';
   return turns.map((t) => `[${t.role}]\n${t.text}`).join('\n\n') + '\n';
 }
-
