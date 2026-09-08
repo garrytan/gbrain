@@ -23,6 +23,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { resolvePromptText } from '../prompts/resolve.ts';
 import { BudgetMeter } from './budget-meter.ts';
 import { resolveModel } from '../model-config.ts';
 import type { DreamPhaseResult } from './auto-think.ts';
@@ -86,6 +87,8 @@ export type DriftJudgeFn = (input: {
   candidate: DriftCandidate;
   evidence: string;
   modelHint?: string;
+  /** Effective prompt template with an operator override applied. Defaults to DRIFT_JUDGE_PROMPT. */
+  promptTemplate?: string;
 }) => Promise<DriftVerdict>;
 
 export const DRIFT_JUDGE_PROMPT = `You are auditing a knowledge-base "take" (a weighted claim) for drift:
@@ -149,9 +152,10 @@ export async function defaultDriftJudge(input: {
   candidate: DriftCandidate;
   evidence: string;
   modelHint?: string;
+  promptTemplate?: string;
 }): Promise<DriftVerdict> {
   const { chat } = await import('../ai/gateway.ts');
-  const prompt = DRIFT_JUDGE_PROMPT
+  const prompt = (input.promptTemplate ?? DRIFT_JUDGE_PROMPT)
     .replace('{CLAIM}', input.candidate.claim)
     .replace('{WEIGHT}', String(input.candidate.weight))
     .replace('{PAGE}', input.candidate.pageSlug)
@@ -312,6 +316,7 @@ export async function runPhaseDrift(
     auditPath: opts.auditPath,
   });
   const judge = opts.judge ?? defaultDriftJudge;
+  const driftPromptTemplate = await resolvePromptText(engine, 'cycle.drift_judge', DRIFT_JUDGE_PROMPT);
   const cutoffIso = lookbackCutoffIso(config.lookbackDays);
 
   const judged: JudgedCandidate[] = [];
@@ -330,7 +335,7 @@ export async function runPhaseDrift(
     }
     const evidence = await loadEvidence(engine, candidate.pageId, cutoffIso);
     try {
-      const verdict = await judge({ candidate, evidence, modelHint: modelId });
+      const verdict = await judge({ candidate, evidence, modelHint: modelId, promptTemplate: driftPromptTemplate });
       judged.push({ candidate, verdict });
     } catch (e) {
       failed += 1;

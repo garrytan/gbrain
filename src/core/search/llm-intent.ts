@@ -18,7 +18,7 @@ import type { ModalityMode } from './query-intent.ts';
 /** Default model tier for the tie-break call. Haiku 4.5 via utility tier. */
 const TIE_BREAK_TIMEOUT_MS = 1000;
 
-const SYSTEM_PROMPT =
+export const INTENT_SYSTEM_PROMPT =
   'You classify search query modality. Output exactly one word: text, image, or both.\n' +
   '- text: the user wants written content (notes, takes, bios, articles)\n' +
   '- image: the user wants visual content (photos, screenshots, diagrams)\n' +
@@ -53,7 +53,7 @@ export async function classifyModalityWithLLM(
   const timer = setTimeout(() => controller.abort(), TIE_BREAK_TIMEOUT_MS);
   try {
     const result = await chat({
-      system: SYSTEM_PROMPT,
+      system: INTENT_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: query.slice(0, 500) }],
       maxTokens: 16,
       abortSignal: controller.signal,

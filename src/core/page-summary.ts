@@ -90,7 +90,7 @@ export const SYNOPSIS_DOC_MAX_CHARS = (() => {
  */
 export const SYNOPSIS_PROMPT_VERSION = 1;
 
-const SYSTEM_PROMPT = [
+export const SYNOPSIS_SYSTEM_PROMPT = [
   'You generate one-sentence chunk synopses for a personal knowledge brain.',
   '',
   'Given a document (the FULL_DOCUMENT block) and a chunk from it (the CHUNK',
@@ -167,7 +167,7 @@ export async function generatePerChunkSynopsis(
     // #3813: key-aware tier default, not the hardcoded hash anchor above —
     // an OPENAI_API_KEY-only install must not route to Anthropic.
     model: args.model ?? resolveTierDefault('utility'),
-    system: SYSTEM_PROMPT,
+    system: SYNOPSIS_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
     maxTokens,
     abortSignal: args.abortSignal,

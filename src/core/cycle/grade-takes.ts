@@ -36,6 +36,7 @@
 
 import { createHash } from 'node:crypto';
 import { BaseCyclePhase, effectivePhaseDeadlineMs, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { resolvePromptText, effectivePromptVersion } from '../prompts/resolve.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import type { SearchResult } from '../types.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
@@ -92,6 +93,8 @@ export type JudgeFn = (input: {
   take: Take;
   evidence: string;
   modelHint?: string;
+  /** Effective prompt template with an operator override applied. Defaults to GRADE_TAKE_PROMPT. */
+  promptTemplate?: string;
 }) => Promise<JudgeVerdict>;
 
 /**
@@ -418,8 +421,9 @@ export async function defaultJudge(input: {
   take: Take;
   evidence: string;
   modelHint?: string;
+  promptTemplate?: string;
 }, chatFn: typeof gatewayChat = gatewayChat): Promise<JudgeVerdict> {
-  const prompt = GRADE_TAKE_PROMPT
+  const prompt = (input.promptTemplate ?? GRADE_TAKE_PROMPT)
     .replace('{CLAIM}', input.take.claim)
     .replace('{KIND}', input.take.kind)
     .replace('{HOLDER}', input.take.holder)
@@ -506,7 +510,11 @@ class GradeTakesPhase extends BaseCyclePhase {
     const evidenceRetriever: EvidenceRetrieverFn =
       opts.evidenceRetriever ??
       ((take: Take, takeScope: ScopedReadOpts) => defaultEvidenceRetriever(engine, take, takeScope));
-    const promptVersion = opts.promptVersion ?? GRADE_TAKES_PROMPT_VERSION;
+    // An operator override digest-suffixes the effective version so
+    // take_grade_cache rows stay keyed to the instructions that produced them.
+    const promptTemplate = await resolvePromptText(engine, 'cycle.grade_takes', GRADE_TAKE_PROMPT);
+    const promptVersion = opts.promptVersion
+      ?? effectivePromptVersion(GRADE_TAKES_PROMPT_VERSION, GRADE_TAKE_PROMPT, promptTemplate);
     const minAgeMonths = opts.minAgeMonths ?? 6;
     const takeLimit = opts.takeLimit ?? 50;
     const autoResolve = opts.autoResolve ?? false; // D17 default OFF
@@ -649,7 +657,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       let rateLimitedThisTake = false;
       let verdict: JudgeVerdict;
       try {
-        verdict = await judge({ take, evidence, modelHint: judgeModelFull });
+        verdict = await judge({ take, evidence, modelHint: judgeModelFull, promptTemplate });
       } catch (err) {
         result.judge_calls_failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
@@ -680,7 +688,7 @@ class GradeTakesPhase extends BaseCyclePhase {
       if (useEnsemble && inBorderlineBand && opts.ensembleJudges && opts.ensembleJudges.length > 0) {
         result.ensemble_invoked += 1;
         const ensembleResults = await Promise.allSettled(
-          opts.ensembleJudges.map(j => j.fn({ take, evidence, modelHint: j.modelId })),
+          opts.ensembleJudges.map(j => j.fn({ take, evidence, modelHint: j.modelId, promptTemplate })),
         );
 
         // #3044: Promise.allSettled flattens judge rejections into null

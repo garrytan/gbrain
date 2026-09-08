@@ -46,6 +46,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
+import { resolvePromptText, effectivePromptVersion } from '../prompts/resolve.ts';
 import { isConfigTruthy } from '../config.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
 import type { OperationContext } from '../operations.ts';
@@ -172,6 +173,8 @@ export type ProposeTakesExtractor = (input: {
   /** #4494: escalated cap for the one truncation retry (default
    *  PROPOSE_TAKES_RETRY_MAX_TOKENS; clamped to >= maxTokens). */
   retryMaxTokens?: number;
+  /** Effective prompt template with an operator override applied. Defaults to EXTRACT_TAKES_PROMPT. */
+  promptTemplate?: string;
 }) => Promise<ProposedTake[]>;
 
 export interface ProposeTakesOpts extends BasePhaseOpts {
@@ -375,7 +378,7 @@ export const EXTRACTOR_FAILURE_HALT_STREAK = 5;
 export async function defaultExtractor(
   input: Parameters<ProposeTakesExtractor>[0],
 ): Promise<ProposedTake[]> {
-  const prompt = EXTRACT_TAKES_PROMPT
+  const prompt = (input.promptTemplate ?? EXTRACT_TAKES_PROMPT)
     .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
     .replace('{PAGE_BODY}', input.pageBody);
 
@@ -658,7 +661,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     const extractor = opts.extractor ?? defaultExtractor;
-    const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
+    // An operator override digest-suffixes the effective version so the
+    // per-page skip-seen cache keyed on prompt_version re-judges pages
+    // instead of reusing verdicts produced by different instructions.
+    const promptTemplate = await resolvePromptText(engine, 'cycle.propose_takes', EXTRACT_TAKES_PROMPT);
+    const promptVersion = opts.promptVersion
+      ?? effectivePromptVersion(PROPOSE_TAKES_PROMPT_VERSION, EXTRACT_TAKES_PROMPT, promptTemplate);
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
     // gbrain#4168: explicit test override wins; otherwise the REAL remaining
@@ -863,6 +871,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           // #4494: configurable output caps (see resolution above).
           maxTokens: extractorMaxTokens,
           retryMaxTokens: extractorRetryMaxTokens,
+          promptTemplate,
         });
       } catch (err) {
         result.llm_calls_failed += 1;

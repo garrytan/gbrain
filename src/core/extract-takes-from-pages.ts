@@ -15,6 +15,7 @@
 
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from './engine.ts';
+import { resolvePromptText } from './prompts/resolve.ts';
 import type { TakeKind } from './engine.ts';
 import { chat, getChatModel, isAvailable } from './ai/gateway.ts';
 import {
@@ -29,7 +30,7 @@ export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
 ] as const;
 
-const CLASSIFIER_SYSTEM = `You extract gradeable CLAIMS from longform writing.
+export const TAKES_CLASSIFIER_SYSTEM = `You extract gradeable CLAIMS from longform writing.
 
 Output strict JSON: an array of objects with shape:
   {"claim": "<short imperative or assertion, <= 200 chars>",
@@ -152,6 +153,7 @@ export async function extractTakesFromPages(
 
   const dryRun = opts.dryRun ?? false;
   const maxPages = opts.maxPages ?? 50;
+  const classifierSystem = await resolvePromptText(engine, 'takes.bootstrap_classifier', TAKES_CLASSIFIER_SYSTEM);
   const holder = opts.holder ?? 'system';
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const params = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
@@ -229,7 +231,7 @@ export async function extractTakesFromPages(
         // On OAuth/local-only installs the hardcoded model made every takes
         // extraction die with llm_unavailable despite a working chat_model.
         model: opts.model || getChatModel(),
-        system: CLASSIFIER_SYSTEM,
+        system: classifierSystem,
         messages: [
           {
             role: 'user',

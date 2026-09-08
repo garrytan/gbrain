@@ -22,7 +22,8 @@ import type { BrainEngine, SynthesisEvidenceInput } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { runGather, renderPagesBlock, pagesBlockExcerptLen, takesHitToTakeForPrompt, selectRelevantExcerpt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
-import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
+import { buildThinkSystemPrompt, buildThinkUserMessage, THINK_SYSTEM_PROMPT_BASE } from './prompt.ts';
+import { resolvePromptText } from '../prompts/resolve.ts';
 import { resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
@@ -682,8 +683,10 @@ export async function runThink(
 
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);
+  const thinkBasePrompt = await resolvePromptText(engine, 'think.system', THINK_SYSTEM_PROMPT_BASE);
   const systemPrompt = buildThinkSystemPrompt({
     intent,
+    baseOverride: thinkBasePrompt,
     ...(opts.anchor !== undefined ? { anchor: opts.anchor } : {}),
     ...(opts.since !== undefined ? { since: opts.since } : {}),
     ...(opts.until !== undefined ? { until: opts.until } : {}),

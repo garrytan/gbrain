@@ -106,7 +106,7 @@ export function countCitations(text: string): number {
 
 // ─── LLM judge ───────────────────────────────────────────────────────────
 
-const LLM_JUDGE_SYSTEM = `You are a strict, fair judge scoring an agent's output against a rubric.
+export const LLM_JUDGE_SYSTEM = `You are a strict, fair judge scoring an agent's output against a rubric.
 
 Output ONLY a single JSON object on a single line:
 {"score": <number 0..1>, "rationale": "<one-sentence reason>"}

@@ -35,6 +35,8 @@ export interface ThinkSystemPromptOpts {
    * message via buildThinkUserMessage.calibration.
    */
   withCalibration?: boolean;
+  /** Effective base prompt with an operator override applied. Defaults to THINK_SYSTEM_PROMPT_BASE. */
+  baseOverride?: string;
 }
 
 export const THINK_SYSTEM_PROMPT_BASE = `You are gbrain's synthesis engine. You answer questions by reasoning across the user's personal knowledge brain. Your inputs are wrapped in structural tags:
@@ -70,7 +72,7 @@ Output schema:
 The "row_num" field is required for take citations and MUST be null for page-only citations.`;
 
 export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string {
-  const lines = [THINK_SYSTEM_PROMPT_BASE];
+  const lines = [opts.baseOverride ?? THINK_SYSTEM_PROMPT_BASE];
   if (opts.anchor) {
     lines.push(`\nAnchor entity for this question: ${opts.anchor}. Center your synthesis on this entity. The <graph> block, if present, holds its subgraph.`);
   }
