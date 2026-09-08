@@ -1500,10 +1500,22 @@ export interface RelationalFanoutOpts extends PageReadPolicy {
   depth?: number;
   /** Include `link_source='mentions'` edges. Default false (typed edges only). */
   includeMentions?: boolean;
-  /** Single-source scope. */
+  /** Single-source scope for SEED SELECTION (which source the seed page must live in). */
   sourceId?: string;
-  /** Federated scope; traversal stays WITHIN each seed's own source. */
+  /** Federated scope for SEED SELECTION. */
   sourceIds?: string[];
+  /**
+   * Sources the WALK may traverse into, independent of where each seed
+   * resolved. Fail-closed default: omitted → traversal stays pinned to
+   * each seed's OWN source (`seed_source`), exactly the pre-v0.43.x
+   * within-source behavior — a caller that doesn't think about this gets
+   * the narrow, safe answer. Pass this explicitly to widen the walk to a
+   * caller-chosen set of sources (e.g. `['tasks', 'people']` so a work item
+   * assigned_to edge can reach a person page in a different source) — a
+   * company brain's value is exactly these cross-source edges. Never pass
+   * a set wider than the caller's own permitted access scope.
+   */
+  walkSourceIds?: string[];
   /** Hard cap on returned candidate nodes. Default 50. */
   limit?: number;
 }

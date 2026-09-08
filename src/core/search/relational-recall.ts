@@ -16,8 +16,15 @@
  * empty arm + an audit row, never breaking the search hot path.
  *
  * Federation (E2=A): resolves the seed in every in-scope source and fans out
- * from each; traversal stays WITHIN each source (no cross-boundary edges in
- * v1). Confidence gate (D3): a seed that only `fallback_slugify`-resolves is
+ * from each. Traversal is CROSS-SOURCE within the caller's permitted scope: a
+ * brain that keeps work items in one source and people in another only pays
+ * off if an `assigned_to` edge can reach the person page, so the walk may land
+ * in any source the caller is scoped to, not only the source the seed itself
+ * resolved in. A federated/scalar-scoped caller stays inside its permitted set;
+ * a genuinely unscoped caller (trusted local, which `sourceScopeOpts` hands
+ * through as no scope at all) walks every source in the brain. The `__all__`
+ * literal is NOT that case and stays fail-closed — see scopeSources.
+ * Confidence gate (D3): a seed that only `fallback_slugify`-resolves is
  * dropped, so the arm never traverses from an invented slug. The tier-2
  * resolution-margin gate is a filed TODO.
  *
@@ -28,6 +35,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, PageType, RelationalFanoutRow, PageReadPolicy } from '../types.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
+import { ALL_SOURCES } from '../source-id.ts';
+import { listSources } from '../sources-ops.ts';
 import { buildVisibilityClause } from './sql-ranking.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -80,13 +89,36 @@ function truncate(msg: string, max = 200): string {
   return msg.length <= max ? msg : msg.slice(0, max - 1) + '…';
 }
 
-/** Sources to resolve a seed against. Federated → the set; scalar → [id];
- *  unscoped/__all__ → ['default'] (single-source brains; multi-source
- *  enumeration under __all__ is a v1 limitation). */
-function scopeSources(opts: RelationalArmOpts): string[] {
+/**
+ * Sources to resolve a seed against AND to allow the walk to traverse into.
+ * Federated → the set. Scalar → that one id.
+ *
+ * Genuinely unscoped (neither field set) → every source in the brain. That
+ * shape is what `sourceScopeOpts` produces for a TRUSTED LOCAL caller, and it
+ * is the case a multi-source brain needs: its cross-source edges should
+ * resolve, not just the ones inside a single source. Previously this branch
+ * returned `['default']`, which silently answered from one source on a
+ * multi-source brain.
+ *
+ * The `ALL_SOURCES` literal is deliberately NOT treated as unscoped. The op
+ * layer maps a trusted-local `__all__` to no scope at all; the literal only
+ * survives for a REMOTE caller with no federated grant, where it exists
+ * precisely so the read fail-closes (it can never match a real source id —
+ * underscores are rejected at source creation). Expanding it here would hand
+ * that caller the whole brain. Returning no sources yields no seeds, hence an
+ * empty arm, which is the same outcome the pre-existing read-policy filter
+ * produced.
+ *
+ * `listSources` excludes archived sources by default, which is load-bearing
+ * here: the enumerated set is the walk scope, and an unscoped caller carries
+ * no read policy, so the fanout's own archived-source clause does not run.
+ */
+async function scopeSources(engine: BrainEngine, opts: RelationalArmOpts): Promise<string[]> {
   if (opts.sourceIds && opts.sourceIds.length > 0) return opts.sourceIds;
-  if (opts.sourceId && opts.sourceId !== '__all__') return [opts.sourceId];
-  return ['default'];
+  if (opts.sourceId === ALL_SOURCES) return [];
+  if (opts.sourceId) return [opts.sourceId];
+  const sources = await listSources(engine);
+  return sources.map(s => s.id);
 }
 
 /** Resolve a seed phrase to all in-scope (source_id, slug) pairs that
@@ -100,8 +132,20 @@ async function resolveSeedScoped(
   const out: Array<{ source_id: string; slug: string }> = [];
   const seen = new Set<string>();
   for (const sid of sources) {
-    const r = await resolveEntitySlugWithSource(engine, sid, phrase);
-    if (!r || r.source === 'fallback_slugify') continue;
+    let r = await resolveEntitySlugWithSource(engine, sid, phrase);
+    if (!r || r.source === 'fallback_slugify') {
+      // A bare name carrying non-ASCII letters can slugify lossily (a
+      // Vietnamese "Đ" drops entirely), so the resolver's bare-name branch —
+      // prefix expansion over the SLUG — can never reach the page and falls
+      // through to fallback_slugify, which the D3 confidence gate then drops.
+      // A title-fuzzy pass on the ORIGINAL phrase is the one lookup that still
+      // sees the accented characters. Gated to lossy inputs so ASCII bare names
+      // keep the resolver's exact/prefix-only contract unchanged.
+      const lossy = /[^\x00-\x7f]/.test(phrase);
+      const fuzzy = lossy ? await engine.findByTitleFuzzy(phrase, undefined, 0.55, sid).catch(() => null) : null;
+      if (!fuzzy) continue;
+      r = { slug: fuzzy.slug, source: 'fuzzy_match' };
+    }
     const key = `${sid}:${r.slug}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -286,7 +330,7 @@ export async function buildRelationalArm(
   meta.kind = parsed.kind;
 
   try {
-    const sources = scopeSources(opts);
+    const sources = await scopeSources(engine, opts);
     const fanoutOpts = {
       sourceId: opts.sourceId,
       sourceIds: opts.sourceIds,
@@ -297,6 +341,9 @@ export async function buildRelationalArm(
       direction: parsed.direction,
       depth: opts.depth,
       limit: opts.limit,
+      // The walk may land in any source the caller is permitted to see, not
+      // only the source each individual seed happened to resolve in.
+      walkSourceIds: sources,
     };
 
     if (parsed.kind === 'connects' && parsed.seeds.length === 2) {

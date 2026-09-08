@@ -69,6 +69,98 @@ describe('parseRelationalQuery — archetypes', () => {
   });
 });
 
+describe('parseRelationalQuery — work-management domain', () => {
+  test('who_rel: who is assigned to tasks/ship-the-thing', () => {
+    const r = parseRelationalQuery('who is assigned to tasks/ship-the-thing');
+    expect(r!.kind).toBe('who_rel');
+    expect(r!.seeds).toEqual(['tasks/ship-the-thing']);
+    expect(r!.linkTypes).toEqual(['assigned_to']);
+    expect(r!.direction).toBe('out');
+  });
+
+  test('who_rel: who manages alice-example', () => {
+    const r = parseRelationalQuery('who manages alice-example');
+    expect(r!.linkTypes).toEqual(['managed_by']);
+    expect(r!.direction).toBe('out');
+  });
+
+  test('who_rel: who owns goals/obj-1', () => {
+    const r = parseRelationalQuery('who owns goals/obj-1');
+    expect(r!.linkTypes).toEqual(['owned_by']);
+    expect(r!.direction).toBe('out');
+  });
+
+  test('who_rel: who reports to bob-example (inbound)', () => {
+    const r = parseRelationalQuery('who reports to bob-example');
+    expect(r!.linkTypes).toEqual(['managed_by']);
+    expect(r!.direction).toBe('in');
+  });
+
+  test('outgoing: what tasks does alice-example have', () => {
+    const r = parseRelationalQuery('what tasks does alice-example have');
+    expect(r!.linkTypes).toEqual(['assigned_to']);
+    expect(r!.seeds).toEqual(['alice-example']);
+    expect(r!.direction).toBe('in');
+  });
+
+  test('outgoing: the noun is tracker-agnostic (issues, tickets, work items)', () => {
+    for (const q of [
+      'what issues is bob-example assigned to',
+      'what tickets does bob-example have',
+      'what work items does bob-example have',
+    ]) {
+      expect(parseRelationalQuery(q)!.linkTypes).toEqual(['assigned_to']);
+    }
+  });
+
+  test('outgoing: what is alice-example working on', () => {
+    const r = parseRelationalQuery('what is alice-example working on');
+    expect(r!.linkTypes).toEqual(['assigned_to']);
+    expect(r!.direction).toBe('in');
+  });
+
+  test('outgoing: who does alice-example report to', () => {
+    const r = parseRelationalQuery('who does alice-example report to');
+    expect(r!.linkTypes).toEqual(['managed_by']);
+    expect(r!.direction).toBe('out');
+  });
+});
+
+describe('parseRelationalQuery — Vietnamese bank (first non-English set)', () => {
+  test('seed-leading assignment question: "<person> đang có những task gì?"', () => {
+    const r = parseRelationalQuery('Đào đang có những task gì?');
+    expect(r).not.toBeNull();
+    expect(r!.kind).toBe('who_rel');
+    expect(r!.seeds).toEqual(['Đào']);
+    expect(r!.linkTypes).toEqual(['assigned_to']);
+    expect(r!.direction).toBe('in');
+  });
+
+  test('verb and noun variants (làm / phụ trách, việc / công việc)', () => {
+    expect(parseRelationalQuery('Đào Nguyễn đang làm việc gì')!.seeds).toEqual(['Đào Nguyễn']);
+    expect(parseRelationalQuery('Đào phụ trách những công việc gì')!.linkTypes).toEqual(['assigned_to']);
+  });
+
+  test('reverse direction: "ai đang phụ trách <task>"', () => {
+    const r = parseRelationalQuery('ai đang phụ trách tasks/ship-the-thing');
+    expect(r!.linkTypes).toEqual(['assigned_to']);
+    expect(r!.direction).toBe('out');
+  });
+
+  test('org hierarchy in both directions', () => {
+    expect(parseRelationalQuery('ai quản lý Đào')!.direction).toBe('out');
+    expect(parseRelationalQuery('Đào báo cáo cho ai')!.direction).toBe('out');
+    expect(parseRelationalQuery('ai báo cáo cho Đào')!.direction).toBe('in');
+    for (const q of ['ai quản lý Đào', 'Đào báo cáo cho ai', 'ai báo cáo cho Đào']) {
+      expect(parseRelationalQuery(q)!.linkTypes).toEqual(['managed_by']);
+    }
+  });
+
+  test('a non-relational Vietnamese content query still returns null', () => {
+    expect(parseRelationalQuery('tóm tắt cuộc họp offsite')).toBeNull();
+  });
+});
+
 describe('parseRelationalQuery — precision-first / no-match', () => {
   test('non-relational content query → null', () => {
     expect(parseRelationalQuery('what is the capital structure of a seed round')).toBeNull();
@@ -124,6 +216,14 @@ describe('default bank emits only known link types (no drift)', () => {
       'who at acme leads payments',
       'what did alice invest in',
       'where does alice work',
+      'who is assigned to tasks/ship-the-thing',
+      'who manages alice-example',
+      'who owns goals/obj-1',
+      'who reports to bob-example',
+      'what tasks does alice-example have',
+      'who does alice-example report to',
+      'Đào đang có những task gì',
+      'ai quản lý Đào',
     ];
     for (const q of queries) {
       const r = parseRelationalQuery(q);

@@ -154,7 +154,8 @@ hybrid recall + fusion:
    ├── vector  (HNSW on chunk embeddings, per-page max-pool)
    ├── keyword (BM25 via tsvector)
    ├── title-phrase arm
-   ├── relational (typed-edge recall arm — relational queries only)
+   ├── relational (typed-edge recall arm — relational queries only; walks
+   │      cross-source within the caller's permitted scope)
    ├── source-aware re-rank (CASE in SQL)
    ├── role-tagged arms; variant/clause lists weighted by search.expansion_variant_budget INSIDE the fusion (fusion-lists.ts)
    └── RRF fusion → cosine re-score → post-fusion boosts
