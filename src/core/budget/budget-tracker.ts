@@ -427,6 +427,19 @@ export class BudgetTracker {
   }
 
   /**
+   * The phase/command label this tracker was constructed with (e.g.
+   * 'dream.synthesize', 'brainstorm'). Distinct from the per-call
+   * `BudgetEstimate.label` / `BudgetActualUsage.label`, which names the call
+   * KIND ('gateway.chat') and lands in the audit row as `sub_label`.
+   *
+   * Read by the gateway's span builders as a fallback caller attribution when
+   * no explicit `withCallLabel` region is active.
+   */
+  get label(): string {
+    return this.opts.label;
+  }
+
+  /**
    * Register a synchronous callback to fire the first time the tracker
    * throws BudgetExhausted (from reserve OR record). Fires once. Useful for
    * persisting checkpoint state before the throw propagates. The callback

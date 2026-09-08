@@ -55,6 +55,7 @@ import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts'
 import { toolLoop as gatewayToolLoop, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
+import { withSpan } from '../../tracing.ts';
 import { runSubagentOneshot, ONESHOT_TOOL_USE_ID_PREFIX } from './subagent-oneshot.ts';
 import type { OneshotFallbackReason } from '../types.ts';
 import {
@@ -885,7 +886,43 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         };
 
         const combinedSignal = mergeSignals(mergeSignals(ctx.signal, ctx.shutdownSignal), leaseLost.signal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        // This legacy path talks to the Anthropic SDK directly, so it never
+        // passes through the gateway's span wrappers. Without an explicit span
+        // the subagent loop — often the single largest token consumer in the
+        // brain — is invisible to the trace collector while every other LLM
+        // call is visible. Job id rides as its own attribute rather than being
+        // baked into the caller label, which stays low-cardinality so
+        // group-by-caller in the collector remains usable.
+        assistantMsg = await withSpan('subagent.turn', {
+          kind: 'LLM',
+          attributes: {
+            'llm.model_name': stripProviderPrefix(model),
+            'llm.invocation_parameters': JSON.stringify({ max_tokens: maxOutputTokens }),
+            'llm.tool_count': toolDefs.length,
+            'gbrain.caller': 'subagent',
+            'gbrain.job_id': ctx.id,
+            'gbrain.turn_index': turnIdx,
+          },
+        }, async (span) => {
+          const msg = await client.create(params, { signal: combinedSignal });
+          const u = msg.usage as (typeof msg.usage & {
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+          }) | undefined;
+          const inTok = u?.input_tokens ?? 0;
+          const outTok = u?.output_tokens ?? 0;
+          span.setAttributes({
+            'llm.model_name': msg.model ?? stripProviderPrefix(model),
+            'llm.provider': 'anthropic',
+            'llm.token_count.prompt': inTok,
+            'llm.token_count.completion': outTok,
+            'llm.token_count.total': inTok + outTok,
+            'llm.token_count.prompt_details.cache_read': u?.cache_read_input_tokens ?? 0,
+            'llm.token_count.prompt_details.cache_write': u?.cache_creation_input_tokens ?? 0,
+            ...(msg.stop_reason ? { 'llm.stop_reason': msg.stop_reason } : {}),
+          });
+          return msg;
+        });
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         clearInterval(leaseRenewTimer);

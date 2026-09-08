@@ -23,6 +23,7 @@ import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
+import { withSpan } from '../tracing.ts';
 
 export interface ThinkGatherOpts {
   question: string;
@@ -113,6 +114,34 @@ function fuseRanked<T>(
  * with partial gather results is more useful than no synthesis at all.
  */
 export async function runGather(
+  engine: BrainEngine,
+  opts: ThinkGatherOpts,
+): Promise<ThinkGatherResult> {
+  // Tracing wrapper — CHAIN span over the
+  // retrieval streams; the hybrid stream's RETRIEVER span nests underneath.
+  return withSpan('think.gather', {
+    kind: 'CHAIN',
+    input: opts.question,
+    attributes: {
+      ...(opts.anchor ? { 'gather.anchor': opts.anchor } : {}),
+      ...(opts.sourceId ? { 'gbrain.source_id': opts.sourceId } : {}),
+    },
+  }, async (span) => {
+    const out = await runGatherImpl(engine, opts);
+    span.setAttributes({
+      'gather.pages': out.pages.length,
+      'gather.takes': out.takes.length,
+      'gather.graph_slugs': out.graphSlugs.length,
+      'gather.pages_from_hybrid': out.diagnostics.pagesFromHybrid,
+      'gather.takes_from_keyword': out.diagnostics.takesFromKeyword,
+      'gather.takes_from_vector': out.diagnostics.takesFromVector,
+    });
+    span.setOutput(out.pages.slice(0, 15).map(p => ({ slug: p.slug, score: p.score })));
+    return out;
+  });
+}
+
+async function runGatherImpl(
   engine: BrainEngine,
   opts: ThinkGatherOpts,
 ): Promise<ThinkGatherResult> {

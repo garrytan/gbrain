@@ -81,6 +81,7 @@ import {
   loadCacheConfig,
   semanticResultCacheAvailable,
 } from './query-cache.ts';
+import { withSpan, retrievalDocumentAttributes, type AttrValue } from '../tracing.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -579,6 +580,36 @@ export async function runPostFusionStages(
   opts: PostFusionOpts,
 ): Promise<void> {
   if (results.length === 0) return;
+  // Tracing wrapper — the stages mutate `results` in place, so snapshot the
+  // top of the ranking before/after to make boost-induced reorders visible.
+  return withSpan('search.post_fusion', {
+    kind: 'CHAIN',
+    attributes: {
+      'post_fusion.count': results.length,
+      'post_fusion.salience': opts.salience,
+      'post_fusion.recency': opts.recency,
+      'post_fusion.backlinks': opts.applyBacklinks,
+      'post_fusion.graph_signals': opts.graphSignalsEnabled ?? false,
+      ...(opts.floorRatio !== undefined ? { 'post_fusion.floor_ratio': opts.floorRatio } : {}),
+      ...(opts.titleBoost !== undefined ? { 'post_fusion.title_boost': opts.titleBoost } : {}),
+    },
+    input: results.slice(0, 10).map(r => ({ slug: r.slug, score: r.score })),
+  }, async (span) => {
+    await runPostFusionStagesImpl(engine, results, opts);
+    span.setOutput(
+      [...results]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+        .map(r => ({ slug: r.slug, score: r.score, base_score: r.base_score })),
+    );
+  });
+}
+
+async function runPostFusionStagesImpl(
+  engine: import('../engine.ts').BrainEngine,
+  results: SearchResult[],
+  opts: PostFusionOpts,
+): Promise<void> {
   const policy = hasReadPolicy(opts) ? opts : undefined;
 
   // v0.40.4 attribution stamp (D12=A) — capture base_score ONCE at entry,
@@ -1240,7 +1271,76 @@ function stampBudgetStage(list: DegradedStageEntry[], meta: TokenBudgetMeta): vo
   else if (meta.kept === 0 && meta.dropped > 0) pushDegraded(list, 'budget_dropped_all');
 }
 
+
+/**
+ * Tracing wrapper — RETRIEVER span. Captures the final ranked documents
+ * (content + score, Phoenix-inspectable) plus the pipeline decisions the
+ * impl already emits via onMeta (mode, intent, expansion, autocut,
+ * token budget) without touching any of the three return paths inside.
+ */
 export async function hybridSearch(
+  engine: BrainEngine,
+  query: string,
+  opts?: HybridSearchOpts,
+): Promise<SearchResult[]> {
+  return withSpan('hybrid_search', {
+    kind: 'RETRIEVER',
+    input: query,
+    attributes: {
+      ...(opts?.limit !== undefined ? { 'retrieval.limit': opts.limit } : {}),
+      ...(opts?.sourceId ? { 'gbrain.source_id': opts.sourceId } : {}),
+    },
+  }, async (span) => {
+    let capturedMeta: HybridSearchMeta | undefined;
+    const results = await hybridSearchImpl(engine, query, {
+      ...(opts ?? {}),
+      onMeta: (m) => {
+        capturedMeta = m;
+        opts?.onMeta?.(m);
+      },
+    });
+    if (capturedMeta) {
+      const attrs: Record<string, AttrValue | undefined> = {
+        'search.mode': capturedMeta.mode,
+        'search.intent': capturedMeta.intent,
+        'search.vector_enabled': capturedMeta.vector_enabled,
+        'search.expansion_applied': capturedMeta.expansion_applied,
+        'search.embedding_column': capturedMeta.embedding_column,
+      };
+      if (capturedMeta.detail_resolved) attrs['search.detail'] = capturedMeta.detail_resolved;
+      const autocut = capturedMeta.autocut;
+      if (autocut) {
+        attrs['search.autocut.applied'] = autocut.applied;
+        attrs['search.autocut.kept'] = autocut.kept;
+        attrs['search.autocut.total'] = autocut.total;
+        attrs['search.autocut.gap_ratio'] = autocut.gapRatio;
+      }
+      if (capturedMeta.adaptive_return) {
+        attrs['search.adaptive_return'] = JSON.stringify(capturedMeta.adaptive_return);
+      }
+      if (capturedMeta.token_budget) {
+        attrs['search.token_budget'] = JSON.stringify(capturedMeta.token_budget);
+      }
+      span.setAttributes(attrs);
+    }
+    span.setAttribute('retrieval.document_count', results.length);
+    span.setAttributes(retrievalDocumentAttributes(results.map(r => ({
+      id: `${r.source_id ?? 'default'}::${r.slug}#${r.chunk_index}`,
+      content: r.chunk_text,
+      score: r.score,
+      metadata: {
+        title: r.title,
+        type: r.type,
+        ...(r.rerank_score !== undefined ? { rerank_score: r.rerank_score } : {}),
+        ...(r.base_score !== undefined ? { base_score: r.base_score } : {}),
+        ...(r.alias_hit ? { alias_hit: true } : {}),
+      },
+    }))));
+    return results;
+  });
+}
+
+async function hybridSearchImpl(
   engine: BrainEngine,
   query: string,
   opts?: HybridSearchOpts,
