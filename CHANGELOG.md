@@ -2,6 +2,46 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.5.1] - 2026-09-08
+
+**Release-notes corrections for 0.48.5.0, a contributor credit, and a privacy
+sweep.** No behavior changes. Two statements in the 0.48.5.0 notes were wrong and
+are corrected here: concept synthesis on a thinking-by-default model requests
+the gateway's shared thinking-model cap of 32,000 output tokens (the notes said
+8,000), and code pages imported before 0.48.5.0 pick up their file path on the
+next change or on `gbrain reindex-code --force` (the notes named a `sync
+--force` flag that does not exist). The importer's reference entry, the repair guide, and one `gbrain doctor`
+hint carried the same non-existent flag and are corrected too.
+
+### Changed
+
+- 0.48.5.0 notes: the concept-synthesis output cap reads 32,000 tokens (the
+  gateway's shared thinking-model cap), matching the code.
+- 0.48.5.0 notes and `docs/architecture/KEY_FILES.md`: pre-existing code pages
+  pick up their file path on the next change or on `gbrain reindex-code
+  --force`; the `sync --force` flag named before does not exist.
+- 0.48.5.0 notes: the open-loops reopen-test bullet credits its contributor
+  (#4930, contributed by @arisgysel-design; fixes #4928).
+- Five older mentions (across two entries) no longer name a private agent deployment; they say
+  "your OpenClaw" (or "Garry's OpenClaw" where the origin story needs it), and
+  the privacy guard now covers `CHANGELOG.md` and `.tsx` sources so the sweep
+  stays done.
+- `gbrain doctor`'s truncated-page hint and `docs/integrations/reliability-repair.md`
+  now describe a re-import that works: edit the page body (whitespace is trimmed
+  before hashing), then `gbrain sync` (commit first on a git-backed brain, or
+  `gbrain sync --working-tree`), or `gbrain import <brain-root> --fresh`; the old
+  text named `sync --force` and a per-slug `import --force`, neither of which exists.
+- TODOS.md: the extract-atoms tombstone follow-up is marked done against #4916
+  (migration v146's `extract_atoms_transcript_state` table).
+
+## To take advantage of 0.48.5.1
+
+Nothing to run. `gbrain upgrade` picks up the version; the changes are to the
+release notes, the reference docs, one doctor hint, and the privacy guard.
+
+**Say to your agent:** *"what changed in gbrain 0.48.5.1"* — your agent reads
+this entry and the corrected 0.48.5.0 notes.
+
 ## [0.48.5.0] - 2026-09-07
 
 **The community fix wave: 57 contributor pull requests adopted or reworked
@@ -23,7 +63,7 @@ regression test proven red before the fix.
   fallback will be soft-deleted (72 hours recoverable) on the next sync when
   they are modified; switch the source to `auto` if you want both kinds.
   Code pages imported before this release pick up their file path on the
-  next change, `sync --force`, or `gbrain reindex-code --force`. (#4903,
+  next change or on `gbrain reindex-code --force`. (#4903,
   contributed by @Jey2311; fixes #4899, #4900)
 - **Migration v146** adds a small table that remembers which transcripts
   returned nothing from atom extraction. The first run after upgrading
@@ -93,7 +133,8 @@ regression test proven red before the fix.
   @Walliiee); a persistently rate-limited Gmail request now waits out the
   limit for up to two minutes instead of six seconds (#4894, contributed by
   @johnerik); concept synthesis on a thinking-by-default model requests
-  8,000 output tokens instead of 500 (#4889, contributed by @awilhite); the
+  the gateway's shared thinking-model cap (32,000 output tokens) instead of
+  500 (#4889, contributed by @awilhite); the
   cwd `.env` guard now also ignores a project `DATABASE_URL` in
   `.env.development.local`, `.env.production.local` and `.env.test.local`
   (#4895); atom extraction may now legitimately return zero atoms for a
@@ -361,7 +402,8 @@ regression test proven red before the fix.
   @arisgysel-design; fixes #4911)
 - The local CI lane's timeout multiplier reaches the CLI-spawning unit tests
   (#4659), and the open-loops reopen test no longer depends on the database
-  clock advancing between statements (#4928).
+  clock advancing between statements (#4930, contributed by
+  @arisgysel-design; fixes #4928).
 
 ### Review hardening
 
@@ -12506,8 +12548,8 @@ built-in registry covering the most common chat-export shapes on Earth, plus an
 opt-in LLM fallback for the long tail. The dream cycle picks the right parser
 per page automatically — no config, no waiting for the next release.
 
-The same wave introduces a new `progressive-batch` primitive (Wintermute-inspired
-ramp-up: trial 10 → 100 → 500 → full with verification at each stage) so future
+The same wave introduces a new `progressive-batch` primitive (the ramp-up Garry's
+OpenClaw uses: trial 10 → 100 → 500 → full with verification at each stage) so future
 batch operations get the discipline for free instead of each reinventing it.
 
 ### How to use it
@@ -14696,7 +14738,7 @@ No action required — this is a docs-only release. The wave commitments below l
 Five items duplicate older entries lower in TODOS.md (`.sql` indexing, Magika, doc_comment, CJK items) — duplication noted inline. The new top section is the canonical wave-commitment register; historical entries stay as detail.
 ## [0.40.7.0] - 2026-05-23
 
-**Your agents can now author your brain's schema pack themselves — no more shell-out, no more hand-editing YAML.** If you've ever opened `gbrain` and noticed thousands of pages stuck as untyped "notes" under `meetings/` or `research/`, this release closes that loop. Tell Wintermute (or any agent connected via MCP) "my brain has 4000 untyped meetings pages — add a `meeting` type and backfill them," and it does the whole thing safely: locks the pack file so two agents can't race, validates the change won't create dangling references, writes atomically so a crash never leaves the pack half-written, audits the mutation with the agent's identity, then updates every matching page in 1000-row batches that never wedge concurrent writers. The cathedral that was bundled but unreachable in v0.39 is now reachable from the outside.
+**Your agents can now author your brain's schema pack themselves — no more shell-out, no more hand-editing YAML.** If you've ever opened `gbrain` and noticed thousands of pages stuck as untyped "notes" under `meetings/` or `research/`, this release closes that loop. Tell your OpenClaw (or any agent connected via MCP) "my brain has 4000 untyped meetings pages — add a `meeting` type and backfill them," and it does the whole thing safely: locks the pack file so two agents can't race, validates the change won't create dangling references, writes atomically so a crash never leaves the pack half-written, audits the mutation with the agent's identity, then updates every matching page in 1000-row batches that never wedge concurrent writers. The cathedral that was bundled but unreachable in v0.39 is now reachable from the outside.
 
 This release rebuilds the design from a closed community PR ([#1321](https://github.com/garrytan/gbrain/pull/1321)) by `@garrytan-agents` into a production-grade `gbrain schema` cathedral. The four mutation verbs that PR proposed (`add-type`, `remove-type`, `stats`, `sync`) all ship — hardened with atomic+locked+audited writes, pack-aware fallback semantics that fail loud instead of silently re-introducing types you removed, and a batched MCP op (`schema_apply_mutations`) that lets a remote agent compose multi-step refactors as one atomic transaction. The lint surface grew from 2 rules to 11. The graph visualization renders link verbs. And the agent on-ramp story — RESOLVER routing, a `schema-author` skill with explicit boundary callouts to `brain-taxonomist` and `eiirp`, a `conventions/schema-evolution.md` decision tree for "when to add a type vs alias vs prefix" — means agents will actually FIND this surface instead of inventing their own ad-hoc YAML edits.
 
@@ -14721,8 +14763,8 @@ gbrain schema sync --apply     # backfills page.type on matching pages
 gbrain whoknows "machine learning"   # researcher-typed pages now route through expert routing
 
 # 4. If you run `gbrain serve --http` for remote MCP, register a client
-#    with admin scope so Wintermute or any other agent can author packs remotely:
-gbrain auth register-client wintermute --scopes admin
+#    with admin scope so your OpenClaw or any other agent can author packs remotely:
+gbrain auth register-client my-openclaw --scopes admin
 ```
 
 If any step fails or numbers look wrong, please file an issue with the output of `gbrain doctor` and `tail -20 ~/.gbrain/audit/schema-mutations-*.jsonl` so we can debug the mutation chain.
@@ -14750,7 +14792,7 @@ If any step fails or numbers look wrong, please file an issue with the output of
 - `schema_graph` (read) — JSON `{nodes, edges}` derived from link types and frontmatter_links.
 - `schema_explain_type` (read) — resolved settings for one declared type.
 - `schema_review_orphans` (read) — drilldown into untyped pages.
-- `schema_apply_mutations` (admin scope, NOT localOnly) — **batched** atomic mutation op. One call applies a list of mutations (`add_type`, `add_link_type`, `set_extractable`, etc.) inside a single `withPackLock` scope. Remote agents like Wintermute can compose multi-step refactors as one transaction. Audit log records `actor: mcp:<clientId8>` per mutation.
+- `schema_apply_mutations` (admin scope, NOT localOnly) — **batched** atomic mutation op. One call applies a list of mutations (`add_type`, `add_link_type`, `set_extractable`, etc.) inside a single `withPackLock` scope. Remote agents like your OpenClaw can compose multi-step refactors as one transaction. Audit log records `actor: mcp:<clientId8>` per mutation.
 - `reload_schema_pack` (admin) — flush cache + extends-chain cascade.
 
 **Lint rules grew from 2 to 11:**

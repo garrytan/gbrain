@@ -232,6 +232,18 @@
   sources (order is now total; the cursor is not). (11) `bootstrap harness`
   resolves the implicit source from its own cwd while the serve resolves from
   its cwd at boot; the shared ladder narrows but does not close the gap.
+- [ ] **P2 — Corrective-release follow-ups (0.48.5.1): two INVESTIGATE items
+  from the adversarial passes on the release-notes fix.** (a) The CLI flag
+  validator accepts `gbrain sync --force` although `sync` never reads it:
+  `scripts/generate-flag-registry.ts` harvests `--[a-z0-9-]*` tokens from
+  source text, and a comment in `src/commands/sync.ts` (`(--force skips …)`)
+  puts `--force` on the sync row. Either harvest from the parsed argv sites
+  only, or strip comments before scanning; then add a registry test that a
+  comment-only token does not register. (b) `scripts/check-privacy.sh
+  --staged` takes filenames from the index but greps their WORKING copies,
+  so a banned name staged for commit and then removed from the working copy
+  (without staging the removal) passes the pre-commit guard. Read the staged
+  blob (`git show :path`) in that mode. **Effort:** S each. **P2.**
 - [ ] **P3 — Simplification advisories from the wave review (structure, not
   defects).** One `mirrorFenceBodyToDb` helper for the three pasted fence-mirror
   recipes (fence-write.ts, forget.ts x2); static import of
@@ -1434,11 +1446,12 @@ deferred M-effort issues above are NOT repeated here.
   by ON CONFLICT DO NOTHING, the tool still executes, and the settle UPDATE
   then matches 0 rows — the outcome is silently unrecorded and a non-idempotent
   tool can re-execute on replay. Add a rowcount check + job-log warn (needs a
-  logging seam in the persist helpers). (b) extract-atoms tombstones cover
-  pages only: `recordPageFailureCount` returns null for `kind !== 'page'`, so
-  a transcript that deterministically yields malformed output re-spends LLM
-  budget every cycle forever — extend #4148's failure-count machinery to
-  transcript items. (c) getHealth coverage numerators are not liveness-
+  logging seam in the persist helpers). (b) DONE in v0.48.5.0 (#4916):
+  extract-atoms now keeps per-transcript strike counts and tombstones
+  (`extract_atoms_transcript_state`, migration v146), so a transcript that
+  deterministically yields malformed output stops re-spending LLM budget;
+  the item as filed (`recordPageFailureCount` returning null for
+  `kind !== 'page'`) is closed by that table. (c) getHealth coverage numerators are not liveness-
   filtered while islanded now is (#4153): a page whose only inbound link is
   from a soft-deleted page counts as covered AND orphaned simultaneously;
   align the coverage EXISTS subqueries with the islanded liveness JOINs in
