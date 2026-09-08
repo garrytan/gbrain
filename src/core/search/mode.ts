@@ -1705,11 +1705,15 @@ export const SEARCH_MODE_KEY = 'search.mode';
 /**
  * Load the live mode config (mode + per-key overrides) from the brain engine.
  * This reads SEARCH_MODE_KEY plus every SEARCH_MODE_CONFIG_KEYS entry, and it
- * runs on every search (twice on the cached path, which resolves the mode
- * before and inside hybridSearch). One key per round trip is free on PGLite
- * and is most of the pre-retrieval wall clock on a hosted Postgres (dozens of
- * pooler-slot grabs per query), so read the whole config table once and
- * answer every key from that snapshot. See config-snapshot.ts.
+ * runs once per direct `hybridSearch` call. (#4359, fixed) On the cached path
+ * it also runs exactly once — `hybridSearchCached` loads the snapshot to
+ * resolve its own cache-key knobs, then threads that SAME snapshot into the
+ * inner `hybridSearch` call (the INTERNAL `HybridSearchOpts._searchModeInput`
+ * field in hybrid.ts) instead of letting it load a second, independent one.
+ * One key per round trip is free on PGLite and is most of the pre-retrieval
+ * wall clock on a hosted Postgres (dozens of pooler-slot grabs per query), so
+ * read the whole config table once and answer every key from that snapshot.
+ * See config-snapshot.ts.
  *
  * Errors are swallowed and fall through to mode-bundle defaults. The cache
  * config table predates v0.32.3 and may not exist on very old brains, and an

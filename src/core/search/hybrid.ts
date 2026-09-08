@@ -12,6 +12,12 @@
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
+// Type-only: mode.ts itself is loaded via `await import('./mode.ts')` at each
+// call site below (kept as-is by this change), but the LOADED CONFIG
+// SNAPSHOT shape (#4359) needs a name to thread through HybridSearchOpts. A
+// type-only import is erased at compile time, so it can't turn that runtime
+// dynamic import into a static one or affect load order.
+import type { ResolveSearchModeInput } from './mode.ts';
 import type {
   SearchResult,
   PageReadPolicy,
@@ -1102,6 +1108,31 @@ export interface HybridSearchOpts extends SearchOpts {
    * public contract.
    */
   _telemetryCacheStatus?: 'miss' | 'disabled';
+
+  /**
+   * (#4359) INTERNAL — the LOADED search-mode config snapshot (the return
+   * value of `loadSearchModeConfig(engine)`: `{ mode, overrides }`) threaded
+   * from `hybridSearchCached` into the inner `hybridSearch` so both sites
+   * resolve from the SAME one DB-plane config read instead of two
+   * independent ones. Pre-fix, `hybridSearchCached` and the inner
+   * `hybridSearch` each called `loadSearchModeConfig` separately; if
+   * `search.mode` / `search.searchLimit` / another per-key override changed
+   * between the two reads, the cache row got keyed (`knobsHash`) from the
+   * outer (stale) snapshot while its actual contents came from the inner
+   * (newer) one — a key/content desync. Threading the snapshot removes the
+   * second DB round trip entirely and closes that window.
+   *
+   * This is the LOADED snapshot only, not the RESOLVED knob set: each site
+   * still calls `resolveSearchMode` itself, because `hybridSearchCached`'s
+   * resolution folds in an extra `cache_enabled` perCall field (and other
+   * cache-only per-call knobs) that the inner `hybridSearch` resolution
+   * doesn't have. Mirrors `[CDX-5+6]` — bare `hybridSearch` must still be
+   * ABLE to resolve on its own for direct callers (eval replay / eval
+   * longmemeval / ops / whoknows / etc.), which leave this undefined and
+   * load their own snapshot exactly as before. Not part of the public
+   * contract.
+   */
+  _searchModeInput?: ResolveSearchModeInput;
 }
 
 /**
@@ -1254,8 +1285,15 @@ export async function hybridSearch(
   // because eval-replay and eval-longmemeval call bare hybridSearch — and
   // per-mode evals would not test production search if modes lived only in
   // the wrapper. See `[CDX-5+6]` in the plan.
+  //
+  // (#4359) `hybridSearchCached` already loaded this exact snapshot once (to
+  // resolve its own cache-key knobs) and threads it in via the INTERNAL
+  // `opts._searchModeInput` field — reuse it instead of reading the config
+  // table a second time. Direct callers (eval replay / eval-longmemeval /
+  // ops / whoknows / etc.) never set this field, so they fall through to
+  // loading their own snapshot exactly as before.
   const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
-  const modeInput = await loadSearchModeConfig(engine);
+  const modeInput = opts?._searchModeInput ?? await loadSearchModeConfig(engine);
   const resolvedMode = resolveSearchMode({
     // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
     // only passes this for trusted/local callers; remote callers leave it
@@ -2822,18 +2860,27 @@ export async function hybridSearchCached(
       // resolver bare hybridSearch's own `resolvedMode` uses (including 0 —
       // see mode.ts `resolveSearchMode`'s `pick()`), so mirroring it here
       // keeps hit/miss consistent for the common case without a second
-      // config round-trip. Caveat: this is a SEPARATE `resolveSearchMode`
-      // call from the one bare hybridSearch performs internally on a miss
+      // config round-trip. This is still a SEPARATE `resolveSearchMode` call
+      // from the one bare hybridSearch performs internally on a miss
       // (hybrid.ts's inner `resolvedMode`, computed when `hybridSearch` is
-      // invoked below) — not literally the same object — so a `search.mode`
-      // / `search.searchLimit` config change landing between these two
-      // resolutions within one request could theoretically desync the
-      // stored row's actual size from what its own `knobsHash` (built from
-      // `resolvedForCache`) implies. Narrow and pre-existing (the double
-      // resolution itself predates this PR); tracked as #4359, not fixed
-      // here — closing it would mean threading one resolved snapshot into
-      // the inner `hybridSearch` call, a larger change than this PR's
-      // `|| 20` → `|| resolvedMode.searchLimit` substitution.
+      // invoked below) — `hybridSearchCached`'s resolution folds in an extra
+      // `cache_enabled` perCall knob the inner one doesn't have, so each
+      // side must still resolve for itself. (#4359, fixed) What used to
+      // desync was the CONFIG LOAD feeding those two resolutions: both used
+      // to call `loadSearchModeConfig(engine)` independently, so a
+      // `search.mode` / `search.searchLimit` config change landing between
+      // the two reads could key a stored row's `knobsHash` (built from
+      // `resolvedForCache`, the outer/stale read) with a different resolved
+      // size than the row's actual contents (produced by the inner/newer
+      // read). The miss path below now loads the snapshot ONCE, here, and
+      // threads it into the inner `hybridSearch` call via the INTERNAL
+      // `_searchModeInput` opt — both resolutions read the SAME loaded
+      // snapshot, closing the window. (This is presently moot in practice:
+      // `semanticResultCacheAvailable()` is hardcoded `false`, so this HIT
+      // branch and the cache write below never run — but the miss-path
+      // double config read this fix removes still happens on every
+      // `hybridSearchCached` call regardless, and the desync becomes live
+      // again the moment semantic result caching is re-enabled.)
       const limit = opts?.limit || resolvedForCache.searchLimit;
       const offset = opts?.offset || 0;
       const sliced = scopedResults.slice(offset, offset + limit);
@@ -2918,6 +2965,15 @@ export async function hybridSearchCached(
     // function) with the cache-consult outcome. 'hit' already returned above,
     // so only miss/disabled reach this call.
     _telemetryCacheStatus: cacheStatus === 'disabled' ? 'disabled' : 'miss',
+    // (#4359) — reuse the ONE search-mode config snapshot already loaded
+    // above (`modeInputForCache`) instead of letting bare `hybridSearch` read
+    // the config table a second time. Removes a DB round trip on every
+    // `hybridSearchCached` call and keeps this function's cache-key
+    // resolution (`resolvedForCache`, used for `knobsHash` and the HIT-path
+    // limit above) and the inner search's own resolution reading from the
+    // same snapshot, closing the desync window documented on the HIT path
+    // above.
+    _searchModeInput: modeInputForCache,
     onMeta: (m) => {
       innerMetaBox.current = m;
       // Do NOT call userOnMeta here — we'll emit a merged meta below
