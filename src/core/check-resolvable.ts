@@ -483,11 +483,15 @@ export function checkResolvable(
         fix: { type: 'remove_trigger', file: resolverPath, skill_path: resolverSkillPath },
       });
     } else {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir and skillName is a directory name read from it; display-only path in a diagnostic
+      const skillMdPath = join(skillsDir, skillName, 'SKILL.md');
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same caller-resolved skillsDir; display-only path in a diagnostic
+      const manifestJsonPath = join(skillsDir, 'manifest.json');
       issues.push({
         type: 'orphan_trigger',
         severity: 'warning',
         skill: skillName,
-        message: `Skill '${skillName}' declares triggers in ${join(skillsDir, skillName, 'SKILL.md')} frontmatter but is not registered in ${join(skillsDir, 'manifest.json')}`,
+        message: `Skill '${skillName}' declares triggers in ${skillMdPath} frontmatter but is not registered in ${manifestJsonPath}`,
         action: `Add {"name":"${skillName}","path":"${skillName}/SKILL.md"} to manifest.json (or delete the skill directory)`,
       });
     }

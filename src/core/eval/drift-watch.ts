@@ -57,15 +57,15 @@ export function matchesWatchPattern(path: string, patterns: ReadonlyArray<string
  * binary (virtual `/$bunfs/` URL). The drift check only means something
  * against a checkout: an installed CLI has no git diff to inspect.
  */
+/** Files that mark a gbrain source checkout (vs an installed package or compiled binary). */
+const CHECKOUT_MARKERS = ['src/cli.ts', 'skills/RESOLVER.md', '.git'] as const;
+
 export function resolveGbrainSourceRoot(moduleUrl: string = import.meta.url): string | null {
   try {
     let dir = dirname(fileURLToPath(moduleUrl));
     for (let i = 0; i < 10; i++) {
-      if (
-        existsSync(join(dir, 'src', 'cli.ts')) &&
-        existsSync(join(dir, 'skills', 'RESOLVER.md')) &&
-        existsSync(join(dir, '.git'))
-      ) return dir;
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir walks up from this module's own file URL (import.meta.url), never from user input; the markers are literals
+      if (CHECKOUT_MARKERS.every((marker) => existsSync(join(dir, marker)))) return dir;
       const parent = dirname(dir);
       if (parent === dir) break;
       dir = parent;

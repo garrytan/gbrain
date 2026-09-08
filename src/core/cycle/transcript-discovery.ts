@@ -146,6 +146,7 @@ function compileLabeledExcludePatterns(patterns: string[] | undefined): Compiled
     if (!p) continue;
     try {
       const src = WORD_BOUNDARY_HEURISTIC.test(p) ? `\\b${p}\\b` : p;
+      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- patterns come from the operator's own local config (dream.synthesize.exclude_patterns), never from remote or page content; a malformed pattern is caught below and skipped
       out.push({ re: new RegExp(src, 'i'), label: p });
     } catch (e) {
       // Bad regex from user config — skip with stderr warning, don't crash.
