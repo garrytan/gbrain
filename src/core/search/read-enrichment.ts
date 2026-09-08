@@ -35,6 +35,18 @@ export async function readRelationalFanout(query: ReadQuery, seeds: string[], op
     typeFilter = `AND l.link_type = ANY($${params.length}::text[])`;
   }
   const mentionsFilter = opts?.includeMentions ? '' : `AND l.link_source IS DISTINCT FROM 'mentions'`;
+  // walkScope constrains which source(s) the recursive step may land in.
+  // Fail-closed default (walkSourceIds omitted) pins each branch to its OWN
+  // seed's source via `w.seed_source`; passing walkSourceIds widens the walk
+  // to that caller-chosen set so cross-source edges resolve (a task in one
+  // source `assigned_to` a person page in another) — see
+  // RelationalFanoutOpts.walkSourceIds. The read-policy filters on p2 still
+  // apply on top, so widening never escapes the caller's permitted scope.
+  let walkScope = 'p2.source_id = w.seed_source';
+  if (opts?.walkSourceIds?.length) {
+    params.push(opts.walkSourceIds);
+    walkScope = `p2.source_id = ANY($${params.length}::text[])`;
+  }
   const recurStep = direction === 'out'
     ? 'JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id'
     : direction === 'in'
@@ -52,7 +64,7 @@ export async function readRelationalFanout(query: ReadQuery, seeds: string[], op
         w.visited || p2.id, w.path || p2.slug, w.seed_source, l.link_type
       FROM walk w ${recurStep}
       WHERE w.depth < $2 AND NOT (p2.id = ANY(w.visited))
-        AND p2.source_id = w.seed_source AND p2.deleted_at IS NULL
+        AND ${walkScope} AND p2.deleted_at IS NULL
         AND ${step} AND ${origin} ${mentionsFilter} ${typeFilter}
     )
     SELECT n.source_id, n.slug, MIN(n.depth) AS hop,

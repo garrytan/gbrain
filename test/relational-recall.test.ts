@@ -272,3 +272,73 @@ describe('hybridSearch guarantees page-1 relational evidence (#3995)', () => {
     expect(meta?.relational_evidence_slot).toBeUndefined();
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// Cross-source arm: seed in one source, answer in another
+// ---------------------------------------------------------------------------
+
+describe('buildRelationalArm — cross-source', () => {
+  let cross: PGLiteEngine;
+
+  beforeAll(async () => {
+    cross = new PGLiteEngine();
+    await cross.connect({});
+    await cross.initSchema();
+    await cross.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('tasks', 'tasks'), ('people', 'people')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    // The person lives in `people`, the work item in `tasks`. The title
+    // carries a Vietnamese diacritic that slugifies lossily ("Đào" → "o"), so
+    // this fixture also covers the seed-resolution fallback: the resolver's
+    // bare-name prefix expansion over the slug cannot reach the page, and only
+    // a title-fuzzy pass on the original phrase can.
+    await cross.putPage('people/dao-example', { type: 'person', title: 'Đào', compiled_truth: 'Đào is an engineer.', timeline: '' }, { sourceId: 'people' });
+    await cross.putPage('tasks/ship-the-thing', { type: 'note', title: 'Ship the thing', compiled_truth: 'Ship the thing by Friday.', timeline: '' }, { sourceId: 'tasks' });
+    await cross.addLink('tasks/ship-the-thing', 'people/dao-example', '', 'assigned_to', 'manual', undefined, undefined, {
+      fromSourceId: 'tasks',
+      toSourceId: 'people',
+    });
+  }, 60_000);
+
+  afterAll(async () => { await cross.disconnect(); });
+
+  test('unscoped: resolves the seed in its own source and walks into another', async () => {
+    const list = await buildRelationalArm(cross, 'Đào đang có những task gì?');
+    const task = list.find(r => r.slug === 'tasks/ship-the-thing');
+    expect(task).toBeDefined();
+    expect(task!.source_id).toBe('tasks');
+    expect(task!.relational_via_link_types).toEqual(['assigned_to']);
+  });
+
+  test('the English phrasing of the same question resolves identically', async () => {
+    const list = await buildRelationalArm(cross, 'what tasks does Đào have');
+    expect(list.find(r => r.slug === 'tasks/ship-the-thing')).toBeDefined();
+  });
+
+  test('scoped to the wrong source: the seed never resolves, arm is a no-op', async () => {
+    const list = await buildRelationalArm(cross, 'Đào đang có những task gì?', { sourceId: 'tasks' });
+    expect(list).toEqual([]);
+  });
+
+  test('federated scope resolves the seed and walks within the granted set', async () => {
+    const list = await buildRelationalArm(cross, 'Đào đang có những task gì?', { sourceIds: ['tasks', 'people'] });
+    expect(list.find(r => r.slug === 'tasks/ship-the-thing')).toBeDefined();
+  });
+
+  test('a grant covering only the person source cannot reach the task', async () => {
+    // The access-control property: a caller granted `people` resolves the seed
+    // but the walk must not surface a page from `tasks`.
+    const list = await buildRelationalArm(cross, 'Đào đang có những task gì?', { sourceIds: ['people'] });
+    expect(list).toEqual([]);
+  });
+
+  test('the __all__ literal stays fail-closed — it is never expanded to the whole brain', async () => {
+    // `sourceScopeOpts` hands a trusted-local `__all__` through as NO scope
+    // (covered by the unscoped test above). The literal only survives for a
+    // remote caller with no federated grant, where it exists so the read
+    // fail-closes. Expanding it here would hand that caller every source.
+    const list = await buildRelationalArm(cross, 'Đào đang có những task gì?', { sourceId: '__all__' });
+    expect(list).toEqual([]);
+  });
+});

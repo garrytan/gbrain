@@ -3,9 +3,21 @@
  *
  * Detects queries whose answer is a RELATIONSHIP (an edge between entities)
  * rather than a passage — "who invested in widget-co", "who at acme works on
- * payments", "who introduced me to alice", "what connects fund-a and fund-b".
- * The relational recall arm uses the parse to resolve seed entities and walk
- * the typed-edge graph.
+ * payments", "who introduced me to alice", "what connects fund-a and fund-b",
+ * "who is assigned to <task>", "what tasks does <person> have", "who manages
+ * <person>", "<person> đang có task gì", "ai phụ trách <task>". The relational
+ * recall arm uses the parse to resolve seed entities and walk the typed-edge
+ * graph.
+ *
+ * Two domains are covered: the original VC/startup bank (founded/invested_in/
+ * works_at/advises/attended) and a work-management bank (assigned_to/
+ * managed_by/owned_by, EN+VI) added for company-knowledge-brain sources (Jira, Asana,
+ * or any in-house work tracker). `assigned_to` in particular is the SAME canonical
+ * schema-pack edge name all three of those collectors already emit (grep-
+ * verified), so this bank is provider-agnostic, not tied to any one tracker —
+ * a future tracker that reuses these edge names is covered without a new
+ * pattern. Confluence/git-doc sources have no assignee/owner concept and
+ * aren't expected to match either bank.
  *
  * Pure module. No DB, no LLM, no async. Detection is regex-only and
  * deterministic, parsed from the ORIGINAL query (never the LLM-expanded
@@ -80,6 +92,14 @@ export const KNOWN_LINK_TYPES: ReadonlySet<string> = new Set([
   'source',
   'related_to',
   'wikilink_basename',
+  // v0.43.x — company/work-management domain (task assignment + org
+  // hierarchy + ownership), added alongside EN+VI verb patterns below so a
+  // brain built from a work-tracker collector can answer
+  // "who has what task" / "who manages whom" / "who owns X" relationally,
+  // not just via the VC/startup domain the original bank covered.
+  'assigned_to',
+  'managed_by',
+  'owned_by',
   // Open-loop engine (google source kind): thread-page → person-page edges
   // written by loops-extract.ts with link_source 'google-loops'.
   //   owes_to              — the account owner promised something to them
@@ -117,6 +137,18 @@ const WHO_REL_VERBS: Array<{ verb: string; linkTypes: string[]; direction: Relat
   { verb: 'advises|advised', linkTypes: ['advises'], direction: 'in' },
   { verb: 'works at|worked at|works for', linkTypes: ['works_at'], direction: 'in' },
   { verb: 'attended', linkTypes: ['attended'], direction: 'in' },
+  // v0.43.x — work-management domain. Edge direction convention: `task
+  // --assigned_to--> person`, `person --managed_by--> manager`,
+  // `objective --owned_by--> person` (the direction every work-tracker collector writes).
+  // "who is assigned to <task>" walks the TASK's own outgoing edge (the
+  // task points at its assignee) → direction 'out', unlike the VC verbs
+  // above where the seed is the edge's TARGET.
+  { verb: 'is assigned to|assigned to', linkTypes: ['assigned_to'], direction: 'out' },
+  { verb: 'manages|is the manager of', linkTypes: ['managed_by'], direction: 'out' },
+  { verb: 'owns|is the owner of', linkTypes: ['owned_by'], direction: 'out' },
+  // "who reports to <manager>" — seed is the MANAGER (edge target), so this
+  // one IS direction 'in', like the VC verbs.
+  { verb: 'reports to', linkTypes: ['managed_by'], direction: 'in' },
 ];
 
 function buildPatterns(vocab?: RelationVocab): CompiledPattern[] {
@@ -175,6 +207,73 @@ function buildPatterns(vocab?: RelationVocab): CompiledPattern[] {
   patterns.push({
     re: new RegExp(`\\bwhere\\s+(?:does|did|has)\\s+${SEED}\\s+work\\b`, 'i'),
     kind: 'who_rel', linkTypes: ['works_at'], direction: 'out', seedGroups: 1,
+  });
+
+  // v0.43.x — work-management domain, outgoing variants (seed in the
+  // middle/start, not the "who <verb> <seed>" shape the loop above covers).
+  // `assigned_to`/`owned_by` are the canonical schema-pack edge names
+  // shared across work-tracker collectors (Jira and
+  // Asana mappers both emit `type: 'assigned_to'`) — this is
+  // provider-agnostic by construction, not one tracker's vocabulary.
+  // The noun alternation below (task/issue/ticket/priority/item) covers the
+  // different words each tracker's own UI uses for the same "assigned unit
+  // of work" concept, so a future Confluence/git-doc source that reuses
+  // `assigned_to` for its own work-item concept is covered too without
+  // needing its own pattern.
+  patterns.push({
+    re: new RegExp(
+      `\\bwhat\\s+(?:tasks?|issues?|tickets?|priorities|work\\s*items?)\\s+(?:does|has|is)\\s+${SEED}\\s+(?:have|got|working on|assigned to)\\b`,
+      'i',
+    ),
+    kind: 'who_rel', linkTypes: ['assigned_to'], direction: 'in', seedGroups: 1,
+  });
+  patterns.push({
+    re: new RegExp(`\\bwhat\\s+is\\s+${SEED}\\s+(?:working on|assigned to)\\b`, 'i'),
+    kind: 'who_rel', linkTypes: ['assigned_to'], direction: 'in', seedGroups: 1,
+  });
+  patterns.push({
+    re: new RegExp(`\\bwho\\s+does\\s+${SEED}\\s+report\\s+to\\b`, 'i'),
+    kind: 'who_rel', linkTypes: ['managed_by'], direction: 'out', seedGroups: 1,
+  });
+  patterns.push({
+    re: new RegExp(`\\bwhat\\s+(?:does|has)\\s+${SEED}\\s+own\\b`, 'i'),
+    kind: 'who_rel', linkTypes: ['owned_by'], direction: 'in', seedGroups: 1,
+  });
+
+  // v0.43.x — Vietnamese phrasings for the same work-management domain.
+  // None of these fit the "who <verb> <seed>" template above (Vietnamese
+  // question words don't lead the sentence the way English "who"/"what"
+  // does — the subject/seed usually comes first), so they're standalone.
+  // No leading `\b` before a seed that may start with a Vietnamese
+  // diacritic letter (e.g. "Đ") — JS's `\b` uses an ASCII-only word-char
+  // definition, so it can fail to recognize a boundary before non-ASCII
+  // letters. The lazy SEED capture plus the required trailing phrase is
+  // sufficient to bound the match without it.
+  patterns.push({
+    re: new RegExp(
+      `${SEED}\\s+(?:đang\\s+)?(?:có|làm|phụ trách|đảm nhận)\\s+(?:những\\s+)?(?:task|công việc|việc)\\s+(?:gì|nào)\\s*\\??$`,
+      'iu',
+    ),
+    kind: 'who_rel', linkTypes: ['assigned_to'], direction: 'in', seedGroups: 1,
+  });
+  patterns.push({
+    re: new RegExp(
+      `\\bai\\s+(?:đang\\s+)?(?:làm|phụ trách|đảm nhận|được giao)\\s+${SEED}\\s*\\??$`,
+      'iu',
+    ),
+    kind: 'who_rel', linkTypes: ['assigned_to'], direction: 'out', seedGroups: 1,
+  });
+  patterns.push({
+    re: new RegExp(`\\bai\\s+quản lý\\s+${SEED}\\s*\\??$`, 'iu'),
+    kind: 'who_rel', linkTypes: ['managed_by'], direction: 'out', seedGroups: 1,
+  });
+  patterns.push({
+    re: new RegExp(`${SEED}\\s+báo cáo cho\\s+ai\\s*\\??$`, 'iu'),
+    kind: 'who_rel', linkTypes: ['managed_by'], direction: 'out', seedGroups: 1,
+  });
+  patterns.push({
+    re: new RegExp(`\\bai\\s+báo cáo cho\\s+${SEED}\\s*\\??$`, 'iu'),
+    kind: 'who_rel', linkTypes: ['managed_by'], direction: 'in', seedGroups: 1,
   });
 
   // schema-pack extensions: "who <verb> <seed>" for each extra verb.

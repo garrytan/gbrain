@@ -275,8 +275,13 @@ rationale lives in the comment chain at `test/search/knobs-hash-reranker.test.ts
 balanced/tokenmax) adds a fourth recall arm: a relational query ("who invested
 in X", "what connects A and B") resolves its seed entity and walks the typed-edge
 graph (`src/core/search/relational-recall.ts` + `relational-intent.ts`,
-`engine.relationalFanout`), injecting edge-derived answers into RRF. Within-source,
-deterministic, mentions-excluded by default, pure no-op for non-relational queries.
+`engine.relationalFanout`), injecting edge-derived answers into RRF. Cross-source
+within the caller's permitted scope (`RelationalFanoutOpts.walkSourceIds` — a work
+item in one source can resolve `assigned_to` a person page in another; a
+genuinely unscoped trusted-local caller walks every source, the `__all__`
+literal stays fail-closed), deterministic, mentions-excluded by default, pure
+no-op for non-relational queries. Two verb banks: the original VC/startup one
+and a work-management one (`assigned_to`/`managed_by`/`owned_by`, EN + VI).
 The `query` op's `relational` flag forces it on/off per call. After the
 reranker, up to `relational_rerank_pin` (3 in every bundle) arm rows are re-pinned
 above the reranked text rows (`relational-rerank-pin.ts`);

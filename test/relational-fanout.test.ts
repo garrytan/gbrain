@@ -125,3 +125,70 @@ describe('relationalFanout', () => {
     expect(JSON.stringify(r1)).toBe(JSON.stringify(r2));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cross-source walk: walkSourceIds
+// ---------------------------------------------------------------------------
+
+describe('relationalFanout — cross-source walk', () => {
+  let cross: PGLiteEngine;
+
+  beforeAll(async () => {
+    cross = new PGLiteEngine();
+    await cross.connect({});
+    await cross.initSchema();
+    await cross.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('tasks', 'tasks'), ('people', 'people')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    // The shape a work-tracker brain actually has: work items in one source,
+    // the people they are assigned to in another, joined by a typed edge that
+    // crosses the source boundary.
+    await cross.putPage('tasks/ship-the-thing', { type: 'note', title: 'Ship the thing', compiled_truth: 'Ship the thing by Friday.', timeline: '' }, { sourceId: 'tasks' });
+    await cross.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice is an engineer.', timeline: '' }, { sourceId: 'people' });
+    await cross.addLink('tasks/ship-the-thing', 'people/alice-example', '', 'assigned_to', 'manual', undefined, undefined, {
+      fromSourceId: 'tasks',
+      toSourceId: 'people',
+    });
+  }, 60_000);
+
+  afterAll(async () => { await cross.disconnect(); });
+
+  test('fail-closed default: walkSourceIds omitted keeps the walk in the seed\'s own source', async () => {
+    const rows = await cross.relationalFanout(['tasks/ship-the-thing'], { direction: 'out', linkTypes: ['assigned_to'] });
+    expect(rows).toEqual([]);
+  });
+
+  test('walkSourceIds widens the walk across the passed source set', async () => {
+    const rows = await cross.relationalFanout(['tasks/ship-the-thing'], {
+      direction: 'out',
+      linkTypes: ['assigned_to'],
+      walkSourceIds: ['tasks', 'people'],
+    });
+    expect(rows.map(r => r.slug)).toEqual(['people/alice-example']);
+    expect(rows[0]!.source_id).toBe('people');
+  });
+
+  test('walkSourceIds never lands outside the passed set', async () => {
+    const rows = await cross.relationalFanout(['tasks/ship-the-thing'], {
+      direction: 'out',
+      linkTypes: ['assigned_to'],
+      walkSourceIds: ['tasks'],
+    });
+    expect(rows).toEqual([]);
+  });
+
+  test('a read policy narrower than walkSourceIds wins — widening cannot escape the caller\'s scope', async () => {
+    // The security property the widening rests on: `walkSourceIds` controls
+    // which sources the recursive step MAY land in, while the read-policy
+    // filter on p2 controls which it is ALLOWED to. A caller granted only
+    // `tasks` must not reach the person page even when the walk set is wider.
+    const rows = await cross.relationalFanout(['tasks/ship-the-thing'], {
+      direction: 'out',
+      linkTypes: ['assigned_to'],
+      walkSourceIds: ['tasks', 'people'],
+      sourceIds: ['tasks'],
+    });
+    expect(rows).toEqual([]);
+  });
+});
