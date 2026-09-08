@@ -106,6 +106,8 @@ export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'pglite-repair', 'upgr
 // and repair must run when the DB is down) — dispatched in handleCliOnly
 // before the connectEngine terminator, like pglite-repair.
 'engine', 'db-repair',
+// Operator prompt overrides (engine-bound: overrides live in brain config).
+'prompts',
 // Monthly backup-coverage check (engine via thunk — pre-engine branch, lock-safe).
 'backup']);
 // CLI-only commands whose handlers print their own --help text. These are
@@ -166,6 +168,8 @@ const CLI_ONLY_SELF_HELP = new Set([
   'reinit-pglite',
   // db-availability loop: both print their own help (engine-free).
   'engine', 'db-repair',
+  // prompts ships PROMPTS_HELP (list/show/set/reset + the placeholder rule).
+  'prompts',
   // WAL-repair wave: pglite-repair ships its own --help with the
   // dry-run/repair semantics + the un-checkpointed-tail caveat.
   'pglite-repair',
@@ -295,6 +299,9 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // runAgent accepts BrainEngine | null; help (incl. `register --help`) is
   // answered before any engine or job-queue work (cathedral-6).
   agent: async () => (await import('./commands/agent.ts')).runAgent as never,
+  // runPrompts takes BrainEngine | null and prints PROMPTS_HELP before any
+  // engine work, so `prompts --help` answers on a machine with no brain.
+  prompts: async () => (await import('./commands/prompts.ts')).runPrompts as never,
   // The retired ze-switch shim answers --help engine-free (arg-order adapter
   // lives in ze-switch.ts because runZeSwitch takes (args, engine)).
   'ze-switch': async () => (await import('./commands/ze-switch.ts')).runZeSwitchSelfHelp as never,
@@ -3068,6 +3075,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runConfig(engine, args);
         break;
       }
+      case 'prompts': {
+        const { runPrompts } = await import('./commands/prompts.ts');
+        await runPrompts(engine, args);
+        break;
+      }
       // doctor is handled before connectEngine() above
       case 'migrate': {
         // #3390: `gbrain migrate embeddings --to <provider:model>` — the
@@ -3954,6 +3966,7 @@ ADMIN
   features [--json] [--auto-fix]     Scan usage + recommend unused features
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
   config [show|get|set] <key> [val]  Brain config
+  prompts [list|show|set|reset]      Inspect + override system prompts
   protocol [conformance|stats]       MEMORY_VERBS v1: schemas, conformance
                                      certification, local usage stats + TTHW
   storage status [--repo <path>]     Storage tier status and health

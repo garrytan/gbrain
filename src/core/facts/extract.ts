@@ -22,6 +22,7 @@
  */
 
 import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
+import { resolvePromptText } from '../prompts/resolve.ts';
 import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { ChatResult } from '../ai/gateway.ts';
@@ -323,6 +324,13 @@ function renderExtractorSystem(admitsLow: boolean): string {
 const EXTRACTOR_SYSTEM_ADMITS_LOW = renderExtractorSystem(true);
 const EXTRACTOR_SYSTEM_SKIPS_LOW = renderExtractorSystem(false);
 
+/**
+ * Default text the prompt registry lists for `prompts.facts.extractor`.
+ * The skip-low variant is the batch/sync default; an operator override
+ * replaces whichever variant the admission selected (see below).
+ */
+export const EXTRACTOR_SYSTEM = EXTRACTOR_SYSTEM_SKIPS_LOW;
+
 /** @internal Exported for the prompt-shape test. */
 export function buildExtractorSystem(admitsLow: boolean): string {
   return admitsLow ? EXTRACTOR_SYSTEM_ADMITS_LOW : EXTRACTOR_SYSTEM_SKIPS_LOW;
@@ -456,9 +464,12 @@ export async function extractFactsFromTurnWithOutcome(
     getFactsExtractionPromptAppendix(input.engine),
     isJunkFilterEnabled(input.engine),
   ]);
+  // A `prompts.facts.extractor` override replaces the built-in variant
+  // wholesale; the #3852 operator appendix still composes on top of it.
+  const baseSystem = await resolvePromptText(input.engine, 'facts.extractor', buildExtractorSystem(admitsLow));
   const extractorSystem = promptAppendix
-    ? `${buildExtractorSystem(admitsLow)}\n\n${promptAppendix}`
-    : buildExtractorSystem(admitsLow);
+    ? `${baseSystem}\n\n${promptAppendix}`
+    : baseSystem;
   const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, ENTITY_HINTS_CAP).join(', ')}.`

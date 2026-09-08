@@ -22,12 +22,13 @@
 
 import { runLlmCall, parseLlmJson, type ChatTransport } from './llm-base.ts';
 import type { BrainEngine } from '../engine.ts';
+import { resolvePromptText } from '../prompts/resolve.ts';
 import { getCurrentBudgetTracker } from '../ai/gateway.ts';
 import type { MatchedMessage } from './types.ts';
 
 const POLISH_HEADROOM_USD = 0.1;
 
-const POLISH_SYSTEM_PROMPT = `You polish a list of chat messages parsed from a chat-log body by a regex.
+export const POLISH_SYSTEM_PROMPT = `You polish a list of chat messages parsed from a chat-log body by a regex.
 
 Input: the original body text plus the regex's parsed JSON.
 
@@ -114,11 +115,13 @@ export async function runLlmPolish(
 
   const promptContent = `BODY:\n${opts.body}\n\nPARSED:\n${JSON.stringify(opts.messages, null, 2)}`;
 
+  const polishSystem = await resolvePromptText(opts.engine, 'conversation_parser.polish', POLISH_SYSTEM_PROMPT);
+
   const ops = await runLlmCall<PolishOps>({
     shape: 'polish',
     modelStr: opts.modelStr,
     content: cacheContent,
-    system: POLISH_SYSTEM_PROMPT,
+    system: polishSystem,
     signal: opts.signal,
     engine: opts.engine,
     chatTransport: opts.chatTransport,

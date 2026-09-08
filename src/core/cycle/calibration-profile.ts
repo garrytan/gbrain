@@ -26,6 +26,7 @@
  */
 
 import { BaseCyclePhase, effectivePhaseDeadlineMs, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { resolvePromptText, effectivePromptVersion } from '../prompts/resolve.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
 import { gateVoice, type VoiceGateGenerator, type VoiceGateJudge } from '../calibration/voice-gate.ts';
@@ -41,7 +42,7 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
 
 export const CALIBRATION_PROFILE_PROMPT_VERSION = 'v0.36.1.0-stub';
 
-const PATTERN_STATEMENTS_PROMPT = `[v0.36.1.0-stub] You are summarizing a forecaster's track record so they
+export const PATTERN_STATEMENTS_PROMPT = `[v0.36.1.0-stub] You are summarizing a forecaster's track record so they
 can see their patterns. Below is a JSON snapshot of how they performed —
 per-domain scorecards over the resolved subset.
 
@@ -68,7 +69,7 @@ SCORECARD:
 {SCORECARD_JSON}
 `;
 
-const BIAS_TAGS_PROMPT = `Based on the pattern statements below, emit 1-4
+export const BIAS_TAGS_PROMPT = `Based on the pattern statements below, emit 1-4
 kebab-case bias tags. Each tag combines an axis (over-confident,
 under-confident, early, late, hedged-correctly) with a domain
 (tactics, macro, geography, hiring, market-timing, founder-behavior,
@@ -92,10 +93,12 @@ export type PatternStatementsGenerator = (input: {
   feedback?: string;
   /** Provider-prefixed model the phase resolved; drives the generator's chat call. */
   modelHint?: string;
+  /** Effective prompt template with an operator override applied. Defaults to PATTERN_STATEMENTS_PROMPT. */
+  promptTemplate?: string;
 }) => Promise<string[]>;
 
 /** Generator function for bias tags (test seam). */
-export type BiasTagsGenerator = (patterns: string[]) => Promise<string[]>;
+export type BiasTagsGenerator = (patterns: string[], promptTemplate?: string) => Promise<string[]>;
 
 export interface CalibrationProfileOpts extends BasePhaseOpts {
   /** Holder to generate the profile for. Default resolves via resolveOwnerHolder (config emotional_weight.user_holder, else 'self'). */
@@ -132,8 +135,9 @@ export async function defaultPatternsGenerator(input: {
   attempt: number;
   feedback?: string;
   modelHint?: string;
+  promptTemplate?: string;
 }): Promise<string[]> {
-  const prompt = PATTERN_STATEMENTS_PROMPT.replace(
+  const prompt = (input.promptTemplate ?? PATTERN_STATEMENTS_PROMPT).replace(
     '{SCORECARD_JSON}',
     JSON.stringify({ holder: input.holder, ...input.scorecard }, null, 2),
   );
@@ -149,9 +153,9 @@ export async function defaultPatternsGenerator(input: {
 }
 
 /** Production bias-tags generator. */
-export async function defaultBiasTagsGenerator(patterns: string[]): Promise<string[]> {
+export async function defaultBiasTagsGenerator(patterns: string[], promptTemplate?: string): Promise<string[]> {
   if (patterns.length === 0) return [];
-  const prompt = BIAS_TAGS_PROMPT.replace(
+  const prompt = (promptTemplate ?? BIAS_TAGS_PROMPT).replace(
     '{PATTERNS_BULLETS}',
     patterns.map(p => `- ${p}`).join('\n'),
   );
@@ -233,7 +237,10 @@ class CalibrationProfilePhase extends BaseCyclePhase {
       override: opts.holder,
       configValue: await engine.getConfig('emotional_weight.user_holder'),
     });
-    const promptVersion = opts.promptVersion ?? CALIBRATION_PROFILE_PROMPT_VERSION;
+    const patternsPromptTemplate = await resolvePromptText(engine, 'cycle.calibration_pattern_statements', PATTERN_STATEMENTS_PROMPT);
+    const biasTagsPromptTemplate = await resolvePromptText(engine, 'cycle.calibration_bias_tags', BIAS_TAGS_PROMPT);
+    const promptVersion = opts.promptVersion
+      ?? effectivePromptVersion(CALIBRATION_PROFILE_PROMPT_VERSION, PATTERN_STATEMENTS_PROMPT, patternsPromptTemplate);
     // Follow the gateway's configured chat model, matching propose_takes
     // (v0.42.62) and grade_takes: previously the generator stayed pinned to
     // the TIER_DEFAULTS.reasoning constant, ignoring a configured
@@ -298,6 +305,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
         // The same resolved string that is persisted to model_id drives the
         // generator's chat call — the phase can't record a model it didn't run.
         modelHint: modelId,
+        promptTemplate: patternsPromptTemplate,
         ...(feedback !== undefined ? { feedback } : {}),
       });
       return lines.join('\n');
@@ -341,7 +349,7 @@ class CalibrationProfilePhase extends BaseCyclePhase {
 
     // Bias tags from the patterns. Best-effort; failure is non-fatal.
     try {
-      result.active_bias_tags = await biasTagsGenerator(result.pattern_statements);
+      result.active_bias_tags = await biasTagsGenerator(result.pattern_statements, biasTagsPromptTemplate);
     } catch (err) {
       result.warnings.push(`bias_tags_generator failed: ${err instanceof Error ? err.message : String(err)}`);
     }

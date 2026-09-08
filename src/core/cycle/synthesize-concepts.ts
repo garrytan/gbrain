@@ -22,6 +22,7 @@
 
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { resolveModel } from '../model-config.ts';
+import { resolvePromptText } from '../prompts/resolve.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
@@ -119,7 +120,7 @@ type ConceptSynthesisMode =
   | 'budget_fallback'
   | 'error_fallback';
 
-const SYNTH_PROMPT = `You write a 1-paragraph executive summary of a concept
+export const SYNTH_PROMPT = `You write a 1-paragraph executive summary of a concept
 based on multiple atom-shaped insights that reference it.
 
 Output ONLY the summary paragraph (3-5 sentences). No headers, no JSON,
@@ -131,6 +132,7 @@ export async function runPhaseSynthesizeConcepts(
   opts: SynthesizeConceptsOpts = {},
 ): Promise<PhaseResult> {
   const chat = opts._chat ?? gatewayChat;
+  const synthPrompt = await resolvePromptText(engine, 'cycle.synthesize_concepts', SYNTH_PROMPT);
 
   // 1. Get atom pages (test seam OR DB query)
   let atoms = opts._atoms ?? [];
@@ -287,7 +289,7 @@ export async function runPhaseSynthesizeConcepts(
         try {
           const result = await chat({
             model: synthModel,
-            system: SYNTH_PROMPT,
+            system: synthPrompt,
             messages: [
               {
                 role: 'user',

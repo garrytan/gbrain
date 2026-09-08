@@ -9,6 +9,7 @@
 // real gateway. The default judge calls the chat gateway; when no gateway is
 // configured it returns zero events (auto-emit is a no-op, never an error).
 import type { BrainEngine } from '../engine.ts';
+import { resolvePromptText } from '../prompts/resolve.ts';
 import { computeContentHash } from '../ingestion/types.ts';
 
 export interface ChronicleEventProposal {
@@ -179,7 +180,7 @@ export async function runChronicleExtract(
   return { slug: opts.slug, status: 'extracted', events_written: written };
 }
 
-const JUDGE_SYSTEM = `You segment a meeting/transcript page into discrete timeline EVENTS.
+export const CHRONICLE_JUDGE_SYSTEM = `You segment a meeting/transcript page into discrete timeline EVENTS.
 Return ONLY a JSON array. Each element: {"when": ISO datetime or YYYY-MM-DD, "who": [entity slugs/names], "what": one-clause summary, "where": optional string, "kind": one of meeting|call|meal|solo|travel|work|commitment|decision|intro|conflict|milestone|event}.
 Prefer the page's known date for "when" when the text gives no explicit time. Use the provided attendee slugs for "who" when the text does not name participants. No prose, no markdown — just the JSON array.`;
 
@@ -206,10 +207,11 @@ function defaultJudge(engine: BrainEngine): ChronicleJudge {
       const n = parseInt(capRaw, 10);
       if (Number.isFinite(n) && n > 0) maxTokens = n;
     }
+    const judgeSystem = await resolvePromptText(engine, 'chronicle.judge', CHRONICLE_JUDGE_SYSTEM);
     let text: string;
     try {
       const res = await chat({
-        system: JUDGE_SYSTEM,
+        system: judgeSystem,
         messages: [{
           role: 'user',
           content:

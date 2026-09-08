@@ -59,6 +59,7 @@
 // which made the NOT EXISTS guard ineffective on federated brains.
 
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import { resolvePromptText } from '../prompts/resolve.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -300,7 +301,7 @@ export function locateQuote(
   return valid[0]!;
 }
 
-const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
+export const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
 
 An atom is a single-source, self-contained idea that could become a tweet,
 quote, or short essay angle. Each atom must:
@@ -925,6 +926,7 @@ export async function runPhaseExtractAtoms(
         `gbrain config set pricing.overrides '{"${costGate.zeroPricedEmbedModel}": <usd-per-1M-tokens>}'.`,
     );
   }
+  const extractPrompt = await resolvePromptText(engine, 'cycle.extract_atoms', EXTRACT_PROMPT);
   const budgetTracker = new BudgetTracker({
     maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
@@ -1087,7 +1089,7 @@ export async function runPhaseExtractAtoms(
     try {
       const result = await chat({
         model: extractModel,
-        system: EXTRACT_PROMPT,
+        system: extractPrompt,
         messages: [
           {
             role: 'user',

@@ -30,6 +30,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import { resolvePromptText } from '../core/prompts/resolve.ts';
 import type { EnrichCandidate, PageType } from '../core/types.ts';
 import { operations } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
@@ -58,6 +59,7 @@ import {
   renderEvidence,
   assessGrounding,
   buildEnrichPrompt,
+  ENRICH_SYSTEM_PROMPT,
   parseSynthesis,
   type EnrichEvidence,
 } from '../core/enrich/thin.ts';
@@ -391,6 +393,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     kind,
     currentBody: page.compiled_truth ?? '',
     evidence,
+    systemPromptTemplate: await resolvePromptText(engine, 'enrich.thin', ENRICH_SYSTEM_PROMPT),
   });
 
   // `ctx.signal` is the CALLER's abort signal (shutdown / cancel). It is NOT the
