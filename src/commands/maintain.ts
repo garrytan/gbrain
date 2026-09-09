@@ -13,6 +13,7 @@
 import { existsSync } from 'fs';
 import type { BrainEngine } from '../core/engine.ts';
 import type { BrainHealth } from '../core/types.ts';
+import { resolveIncludeFrontmatter } from '../core/extract-frontmatter.ts';
 import { buildChecks, computeDoctorReport, type DoctorReport, type Check } from './doctor.ts';
 import { extractStaleFromDB } from './extract.ts';
 import { runCycle, type CycleReport } from '../core/cycle.ts';
@@ -95,7 +96,10 @@ async function runStaleExtraction(
   const result = await extractStaleFromDB(engine, {
     dryRun: false,
     jsonMode: false,
-    includeFrontmatter: false,
+    // Was hardcoded false. Honours extract.include_frontmatter
+    // (legacy autopilot key as fallback) so `gbrain maintain` keeps
+    // frontmatter edges fresh for packs that store relationships there.
+    includeFrontmatter: await resolveIncludeFrontmatter(engine),
     catchUp: false,
   });
 

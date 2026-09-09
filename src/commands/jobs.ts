@@ -23,6 +23,7 @@ import { runChildJobEntry } from '../core/minions/run-child.ts';
 import type { MinionHandler, MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import type { PaceKeyOverrides } from '../core/pace-mode.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
+import { resolveIncludeFrontmatter } from '../core/extract-frontmatter.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 import { defaultTimeoutMsFor, defaultLockDurationMsFor, clampLockDurationMs } from '../core/minions/handler-timeouts.ts';
@@ -2434,7 +2435,9 @@ export async function registerBuiltinHandlers(
       const r = await extractStaleFromDB(engine, {
         dryRun: !!job.data.dryRun,
         jsonMode: false,
-        includeFrontmatter: false,
+        // Was hardcoded false: a deferred sweep could never build frontmatter
+        // edges even with the config set. See core/extract-frontmatter.ts.
+        includeFrontmatter: await resolveIncludeFrontmatter(engine),
         sourceIdFilter,
         catchUp: false,
       });

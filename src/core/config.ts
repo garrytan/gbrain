@@ -258,6 +258,14 @@ export interface GBrainConfig {
      */
     incremental_extract_include_frontmatter?: boolean;
   };
+  /**
+   * Frontmatter link extraction for EVERY extraction path. Default false.
+   * Supersedes autopilot.incremental_extract_include_frontmatter (still
+   * honoured as a fallback). See src/core/extract-frontmatter.ts.
+   */
+  extract?: {
+    include_frontmatter?: boolean;
+  };
   eval?: {
     /** false disables capture entirely. Defaults to true. */
     capture?: boolean;
@@ -1510,6 +1518,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // WP3 — unknown tool-call argument posture ('warn' default | 'reject').
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',
+  // Frontmatter link extraction for EVERY path (src/core/extract-frontmatter.ts).
+  'extract.include_frontmatter',
   // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
@@ -1639,6 +1649,7 @@ export function isConfigTruthy(raw: unknown): boolean {
   return typeof raw === 'string'
     && ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
+
 
 export function saveConfig(config: GBrainConfig): void {
   mkdirSync(getConfigDir(), { recursive: true });

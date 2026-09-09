@@ -1355,21 +1355,15 @@ async function runPhaseExtract(
 ): Promise<PhaseResult> {
   try {
     const { runExtractCore } = await import('../commands/extract.ts');
-    const { loadConfig } = await import('./config.ts');
-    // Default off: the incremental cycle extracts body links only unless the
-    // operator opts in to keeping externally-edited frontmatter links fresh too.
-    // Both planes, file wins (env > file > DB precedence, per loadConfigWithEngine):
-    // `gbrain config set autopilot.incremental_extract_include_frontmatter true`
-    // writes the DB plane (engine.setConfig), so a file-plane-only read here
-    // would make the documented enable command a silent no-op (#2120 class).
-    const fileVal = loadConfig()?.autopilot?.incremental_extract_include_frontmatter;
-    let includeFrontmatter = fileVal === true;
-    if (fileVal === undefined) {
-      try {
-        includeFrontmatter =
-          (await engine.getConfig('autopilot.incremental_extract_include_frontmatter')) === 'true';
-      } catch { /* config table unreadable → default off */ }
-    }
+    const { resolveIncludeFrontmatter } = await import('./extract-frontmatter.ts');
+    // This bespoke two-plane read is now the shared resolver, so every
+    // extraction path (this cycle, performSync's inline extract, the
+    // extract_stale minion, maintain) agrees on one answer. Behaviour is
+    // preserved — the legacy autopilot key is still honoured — and the general
+    // `extract.include_frontmatter` key now works here too. Truthiness moves to
+    // isConfigTruthy, so `1`/`yes`/`on` are accepted as they are everywhere
+    // else; the previous `=== 'true'` silently rejected them.
+    const includeFrontmatter = await resolveIncludeFrontmatter(engine);
     // Extract is read-mostly against the filesystem + write to links table.
     // Honor dryRun by skipping with a 'skipped' entry: extract doesn't have
     // a clean dry-run mode today and runCycle should be honest about it.

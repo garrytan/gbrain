@@ -40,6 +40,7 @@ import type { SyncManifest, SyncFailure } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadConfig } from '../core/config.ts';
+import { resolveIncludeFrontmatter } from '../core/extract-frontmatter.ts';
 import { DB_ACCESS_MARKER_PREFIX, shouldEmitDbAccessMarker } from '../core/pg-access-classify.ts';
 import {
   autoConcurrency,
@@ -321,6 +322,8 @@ export interface SyncOpts {
   noPull?: boolean;
   noEmbed?: boolean;
   noExtract?: boolean;
+  /** Explicit --include-frontmatter override; unset defers to config. */
+  includeFrontmatter?: boolean;
   /**
    * #3969: opt back into per-poll ingest_log rows. By default a sync that
    * landed nothing (no pages written, no chunks, no failures acknowledged)
@@ -3760,7 +3763,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // up. For resumed large syncs, pagesAffected holds only THIS run's slugs, but
   // the stale sweep scans the whole source, so banked-across-runs pages are
   // covered regardless.
-  const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  // Pre-fix this built {sourceId} only, so an unattended sync never built
+  // `related:` frontmatter edges. See src/core/extract-frontmatter.ts.
+  const includeFrontmatter = await resolveIncludeFrontmatter(engine, opts.includeFrontmatter);
+  const extractOpts = { ...(opts.sourceId ? { sourceId: opts.sourceId } : {}), includeFrontmatter };
   if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
     // #2849: above the size gate the deferred extraction must be DURABLY
     // QUEUED, not just hinted. The autopilot cycle's extract phase is
