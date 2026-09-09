@@ -218,18 +218,30 @@ describe('extract_atoms per-page atoms_source_changed', () => {
   test('the drift query IS issued for a page item (positive control for the next case)', async () => {
     await seedSourcePage();
     const seen: string[] = [];
-    const realExecuteRaw = engine.executeRaw.bind(engine);
-    (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = ((
+    // Unbound + `.call(this, …)`, NOT `.bind(engine)` — as in
+    // test/import-default-write-guard-once.test.ts. importFromContent writes
+    // the atom through engine.transaction(), whose callback runs on a
+    // `Object.create(engine)` clone (pglite-engine.ts's `transaction()`) so
+    // its own `executeRaw` calls route to the transaction's connection
+    // instead of the base engine's. `.bind(engine)` freezes `this` to the
+    // base engine, so a transaction-clone call (e.g. the chunker_version
+    // stamp in import-file.ts) would silently escape the transaction and
+    // re-enter PGLite's single connection while it is still inside that
+    // same transaction — a hang, not a wrong count. Forwarding via `.call`
+    // preserves whichever receiver (base engine or clone) invoked it.
+    const realExecuteRaw = engine.executeRaw;
+    (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = (async function (
+      this: PGLiteEngine,
       sql: string,
-      ...rest: unknown[]
-    ) => {
+      params?: unknown[],
+    ) {
       seen.push(sql);
-      return (realExecuteRaw as (...a: unknown[]) => unknown)(sql, ...rest);
+      return realExecuteRaw.call(this, sql, params);
     }) as typeof realExecuteRaw;
     try {
       await runPage('Prototypes beat renders');
     } finally {
-      (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = realExecuteRaw;
+      delete (engine as unknown as { executeRaw?: typeof realExecuteRaw }).executeRaw;
     }
     expect(seen.some((sql) => sql.includes("NOT LIKE 'pending:%'"))).toBe(true);
   });
@@ -239,14 +251,18 @@ describe('extract_atoms per-page atoms_source_changed', () => {
 
     // 0 alone would also pass if the query ran and returned 0, or threw into
     // the fail-soft catch — so record the SQL and assert it was never issued.
+    // Same unbound + `.call(this, …)` wrapper as the previous test — the
+    // stubbed chat still yields an atom here, so this run also writes
+    // through importFromContent's engine.transaction() clone.
     const seen: string[] = [];
-    const realExecuteRaw = engine.executeRaw.bind(engine);
-    (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = ((
+    const realExecuteRaw = engine.executeRaw;
+    (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = (async function (
+      this: PGLiteEngine,
       sql: string,
-      ...rest: unknown[]
-    ) => {
+      params?: unknown[],
+    ) {
       seen.push(sql);
-      return (realExecuteRaw as (...a: unknown[]) => unknown)(sql, ...rest);
+      return realExecuteRaw.call(this, sql, params);
     }) as typeof realExecuteRaw;
 
     let result;
@@ -259,7 +275,7 @@ describe('extract_atoms per-page atoms_source_changed', () => {
         _chat: stubChat('Transcript atom'),
       });
     } finally {
-      (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = realExecuteRaw;
+      delete (engine as unknown as { executeRaw?: typeof realExecuteRaw }).executeRaw;
     }
     expect(result.details?.atoms_source_changed).toBe(0);
     expect(seen.some((sql) => sql.includes("NOT LIKE 'pending:%'"))).toBe(false);
