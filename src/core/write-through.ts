@@ -489,6 +489,13 @@ export interface DeleteThroughResult {
   /** The path that was removed (or would have been). */
   path?: string;
   /**
+   * True when the removal was also committed (path-limited) because the repo
+   * is durability-hardened — the delete-side twin of
+   * `WriteThroughResult.committed`. Absent on unhardened repos and when the
+   * best-effort commit did not land (the unlink still stands).
+   */
+  committed?: boolean;
+  /**
    * Non-error reasons nothing was removed. Shares the target-resolution skip
    * vocabulary (kept in lockstep via the Extract), plus:
    *   - disabled_by_config: the operator opted the brain out of the disk sink.
@@ -538,14 +545,27 @@ export async function deletePageThrough(
     }
     const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);
     if (!target.ok) return { removed: false, skipped: target.skipped };
-    const { filePath } = target;
+    const { filePath, writeRoot } = target;
 
     if (!existsSync(filePath)) {
       return { removed: false, path: filePath, skipped: 'file_not_present' };
     }
 
     unlinkSync(filePath);
-    return { removed: true, path: filePath };
+    // Mirror writePageThrough (#2426): on a durability-hardened repo, commit
+    // the removal (path-limited) so the post-commit hook pushes it. Pre-fix
+    // the deletion sat in the working tree as an uncommitted ` D` — invisible
+    // to commit-driven sync (the autopilot's own sync then warned "N
+    // uncommitted file(s) invisible to commit-driven sync") until a human
+    // committed it by hand. Best-effort, like the write side: a commit failure
+    // never fails the delete (the DB row + the unlink are the durable state).
+    let committed = false;
+    try {
+      if (isDurabilityHardened(writeRoot)) {
+        committed = commitWriteThroughFile(writeRoot, filePath, slug, 'delete write-through');
+      }
+    } catch { /* best-effort */ }
+    return { removed: true, path: filePath, ...(committed ? { committed } : {}) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] delete failed for ${slug}: ${msg}`);

@@ -446,14 +446,23 @@ export function isDurabilityHardened(repoPath: string): boolean {
  * never swept into the commit. Never throws; returns false on any failure
  * (index.lock contention, nothing changed, detached states) — the DB row and
  * the on-disk file remain the durable sinks either way.
+ *
+ * `git add -- <path>` stages a removal as readily as an edit, so
+ * `deletePageThrough` reuses this helper with `action: 'delete write-through'`
+ * — same hardening gate, same explicit-path discipline, distinct subject line.
  */
-export function commitWriteThroughFile(repoPath: string, absPath: string, slug: string): boolean {
+export function commitWriteThroughFile(
+  repoPath: string,
+  absPath: string,
+  slug: string,
+  action: 'write-through' | 'delete write-through' = 'write-through',
+): boolean {
   try {
     const rel = relative(repoPath, absPath);
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
     const gitOpts = { stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV } } as const;
     execFileSync('git', ['-C', repoPath, 'add', '--', rel], gitOpts);
-    execFileSync('git', ['-C', repoPath, 'commit', '-m', `gbrain: write-through ${slug}`, '--', rel], gitOpts);
+    execFileSync('git', ['-C', repoPath, 'commit', '-m', `gbrain: ${action} ${slug}`, '--', rel], gitOpts);
     return true;
   } catch {
     return false;
