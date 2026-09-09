@@ -2,6 +2,18 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Features
+
+- **`gbrain embed --stale --facts` backfills `facts.embedding`.** The `--stale`
+  sweep now also selects fact rows that are active, non-expired, and
+  un-embedded, and writes their vectors in batches. Per-batch provider failures
+  are isolated to that batch, and `--dry-run` reports the owed count without
+  writing. The selector and the doctor's `facts_pending` counter both exclude
+  audit checkpoint rows, so they agree on what is still owed. (#4812; selector
+  parity with #4954 / #4875)
+
 ## [0.48.5.0] - 2026-09-07
 
 **The community fix wave: 57 contributor pull requests adopted or reworked

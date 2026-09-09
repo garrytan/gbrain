@@ -52,6 +52,12 @@ Personal knowledge from the brain owner's conversations. Real-time capture.
 
 **Query surface:** `gbrain recall`, MCP `_meta.brain_hot_memory`
 
+Facts are embedded at write time, so there is no routine embed step. Rows that
+missed their vector (provider down, keyless install, budget cap) are counted as
+`facts_pending` by `gbrain migrate embeddings --status`; `gbrain embed --stale
+--facts` backfills them, the facts analogue of `gbrain takes embed`, and
+`--dry-run` shows the pending count without provider calls.
+
 ## The Category Error
 
 **Never dump takes into the facts table.** Takes include other people's attributed

@@ -78,6 +78,8 @@ export const BATCH_AUDIT_SITES = [
   'addTimelineEntriesBatch',
   'addTakesBatch',
   'updateTakeEmbeddings',
+  // #4812: embed --stale --facts writer.
+  'updateFactEmbeddings',
   'upsertChunks',
   // extract.ts per-site labels.
   'extract.links_inc',
