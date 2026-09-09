@@ -2,6 +2,14 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.5.1] - 2026-09-09
+
+### Fixed
+
+- Consolidation now keeps explicitly supplied fact lifetimes and supersession
+  markers intact, so similar facts are not silently expired merely because
+  they were observed at different times.
+
 ## [0.48.5.0] - 2026-09-07
 
 **The community fix wave: 57 contributor pull requests adopted or reworked

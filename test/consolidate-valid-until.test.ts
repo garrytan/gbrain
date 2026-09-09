@@ -1,12 +1,10 @@
 /**
- * v0.35.4 (D-CDX-4) — consolidate semantic upsert + chronological
- * valid_until writeback.
+ * Consolidate semantic upsert + explicit fact-lifecycle preservation.
  *
  * Pins:
- *   - R4a: a cluster of 3 chronologically-ordered facts produces
- *          2 facts with valid_until set (older) and 1 with NULL (newest).
+ *   - Similarity-based take promotion never invents fact expiration.
  *   - R4b/R7: running consolidate twice on the same input produces zero
- *          NEW takes (semantic upsert by (page_id, claim, since_date)).
+ *          NEW takes (semantic upsert by page and claim).
  *          This is the Codex F4 fix — without it, the second cycle's
  *          extract_facts would clear consolidated_at and the second
  *          consolidate would append duplicate takes via MAX(row_num)+1.
@@ -78,15 +76,23 @@ async function insertFact(args: {
   entity_slug: string;
   text: string;
   valid_from: Date;
+  valid_until?: Date | null;
   confidence?: number;
+  embedding?: string;
 }): Promise<number> {
   const r = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at)
-     VALUES ('default', $1, $2, 'fact', 'test', $3::timestamptz, $4, $5::vector, $3::timestamptz)
+    `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, valid_until, confidence, embedding, embedded_at)
+     VALUES ('default', $1, $2, 'fact', 'test', $3::timestamptz, $4::timestamptz, $5, $6::vector, $3::timestamptz)
      RETURNING id`,
-    [args.entity_slug, args.text, args.valid_from.toISOString(), args.confidence ?? 0.9, unitVec()],
+    [args.entity_slug, args.text, args.valid_from.toISOString(), args.valid_until?.toISOString() ?? null, args.confidence ?? 0.9, args.embedding ?? unitVec()],
   );
   return r[0].id;
+}
+
+function orthogonalVec(): string {
+  const a = new Float32Array(1536);
+  a[1] = 1.0;
+  return '[' + Array.from(a).join(',') + ']';
 }
 
 describe('#4057 — consolidation work-window eligibility', () => {
@@ -139,8 +145,58 @@ describe('#4057 — consolidation work-window eligibility', () => {
   });
 });
 
-describe('R4a — chronological valid_until writeback', () => {
-  test('cluster of 3 chronologically-ordered facts: 2 older get valid_until set, newest stays NULL', async () => {
+describe('fact lifecycle preservation', () => {
+  test('complementary same-day device facts remain current after consolidation', async () => {
+    const slug = 'cdx4-complementary-devices';
+    await seedPage(slug);
+    const sameDay = new Date(Date.now() - 30 * 60 * 60 * 1000);
+
+    const workId = await insertFact({
+      entity_slug: slug,
+      text: "Alice's work laptop is a ThinkPad.",
+      valid_from: sameDay,
+    });
+    const personalId = await insertFact({
+      entity_slug: slug,
+      text: "Alice's personal laptop is a 14-inch MacBook Pro.",
+      valid_from: sameDay,
+    });
+    // Satisfy the stock three-fact bucket gate without joining the device
+    // cluster. The device pair deliberately has controlled similar vectors.
+    await insertFact({
+      entity_slug: slug,
+      text: 'Alice uses a paper planner.',
+      valid_from: sameDay,
+      embedding: orthogonalVec(),
+    });
+
+    const result = await runPhaseConsolidate(engine, {});
+    expect(result.details.facts_consolidated).toBe(2);
+
+    const active = await engine.listFactsByEntity('default', slug, { activeOnly: true });
+    expect(active.map(fact => fact.fact)).toEqual(expect.arrayContaining([
+      "Alice's work laptop is a ThinkPad.",
+      "Alice's personal laptop is a 14-inch MacBook Pro.",
+    ]));
+
+    const rows = await engine.executeRaw<{
+      id: number;
+      valid_until: Date | null;
+      consolidated_into: number | null;
+    }>(
+      `SELECT id, valid_until, consolidated_into
+         FROM facts
+        WHERE id IN ($1, $2)
+        ORDER BY id`,
+      [workId, personalId],
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].consolidated_into).toBe(rows[1].consolidated_into);
+    expect(rows[0].valid_until).toBeNull();
+    expect(rows[1].valid_until).toBeNull();
+  });
+
+  test('chronologically ordered similar facts retain their supplied validity', async () => {
     await seedPage('cdx4-acme-mrr');
     const olderDay = new Date('2026-01-15T00:00:00Z');
     const midDay   = new Date('2026-04-12T00:00:00Z');
@@ -172,20 +228,16 @@ describe('R4a — chronological valid_until writeback', () => {
       `SELECT id, valid_until FROM facts WHERE entity_slug = 'cdx4-acme-mrr' ORDER BY valid_from ASC`,
     );
     expect(rows.length).toBe(3);
-    // Older fact's valid_until = mid.valid_from.
+    // Similarity and chronology alone do not prove replacement.
     expect(rows[0].id).toBe(idOlder);
-    expect(rows[0].valid_until).not.toBeNull();
-    expect(new Date(rows[0].valid_until!).toISOString().slice(0, 10)).toBe('2026-04-12');
-    // Mid fact's valid_until = newest.valid_from.
+    expect(rows[0].valid_until).toBeNull();
     expect(rows[1].id).toBe(idMid);
-    expect(rows[1].valid_until).not.toBeNull();
-    expect(new Date(rows[1].valid_until!).toISOString().slice(0, 10)).toBe('2026-07-08');
-    // Newest fact's valid_until stays NULL.
+    expect(rows[1].valid_until).toBeNull();
     expect(rows[2].id).toBe(idNewest);
     expect(rows[2].valid_until).toBeNull();
   });
 
-  test('same-day cluster (3 facts, identical valid_from): id tiebreaker establishes chronological order', async () => {
+  test('same-day cluster keeps every independent fact current', async () => {
     await seedPage('cdx4-acme-sameday');
     const sameDay = new Date(Date.now() - 30 * 60 * 60 * 1000);
     const idA = await insertFact({ entity_slug: 'cdx4-acme-sameday', text: 'same day', valid_from: sameDay });
@@ -194,9 +246,7 @@ describe('R4a — chronological valid_until writeback', () => {
 
     await runPhaseConsolidate(engine, {});
 
-    // All three valid_from values are equal; the (id ASC) tiebreaker
-    // makes the lowest-id row the "oldest" chronologically. Pin that
-    // contract since the trajectory CLI depends on this ordering.
+    // Row identity orders the result only; it does not imply supersession.
     const rows = await engine.executeRaw<{ id: number; valid_until: Date | null }>(
       `SELECT id, valid_until FROM facts WHERE entity_slug = 'cdx4-acme-sameday' ORDER BY id ASC`,
     );
@@ -204,11 +254,8 @@ describe('R4a — chronological valid_until writeback', () => {
     expect(rows[0].id).toBe(idA);
     expect(rows[1].id).toBe(idB);
     expect(rows[2].id).toBe(idC);
-    // First two are "older" by tiebreaker → both get valid_until set
-    // (= sameDay, since the next-newer fact has the same valid_from).
-    expect(rows[0].valid_until).not.toBeNull();
-    expect(rows[1].valid_until).not.toBeNull();
-    // Newest by tiebreaker stays NULL.
+    expect(rows[0].valid_until).toBeNull();
+    expect(rows[1].valid_until).toBeNull();
     expect(rows[2].valid_until).toBeNull();
   });
 });
@@ -216,14 +263,7 @@ describe('R4a — chronological valid_until writeback', () => {
 describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new takes (Codex F4 fix)', () => {
   test('semantic upsert: second consolidate on identical state produces zero NEW takes', async () => {
     await seedPage('cdx4-idempo-1');
-    // WP5 read-time TTL validity: the chronological valid_until writeback
-    // closes older facts at the NEXT fact's valid_from. If every valid_from
-    // were in the past, run 1's closes would validity-lapse the older rows
-    // and the second consolidate's active read (listFactsByEntity) would no
-    // longer see them — skipping the bucket instead of exercising the F4
-    // semantic-upsert path this test pins. Keep the oldest fact 30h old
-    // (satisfies the age gate) and the rest in the FUTURE so run 1's closes
-    // stay validity-live across the re-run.
+    // Keep the oldest fact 30h old to satisfy the age gate.
     const oldDate = new Date(Date.now() - 30 * 60 * 60 * 1000);
     for (let i = 0; i < 4; i++) {
       await insertFact({
@@ -243,9 +283,7 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
 
     // Simulate the Codex F4 scenario: clear consolidated_at on every fact
     // (extract_facts cycle phase wipes facts via delete-then-insert, which
-    // is functionally identical to NULL-ing consolidated_at). DO NOT touch
-    // valid_until — the prior consolidate wrote it; the semantic upsert
-    // should still find the take.
+    // is functionally identical to NULL-ing consolidated_at).
     await engine.executeRaw(
       `UPDATE facts SET consolidated_at = NULL, consolidated_into = NULL
        WHERE entity_slug = 'cdx4-idempo-1'`,
@@ -533,19 +571,53 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
     for (const f of facts) expect(f.consolidated_into).toBe(dupA[0].id);
   });
 
-  test('valid_until idempotency: second run leaves valid_until unchanged (no diff)', async () => {
+  test('explicit TTL and supersession markers survive consolidation and re-promotion', async () => {
     await seedPage('cdx4-idempo-2');
     const t1 = new Date('2026-01-15T00:00:00Z');
     const t2 = new Date('2026-04-12T00:00:00Z');
     const t3 = new Date('2026-07-08T00:00:00Z');
-    await insertFact({ entity_slug: 'cdx4-idempo-2', text: 'iterable', valid_from: t1 });
+    const explicitUntil = new Date('2027-01-15T00:00:00Z');
+    await insertFact({
+      entity_slug: 'cdx4-idempo-2',
+      text: 'iterable',
+      valid_from: t1,
+      valid_until: explicitUntil,
+    });
     await insertFact({ entity_slug: 'cdx4-idempo-2', text: 'iterable', valid_from: t2 });
     await insertFact({ entity_slug: 'cdx4-idempo-2', text: 'iterable', valid_from: t3 });
 
+    const retiredId = await insertFact({
+      entity_slug: 'cdx4-idempo-2',
+      text: 'retired device claim',
+      valid_from: t1,
+      embedding: orthogonalVec(),
+    });
+    const successorId = await insertFact({
+      entity_slug: 'cdx4-idempo-2',
+      text: 'replacement device claim',
+      valid_from: t3,
+      embedding: orthogonalVec(),
+    });
+    const explicitExpiredAt = new Date('2026-08-01T00:00:00Z');
+    await engine.expireFact(retiredId, {
+      supersededBy: successorId,
+      at: explicitExpiredAt,
+    });
+
     await runPhaseConsolidate(engine, {});
-    const before = await engine.executeRaw<{ id: number; valid_until: Date | null }>(
-      `SELECT id, valid_until FROM facts WHERE entity_slug = 'cdx4-idempo-2' ORDER BY valid_from ASC`,
+    const before = await engine.executeRaw<{
+      id: number;
+      valid_until: Date | null;
+      expired_at: Date | null;
+      superseded_by: number | null;
+    }>(
+      `SELECT id, valid_until, expired_at, superseded_by
+         FROM facts WHERE entity_slug = 'cdx4-idempo-2' ORDER BY id`,
     );
+    expect(new Date(before[0].valid_until!).toISOString()).toBe(explicitUntil.toISOString());
+    const retiredBefore = before.find(row => row.id === retiredId)!;
+    expect(new Date(retiredBefore.expired_at!).toISOString()).toBe(explicitExpiredAt.toISOString());
+    expect(retiredBefore.superseded_by).toBe(successorId);
 
     // Reset consolidated_at to simulate extract_facts re-run.
     await engine.executeRaw(
@@ -554,16 +626,21 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
     );
 
     await runPhaseConsolidate(engine, {});
-    const after = await engine.executeRaw<{ id: number; valid_until: Date | null }>(
-      `SELECT id, valid_until FROM facts WHERE entity_slug = 'cdx4-idempo-2' ORDER BY valid_from ASC`,
+    const after = await engine.executeRaw<{
+      id: number;
+      valid_until: Date | null;
+      expired_at: Date | null;
+      superseded_by: number | null;
+    }>(
+      `SELECT id, valid_until, expired_at, superseded_by
+         FROM facts WHERE entity_slug = 'cdx4-idempo-2' ORDER BY id`,
     );
-    // Same valid_until values; the IS DISTINCT FROM guard avoided rewrites.
-    expect(after.length).toBe(3);
+    expect(after.length).toBe(5);
     for (let i = 0; i < before.length; i++) {
       expect(after[i].id).toBe(before[i].id);
-      const a = after[i].valid_until ? new Date(after[i].valid_until!).toISOString() : null;
-      const b = before[i].valid_until ? new Date(before[i].valid_until!).toISOString() : null;
-      expect(a).toBe(b);
+      expect(after[i].valid_until?.toISOString() ?? null).toBe(before[i].valid_until?.toISOString() ?? null);
+      expect(after[i].expired_at?.toISOString() ?? null).toBe(before[i].expired_at?.toISOString() ?? null);
+      expect(after[i].superseded_by).toBe(before[i].superseded_by);
     }
   });
 });
