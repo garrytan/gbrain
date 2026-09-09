@@ -79,7 +79,9 @@ import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 
-const DEFAULT_BUDGET_USD = 0.3;
+/** Per-run cap (`cycle.extract_atoms.budget_usd`). Exported so autopilot's
+ *  auto-drain daily count derives from the cap the drain actually enforces. */
+export const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
 // cycle.extract_atoms.* config keys (max_input_chars — with the #4529
 // legacy alias max_source_chars — plus max_output_tokens / pacing_ms).
