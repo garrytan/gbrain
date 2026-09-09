@@ -1749,6 +1749,36 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
   } catch { /* config unreadable — never break a sync over the scope read */ }
 
+  // #4901: the same persisted-scope treatment for the WAIVER that `sync.exclude`
+  // above gets for the narrowing.
+  //
+  // `--include-hidden` is per-invocation, so only a CLI caller could ever admit a
+  // committed dot-directory; autopilot, minion sync jobs and the dream cycle have
+  // nowhere to put one. And `sync --all` REFUSES the flag outright ("they cannot
+  // be combined with --all"), which is the form a scheduled sync actually uses —
+  // so the waiver could not be expressed at all on the only path that runs
+  // unattended.
+  //
+  // THE DEFAULT DOES NOT MOVE: an unset key admits nothing, exactly as today.
+  // This is plumbing for an opt-in that already exists, not the product decision
+  // about indexing dot-directories by default, which #4901 leaves open.
+  //
+  // Union, not override, and the same dialect and trailing-slash normalization as
+  // `exclude` — an ad-hoc flag widens further but never silently closes a scope
+  // the operator persisted. Best-effort read for the same reason: a config the
+  // engine cannot serve must not break a sync.
+  try {
+    const storedHidden = await engine.getConfig('sync.include_hidden');
+    const hiddenPatterns = (storedHidden ?? '')
+      .split(/[\n,]/)
+      .map(p => p.trim())
+      .filter(Boolean)
+      .map(p => (p.endsWith('/') ? `${p}**` : p));
+    if (hiddenPatterns.length > 0) {
+      opts = { ...opts, includeHidden: [...new Set([...(opts.includeHidden ?? []), ...hiddenPatterns])] };
+    }
+  } catch { /* config unreadable — never break a sync over the scope read */ }
+
   // #1970: bookmark reachability. The ONLY thing that should force a full
   // reconcile is a truly-absent object; a present-but-non-ancestor bookmark
   // (history rewrite: force-push, master→main consolidation, squash) is still
