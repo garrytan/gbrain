@@ -229,6 +229,16 @@ export interface AuthInfo {
    */
   fenceProjectionDegraded?: boolean;
   /**
+   * Gateway JWT `sub` (or `email` when the caller map matched on email) for
+   * external-issuer callers (src/core/external-token-verifier.ts). Several
+   * gateway keys can map to the SAME client_id, so the mapped client alone
+   * cannot attribute a request to the exact key that made it. serve-http
+   * threads this into `mcp_request_log.params` as `external_sub` so the row
+   * reads "acl-hassan / litellm-user-b", not just "acl-hassan". Undefined on
+   * every non-external auth path.
+   */
+  externalSub?: string;
+  /**
    * WP4 (D2): per-client tool surface from `oauth_clients.surface`, threaded
    * at token-verification time (same JOIN as sourceId/allowedSources). The
    * serve-http transport resolves the request's effective surface as

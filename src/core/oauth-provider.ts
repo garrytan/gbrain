@@ -36,6 +36,11 @@ import {
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
 import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes } from './legacy-token-scope.ts';
+import {
+  getExternalTokenVerifier,
+  looksLikeCompactJws,
+  type ExternalTokenVerifier,
+} from './external-token-verifier.ts';
 
 /**
  * A slug-prefix write binding is only meaningful if every entry actually
@@ -795,6 +800,18 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // -------------------------------------------------------------------------
 
   async verifyAccessToken(token: string): Promise<SdkAuthInfo> {
+    // External-issuer JWTs (e.g. a gateway running LiteLLM's mcp_jwt_signer
+    // guardrail). Only consulted when the deploy configures a verifier AND
+    // the bearer parses as compact JWS — opaque GBrain tokens never contain
+    // two dots, so the hash paths below are unaffected. A JWS that fails
+    // verification or mapping is rejected here, never fed to the hash paths:
+    // falling through would let an attacker probe the opaque-token store
+    // with attacker-shaped JWTs.
+    const externalVerifier = getExternalTokenVerifier();
+    if (externalVerifier && looksLikeCompactJws(token)) {
+      return this.verifyExternalToken(externalVerifier, token);
+    }
+
     const tokenHash = hashToken(token);
     const now = Math.floor(Date.now() / 1000);
 
@@ -1057,6 +1074,85 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     }
 
     throw new InvalidTokenError('Invalid token');
+  }
+
+  /**
+   * Resolve a gateway-signed JWT to the registered client it maps to and
+   * return the SAME client-scoped AuthInfo shape the OAuth branch builds —
+   * source isolation, federated reads, slug fences and surface all come from
+   * the mapped `oauth_clients` row, never from the JWT.
+   *
+   * Unlike the opaque-token path there is no schema degrade ladder here:
+   * external verification is a NEW opt-in feature, so a brain missing the
+   * isolation columns fails the SELECT and the token is rejected. Fail
+   * closed beats accepting a gateway caller on a brain that cannot express
+   * its source scope.
+   */
+  private async verifyExternalToken(
+    verifier: ExternalTokenVerifier,
+    token: string,
+  ): Promise<SdkAuthInfo> {
+    let clientId: string;
+    let externalSub: string;
+    let exp: number | undefined;
+    try {
+      const verified = await verifier.verify(token);
+      clientId = verified.clientId;
+      externalSub = verified.subject;
+      exp = verified.payload.exp;
+    } catch {
+      // Detail (bad signature vs unmapped subject) stays server-side.
+      throw new InvalidTokenError('Invalid token');
+    }
+
+    const rows = await this.sql`
+      SELECT client_id, client_name, scope, source_id, federated_read,
+             bound_slug_prefixes, surface, surface_set_by
+      FROM oauth_clients
+      WHERE client_id = ${clientId} AND deleted_at IS NULL
+    `;
+    if (rows.length === 0) {
+      // Mapped caller whose client row is gone (or soft-deleted) — the map
+      // is stale, not the caller's fault, but access still ends here.
+      throw new InvalidTokenError('Invalid token');
+    }
+    const row = rows[0];
+
+    // Scopes come from the client registration (space-separated per RFC
+    // 6749), NOT from the JWT: gateway scope claims use the gateway's own
+    // vocabulary. NULL/empty registration scope means no grant.
+    const scopes = typeof row.scope === 'string' ? parseScopeString(row.scope) : [];
+
+    // Same normalization as the OAuth branch above.
+    const rowSourceId = (row.source_id as string | null) ?? undefined;
+    const federatedRaw = row.federated_read;
+    let allowedSources = Array.isArray(federatedRaw) ? (federatedRaw as string[]) : undefined;
+    if (allowedSources === undefined && rowSourceId !== undefined) {
+      allowedSources = [rowSourceId];
+    }
+    const boundRaw = row.bound_slug_prefixes;
+    const boundSlugPrefixes = Array.isArray(boundRaw) ? (boundRaw as string[]) : undefined;
+    const rowSurface = typeof row.surface === 'string' ? row.surface : undefined;
+    const rowSurfaceSetBy = typeof row.surface_set_by === 'string' ? row.surface_set_by : undefined;
+
+    return {
+      token,
+      clientId: row.client_id as string,
+      clientName: (row.client_name as string | null) ?? undefined,
+      scopes,
+      // jwtVerify already enforced exp; mirror it for the SDK's bearerAuth
+      // `typeof expiresAt === 'number'` requirement. A JWT without exp gets
+      // a zero-length validity rather than an unbounded one.
+      expiresAt: exp ?? Math.floor(Date.now() / 1000),
+      sourceId: rowSourceId,
+      allowedSources,
+      boundSlugPrefixes,
+      // Audit identity of the exact gateway key (several keys can map to
+      // this client_id); serve-http writes it to mcp_request_log params.
+      externalSub,
+      ...(rowSurface !== undefined ? { surface: rowSurface } : {}),
+      ...(rowSurfaceSetBy !== undefined ? { surfaceSetBy: rowSurfaceSetBy } : {}),
+    } as CoreAuthInfo as SdkAuthInfo;
   }
 
   // -------------------------------------------------------------------------
