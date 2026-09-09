@@ -1168,10 +1168,18 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                 const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 25);
                 const windowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
                 const maxUsdPerDay = parseNonNegFloat(await engine.getConfig('autopilot.auto_drain.max_usd_per_day'), 2.0);
-                // Each drain run is BudgetTracker-capped at ~$0.30; bound the
-                // brain-wide daily count instead of a real-time spend ledger.
-                const PER_RUN_USD = 0.3;
-                const maxJobsToday = Math.max(0, Math.floor(maxUsdPerDay / PER_RUN_USD));
+                // Bound the brain-wide daily count from the cap the drain
+                // actually enforces (`cycle.extract_atoms.budget_usd`). This was
+                // a private PER_RUN_USD=0.3 copy of that default: once an
+                // operator set the key the two diverged, so a 0.10 cap still
+                // yielded floor(2.0/0.30)=6 jobs/day when it funded 20.
+                const { DEFAULT_BUDGET_USD: DRAIN_DEFAULT_USD } =
+                  await import('../core/cycle/extract-atoms.ts');
+                const perRunUsd = parseNonNegFloat(
+                  await engine.getConfig('cycle.extract_atoms.budget_usd'), DRAIN_DEFAULT_USD);
+                // Zero/blank cap: dispatch nothing rather than divide by zero.
+                const maxJobsToday = perRunUsd > 0
+                  ? Math.max(0, Math.floor(maxUsdPerDay / perRunUsd)) : 0;
                 const utcDay = new Date().toISOString().slice(0, 10);
 
                 let submittedToday = 0;
