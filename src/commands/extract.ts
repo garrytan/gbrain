@@ -1607,7 +1607,7 @@ export async function extractLinksForSlugs(
   engine: BrainEngine,
   repoPath: string,
   slugs: string[],
-  opts?: { sourceId?: string },
+  opts?: { sourceId?: string; includeFrontmatter?: boolean },
 ): Promise<number> {
   const allFiles = walkMarkdownFiles(repoPath);
   const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
@@ -1628,7 +1628,7 @@ export async function extractLinksForSlugs(
     if (!existsSync(filePath)) continue;
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename, pack })) {
+      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename, includeFrontmatter: opts?.includeFrontmatter === true, pack })) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
     } catch { /* skip */ }
