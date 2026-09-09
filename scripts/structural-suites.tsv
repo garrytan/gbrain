@@ -10,6 +10,7 @@ test/apply-migrations.test.ts	resolveSchemaBehind (#1530)	5	readFileSync
 test/apply-migrations.test.ts	runApplyMigrations exit codes (v0.36.1.x #1062)	1	readFileSync
 test/archived-source-scoping.test.ts	#3880 structural pins — all-source local_path selections filter archived	2	readFileSync
 test/asymmetric-encoding-contract.test.ts	Source-text contract (cheap belt + suspenders)	3	readFileSync
+test/auth-admin-login-discovery.test.ts	(file-level)	5	readFileSync
 test/auto-link-targeted-probe-2544.test.ts	#2544 — auto-link behavior through put_page (targeted probe)	6	readFileSync
 test/autopilot-auto-drain-wiring.test.ts	autopilot auto-drain wiring	8	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	autopilot cycle-failure classification — only 'failed' trips the circuit breaker	2	readFileSync

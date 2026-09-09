@@ -1105,6 +1105,13 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
 
 const AUTH_USAGE = `GBrain Token Management
 
+Admin dashboard login (running HTTP server):
+  For "Give me the GBrain admin login link", use POST /admin/api/issue-magic-link
+  with the server bootstrap credential through the host's protected credential flow.
+  It returns a five-minute, single-use owner login link. Deliver it privately;
+  do not GET the generated link to check it. A static /admin/ URL only opens the login page.
+  This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
+
 Usage:
   gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
                                                           Create a legacy bearer token. v0.28: --takes-holders
