@@ -48,6 +48,19 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     expect(r.kind).toBe('known');
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.05);
   });
+
+  // Google, verified against ai.google.dev/gemini-api/docs/pricing 2026-09-09.
+  // Both models are native to the `google` recipe's embedding touchpoint —
+  // neither had a pricing-table row before, so `migrate embeddings --to
+  // google:<model>` always reported "estimated cost: unknown".
+  test.each([
+    ['google:gemini-embedding-001', 0.15],
+    ['google:gemini-embedding-2', 0.20],
+  ])('Google %s at $%d/MTok', (model, expected) => {
+    const r = lookupEmbeddingPrice(model);
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(expected);
+  });
 });
 
 describe('lookupEmbeddingPrice — fall-through behavior', () => {
@@ -208,5 +221,20 @@ describe('#4344 — every hosted voyage recipe model has a pricing entry', () =>
     const r = lookupEmbeddingPrice(model);
     expect(r.kind).toBe('known');
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(expected);
+  });
+});
+
+// Same coverage gate as #4344, for the `google` recipe: both
+// gemini-embedding-001 and gemini-embedding-2 are HOSTED models the recipe
+// offers, and until this change neither had a pricing row — every
+// `migrate embeddings --to google:<model>` cost estimate read "unknown".
+describe('every hosted google recipe model has a pricing entry', () => {
+  test('recipe models ⊆ pricing table', async () => {
+    const { google } = await import('../src/core/ai/recipes/google.ts');
+    const models: string[] = (google as any).touchpoints.embedding.models;
+    expect(models).toContain('gemini-embedding-001');
+    expect(models).toContain('gemini-embedding-2');
+    const missing = models.filter((m) => lookupEmbeddingPrice(`google:${m}`).kind !== 'known');
+    expect(missing).toEqual([]);
   });
 });

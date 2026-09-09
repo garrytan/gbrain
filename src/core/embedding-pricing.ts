@@ -62,6 +62,13 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'voyage:voyage-3':               { pricePerMTok: 0.06 },
   'voyage:voyage-3-lite':          { pricePerMTok: 0.02 },
   'voyage:voyage-code-3':          { pricePerMTok: 0.18 },
+  // Google (https://ai.google.dev/gemini-api/docs/pricing, verified 2026-09-09).
+  // Paid-tier standard rate; the free tier has no per-token charge. The two
+  // models are separately priced (not aliases of one rate) — gemini-embedding-2
+  // costs 33% more per text token but adds native multimodal input and a 4x
+  // input-token limit over -001.
+  'google:gemini-embedding-001':   { pricePerMTok: 0.15 },
+  'google:gemini-embedding-2':     { pricePerMTok: 0.20 },
   // ZeroEntropy (https://www.zeroentropy.dev/pricing, verified 2026-07-28)
   'zeroentropyai:zembed-1':        { pricePerMTok: 0.05 },
   // ZeroEntropy reranker (docs/ai-providers/zeroentropy.md — $0.025/1M tokens).

@@ -41,9 +41,23 @@ export const google: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['gemini-embedding-001'],
+      // gemini-embedding-2 (GA 2026-05-20) is the current Google-recommended
+      // embedding model — natively multimodal (text/image/video/audio/PDF
+      // into one vector space) and an 8,192-token input limit, vs. -001's
+      // text-only 2,048. Listed second (not as default_model) deliberately:
+      // -001 stays models[0] so every "pick a model for the user" surface
+      // (new-install auto-pick, the interactive picker) keeps its existing
+      // default rather than opting installs into the pricier model. Live
+      // model id (not `-2-preview`) verified against
+      // generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2
+      // with GOOGLE_GENERATIVE_AI_API_KEY; embedding at output_dimensionality
+      // 768 round-tripped correctly.
+      models: ['gemini-embedding-001', 'gemini-embedding-2'],
       default_dims: 768,
       dims_options: [768, 1536, 3072],
+      // Display hint for `gbrain providers` only (billing math goes through
+      // src/core/embedding-pricing.ts, which prices both models); reflects
+      // -001, models[0].
       cost_per_1m_tokens_usd: 0.15,
       price_last_verified: '2026-04-20',
       // Gemini's embedding endpoint has a low per-request cap relative to
@@ -54,6 +68,9 @@ export const google: Recipe = {
       // 20k budget × 0.8 safety keeps a batch well within request limits while
       // staying efficient. chars_per_token ~4 matches Gemini's SentencePiece
       // density on English. Tunable; recursion stays the backstop.
+      // (gemini-embedding-2's real per-input cap is 8,192 — 4x this budget —
+      // but this recipe doesn't yet declare a per-model max_input_tokens
+      // override, so both models share this conservative batching today.)
       max_batch_tokens: 20_000,
       chars_per_token: 4,
       safety_factor: 0.8,
