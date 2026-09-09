@@ -243,36 +243,10 @@ export async function runPhaseConsolidate(
         factsConsolidated += 1;
       }
 
-      // v0.35.4 (D-CDX-4 part 2) — chronological valid_until writeback.
-      // Sort the cluster by (valid_from ASC, id ASC); walk consecutive
-      // pairs; stamp the older fact's valid_until = next_newer.valid_from.
-      // The newest fact keeps valid_until = NULL. This makes the facts
-      // table a proper bitemporal record without the contradiction probe
-      // having to mutate it (preserves auto-supersession.ts:4 invariant —
-      // see also R8 test guard).
-      //
-      // Idempotent: re-running on the same cluster produces the same
-      // chronological order and the same valid_until values. No-op if
-      // valid_until is already correct.
-      const chronological = [...cluster].sort((a, b) => {
-        const t = a.valid_from.getTime() - b.valid_from.getTime();
-        if (t !== 0) return t;
-        return a.id - b.id;
-      });
-      for (let i = 0; i < chronological.length - 1; i++) {
-        const older = chronological[i];
-        const newer = chronological[i + 1];
-        await engine.executeRaw(
-          // Only UPDATE when the new value would actually change. Avoids
-          // touching updated_at on no-op rewrites and keeps idempotency
-          // observable in the DB (zero affected rows on stable re-run).
-          `UPDATE facts
-             SET valid_until = $1
-           WHERE id = $2
-             AND (valid_until IS DISTINCT FROM $1)`,
-          [newer.valid_from, older.id],
-        );
-      }
+      // Similarity is sufficient for promotion into a shared take, but it is
+      // not evidence that the clustered facts are temporal replacements.
+      // Preserve every fact's caller-supplied validity and supersession state;
+      // those fields change only through explicit TTL/forget/supersede paths.
     }
   }
 
