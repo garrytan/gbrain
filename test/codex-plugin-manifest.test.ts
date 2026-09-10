@@ -410,6 +410,21 @@ describe('curated tree membership + scanner guard', () => {
     }
   });
 
+  test('context-audit ships its calibrated token estimate in every plugin lane', () => {
+    const paths = [
+      'skills/context-audit/SKILL.md',
+      'plugin/skills/context-audit/SKILL.md',
+      'plugin-variants/gbrain-coding/skills/context-audit/SKILL.md',
+    ];
+    for (const path of paths) {
+      const skill = read(path);
+      expect(skill).toContain('chars / 2.8');
+      expect(skill).toContain('exact per-category context counts take precedence');
+      expect(skill).not.toContain('chars/4');
+      expect(skill).not.toContain('chars-per-token');
+    }
+  });
+
   test('generator round-trip: curation record valid + starter_gaps snapshot fresh', () => {
     const out = mkdtempSync(join(tmpdir(), 'gbrain-plugin-tree-'));
     try {

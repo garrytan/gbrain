@@ -81,8 +81,8 @@ This skill guarantees:
   (`gbrain bootstrap interview --set KEY "..."` then
   `gbrain bootstrap render --only <FILE> --force`), never as a direct edit.
   See [skills/soul-audit/SKILL.md](../soul-audit/SKILL.md) for the mechanics.
-- **Measured, not guessed.** Token figures come from the deterministic
-  pre-pass (`wc -c` / ~4 chars-per-token), never invented.
+- **Measured, not guessed.** Token estimates come from the deterministic
+  pre-pass (`wc -c`, then `chars / 2.8`), never invented. The host's exact per-category context counts take precedence over this estimate when available.
 - **Native judging.** The draft report is quality-gated through
   `gbrain eval cross-modal` — no raw model API calls, no hardcoded model IDs.
 - **Cost line.** Default judging is ONE cheap model (the user's utility-tier
@@ -98,12 +98,17 @@ List the always-loaded files for this harness and measure each:
 
 ```bash
 for f in CLAUDE.md AGENTS.md SOUL.md USER.md ACCESS_POLICY.md HEARTBEAT.md MEMORY.md; do
-  [ -f "$f" ] && echo "$f: $(wc -c < "$f") chars (~$(( $(wc -c < "$f") / 4 )) tokens)"
+  if [ -f "$f" ]; then
+    chars=$(wc -c < "$f")
+    echo "$f: $chars chars (~$(( (chars * 10 + 27) / 28 )) tokens; chars / 2.8 estimate)"
+  fi
 done
 ```
 
-Record the total. If a prior audit report exists in the brain, compute drift
-(net tokens grown/shrunk since last run, which files moved).
+Record the total and the `chars / 2.8` divisor so readers can re-derive it. If
+the host exposes exact per-category context counts, use those instead and cite
+them as the source of truth. If a prior audit report exists in the brain,
+compute drift (net tokens grown/shrunk since last run, which files moved).
 
 ### 2. Read and analyze (the agent does this — no model calls yet)
 
@@ -138,7 +143,7 @@ Write the draft report to a temp file, then gate it:
 JUDGE=$(gbrain config get models.tier.utility)
 
 gbrain eval cross-modal \
-  --task "Context-stack token-hygiene audit: every finding cites file + quoted evidence; savings are measured (chars/4), not guessed; findings ranked by token savings; every rendered-file recommendation targets the interview answer bank or template, never a direct edit; risk class on every row" \
+  --task "Context-stack token-hygiene audit: every finding cites file + quoted evidence; estimated savings use chars / 2.8 unless exact per-category context counts are available from the host, in which case those take precedence; findings ranked by token savings; every rendered-file recommendation targets the interview answer bank or template, never a direct edit; risk class on every row" \
   --output /tmp/context-audit-draft.md \
   --slug context-audit-report \
   --cycles 1 \
@@ -209,7 +214,8 @@ belongs: source file, answer bank/template, memory store, or a new skill.
 - **Auditing on-demand content as if always-loaded.** Skills and reference
   docs don't pay the per-turn tax; flagging them inflates savings numbers.
 - **Inventing token counts.** Measure with the pre-pass; estimates are labeled
-  as `~N` chars/4 approximations.
+  as `~N` using the `chars / 2.8` approximation and exact host counts are
+  identified when they take precedence.
 - **Rewriting identity content yourself.** If a finding is about WHAT an
   identity file says (wrong persona, outdated profile), route to soul-audit —
   the interview is the only author of that content.
