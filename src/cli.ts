@@ -3828,7 +3828,8 @@ IMPORT/EXPORT
                                      See also: autopilot --install (continuous daemon).
   sync --all --missing-path skip     Classify sources whose local_path is absent
                                      on this machine as skipped, not failed
-  export [--dir ./out/]              Export to markdown
+  export [--dir ./out/] [--prune]    Export to markdown (--prune removes files
+                                     of pages the brain no longer has)
   export --restore-only [--repo <p>] Restore missing supabase-only files
         [--type T] [--slug-prefix S] With optional filters
 
