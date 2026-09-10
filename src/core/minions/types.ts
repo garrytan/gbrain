@@ -431,13 +431,7 @@ export const ABORT_REASON_TIMEOUT = 'timeout';
 
 // --- Errors ---
 
-/** Throw this from a handler to skip all retry logic and go straight to 'dead'. */
-export class UnrecoverableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'UnrecoverableError';
-  }
-}
+export { UnrecoverableError } from './errors.ts';
 
 // --- Row Mapping ---
 

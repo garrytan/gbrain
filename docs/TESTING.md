@@ -47,10 +47,12 @@ Measured effect: ~3.5x per PGLite-booting file (a cold boot replays every
 migration, ~3.1s each on a CI shard). Properties:
 
 - **Idempotent.** A hash short-circuit exits in ~40ms when the snapshot is
-  fresh, and REBUILDS a stale one. The hash covers `PGLITE_SCHEMA_SQL`, every
-  migration's `sql` + `sqlFor.pglite`, AND each migration `handler`'s function
-  source (`Function.prototype.toString`) — 19+ migrations carry executable
-  handler code with empty `sql` that a sql-only hash cannot see.
+  fresh, and REBUILDS a stale one. The hash covers the raw file bytes of
+  `migrate.ts`, `pglite-schema.ts`, and their schema/migration helpers,
+  including grant constraints and withdrawal triggers. Imported SQL and
+  handler changes invalidate the fixture; coverage instrumentation does not
+  change the hash. Keep the dependency list in `computeSnapshotSchemaHash`
+  and the CI cache keys aligned when adding another schema helper.
 - **Concurrency-safe.** Parallel shard runners / sibling workspaces serialize
   on an atomic `mkdir` lock (`test/fixtures/.pglite-snapshot.lock`) with
   staleness-verified takeover of a crashed builder; the tar is written first
@@ -69,7 +71,7 @@ migration, ~3.1s each on a CI shard). Properties:
   the migration-replay canary tests clear the env themselves regardless.
 
 Pinned by `test/snapshot-shape-guard.test.ts` (hash + shape refusal matrix,
-handler-source hash sensitivity).
+imported SQL/handler dependency hash sensitivity).
 
 ### Guard registry and self-test
 

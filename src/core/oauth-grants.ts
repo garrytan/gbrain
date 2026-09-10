@@ -7,6 +7,7 @@ import { InvalidClientError, InvalidGrantError, InvalidRequestError, ServerError
 import type { SqlQuery } from './sql-query.ts';
 import { generateToken, hashToken } from './utils.ts';
 import { hasScope, parseScopeString } from './scope.ts';
+import { intersectGrantedScopes } from './grants/model.ts';
 import { safeHexEqual } from './timing-safe.ts';
 
 export type OAuthTransaction = <T>(fn: (sql: SqlQuery) => Promise<T>) => Promise<T>;
@@ -29,7 +30,9 @@ function policyDigest(row: ClientRow): string {
   const fields = ['client_id', 'client_name', 'redirect_uris', 'grant_types', 'scope',
     'client_secret_hash', 'token_endpoint_auth_method', 'client_secret_expires_at',
     'source_id', 'federated_read', 'bound_tools', 'bound_source_id', 'bound_brain_id',
-    'bound_slug_prefixes', 'bound_max_concurrent', 'budget_usd_per_day', 'surface', 'token_ttl'];
+    'bound_slug_prefixes', 'bound_max_concurrent', 'budget_usd_per_day', 'surface', 'token_ttl',
+    'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile',
+    'grant_revision', 'grant_repair_reasons'];
   return hashToken(JSON.stringify(fields.map(field => row[field] ?? null)));
 }
 
@@ -42,6 +45,11 @@ export interface OAuthConsentDetails {
   sourceId: string | null;
   allowedSources: string[];
   resource: string | null;
+  allowedOperations: string[] | null;
+  boundSlugPrefixes: string[] | null;
+  delegatedTools: string[] | null;
+  delegatedSlugPrefixes: string[] | null;
+  delegatedNamespace: string | null;
   expiresAt: number;
 }
 interface PendingAuthorization {
@@ -103,6 +111,11 @@ export class OAuthGrants {
       redirectUri: params.redirectUri, scopes: grantScopes(row, params.scopes),
       sourceId: typeof row.source_id === 'string' ? row.source_id : null,
       allowedSources: Array.isArray(row.federated_read) ? [...row.federated_read] as string[] : [],
+      allowedOperations: Array.isArray(row.allowed_operations) ? [...row.allowed_operations] as string[] : null,
+      boundSlugPrefixes: Array.isArray(row.bound_slug_prefixes) ? [...row.bound_slug_prefixes] as string[] : null,
+      delegatedTools: Array.isArray(row.bound_tools) ? [...row.bound_tools] as string[] : null,
+      delegatedSlugPrefixes: Array.isArray(row.delegated_slug_prefixes) ? [...row.delegated_slug_prefixes] as string[] : null,
+      delegatedNamespace: typeof row.delegated_namespace === 'string' ? row.delegated_namespace : null,
       resource: params.resource?.toString() ?? null, expiresAt: this.now() + 10 * 60_000,
     };
     this.pending.set(id, {
@@ -118,7 +131,7 @@ export class OAuthGrants {
     if (!pending || pending.status !== 'pending') {
       throw new OAuthConsentError(410, 'authorization_unavailable', 'This request expired, was completed, or the server restarted. Restart the connection from your client.');
     }
-    return { ...pending.details, scopes: [...pending.details.scopes], allowedSources: [...pending.details.allowedSources] };
+    return structuredClone(pending.details);
   }
 
   hasPending(id: unknown): id is string {
@@ -186,6 +199,7 @@ export class OAuthGrants {
       if (row.expires_at == null || !Number.isFinite(Number(row.expires_at)) || Number(row.expires_at) <= Math.floor(this.now() / 1000)) throw new InvalidGrantError('Refresh token expired');
       const original = Array.isArray(row.scopes) ? row.scopes as string[] : [];
       if (requested?.some(scope => !hasScope(original, scope))) throw new InvalidGrantError('Requested scope exceeds refresh token grant');
+      if (requested?.some(scope => !hasScope(parseScopeString(client.scope as string | undefined), scope))) throw new InvalidGrantError('Requested scope exceeds current client grant');
       const scopes = this.currentScopes(client, requested ?? original);
       const target = this.resource(row.resource, resource);
       await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId}`;
@@ -195,7 +209,7 @@ export class OAuthGrants {
 
   private currentScopes(client: ClientRow, original: string[]): string[] {
     const allowed = parseScopeString(client.scope as string | undefined);
-    return (original ?? []).filter(scope => hasScope(allowed, scope));
+    return intersectGrantedScopes(original ?? [], allowed);
   }
 
   private assertCredentialPolicy(client: ClientRow, secretHash?: string): void {

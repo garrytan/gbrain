@@ -33,6 +33,7 @@ import {
   federatedSearchScope,
   normalizeSlugPrefix,
   parseSourceIdParam,
+  requireWritablePage,
   validatePageSlug,
 } from './context.ts';
 
@@ -385,6 +386,7 @@ const put_page: Operation = {
     // enforceSubagentSlugFence for the fail-closed policy.
     enforceSubagentSlugFence(ctx, slug, 'put_page');
     enforceClientSlugFence(ctx, slug, 'put_page');
+    if (ctx.viaSubagent === true && ctx.auth) await requireWritablePage(ctx, slug.toLowerCase(), 'put_page', 'page', true);
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
 
@@ -487,6 +489,7 @@ const put_page: Operation = {
           'Remove the `id:` frontmatter field (or change the content) to write a new page under your own prefix.',
         );
       }
+      if (ctx.viaSubagent === true && ctx.auth) await requireWritablePage(ctx, result.slug, 'put_page', 'page');
     }
 
     // v0.39 T13 — auto-prompt on first unknown-type write.
@@ -621,6 +624,7 @@ const put_page: Operation = {
     // patterns (which runs after extract) would still see the right graph
     // but auto_timeline would never fire on synth output.
     const trustedWorkspace = ctx.viaSubagent === true
+      && ctx.auth === undefined
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
     if (ctx.remote !== false && !trustedWorkspace) {

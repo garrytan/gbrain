@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
+import { once } from 'node:events';
 import { bindResolveIpcForServe } from '../src/mcp/resolve-ipc-binding.ts';
 import { resolveSocketPath, socketHasLiveListener } from '../src/core/context/resolve-ipc.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -33,7 +34,7 @@ afterEach(() => {
 });
 
 describe('bindResolveIpcForServe (#4474)', () => {
-  it('binds the socket for a PGLite config and close() reaps it', async () => {
+  it('binds a PGLite listener and close permits safe rebinding', async () => {
     const dataDir = join(tmp, 'db');
     mkdirSync(dataDir, { recursive: true });
     mkdirSync(join(tmp, '.gbrain'), { recursive: true });
@@ -50,11 +51,25 @@ describe('bindResolveIpcForServe (#4474)', () => {
         expect(binding.socketPath).toBe(resolveSocketPath(dataDir));
         expect(existsSync(binding.socketPath!)).toBe(true);
       } finally {
+        // net.Server.close completes asynchronously. Bun versions differ in
+        // whether close also removes the Unix pathname; test live ownership.
+        const closed = binding.server ? once(binding.server, 'close') : Promise.resolve();
         binding.close();
+        await closed;
       }
-      expect(existsSync(resolveSocketPath(dataDir))).toBe(false);
+      expect(await socketHasLiveListener(resolveSocketPath(dataDir))).toBe(false);
       // close() is idempotent.
       binding.close();
+      // A leftover pathname must not prevent the next owner from binding.
+      const next = await bindResolveIpcForServe({} as unknown as BrainEngine, 'default');
+      try {
+        expect(next.server).not.toBeNull();
+        expect(await socketHasLiveListener(resolveSocketPath(dataDir))).toBe(true);
+      } finally {
+        const closed = next.server ? once(next.server, 'close') : Promise.resolve();
+        next.close();
+        await closed;
+      }
     });
   });
 

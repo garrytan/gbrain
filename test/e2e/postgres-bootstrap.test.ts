@@ -44,6 +44,33 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     await engine.disconnect();
   });
 
+  test('grant bootstrap repairs a partial installation without changing existing client policy', async () => {
+    await engine.initSchema();
+    const conn = await (engine as any).sql.reserve();
+    try {
+      await conn.unsafe('SELECT pg_advisory_lock(42)');
+      await conn.unsafe(`
+        INSERT INTO oauth_clients (client_id, client_name, scope, grant_revision)
+        VALUES ('fixture-bootstrap-client', 'fixture client', 'read', 4);
+        ALTER TABLE oauth_clients DROP COLUMN grant_profile;
+        ALTER TABLE oauth_clients DROP COLUMN allowed_operations;
+      `);
+      await expect((async () => { await conn.unsafe('SELECT grant_profile FROM oauth_clients LIMIT 1'); })())
+        .rejects.toThrow('does not exist');
+      await applyPostgresForwardReferenceBootstrap(conn);
+      await applyPostgresForwardReferenceBootstrap(conn);
+      expect(await conn.unsafe(`
+        SELECT scope, grant_revision, grant_profile, allowed_operations
+        FROM oauth_clients WHERE client_id = 'fixture-bootstrap-client'
+      `)).toEqual([{ scope: 'read', grant_revision: 4, grant_profile: null, allowed_operations: null }]);
+    } finally {
+      await applyPostgresForwardReferenceBootstrap(conn);
+      await conn.unsafe("DELETE FROM oauth_clients WHERE client_id = 'fixture-bootstrap-client'");
+      await conn.unsafe('SELECT pg_advisory_unlock(42)');
+      conn.release();
+    }
+  }, 30_000);
+
   test('queue bootstrap preserves historical NULL authority and repairs either missing protocol column', async () => {
     await engine.initSchema();
     const conn = await (engine as any).sql.reserve();

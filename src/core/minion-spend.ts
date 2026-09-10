@@ -34,7 +34,9 @@ export interface MinionJobLike {
 export function getJobClientId(job: MinionJobLike): string | undefined {
   if (!job.data || typeof job.data !== 'object') return undefined;
   const data = job.data as Record<string, unknown>;
-  const cid = data.client_id;
+  // Delegated ownership is stamped by submit_agent, never model tool inputs.
+  // A malformed protected owner must not fall back to a caller-selected bill.
+  const cid = '__owner_client_id' in data ? data.__owner_client_id : data.client_id;
   return typeof cid === 'string' && cid.length > 0 ? cid : undefined;
 }
 

@@ -18,6 +18,7 @@ import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
 import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
+import { lockDelegatedSubmission, checkDelegatedCapacity, prepareDelegatedReplay, admitDelegatedRetry } from './delegated-admission.ts';
 import {
   computeParamHash,
   resolveAdmissionPolicy,
@@ -45,6 +46,8 @@ export interface TrustedSubmitOpts {
   allowProtectedSubmit?: boolean;
   /** Allow PGLite embed-backfill only for an explicit inline-worker caller. */
   allowPgliteInlineWorker?: boolean;
+  /** Authenticated submit_agent identity, never read from agent job parameters. */
+  delegatedClientId?: string;
 }
 
 const MIGRATION_VERSION = 7;
@@ -216,6 +219,10 @@ export class MinionQueue {
     if (currentSubmissionAuthority() && currentSubmissionAuthority()!.kind !== 'application') throw new Error('Remote jobs cannot submit descendant jobs');
     const authority = parseSubmissionAuthority(trusted?.submissionAuthority ?? APPLICATION_AUTHORITY);
     if (!authority) throw new Error('Unsupported submission authority');
+    const delegatedClientId = authority.kind === 'remote_agent' ? authority.principal.id : trusted?.delegatedClientId;
+    if (authority.kind === 'remote_agent' && trusted?.delegatedClientId !== undefined && trusted.delegatedClientId !== delegatedClientId) {
+      throw new Error('Delegated submission identity differs from its authority');
+    }
     const jobName = (name || '').trim();
     if (authority.kind !== 'application') await authorizeJobExecution(this.engine, { name: jobName, data: data ?? {}, submission_authority: authority });
     if (jobName.length === 0) {
@@ -330,6 +337,8 @@ export class MinionQueue {
     let coalesceAudit: CoalesceAuditEvent | null = null;
 
     const result = await this.engine.transaction(async (tx) => {
+      // Client lock spans grant validation, capacity check and insertion.
+      const delegatedLimit = await lockDelegatedSubmission(tx, delegatedClientId, jobName, data);
       // 1. Idempotency fast path — if a row already exists for this key, return it
       //    without doing any other work. The unique partial index guarantees
       //    no second row can be inserted with the same non-null key.
@@ -401,6 +410,8 @@ export class MinionQueue {
           }, ev => { coalesceAudit = ev; }, authority);
         }
       }
+
+      await checkDelegatedCapacity(tx, delegatedClientId, delegatedLimit);
 
       // 1a2. Name-global waiting quota (admission; config-only, no shipped
       // default — user decision D2C). Counts the name across ALL queues:
@@ -1224,19 +1235,22 @@ export class MinionQueue {
    * "run this fresh" the same way the unreset attempt counters did.
    */
   async retryJob(id: number): Promise<MinionJob | null> {
-    const prior = await this.getJob(id);
-    if (!prior) return null;
-    await authorizeJobExecution(this.engine, prior);
-    const rows = await this.engine.executeRaw<Record<string, unknown>>(
-      `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
-        lock_token = NULL, lock_until = NULL, delay_until = NULL,
-        finished_at = NULL, started_at = NULL, attempts_made = 0,
-        attempts_started = 0, stalled_counter = 0, updated_at = now()
-       WHERE id = $1 AND status IN ('failed', 'dead')
-       RETURNING *`,
-      [id]
-    );
-    return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
+    return this.engine.transaction(async tx => {
+      const [prior] = await tx.executeRaw<Record<string, unknown>>('SELECT * FROM minion_jobs WHERE id = $1', [id]);
+      if (!prior) return null;
+      await authorizeJobExecution(tx, rowToMinionJob(prior));
+      if (!await admitDelegatedRetry(tx, id)) return null;
+      const rows = await tx.executeRaw<Record<string, unknown>>(
+        `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
+          lock_token = NULL, lock_until = NULL, delay_until = NULL,
+          finished_at = NULL, started_at = NULL, attempts_made = 0,
+          attempts_started = 0, stalled_counter = 0, updated_at = now()
+         WHERE id = $1 AND status IN ('failed', 'dead')
+         RETURNING *`,
+        [id]
+      );
+      return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
+    });
   }
 
   /** Prune old jobs in terminal statuses. Returns count of deleted rows. */
@@ -2286,9 +2300,7 @@ export class MinionQueue {
     const authority = await authorizeJobExecution(this.engine, source);
     if (authority.kind !== 'application' && dataOverrides && Object.keys(dataOverrides).length) throw new Error('Remote job replay cannot override accepted data; submit a new job');
 
-    const data = dataOverrides
-      ? { ...source.data, ...dataOverrides }
-      : source.data;
+    const { data, clientId } = prepareDelegatedReplay(source.name, source.data, dataOverrides);
 
     return this.add(source.name, data, {
       queue: source.queue,
@@ -2297,7 +2309,8 @@ export class MinionQueue {
       backoff_type: source.backoff_type,
       backoff_delay: source.backoff_delay,
       backoff_jitter: source.backoff_jitter,
-    }, { submissionAuthority: authority, allowProtectedSubmit: authority.kind === 'application' && isProtectedJobName(source.name) });
+    }, { submissionAuthority: authority, delegatedClientId: clientId,
+      allowProtectedSubmit: authority.kind === 'remote_agent' || (authority.kind === 'application' && isProtectedJobName(source.name)) });
   }
 
   /** Remove a child's dependency on its parent. */

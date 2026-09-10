@@ -139,6 +139,14 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // v121 mask class), so the bootstrap adds them on pre-v127 brains.
   { kind: 'column', table: 'oauth_clients', column: 'surface' },
   { kind: 'column', table: 'oauth_clients', column: 'surface_set_by' },
+  // v147 capability columns are repaired before schema replay, including
+  // partial installations. Numbered migration 147 owns grant policy repair.
+  { kind: 'column', table: 'oauth_clients', column: 'allowed_operations' },
+  { kind: 'column', table: 'oauth_clients', column: 'delegated_slug_prefixes' },
+  { kind: 'column', table: 'oauth_clients', column: 'delegated_namespace' },
+  { kind: 'column', table: 'oauth_clients', column: 'grant_profile' },
+  { kind: 'column', table: 'oauth_clients', column: 'grant_revision' },
+  { kind: 'column', table: 'oauth_clients', column: 'grant_repair_reasons' },
   // v0.26.5 (v34) — promotes archive lifecycle from JSONB config to real
   // columns on sources. CREATE TABLE IF NOT EXISTS is a no-op on existing
   // sources tables, so the visibility filters in search/list_pages that
@@ -205,7 +213,7 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // Token rides the same bootstrap ALTER; registering it guards any FUTURE
   // blob index on it against the same wedge.
   { kind: 'column', table: 'minion_jobs', column: 'private_queue_owner_token' },
-  // v147 queue protocol reads both fields before numbered migrations run.
+  // v149 queue protocol reads both fields before numbered migrations run.
   // Authority remains nullable: bootstrap must never authorize historical work.
   { kind: 'column', table: 'minion_jobs', column: 'submission_authority' },
   { kind: 'column', table: 'minion_jobs', column: 'claim_generation' },
@@ -285,6 +293,12 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       -- must re-add them.
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS surface;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS surface_set_by;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS allowed_operations;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS delegated_slug_prefixes;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS delegated_namespace;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS grant_profile;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS grant_revision;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS grant_repair_reasons;
 
       -- v0.40.3.0 v90 + v91 column strips so applyForwardReferenceBootstrap
       -- has work to do. Only strip pages columns + the trigger; sources

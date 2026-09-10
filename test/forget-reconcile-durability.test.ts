@@ -20,6 +20,7 @@ import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { forgetFactInFence } from '../src/core/facts/forget.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { acquirePageLock } from '../src/core/page-lock.ts';
+import { writeSingleFact } from '../src/core/facts/write-single.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -60,6 +61,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await engine.executeRaw('DELETE FROM fact_withdrawals');
   await engine.executeRaw('DELETE FROM facts');
   await engine.executeRaw('DELETE FROM pages');
   rmSync(join(brainDir, 'people'), { recursive: true, force: true });
@@ -147,6 +149,10 @@ describe('forget DB-body mirror — hash + lock discipline (wave review)', () =>
       // The importer's own idempotency check: same file bytes must now re-import.
       const imp = await importFromContent(engine, SLUG, FILE, { noEmbed: true, sourceId: 'default' });
       expect(imp.status).toBe('imported');
+      await runExtractFacts(engine, { slugs: [SLUG] });
+      const rows = await factRows();
+      expect(rows.every(row => row.expired_at !== null)).toBe(true);
+      expect((await engine.getPage(SLUG, { sourceId: 'default' }))!.compiled_truth).toContain('~~Founded acme-example~~');
     } finally {
       await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [brainDir]);
     }
@@ -179,5 +185,60 @@ describe('forget DB-body mirror — hash + lock discipline (wave review)', () =>
     expect(page.compiled_truth).toContain('~~Founded acme-example~~');
     expect(typeof page.content_hash).toBe('string');
     expect(page.content_hash!.length).toBeGreaterThan(0);
+  });
+});
+
+describe('withdrawal survives stale imports and derived-index rebuilds', () => {
+  test('renaming a page and recreating its facts cannot restore a withdrawn claim', async () => {
+    const id = await seed();
+    await forgetFactInFence(engine, id);
+    await engine.executeRaw('DELETE FROM facts');
+    const renamed = 'people/renamed-example';
+    await importFromContent(engine, renamed, FILE, { noEmbed: true, sourceId: 'default' });
+    await runExtractFacts(engine, { slugs: [renamed] });
+    const rows = await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE source_markdown_slug=$1', [renamed]);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(r => r.expired_at !== null)).toBe(true);
+    const chunks = await engine.getChunks(renamed, { sourceId: 'default', requireSafeChunks: true });
+    expect(chunks.map(c => c.chunk_text).join('\n')).toContain('~~Founded acme-example~~');
+    // Overlay hashing is deterministic: the same stale file is a no-op next time.
+    expect((await importFromContent(engine, renamed, FILE, { noEmbed: true, sourceId: 'default' })).status).toBe('skipped');
+  });
+
+  test('subjectless DB-only remember remains withdrawn after reimport', async () => {
+    const remembered = await writeSingleFact(engine, 'default', { fact: 'Founded acme-example', provenance: 'fixture', visibility: 'world' });
+    expect((await forgetFactInFence(engine, remembered.id)).path).toBe('legacy_db');
+    await expect(writeSingleFact(engine, 'default', { fact: '  founded   acme-example ', provenance: 'fixture', visibility: 'world' })).rejects.toThrow('fact_withdrawn');
+    await importFromContent(engine, SLUG, FILE, { noEmbed: true, sourceId: 'default' });
+    await runExtractFacts(engine, { slugs: [SLUG] });
+    const rows = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE source_id='default' AND expired_at IS NULL");
+    expect(rows[0].n).toBe(0);
+  });
+
+  test('withdrawals do not cross source or visibility authorization boundaries', async () => {
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES ('other','other') ON CONFLICT DO NOTHING");
+    const fact = { fact: 'Uses a dark editor', source: 'fixture', visibility: 'world' as const };
+    const owner = await engine.insertFact(fact, { source_id: 'default' });
+    await forgetFactInFence(engine, owner.id, { sourceId: 'default', worldOnly: true });
+    const other = await engine.insertFact(fact, { source_id: 'other' });
+    const privateRow = await engine.insertFact({ ...fact, visibility: 'private' }, { source_id: 'default' });
+    const rows = await engine.executeRaw<{ id: number; expired_at: unknown }>('SELECT id,expired_at FROM facts WHERE id=ANY($1::integer[])', [[other.id,privateRow.id]]);
+    expect(rows).toHaveLength(2); expect(rows.every(r => r.expired_at === null)).toBe(true);
+    expect((await forgetFactInFence(engine, privateRow.id, { sourceId: 'default', worldOnly: true })).path).toBe('not_found');
+    expect((await forgetFactInFence(engine, other.id, { sourceId: 'default', worldOnly: true })).path).toBe('not_found');
+    expect(await engine.executeRaw('SELECT * FROM fact_withdrawals')).toHaveLength(1);
+  });
+
+  test('the database rejects silent reactivation while ordinary expiry stays reversible', async () => {
+    const original = await engine.insertFact({ fact: 'An explicitly withdrawn claim', source: 'fixture', visibility: 'world' }, { source_id: 'default' });
+    await forgetFactInFence(engine, original.id);
+    await engine.executeRaw('UPDATE facts SET expired_at=NULL WHERE id=$1', [original.id]);
+    const withdrawn = await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id=$1', [original.id]);
+    expect(withdrawn[0].expired_at).not.toBeNull();
+    const ordinary = await engine.insertFact({ fact: 'A time-limited claim', source: 'fixture', visibility: 'world' }, { source_id: 'default' });
+    await engine.expireFact(ordinary.id);
+    await engine.executeRaw('UPDATE facts SET expired_at=NULL WHERE id=$1', [ordinary.id]);
+    const restored = await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id=$1', [ordinary.id]);
+    expect(restored[0].expired_at).toBeNull();
   });
 });

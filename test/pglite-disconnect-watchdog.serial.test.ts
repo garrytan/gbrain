@@ -171,6 +171,7 @@ describe('pglite disconnect watchdog vs a wedged event loop (#4284, Bun-pinned)'
 
   test('clean-watchdog: a units-typo deadline clamps UP to the floor and a healthy disconnect is never killed', async () => {
     const r = await runFixture('clean-watchdog', {
+      GBRAIN_PGLITE_SNAPSHOT: undefined, // prove cold init does not import unrelated registry sinks
       GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: String(CLOSE_TIMEOUT_MS),
       GBRAIN_PGLITE_CLOSE_WATCHDOG_MS: '100', // "100", thinking seconds — the units-typo footgun
       GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS: String(WATCHDOG_GRACE_MS),
@@ -186,6 +187,7 @@ describe('pglite disconnect watchdog vs a wedged event loop (#4284, Bun-pinned)'
     // The lethal-knob floor: 100ms clamps UP (never down, never refuse-to-arm),
     // the clamp warns, and the armed breadcrumb names the FLOORED deadline.
     const floor = expectedFloor(r.stdout);
+    expect(floor).toBe(WATCHDOG_DEADLINE_MS);
     expect(r.stderr).toContain('below this process\'s safe floor');
     expect(r.stderr).toContain(`SIGTERM at ${floor}ms`);
     // Once per process: exactly one armed breadcrumb.

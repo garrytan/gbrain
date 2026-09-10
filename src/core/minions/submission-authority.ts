@@ -11,6 +11,7 @@ import { coerceLegacyPermissions, normalizeTokenScopes, parseLegacyTokenScope } 
 import { isValidSourceId } from '../source-id.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import type { MinionJob } from './types.ts';
+import { effectiveDelegation, snapshotFromJob } from './delegated-policy.ts';
 
 export const REMOTE_JOB_NAMES = ['sync', 'import', 'lint', 'lint-fix'] as const;
 export type RemoteJobName = typeof REMOTE_JOB_NAMES[number];
@@ -33,6 +34,7 @@ export interface RemoteJobAuthority {
     canonicalRoot: string;
     worktreeRoot: string | null;
     jobName: RemoteJobName;
+    allowedOperations?: string[] | null;
   };
   payloadHash: string;
 }
@@ -81,6 +83,8 @@ export function parseSubmissionAuthority(value: unknown): SubmissionAuthority | 
   if (a.kind !== 'remote_generic' || !p || !g ||
       !['oauth_client', 'legacy_token'].includes(String(p.kind)) || typeof p.id !== 'string' || !p.id ||
       !Array.isArray(g.scopes) || !g.scopes.every(s => typeof s === 'string') ||
+      (g.allowedOperations !== undefined && g.allowedOperations !== null &&
+        (!Array.isArray(g.allowedOperations) || !g.allowedOperations.every(op => typeof op === 'string' && op.length))) ||
       typeof g.sourceId !== 'string' || !isValidSourceId(g.sourceId) ||
       typeof g.sourceCreatedAt !== 'string' || typeof g.canonicalRoot !== 'string' || !g.canonicalRoot ||
       !(g.worktreeRoot === null || typeof g.worktreeRoot === 'string') ||
@@ -119,12 +123,17 @@ async function assertCurrentPrincipal(engine: BrainEngine, authority: RemoteJobA
   if (principal.kind === 'oauth_client') {
     // No fallback projections: an incomplete auth schema cannot authorize background work.
     const [row] = await engine.executeRaw<Record<string, unknown>>(
-      'SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface FROM oauth_clients WHERE client_id = $1', [principal.id]);
+      'SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1', [principal.id]);
     if (!row || row.deleted_at != null) deny('OAuth client is missing or revoked');
     scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/).filter(Boolean) : [];
     sourceId = typeof row.source_id === 'string' ? row.source_id : undefined;
     if (row.bound_slug_prefixes != null) deny('bulk filesystem jobs are unavailable to slug-bound clients');
     if (row.surface != null && row.surface !== 'full') deny('current client surface does not permit generic jobs');
+    for (const operations of [grant.allowedOperations, row.allowed_operations]) {
+      if (operations != null && (!Array.isArray(operations) || !operations.every(op => typeof op === 'string') || !operations.includes('submit_job'))) {
+        deny('original and current operation grants must authorize submit_job');
+      }
+    }
   } else {
     const [row] = await engine.executeRaw<Record<string, unknown>>(
       'SELECT id, revoked_at, scopes, permissions FROM access_tokens WHERE id = $1', [principal.id]);
@@ -163,7 +172,8 @@ export async function prepareRemoteJob(
     : { dir: boundary.canonicalRoot, sourceId, ...(name === 'import' ? { noEmbed: true } : {}) };
   const authority: RemoteJobAuthority = {
     version: 1, kind: 'remote_generic', principal: { ...principal },
-    grant: { scopes: [...ctx.auth!.scopes], sourceId, ...boundary, jobName: name as RemoteJobName },
+    grant: { scopes: [...ctx.auth!.scopes], sourceId, ...boundary, jobName: name as RemoteJobName,
+      allowedOperations: ctx.auth?.allowedOperations == null ? null : [...ctx.auth.allowedOperations] },
     payloadHash: authorityDigest(data),
   };
   await assertCurrentPrincipal(ctx.engine, authority);
@@ -172,7 +182,21 @@ export async function prepareRemoteJob(
 
 const toolName = (name: string) => name.replace(/^(?:brain_|mcp__gbrain__)/, '');
 
-async function assertCurrentAgent(engine: BrainEngine, a: RemoteAgentAuthority): Promise<void> {
+async function assertCurrentAgent(engine: BrainEngine, a: RemoteAgentAuthority, data: Record<string, unknown>, jobId?: number): Promise<void> {
+  const [source] = await engine.executeRaw<Record<string, unknown>>('SELECT archived, created_at FROM sources WHERE id = $1', [a.grant.sourceId]);
+  if (!source || source.archived !== false || new Date(source.created_at as string).toISOString() !== a.grant.sourceCreatedAt) deny('agent source is missing, archived, or was replaced');
+  if (data.__delegation_grant !== undefined) {
+    const submitted = snapshotFromJob(data);
+    if (!submitted || submitted.clientId !== a.principal.id || submitted.sourceId !== a.grant.sourceId
+      || authorityDigest(submitted.tools) !== authorityDigest(a.grant.allowedTools)
+      || authorityDigest(submitted.slugPrefixes) !== authorityDigest(a.grant.allowedSlugPrefixes)
+      || !hasScope(a.grant.scopes, 'agent')) deny('delegation snapshot differs from its accepted authority');
+    // Direct and delegated namespaces are independent. The current grant may
+    // narrow tools/paths, while the submitted snapshot remains the ceiling.
+    await effectiveDelegation(engine, submitted, jobId);
+    return;
+  }
+  // Preserve the older explicit authority shape for already accepted jobs.
   const [row] = await engine.executeRaw<Record<string, unknown>>(
     'SELECT deleted_at, scope, source_id, bound_tools, bound_source_id, bound_slug_prefixes FROM oauth_clients WHERE client_id = $1', [a.principal.id]);
   if (!row || row.deleted_at != null) deny('agent owner is missing or revoked');
@@ -191,8 +215,6 @@ async function assertCurrentAgent(engine: BrainEngine, a: RemoteAgentAuthority):
       if (!prefixes.some(p => { const base = normalizeSlugPrefix(p as string); return base && (base.endsWith('/') ? requested.startsWith(base) : requested === base || requested.startsWith(`${base}/`)); })) deny('accepted agent slug grant is outside the current binding');
     }
   }
-  const [source] = await engine.executeRaw<Record<string, unknown>>('SELECT archived, created_at FROM sources WHERE id = $1', [a.grant.sourceId]);
-  if (!source || source.archived !== false || new Date(source.created_at as string).toISOString() !== a.grant.sourceCreatedAt) deny('agent source is missing, archived, or was replaced');
 }
 
 export async function prepareRemoteAgent(ctx: OperationContext, data: Record<string, unknown>): Promise<RemoteAgentAuthority> {
@@ -208,18 +230,18 @@ export async function prepareRemoteAgent(ctx: OperationContext, data: Record<str
     payloadHash: authorityDigest(data),
   };
   if (!parseSubmissionAuthority(authority)) deny('invalid agent grant');
-  await assertCurrentAgent(ctx.engine, authority);
+  await assertCurrentAgent(ctx.engine, authority, data);
   return authority;
 }
 
 /** Runs in BOTH inline and isolated workers, immediately before the handler. */
-export async function authorizeJobExecution(engine: BrainEngine, job: Pick<MinionJob, 'name' | 'data' | 'submission_authority'>): Promise<SubmissionAuthority> {
+export async function authorizeJobExecution(engine: BrainEngine, job: Pick<MinionJob, 'name' | 'data' | 'submission_authority'> & Partial<Pick<MinionJob, 'id'>>): Promise<SubmissionAuthority> {
   const a = parseSubmissionAuthority(job.submission_authority);
   if (!a) deny('missing or unsupported submission authority; review locally with jobs authorize-legacy');
   if (a.kind === 'application') return a;
   if (a.kind === 'remote_agent') {
     if (job.name !== 'subagent' || authorityDigest(job.data) !== a.payloadHash) deny('agent payload differs from its accepted grant');
-    await assertCurrentAgent(engine, a);
+    await assertCurrentAgent(engine, a, job.data, job.id);
     return a;
   }
   if (job.name !== a.grant.jobName || authorityDigest(job.data) !== a.payloadHash) deny('job data or name differs from its accepted grant');

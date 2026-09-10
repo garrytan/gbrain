@@ -200,9 +200,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }
 
   async function registerThrowawayClient(name: string, scopes: string): Promise<{ id: string; secret: string }> {
-    const { execSync } = await import('child_process');
-    const reg = execSync(
-      `bun run src/cli.ts auth register-client ${name} --grant-types client_credentials --scopes "${scopes}"`,
+    const { execFileSync } = await import('child_process');
+    const reg = execFileSync('bun',
+      ['run', 'src/cli.ts', 'auth', 'register-client', name, '--grant-types', 'client_credentials', '--scopes', scopes,
+        ...(scopes.split(' ').includes('agent') ? ['--bound-tools', 'search', '--bound-source', 'default', '--delegated-namespace', 'job'] : [])],
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
     );
     const id = reg.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];

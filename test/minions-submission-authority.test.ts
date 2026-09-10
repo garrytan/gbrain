@@ -103,6 +103,18 @@ describe('generic remote job authority', () => {
     await expect(authorizeJobExecution(engine, job)).rejects.toThrow('revoked');
   }));
 
+  test('current operation profiles and the submitted ceiling both authorize generic jobs', () => isolated(async () => {
+    const narrowed = ctx(); narrowed.auth!.allowedOperations = ['get_page'];
+    await expect(prepareRemoteJob(narrowed, 'lint', {})).rejects.toThrow('operation grants');
+    const allowed = ctx(); allowed.auth!.allowedOperations = ['submit_job'];
+    const accepted = await prepareRemoteJob(allowed, 'lint', {});
+    const job = await queue.add('lint', accepted.data, {}, { submissionAuthority: accepted.authority });
+    expect(job.submission_authority?.kind === 'remote_generic' && job.submission_authority.grant.allowedOperations).toEqual(['submit_job']);
+    await engine.executeRaw("UPDATE oauth_clients SET allowed_operations=ARRAY['get_page'] WHERE client_id='client-a'");
+    await expect(authorizeJobExecution(engine, job)).rejects.toThrow('operation grants');
+    await expect(prepareRemoteJob(ctx(), 'lint', {})).rejects.toThrow('operation grants');
+  }));
+
   test('legacy principal is UUID: names cannot transfer authority and revocation blocks retry', () => isolated(async () => {
     await engine.executeRaw('INSERT INTO access_tokens (id, name, token_hash, permissions, scopes) VALUES ($1, $2, $3, $4::jsonb, ARRAY[\'admin\'])', [legacyId, 'same-name', 'test-hash-a', { source_id: 'default' }]);
     const legacy = ctx(); legacy.auth = { ...legacy.auth!, principal: { kind: 'legacy_token', id: legacyId }, clientId: 'same-name' };
@@ -201,7 +213,7 @@ describe('generic remote job authority', () => {
   }));
 
   test('delegated jobs retain owner, source, tool and slug ceilings through queue execution', () => isolated(async () => {
-    await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['search','get_page'], bound_slug_prefixes = ARRAY['wiki/'], bound_max_concurrent = 3 WHERE client_id = 'client-a'");
+    await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['search','get_page'], bound_slug_prefixes = ARRAY['direct-only/'], delegated_namespace = 'prefixes', delegated_slug_prefixes = ARRAY['wiki/'], bound_source_id = 'default', federated_read = ARRAY['default'], bound_max_concurrent = 3 WHERE client_id = 'client-a'");
     const caller = ctx(); caller.auth!.scopes = ['read', 'agent'];
     const submitAgent = jobsOperations.find(op => op.name === 'submit_agent')!;
     const result = await submitAgent.handler(caller, { prompt: 'Fixture task', allowed_tools: ['search'], allowed_slug_prefixes: ['wiki/example/'] }) as { id: number };
@@ -211,14 +223,35 @@ describe('generic remote job authority', () => {
     await expect(withSubmissionAuthority(job.submission_authority!, () => queue.add('maintenance', {}))).rejects.toThrow('descendant');
     await expect(authorizeJobExecution(engine, { ...job, data: { ...job.data, allowed_tools: ['put_page'] } })).rejects.toThrow('differs');
     await engine.executeRaw("UPDATE oauth_clients SET bound_tools = ARRAY['get_page'] WHERE client_id = 'client-a'");
-    await expect(authorizeJobExecution(engine, job)).rejects.toThrow('current binding');
-    await engine.executeRaw("UPDATE oauth_clients SET bound_tools = ARRAY['search','get_page'], bound_slug_prefixes = ARRAY['other/'] WHERE client_id = 'client-a'");
-    await expect(authorizeJobExecution(engine, job)).rejects.toThrow('slug grant');
-    await engine.executeRaw("UPDATE oauth_clients SET bound_slug_prefixes = ARRAY['wiki/'], scope = 'read' WHERE client_id = 'client-a'");
-    await expect(authorizeJobExecution(engine, job)).rejects.toThrow('agent scope');
+    await expect(authorizeJobExecution(engine, job)).rejects.toThrow('submitted_grant_no_longer_usable');
+    await engine.executeRaw("UPDATE oauth_clients SET bound_tools = ARRAY['search','get_page'], delegated_slug_prefixes = ARRAY['other/'] WHERE client_id = 'client-a'");
+    await expect(authorizeJobExecution(engine, job)).rejects.toThrow('submitted_grant_no_longer_usable');
+    await engine.executeRaw("UPDATE oauth_clients SET delegated_slug_prefixes = ARRAY['wiki/'], scope = 'read' WHERE client_id = 'client-a'");
+    await expect(authorizeJobExecution(engine, job)).rejects.toThrow('agent_scope_missing');
     await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', deleted_at = now() WHERE client_id = 'client-a'");
     await expect(authorizeJobExecution(engine, job)).rejects.toThrow('revoked');
     expect((await queue.getJob(job.id))?.data.allowed_tools).toEqual(['search']);
+  }));
+
+  test('narrowing a job namespace to its concrete job preserves execution and retry only for that job', () => isolated(async () => {
+    await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['search'], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_source_id = 'default', federated_read = ARRAY['default'], bound_max_concurrent = 3 WHERE client_id = 'client-a'");
+    const caller = ctx(); caller.auth!.scopes = ['read', 'agent'];
+    const submitAgent = jobsOperations.find(op => op.name === 'submit_agent')!;
+    const first = await submitAgent.handler(caller, { prompt: 'First fixture task' }) as { id: number };
+    const second = await submitAgent.handler(caller, { prompt: 'Second fixture task' }) as { id: number };
+    const job = (await queue.getJob(first.id))!;
+    const other = (await queue.getJob(second.id))!;
+    await engine.executeRaw("UPDATE oauth_clients SET delegated_namespace = 'prefixes', delegated_slug_prefixes = ARRAY[$1] WHERE client_id = 'client-a'", [`wiki/agents/${job.id}/*`]);
+
+    await expect(authorizeJobExecution(engine, job)).resolves.toEqual(job.submission_authority!);
+    await expect(authorizeJobExecution(engine, other)).rejects.toThrow('submitted_grant_no_longer_usable');
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'failed' WHERE id = $1", [job.id]);
+    // Replay creates a different job, so the existing job's path grant is insufficient.
+    await expect(queue.replayJob(job.id)).rejects.toThrow('submitted_grant_no_longer_usable');
+    const retried = await queue.retryJob(job.id);
+    expect(retried?.status).toBe('waiting');
+    expect(retried?.data).toEqual(job.data);
+    expect(retried?.submission_authority).toEqual(job.submission_authority);
   }));
 
   test('future or malformed non-NULL authority is never authorized as legacy work', () => isolated(async () => {

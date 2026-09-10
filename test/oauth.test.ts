@@ -145,8 +145,7 @@ describe('client registration', () => {
     const { clientId } = await provider.registerClientManual(
       'bound-agent', ['client_credentials'], 'read agent', [], 'default', undefined, undefined, {
         boundTools: ['search', 'get_page'],
-        boundSourceId: 'dept-x',
-        boundBrainId: 'brain-a',
+        boundSourceId: 'default',
         boundSlugPrefixes: ['wiki/agents/bound-agent/'],
         boundMaxConcurrent: 2,
         budgetUsdPerDay: '7.50',
@@ -159,8 +158,8 @@ describe('client registration', () => {
         FROM oauth_clients WHERE client_id = ${clientId}
     `;
     expect(rows[0].bound_tools).toEqual(['search', 'get_page']);
-    expect(rows[0].bound_source_id).toBe('dept-x');
-    expect(rows[0].bound_brain_id).toBe('brain-a');
+    expect(rows[0].bound_source_id).toBe('default');
+    expect(rows[0].bound_brain_id).toBeNull();
     expect(rows[0].bound_slug_prefixes).toEqual(['wiki/agents/bound-agent/']);
     expect(Number(rows[0].bound_max_concurrent)).toBe(2);
     expect(rows[0].budget).toBe('7.50');
@@ -174,7 +173,7 @@ describe('client registration', () => {
 describe('rescopeClient', () => {
   beforeAll(async () => {
     // oauth_clients.source_id has FK → sources(id); create the targets.
-    for (const id of ['wiki', 'essays', 'alpha', 'gamma']) {
+    for (const id of ['wiki', 'essays', 'alpha', 'beta', 'gamma']) {
       await sql`INSERT INTO sources (id, name) VALUES (${id}, ${id}) ON CONFLICT (id) DO NOTHING`;
     }
   });

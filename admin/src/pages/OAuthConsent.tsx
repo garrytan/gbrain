@@ -5,6 +5,8 @@ import { clearOAuthRequest, pendingOAuthRequest } from '../lib/oauth-request';
 interface ConsentRequest {
   id: string; clientId: string; clientName: string; redirectUri: string;
   scopes: string[]; sourceId: string | null; allowedSources: string[];
+  allowedOperations: string[] | null; boundSlugPrefixes: string[] | null;
+  delegatedTools: string[] | null; delegatedSlugPrefixes: string[] | null; delegatedNamespace: string | null;
   resource: string | null; expiresAt: number; csrf: string;
 }
 
@@ -45,7 +47,13 @@ export function OAuthConsentPage() {
         <dt>Client ID</dt><dd><code>{request.clientId}</code></dd>
         <dt>Redirect destination</dt><dd><code>{request.redirectUri}</code></dd>
         <dt>Permissions</dt><dd>{request.scopes.length ? request.scopes.map(scope => <span key={scope} className={`badge ${scope.includes('admin') ? 'badge-error' : ''}`} style={{ marginRight: 8 }}>{scope}</span>) : 'No permissions'}</dd>
-        <dt>Administrative access</dt><dd>{request.scopes.some(scope => scope === 'admin') ? 'Full administration, including clients, sources and privileged operations.' : request.scopes.some(scope => scope.endsWith('_admin')) ? 'Administrative capabilities are included in the permissions above.' : 'None'}</dd>
+        <dt>Administrative access</dt><dd>{request.scopes.some(scope => scope === 'admin') ? 'Administration within the allowed operations shown below.' : request.scopes.some(scope => scope.endsWith('_admin')) ? 'Administrative capabilities are included in the permissions above.' : 'None'}</dd>
+        <dt>Allowed operations</dt><dd>{request.allowedOperations === null ? 'All operations permitted by these scopes and the server policy' : request.allowedOperations.join(', ') || 'None'}</dd>
+        <dt>Write paths</dt><dd>{request.boundSlugPrefixes === null ? 'Within the granted source' : request.boundSlugPrefixes.join(', ') || 'None'}</dd>
+        {request.scopes.includes('agent') && <>
+          <dt>Delegated tools</dt><dd>{request.delegatedTools?.join(', ') || 'None'}</dd>
+          <dt>Delegated write paths</dt><dd>{request.delegatedNamespace === 'job' ? 'A separate namespace for each job' : request.delegatedSlugPrefixes?.join(', ') || 'None'}</dd>
+        </>}
         <dt>Write source</dt><dd>{request.sourceId ?? 'Not configured'}</dd>
         <dt>Read sources</dt><dd>{request.allowedSources.length ? request.allowedSources.join(', ') : request.sourceId ?? 'Not configured'}</dd>
         <dt>Resource</dt><dd><code>{request.resource ?? 'No resource binding requested'}</code></dd>

@@ -26,7 +26,16 @@ const LOCK_FILE = 'lock';
 // LIVE holder (embed jobs run for many minutes) is never mistaken for stale.
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
-export class LiveServeLockError extends Error {}
+export class PgliteBusyError extends Error {
+  readonly code = 'pglite_busy';
+  readonly retryable = true;
+  constructor(message: string, public reason: 'timeout' | 'live_serve' = 'timeout') {
+    super(message); this.name = 'PgliteBusyError';
+  }
+}
+export class LiveServeLockError extends PgliteBusyError {
+  constructor(message: string) { super(message, 'live_serve'); this.name = 'LiveServeLockError'; }
+}
 
 function isServeCommand(lockData: { subcommand?: unknown; command?: unknown }): boolean {
   // New lock files store the command after the same global-flag parsing used
@@ -477,15 +486,15 @@ function pgliteLockTimeoutError(lockDir: string): Error {
       ? ' The holder looks like `gbrain serve`, so this is probably serve↔sync contention from an MCP/HTTP server; stop that server/client and rerun the command.'
       : '';
 
-    return new Error(
+    return new PgliteBusyError(
       `GBrain: Timed out waiting for PGLite data-dir lock. Process ${pid} has held it since ${formatLockTimestamp(lockData.acquired_at)} (command: ${command}). ` +
-      `Lock directory: ${lockDir}. If that process is dead, remove the lock directory and try again. ` +
+      `Lock directory: ${lockDir}. Retry after the holder finishes; GBrain automatically recovers provably dead holders. Never remove a live holder's lock. ` +
       `This is a PGLite data-dir lock, not the \`gbrain-sync:*\` advisory lock; \`gbrain sync --break-lock\` will not clear a live PGLite holder.` +
       serveHint,
     );
   } catch {
-    return new Error(
-      `GBrain: Timed out waiting for PGLite lock. Remove ${lockDir} and try again.`
+    return new PgliteBusyError(
+      `GBrain: Timed out waiting for PGLite lock at ${lockDir}. Retry after the active command finishes. Do not remove the lock manually.`
     );
   }
 }

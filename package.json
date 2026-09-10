@@ -115,7 +115,8 @@
     "check:no-legacy-getconnection": "bash scripts/check-no-legacy-getconnection.sh",
     "check:module-size": "bash scripts/check-module-size.sh",
     "check:structural-manifest": "bash scripts/check-structural-manifest.sh",
-    "check:orphan-modules": "node scripts/check-orphan-modules.mjs"
+    "check:orphan-modules": "node scripts/check-orphan-modules.mjs",
+    "build:harness-docs": "bun run scripts/build-harness-docs.ts"
   },
   "openclaw": {
     "compat": {
@@ -175,6 +176,7 @@
   "license": "MIT",
   "version": "0.50.0.0",
   "overrides": {
+    "@ai-sdk/provider-utils": "4.0.33",
     "@hono/node-server": "^2.0.5",
     "fast-uri": "3.1.6",
     "body-parser": "^2.3.0",
@@ -184,7 +186,6 @@
     "hono": "^4.13.5",
     "ip-address": "^10.3.1",
     "qs": "6.16.0",
-    "js-yaml": "^3.15.2",
-    "@ai-sdk/provider-utils": "4.0.33"
+    "js-yaml": "^3.15.2"
   }
 }

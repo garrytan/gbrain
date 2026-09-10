@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import * as realEmbedding from '../src/core/embedding.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { DbLockHandle } from '../src/core/db-lock.ts';
 
@@ -15,6 +16,9 @@ let lastEmbedBatchOpts: unknown = undefined;
 let embedBatchBehavior: ((texts: string[], opts?: unknown) => Promise<Float32Array[]>) | null = null;
 
 mock.module('../src/core/embedding.ts', () => ({
+  // Import's withdrawal path also reaches query-side consumers. Keep the
+  // module's complete export surface while overriding the transport tested here.
+  ...realEmbedding,
   embedBatch: async (texts: string[], opts?: unknown) => {
     activeEmbedCalls++;
     totalEmbedCalls++;

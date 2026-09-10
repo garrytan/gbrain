@@ -1,5 +1,7 @@
 # Connect GBrain to Grok Build
 
+This guide is for the **Grok Build CLI**. For the personal **Grok Bot** with its own computer, use the dedicated [Grok Bot guide](../guides/grok-bot.md).
+
 > This page is the MCP-registration reference for **Grok Build** — xAI's
 > official `grok` CLI (early beta, subscriber-gated; not the community
 > `superagent-ai/grok-cli`, which ships a colliding `grok` binary — see

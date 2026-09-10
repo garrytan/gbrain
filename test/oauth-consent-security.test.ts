@@ -220,7 +220,9 @@ describe('owner-approved HTTP authorization', () => {
     const tokens = await provider.exchangeClientCredentials(clientId, clientSecret!, 'write');
     expect((await provider.verifyAccessToken(tokens.access_token)).scopes).toEqual(['write']);
     await sql`UPDATE oauth_clients SET scope = 'read' WHERE client_id = ${clientId}`;
-    expect((await provider.verifyAccessToken(tokens.access_token)).scopes).toEqual([]);
+    // Preserve the read capability implied by the original write grant,
+    // while dropping the write capability removed by the owner.
+    expect((await provider.verifyAccessToken(tokens.access_token)).scopes).toEqual(['read']);
   });
 });
 

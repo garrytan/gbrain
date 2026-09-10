@@ -181,7 +181,7 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     await forceRow(parented.id,
       `created_at = now() - interval '6 hours', parent_job_id = $1`, [dupNew.id]);
 
-    // Keep the active-row contract local to v128; the v147 authority
+    // Keep the active-row contract local to v128; the v149 authority
     // cutover independently requires active jobs to have drained.
     await execV128Directly();
 
