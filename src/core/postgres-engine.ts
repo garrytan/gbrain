@@ -1579,7 +1579,7 @@ export class PostgresEngine implements BrainEngine {
     // shares the same transaction as the timeout.
     const runKeyword = (queryText: string) =>
       this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SET LOCAL statement_timeout = '8s'`;
+        await tx`SELECT set_config('statement_timeout', ${await this.searchStatementTimeout()}, true)`;
         const boundParams = [...params];
         boundParams[0] = queryText;
         return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
@@ -1733,7 +1733,7 @@ export class PostgresEngine implements BrainEngine {
     // same scoped wrapper.
     const runTitles = (queryText: string) =>
       this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SET LOCAL statement_timeout = '8s'`;
+        await tx`SELECT set_config('statement_timeout', ${await this.searchStatementTimeout()}, true)`;
         const boundParams = [...params];
         boundParams[0] = queryText;
         return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
@@ -1891,7 +1891,7 @@ export class PostgresEngine implements BrainEngine {
     // already wrapped this in sql.begin() for the SET LOCAL; flag off is
     // identical to that wrap, flag on adds set_config in the same tx.
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-      await tx`SET LOCAL statement_timeout = '8s'`;
+      await tx`SELECT set_config('statement_timeout', ${await this.searchStatementTimeout()}, true)`;
       return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
     }, { alwaysTransaction: true });
     return rows.map(rowToSearchResult);
@@ -1907,7 +1907,7 @@ export class PostgresEngine implements BrainEngine {
     return searchKeywordCJKImpl(
       async (sqlText, params) =>
         await this.withScopedReadTransaction(ctx.opts?.sourceIds, ctx.opts?.sourceId, async (tx) => {
-          await tx`SET LOCAL statement_timeout = '8s'`;
+          await tx`SELECT set_config('statement_timeout', ${await this.searchStatementTimeout()}, true)`;
           return await tx.unsafe(sqlText, params as Parameters<typeof tx.unsafe>[1]) as unknown as Record<string, unknown>[];
         }, { alwaysTransaction: true }),
       query,
@@ -2123,7 +2123,7 @@ export class PostgresEngine implements BrainEngine {
     // pagination) but never emits: pool state is unknowable there.
     const runOnce = async (il: number) =>
       await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SET LOCAL statement_timeout = '8s'`;
+        await tx`SELECT set_config('statement_timeout', ${await this.searchStatementTimeout()}, true)`;
         await tx`SELECT set_config('hnsw.ef_search', ${String(hnswEfSearchFor(il))}, true)`;
         return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
       }, { alwaysTransaction: true });
@@ -5149,6 +5149,46 @@ export class PostgresEngine implements BrainEngine {
       // guard; fail-loud — a reconnect throw propagates as the real cause.
       reconnect: (ctx) => this.reconnect(ctx),
     });
+  }
+
+  // #-- configurable search statement timeout ------------------------------
+  // The five search arms below (keyword, titles, keyword-chunks, CJK, vector)
+  // each set a transaction-scoped statement_timeout so one pathological query
+  // cannot pin a pooled connection. That bound was hardcoded to '8s', which is
+  // ample on a small brain and unreachable on a large one: on a 157k-page /
+  // 896MB `pages` table the keyword arm cannot finish inside it, so every
+  // search logs "searchKeyword arm failed (fail-open)" and silently degrades to
+  // vector-only. Exact-token lookups — an email address, a proper noun — stop
+  // working at exactly the corpus size where they matter most.
+  //
+  // Applied with set_config('statement_timeout', $1, true) rather than
+  // `SET LOCAL ... = '<value>'`: a GUC name cannot be parameterised in SET,
+  // so a dynamic value there means string interpolation. set_config takes the
+  // value as a bound parameter and the third argument scopes it to the
+  // transaction, which is exactly what SET LOCAL did.
+  //
+  // Resolution order matches isCrossSourceLinksEnabled: env, then the DB config
+  // plane, then the previous default. Memoised for 60s because this sits on the
+  // hot path and getConfig is a round trip per call; a longer-lived cache would
+  // make `gbrain config set` feel broken.
+  private _searchTimeoutCache: { value: string; at: number } | null = null;
+
+  private async searchStatementTimeout(): Promise<string> {
+    const envVal = process.env.GBRAIN_SEARCH_STATEMENT_TIMEOUT_MS;
+    if (envVal != null && /^\d+$/.test(envVal.trim())) return `${envVal.trim()}ms`;
+    const now = Date.now();
+    if (this._searchTimeoutCache && now - this._searchTimeoutCache.at < 60_000) {
+      return this._searchTimeoutCache.value;
+    }
+    let value = '8s';
+    try {
+      const raw = await this.getConfig('search.statement_timeout_ms');
+      if (raw != null && /^\d+$/.test(raw.trim())) value = `${raw.trim()}ms`;
+    } catch {
+      // A config read failure must never take search down; keep the old default.
+    }
+    this._searchTimeoutCache = { value, at: now };
+    return value;
   }
 
   async getConfig(key: string): Promise<string | null> {
