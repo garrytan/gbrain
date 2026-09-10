@@ -223,15 +223,10 @@ export interface SocketTracker {
  * tracking is the only portable teardown.
  */
 export function trackServerSockets(server: Pick<HttpServerLifecycle, 'on'>): SocketTracker {
-  // Hold sockets WEAKLY. Bun's node:http never emits 'close' (nor 'end'/'error')
-  // on server-side sockets and keeps reporting them open after the peer is
-  // gone, so no event or state flag can evict a dead connection — a strong Set
-  // grew by one socket per request forever (each health probe is a fresh TCP
-  // connection). A dead socket does become unreachable once the runtime drops
-  // it, so a WeakRef lets it go; a live one stays reachable from the server
-  // and keeps being tracked. Node does emit 'close' — honor it so the
-  // bookkeeping stays exact there, and prune collected refs as we go so the
-  // ref set itself stays bounded by live connections.
+  // Weak refs, because Bun's node:http never emits 'close' on a server-side
+  // socket and keeps reporting it open after the peer is gone — nothing can
+  // evict a dead one from a strong Set. Unreachability is the only signal
+  // left. Node does emit 'close'; honored below so it stays exact there.
   const refs = new Set<WeakRef<TrackedSocket>>();
   const live = (): TrackedSocket[] => {
     const out: TrackedSocket[] = [];

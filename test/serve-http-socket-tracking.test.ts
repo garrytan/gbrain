@@ -3,14 +3,8 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { trackServerSockets } from '../src/commands/serve-http.ts';
 
-// The shipped leak: `serve --http` tracked every accepted socket in a Set for
-// shutdown teardown and dropped it only on the socket's 'close' event. Bun's
-// node:http never emits 'close' (nor 'end'/'error') on server-side sockets, and
-// the socket keeps reporting open/writable after the peer is gone, so every
-// connection stayed tracked forever. Each kubelet health probe is a fresh TCP
-// connection, so a probe-only pod grew ~9 MB/h until OOMKilled. The lifecycle
-// tests use a FakeHttpServer whose 'close' fires synchronously, which is why
-// they never saw it — this file exercises a REAL server on the current runtime.
+// A REAL server, unlike the lifecycle suite's FakeHttpServer whose 'close'
+// fires synchronously — which is why it never caught the retained sockets.
 
 const servers: http.Server[] = [];
 afterEach(async () => {
@@ -25,11 +19,7 @@ async function listen(): Promise<{ server: http.Server; url: string }> {
   return { server, url: `http://127.0.0.1:${port}/health` };
 }
 
-/**
- * Let the runtime release dropped sockets; tracking must not out-live them.
- * Socket teardown and GC are asynchronous, so poll until `done` holds (or a
- * generous deadline passes and the assertion reports the real count).
- */
+/** Teardown and GC are async — poll until `done`, then let the assertion talk. */
 async function settle(done: () => boolean = () => false): Promise<void> {
   const deadline = Date.now() + 3000;
   do {
@@ -44,9 +34,8 @@ describe('trackServerSockets on a real http.Server', () => {
     const { server, url } = await listen();
     const tracker = trackServerSockets(server);
 
-    // node:http client, not `fetch`: Bun's in-process fetch pool can keep one
-    // server-side socket reachable for a while, which would mask what the
-    // tracker does. Real probes come from another process (kubelet).
+    // node:http, not `fetch`: Bun's fetch pool can keep a server-side socket
+    // reachable in-process and mask the result.
     for (let i = 0; i < 20; i++) {
       await new Promise<void>((resolve, reject) => {
         http.get(url, { headers: { Connection: 'close' } }, (res) => { res.resume(); res.on('end', resolve); }).on('error', reject);
@@ -67,8 +56,7 @@ describe('trackServerSockets on a real http.Server', () => {
     });
     await settle();
 
-    // The pooled socket is still open on both ends: it must still be tracked,
-    // otherwise `server.close()` would hang on it at shutdown.
+    // Still open on both ends, so still tracked — else close() hangs on it.
     expect(tracker.size()).toBe(1);
 
     tracker.destroyAll();
