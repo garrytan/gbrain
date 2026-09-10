@@ -1,5 +1,5 @@
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'fs';
+import { join, dirname, basename, resolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { createProgress } from '../core/progress.ts';
@@ -23,6 +23,26 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   const slugPrefix = slugPrefixIdx !== -1 ? args[slugPrefixIdx + 1] : undefined;
 
   const restoreOnly = args.includes('--restore-only');
+  const prune = args.includes('--prune');
+
+  // A filtered run exports a subset by design, so every page outside the filter
+  // would look stale. Refuse before any file is touched, not after.
+  if (prune) {
+    const subsetReason = restoreOnly
+      ? '--restore-only'
+      : typeFilter
+        ? '--type'
+        : slugPrefix
+          ? '--slug-prefix'
+          : null;
+    if (subsetReason) {
+      console.error(
+        `Error: --prune cannot be combined with ${subsetReason}. That run exports a\n` +
+          `subset, so pruning would delete every page outside the filter.`,
+      );
+      process.exit(1);
+    }
+  }
 
   // Resolution chain (D5): explicit --repo → typed sources.getDefault() →
   // hard-error for restore-only paths (never fall through to cwd).
@@ -107,6 +127,10 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   progress.start('export.pages', pages.length);
 
   let exported = 0;
+  // Paths this run owns. Anything else under outDir belongs to a page that was
+  // deleted or re-slugged since the last export, and a mirror that keeps it is
+  // a mirror that lies to whoever restores from it.
+  const written = new Set<string>();
 
   for (const page of pages) {
     // Slugs are unique per source, not brain-wide, so both sidecar reads are
@@ -137,6 +161,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     const filePath = join(outDir, page.slug + '.md');
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, md);
+    written.add(resolve(filePath));
 
     // Export raw data as sidecar JSON. Unscoped, this matches the slug in
     // EVERY source and the loop below merges the rows into one sidecar keyed
@@ -156,6 +181,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
         rawObj[rd.source] = rd.data;
       }
       writeFileSync(rawPath, JSON.stringify(rawObj, null, 2) + '\n');
+      written.add(resolve(rawPath));
     }
 
     exported++;
@@ -169,4 +195,39 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   } else {
     console.log(`Exported ${exported} pages to ${outDir}/`);
   }
+
+  if (prune) {
+    // Fail closed: an export that wrote nothing cannot distinguish "the brain is
+    // empty" from "the query failed", and both would empty the mirror.
+    if (exported === 0) {
+      console.error(`Error: --prune refused — the export wrote no pages, so every file looks stale.`);
+      process.exit(1);
+    }
+    const removed = pruneStale(outDir, written);
+    console.log(`Pruned ${removed} stale files from ${outDir}/`);
+  }
+}
+
+// Only the two shapes export itself writes are candidates. Anything else the
+// user keeps under outDir is theirs and is left alone.
+function isExportArtefact(filePath: string): boolean {
+  if (filePath.endsWith('.md')) return true;
+  return filePath.endsWith('.json') && basename(dirname(filePath)) === '.raw';
+}
+
+function pruneStale(dir: string, written: Set<string>): number {
+  if (!existsSync(dir)) return 0;
+  let removed = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      removed += pruneStale(full, written);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!isExportArtefact(full) || written.has(resolve(full))) continue;
+    unlinkSync(full);
+    removed++;
+  }
+  return removed;
 }
