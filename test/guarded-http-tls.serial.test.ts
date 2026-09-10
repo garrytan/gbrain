@@ -62,10 +62,15 @@ describe('pinned native HTTP transport', () => {
     const direct = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() { directHits++; return new Response('direct'); } });
     const secure = Bun.serve({ hostname: '127.0.0.1', port: 0, tls, fetch() { directHits++; return new Response('secure'); } });
     const adapterPath = join(import.meta.dir, '../src/core/guarded-http.ts');
+    const proxy = `http://127.0.0.1:${trap.port}`;
     // A child gives proxy env settings a chance to take effect at runtime startup.
     const script = `
       import { createPinnedHttpFetch } from ${JSON.stringify(adapterPath)};
       import { readFileSync } from 'node:fs';
+      const proxyKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'];
+      if (!proxyKeys.some(key => process.env[key] === ${JSON.stringify(proxy)})) {
+        throw new Error('Proxy fixture did not reach subprocess');
+      }
       const nativeFetch = globalThis.fetch;
       const request = createPinnedHttpFetch((url, opts) => nativeFetch(url, {
         ...opts, tls: { ...opts.tls, ca: readFileSync(${JSON.stringify(certPath)}, 'utf8') },
@@ -82,11 +87,15 @@ describe('pinned native HTTP transport', () => {
         }
       }
     `;
-    const proxy = `http://127.0.0.1:${trap.port}`;
+    // Windows environment names are case-insensitive: an empty lowercase alias
+    // can overwrite the populated uppercase key (or vice versa) during spawn.
+    // Remove every spelling before adding just the variant under test.
+    const proxyEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+      !['http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'].includes(key.toLowerCase())));
     try {
       for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
-        const proc = Bun.spawn([process.execPath, '--eval', script], {
-          env: { ...process.env, HTTP_PROXY: '', HTTPS_PROXY: '', http_proxy: '', https_proxy: '', ALL_PROXY: '', all_proxy: '', NO_PROXY: '*', no_proxy: '*', [key]: proxy },
+        const proc = Bun.spawn([process.execPath, '--no-env-file', '--eval', script], {
+          env: { ...proxyEnv, NO_PROXY: '*', [key]: proxy },
           stdout: 'pipe', stderr: 'pipe',
         });
         const [out, err, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);

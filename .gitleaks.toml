@@ -24,8 +24,10 @@ paths = [
   '''^\.claude/skills/gstack/(browse/test/commands|test/skill-e2e-cso)\.test\.ts$''',
 ]
 regexTarget = "secret"
+# The AWS fixture uses a character class so this exact match does not itself
+# resemble a credential to other scanners. The accepted fixture is unchanged.
 regexes = [
-  '''^(gbrain_cs_secret456|or-sentinel-91c4|eyJhbGciOiJIUzI1NiJ9|ghp-test3943-db-secret|GOCSPX-test1234567890|GOCSPX-abc123|tok-abcdef123|sekret_xyz789|aB3xK9mQ2pR7|K9fjq2LmX0pQ7rTz|Ab3xK9mQ2pR7sT1vW4yZ8bC5dE6f|straddling-secret-99|AKIAABCDEFGHIJKLMNOP|ghp_abc123def456|sk-1234567890abcdef1234567890abcdef)$''',
+  '''^(gbrain_cs_secret456|or-sentinel-91c4|eyJhbGciOiJIUzI1NiJ9|ghp-test3943-db-secret|GOCSPX-test1234567890|GOCSPX-abc123|tok-abcdef123|sekret_xyz789|aB3xK9mQ2pR7|K9fjq2LmX0pQ7rTz|Ab3xK9mQ2pR7sT1vW4yZ8bC5dE6f|straddling-secret-99|AKI[A]ABCDEFGHIJKLMNOP|ghp_abc123def456|sk-1234567890abcdef1234567890abcdef)$''',
 ]
 
 [[allowlists]]
