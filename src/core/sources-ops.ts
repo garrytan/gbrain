@@ -71,7 +71,8 @@ export type SourceOpErrorCode =
   | 'clone_dir_outside_gbrain'
   | 'symlink_escape'
   | 'unmanaged_path'
-  | 'not_a_git_repo';
+  | 'not_a_git_repo'
+  | 'ephemeral_ci_path';
 
 export class SourceOpError extends Error {
   constructor(
@@ -150,10 +151,12 @@ export interface AddSourceOpts {
    */
   cloneDir?: string;
   /**
-   * Skip the #2707 git-repo validation on `localPath`. Opt-in escape hatch
-   * for registering a path before it's git-initialized (e.g. an automated
-   * pipeline that populates + `git init`s the directory after `sources add`
-   * runs). Does NOT auto-`git init` anything — see `addSource` docstring.
+   * Skip the path validations on `localPath`: the #2707 git-repo check and
+   * the ephemeral-CI-path refusal. Opt-in escape hatch for registering a
+   * path before it's git-initialized (e.g. an automated pipeline that
+   * populates + `git init`s the directory after `sources add` runs), or a
+   * genuinely durable brain living at a runner-shaped path. Does NOT
+   * auto-`git init` anything — see `addSource` docstring.
    */
   force?: boolean;
   /**
@@ -474,6 +477,39 @@ export async function addSource(
     // Same #3696 phantom-path class as the github dir above.
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- opts.google.dir only flows here from the trusted local CLI (sources_add hard-rejects opts.google unless ctx.remote === false); absolutizing the operator's own directory is the #3696 fix
     opts = { ...opts, google: { ...opts.google, dir: resolvePath(msysToNativePath(opts.google.dir)) } };
+  }
+
+  // Ephemeral-CI-path guard (2026-09-08 shared-brain incident): refuse to
+  // bind a source row — a fresh INSERT or the #3903 path-less attach below —
+  // to a path that only exists inside a CI runner (/home/runner/work/*,
+  // $GITHUB_WORKSPACE, ...). On a shared brain such a binding breaks capture
+  // and sync on every other machine the moment the runner is recycled.
+  // Unlike the #2707 git-repo check this does NOT gate on existsSync: the
+  // dangerous case includes a runner path replayed on a machine where it
+  // doesn't exist. `--force` (the existing path-validation escape hatch) and
+  // GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 both bypass. Checked before the
+  // collision SELECT so a CI bootstrap re-running `sources add` sees the
+  // real problem, not "id taken".
+  if (opts.localPath && opts.force !== true) {
+    const { classifyEphemeralCiPath, allowEphemeralPersist } = await import(
+      './ci-path-guard.ts'
+    );
+    if (!allowEphemeralPersist()) {
+      const verdict = classifyEphemeralCiPath(opts.localPath);
+      if (verdict.ephemeral) {
+        throw new SourceOpError(
+          'ephemeral_ci_path',
+          `Refusing to register source "${opts.id}" with local_path ` +
+            `${opts.localPath}: it looks like an ephemeral CI checkout ` +
+            `(${verdict.detail}). On a shared brain this path would break ` +
+            `capture and sync on every other machine once the runner is gone. ` +
+            `To sync CI content without binding the path, run 'gbrain sync ` +
+            `--repo <path> --source <id>' (the path stays session-scoped). ` +
+            `If this path really is durable, pass --force or set ` +
+            `GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1.`,
+        );
+      }
+    }
   }
 
   // Q4: pre-flight collision check before any clone work.

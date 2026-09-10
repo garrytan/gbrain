@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { runSources } from '../src/commands/sources.ts';
 
 describe('gbrain sources set-path', () => {
@@ -272,5 +273,70 @@ describe('gbrain sources set-path', () => {
     await runSources(engine, ['set-path', 'default', link]);
     expect(exitCode).toBeNull();
     expect(await readLocalPath('default')).toBe(link);
+  });
+
+  // ── Ephemeral-CI-path guard (2026-09-08 shared-brain incident) ──────────
+  //
+  // set-path is the one writer that repoints a NON-NULL local_path in one
+  // line — exactly what a CI job (or an agent following a sync refusal hint
+  // inside CI) reaches for. A runner checkout passes the existsSync check ON
+  // the runner, then poisons the shared row for every other machine. The
+  // guard classifies via src/core/ci-path-guard.ts; env-based cases go
+  // through withEnv (this file also runs FOR REAL under GitHub Actions, so
+  // each case neutralizes the ambient CI env it doesn't set).
+
+  const guardEnvOff = {
+    CI: undefined,
+    GITHUB_ACTIONS: undefined,
+    GITHUB_WORKSPACE: undefined,
+    GITLAB_CI: undefined,
+    CI_PROJECT_DIR: undefined,
+    BUILDKITE: undefined,
+    BUILDKITE_BUILD_CHECKOUT_PATH: undefined,
+    CIRCLECI: undefined,
+    CIRCLE_WORKING_DIRECTORY: undefined,
+    TF_BUILD: undefined,
+    GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: undefined,
+  };
+
+  test('rejection: path inside $GITHUB_WORKSPACE → exit 7, no mutation (incident shape)', async () => {
+    const durable = makeDir();
+    await runSources(engine, ['set-path', 'default', durable]);
+    const ciCheckout = makeDir(); // exists on "the runner" — passes the exit-5 check
+    await withEnv({ ...guardEnvOff, GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: ciCheckout }, async () => {
+      try {
+        await runSources(engine, ['set-path', 'default', ciCheckout]);
+      } catch (err) {
+        expect((err as Error).message).toContain('__test_exit_7__');
+      }
+    });
+    expect(exitCode).toBe(7);
+    expect(await readLocalPath('default')).toBe(durable); // shared row survives
+  });
+
+  test('--force bypasses the ephemeral-CI-path guard', async () => {
+    const ciCheckout = makeDir();
+    await withEnv({ ...guardEnvOff, GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: ciCheckout }, async () => {
+      await runSources(engine, ['set-path', 'default', ciCheckout, '--force']);
+    });
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(ciCheckout);
+  });
+
+  test('GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 bypasses the ephemeral-CI-path guard', async () => {
+    const ciCheckout = makeDir();
+    await withEnv(
+      {
+        ...guardEnvOff,
+        GITHUB_ACTIONS: 'true',
+        GITHUB_WORKSPACE: ciCheckout,
+        GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: '1',
+      },
+      async () => {
+        await runSources(engine, ['set-path', 'default', ciCheckout]);
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(ciCheckout);
   });
 });

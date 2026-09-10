@@ -230,6 +230,34 @@ export async function writeSyncAnchor(
   // it on a legacy-path last_commit write keep pre-#2114 behavior.
   repoDir?: string,
 ): Promise<void> {
+  // Ephemeral-CI-path guard (2026-09-08 shared-brain incident): a sync run
+  // FROM a CI checkout is fine, but its path must never become the durable
+  // `sources.local_path` / `sync.repo_path` — on a shared brain that poisons
+  // the pointer every other machine resolves (capture/write-through then
+  // fails with repo_not_found until an operator repairs the row). Checked
+  // BEFORE the ownership guards below because those deliberately allow a
+  // null-anchor BOOTSTRAP — and bootstrapping onto a runner checkout is
+  // exactly the contamination. The sync stays session-scoped: content lands
+  // and last_commit advances; only the path binding is skipped.
+  // GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 persists anyway.
+  if (which === 'repo_path') {
+    const { classifyEphemeralCiPath, allowEphemeralPersist } = await import(
+      './ci-path-guard.ts'
+    );
+    const verdict = classifyEphemeralCiPath(value);
+    if (verdict.ephemeral && !allowEphemeralPersist()) {
+      const target = sourceId
+        ? `sources.local_path for "${sourceId}"`
+        : 'sync.repo_path';
+      serr(
+        `[sync] ${target} not updated — "${value}" looks like an ephemeral CI ` +
+        `checkout (${verdict.detail}). The stored path is left untouched so other ` +
+        `machines sharing this brain keep a working pointer; this run still synced ` +
+        `from "${value}". Set GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 to persist it anyway.`,
+      );
+      return;
+    }
+  }
   if (sourceId) {
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.

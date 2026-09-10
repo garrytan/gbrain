@@ -19,6 +19,7 @@ import { resolve as resolvePath } from 'path';
 import { msysToNativePath } from '../core/path-confine.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { assertNoOverlappingPath, SourceOpError } from '../core/sources-ops.ts';
+import { classifyEphemeralCiPath, allowEphemeralPersist } from '../core/ci-path-guard.ts';
 
 export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promise<void> {
   const force = rawArgs.includes('--force');
@@ -31,7 +32,9 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
     console.error("  Sets the source's local_path — the on-disk directory gbrain treats as");
     console.error('  its write-through target and walks for sync/audit. Non-destructive: only');
     console.error('  updates the pointer, never touches files on disk.');
-    console.error("  Refuses a path that overlaps another source's tree; --force bypasses that guard.");
+    console.error("  Refuses a path that overlaps another source's tree, or one that looks like");
+    console.error('  an ephemeral CI checkout (/home/runner/work/*, $GITHUB_WORKSPACE, ...);');
+    console.error('  --force bypasses both guards.');
     process.exit(2);
   }
 
@@ -72,6 +75,29 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
         process.exit(6);
       }
       throw e;
+    }
+  }
+
+  // Ephemeral-CI-path guard (2026-09-08 shared-brain incident): this repair
+  // command is the one writer that can repoint a NON-NULL local_path in one
+  // line — which is exactly what a CI job (or an agent following a sync
+  // refusal hint inside CI) reaches for. A runner checkout passes the
+  // existsSync check above ON the runner, then poisons the shared row for
+  // every other machine. Refuse unless --force / the env hatch.
+  if (!force && !allowEphemeralPersist()) {
+    const verdict = classifyEphemeralCiPath(path);
+    if (verdict.ephemeral) {
+      console.error(
+        `Error (ephemeral_ci_path): "${path}" looks like an ephemeral CI checkout ` +
+        `(${verdict.detail}). Pointing source "${id}" at it would break capture and ` +
+        `sync on every other machine sharing this brain once the runner is gone.`,
+      );
+      console.error(
+        '  To sync CI content without repointing, use `gbrain sync --repo <path> ' +
+        '--source <id>` (session-scoped). If this path really is durable, pass ' +
+        '--force or set GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1.',
+      );
+      process.exit(7);
     }
   }
 
