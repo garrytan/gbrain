@@ -22,7 +22,10 @@ import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
 import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
-import { isClaudeCodeSubagentFile } from '../core/transcripts/claude-code.ts';
+import {
+  isClaudeCodeSubagentFile,
+  isClaudeCodeWorkflowArtifactFile,
+} from '../core/transcripts/claude-code.ts';
 
 interface RecentOpts {
   days?: number;
@@ -291,7 +294,11 @@ export async function expandPaths(specs: string[]): Promise<string[]> {
     }
   }
   return [...new Set(out)].filter(
-    (p) => !isOpenclawCheckpointFile(p) && !isGrokSessionSidecarStrict(p) && !isClaudeCodeSubagentFile(p),
+    (p) =>
+      !isOpenclawCheckpointFile(p) &&
+      !isGrokSessionSidecarStrict(p) &&
+      !isClaudeCodeSubagentFile(p) &&
+      !isClaudeCodeWorkflowArtifactFile(p),
   );
 }
 

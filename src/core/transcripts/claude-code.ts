@@ -43,13 +43,42 @@ const CLAUDE_CONTROL_TYPES = new Set([
  * and carries the PARENT session's id — it is not a session and can never
  * import. Discovery and explicit-path expansion both skip these so they stop
  * reading as a permanent not-yet-imported backlog + host-format drift (#4796).
- * STRICT shape (parent dir literally `subagents` AND basename `agent-*.jsonl`)
- * so a user project whose slug merely contains "subagents" is never hidden.
+ * STRICT shape (a path segment literally `subagents` AND basename
+ * `agent-*.jsonl`) so a user project whose slug merely contains "subagents" is
+ * never hidden: Claude Code encodes a whole project path as ONE slug segment
+ * (`-Users-me-subagents-thing`), which never equals `subagents` exactly.
+ *
+ * The segment is matched at ANY depth above the file, not just the immediate
+ * parent. Workflow runs nest a second level —
+ * `<session>/subagents/workflows/<wf-id>/agent-<id>.jsonl` — and an
+ * immediate-parent check missed every one of them, so they stayed a permanent
+ * gap-table phantom and re-fired DRIFT WARNING on every ingest: the exact
+ * failure this function exists to prevent.
  */
 export function isClaudeCodeSubagentFile(path: string): boolean {
   const segs = path.split(/[/\\]/);
   const base = segs[segs.length - 1] ?? '';
-  return segs[segs.length - 2] === 'subagents' && /^agent-[^/\\]+\.jsonl$/.test(base);
+  if (!/^agent-[^/\\]+\.jsonl$/.test(base)) return false;
+  return segs.slice(0, -1).includes('subagents');
+}
+
+/**
+ * True for a file inside a Claude Code WORKFLOW run directory:
+ * `<session>/subagents/workflows/<wf-id>/...`. The tree holds one
+ * `agent-<id>.jsonl` per fanned-out agent plus a `journal.jsonl` run log —
+ * bookkeeping for a workflow, never a top-level session. The journal is not
+ * a transcript in ANY adapter's format, so leaving it discoverable made every
+ * ingest report `unknown format` and, because an errored file also clears
+ * `cleanScan`, held the `--since last` watermark frozen indefinitely.
+ *
+ * Deliberately narrower than "everything under `subagents/`": a UUID-named
+ * file directly under `subagents/` IS a real session and must stay
+ * discoverable (pinned by transcripts-self-exclusion.test.ts).
+ */
+export function isClaudeCodeWorkflowArtifactFile(path: string): boolean {
+  const segs = path.split(/[/\\]/);
+  const i = segs.indexOf('subagents');
+  return i !== -1 && segs[i + 1] === 'workflows' && segs.length > i + 2;
 }
 
 /** Keys that mark a Claude Code project transcript. */
@@ -164,13 +193,27 @@ export const claudeCodeAdapter: TranscriptAdapter = {
         })),
       };
     }
+    // A file with NO turn-shaped records never had anything to import: a
+    // title/metadata-only stub (`last-prompt` + `custom-title` and nothing
+    // else) or all-`isSidechain` subagent traffic. That is understood, not
+    // host-format drift, so it must not freeze the shared watermark — the
+    // same distinction grok draws with expectedEmpty. Turn records that stop
+    // yielding text (`turnShapedLines > 0` with zero turns) still drift, and
+    // so does any file with unparseable lines.
+    const expectedEmpty =
+      sessions === 0 && r.skippedLines === 0 && r.turnShapedLines === 0;
     return {
       bytesRead: r.bytesRead,
       skippedLines: r.skippedLines,
       truncated: false,
       sessions,
+      expectedEmpty: expectedEmpty || undefined,
       zeroSessionsReason:
-        sessions === 0 ? 'no user or assistant turns in file' : undefined,
+        sessions === 0
+          ? expectedEmpty
+            ? 'no turn records in file (title/metadata-only or all-subagent)'
+            : 'no user or assistant turns in file'
+          : undefined,
     };
   },
 };

@@ -530,6 +530,14 @@ export interface ParsedClaudeSession {
   turns: TimedTurn[];
   bytesRead: number;
   skippedLines: number;
+  /**
+   * Records that CLAIM to be importable turns: `type` user/assistant and not
+   * `isSidechain`. Zero of them means the file never had anything to import
+   * (a title/metadata-only stub, or all-subagent traffic) — understood, not
+   * host-format drift. Above zero with `turns` still empty is the real drift
+   * signal: turn records exist but no longer yield text.
+   */
+  turnShapedLines: number;
 }
 
 /**
@@ -552,6 +560,7 @@ export function parseClaudeSessionFile(
   let sessionId = '';
   let cwd: string | undefined;
   let skippedLines = 0;
+  let turnShapedLines = 0;
   for (const line of raw.split('\n')) {
     const t = line.trim();
     if (!t) continue;
@@ -565,6 +574,9 @@ export function parseClaudeSessionFile(
     const e = entry as Record<string, unknown>;
     if (!sessionId && typeof e.sessionId === 'string' && e.sessionId) sessionId = e.sessionId;
     if (!cwd && typeof e.cwd === 'string' && e.cwd) cwd = e.cwd;
+    if (e.isSidechain !== true && (e.type === 'user' || e.type === 'assistant')) {
+      turnShapedLines++;
+    }
     const turn = entryToTurn(entry);
     if (!turn) continue;
     const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
@@ -577,6 +589,7 @@ export function parseClaudeSessionFile(
     turns,
     bytesRead: size,
     skippedLines,
+    turnShapedLines,
   };
 }
 
