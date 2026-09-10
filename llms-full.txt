@@ -5849,6 +5849,46 @@ and per-client config export.
 > stderr warning fires at startup). Multi-tenant deployments should leave it on
 > the redacted default.
 
+### Owner login links for AI agents
+
+**Say to your agent:** *"Give me the GBrain admin login link"* — the agent
+uses the existing HTTP mint endpoint described below.
+
+When an authenticated owner asks **"Give me the GBrain admin login link"**,
+use the existing single-use login flow. A static `/admin/` URL opens the login
+page; it does not authenticate the owner.
+
+1. Confirm the requesting owner and a private destination for the login link.
+2. Obtain the running server's bootstrap credential through the host's existing
+   protected credential mechanism. `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` is the supported
+   deployment setting. Never expose its value in chat, logs, shell arguments,
+   or a URL. If the credential is unavailable, report that specific setup blocker;
+   do not claim the login-link capability is missing, scrape logs or process memory,
+   or silently replace the server's credential.
+3. Send `POST /admin/api/issue-magic-link` to the running server, with the
+   bootstrap credential in the `Authorization: Bearer` header through that
+   protected mechanism. An MCP client bearer token or client secret is not the
+   server bootstrap credential.
+4. The response contains `url` and `expires_in` (300 seconds). The returned URL
+   uses the server's configured `--public-url`; without it, the fallback is
+   localhost. Ensure the deployment has an owner-reachable public URL rather
+   than substituting a remembered tunnel address.
+5. Deliver the returned short-lived login link only to the requesting owner in
+   private. In a shared channel, acknowledge private delivery without reproducing
+   the link. Never put it into a public issue or commit.
+
+**Do not GET or fetch the generated login URL to verify it.** That redeems the
+single-use nonce before the owner can use it. Check the base `/admin/` page and
+non-secret response metadata separately. The link expires after five minutes,
+cannot be replayed, and is invalidated by a server restart. Successful redemption
+establishes the admin browser session and redirects to `/admin/`.
+
+This logs the owner into the dashboard; it does not create, reveal, or rotate an
+MCP client credential. Register the intended OAuth client separately in the
+credential-reveal screen below. For unattended deployments, provision the
+bootstrap credential through the operator's protected configuration before
+starting the server; generated secrets are deliberately hidden in captured logs.
+
 ### 2. Register OAuth clients
 
 Register clients from the **`/admin` dashboard**:
