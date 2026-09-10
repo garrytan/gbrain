@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const source = readFileSync(join(import.meta.dir, '../../scripts/ci-local.sh'), 'utf8');
 const templateStart = source.indexOf("INNER_CMD=$(cat <<'EOF'");
@@ -189,6 +189,10 @@ describe('ci-local execution coverage', () => {
         const end = source.indexOf('# Pre-flight: postgres host ports');
         const script = `command() { if [ "$1" = -v ] && [ "\${2:-}" = gitleaks ] && [ "$SCAN_MODE" = missing ]; then return 1; fi; builtin command "$@"; }\n${source.slice(0, end)}`;
         const log = join(home, 'scans');
+        // Keep this branch-routing fixture focused on the scanner result;
+        // the real detector/configuration canary runs separately in CI.
+        writeFileSync(join(home, 'scripts/test-gitleaks-config.sh'), 'exit 0\n');
+        writeFileSync(join(home, 'scripts/scan-worktree-secrets.sh'), 'gitleaks dir . --redact --no-banner\n');
         const result = spawnSync('bash', ['-c', script, join(home, 'scripts/ci-local.sh'), '--diff'], {
           encoding: 'utf8', timeout: 5_000,
           env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SCAN_MODE: gitleaks, SCAN_LOG: log },
@@ -262,5 +266,56 @@ exit "$FAKE_EXIT"
         rmSync(home, { recursive: true, force: true });
       }
     });
+  }
+});
+
+describe('local test configuration through run-e2e', () => {
+  for (const disabled of ['1', '0', undefined]) {
+    test(`preserves configuration isolation flag ${disabled ?? '(absent)'} through the actual Bun child`, () => {
+      const fixture = mkdtempSync(join(tmpdir(), 'gbrain-e2e-env-file-'));
+      const repo = resolve(import.meta.dir, '../..');
+      try {
+        mkdirSync(join(fixture, 'scripts/lib'), { recursive: true });
+        mkdirSync(join(fixture, 'test/e2e'), { recursive: true });
+        // Copy the real loader into a separate fixture: its import.meta.dir
+        // must resolve ONLY our synthetic .env.testing, never the checkout's.
+        writeFileSync(join(fixture, 'scripts/run-e2e.sh'), readFileSync(join(repo, 'scripts/run-e2e.sh')));
+        writeFileSync(join(fixture, 'scripts/lib/test-env.sh'), 'ensure_pglite_snapshot() { :; }\n');
+        writeFileSync(join(fixture, 'test/e2e/helpers.ts'), readFileSync(join(repo, 'test/e2e/helpers.ts')));
+        symlinkSync(join(repo, 'src'), join(fixture, 'src'), 'dir');
+        symlinkSync(join(repo, 'test/helpers'), join(fixture, 'test/helpers'), 'dir');
+        writeFileSync(join(fixture, '.env.testing'), 'E2E_CONFIG_FILE_CANARY=synthetic-fixture-loaded\n');
+        const expected = {
+          disabled: disabled ?? null,
+          loaded: disabled === '1' ? null : 'synthetic-fixture-loaded',
+          operatorOverride: null,
+        };
+        writeFileSync(join(fixture, 'test/e2e/config-file-probe.test.ts'), `
+import { expect, test } from 'bun:test';
+import './helpers.ts';
+test('configuration file respects the parent isolation policy', () => {
+  expect({
+    disabled: process.env.GBRAIN_CI_DISABLE_TEST_ENV_FILE ?? null,
+    loaded: process.env.E2E_CONFIG_FILE_CANARY ?? null,
+    operatorOverride: process.env.GBRAIN_SOURCE ?? null,
+  }).toEqual(${JSON.stringify(expected)});
+});
+`);
+        const env: Record<string, string | undefined> = {
+          ...process.env, HOME: fixture, PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+          SHARD: '', COVERAGE_DIR: '', DATABASE_URL: '', GBRAIN_DATABASE_URL: '',
+          GBRAIN_CI_REQUIRE_PGBOUNCER: '0', GBRAIN_SOURCE: 'ambient-must-be-removed',
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: disabled,
+        };
+        delete env.E2E_CONFIG_FILE_CANARY;
+        const result = spawnSync('bash', [join(fixture, 'scripts/run-e2e.sh'), 'test/e2e/config-file-probe.test.ts'], {
+          cwd: fixture, encoding: 'utf8', timeout: 20_000, env,
+        });
+        expect(result.status, result.stdout + result.stderr).toBe(0);
+        expect(result.stdout).toContain('1 pass');
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
+    }, 25_000);
   }
 });

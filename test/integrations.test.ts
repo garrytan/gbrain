@@ -14,6 +14,7 @@ import {
   isPrivateIpv4,
   isInternalUrl,
 } from '../src/commands/integrations.ts';
+import { __setDnsLookupForTests } from '../src/core/ssrf-validate.ts';
 
 const RECIPES_DIR = resolve(import.meta.dir, '..', 'recipes');
 
@@ -558,6 +559,101 @@ describe('executeHealthCheck', () => {
       true,
     );
     expect(result.status).toBe('blocked');
+  });
+});
+
+describe('HTTP health checks use the guarded transport', () => {
+  const originalFetch = globalThis.fetch;
+  beforeEach(() => {
+    __setDnsLookupForTests((async () => [{ address: '8.8.8.8', family: 4 }]) as any);
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    __setDnsLookupForTests(undefined);
+  });
+
+  test('preserves configured method, string body and auth on a same-origin redirect', async () => {
+    const requests: Array<{ url: string; method?: string; body: unknown; auth: string | null }> = [];
+    let cancelled = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      requests.push({ url, method: init?.method, body: init?.body, auth: new Headers(init?.headers).get('authorization') });
+      return new Response(new ReadableStream({ cancel() { cancelled++; } }), requests.length === 1
+        ? { status: 303, headers: { location: '/final' } } : { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await executeHealthCheck({
+      type: 'http', url: 'https://api.example.test/start', method: 'POST', body: '{"probe":true}',
+      auth: 'bearer', auth_token: 'synthetic-test-value',
+    }, 'test-id', true);
+    expect(result.status).toBe('ok');
+    expect(requests).toEqual([
+      { url: 'https://8.8.8.8/start', method: 'POST', body: '{"probe":true}', auth: 'Bearer synthetic-test-value' },
+      { url: 'https://8.8.8.8/final', method: 'POST', body: '{"probe":true}', auth: 'Bearer synthetic-test-value' },
+    ]);
+    expect(cancelled).toBe(2);
+  });
+
+  test('even a configured Accept header prevents cross-origin forwarding', async () => {
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(null, { status: 302, headers: { location: 'https://other.example.test/final' } });
+    }) as unknown as typeof fetch;
+    const result = await executeHealthCheck({
+      type: 'http', url: 'https://api.example.test/start', headers: { Accept: 'synthetic-test-value' },
+    }, 'test-id', true);
+    expect(result.status).toBe('blocked');
+    expect(result.output).toContain('SSRF_REDIRECT_DENIED');
+    expect(result.output).not.toContain('synthetic-test-value');
+    expect(requests).toBe(1);
+  });
+
+  test('plain probes cross public origins and never consume the response body', async () => {
+    let requests = 0;
+    let cancelled = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Response(new ReadableStream({ cancel() { cancelled++; } }), requests === 1
+        ? { status: 302, headers: { location: 'https://other.example.test/final' } } : { status: 200 });
+    }) as unknown as typeof fetch;
+    const result = await executeHealthCheck({ type: 'http', url: 'https://api.example.test/start' }, 'test-id', true);
+    expect(result.status).toBe('ok');
+    expect(requests).toBe(2);
+    expect(cancelled).toBe(2);
+  });
+
+  test('unlabelled HTTP checks never serialize configured credentials into results', async () => {
+    globalThis.fetch = (async () => new Response(null, { status: 200 })) as unknown as typeof fetch;
+    const result = await executeHealthCheck({
+      type: 'http', url: 'https://api.example.test/private-document?signature=private-value',
+      auth: 'bearer', auth_token: 'private-token', method: 'POST', body: 'private-body',
+    }, 'test-id', true);
+    expect(result.status).toBe('ok');
+    expect(result.check).toBe('HTTP');
+    expect(JSON.stringify(result)).not.toContain('private-');
+  });
+
+  test('any_of results do not serialize nested HTTP credentials', async () => {
+    globalThis.fetch = (async () => new Response(null, { status: 200 })) as unknown as typeof fetch;
+    const result = await executeHealthCheck({ type: 'any_of', checks: [{
+      type: 'http', url: 'https://api.example.test/check', auth: 'bearer', auth_token: 'private-token',
+    }] }, 'test-id', true);
+    expect(result.status).toBe('ok');
+    expect(JSON.stringify(result)).not.toContain('private-');
+  });
+
+  test('HTTP denials and transport errors omit configured URLs and exception contents', async () => {
+    for (const [url, embedded] of [
+      ['https://api.example.test/private-document?signature=private-value', false],
+      ['http://127.0.0.1/private-document?signature=private-value', true],
+    ] as const) {
+      const result = await executeHealthCheck({ type: 'http', url }, 'test-id', embedded);
+      expect(result.status).toBe('blocked');
+      expect(JSON.stringify(result)).not.toContain('private-');
+    }
+    globalThis.fetch = (async () => { throw new Error('TLS error private-document private-value'); }) as unknown as typeof fetch;
+    const failed = await executeHealthCheck({ type: 'http', url: 'https://api.example.test/check' }, 'test-id', true);
+    expect(failed.status).toBe('fail');
+    expect(failed.output).not.toContain('private-');
   });
 });
 

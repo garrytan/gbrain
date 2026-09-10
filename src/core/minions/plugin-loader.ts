@@ -32,7 +32,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../data-frontmatter.ts';
 
 export const SUPPORTED_PLUGIN_VERSION = 'gbrain-plugin-v1';
 

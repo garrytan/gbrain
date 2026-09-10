@@ -67,7 +67,7 @@ interface FakeEngineConfig {
    * `permissions` JSONB column. Default permissions = {takes_holders: ['world']}
    * when unset, matching the migration v33 default.
    */
-  validTokens?: Map<string, { id: string; name: string; permissions?: { takes_holders?: string[] } }>;
+  validTokens?: Map<string, { id: string; name: string; scopes?: string[] | null; permissions?: { takes_holders?: string[] } }>;
   /** Tokens that are present but revoked (revoked_at IS NOT NULL — query returns empty). */
   revokedTokens?: Set<string>;
   /** If true, every SELECT throws (simulating DB outage). */
@@ -93,7 +93,8 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
 
     // SELECT id, name, permissions FROM access_tokens WHERE token_hash = $1 AND revoked_at IS NULL
     if (norm.startsWith('select id, name from access_tokens') ||
-        norm.startsWith('select id, name, permissions from access_tokens')) {
+        norm.startsWith('select id, name, permissions from access_tokens') ||
+        norm.startsWith('select id, name, permissions, scopes from access_tokens')) {
       const tokenHash = values[0] as string;
       if (revokedTokens.has(tokenHash)) return [];
       const row = validTokens.get(tokenHash);
@@ -188,6 +189,21 @@ async function startTest(cfg: FakeEngineConfig & { lruCap?: number; ipLimit?: nu
 function rpc(method: string, params?: unknown, id: number = 1) {
   return JSON.stringify({ jsonrpc: '2.0', id, method, ...(params !== undefined ? { params } : {}) });
 }
+
+test('read-only legacy tokens hide and deny write operations while retaining read discovery', async () => {
+  const token = 'fixture-read-only';
+  const srv = await startTest({ validTokens: new Map([[hash(token), { id: 'readonly-id', name: 'fixture', scopes: ['read'] }]]) });
+  try {
+    const request = (method: string, params?: unknown) => fetch(`${srv.url}/mcp`, { method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: rpc(method, params) });
+    const list = await (await request('tools/list')).json() as { result: { tools: { name: string }[] } };
+    expect(list.result.tools.some(t => t.name === 'get_page')).toBe(true);
+    expect(list.result.tools.some(t => t.name === 'put_page')).toBe(false);
+    const call = await (await request('tools/call', { name: 'put_page', arguments: { slug: 'example', content: 'fixture' } })).json() as { result: { isError: boolean; content: { text: string }[] } };
+    expect(call.result.isError).toBe(true);
+    expect(call.result.content[0].text).toContain('permission_denied');
+  } finally { srv.stop(); }
+});
 
 // --------------------------------------------------------------------------
 // Auth path

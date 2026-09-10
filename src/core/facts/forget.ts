@@ -42,6 +42,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
+import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { parseMarkdown } from '../markdown.ts';
@@ -232,6 +233,9 @@ export async function forgetFactInFence(
   // fence keeps the live row for the next absorb to resurrect.
   const resolved = await resolvePageWriteTarget(engine, slug, row.source_id);
   if (!resolved.ok) return legacyExpire();
+  if (!hasSourceFilesystemLock(resolved.writeRoot)) {
+    return withSourceFilesystemLock(engine, resolved.writeRoot, () => forgetFactInFence(engine, factId, opts));
+  }
   const filePath = resolved.filePath;
   const tmpPath = `${filePath}.tmp`;
 
@@ -251,6 +255,7 @@ export async function forgetFactInFence(
     if (newBody === null) return legacyExpire(true);
 
     // Atomic .tmp + parse-validate + rename.
+    assertSourceFilesystemActive();
     writeFileSync(tmpPath, newBody, 'utf-8');
     const tmpBody = readFileSync(tmpPath, 'utf-8');
     const validate = parseFactsFence(tmpBody);

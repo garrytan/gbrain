@@ -357,3 +357,8 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
   .metrics { flex-wrap: wrap; }
   .drawer { width: 100%; }
 }
+/* Consent uses the existing dashboard typography and semantic controls. */
+.oauth-consent-details { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 16px; }
+.oauth-consent-details dt { color: var(--text-secondary); }
+.oauth-consent-details dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .oauth-consent-details { grid-template-columns: 1fr; gap: 8px; } .oauth-consent-details dd { margin-bottom: 12px; } }

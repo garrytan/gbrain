@@ -256,6 +256,25 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   // =========================================================================
   // Fix 1: client_credentials tokens validate at /mcp
+  for (const [label, resource, expectedStatus] of [
+    ['matching', `${BASE}/mcp`, 200],
+    ['foreign', 'https://different.example/resource', 401],
+    ['legacy unbound', null, 200],
+  ] as const) {
+    test(`MCP enforces the ${label} persisted resource audience`, async () => {
+      const { access_token } = await mintToken('read');
+      const { default: postgres } = await import('postgres');
+      const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL!, { max: 1 });
+      try {
+        await sql`UPDATE oauth_tokens SET resource = ${resource}
+          WHERE token_hash = ${createHash('sha256').update(access_token).digest('hex')}`;
+      } finally { await sql.end(); }
+      const response = await mcpCall(access_token, 'tools/list');
+      expect(response.status).toBe(expectedStatus);
+      if (expectedStatus === 401) expect((await response.json() as any).error).toBe('invalid_token');
+      else await response.text();
+    });
+  }
   // =========================================================================
 
   test('mint token via client_credentials grant', async () => {
@@ -607,7 +626,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     });
     expect(res.ok).toBe(false);
     const data = await res.json() as any;
-    expect(data.error).toBe('invalid_grant');
+    expect(res.status).toBe(401);
+    expect(data.error).toBe('invalid_client');
   });
 
   test('confidential client can revoke its token only with its valid secret', async () => {

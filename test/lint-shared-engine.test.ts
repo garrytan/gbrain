@@ -34,6 +34,16 @@ describe('runLintCore engine reuse (issue #1678)', () => {
     const state = { disconnects: 0, connects: 0, getConfigCalls: 0 };
     const engine = {
       kind: 'postgres' as const,
+      // Model the shared engine's source-root lookup and lock bookkeeping;
+      // neither operation opens another pool or changes the reuse counters.
+      executeRaw: async () => [],
+      sql: async (parts: TemplateStringsArray, ...params: unknown[]) => {
+        const statement = parts.join('?');
+        if (statement.includes('INSERT INTO gbrain_cycle_locks')) return [{ id: params[0], fence: 'test-fence' }];
+        if (statement.includes('DELETE FROM gbrain_cycle_locks')) return [];
+        throw new Error('Unexpected SQL in lint shared-engine fixture');
+      },
+      executeRawDirect: async () => [{ id: 'test-lock' }],
       getConfig: async () => { state.getConfigCalls++; return null; },
       connect: async () => { state.connects++; },
       disconnect: async () => { state.disconnects++; },

@@ -166,12 +166,12 @@ describeE2E('E2E: Minions resilience (OpenClaw real-world patterns)', () => {
       // leaves behind — status='active', lock_token set, lock_until in past.
       const inserted = await conn.unsafe<{ id: number }[]>(`
         INSERT INTO minion_jobs
-          (name, queue, status, priority, data, max_attempts, attempts_made, attempts_started,
+          (submission_authority, name, queue, status, priority, data, max_attempts, attempts_made, attempts_started,
            backoff_type, backoff_delay, backoff_jitter, stalled_counter, max_stalled,
            lock_token, lock_until, on_child_fail, depth, remove_on_complete, remove_on_fail,
            started_at)
         VALUES
-          ('rescue-me', 'default', 'active', 0, '{}'::jsonb, 3, 1, 1,
+          ('{"version":1,"kind":"application"}'::jsonb, 'rescue-me', 'default', 'active', 0, '{}'::jsonb, 3, 1, 1,
            'exponential', 1000, 0.2, 0, 3,
            'crashed-worker:123', now() - interval '30 seconds', 'fail_parent', 0, false, false,
            now() - interval '1 minute')

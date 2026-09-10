@@ -185,7 +185,7 @@ describe('haltBudgetSubtree', () => {
     await inheritBudgetOwner(engine, c1.id, owner.id);
     // Move c1 to 'active' to simulate in-flight.
     await engine.executeRaw(
-      `UPDATE minion_jobs SET status = 'active', lock_token = 'lock', lock_until = now() + interval '1 minute' WHERE id = $1`,
+      `UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_token = 'lock', lock_until = now() + interval '1 minute' WHERE id = $1`,
       [c1.id],
     );
 

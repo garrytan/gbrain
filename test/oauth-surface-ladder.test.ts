@@ -1,3 +1,4 @@
+import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 /**
  * WP4 (amendments 17-19, ENG-9) — oauth_clients.surface threading + the
  * verifyAccessToken degrade ladder's NEW top rung + rescopeClient's surface
@@ -28,7 +29,7 @@ beforeAll(async () => {
     const result = await db.query(query, values as any[]);
     return result.rows;
   };
-  provider = new GBrainOAuthProvider({ sql, tokenTtl: 60, refreshTtl: 300 });
+  provider = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, tokenTtl: 60, refreshTtl: 300 });
 }, 30_000);
 
 afterAll(async () => {

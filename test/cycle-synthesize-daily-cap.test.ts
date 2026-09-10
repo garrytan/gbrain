@@ -119,8 +119,8 @@ async function seedPassingFile(rig: Rig, name: string): Promise<string> {
 /** Seed a recent (or old) synth-v2 submission row for the cap counter. */
 async function seedSubmissionRow(rig: Rig, opts: { ageHours?: number; status?: string; sourceId?: string; tag: string }): Promise<void> {
   await rig.engine.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, created_at)
-     VALUES ('subagent', 'dream-inline-old-run', $1,
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key, created_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-old-run', $1,
              jsonb_build_object('source_id', $2::text),
              $3,
              now() - ($4 || ' hours')::interval)`,
@@ -225,9 +225,9 @@ describe('daily cap — engaged', () => {
         return `dream:synth-v2:default:filename:${name}:${hash16}`;
       };
       await rig.engine.executeRaw(
-        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, created_at, finished_at)
-         VALUES ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1, now() - interval '2 days', now() - interval '2 days'),
-                ('subagent', 'dream-inline-old-run', 'cancelled', '{"source_id":"default"}'::jsonb, $2, now() - interval '2 days', now() - interval '2 days')`,
+        `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key, created_at, finished_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1, now() - interval '2 days', now() - interval '2 days'),
+                ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-old-run', 'cancelled', '{"source_id":"default"}'::jsonb, $2, now() - interval '2 days', now() - interval '2 days')`,
         [key('2026-08-05-done.txt'), key('2026-08-06-redo.txt')],
       );
       const details = await runPhase(rig);
@@ -253,10 +253,10 @@ describe('daily cap — engaged', () => {
       // full: c0of2 + c1of2 completed (a whole set). partial: only c0of3 —
       // the transcript would ship with holes, so it must be re-synthesized.
       await rig.engine.executeRaw(
-        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, created_at, finished_at)
-         VALUES ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1, now() - interval '2 days', now() - interval '2 days'),
-                ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $2, now() - interval '2 days', now() - interval '2 days'),
-                ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $3, now() - interval '2 days', now() - interval '2 days')`,
+        `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key, created_at, finished_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1, now() - interval '2 days', now() - interval '2 days'),
+                ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $2, now() - interval '2 days', now() - interval '2 days'),
+                ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $3, now() - interval '2 days', now() - interval '2 days')`,
         [
           chunkKey('2026-08-07-chunked-full.txt', 0, 2),
           chunkKey('2026-08-07-chunked-full.txt', 1, 2),
@@ -365,8 +365,8 @@ describe('daily cap — engaged', () => {
       const hash16 = createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
       const key = `dream:synth-v2:default:filename:${encodeURIComponent('2026-08-09-retry.txt')}:${hash16}`;
       await rig.engine.executeRaw(
-        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key)
-         VALUES ('subagent', 'dream-inline-1700000000000-deadbeef', 'waiting', '{}'::jsonb, $1)`,
+        `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-1700000000000-deadbeef', 'waiting', '{}'::jsonb, $1)`,
         [key],
       );
       const details = await runPhase(rig, { excludeQueue: 'dream-inline-1700000000000-deadbeef' });

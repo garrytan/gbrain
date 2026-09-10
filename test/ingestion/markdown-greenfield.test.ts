@@ -194,19 +194,28 @@ describe('v0.41 T7: validation failure → JSONL audit', () => {
     expect(Object.keys(fs.audit).length).toBe(0);
   });
 
-  test('continues processing after a failed file', async () => {
-    // First file good, second file good — no failures triggered by the
-    // happy path. Failure-injection test would require mocking matter()
-    // to throw; for v0.41 minimal, we assert the stats tracker exposes
-    // the counters.
+  test('rejected frontmatter is audited as invalid and later valid files still import', async () => {
     const fs = makeFakeFs({
-      [`${REPO}/atoms/2026-05-24/a.md`]: '---\ntype: atom\n---\na',
-      [`${REPO}/atoms/2026-05-24/b.md`]: '---\ntype: atom\n---\nb',
+      // An inert object expression reproduces old executable-engine acceptance
+      // without any process, filesystem or network side effects.
+      [`${REPO}/atoms/2026-05-24/a.md`]: '---javascript\n({type: "atom", title: "private-content"})\n---\nbody',
+      [`${REPO}/atoms/2026-05-24/b.md`]: '---\ntype: atom\ntitle: [private-content\n---\nbody',
+      [`${REPO}/atoms/2026-05-24/c.md`]: '---\ntype: atom\n---\nvalid body',
     });
     const src = new MarkdownGreenfieldSource({ repoPath: REPO, ...fsOpts(fs) });
     const ctx = makeCtx();
     await src.start(ctx);
-    expect(src.stats.emitted).toBe(2);
+    expect(src.stats).toEqual({ emitted: 1, skipped_invalid: 2, skipped_no_type: 0, total_walked: 3 });
+    expect(ctx.emitted).toHaveLength(1);
+    expect(ctx.emitted[0]!.source_uri).toEndWith('/c.md');
+    expect(ctx.warnings).toHaveLength(2);
+    expect(ctx.warnings.join('\n')).not.toContain('private-content');
+    const failures = Object.values(fs.audit).flatMap(lines => lines.trim().split('\n').map(line => JSON.parse(line)));
+    expect(failures.map(row => row.path)).toEqual([`${REPO}/atoms/2026-05-24/a.md`, `${REPO}/atoms/2026-05-24/b.md`]);
+    expect(failures[0].error).toContain('Unsupported frontmatter language');
+    expect(failures[1].error).toContain('Malformed YAML frontmatter');
+    expect(JSON.stringify(failures)).not.toContain('private-content');
+    expect(await src.healthCheck()).toMatchObject({ status: 'warn', message: '2/3 files failed validation; check audit log' });
   });
 
   test('audit JSONL path follows ISO-week-rotation pattern', async () => {

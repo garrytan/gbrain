@@ -72,8 +72,8 @@ async function seedJob(opts: {
   const data: Record<string, unknown> = { prompt: 'seeded' };
   if (opts.owner) data.__owner_client_id = opts.owner;
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at, error_text, result)
-     VALUES ($1, $2, $3::text::jsonb, $4, $5, ${opts.createdAtSql ?? 'now()'}, $6, $7::text::jsonb)
+    `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at, error_text, result)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, $1, $2, $3::text::jsonb, $4, $5, ${opts.createdAtSql ?? 'now()'}, $6, $7::text::jsonb)
      RETURNING id`,
     [
       opts.name ?? 'subagent',

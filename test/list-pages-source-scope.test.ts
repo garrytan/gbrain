@@ -40,8 +40,11 @@ function makeCtx(overrides: Partial<OperationContext> = {}): {
 }
 
 describe('list_pages — explicit source_id param (#4400)', () => {
-  test('an explicit source_id scopes the engine call to that source', async () => {
-    const { ctx, calls } = makeCtx({ sourceId: 'default' });
+  test('an explicitly granted source_id scopes the engine call to that source', async () => {
+    const { ctx, calls } = makeCtx({
+      sourceId: 'default',
+      auth: { token: 't', clientId: 'c', scopes: ['read'], allowedSources: ['default', 'hermes-coding-agent'] },
+    });
     await list_pages.handler(ctx, { source_id: 'hermes-coding-agent' });
     expect(calls[0]).toMatchObject({ sourceId: 'hermes-coding-agent' });
   });
@@ -72,6 +75,15 @@ describe('list_pages — explicit source_id param (#4400)', () => {
     await expect(list_pages.handler(ctx, { source_id: 'b' })).rejects.toThrow(
       /outside your granted sources/,
     );
+  });
+
+  test.each(['scalar', 'absent'] as const)('a remote caller with a %s grant cannot explicitly select a foreign source', async grant => {
+    const { ctx, calls } = makeCtx({
+      sourceId: grant === 'scalar' ? 'default' : undefined,
+      auth: grant === 'scalar' ? { token: 't', clientId: 'c', scopes: ['read'], sourceId: 'default' } : undefined,
+    });
+    await expect(list_pages.handler(ctx, { source_id: 'hermes-coding-agent' })).rejects.toMatchObject({ code: 'permission_denied' });
+    expect(calls).toHaveLength(0);
   });
 
   test('no source_id param still falls back to federatedSearchScope(ctx) (back-compat)', async () => {

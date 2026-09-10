@@ -136,7 +136,7 @@ const ALLOWLIST: AllowlistEntry[] = [
 // The scan, run once against the real file
 // ---------------------------------------------------------------------------
 
-const source = readFileSync(SRC_PATH, 'utf-8');
+const source = readFileSync(SRC_PATH, 'utf-8') + '\n' + readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'serve-http-oauth.ts'), 'utf-8');
 const all = extractRegistrations(source);
 const admin = adminRoutes(all);
 const guarded = admin.filter(r => r.guarded);
@@ -153,6 +153,8 @@ describe('serve-http admin route guard (structural)', () => {
       ['get', '/admin/api/stats'],
       ['get', '/admin/events'],
       ['post', '/admin/api/revoke-client'],
+      ['get', '/admin/api/oauth-requests/:id'],
+      ['post', '/admin/api/oauth-requests/:id'],
     ] as const) {
       const hit = admin.find(r => r.method === method && r.path === path);
       expect(hit, `expected app.${method}('${path}') to be found by the scan`).toBeDefined();

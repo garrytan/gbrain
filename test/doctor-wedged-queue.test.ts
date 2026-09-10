@@ -51,8 +51,8 @@ async function seed(
   extra: { lockUntilSql?: string; updatedAtSql?: string; createdAtSql?: string } = {},
 ): Promise<void> {
   await base.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, lock_until, updated_at, created_at)
-     VALUES ($1, $2, $3, ${extra.lockUntilSql ?? 'NULL'}, ${extra.updatedAtSql ?? 'now()'}, ${extra.createdAtSql ?? 'now()'})`,
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, lock_until, updated_at, created_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, $1, $2, $3, ${extra.lockUntilSql ?? 'NULL'}, ${extra.updatedAtSql ?? 'now()'}, ${extra.createdAtSql ?? 'now()'})`,
     [name, queue, status],
   );
 }
@@ -284,12 +284,12 @@ describe('orphaned private dream queues', () => {
     // Terminal owner + expired lease → the classifier verdict is 'orphan':
     // auto-recovery cancels it at the next worker spawn / cycle start.
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at) VALUES ('parent', 'cycle', 'completed', now() - interval '3 hours')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'parent', 'cycle', 'completed', now() - interval '3 hours')`,
     );
     const owner = await base.executeRaw<{ id: number }>(`SELECT max(id)::int AS id FROM minion_jobs`);
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until)
-       VALUES ('child', 'dream-inline-owned-dead', 'waiting', now() - interval '2 hours', now() - interval '2 hours', $1, 'tok', now() - interval '1 hour')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'child', 'dream-inline-owned-dead', 'waiting', now() - interval '2 hours', now() - interval '2 hours', $1, 'tok', now() - interval '1 hour')`,
       [owner[0].id],
     );
     const check = await computeOrphanedPrivateQueueCheck(pgLike);
@@ -300,8 +300,8 @@ describe('orphaned private dream queues', () => {
 
   it('suppresses a queue whose owner lease is still in the future (live, never flagged)', async () => {
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, private_queue_owner_token, private_queue_lease_until)
-       VALUES ('child', 'dream-inline-leased', 'waiting', now() - interval '2 hours', 'tok', now() + interval '30 min')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, private_queue_owner_token, private_queue_lease_until)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'child', 'dream-inline-leased', 'waiting', now() - interval '2 hours', 'tok', now() + interval '30 min')`,
     );
     const check = await computeOrphanedPrivateQueueCheck(pgLike);
     expect(check.status).toBe('ok');
@@ -317,8 +317,8 @@ describe('orphaned private dream queues — cycle-lock liveness + ownership corr
     extra: { createdAtSql?: string } = {},
   ): Promise<void> {
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data, created_at)
-       VALUES ($1, $2, $3, $4::text::jsonb, ${extra.createdAtSql ?? 'now()'})`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, $1, $2, $3, $4::text::jsonb, ${extra.createdAtSql ?? 'now()'})`,
       ['subagent', queue, status, JSON.stringify(dataJson)],
     );
   }
@@ -440,8 +440,8 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     // 101 metadata-backed orphan candidates (aged, waiting, expired lease —
     // classifier verdict 'orphan'), one row per queue for speed.
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at, private_queue_lease_until)
-       SELECT 'subagent', 'dream-inline-cap-' || i, 'waiting',
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at, private_queue_lease_until)
+       SELECT '{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-cap-' || i, 'waiting',
               now() - interval '2 hours', now() - interval '2 hours', now() - interval '1 hour'
          FROM generate_series(1, 101) AS i`,
     );
@@ -457,8 +457,8 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     // the 101st never gets classified. Status stays ok but the message and
     // details must still surface the unclassified remainder.
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at, private_queue_lease_until)
-       SELECT 'subagent', 'dream-inline-live-' || i, 'waiting',
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at, private_queue_lease_until)
+       SELECT '{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-live-' || i, 'waiting',
               now() - interval '2 hours', now(), now() + interval '30 minutes'
          FROM generate_series(1, 101) AS i`,
     );
@@ -473,12 +473,12 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     // Owner job still waiting (not claimed, no lock) → verdict not_orphan:
     // doctor must say "inspect the owner", never advertise cancellation.
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at) VALUES ('dream-cycle', 'default', 'waiting', now() - interval '3 hours')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'dream-cycle', 'default', 'waiting', now() - interval '3 hours')`,
     );
     const owner = await base.executeRaw<{ id: number }>(`SELECT max(id)::int AS id FROM minion_jobs`);
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token)
-       VALUES ('subagent', 'dream-inline-owner-pending', 'waiting', now() - interval '2 hours', now() - interval '2 hours', $1, 'tok')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-owner-pending', 'waiting', now() - interval '2 hours', now() - interval '2 hours', $1, 'tok')`,
       [owner[0].id],
     );
     const check = await computeOrphanedPrivateQueueCheck(pgLike);
@@ -497,12 +497,12 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     // the engine-aware remediation must name the dream trigger (a supervisor
     // command is impossible advice — no worker process can ever run there).
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at) VALUES ('dream-cycle', 'default', 'completed', now() - interval '3 hours')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'dream-cycle', 'default', 'completed', now() - interval '3 hours')`,
     );
     const owner = await base.executeRaw<{ id: number }>(`SELECT max(id)::int AS id FROM minion_jobs`);
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until)
-       VALUES ('subagent', 'dream-inline-pglite-recoverable', 'waiting', now() - interval '2 hours', now() - interval '2 hours', $1, 'tok', now() - interval '1 hour')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-pglite-recoverable', 'waiting', now() - interval '2 hours', now() - interval '2 hours', $1, 'tok', now() - interval '1 hour')`,
       [owner[0].id],
     );
     const check = await computeOrphanedPrivateQueueCheck(base as unknown as BrainEngine);
@@ -515,12 +515,12 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
   it('waiting_jobs counts FLAGGED queues only — live-lease-suppressed waiting rows are excluded (749a7dcb)', async () => {
     // Recoverable orphan with 3 waiting rows (terminal owner, expired lease).
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at) VALUES ('dream-cycle', 'default', 'completed', now() - interval '3 hours')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'dream-cycle', 'default', 'completed', now() - interval '3 hours')`,
     );
     const owner = await base.executeRaw<{ id: number }>(`SELECT max(id)::int AS id FROM minion_jobs`);
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until)
-       SELECT 'subagent', 'dream-inline-orphan-n', 'waiting',
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until)
+       SELECT '{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-orphan-n', 'waiting',
               now() - interval '2 hours', now() - interval '2 hours', $1, 'tok', now() - interval '1 hour'
          FROM generate_series(1, 3)`,
       [owner[0].id],
@@ -528,8 +528,8 @@ describe('orphaned private dream queues — classify cap, buckets, flagged-only 
     // Aged candidate suppressed by a live lease, carrying 2 waiting rows that
     // must NOT leak into waiting_jobs (pre-fix it summed N+M during the scan).
     await base.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at, private_queue_lease_until)
-       SELECT 'subagent', 'dream-inline-lively-m', 'waiting',
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at, private_queue_lease_until)
+       SELECT '{"version":1,"kind":"application"}'::jsonb, 'subagent', 'dream-inline-lively-m', 'waiting',
               now() - interval '2 hours', now() - interval '2 hours', now() + interval '30 minutes'
          FROM generate_series(1, 2)`,
     );

@@ -247,8 +247,8 @@ describe('queryAgentClientSpend (v0.38 Slice 4 — /admin/api/agents/spend SQL)'
     // 1 active + 1 waiting + 1 waiting-children + 1 completed (excluded)
     for (const status of ['active', 'waiting', 'waiting-children', 'completed']) {
       await engine.executeRaw(
-        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-         VALUES ('subagent', $1, $2::jsonb, 'default', 0, now())`,
+        `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', $1, $2::jsonb, 'default', 0, now())`,
         [status, JSON.stringify({ prompt: 'x', __owner_client_id: 'busy-client' })],
       );
     }
@@ -259,8 +259,8 @@ describe('queryAgentClientSpend (v0.38 Slice 4 — /admin/api/agents/spend SQL)'
   it('only counts subagent jobs (not shell/other minion jobs)', async () => {
     await seedClient({ id: 'shell-too', scope: 'read agent' });
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-       VALUES ('shell', 'active', $1::jsonb, 'default', 0, now())`,
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'shell', 'active', $1::jsonb, 'default', 0, now())`,
       [JSON.stringify({ cmd: 'echo', __owner_client_id: 'shell-too' })],
     );
     const rows = await queryAgentClientSpend(engine);
@@ -296,8 +296,8 @@ describe('queryAgentClientSpend (v0.38 Slice 4 — /admin/api/agents/spend SQL)'
       [future],
     );
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-       VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())`,
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', $1::jsonb, 'default', 0, now())`,
       [JSON.stringify({ prompt: 'x', __owner_client_id: 'full-data' })],
     );
     const rows = await queryAgentClientSpend(engine);

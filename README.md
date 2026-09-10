@@ -65,6 +65,10 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
+Requires **Bun 1.3.11 or newer**. Existing worker installations should follow the
+[authorization and queue upgrade guide](docs/guides/authorization-upgrade.md)
+before restarting services with this version.
+
 > [!WARNING]
 > **GBrain is NOT distributed on npm.** The npm package named `gbrain` is an unrelated
 > package with no connection to this project. Do not run `npm install -g gbrain` or

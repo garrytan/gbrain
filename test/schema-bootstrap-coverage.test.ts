@@ -205,6 +205,10 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // Token rides the same bootstrap ALTER; registering it guards any FUTURE
   // blob index on it against the same wedge.
   { kind: 'column', table: 'minion_jobs', column: 'private_queue_owner_token' },
+  // v147 queue protocol reads both fields before numbered migrations run.
+  // Authority remains nullable: bootstrap must never authorize historical work.
+  { kind: 'column', table: 'minion_jobs', column: 'submission_authority' },
+  { kind: 'column', table: 'minion_jobs', column: 'claim_generation' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -316,6 +320,8 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_job_id;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS submission_authority;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS claim_generation;
     `);
 
     // Note: we don't strip sources.archived* here because they're inline in the
@@ -418,6 +424,8 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_job_id;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS submission_authority;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS claim_generation;
 
       -- WP4 (v127) strip: surface columns + the wedge-signal index; replay
       -- must succeed from the pre-v127 shape.
@@ -1088,7 +1096,7 @@ test('extractAlterAddColumnsFromSql handles representative migration SQL shapes'
 // assertion is the local half of the guard; the e2e file is the live half.
 // ─────────────────────────────────────────────────────────────────
 
-test('postgres-engine.ts bootstrap carries the private-queue ALTERs and probes (guard symmetry with pglite-engine.ts)', async () => {
+test('postgres bootstrap carries the private-queue and authority ALTERs and probes (PGLite symmetry)', async () => {
   const { readFileSync } = await import('fs');
   const { resolve: resolvePath } = await import('path');
   // #4477 peeled the Postgres forward-reference bootstrap out of the
@@ -1105,6 +1113,8 @@ test('postgres-engine.ts bootstrap carries the private-queue ALTERs and probes (
     'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL;',
     'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_token TEXT;',
     'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_lease_until TIMESTAMPTZ;',
+    'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS submission_authority JSONB;',
+    'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;',
   ]) {
     expect(normalized).toContain(stmt);
   }
@@ -1116,11 +1126,13 @@ test('postgres-engine.ts bootstrap carries the private-queue ALTERs and probes (
   expect(normalized).toContain('minion_jobs_pq_token_exists');
   expect(normalized).toContain('minion_jobs_pq_owner_exists');
   expect(normalized).toContain('minion_jobs_pq_lease_exists');
+  expect(normalized).toContain('minion_jobs_submission_authority_exists');
+  expect(normalized).toContain('minion_jobs_claim_generation_exists');
 
   // The structural extractor sees the same three ALTERs (keeps this guard
   // aligned with the parser-based coverage machinery above).
   const pgBootstrapAdds = parseAlterAddColumns(engineSrc);
-  for (const column of ['private_queue_owner_job_id', 'private_queue_owner_token', 'private_queue_lease_until']) {
+  for (const column of ['private_queue_owner_job_id', 'private_queue_owner_token', 'private_queue_lease_until', 'submission_authority', 'claim_generation']) {
     expect(pgBootstrapAdds).toContainEqual({ table: 'minion_jobs', column });
   }
 });

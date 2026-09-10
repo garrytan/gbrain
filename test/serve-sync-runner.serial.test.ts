@@ -22,6 +22,7 @@ import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { withSourceFilesystemLock } from '../src/core/minions/source-filesystem.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import {
   __deferredEmbedsPendingForTests,
@@ -163,6 +164,10 @@ describe('serve-sync-runner delegated jobs', () => {
     expect(s.state).toBe('done');
     expect(s.result!.status).toBe('partial');
     expect(['timeout', 'pull_timeout', 'stall_timeout']).toContain(s.result!.reason!);
+    expect(s.result!.filesImported).toBe(0);
+    expect(await engine.getPage('topics/alpha')).toBeNull();
+    const [source] = await engine.executeRaw<{ last_commit: string | null }>("SELECT last_commit FROM sources WHERE id = 'default'");
+    expect(source.last_commit).toBeNull();
 
     // Resume: a fresh delegated run completes the remainder.
     const second = startDelegatedSync(engine, { noPull: true, timeoutSeconds: 120, sourceId: 'default' }, 'token-resume');
@@ -171,6 +176,25 @@ describe('serve-sync-runner delegated jobs', () => {
     expect(['first_sync', 'synced', 'up_to_date']).toContain(s2.result!.status);
     expect(await engine.getPage('topics/alpha')).not.toBeNull();
     expect(await engine.getPage('topics/beta')).not.toBeNull();
+  }, 60_000);
+
+  test('abort while waiting for the filesystem lock remains a zero-work partial', async () => {
+    let release!: () => void, entered!: () => void;
+    const acquired = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const writer = withSourceFilesystemLock(engine, repoPath, async () => { entered(); await held; });
+    await acquired;
+    try {
+      const start = startDelegatedSync(engine, { noPull: true, timeoutSeconds: 120, sourceId: 'default' }, 'token-lock-wait');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(getDelegatedSyncStatus(start.jobId!).state).toBe('running');
+      expect(abortDelegatedSync(start.jobId!).ok).toBe(true);
+      const status = await waitForTerminal(start.jobId!);
+      expect(status.state).toBe('done');
+      expect(status.result!.status).toBe('partial');
+      expect(status.result!.filesImported).toBe(0);
+      expect(await engine.getPage('topics/alpha')).toBeNull();
+    } finally { release(); await writer; }
   }, 60_000);
 
   test('unknown jobId: status and abort answer unknown_job (serve restarted mid-sync)', () => {

@@ -17,7 +17,7 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    throw new Error(body.message || body.error || `HTTP ${res.status}`);
   }
   return res.json();
 }
@@ -34,6 +34,9 @@ async function apiFetchText(path: string) {
 }
 
 export const api = {
+  oauthRequest: (id: string) => apiFetch(`/admin/api/oauth-requests/${encodeURIComponent(id)}`),
+  decideOAuthRequest: (id: string, decision: 'approve' | 'deny', csrf: string) =>
+    apiFetch(`/admin/api/oauth-requests/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ decision, csrf }) }),
   login: (token: string) => apiFetch('/admin/login', { method: 'POST', body: JSON.stringify({ token }) }),
   signOutEverywhere: () => apiFetch('/admin/api/sign-out-everywhere', { method: 'POST' }),
   stats: () => apiFetch('/admin/api/stats'),

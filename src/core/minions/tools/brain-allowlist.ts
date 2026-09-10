@@ -37,7 +37,7 @@ import type { ToolCtx, ToolDef } from '../types.ts';
  * Knowledge Runtime).
  *
  * Read-only (all safe):
- *   query, search, get_page, list_pages, file_list, file_url,
+ *   query, search, get_page, list_pages,
  *   get_backlinks, traverse_graph, resolve_slugs, get_ingest_log
  *
  * Conditional write:
@@ -52,8 +52,6 @@ export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'search',
   'get_page',
   'list_pages',
-  'file_list',
-  'file_url',
   'get_backlinks',
   'traverse_graph',
   // v114 (#1941): read-only provenance discovery. Edge-WRITE ops (add_link /
@@ -97,8 +95,6 @@ export const BRAIN_TOOL_USAGE_HINTS: Readonly<Record<string, string>> = {
   search: 'Use for hybrid keyword + vector search returning ranked page hits. Use over `query` when you want page-level not chunk-level results (e.g. "find pages about X").',
   get_page: 'Read a brain page by its slug. Returns the full markdown body + frontmatter + linked pages.',
   list_pages: 'List pages by type or slug-prefix filter. Use when you need to enumerate (e.g. "list all `people/` pages") instead of search.',
-  file_list: 'List uploaded files (attachments) by slug-prefix or content type. NOT the local filesystem — only files the brain has stored.',
-  file_url: 'Get a presigned URL for a brain-stored file. Read-only; expires.',
   get_backlinks: 'List every page that links TO the given slug. Use for "what references this".',
   traverse_graph: 'Walk the typed-edge graph starting from a slug (e.g. `works_at`, `founded`, `invested_in`). Use for relationship queries.',
   list_link_sources: 'List the distinct link provenances in the brain with edge counts (e.g. `citation-graph`, `manual`). Use to discover which edge-writers have populated the graph.',
@@ -265,7 +261,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
 export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
   const filter = opts.allowedNames ?? BRAIN_TOOL_ALLOWLIST;
   const picked: Operation[] = operations.filter(
-    op => BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
+    op => !op.localOnly && BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
   );
 
   // #1586: fail fast on a malformed source id before any tool executes
@@ -294,6 +290,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
       // Keyed by the unprefixed op name. Undefined when no hint is registered.
       usage_hint: BRAIN_TOOL_USAGE_HINTS[op.name],
       async execute(input: unknown, ctx: ToolCtx): Promise<unknown> {
+        if (op.localOnly) throw new Error(`${toolName}: local-only operations cannot be delegated`);
         const opCtx = buildOpContext({
           engine: ctx.engine,
           config: opts.config,
@@ -348,6 +345,15 @@ export function filterAllowedTools(registry: ToolDef[], allowedToolNames: string
     picked.push(match);
   }
   return picked;
+}
+
+/** An absent trusted binding uses the registry; an explicit empty binding grants nothing. */
+export function selectAllowedTools(registry: ToolDef[], allowed: unknown): ToolDef[] {
+  if (allowed === undefined) return registry;
+  if (!Array.isArray(allowed) || allowed.some(name => typeof name !== 'string' || name.trim() === '')) {
+    throw new Error('subagent allowed_tools must be an array of nonempty tool names');
+  }
+  return filterAllowedTools(registry, allowed);
 }
 
 /** Exported for unit tests (stable surface). */

@@ -66,11 +66,11 @@ async function seedClient(clientId: string, opts: SeedOpts = {}): Promise<void> 
   await engine.executeRaw(
     `INSERT INTO oauth_clients
        (client_id, client_name, client_secret_hash, scope, grant_types,
-        redirect_uris, token_endpoint_auth_method,
+        redirect_uris, token_endpoint_auth_method, source_id,
         bound_tools, bound_source_id, bound_brain_id, bound_slug_prefixes,
         bound_max_concurrent, budget_usd_per_day, created_at, deleted_at)
      VALUES ($1, $1, '', $2, ARRAY['client_credentials'],
-             ARRAY[]::text[], 'client_secret_post',
+             ARRAY[]::text[], 'client_secret_post', 'default',
              $3, $4, $5, $6, $7, $8, now(), NULL)
      ON CONFLICT (client_id) DO UPDATE SET
        bound_tools = EXCLUDED.bound_tools,
@@ -99,7 +99,8 @@ function makeCtx(opts: { clientId?: string; remote?: boolean; dryRun?: boolean }
     logger: console,
     dryRun: opts.dryRun ?? false,
     remote: opts.remote ?? true,
-    auth: opts.clientId ? { clientId: opts.clientId } : undefined,
+    sourceId: 'default',
+    auth: opts.clientId ? { clientId: opts.clientId, principal: { kind: 'oauth_client', id: opts.clientId }, scopes: ['read', 'agent'], sourceId: 'default' } : undefined,
   };
 }
 
@@ -155,7 +156,7 @@ describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with
       await seedClient('legacy-admin', { bound_tools: null });
       const ctx = makeCtx({ clientId: 'legacy-admin' });
       await expect(callSubmitAgent(ctx, { prompt: 'hi' })).rejects.toThrow(
-        /has the agent scope but no bindings.*re-register/i,
+        /missing, empty, or unsupported tool bindings.*re-register/i,
       );
     });
   });
@@ -204,16 +205,14 @@ describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with
     // worker, which reads empty allowed_tools as "the whole registry" — so a
     // client bound to ['search'] got put_page. `??` doesn't substitute for an
     // empty array, only for null/undefined.
-    it('collapses an explicit empty allowed_tools to the binding, not the full registry', async () => {
+    it('rejects an explicit empty allowed_tools binding', async () => {
       await seedClient('cursor', {
         bound_tools: ['search'],
         bound_source_id: 'default',
         bound_slug_prefixes: ['wiki/'],
       });
       const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      const result = await callSubmitAgent(ctx, { prompt: 'go', allowed_tools: [] });
-      expect(result.dry_run).toBe(true);
-      expect(result.resolved_tools).toEqual(['search']);
+      await expect(callSubmitAgent(ctx, { prompt: 'go', allowed_tools: [] })).rejects.toThrow('non-empty subset');
     });
 
     // Empty prefixes reached the subagent as "use the legacy
@@ -275,9 +274,9 @@ describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with
       // Seed 2 already-running subagent jobs for this client.
       for (let i = 0; i < 2; i++) {
         await engine.executeRaw(
-          `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-           VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())`,
-          [JSON.stringify({ prompt: `existing-${i}`, __owner_client_id: 'cursor' })],
+          `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at, submission_authority)
+           VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now(), '{"version":1,"kind":"application"}'::jsonb)`,
+          [{ prompt: `existing-${i}`, __owner_client_id: 'cursor' }],
         );
       }
       const ctx = makeCtx({ clientId: 'cursor' });
@@ -294,9 +293,9 @@ describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with
         bound_max_concurrent: 3,
       });
       await engine.executeRaw(
-        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-         VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())`,
-        [JSON.stringify({ prompt: 'one', __owner_client_id: 'cursor' })],
+        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at, submission_authority)
+         VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now(), '{"version":1,"kind":"application"}'::jsonb)`,
+        [{ prompt: 'one', __owner_client_id: 'cursor' }],
       );
       const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
       const result = await callSubmitAgent(ctx, { prompt: 'two' });
@@ -314,9 +313,9 @@ describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with
       // 5 completed jobs — none counted (status filter is waiting/active/waiting-children).
       for (let i = 0; i < 5; i++) {
         await engine.executeRaw(
-          `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-           VALUES ('subagent', 'completed', $1::jsonb, 'default', 0, now())`,
-          [JSON.stringify({ prompt: `done-${i}`, __owner_client_id: 'cursor' })],
+          `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at, submission_authority)
+           VALUES ('subagent', 'completed', $1::jsonb, 'default', 0, now(), '{"version":1,"kind":"application"}'::jsonb)`,
+          [{ prompt: `done-${i}`, __owner_client_id: 'cursor' }],
         );
       }
       const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
@@ -339,9 +338,9 @@ describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with
       });
       // Alice has 1 active — at her cap.
       await engine.executeRaw(
-        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-         VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())`,
-        [JSON.stringify({ prompt: 'alice-busy', __owner_client_id: 'alice' })],
+        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at, submission_authority)
+         VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now(), '{"version":1,"kind":"application"}'::jsonb)`,
+        [{ prompt: 'alice-busy', __owner_client_id: 'alice' }],
       );
       // Bob's submit should succeed — his cap (1) is independent.
       const ctxBob = makeCtx({ clientId: 'bob', dryRun: true });

@@ -1,3 +1,4 @@
+import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 /**
  * Authorize-grant scope default (RFC 6749 §3.3).
  *
@@ -23,7 +24,7 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   sql = sqlQueryForEngine(engine);
-  provider = new GBrainOAuthProvider({ sql });
+  provider = new GBrainOAuthProvider({ transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))), sql });
 });
 
 afterAll(async () => {
@@ -49,11 +50,11 @@ async function authorizeAndReadScopes(
   );
   const client = await provider.clientsStore.getClient(reg.clientId);
   expect(client).toBeTruthy();
-  await provider.authorize(
+  await authorizeAsOwner(provider,
     client!,
     {
       scopes: requested,
-      codeChallenge: 'test-challenge',
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'https://example.test/cb',
       state: 'xyz',
     } as any,

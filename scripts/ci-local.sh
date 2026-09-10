@@ -67,7 +67,8 @@ if [ "$DIFF" = "1" ]; then
         echo "[ci-local] ERROR: gitleaks not installed; the required secrets scan cannot run. Install gitleaks and retry." >&2
         exit 1
       else
-        gitleaks dir . --redact --no-banner
+        bash scripts/test-gitleaks-config.sh
+        bash scripts/scan-worktree-secrets.sh
         gitleaks git . --redact --no-banner --log-opts="origin/master..HEAD"
       fi
       echo "[ci-local] Doc-only fast-path complete. No code paths exercised."
@@ -122,7 +123,8 @@ fi
 #   1. Working-tree files (catch uncommitted secrets sitting in files)
 #   2. Branch commits vs origin/master (catch secrets committed on this branch)
 # Full-history scan is ~4 min on this repo's 3700+ commits; not useful pre-push.
-gitleaks dir . --redact --no-banner
+bash scripts/test-gitleaks-config.sh
+bash scripts/scan-worktree-secrets.sh
 gitleaks git . --redact --no-banner --log-opts="origin/master..HEAD"
 
 # Step 1: pull. Refreshes pgvector + the pinned oven/bun tag (both are `image:` not `build:`).

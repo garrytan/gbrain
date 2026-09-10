@@ -44,6 +44,7 @@ import { inferTypeFromPack, parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { loadActivePackBestEffort } from '../schema-pack/best-effort.ts';
 import { withPageLock } from '../page-lock.ts';
+import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
@@ -308,6 +309,9 @@ export async function writeFactsToFence(
     return { inserted: 0, ids: [], targetUnresolvable: true };
   }
   const { filePath, writeRoot } = resolved;
+  if (!hasSourceFilesystemLock(writeRoot)) {
+    return withSourceFilesystemLock(engine, writeRoot, () => writeFactsToFence(engine, target, facts));
+  }
   const tmpPath = `${filePath}.tmp`;
   const durabilityEnabled = isDurabilityHardened(writeRoot);
 
@@ -450,6 +454,7 @@ export async function writeFactsToFence(
         : 'clean';
 
       // 3. Atomic write: .tmp first, then parse-validate, then rename.
+      assertSourceFilesystemActive();
       writeFileSync(tmpPath, body, 'utf-8');
 
       // 4. Parse-before-rename: re-read the .tmp content and verify the

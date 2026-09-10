@@ -40,21 +40,21 @@ beforeEach(async () => {
 async function seedJobs(opts: { waiting: number; completed: number; ttlCancelled?: number }): Promise<void> {
   for (let i = 0; i < opts.waiting; i++) {
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data) VALUES ('subagent', 'default', 'waiting', '{}'::jsonb)`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'default', 'waiting', '{}'::jsonb)`,
       [],
     );
   }
   for (let i = 0; i < opts.completed; i++) {
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data, started_at, finished_at)
-       VALUES ('subagent', 'default', 'completed', '{}'::jsonb, now() - interval '10 minutes', now() - interval '5 minutes')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, started_at, finished_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'default', 'completed', '{}'::jsonb, now() - interval '10 minutes', now() - interval '5 minutes')`,
       [],
     );
   }
   for (let i = 0; i < (opts.ttlCancelled ?? 0); i++) {
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data, error_text, finished_at)
-       VALUES ('subagent', 'default', 'cancelled', '{}'::jsonb,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, error_text, finished_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'default', 'cancelled', '{}'::jsonb,
                'waiting_ttl_expired: waited > 48h in queue', now() - interval '1 hour')`,
       [],
     );

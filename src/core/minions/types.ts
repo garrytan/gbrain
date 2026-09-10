@@ -1,3 +1,4 @@
+import { parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
 /**
  * Minions — BullMQ-inspired Postgres-native job queue for GBrain.
  *
@@ -39,6 +40,8 @@ export interface MinionJob {
   status: MinionJobStatus;
   priority: number;
   data: Record<string, unknown>;
+  /** Internal authority column; never accepted from job data or remote options. */
+  submission_authority?: SubmissionAuthority | null;
 
   // Retry
   max_attempts: number;
@@ -264,6 +267,8 @@ export interface MinionJobContext {
   id: number;
   name: string;
   data: Record<string, unknown>;
+  /** Internal authority column; never accepted from job data or remote options. */
+  submission_authority?: SubmissionAuthority | null;
   attempts_made: number;
   /** AbortSignal for cooperative cancellation (fires on timeout, cancel, pause, or lock loss). */
   signal: AbortSignal;
@@ -443,6 +448,7 @@ export function rowToMinionJob(row: Record<string, unknown>): MinionJob {
     queue: row.queue as string,
     status: row.status as MinionJobStatus,
     priority: row.priority as number,
+    submission_authority: parseSubmissionAuthority(row.submission_authority),
     data: (typeof row.data === 'string' ? JSON.parse(row.data) : row.data ?? {}) as Record<string, unknown>,
     max_attempts: row.max_attempts as number,
     attempts_made: row.attempts_made as number,

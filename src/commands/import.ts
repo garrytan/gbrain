@@ -1,4 +1,5 @@
-import { readdirSync, lstatSync, existsSync } from 'fs';
+import { hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal } from '../core/minions/source-filesystem.ts';
+import { readdirSync, lstatSync, existsSync, mkdirSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
@@ -124,12 +125,15 @@ function defaultWorkers(): number {
  */
 export class ImportAbortError extends Error {
   readonly exitCode: number;
+  /** Present only after an interrupted import has drained and checkpointed. */
+  readonly partialResult?: RunImportResult;
   /** True: the user-facing message was already printed at the throw site. */
   readonly alreadyReported = true;
-  constructor(reason: string, exitCode = 1) {
+  constructor(reason: string, exitCode = 1, partialResult?: RunImportResult) {
     super(`import aborted: ${reason}`);
     this.name = 'ImportAbortError';
     this.exitCode = exitCode;
+    this.partialResult = partialResult;
   }
 }
 
@@ -167,6 +171,7 @@ export async function runImport(
   engine: BrainEngine,
   args: string[],
   opts: {
+    signal?: AbortSignal;
     commit?: string;
     strategy?: SyncStrategy;
     sourceId?: string;
@@ -200,6 +205,9 @@ export async function runImport(
     slugRoot?: string;
   } = {},
 ): Promise<RunImportResult> {
+  const inheritedSignal = currentSourceFilesystemSignal();
+  const signal = opts.signal && inheritedSignal ? AbortSignal.any([opts.signal, inheritedSignal]) : opts.signal ?? inheritedSignal;
+  signal?.throwIfAborted();
   const noEmbed = args.includes('--no-embed');
   const allowNoncanonicalRoot = args.includes('--allow-noncanonical-root');
   const fresh = args.includes('--fresh');
@@ -416,6 +424,21 @@ export async function runImport(
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
+  if (!hasSourceFilesystemLock(dir)) {
+    let entered = false;
+    try {
+      return await withSourceFilesystemLock(engine, dir, () => {
+        entered = true;
+        return runImport(engine, args, opts);
+      }, { signal });
+    } catch (error) {
+      // Root discovery is part of admission. Preserve the CLI/library's typed
+      // preflight error contract without changing errors from an import in flight.
+      if (entered || signal?.aborted) throw error;
+      throw new ImportAbortError('source filesystem lock admission failed');
+    }
+  }
+
   if (!allowNoncanonicalRoot) {
     try {
       const strictRoot = (await engine.getConfig('import.require_configured_root')) === 'true';
@@ -585,6 +608,7 @@ export async function runImport(
   }
 
   async function processFile(eng: BrainEngine, filePath: string) {
+    if (signal?.aborted) return;
     const relativePath = relative(dir, filePath);
     // #753/#774: slug + source_path base. When performFullSync syncs a
     // monorepo subdir, slugRoot is the git root so slugs stay git-root-
@@ -603,6 +627,8 @@ export async function runImport(
       const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
         : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
+      // An import that landed while cancellation arrived is still complete.
+      // Account for it before stopping, so resume never loses a successful path.
       noteTypeWarning((result as { type_warning?: Parameters<typeof noteTypeWarning>[0] }).type_warning);
       const _fileMs = Date.now() - _fileT0;
       if (_fileMs > 5000) {
@@ -624,6 +650,7 @@ export async function runImport(
           malformedFileSkips++;
           completed.add(relativePath);
         } else if (result.error && result.error !== 'unchanged') {
+          errors++;
           console.error(`  Skipped ${relativePath}: ${result.error}`);
           // Bug 9 — non-"unchanged" skips carry a real error reason.
           // #774: ledger paths use the slug base so an incremental sync's
@@ -637,6 +664,11 @@ export async function runImport(
         }
       }
     } catch (e: unknown) {
+      if (signal?.aborted) {
+        // Do not turn an unrelated infrastructure failure into a timeout.
+        if (e !== signal.reason && !(e instanceof Error && e.name === 'AbortError')) throw e;
+        return;
+      }
       const msg = e instanceof Error ? e.message : String(e);
       const { count, sample } = recordImportFailure(errorCounts, errorSamples, msg);
       if (count <= 5) {
@@ -680,67 +712,87 @@ export async function runImport(
     }
   }
 
-  if (actualWorkers > 1) {
-    // v0.22.13 (PR #490 A1 + Q3): use engine.kind discriminator (not config.engine
-    // string sniff) and fall back to serial when database_url is unset. Both
-    // checks belt-and-suspenders so we never crash on a null assertion.
-    const config = loadConfig();
-    if (engine.kind === 'pglite' || !config?.database_url) {
-      for (const file of files) {
-        await processFile(engine, file);
-      }
-    } else {
-      const { PostgresEngine } = await import('../core/postgres-engine.ts');
-      const { resolvePoolSize } = await import('../core/db.ts');
-      // Each child keeps the established two-connection pool. GBRAIN_POOL_SIZE
-      // controls the parent pool; GBRAIN_MAX_CONNECTIONS clamps the child
-      // count above so the combined footprint stays within the operator's cap.
-      const workerPoolSize = Math.min(2, resolvePoolSize(2));
-      const databaseUrl = config.database_url;
-
-      // v0.22.13 (PR #490 A2): connect workers serially so a partial failure
-      // leaves us with the connected ones already pushed onto workerEngines
-      // for the finally-block cleanup. The prior Promise.all could leak any
-      // engine that connected before another's connect() rejected.
-      const workerEngines: InstanceType<typeof PostgresEngine>[] = [];
-      try {
-        for (let i = 0; i < actualWorkers; i++) {
-          const eng = new PostgresEngine();
-          await eng.connect({ database_url: databaseUrl, poolSize: workerPoolSize });
-          workerEngines.push(eng);
+  let workerError: unknown;
+  let workerFailed = false;
+  try {
+    if (actualWorkers > 1) {
+      // v0.22.13 (PR #490 A1 + Q3): use engine.kind discriminator (not config.engine
+      // string sniff) and fall back to serial when database_url is unset. Both
+      // checks belt-and-suspenders so we never crash on a null assertion.
+      const config = loadConfig();
+      if (engine.kind === 'pglite' || !config?.database_url) {
+        for (const file of files) {
+          if (signal?.aborted) break;
+          await processFile(engine, file);
         }
+      } else {
+        const { PostgresEngine } = await import('../core/postgres-engine.ts');
+        const { resolvePoolSize } = await import('../core/db.ts');
+        // Each child keeps the established two-connection pool. GBRAIN_POOL_SIZE
+        // controls the parent pool; GBRAIN_MAX_CONNECTIONS clamps the child
+        // count above so the combined footprint stays within the operator's cap.
+        const workerPoolSize = Math.min(2, resolvePoolSize(2));
+        const databaseUrl = config.database_url;
 
-        // Thread-safe queue: atomic index counter (JS is single-threaded; the
-        // read-then-increment happens between awaits so no lock is needed).
-        let queueIndex = 0;
-        await Promise.all(workerEngines.map(async (eng) => {
-          while (true) {
-            const idx = queueIndex++;
-            if (idx >= files.length) break;
-            await processFile(eng, files[idx]);
+        // v0.22.13 (PR #490 A2): connect workers serially so a partial failure
+        // leaves us with the connected ones already pushed onto workerEngines
+        // for the finally-block cleanup. The prior Promise.all could leak any
+        // engine that connected before another's connect() rejected.
+        const workerEngines: InstanceType<typeof PostgresEngine>[] = [];
+        try {
+          for (let i = 0; i < actualWorkers; i++) {
+            if (signal?.aborted) break;
+            const eng = new PostgresEngine();
+            await eng.connect({ database_url: databaseUrl, poolSize: workerPoolSize });
+            workerEngines.push(eng);
           }
-        }));
-      } finally {
-        // v0.22.13 (PR #490 A2): try/finally guarantees cleanup even when the
-        // worker loop throws. Each disconnect is best-effort — one failing
-        // disconnect must not strand the others.
-        await Promise.all(
-          workerEngines.map(e =>
-            e.disconnect().catch((err: unknown) =>
-              console.error(`  worker disconnect failed: ${err instanceof Error ? err.message : String(err)}`),
-            ),
-          ),
-        );
-      }
-    } // end else (postgres parallel)
-  } else {
-    // Sequential: use the provided engine
-    for (const filePath of files) {
-      await processFile(engine, filePath);
-    }
-  }
 
-  progress.finish();
+          // Thread-safe queue: atomic index counter (JS is single-threaded; the
+          // read-then-increment happens between awaits so no lock is needed).
+          let queueIndex = 0;
+          let stopWorkers = false;
+          const outcomes = await Promise.allSettled(workerEngines.map(async (eng) => {
+            try {
+              while (!stopWorkers && !signal?.aborted) {
+                const idx = queueIndex++;
+                if (idx >= files.length) break;
+                await processFile(eng, files[idx]);
+              }
+            } catch (error) {
+              stopWorkers = true;
+              throw error;
+            }
+          }));
+          // Drain every in-flight file before disconnecting pools or releasing
+          // the source lock, even when one worker fails or cancellation arrives.
+          const failed = outcomes.find(outcome => outcome.status === 'rejected');
+          if (failed?.status === 'rejected') throw failed.reason;
+        } finally {
+          // v0.22.13 (PR #490 A2): try/finally guarantees cleanup even when the
+          // worker loop throws. Each disconnect is best-effort — one failing
+          // disconnect must not strand the others.
+          await Promise.all(
+            workerEngines.map(e =>
+              e.disconnect().catch((err: unknown) =>
+                console.error(`  worker disconnect failed: ${err instanceof Error ? err.message : String(err)}`),
+              ),
+            ),
+          );
+        }
+      } // end else (postgres parallel)
+    } else {
+      // Sequential: use the provided engine
+      for (const filePath of files) {
+        if (signal?.aborted) break;
+        await processFile(engine, filePath);
+      }
+    }
+  } catch (error) {
+    workerFailed = true;
+    workerError = error;
+  } finally {
+    progress.finish();
+  }
 
   // Error summary
   for (const [key, count] of Object.entries(errorCounts)) {
@@ -749,62 +801,28 @@ export async function runImport(
     }
   }
 
-  // Final checkpoint save BEFORE the clear/preserve decision below. The
-  // periodic triggers above are gated on a 100-file boundary or an interval,
-  // so a run that ends between them would otherwise leave its tail unsaved.
-  // This must run before clearCheckpoint() so a clean run still ends with no
-  // checkpoint file — it only makes the ERROR path's preserved checkpoint
-  // complete.
-  if (errors > 0 && completed.size > lastCheckpointSize) {
+  // Save the successful tail on interruption/failure. Keep this synchronous:
+  // checkpoint and cancellation decisions must not race another worker.
+  function preserveCompletedPaths(): void {
+    if (completed.size <= lastCheckpointSize) return;
     try {
-      const cpDir = gbrainPath();
-      if (!existsSync(cpDir)) {
-        const { mkdirSync } = await import('fs');
-        mkdirSync(cpDir, { recursive: true });
-      }
+      mkdirSync(gbrainPath(), { recursive: true });
       saveCheckpoint(checkpointPath, {
-        schema_version: 1,
-        owner: 'gbrain',
-        kind: 'import',
-        dir,
-        completedPaths: Array.from(completed),
-        timestamp: new Date().toISOString(),
+        schema_version: 1, owner: 'gbrain', kind: 'import', dir,
+        completedPaths: Array.from(completed), timestamp: new Date().toISOString(),
       });
-    } catch { /* non-fatal: the next run simply redoes the tail */ }
+      lastCheckpointSize = completed.size;
+    } catch { /* non-fatal: resume can safely recheck content hashes */ }
   }
-
-  // Clear checkpoint on clean completion. On error, the path-based checkpoint
-  // preserves only the successfully-completed paths, so the next run retries
-  // failed files automatically (they never entered `completed`).
-  if (errors === 0) {
-    clearCheckpoint(checkpointPath);
-  } else if (existsSync(checkpointPath)) {
-    info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
+  function throwIfInterrupted(): void {
+    if (!signal?.aborted) return;
+    preserveCompletedPaths();
+    console.error(`Import interrupted: ${imported} pages imported; completed paths preserved for resume.`);
+    throw new ImportAbortError('interrupted', 1, { imported, skipped, errors, chunksCreated, failures });
   }
-
-  const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-  if (jsonOutput) {
-    // `skipped` includes every per-file failure importFile RETURNS (invalid
-    // frontmatter, oversize, symlink, slug mismatch) as well as content-hash
-    // no-ops, and `errors` counts only the thrown ones — so a caller cannot
-    // tell "unchanged" from "failed" by counts alone. The failure ledger is
-    // written only for git-repo dirs (see the gitHead gate below), so a caller
-    // importing a scratch directory has no other channel. Emit the per-file
-    // list so state can be gated per file.
-    console.log(JSON.stringify({
-      status: 'success', duration_s: parseFloat(totalTime),
-      imported, skipped, errors, chunks: chunksCreated,
-      total_files: allFiles.length,
-      unchanged: skipped - failures.length - malformedFileSkips,
-      malformed_skipped: malformedFileSkips,
-      failures,
-    }));
-  } else {
-    slog(`\nImport complete (${totalTime}s):`);
-    slog(`  ${imported} pages imported`);
-    slog(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
-    slog(`  ${chunksCreated} chunks created`);
-  }
+  if (errors > 0 || workerFailed) preserveCompletedPaths();
+  if (workerFailed) throw workerError;
+  throwIfInterrupted();
 
   // v0.39 T7 — end-of-run schema mismatch warn. Fires ONCE per import,
   // not per page. Counts untyped pages in the affected source AND
@@ -871,6 +889,8 @@ export async function runImport(
     });
   }
 
+  throwIfInterrupted();
+
   // Import → sync continuity: write sync checkpoint if this is a git repo.
   // Bug 9 — gate last_commit on "no failures" so import doesn't silently
   // stomp on the sync bookmark when parsing broke. last_run + repo_path are
@@ -926,6 +946,7 @@ export async function runImport(
     // legacy branch in sync.ts, so the two layers cannot drift).
     const { ownsGlobalSyncAnchor } = await import('../core/sync.ts');
     const { owns, configured } = await ownsGlobalSyncAnchor(engine, sourceId, dir);
+    throwIfInterrupted();
 
     if (owns) {
       if (failures.length === 0) {
@@ -1017,11 +1038,42 @@ export async function runImport(
         }
       }
       if (row?.local_path && coversRegisteredRoot && !sourceConfigHasRemoteUrl(row.config) && !isGitTracked && !isConnectorManaged) {
+        throwIfInterrupted();
         await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = $1`, [sourceId]);
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof ImportAbortError) throw error;
       // best-effort — a freshness nicety never fails the import (see above).
     }
+  }
+
+  throwIfInterrupted();
+  // Only a fully completed run removes resume state, including async metadata.
+  if (errors === 0) clearCheckpoint(checkpointPath);
+  else if (existsSync(checkpointPath)) info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
+
+  const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+  if (jsonOutput) {
+    // `skipped` includes every per-file failure importFile RETURNS (invalid
+    // frontmatter, oversize, symlink, slug mismatch) as well as content-hash
+    // no-ops. `errors` counts both returned failures and thrown failures.
+    // The failure ledger is
+    // written only for git-repo dirs (see the gitHead gate below), so a caller
+    // importing a scratch directory has no other channel. Emit the per-file
+    // list so state can be gated per file.
+    console.log(JSON.stringify({
+      status: errors > 0 ? 'partial' : 'success', duration_s: parseFloat(totalTime),
+      imported, skipped, errors, chunks: chunksCreated,
+      total_files: allFiles.length,
+      unchanged: skipped - failures.length - malformedFileSkips,
+      malformed_skipped: malformedFileSkips,
+      failures,
+    }));
+  } else {
+    slog(`\nImport complete (${totalTime}s):`);
+    slog(`  ${imported} pages imported`);
+    slog(`  ${skipped} pages skipped (${skipped - failures.length - malformedFileSkips} unchanged, ${errors} errors, ${malformedFileSkips} malformed filenames)`);
+    slog(`  ${chunksCreated} chunks created`);
   }
 
   return {

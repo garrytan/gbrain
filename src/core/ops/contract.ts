@@ -137,6 +137,8 @@ export interface Logger {
 export interface AuthInfo {
   token: string;
   clientId: string;
+  /** Durable, verifier-derived identity. Never infer this from a display name or request data. */
+  principal?: { kind: 'oauth_client' | 'legacy_token'; id: string };
   /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy

@@ -96,8 +96,8 @@ const FILLER_QUEUE = 'quota-filler-fixture';
  */
 async function seedWaitingSubagentFiller(): Promise<void> {
   await engine.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, data)
-     VALUES ('subagent', $1, 'waiting', '{"prompt": "quota filler"}'::jsonb)`,
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, data)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', $1, 'waiting', '{"prompt": "quota filler"}'::jsonb)`,
     [FILLER_QUEUE],
   );
 }

@@ -1,3 +1,4 @@
+import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 // #4532 — exchangeRefreshToken failures must be InvalidGrantError, not bare
 // Error.
 //
@@ -28,7 +29,7 @@ beforeAll(async () => {
     const result = await db.query(query, values as any[]);
     return result.rows;
   };
-  provider = new GBrainOAuthProvider({ sql, tokenTtl: 60, refreshTtl: 300 });
+  provider = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, tokenTtl: 60, refreshTtl: 300 });
 }, 120_000);
 
 afterAll(async () => {
@@ -43,13 +44,13 @@ async function mintTokens() {
   const client = (await provider.clientsStore.getClient(clientId))!;
   let redirectUrl = '';
   const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-  await provider.authorize(client, {
-    codeChallenge: 'challenge',
+  await authorizeAsOwner(provider, client, {
+    codeChallenge: TEST_PKCE_CHALLENGE,
     redirectUri: 'http://localhost:3000/callback',
     scopes: ['read', 'write'],
   }, mockRes);
   const code = new URL(redirectUrl).searchParams.get('code')!;
-  const tokens = await provider.exchangeAuthorizationCode(client, code);
+  const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
   return { client, tokens };
 }
 

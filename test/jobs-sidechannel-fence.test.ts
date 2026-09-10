@@ -63,8 +63,8 @@ const AUTHED = {
 /** Direct SQL seed (same shape as test/jobs-ops-token-redaction.test.ts). */
 async function seedJob(status = 'waiting'): Promise<number> {
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, queue, status, data)
-     VALUES ('embed', 'default', $1, '{}'::jsonb)
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, data)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'embed', 'default', $1, '{}'::jsonb)
      RETURNING id`,
     [status],
   );
@@ -147,8 +147,8 @@ describe('send_job_message — local caller behavior preserved', () => {
   it('local caller with an explicit sender param passes it through (parent job id)', async () => {
     const parentId = await seedJob();
     const childRows = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, queue, status, data, parent_job_id)
-       VALUES ('research', 'default', 'waiting', '{}'::jsonb, $1)
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, parent_job_id)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'research', 'default', 'waiting', '{}'::jsonb, $1)
        RETURNING id`,
       [parentId],
     );

@@ -100,6 +100,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // reduce coverage vs the fail-closed run-everything default for unmapped paths.
   "src/core/cycle/inline-drain.ts": [
     "test/e2e/dream-synthesize-pglite.test.ts",
+    "test/e2e/minions-authority-parity.test.ts",
     "test/e2e/minions-concurrency.test.ts",
     "test/e2e/minions-resilience.test.ts",
     "test/e2e/minions-shell.test.ts",
@@ -261,7 +262,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // (per the plan-eng-review E1 decision); the daemon + built-in sources
   // + ingest_capture Minion handler all feed the in-process roundtrip
   // E2E AND the HTTP contract E2E for the webhook route.
+  "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts"],
+  "src/core/oauth-grants.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-oauth.ts": ["test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http.ts": [
+    "test/e2e/serve-http-consent.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
     "test/e2e/serve-http-oauth.test.ts",
     // #3242 wiring: legacy no-grant federated widening vs granted confinement

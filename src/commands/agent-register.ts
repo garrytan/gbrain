@@ -660,7 +660,10 @@ async function mintAndProbe(
 ): Promise<RegisterOutput> {
   const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
   // The tx-scoped sql is dead after COMMIT — the exchange runs on the OUTER engine.
-  const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) });
+  const provider = new GBrainOAuthProvider({
+    sql: sqlQueryForEngine(engine),
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
+  });
 
   let accessToken: string | undefined;
   let tokenExpiresAt: string | undefined;

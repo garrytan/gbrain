@@ -829,7 +829,11 @@ const forget_fact: Operation = {
     const id = p.id as number;
     const reason = typeof p.reason === 'string' ? p.reason : undefined;
     const { forgetFactInFence } = await import('../facts/forget.ts');
-    const result = await forgetFactInFence(ctx.engine, id, { reason });
+    const result = await forgetFactInFence(ctx.engine, id, {
+      reason,
+      sourceId: ctx.sourceId ?? 'default',
+      worldOnly: ctx.remote !== false,
+    });
     if (!result.ok && result.path === 'not_found') {
       throw new OperationError('fact_not_found', `Fact id ${id} not found.`);
     }

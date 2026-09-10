@@ -1,3 +1,4 @@
+import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 /**
  * v0.37.7.0 #1166 — OAuth confidential clients regression test.
  *
@@ -27,7 +28,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) });
+  provider = new GBrainOAuthProvider({ transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))), sql: sqlQueryForEngine(engine) });
 });
 
 afterAll(async () => {

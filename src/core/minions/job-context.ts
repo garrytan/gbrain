@@ -28,6 +28,7 @@ export function buildJobContext(
     id: job.id,
     name: job.name,
     data: job.data,
+    submission_authority: job.submission_authority,
     attempts_made: job.attempts_made,
     signal,
     deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null,

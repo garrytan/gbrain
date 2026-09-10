@@ -37,7 +37,7 @@ import type {
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig, isConfigTruthy } from '../../config.ts';
-import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
+import { buildBrainTools, selectAllowedTools } from '../tools/brain-allowlist.ts';
 import {
   acquireLease,
   releaseLease,
@@ -466,9 +466,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // #1586: cycle-resolved source scope for tool-call OperationContexts.
       sourceId: data.source_id,
     });
-    const toolDefs = data.allowed_tools && data.allowed_tools.length > 0
-      ? filterAllowedTools(registry, data.allowed_tools)
-      : registry;
+    const toolDefs = selectAllowedTools(registry, data.allowed_tools);
 
     // v0.41 Approach C: render the final system prompt now that toolDefs
     // is known. Splices a deterministic tool-usage preamble listing each
@@ -536,9 +534,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         // that scoped its job read-only must not gain write capability by
         // setting mode: oneshot (put_page filtered out → no_put_page_tool
         // fallback → the equally-filtered loop).
-        const oneshotTools = data.allowed_tools && data.allowed_tools.length > 0
-          ? filterAllowedTools(oneshotRegistry, data.allowed_tools)
-          : oneshotRegistry;
+        const oneshotTools = selectAllowedTools(oneshotRegistry, data.allowed_tools);
         const outcome = await runSubagentOneshot({
           engine,
           ctx,

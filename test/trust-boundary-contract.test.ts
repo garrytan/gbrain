@@ -73,18 +73,20 @@ describe('F7b — trust-boundary contract fail-closed semantics', () => {
     ).rejects.not.toMatchObject({ code: 'permission_denied' });
   });
 
-  test('non-protected job names always allowed regardless of remote', async () => {
-    // 'default-noop' is not in PROTECTED_JOB_NAMES. The protected-name guard
-    // skips entirely, so we again get a downstream stub-engine error.
+  test('arbitrary job names require a strictly local caller', async () => {
+    // Remote generic jobs must also belong to the explicit four-kind allowlist.
     const cases: OperationContext[] = [
       castUndefinedRemoteCtx(),
       { ...castUndefinedRemoteCtx(), remote: true } as OperationContext,
-      { ...castUndefinedRemoteCtx(), remote: false } as OperationContext,
     ];
     for (const ctx of cases) {
       await expect(
         submit_job.handler(ctx, { name: 'noop-job', data: {} })
-      ).rejects.not.toMatchObject({ code: 'permission_denied' });
+      ).rejects.toMatchObject({ code: 'permission_denied' });
     }
+    // A trusted local caller still passes admission and reaches the stub engine.
+    await expect(submit_job.handler({ ...castUndefinedRemoteCtx(), remote: false }, {
+      name: 'noop-job', data: {},
+    })).rejects.not.toMatchObject({ code: 'permission_denied' });
   });
 });

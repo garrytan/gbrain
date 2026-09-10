@@ -89,7 +89,7 @@ function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
 }
 const dryCtx = () => ctxOf({ dryRun: true });
 
-/** Direct SQL seed (columns beyond these fall back to schema defaults). */
+/** Direct SQL fixture of reviewed application work (never unknown legacy provenance). */
 async function seedJob(opts: {
   status: string;
   name?: string;
@@ -109,12 +109,13 @@ async function seedJob(opts: {
        (name, queue, status, data, priority, max_attempts,
         lock_token, lock_until, error_text,
         attempts_made, attempts_started, stalled_counter,
-        started_at, finished_at)
+        started_at, finished_at, submission_authority)
      VALUES ($1, 'default', $2, $3::jsonb, $4, $5,
              $6, CASE WHEN $6::text IS NULL THEN NULL ELSE now() + interval '5 minutes' END,
              $7, $8, $9, $10,
              CASE WHEN $11::boolean THEN now() ELSE NULL END,
-             CASE WHEN $11::boolean THEN now() ELSE NULL END)
+             CASE WHEN $11::boolean THEN now() ELSE NULL END,
+             '{"version":1,"kind":"application"}'::jsonb)
      RETURNING id`,
     [
       opts.name ?? 'embed',

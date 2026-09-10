@@ -138,9 +138,12 @@ gbrain auth register-client neuromancer-dept \
 ```
 
 The `register-client` command prints a `client_id` and `client_secret`.
-Note both. **Scope must include `admin`** — `submit_job` (used by
-`gbrain remote ping`) and `run_doctor` (used by `gbrain remote doctor`)
-both require it.
+Note both. **Scope must include `admin`** for `run_doctor` (used by
+`gbrain remote doctor`) and generic background jobs. `submit_job` accepts
+only `sync`, `import`, `lint`, and `lint-fix` with the authenticated source's
+registered root. `gbrain remote ping` no longer submits an autopilot cycle;
+run maintenance on the brain host. See the
+[authorization upgrade guide](../guides/authorization-upgrade.md#generic-remote-background-jobs).
 
 **Step 2 — On the thin client (neuromancer):**
 

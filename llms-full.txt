@@ -1903,6 +1903,10 @@ This is the difference between a search engine and a brain. Search finds the pag
 
 ## Install
 
+Requires **Bun 1.3.11 or newer**. Existing worker installations should follow the
+[authorization and queue upgrade guide](docs/guides/authorization-upgrade.md)
+before restarting services with this version.
+
 > [!WARNING]
 > **GBrain is NOT distributed on npm.** The npm package named `gbrain` is an unrelated
 > package with no connection to this project. Do not run `npm install -g gbrain` or
@@ -4919,6 +4923,11 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY
 Access your brain from any device, any AI client. GBrain ships two transports:
 `gbrain serve` (stdio) for local agents, and `gbrain serve --http` for remote
 clients over OAuth 2.1.
+
+Authorization-code connections require owner approval in the admin dashboard.
+Existing sessions are preserved. Before upgrading an installation with queued
+work, follow the [authorization and worker upgrade guide](../guides/authorization-upgrade.md)
+for the coordinated cutover, consent recovery, and Bun requirements.
 
 ## Three Paths
 

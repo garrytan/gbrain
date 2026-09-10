@@ -547,11 +547,14 @@ export function resolveRequestedScope(
     return ctx.remote === false ? {} : sourceScopeOpts(ctx);
   }
   if (sourceIdParam !== undefined) {
-    const allowed = ctx.auth?.allowedSources;
-    if (ctx.remote !== false && allowed && allowed.length > 0 && !allowed.includes(sourceIdParam)) {
+    const scope = sourceScopeOpts(ctx);
+    const granted = scope.sourceIds !== undefined
+      ? scope.sourceIds.includes(sourceIdParam)
+      : scope.sourceId === sourceIdParam;
+    if (ctx.remote !== false && !granted) {
       throw new OperationError(
         'permission_denied',
-        `source '${sourceIdParam}' is outside your granted sources`,
+        'Requested source is outside your granted sources',
         'Request access to this source, or omit source_id to search within your grant.',
       );
     }

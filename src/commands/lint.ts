@@ -1,3 +1,4 @@
+import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
 /**
  * gbrain lint — Deterministic brain page quality checker.
  *
@@ -16,7 +17,7 @@
  *   gbrain lint <file.md>          # lint single file
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
+import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
@@ -535,6 +536,10 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     throw new Error(`Not found: ${opts.target}`);
   }
 
+  if (opts.engine && !hasSourceFilesystemLock(opts.target)) {
+    return withSourceFilesystemLock(opts.engine, opts.target, () => runLintCore(opts), { signal: opts.signal });
+  }
+
   const isSingleFile = statSync(opts.target).isFile();
   const pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
   opts.onPagesCollected?.(pages.length);
@@ -564,6 +569,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   let pagesWithIssues = 0;
 
   for (let idx = 0; idx < pages.length; idx++) {
+    assertSourceFilesystemActive();
     const page = pages[idx];
     // #1972: every 200 pages, yield to the event loop and honor abort. The
     // yield is what lets the abort signal actually fire (the rest of the loop
@@ -573,7 +579,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
       if (isAborted(opts.signal)) break;
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
-    const content = readFileSync(page, 'utf-8');
+    const content = readSourceFileSync(page, 'utf-8');
     const relPath = isSingleFile ? page : relative(opts.target, page);
     const issues = lintContent(content, relPath, lintOpts);
     opts.onPageScanned?.();
@@ -589,7 +595,8 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
         fixCount = issues.filter(i => i.fixable).length;
         totalFixed += fixCount;
         if (!opts.dryRun) {
-          writeFileSync(page, fixed);
+          assertSourceFilesystemActive();
+          writeSourceFileSync(page, fixed);
           if (commitFixes) {
             commitWriteThroughFile(repoProbe, page, relative(repoProbe, page).replace(/\.md$/u, ''));
           }
