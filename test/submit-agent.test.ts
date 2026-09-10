@@ -1,431 +1,184 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { operationsByName } from '../src/core/operations.ts';
-
-/**
- * v0.38 Slice 3 — `submit_agent` MCP op tests.
- *
- * Covers the load-bearing trust-boundary surface:
- *   - Per-dispatch binding enforcement against oauth_clients.bound_*
- *   - allowed_tools ⊆ bound_tools subset check
- *   - allowed_slug_prefixes prefix-match against bound_slug_prefixes
- *   - bound_max_concurrent concurrency cap
- *   - Local CLI bypass (ctx.remote === false → invalid_request)
- *   - Refusal when client has scope but missing bindings
- *   - Refusal for unknown client_id
- *   - dry_run path
- *   - Happy-path submission writes audit row + queue row
- *
- * Audit-trail writes go to a tmpdir via GBRAIN_AUDIT_DIR (withEnv-wrapped).
- */
-
-const submit_agent = operationsByName['submit_agent'];
-if (!submit_agent) {
-  throw new Error('submit_agent op missing from operations registry — test fixture invalid');
-}
+import { currentDelegationGrant, submissionSnapshot, effectiveDelegation, snapshotFromJob } from '../src/core/minions/delegated-policy.ts';
 
 let engine: PGLiteEngine;
-let tmpAuditDir: string;
-
-beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-});
-
-afterAll(async () => {
-  await engine.disconnect();
-});
-
+let auditDir: string;
+beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); });
+afterAll(async () => { await engine.disconnect(); });
 beforeEach(async () => {
   await resetPgliteState(engine);
-  // resetPgliteState truncates `config` table; restore the version row so
-  // MinionQueue.ensureSchema() sees the migrated state. The schema itself
-  // is preserved (initSchema applied in beforeAll); only the config-table
-  // marker row needs re-seeding.
-  await engine.setConfig('version', '85');
-  tmpAuditDir = fs.mkdtempSync(path.join(os.tmpdir(), 'submit-agent-audit-'));
+  await engine.setConfig('version', '147');
+  auditDir = mkdtempSync(join(tmpdir(), 'gbrain-delegation-test-'));
 });
+afterEach(() => rmSync(auditDir, { recursive: true, force: true }));
 
-interface SeedOpts {
-  bound_tools?: string[] | null;
-  bound_source_id?: string | null;
-  bound_brain_id?: string | null;
-  bound_slug_prefixes?: string[] | null;
-  bound_max_concurrent?: number;
-  budget_usd_per_day?: number | null;
-  scope?: string;
+async function seed(opts: { tools?: string[]; prefixes?: string[] | null; cap?: number; source?: string; budget?: number | null } = {}) {
+  const source = opts.source ?? 'default';
+  const prefixes = opts.prefixes === undefined ? ['wiki/agents/*'] : opts.prefixes;
+  await engine.executeRaw(`INSERT INTO oauth_clients
+    (client_id,client_name,client_secret_hash,scope,grant_types,redirect_uris,token_endpoint_auth_method,
+     source_id,federated_read,bound_tools,bound_source_id,delegated_slug_prefixes,delegated_namespace,bound_max_concurrent,budget_usd_per_day)
+    VALUES ('client','client','','agent',ARRAY['client_credentials'],ARRAY[]::text[],'client_secret_post',
+     $1,ARRAY[$1]::text[],$2,$1,$3,$4,$5,$6)`,
+    [source, opts.tools ?? ['get_page','put_page'], prefixes, prefixes === null ? 'job' : 'prefixes', opts.cap ?? 1, opts.budget ?? null]);
+}
+function ctx(extra: Record<string, unknown> = {}): any {
+  return { engine, config: {}, logger: console, remote: true, dryRun: false,
+    auth: { clientId: 'client', scopes: ['agent'], sourceId: 'default' }, ...extra };
+}
+async function submit(params: Record<string, unknown> = {}, context = ctx()): Promise<any> {
+  return withEnv({ GBRAIN_AUDIT_DIR: auditDir }, () => operationsByName.submit_agent.handler(context, { prompt: 'read the fixture', ...params }));
 }
 
-async function seedClient(clientId: string, opts: SeedOpts = {}): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO oauth_clients
-       (client_id, client_name, client_secret_hash, scope, grant_types,
-        redirect_uris, token_endpoint_auth_method,
-        bound_tools, bound_source_id, bound_brain_id, bound_slug_prefixes,
-        bound_max_concurrent, budget_usd_per_day, created_at, deleted_at)
-     VALUES ($1, $1, '', $2, ARRAY['client_credentials'],
-             ARRAY[]::text[], 'client_secret_post',
-             $3, $4, $5, $6, $7, $8, now(), NULL)
-     ON CONFLICT (client_id) DO UPDATE SET
-       bound_tools = EXCLUDED.bound_tools,
-       bound_source_id = EXCLUDED.bound_source_id,
-       bound_slug_prefixes = EXCLUDED.bound_slug_prefixes,
-       bound_max_concurrent = EXCLUDED.bound_max_concurrent,
-       budget_usd_per_day = EXCLUDED.budget_usd_per_day,
-       scope = EXCLUDED.scope`,
-    [
-      clientId,
-      opts.scope ?? 'read agent',
-      opts.bound_tools ?? null,
-      opts.bound_source_id ?? null,
-      opts.bound_brain_id ?? null,
-      opts.bound_slug_prefixes ?? null,
-      opts.bound_max_concurrent ?? 1,
-      opts.budget_usd_per_day ?? null,
-    ],
-  );
-}
-
-function makeCtx(opts: { clientId?: string; remote?: boolean; dryRun?: boolean } = {}): any {
-  return {
-    engine,
-    config: {},
-    logger: console,
-    dryRun: opts.dryRun ?? false,
-    remote: opts.remote ?? true,
-    auth: opts.clientId ? { clientId: opts.clientId } : undefined,
-  };
-}
-
-async function callSubmitAgent(ctx: any, params: Record<string, unknown>): Promise<any> {
-  return await withEnv({ GBRAIN_AUDIT_DIR: tmpAuditDir }, async () => {
-    return await submit_agent.handler(ctx, params);
+describe('delegation admission and submitted permission ceiling', () => {
+  it('requires an authenticated agent token, including direct handler calls', async () => {
+    await seed();
+    await expect(submit({}, ctx({ auth: { clientId: 'client', scopes: ['read'] } }))).rejects.toThrow('agent scope');
+    await expect(submit({}, ctx({ auth: undefined }))).rejects.toThrow('OAuth client');
+    await expect(submit({}, ctx({ remote: false }))).rejects.toThrow('local CLI');
   });
-}
-
-describe('submit_agent op (v0.38 Slice 3 — remote-callable agent dispatch with binding enforcement)', () => {
-  describe('op surface', () => {
-    it('declares scope=agent + mutating=true', () => {
-      // Minions-visibility wave: 'agent' is a first-class member of the
-      // Operation scope union now (amendment 16) — no `as any` escape hatch.
-      expect(submit_agent.scope).toBe('agent');
-      expect(submit_agent.mutating).toBe(true);
-    });
-    it('declares required prompt param', () => {
-      expect(submit_agent.params.prompt).toBeDefined();
-      expect((submit_agent.params.prompt as any).required).toBe(true);
-    });
+  it('refuses unknown and revoked clients', async () => {
+    await expect(submit()).rejects.toThrow('No OAuth client found');
+    await seed();
+    await engine.executeRaw("UPDATE oauth_clients SET deleted_at=now() WHERE client_id='client'");
+    await expect(submit()).rejects.toThrow('client_revoked');
   });
-
-  describe('local CLI bypass (ctx.remote === false)', () => {
-    it('throws invalid_request — local CLI must use gbrain agent run', async () => {
-      const ctx = makeCtx({ remote: false });
-      await expect(callSubmitAgent(ctx, { prompt: 'hi' })).rejects.toThrow(
-        /local CLI.*gbrain agent run/i,
-      );
-    });
+  it('database boundary rejects incomplete agent bindings', async () => {
+    await expect(seed({ tools: [] })).rejects.toThrow('oauth_clients_complete_agent_grant');
   });
-
-  describe('OAuth client requirement', () => {
-    it('refuses when no clientId in ctx.auth', async () => {
-      const ctx = makeCtx(); // no clientId
-      await expect(callSubmitAgent(ctx, { prompt: 'hi' })).rejects.toThrow(
-        /requires an OAuth client with the `agent` scope/i,
-      );
-    });
-
-    it('refuses when client_id is unknown', async () => {
-      const ctx = makeCtx({ clientId: 'nobody-here' });
-      await expect(callSubmitAgent(ctx, { prompt: 'hi' })).rejects.toThrow(
-        /client_id nobody-here not found/,
-      );
-    });
+  it('rejects removed or unknown registry tools', async () => {
+    await seed({ tools: ['invented_tool'] });
+    await expect(submit()).rejects.toThrow('delegated_tools_unavailable');
   });
-
-  describe('binding requirement (D13 — opt-in only)', () => {
-    it('refuses when client has agent scope but bound_tools is NULL', async () => {
-      // Legacy admin client gets agent scope appended via re-registration but
-      // forgot to set --bound-tools. Refuse with the paste-ready hint.
-      await seedClient('legacy-admin', { bound_tools: null });
-      const ctx = makeCtx({ clientId: 'legacy-admin' });
-      await expect(callSubmitAgent(ctx, { prompt: 'hi' })).rejects.toThrow(
-        /has the agent scope but no bindings.*re-register/i,
-      );
-    });
+  it('preview validates source and model without inserting work', async () => {
+    await seed();
+    await expect(submit({ model: 'missing-provider:model' }, ctx({ dryRun: true }))).rejects.toThrow('supported agent');
+    await expect(submit({}, ctx({ dryRun: true, auth: { clientId: 'client', scopes: ['agent'], sourceId: 'other' } }))).rejects.toThrow('authenticated_source_changed');
+    const rows = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM minion_jobs');
+    expect(rows[0]?.n).toBe(0);
   });
-
-  describe('allowed_tools subset enforcement', () => {
-    it('passes when allowed_tools ⊆ bound_tools', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search', 'get_page', 'put_page'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-        bound_max_concurrent: 3,
-      });
-      const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      const result = await callSubmitAgent(ctx, {
-        prompt: 'go',
-        allowed_tools: ['search', 'get_page'],
-      });
-      expect(result.dry_run).toBe(true);
-      expect(result.action).toBe('submit_agent');
-    });
-
-    it('refuses when allowed_tools requests a tool outside bound_tools', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search', 'get_page'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-      });
-      const ctx = makeCtx({ clientId: 'cursor' });
-      await expect(
-        callSubmitAgent(ctx, { prompt: 'go', allowed_tools: ['put_page'] }),
-      ).rejects.toThrow(/tool "put_page" is not in client cursor's bound_tools/);
-    });
-
-    it('defaults to bound_tools when allowed_tools omitted', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-      });
-      const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      const result = await callSubmitAgent(ctx, { prompt: 'go' });
-      expect(result.dry_run).toBe(true);
-    });
-
-    // An EXPLICIT [] used to pass both subset loops vacuously and reach the
-    // worker, which reads empty allowed_tools as "the whole registry" — so a
-    // client bound to ['search'] got put_page. `??` doesn't substitute for an
-    // empty array, only for null/undefined.
-    it('collapses an explicit empty allowed_tools to the binding, not the full registry', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-      });
-      const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      const result = await callSubmitAgent(ctx, { prompt: 'go', allowed_tools: [] });
-      expect(result.dry_run).toBe(true);
-      expect(result.resolved_tools).toEqual(['search']);
-    });
-
-    // Empty prefixes reached the subagent as "use the legacy
-    // wiki/agents/<job-id>/ namespace" — outside every bound prefix.
-    it('collapses an explicit empty allowed_slug_prefixes to the binding', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['put_page'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['emp-alice/'],
-      });
-      const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      const result = await callSubmitAgent(ctx, { prompt: 'go', allowed_slug_prefixes: [] });
-      // Normalized into the glob the delegated matcher understands, so the
-      // subagent can write descendants rather than one exact slug.
-      expect(result.resolved_slug_prefixes).toEqual(['emp-alice/*']);
-    });
+  it('preview shows actual tools, source, paths and explicit unlimited spending', async () => {
+    await seed();
+    const result = await submit({ allowed_tools: ['get_page'] }, ctx({ dryRun: true }));
+    expect(result.resolved_tools).toEqual(['get_page']);
+    expect(result.bound_source).toBe('default');
+    expect(result.spending).toEqual({ mode: 'unlimited' });
   });
-
-  describe('allowed_slug_prefixes enforcement', () => {
-    it('passes when each requested prefix is under a bound prefix', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['put_page'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/', 'people/'],
-      });
-      const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      // 'wiki/' starts with 'wiki/' (exact prefix match)
-      const r1 = await callSubmitAgent(ctx, {
-        prompt: 'go',
-        allowed_slug_prefixes: ['wiki/'],
-      });
-      expect(r1.dry_run).toBe(true);
-    });
-
-    it('refuses when a requested prefix has no bound parent', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['put_page'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-      });
-      const ctx = makeCtx({ clientId: 'cursor' });
-      await expect(
-        callSubmitAgent(ctx, {
-          prompt: 'go',
-          allowed_slug_prefixes: ['private/'],
-        }),
-      ).rejects.toThrow(/slug_prefix "private\/" is not under any.*bound_slug_prefixes/);
-    });
+  it('preview and enqueue enforce explicit operation authority without requiring direct scopes', async () => {
+    await seed();
+    await engine.executeRaw("UPDATE oauth_clients SET allowed_operations=ARRAY['submit_agent','get_page'] WHERE client_id='client'");
+    const preview = await submit({}, ctx({ dryRun: true }));
+    expect(preview.resolved_tools).toEqual(['get_page']);
+    await expect(submit({ allowed_tools: ['put_page'] }, ctx({ dryRun: true }))).rejects.toThrow('delegated_tools_invalid');
+    await engine.executeRaw("UPDATE oauth_clients SET allowed_operations=ARRAY['get_page'] WHERE client_id='client'");
+    await expect(submit({}, ctx({ dryRun: true }))).rejects.toThrow('delegation_operation_withdrawn');
+    await expect(submit()).rejects.toThrow('delegation_operation_withdrawn');
+    expect(await engine.executeRaw('SELECT * FROM minion_jobs')).toHaveLength(0);
   });
-
-  describe('concurrency cap enforcement', () => {
-    it('refuses when inflight count >= bound_max_concurrent', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-        bound_max_concurrent: 2,
-      });
-      // Seed 2 already-running subagent jobs for this client.
-      for (let i = 0; i < 2; i++) {
-        await engine.executeRaw(
-          `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-           VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())`,
-          [JSON.stringify({ prompt: `existing-${i}`, __owner_client_id: 'cursor' })],
-        );
-      }
-      const ctx = makeCtx({ clientId: 'cursor' });
-      await expect(callSubmitAgent(ctx, { prompt: 'one too many' })).rejects.toThrow(
-        /at concurrency cap \(2\/2\)/,
-      );
-    });
-
-    it('allows submit when inflight count < cap', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-        bound_max_concurrent: 3,
-      });
-      await engine.executeRaw(
-        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-         VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())`,
-        [JSON.stringify({ prompt: 'one', __owner_client_id: 'cursor' })],
-      );
-      const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      const result = await callSubmitAgent(ctx, { prompt: 'two' });
-      expect(result.dry_run).toBe(true);
-      expect(result.bound_max_concurrent).toBe(3);
-    });
-
-    it('does NOT count terminal-state jobs toward the cap', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-        bound_max_concurrent: 1,
-      });
-      // 5 completed jobs — none counted (status filter is waiting/active/waiting-children).
-      for (let i = 0; i < 5; i++) {
-        await engine.executeRaw(
-          `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-           VALUES ('subagent', 'completed', $1::jsonb, 'default', 0, now())`,
-          [JSON.stringify({ prompt: `done-${i}`, __owner_client_id: 'cursor' })],
-        );
-      }
-      const ctx = makeCtx({ clientId: 'cursor', dryRun: true });
-      const result = await callSubmitAgent(ctx, { prompt: 'fresh' });
-      expect(result.dry_run).toBe(true);
-    });
-
-    it('isolates inflight count by client_id (no cross-client leakage)', async () => {
-      await seedClient('alice', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-        bound_max_concurrent: 1,
-      });
-      await seedClient('bob', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-        bound_max_concurrent: 1,
-      });
-      // Alice has 1 active — at her cap.
-      await engine.executeRaw(
-        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-         VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())`,
-        [JSON.stringify({ prompt: 'alice-busy', __owner_client_id: 'alice' })],
-      );
-      // Bob's submit should succeed — his cap (1) is independent.
-      const ctxBob = makeCtx({ clientId: 'bob', dryRun: true });
-      const result = await callSubmitAgent(ctxBob, { prompt: 'bob-fresh' });
-      expect(result.dry_run).toBe(true);
-    });
+  it('later operation widening cannot widen a submitted operation ceiling', async () => {
+    await seed();
+    await engine.executeRaw("UPDATE oauth_clients SET allowed_operations=ARRAY['submit_agent','get_page'] WHERE client_id='client'");
+    const original = submissionSnapshot(await currentDelegationGrant(engine, 'client'), {});
+    await engine.executeRaw("UPDATE oauth_clients SET allowed_operations=NULL WHERE client_id='client'");
+    const effective = await effectiveDelegation(engine, original);
+    expect(effective.tools).toEqual(['get_page']);
   });
-
-  describe('happy-path submission', () => {
-    it('inserts a subagent job + writes audit row', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search', 'get_page'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-        bound_max_concurrent: 3,
-        budget_usd_per_day: 5.00,
-      });
-      const ctx = makeCtx({ clientId: 'cursor' });
-      const result = await callSubmitAgent(ctx, {
-        prompt: 'research the YC W26 batch',
-        allowed_tools: ['search'],
-      });
-      expect(result.id).toBeGreaterThan(0);
-      expect(result.name).toBe('subagent');
-      expect(result.client_id).toBe('cursor');
-      // Minions-visibility wave (amendments 24/25): every successful submit
-      // carries a queue-state probe. Either a real snapshot (depth counts the
-      // job just enqueued) or the fail-open {probe_failed: true} marker —
-      // never absent, never an error.
-      expect(result.queue_state).toBeDefined();
-      if (!result.queue_state.probe_failed) {
-        expect(result.queue_state.depth).toBeGreaterThanOrEqual(1);
-        expect(typeof result.queue_state.worker_alive).toBe('boolean');
-      }
-
-      // Job persisted with correct shape.
-      const rows = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT name, status, data FROM minion_jobs WHERE id = $1`,
-        [result.id],
-      );
-      expect(rows.length).toBe(1);
-      expect(rows[0].name).toBe('subagent');
-      const data = typeof rows[0].data === 'string'
-        ? JSON.parse(rows[0].data as string)
-        : (rows[0].data as Record<string, unknown>);
-      expect(data.prompt).toBe('research the YC W26 batch');
-      expect(data.allowed_tools).toEqual(['search']);
-      expect(data.__owner_client_id).toBe('cursor');
-      expect(data.source_id).toBe('default'); // auto-set from bound_source_id
-
-      // Audit file written.
-      const auditFiles = fs.readdirSync(tmpAuditDir).filter(f => f.startsWith('agent-jobs-'));
-      expect(auditFiles.length).toBe(1);
-      const auditContent = fs.readFileSync(path.join(tmpAuditDir, auditFiles[0]), 'utf8');
-      const auditLine = JSON.parse(auditContent.trim().split('\n')[0]);
-      expect(auditLine.client_id).toBe('cursor');
-      expect(auditLine.job_id).toBe(result.id);
-      expect(auditLine.bound_tools).toEqual(['search']);
-      expect(auditLine.bound_source).toBe('default');
-      expect(auditLine.budget_remaining_cents).toBe(500); // 5.00 USD → 500 cents
-      expect(auditLine.outcome).toBe('submitted');
-      // CRITICAL: prompt text MUST NOT be in audit (only byte count).
-      expect(auditContent).not.toContain('YC W26 batch');
-    });
-
-    it('caps max_turns at 100', async () => {
-      await seedClient('cursor', {
-        bound_tools: ['search'],
-        bound_source_id: 'default',
-        bound_slug_prefixes: ['wiki/'],
-      });
-      const ctx = makeCtx({ clientId: 'cursor' });
-      const result = await callSubmitAgent(ctx, {
-        prompt: 'long',
-        max_turns: 9999, // way over cap
-      });
-      const rows = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT data FROM minion_jobs WHERE id = $1`,
-        [result.id],
-      );
-      const data = typeof rows[0].data === 'string'
-        ? JSON.parse(rows[0].data as string)
-        : (rows[0].data as Record<string, unknown>);
-      expect(data.max_turns).toBe(100);
-    });
+  it('rejects empty or broadened tool and prefix overrides', async () => {
+    await seed();
+    for (const params of [{ allowed_tools: [] }, { allowed_tools: ['search'] }, { allowed_slug_prefixes: [] }, { allowed_slug_prefixes: ['wiki/'] }]) {
+      await expect(submit(params, ctx({ dryRun: true }))).rejects.toThrow('agent_bindings_invalid');
+    }
+  });
+  it('checks namespace boundaries, including sibling names', async () => {
+    await seed({ prefixes: ['wiki/agents/one/'] });
+    await expect(submit({ allowed_slug_prefixes: ['wiki/agents/one-two/'] })).rejects.toThrow('delegated_prefixes_invalid');
+    const result = await submit({ allowed_slug_prefixes: ['wiki/agents/one/sub/'] }, ctx({ dryRun: true }));
+    expect(result.resolved_slug_prefixes).toEqual(['wiki/agents/one/sub/*']);
+  });
+  it('refuses archived sources before preview or enqueue', async () => {
+    await seed();
+    await engine.executeRaw("UPDATE sources SET archived=true WHERE id='default'");
+    await expect(submit({}, ctx({ dryRun: true }))).rejects.toThrow('source_inactive');
+    await expect(submit()).rejects.toThrow('source_inactive');
+  });
+  it('rejects invalid turn limits', async () => {
+    await seed();
+    for (const max_turns of [0, -1, 1.5, 101, NaN]) await expect(submit({ max_turns })).rejects.toThrow('max_turns');
+  });
+  it('atomically admits exactly the configured count across queues', async () => {
+    await seed({ cap: 2 });
+    const results = await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, () => Promise.allSettled(
+      Array.from({ length: 8 }, (_, i) => operationsByName.submit_agent.handler(ctx(), { prompt: `request ${i}`, queue: `queue-${i}` }))));
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(2);
+    const jobs = await engine.executeRaw<{ data: any }>("SELECT data FROM minion_jobs WHERE name='subagent'");
+    expect(jobs).toHaveLength(2);
+    expect(jobs[0].data.__delegation_grant.tools).toEqual(['get_page','put_page']);
+  });
+  it('counts delayed and paused jobs against the same owner cap', async () => {
+    await seed();
+    const first = await submit();
+    for (const status of ['delayed','paused','waiting-children','active']) {
+      await engine.executeRaw('UPDATE minion_jobs SET status=$1 WHERE id=$2', [status, first.id]);
+      await expect(submit({ prompt: 'another request' })).rejects.toThrow();
+    }
+  });
+  it('uses an explicit job namespace and refuses prefix overrides', async () => {
+    await seed({ prefixes: null });
+    await expect(submit({ allowed_slug_prefixes: ['wiki/'] })).rejects.toThrow('job_namespace_cannot_be_overridden');
+    const result = await submit();
+    const rows = await engine.executeRaw<{ data: any }>('SELECT data FROM minion_jobs WHERE id=$1',[result.id]);
+    const effective = await effectiveDelegation(engine, snapshotFromJob(rows[0].data)!, result.id);
+    expect(effective.slugPrefixes).toEqual([`wiki/agents/${result.id}/*`]);
+  });
+  it('current tools and paths intersect the original snapshot', async () => {
+    await seed({ tools: ['get_page','put_page'], prefixes: ['wiki/'] });
+    const original = submissionSnapshot(await currentDelegationGrant(engine,'client'), { allowed_slug_prefixes: ['wiki/project/'] });
+    await engine.executeRaw("UPDATE oauth_clients SET bound_tools=ARRAY['get_page','search'], delegated_slug_prefixes=ARRAY['wiki/project/narrow/'] WHERE client_id='client'");
+    const effective = await effectiveDelegation(engine, original);
+    expect(effective.tools).toEqual(['get_page']);
+    expect(effective.slugPrefixes).toEqual(['wiki/project/narrow/*']);
+  });
+  it('grant widening does not widen submitted tools, paths or finite budget', async () => {
+    await seed({ tools: ['get_page'], prefixes: ['wiki/one/'], budget: 3 });
+    const original = submissionSnapshot(await currentDelegationGrant(engine,'client'), {});
+    await engine.executeRaw("UPDATE oauth_clients SET bound_tools=ARRAY['get_page','put_page'], delegated_slug_prefixes=ARRAY['wiki/'], budget_usd_per_day=NULL WHERE client_id='client'");
+    const effective = await effectiveDelegation(engine, original);
+    expect(effective.tools).toEqual(['get_page']);
+    expect(effective.slugPrefixes).toEqual(['wiki/one/*']);
+    expect(Number(effective.budgetUsdPerDay)).toBe(3);
+  });
+  it('source changes invalidate a job instead of retargeting it', async () => {
+    await seed();
+    const original = submissionSnapshot(await currentDelegationGrant(engine,'client'), {});
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES ('another','another')");
+    await engine.executeRaw("UPDATE oauth_clients SET source_id='another', bound_source_id='another', federated_read=ARRAY['another'] WHERE client_id='client'");
+    await expect(effectiveDelegation(engine,original)).rejects.toThrow('submitted_source_or_brain_changed');
+  });
+  it('removing delegated read authority invalidates an existing job and preview', async () => {
+    await seed();
+    const original = submissionSnapshot(await currentDelegationGrant(engine, 'client'), {});
+    await expect(engine.executeRaw("UPDATE oauth_clients SET federated_read=ARRAY[]::text[] WHERE client_id='client'")).rejects.toThrow('oauth_clients_complete_agent_grant');
+    await engine.executeRaw("UPDATE oauth_clients SET scope='read',federated_read=ARRAY[]::text[] WHERE client_id='client'");
+    await expect(effectiveDelegation(engine, original)).rejects.toThrow('delegated_read_source_missing');
+    await expect(submit({}, ctx({ dryRun: true }))).rejects.toThrow('delegated_read_source_missing');
+  });
+  it('legacy or forged job payloads never turn empty tools into a full registry', () => {
+    expect(() => snapshotFromJob({ __owner_client_id: 'client', allowed_tools: [], source_id: 'default' })).toThrow('legacy_snapshot_missing');
+    expect(() => snapshotFromJob({ __owner_client_id: 'client', __delegation_grant: {} })).toThrow('snapshot_invalid');
+  });
+  it('legacy host/current brain aliases resolve to the serving brain', async () => {
+    await seed();
+    await engine.executeRaw("UPDATE oauth_clients SET bound_brain_id='host' WHERE client_id='client'");
+    const legacy = snapshotFromJob({ __owner_client_id: 'client', allowed_tools: ['get_page'], source_id: 'default', brain_id: 'current' })!;
+    const effective = await effectiveDelegation(engine, legacy, 42);
+    expect(effective.brainId).toBeNull();
+    expect(effective.slugPrefixes).toEqual(['wiki/agents/42/*']);
   });
 });

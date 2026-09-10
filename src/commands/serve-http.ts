@@ -33,6 +33,15 @@ import { operations, OperationError, opAllowedForBoundClient } from '../core/ope
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
 import { resolveMcpInstructions } from '../mcp/instructions.ts';
+import { installCapabilitiesResource } from '../mcp/capabilities.ts';
+import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
+import { publicHarnessMetadata } from '../core/harness/registry.ts';
+import { GRANT_PROFILES } from '../core/grants/model.ts';
+import { provisionHarnessGrant } from './mcp-provision.ts';
+import { retainCredentialDelivery } from '../core/harness/delivery.ts';
+import { mountOAuthOwnerConsent } from './serve-http-consent.ts';
+import { readClientGrant, rescopeClientGrant } from '../core/grants/service.ts';
+import { parseAdminGrantRequest, previewNewAdminGrant, grantHttpStatus, GRANT_TOKEN_IMPLICATIONS, mountAdminGrantDiscovery } from './serve-http-grants.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import {
   GBrainOAuthProvider,
@@ -678,6 +687,7 @@ export interface AgentClientSpend {
   cap_usd_per_day: number | null;
   spent_cents_today: number;
   pending_cents: number;
+  unknown_count: number;
   inflight_count: number;
 }
 
@@ -704,14 +714,16 @@ export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentC
         SELECT SUM(estimated_cents)::text
           FROM mcp_spend_reservations
          WHERE client_id = c.client_id
-           AND status = 'pending'
-           AND expires_at > now()
+           AND status IN ('pending', 'expired')
       ), '0') AS pending_cents,
+      (SELECT COUNT(*)::int FROM mcp_spend_reservations
+        WHERE client_id = c.client_id AND status IN ('pending', 'expired')
+          AND estimate_known = false) AS unknown_count,
       COALESCE((
         SELECT COUNT(*)::int
           FROM minion_jobs
          WHERE name = 'subagent'
-           AND status IN ('waiting', 'active', 'waiting-children')
+           AND status IN ('waiting', 'active', 'waiting-children', 'delayed', 'paused')
            AND data->>'__owner_client_id' = c.client_id
       ), 0) AS inflight_count
     FROM oauth_clients c
@@ -727,6 +739,7 @@ export async function queryAgentClientSpend(engine: BrainEngine): Promise<AgentC
       : null,
     spent_cents_today: parseFloat(String(r.spent_cents_today ?? '0')),
     pending_cents: parseFloat(String(r.pending_cents ?? '0')),
+    unknown_count: Number(r.unknown_count ?? 0),
     inflight_count: Number(r.inflight_count ?? 0),
   }));
 }
@@ -1143,7 +1156,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           res.status(400).json({ error: 'invalid_request', error_description: 'code required' });
           return;
         }
-        tokens = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri);
+        tokens = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri,
+          typeof req.body.resource === 'string' ? new URL(req.body.resource) : undefined);
       } else {
         const refreshToken = req.body.refresh_token;
         const scopeParam = typeof req.body.scope === 'string' ? req.body.scope.split(/\s+/) : undefined;
@@ -1151,7 +1165,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           res.status(400).json({ error: 'invalid_request', error_description: 'refresh_token required' });
           return;
         }
-        tokens = await oauthProvider.exchangeRefreshToken(client, refreshToken, scopeParam);
+        tokens = await oauthProvider.exchangeRefreshToken(client, refreshToken, scopeParam,
+          typeof req.body.resource === 'string' ? new URL(req.body.resource) : undefined);
       }
       res.json(tokens);
     } catch (e) {
@@ -1355,7 +1370,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     next();
   });
 
+  mountOAuthOwnerConsent(app, {
+    provider: oauthProvider,
+    publicOrigin: new URL(mcpResourceUrl).origin,
+    sessionValid: id => Boolean(id && (adminSessions.get(id) ?? 0) > Date.now()),
+  });
   app.use(authRouter);
+  app.get('/.well-known/gbrain', (_req, res) => {
+    res.json({ version: VERSION, protocol: 'mcp', endpoint: mcpResourceUrl.toString(), profiles: GRANT_PROFILES,
+      adapters: publicHarnessMetadata(), documentation: 'https://github.com/garrytan/gbrain/blob/master/docs/mcp/README.md' });
+  });
 
   // ---------------------------------------------------------------------------
   // Health check — liveness only. Full engine stats live at
@@ -1527,6 +1551,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   }
 
   // #3893 (reimplemented from @y2688): Prometheus exposition. Admin-gated —
+  app.post('/admin/api/grants', requireAdmin, express.json(), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    try {
+      const result = await provisionHarnessGrant(engine, req.body, 'admin-api');
+      res.json(result);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      res.status(code === 'grant_conflict' ? 409 : 400).json({ error: code ?? 'invalid_grant', message: error instanceof Error ? error.message : 'Grant failed' });
+    }
+  });
+
   // request/error/latency series profile a personal brain's usage, so this
   // is not a public surface (the original PR served it unauthenticated).
   app.get('/metrics', requireAdmin, (_req: Request, res: Response) => {
@@ -1922,8 +1957,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  mountAdminGrantDiscovery(app, requireAdmin, engine, mcpResourceUrl.toString());
+
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    res.set('Cache-Control', 'no-store');
     // Set only once the client row has COMMITTED — the catch below folds it
     // into the 500 payload so a post-commit failure never reads as
     // "nothing was created".
@@ -1941,7 +1979,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // missing, empty) and rejects the rest with a structured 400.
       const { name, source, federatedRead, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
       const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
-      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      if (typeof name !== 'string' || !name.trim()) { res.status(400).json({ error: 'Name required' }); return; }
       let scopeString: string;
       try {
         scopeString = normalizeScopesInput(rawScopes);
@@ -2037,6 +2075,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         }
         ttlNum = v;
       }
+      // Profile resolution and all advanced bindings use the same canonical
+      // validation as CLI registration. Preview performs no credential writes.
+      const grantRequest = parseAdminGrantRequest(req.body);
+      const preview = await previewNewAdminGrant(engine, name, grantRequest.patch, { sourceId, federatedRead: federatedReadIds, scopes: scopeString });
+      if (grantRequest.dryRun) {
+        const existing = await sql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`;
+        if (existing.length) { res.status(409).json({ error: 'duplicate_name', client_id: existing[0].client_id }); return; }
+        res.json({ before: null, after: preview, revision: 0, dryRun: true, tokenImplications: GRANT_TOKEN_IMPLICATIONS });
+        return;
+      }
       // Column pre-flight OUTSIDE the tx (25P02 — nothing inside may degrade):
       // pre-v61 brains lack the scoped-client columns and registerClientManual's
       // internal 42703 retry ladder would abort the transaction, so refuse up
@@ -2075,9 +2123,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // had already drifted once (this route hardcoded 'default' pre-v0.41).
         registered = await registerScopedClient(txSql, name, {
           grantTypes: grants,
-          scopes: scopeString,
-          sourceId,
-          federatedRead: federatedReadIds,
+          scopes: preview.scopes.join(' '),
+          sourceId: preview.sourceId!,
+          federatedRead: preview.federatedRead,
           redirectUris: uris,
           tokenEndpointAuthMethod: validatedAuthMethod,
           boundTools: undefined,
@@ -2087,7 +2135,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           boundMaxConcurrent: undefined,
           budgetUsdPerDay: undefined,
           tokenTtlSeconds: undefined,
-        }, { tokenTtlSeconds: ttlNum, columns });
+        }, { tokenTtlSeconds: preview.tokenTtlSeconds ?? ttlNum, columns, grant: grantRequest.patch });
+        if (registered.clientSecret) {
+          // Preserve delivery before COMMIT so a lost browser response is
+          // recoverable without rotating or duplicating the registered client.
+          retainCredentialDelivery({ version: 1, mcp_url: mcpResourceUrl.toString(), issuer_url: issuerUrl.origin,
+            client_id: registered.clientId, client_secret: registered.clientSecret,
+            profile: preview.profile ?? undefined, source_id: preview.sourceId ?? undefined });
+        }
       });
       if (dupClientId !== null) {
         res.status(409).json({
@@ -2109,7 +2164,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // A throw INSIDE the tx rolls the row back (no client persists); the
       // only window where a client exists at failure time is post-commit,
       // marked by createdClientId — include it so the operator can revoke.
-      res.status(500).json({
+      res.status(grantHttpStatus(e)).json({
         error: e instanceof Error ? e.message : 'Registration failed',
         ...(createdClientId !== undefined ? { client_id: createdClientId } : {}),
       });
@@ -2121,11 +2176,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     try {
       const { clientId, tokenTtl } = req.body;
       if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
-      const ttl = tokenTtl === null || tokenTtl === 0 ? null : Number(tokenTtl);
-      await sql`UPDATE oauth_clients SET token_ttl = ${ttl} WHERE client_id = ${clientId}`;
-      res.json({ updated: true, tokenTtl: ttl });
+      if (tokenTtl === undefined) { res.status(400).json({ error: 'tokenTtl required' }); return; }
+      const request = parseAdminGrantRequest(req.body);
+      const result = await rescopeClientGrant(engine, clientId, { tokenTtlSeconds: request.patch.tokenTtlSeconds }, { actor: 'admin-api', expectedRevision: request.expectedRevision, dryRun: request.dryRun });
+      res.json(request.dryRun ? { ...result, tokenImplications: GRANT_TOKEN_IMPLICATIONS } : { updated: true, tokenTtl: result.after.tokenTtlSeconds, ...(request.expectedRevision !== undefined ? { revision: result.revision } : {}) });
     } catch (e) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Update failed' });
+      res.status(grantHttpStatus(e)).json({ error: e instanceof Error ? e.message : 'Update failed' });
     }
   });
 
@@ -2139,6 +2195,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const { clientId, sourceId, federatedRead, boundSlugPrefixes, surface } = req.body ?? {};
       if (!clientId || typeof clientId !== 'string') {
         res.status(400).json({ error: 'clientId required' });
+        return;
+      }
+      const extended = Object.keys(req.body).some(key => !['clientId', 'sourceId', 'federatedRead', 'boundSlugPrefixes', 'surface'].includes(key));
+      if (extended) {
+        const before = await readClientGrant(engine, clientId);
+        const request = parseAdminGrantRequest(req.body, before);
+        const result = await rescopeClientGrant(engine, clientId, request.patch, {
+          actor: 'admin-api', expectedRevision: request.expectedRevision ?? before.revision, dryRun: request.dryRun, repair: request.repair,
+        });
+        res.json({ ...result, tokenImplications: GRANT_TOKEN_IMPLICATIONS });
         return;
       }
       if (federatedRead !== undefined &&
@@ -2181,7 +2247,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.json(result);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Rescope failed';
-      const status = /No OAuth client found/.test(message) ? 404
+      const status = grantHttpStatus(e) !== 500 ? grantHttpStatus(e) : /No OAuth client found/.test(message) ? 404
         : /Invalid source_id|requires --source|cannot be empty|does not exist|cannot be an empty list|bound_slug_prefixes entr|--surface must be/.test(message) ? 400
         : 500;
       res.status(status).json({ error: message });
@@ -2375,9 +2441,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       resolveEffectiveSurface(authInfo),
       canWrite ? resolveWritebackConfig(engine, config) : Promise.resolve(null),
     ]);
-    const mcpOperations = filterOpsForSurface(mcpOperationsBase, surface);
+    const mcpOperations = filterOpsForSurface(mcpOperationsBase, surface)
+      .filter(op => authInfo.allowedOperations == null || authInfo.allowedOperations.includes(op.name));
+    authInfo.effectiveSurface = surface;
     const surfaceAllowedOps: ReadonlySet<string> | undefined =
-      surface === 'full' ? undefined : new Set(mcpOperations.map(o => o.name));
+      surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
 
     // Create a fresh MCP server per request (stateless).
     let writebackOpts: ReturnType<typeof ambientOptsFrom> = null;
@@ -2396,11 +2464,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const server = new Server(
       { name: 'gbrain', version: VERSION },
       {
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, resources: {} },
         // #4748: contract (+ opt-in writeback section) + deployment identity.
         instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
       },
     );
+    installCapabilitiesResource(server, async () => {
+      return { transport: authInfo.clientId.startsWith('gbrain_cl_') ? 'oauth' : 'legacy', client_id: authInfo.clientId,
+        ...await resolveAuthCapabilities(authInfo, engine, config) };
+    });
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       // WP1 honest catalog: the advertised list is exactly what THIS token
       // can call. Three per-request filters, cheapest first:
@@ -2820,6 +2892,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // guard (codex F#16) prevents a second-response attempt if the throw
       // happens after the inner queue.add try/catch already responded.
       try {
+
+      // The webhook queue bypasses MCP dispatch and does not carry an original
+      // operation grant through execution. A snapshot-bound client must use the
+      // shared MCP write path until ingestion has that same policy contract.
+      if (authInfo.allowedOperations != null || authInfo.grantProjectionDegraded) {
+        res.status(403).json({
+          error: 'permission_denied',
+          message: 'POST /ingest is unavailable to clients with operation snapshots. ' +
+            'Use an approved MCP capture, put_page, or remember operation so the current grant is enforced.',
+        });
+        return;
+      }
 
       // v0.39.3.0 BUG-2: explicit null/undefined guard BEFORE body coercion.
       // When the request has no body at all (no Content-Length header, no

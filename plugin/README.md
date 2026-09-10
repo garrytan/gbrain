@@ -1,4 +1,4 @@
-<!-- gbrain-plugin-tree-stamp: 0.48.5.0 -->
+<!-- gbrain-plugin-tree-stamp: 0.49.0.0 -->
 # gbrain plugin skill tree (generated — do not hand-edit)
 
 This tree is the curated skill set for the gbrain Codex and Claude Code
@@ -9,7 +9,7 @@ addition/exclusion).
 ## MCP surface note (read once)
 
 The plugin's MCP server runs `gbrain serve --surface starter` — the
-27-op daily-driver surface (the seven memory verbs + daily
+28-op daily-driver surface (the seven memory verbs + daily
 brain ops + capture). 22
 bundled skills reference gbrain operations beyond that surface; every one of
 them has a first-class `gbrain` CLI path, which is the primary way skills

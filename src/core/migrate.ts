@@ -10,6 +10,9 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
+import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
+import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL } from './facts/withdrawal-schema.ts';
+import { repairLegacyClientGrants } from './grants/migration.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -6500,6 +6503,18 @@ export const MIGRATIONS: Migration[] = [
         ON extract_atoms_transcript_state (source_id, content_hash)
         WHERE tombstoned;
     `,
+  },
+  {
+    version: 147,
+    name: 'oauth_client_capability_grants',
+    sql: GRANT_COLUMNS_SQL + GRANT_AUDIT_SCHEMA_SQL + GRANT_SPEND_COLUMNS_SQL,
+    handler: repairLegacyClientGrants,
+  },
+  {
+    version: 148,
+    name: 'durable_fact_withdrawals',
+    idempotent: true,
+    sql: FACT_WITHDRAWAL_SCHEMA_SQL + FACT_WITHDRAWAL_BACKFILL_SQL,
   },
 ];
 

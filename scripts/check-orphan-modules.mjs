@@ -82,6 +82,8 @@ function main() {
       'src/mcp/server.ts',
       'src/openclaw-context-engine.ts',
       'src/admin-embedded.ts',
+      // Package-shipped scripts/setup-in-agent.sh invokes this finite setup entry directly.
+      'src/core/agent-install/entry.ts',
     ].filter(f => srcSet.has(f));
     const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
     for (const target of Object.values(pkg.exports ?? {})) {

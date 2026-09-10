@@ -9,11 +9,18 @@ map of the same routing: one place to scan every skill and its trigger
 phrases. If a row here and a skill's frontmatter disagree, the frontmatter
 wins; fix the row.
 
-## Always-on (every message)
+## Memory defaults
+
+Preserve the existing agent's identity and instructions. Ordinary setup adds
+keyless memory; personal-agent bootstrap requires an explicit request. Recall
+and explicit remembering do not require automatic capture. Ambient capture is
+off until the user opts in, and paid enrichment is a separate choice.
+
+## Always-on recall and opt-in capture
 
 | Trigger | Skill |
 |---------|-------|
-| Every inbound message (spawn parallel, don't block) | `skills/signal-detector/SKILL.md` |
+| Every substantive inbound message, only after automatic-capture opt-in | `skills/signal-detector/SKILL.md` (delegation additionally requires authorization) |
 | Any brain read/write/lookup/citation | `skills/brain-ops/SKILL.md` |
 
 ## Brain operations
@@ -103,9 +110,9 @@ wins; fix the row.
 
 | Trigger | Skill |
 |---------|-------|
-| "Set up GBrain", first boot | `skills/setup/SKILL.md` |
+| "Set up GBrain", "install gbrain into this agent workspace", "add gbrain to my agent", first boot | `skills/setup/SKILL.md` (existing identity, keyless memory by default) |
 | "Now what?", "fill my brain", "cold start", "bootstrap my data", "import my data", "what should I import first" | `skills/cold-start/SKILL.md` |
-| "agent workspace bootstrap", "install gbrain into this agent workspace", "gbrain bootstrap", "paste-in install", "set up the maintenance sweep" | Run `gbrain bootstrap` (paste-in workspace install: interview + identity files + hooks + sweep). See `docs/guides/bootstrap.md` |
+| Explicit request to create a new personal agent with identity and private repository, "gbrain bootstrap" | Run `gbrain bootstrap`; see `BOOTSTRAP_FOR_AGENTS.md`. A generic paste-in install request routes to `skills/setup/SKILL.md`. |
 | "wire this box's coding agents to the brain", "framework-spawned sessions need brain access", "wire gbrain hooks without a workspace", "hook Claude Code/Codex to the running serve" | Run `gbrain bootstrap harness --yes` (machine-level wiring to a running `serve --http`: scoped token + user-scope MCP + headless pre-approval + hooks; no agent.json). See the "Local harness mode" section of `docs/guides/bootstrap.md` |
 | "which gbrain engine", "pglite or postgres", "gbrain engine status", "upgrade to postgres", "switch gbrain to postgres", "install postgres for gbrain", "move my brain to supabase", "set up postgres for the brain" | `skills/postgres-adopt/SKILL.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |

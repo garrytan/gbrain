@@ -163,7 +163,8 @@ function scanSrcStrings(): string[] {
         // Prose separators end the command: an em-dash clause or a new
         // sentence after the mention is instruction text, not the command's
         // own argv ("...gbrain binary path — pass --gbrain-bin ...").
-        const tail = (m[2] ?? '').split(/\s—\s|\.\s|;\s|\?\s|!\s/)[0]!;
+        // A shell pipe starts another command with its own flags (e.g. jq --arg).
+        const tail = (m[2] ?? '').split(/\s—\s|\.\s|;\s|\?\s|!\s|\s\|\s|\s&&\s/)[0]!;
         const flags = [...tail.matchAll(/--[a-z][a-z0-9-]*/g)].map((f) => f[0]);
         if (flags.length === 0) continue; // prose-mention; not gated (see header)
         if (!valid.has(verb)) {

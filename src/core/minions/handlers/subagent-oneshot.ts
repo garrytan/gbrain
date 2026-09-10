@@ -39,6 +39,7 @@ import { parseLlmJson } from '../../llm-json.ts';
 import { PAGE_SLUG_SEG } from '../../cjk.ts';
 import { matchesSlugAllowList } from '../../ops/context.ts';
 import { autoLinkWrittenPage } from '../../ops/pages.ts';
+import { snapshotFromJob, effectiveDelegation, DelegationDeniedError } from '../delegated-policy.ts';
 import { serializeMarkdown } from '../../markdown.ts';
 import type { PageType } from '../../types.ts';
 import { LINK_CANDIDATES_HEADER } from '../../cycle/link-manifest.ts';
@@ -237,6 +238,15 @@ async function loadOneshotLedger(engine: BrainEngine, jobId: number): Promise<Le
 export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutcome> {
   const { engine, ctx, data, model } = args;
   const chat = args._chat ?? gatewayChat;
+  const submitted = snapshotFromJob(ctx.data);
+  const checkCurrentWrite = async (slug?: string): Promise<void> => {
+    if (!submitted) return;
+    const effective = await effectiveDelegation(engine, submitted, ctx.id);
+    if (slug !== undefined && (!effective.tools.includes('put_page') || !matchesSlugAllowList(slug, effective.slugPrefixes))) {
+      throw new DelegationDeniedError(['delegated_write_withdrawn']);
+    }
+  };
+  await checkCurrentWrite();
 
   // ── OV-4: ledger-first recovery ─────────────────────────────────────────
   // A prior invocation of this job already reached the write stage. Never
@@ -287,7 +297,8 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
       if (row.status !== 'complete' || !row.slug || !row.content) continue;
       const targets = extractWikilinkTargets(row.content);
       if (!targets.some(t => recoveredSlugs.has(t) && t !== row.slug)) continue;
-      await autoLinkWrittenPage(engine, row.slug, { sourceId: data.source_id ?? 'default' });
+      await checkCurrentWrite(row.slug);
+      if (!submitted) await autoLinkWrittenPage(engine, row.slug, { sourceId: data.source_id ?? 'default' });
     }
     const recoveredText = `oneshot recovery: finalized from a prior invocation's ledger (${writtenRefs.filter(r => r.status === 'complete').length} completed write(s))`;
     await persistOneshotTranscript(engine, ctx.id, data.prompt, recoveredText, model);
@@ -442,11 +453,14 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
   // (getAllSlugs is a full-table scan per job; wikilink targets are few).
   // Reads are scoped to the WRITE's source (source_id ?? 'default' — mirrors
   // putPage's schema default) so validation universe == write universe.
+  await checkCurrentWrite();
   const writeSourceId = data.source_id ?? 'default';
   const allTargets = [...new Set(parsed.pages.flatMap(p => extractWikilinkTargets(p.body)))];
-  let existingSlugs: Set<string>;
+  let existingSlugs = new Set<string>();
   let pageSample = 0;
-  try {
+  // Remote-owned jobs do not resolve or count hidden targets. Their links
+  // remain literal text, matching remote put_page's disabled auto-link hook.
+  if (!submitted) try {
     const rows = allTargets.length > 0
       ? await engine.executeRaw<{ slug: string }>(
           `SELECT slug FROM pages WHERE slug = ANY($1) AND source_id = $2 AND deleted_at IS NULL`,
@@ -466,7 +480,7 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
   // CEO-5 cold-brain relaxation: no manifest was offered AND the brain has
   // almost no pages — a resolving wikilink is impossible; accept syntactic
   // presence (content-first; the edge materializes once targets exist).
-  const coldBrain = pageSample < 5 && !data.prompt.includes(LINK_CANDIDATES_HEADER);
+  const coldBrain = submitted !== null || (pageSample < 5 && !data.prompt.includes(LINK_CANDIDATES_HEADER));
 
   for (const page of parsed.pages) {
     if (!SLUG_RE.test(page.slug)) return fb('bad_slug');
@@ -568,7 +582,8 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
     if (!ref || ref.status !== 'complete') continue;
     const targets = extractWikilinkTargets(parsed.pages[i].body);
     if (!targets.some(t => inBatch.has(t) && t !== parsed.pages[i].slug)) continue;
-    await autoLinkWrittenPage(engine, ref.slug, { sourceId: writeSourceId });
+    await checkCurrentWrite(ref.slug);
+    if (!submitted) await autoLinkWrittenPage(engine, ref.slug, { sourceId: writeSourceId });
   }
 
   const written = writtenRefs.filter(r => r.status === 'complete');

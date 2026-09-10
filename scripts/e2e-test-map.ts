@@ -15,6 +15,11 @@
 // No brace expansion, no ?, no [ ].
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  "src/core/harness/**": ["test/e2e/harness-access.test.ts"],
+  "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
+  "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts"],
+  "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
+  "src/commands/serve-http-consent.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the
   // key-gated live DeepSeek replay (self-skips without OPENROUTER_API_KEY).
   "src/core/ai/openrouter-families.ts": ["test/e2e/openrouter-deepseek-subagent-replay.live.test.ts"],
@@ -122,6 +127,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
+    "test/e2e/delegated-grants-withdrawal.test.ts",
+    "test/e2e/delegated-http-worker.test.ts",
     "test/e2e/minions-concurrency.test.ts",
     "test/e2e/minions-resilience.test.ts",
     "test/e2e/minions-shell.test.ts",
@@ -137,7 +144,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/doctor-connectors-pglite.test.ts",
   ],
   // Agent-job scope fences over real Postgres.
-  "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts"],
+  "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
   "src/core/postgres-engine.ts": [
     "test/e2e/chunk-canonical-text-privacy.test.ts",
@@ -264,6 +271,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/serve-http.ts": [
     "test/e2e/serve-http-ingest-webhook.test.ts",
     "test/e2e/serve-http-oauth.test.ts",
+    "test/e2e/harness-access.test.ts",
     // #3242 wiring: legacy no-grant federated widening vs granted confinement
     // over the SDK /mcp transport (verifyAccessToken → noGrantFederatedScope
     // → OperationContext.localFederatedSourceIds).

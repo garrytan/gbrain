@@ -36,6 +36,12 @@ GBRAIN_HOME_DIR="$BUILD_DIR/home"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts" "$GBRAIN_HOME_DIR"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+cp "$REPO_ROOT/package.json" "$BUILD_DIR/package.json"
+# Grant migrations validate against the running operation registry, whose
+# shipped templates are compile-time assets too. Preserve package-relative paths.
+cp -R "$REPO_ROOT/templates" "$BUILD_DIR/templates"
+mkdir -p "$BUILD_DIR/skills"
+cp "$REPO_ROOT/skills/_brain-filing-rules.json" "$BUILD_DIR/skills/_brain-filing-rules.json"
 cp "$REPO_ROOT/scripts/pglite-embedded-smoketest.ts" "$BUILD_DIR/scripts/pglite-embedded-smoketest.ts"
 ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 

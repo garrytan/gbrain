@@ -5,6 +5,808 @@
 This file concatenates core GBrain documentation for single-fetch ingestion.
 For the link-only index, see `llms.txt`. Source of truth: https://github.com/garrytan/gbrain.
 
+# Choose your agent setup
+
+## docs/guides/grok-bot.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md
+
+# GBrain for Grok Bot
+
+Give Grok Bot durable, inspectable memory by installing GBrain in
+`/workspace/gbrain`, then saving the generated memory instructions as a native
+skill. Start locally for a new brain. If you already operate GBrain elsewhere,
+connect to that hosted brain instead.
+
+This guide covers the **Grok Bot personal agent**. The `grok` coding CLI has a
+separate [Grok Build guide](../mcp/GROK.md). A Grok API key configures a model
+provider; it does not install memory in Grok Bot.
+
+## Choose your path
+
+| Your situation | Use |
+| --- | --- |
+| New to GBrain; want memory inside your Bot | Local setup below; no model API key needed for the first fact/recall test |
+| Already have a hosted GBrain | [Hosted harness access](hosted-harness-access.md), adapter `grok-bot`; choose the thin CLI for the complete remote command path |
+| Want a native Grok Bot MCP plugin | Native plugin authentication is unverified and release-gated; use the supported thin CLI path until an actual Bot pilot establishes the native connection |
+
+## Paste this into your Bot
+
+```text
+Set up GBrain as my durable local memory. Read:
+https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md
+and its linked in-agent setup guide.
+
+Use /workspace/gbrain on the Grok Bot cloud computer. First inspect that path
+and reuse an existing matching installation; do not replace existing state.
+Run the shipped setup helper with --harness grok-bot. Use the generated absolute
+/workspace/gbrain/bin/gbrain launcher for every memory command.
+
+Start with keyless fact memory. Show me the search-mode matrix printed by init
+and confirm my choice. Keep bulk capture and paid maintenance opt-in.
+Save the generated memory instructions as a private native skill and enable it
+for this Bot. Keep your current identity and other instructions.
+
+Save a harmless randomized test fact with provenance, recall it through a
+separate command, then help me test it in a fresh conversation. Show the actual
+GBrain result and root used. Tell me which native setup steps remain unverified.
+```
+
+The exact shell commands, generated files, first test, repair, and recovery
+procedure are in [Install GBrain inside a personal agent](in-agent-setup.md).
+
+## One shared brain for your Bots
+
+Grok documents one account-wide cloud computer: files, browser sessions, and
+command-line credentials are shared. It names `/workspace` for durable files
+and treats manually installed packages as replaceable. Use one root and its
+repair helper across Bots; separate Bot names or GBrain sources do not create
+a privacy boundary on that computer.
+[Grok Bot computer documentation](https://docs.x.ai/grok-bot/computer-and-apps)
+(updated August 11, 2026; checked September 9, 2026).
+
+Give each Bot the same absolute launcher. Keep memory calls finite and serialize
+them when possible. If another Bot is using PGLite, retry after it finishes;
+never remove the live database lock. Designate one Bot to own optional scheduled
+maintenance so several Bots do not create duplicate routines.
+
+## Attach the memory skill
+
+Ask the Bot to save the contents of
+`/workspace/gbrain/instructions/gbrain-skill.md` as a private skill. Grok's
+documented controls are **Settings → Plugins → Yours** to enable a private
+skill for a Bot, and `/` in the composer to select it. Enable it for every Bot
+that should use this installation. GBrain does not assume that Grok Bot reads
+`AGENTS.md` automatically.
+[Grok Bot skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations)
+(updated August 11, 2026; checked September 9, 2026).
+
+Test the skill explicitly first. Then start a new conversation and ask for the
+randomized phrase without supplying it. Inspect the CLI call and returned
+provenance. Also ask a second Bot to recall it after enabling the same skill.
+This establishes use of the shared GBrain database rather than relying on an
+answer the app may have retained elsewhere.
+
+## Three useful things to try
+
+- **A continuing project:** “Recall our project-example decisions, then help me
+  choose the next step. Remember today's decision and its rationale.”
+- **A preference across Bots:** “Remember that my meeting brief should start
+  with the decision needed.” Ask a different enabled Bot to prepare the next
+  brief and inspect its recall.
+- **A connected-service workflow:** “Use your existing calendar and email
+  plugins for tomorrow's meeting brief. Save only the commitments I explicitly
+  ask you to keep, with links and dates.” Use Grok's normal plugin permissions;
+  GBrain does not need those services' credentials to store the selected facts.
+
+For corrections, recall the old fact, retire its ID, save the corrected fact
+with provenance, and verify active recall. For deletion, use the returned fact
+ID with `forget`; retained history and older backups need separate consideration.
+See the [worked round trip](in-agent-setup.md#3-prove-the-first-memory-round-trip).
+
+## Local installation maintenance and recovery
+
+These steps apply when GBrain runs inside the Bot. For a hosted connection,
+use `<ROOT>/GBRAIN-INSTRUCTIONS.md` and the
+[hosted runtime repair procedure](hosted-harness-access.md#maintenance-removal-and-troubleshooting).
+
+After a successful manual run, optionally ask one Bot to turn
+`instructions/maintenance.md` into a native routine. Reuse the receipt's stable
+routine identifier, select the schedule and time zone, and inspect its test run.
+Grok documents native routines and their run history, but GBrain does not create
+one automatically.
+[Grok Bot routine controls](https://docs.x.ai/grok-bot/skills-routines-and-automations).
+
+Use [full database backups](in-agent-setup.md#6-back-up-the-complete-local-database)
+and an explicitly chosen protected off-VM copy. If packages disappear after a
+computer update, run `bash /workspace/gbrain/bin/gbrain-setup`. If durable state
+is lost, [restore into a new root](in-agent-setup.md#7-restore-into-a-new-root),
+repair its launcher, verify memory, and reattach the skill and routine. Do not
+reinitialize the old path to make an error disappear.
+
+To stop, pause the native routine and disable the skill. Preserve the root and
+backup until you deliberately choose to delete the data. For hosted access,
+also revoke that Bot installation's grant on the host.
+
+## Acceptance checklist and limits
+
+The local installer and recovery path have hermetic repository tests. **An
+actual Grok Bot account has not been used to verify this integration.** Before
+calling your installation complete, check:
+
+- The launcher writes, recalls, corrects, and forgets the randomized test fact.
+- A fresh conversation invokes that same launcher through the native skill.
+- Every intended Bot uses the same root; concurrent calls recover from a busy
+  response without deleting locks.
+- A full backup restores into a different root and returns the saved fact.
+- If scheduling is enabled, the single native routine runs and reports a result.
+- After a platform update, the root persists or the documented repair/recovery
+  path succeeds; record the observed app version and date.
+
+If a skill is absent from `/`, check its per-Bot enablement. If the command
+disappears, follow the repair procedure for your local or hosted setup. If recall fails only in new conversations, inspect skill
+selection and the absolute launcher path before changing the database. Hosted
+network and OAuth failures belong to the
+[hosted access troubleshooting flow](hosted-harness-access.md).
+
+[Validation evidence and actual-harness acceptance](harness-validation.md).
+
+---
+
+## docs/guides/muse.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
+
+# GBrain for Muse
+
+Install a small local GBrain CLI in Muse's durable user-files area, then teach
+Muse to use it for explicit memory and recall. Start keyless. If you already
+have a hosted brain, use the same CLI workflow as a thin client instead.
+
+This guide covers **Meta's Muse personal agent**.
+
+## Muse Code is a different product
+
+Muse Code and third-party projects with similar names do not establish
+capabilities for the personal agent. Use the `muse` adapter for this guide;
+`muse-code` remains a separate identity in the harness registry.
+
+## What the public design establishes
+
+Meta describes a dedicated Linux VM, a Debian runtime cell, CLI-based tools,
+custom skills, and custom connectors. Built-in connector credentials are kept
+outside that cell; Sentinel controls connector actions and network egress.
+These are a good basis for a small CLI integration, but the public document
+does not specify a durable custom-tool directory, a native MCP registration
+interface, or an installation API for GBrain skills.
+[Meta's Muse technical design](https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse)
+(published September 8, 2026; checked September 9, 2026).
+
+**Establish the persistent path in the actual Muse environment before installing.**
+Do not copy Grok Bot's `/workspace` convention or place memory in an arbitrary
+runtime home. A Linux shell existing today does not prove its files will survive
+replacement of the runtime cell.
+
+## Choose your path
+
+| Your situation | Use |
+| --- | --- |
+| New brain and a confirmed durable user-files directory | Local setup below, adapter `muse` |
+| Existing hosted brain | [Hosted harness access](hosted-harness-access.md), adapter `muse`, thin CLI |
+| No confirmed persistent custom-files location | Resolve that platform capability before creating durable local memory |
+| A native MCP option appears in your account | Treat it as a new capability to verify; this guide does not claim Muse supports native MCP |
+
+## Paste this into Muse
+
+```text
+Set up GBrain as my durable memory. Read:
+https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
+and its linked in-agent setup guide.
+
+First identify the documented or platform-confirmed durable user-files area
+available to your runtime. Inspect it and choose an absolute gbrain root there.
+Tell me the persistence evidence. If you cannot establish persistence, report
+that blocker instead of treating a temporary runtime directory as durable.
+
+Use the shipped setup helper with --harness muse and that absolute --root.
+Reuse a matching installation and preserve existing state. Use its generated
+absolute bin/gbrain launcher for every memory command. Keep your current identity.
+
+Start with keyless facts and recall. Show me init's search-mode matrix and
+confirm my choice; keep paid maintenance and bulk capture opt-in. Attach the
+generated memory instructions using the native custom-skill mechanism available
+in this account, and report its exact location or name.
+
+Save and recall a harmless randomized test fact, then help me verify a fresh
+conversation actually invokes GBrain. Use Muse's normal permission and secure
+credential flows for any blocked download or later hosted connection. Report
+each unverified platform step separately from successful local CLI checks.
+```
+
+Once the durable root is established, follow the
+[shared setup commands](in-agent-setup.md#2-run-the-shipped-setup-helper), replacing
+the example root and selecting `--harness muse`. The helper works without root
+and does not create a system service or agent identity. Initial fact storage and
+recall do not require extracting credentials from a Muse connector.
+
+## Attach instructions and test a fresh conversation
+
+Read `<ROOT>/instructions/gbrain-skill.md` and save it through Muse's available
+custom-skill or standing-instruction mechanism. Keep the exact absolute
+`<ROOT>/bin/gbrain` path in that skill. Public documentation does not establish
+an automatic `AGENTS.md` loader or hook API, so merely writing a repository file
+is not evidence that Muse will use it.
+
+Follow the [randomized round trip](in-agent-setup.md#3-prove-the-first-memory-round-trip).
+In a fresh conversation, ask for the phrase without repeating it and inspect
+the command result. Test a correction and deletion too. Record the actual
+native skill location/name and the date of the test; the installer deliberately
+leaves native integration marked unverified.
+
+## Three useful things to try
+
+- **A durable preference:** “Remember that I want a short recommendation followed
+  by the evidence.” Ask a new conversation to recall that preference before
+  preparing a recommendation.
+- **A project handoff:** “Recall the current project-example decision and open
+  questions. After we decide, remember the new decision with today's date.”
+- **Existing connected services:** “Use your connected calendar and email to
+  prepare this meeting. Save the selected commitments I ask you to retain,
+  with source links.” Let Muse use its existing connectors and permissions;
+  store the chosen facts in GBrain without duplicating service credentials.
+
+Do not request raw connector tokens or change Sentinel policy to make GBrain
+work. For a hosted brain, the allowed destination and secure credential delivery
+are part of the [hosted setup](hosted-harness-access.md); finish them through the
+actual product's supported flow. A denied request is a reported setup boundary,
+not a reason to try another route around it.
+
+## Local installation maintenance, backup, and recovery
+
+These steps apply when GBrain runs inside Muse. A hosted connection instead
+uses `<ROOT>/GBRAIN-INSTRUCTIONS.md` and the
+[hosted runtime repair procedure](hosted-harness-access.md#maintenance-removal-and-troubleshooting).
+
+After manual memory succeeds, use `<ROOT>/instructions/maintenance.md` as the
+basis of an optional native schedule, if that feature is available in your
+account. Maintain one routine for the installation and test it. Do not install
+a speculative daemon or assume a shell cron is the product's native scheduler.
+
+Create a [full private backup](in-agent-setup.md#6-back-up-the-complete-local-database)
+and choose a protected off-VM copy explicitly. The raw database can contain
+sensitive memories and authentication state. Its `0600` mode does not encrypt
+it or protect against loss of the whole VM.
+
+After a runtime replacement, use `bash <ROOT>/bin/gbrain-setup` to repair the
+recorded package without resetting memory. If data is lost, restore into an
+absent root, rerun the helper with `--harness muse`, reconnect excluded state,
+and test before reattaching the native skill. The
+[restore procedure](in-agent-setup.md#7-restore-into-a-new-root) preserves the
+original brain and starts no automation.
+
+To stop, pause the native routine and disable the skill. Keep the root and a
+protected backup until you deliberately choose to delete the memory. Revoke
+hosted grants separately if you connected to an existing brain.
+
+## Acceptance checklist and limits
+
+The local installer, CLI, and recovery path have hermetic repository tests.
+**An actual Muse account has not been used to verify this integration.** The
+remaining acceptance checks are concrete:
+
+- Establish and record the durable root and its behavior across runtime replacement.
+- Complete allowed package downloads and run the generated launcher.
+- Save, recall, correct, and forget the randomized fact through separate commands.
+- Make a fresh conversation select the native skill and invoke that launcher.
+- Restore a private backup into another root and verify the saved fact.
+- If used, test the account's native schedule and its failure reporting.
+- For a hosted brain, verify the real egress and secure credential flow; no
+  native MCP or privileged credential-service integration is assumed.
+
+If installation is blocked, preserve the exact platform denial. If memory works
+only in the current conversation, inspect the native skill attachment. If the
+runtime vanishes, run repair against the same durable root. If that root was not
+preserved, restore a backup rather than initializing a replacement brain at the
+old path. More errors and fixes are in the
+[shared troubleshooting table](in-agent-setup.md#troubleshooting).
+
+[Validation evidence and actual-harness acceptance](harness-validation.md).
+
+---
+
+## docs/guides/in-agent-setup.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/in-agent-setup.md
+
+# Install GBrain inside a personal agent
+
+Give the agent one durable GBrain folder and one absolute command to use in
+every conversation. The setup helper installs a private Bun runtime, creates a
+local PGLite brain, and writes a small memory skill. You can start remembering
+facts without a model API key, a server, or a new agent identity.
+
+Start with the instructions for your app:
+
+- [Grok Bot](grok-bot.md): use its shared `/workspace` directory.
+- [Muse](muse.md): first establish which user-files directory survives runtime
+  replacement; its public documentation does not name that path.
+- [An existing hosted brain](hosted-harness-access.md): connect to that brain
+  instead of creating another local database.
+
+## 1. Choose the durable folder
+
+The root must be an absolute path with an existing parent, for example
+`/workspace/gbrain`. It must be empty or absent for a new installation. Do not
+use a temporary directory, a checkout that another task might delete, or a
+symlink. The same root must be available to later conversations and routines.
+
+Setup creates this layout:
+
+| Path beneath the chosen root | Purpose |
+| --- | --- |
+| `bin/gbrain` | Stable command; always selects this brain and its source |
+| `bin/gbrain-setup` | Repair the recorded runtime, or explicitly upgrade it |
+| `.gbrain/config.json` | Local configuration |
+| `.gbrain/brain.pglite` | Complete database, including facts saved only in the database |
+| `.gbrain/agent-install/receipt.json` | Ownership, pinned package/runtime versions, schema, and capability evidence |
+| `memory/` | Managed source files |
+| `instructions/gbrain-skill.md` | Memory instructions to attach using the app's native skill mechanism |
+| `instructions/maintenance.md` | Optional maintenance routine with a stable identifier |
+| `runtime/` | Replaceable private runtime and package versions |
+
+`GBRAIN_HOME` is the chosen root; GBrain places its state in the `.gbrain`
+directory underneath it. Use the generated launcher even if another `gbrain`
+is on `PATH`. It selects the root explicitly, changes to that directory, and
+removes inherited database, brain, source, and provider overrides. Put later
+provider configuration in this installation's config or private `.gbrain/.env`,
+not another project's environment.
+
+## 2. Run the shipped setup helper
+
+Run these commands **inside the agent's computer**. For Grok Bot:
+
+```bash
+curl --fail --silent --show-error --location \
+  https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/scripts/setup-in-agent.sh \
+  --output /tmp/gbrain-setup.sh
+bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot
+```
+
+For Muse, use `--harness muse` and the absolute durable root established in
+[its guide](muse.md). The helper needs Bash, `curl`, `git`, `unzip`, and outbound
+access to GitHub and package downloads. It does not install system packages or
+require root. If the platform blocks a download, use its normal permission flow.
+
+The helper verifies the pinned Bun release checksum and records the exact
+GBrain commit it installs. Package installation runs with lifecycle scripts
+disabled. Initialization uses `--pglite --no-embedding`: keyless fact writes,
+entity recall, and text filtering are available; semantic embedding and paid
+extraction require separate configuration.
+
+**Relay the search-mode matrix printed by initialization and confirm the
+operator's choice**, as described in [the install protocol](../../INSTALL_FOR_AGENTS.md).
+Automatic capture and paid maintenance remain separate choices. A local
+database does not automatically capture conversations, grant connector access,
+or install a native skill.
+
+For an existing compatible local brain, review its root and config before
+adding `--adopt`. Adoption preserves the database and configuration; existing
+source trees remain external to the installer. `--adopt` does not convert a
+hosted client or repair an unreadable database by replacing it.
+
+## 3. Prove the first memory round trip
+
+Use a harmless randomized value so the answer cannot come from the model's
+general knowledge. Have the agent substitute a new random suffix and the
+current date:
+
+```bash
+/workspace/gbrain/bin/gbrain remember \
+  "My setup test phrase is amber-orbit-REPLACE-WITH-RANDOM-SUFFIX" \
+  --entity projects/gbrain-setup --provenance "explicit setup test, YYYY-MM-DD" --json
+/workspace/gbrain/bin/gbrain recall projects/gbrain-setup --json
+```
+
+Replace `/workspace/gbrain` throughout this guide if your root differs. Keep
+the returned fact ID. The write must return a successful status, and a separate
+recall process must return the exact phrase with its attribution.
+
+Now attach `instructions/gbrain-skill.md` through the app's native saved-skill
+or standing-instruction mechanism. Open a **new conversation**, ask for the
+test phrase without repeating it, and inspect the actual command result. The
+agent must invoke the same absolute launcher. Its own built-in memory is not
+evidence that it used GBrain.
+
+Finally, ask the agent to correct the test phrase. It should recall the old
+fact, retire the old ID, save the replacement with provenance, and verify that
+ordinary recall returns the current fact. To remove the test:
+
+```bash
+/workspace/gbrain/bin/gbrain forget FACT_ID --reason "setup test complete"
+/workspace/gbrain/bin/gbrain recall projects/gbrain-setup --json
+```
+
+Use the numeric ID returned by this installation's CLI. Forgetting retires a
+fact from active recall; history and earlier backups can still contain it.
+
+The installer records `native_runtime: unverified` deliberately. A successful
+database probe establishes local operation; enabling the native skill and
+testing a fresh conversation establishes app behavior. Record those results
+separately, including the date and app version when visible.
+
+## 4. Make memory useful
+
+The generated skill is intentionally small: recall relevant context before
+personal or continuing-work questions; save requested durable facts with a
+source and date; preserve uncertainty; correct stale facts; verify the result.
+Keep personal edits in a separate native instruction or separate file so
+repair can maintain the generated file without replacing your work.
+
+Three useful first workflows:
+
+1. **Preferences:** “Remember that I want meeting briefs in three bullets, with
+   the decision first.” In a new conversation, request a meeting brief and
+   check that the agent recalled the preference.
+2. **Decisions:** “Remember that project-example chose option B today, because
+   it meets our offline requirement. Mark this as our decision, not a general
+   recommendation.” Ask for the decision and rationale next week.
+3. **Connected services:** “Use your existing calendar/email connector to
+   prepare this meeting, then save only the decisions and commitments I ask
+   you to retain, with source links.” The harness keeps using its own service
+   connection. GBrain stores the selected memory; it does not need a second
+   copy of the service credentials or the entire inbox.
+
+Capture and bulk imports are opt-in. To import chosen files or exported chats,
+follow [chat connectors and imports](chat-connectors.md). Neither this helper
+nor the product guides claim automatic transcript interception or hooks.
+
+## 5. Maintenance and concurrent agents
+
+Use finite CLI commands. PGLite allows one process to hold the database at a
+time; another command waits and can return `pglite_busy` when the wait expires.
+Let the first command finish, then retry. Do not remove a live lock. Avoid
+launching parallel memory commands against the same root, and keep longer
+maintenance work out of interactive recall periods.
+
+After the round trip succeeds, the user can choose a native schedule. Attach
+`instructions/maintenance.md` to **one** routine, using the identifier in the
+receipt. Start with `doctor --fast --json` and report its result. Missing
+embedding credentials on a keyless installation are a configuration choice;
+do not invent keys or start paid maintenance to improve a score.
+
+The helper creates no daemon, `serve` process, cron entry, or native routine.
+Native scheduling availability must be checked in the actual app. Reuse the
+same routine on repair instead of creating duplicates. If serialized local
+commands become a bottleneck, [move to a hosted brain](hosted-harness-access.md)
+with a server database suitable for concurrent clients.
+
+## 6. Back up the complete local database
+
+Choose a private backup directory outside `memory/` and `instructions/`, and
+pause other memory and file writers for the snapshot:
+
+```bash
+mkdir -p /workspace/gbrain-backups
+chmod 700 /workspace/gbrain-backups
+/workspace/gbrain/bin/gbrain backup create \
+  --output /workspace/gbrain-backups/brain-YYYYMMDD-HHMM.gbrain-backup --json
+```
+
+Each output filename must be new. The command holds the real PGLite writer
+lock, takes a full database dump, checks the managed file inventory for changes,
+and publishes a checksummed archive with mode `0600`. A busy database or a
+changing file fails the operation instead of publishing a success receipt.
+
+| Included | Excluded or inventoried for reconnection |
+| --- | --- |
+| Full PGLite database: pages, DB-only facts, jobs, settings, authentication state, and other tables | Runtime packages, Bun, caches, Git metadata, previous backups |
+| Files under the receipt's managed data paths, subject to the exclusions below; fresh setup uses `memory/` and `instructions/` | External source directories and remote object storage contents |
+| Config with recognized credential fields removed, source/path inventory, and install metadata | Known standalone credential files such as `credentials.json`, `auth.json`, `token.txt`, and `.env*`; `.gbrain/credential-deliveries`; known cache, browser-profile, and backup directories |
+| File hashes, package/schema versions, and explicit omitted-item inventory | Native app accounts, installed skills, routines, and platform state |
+
+**The archive contains sensitive full database state and may contain secrets.**
+Excluded managed paths are listed in the inventory. Ordinary memory documents,
+including files named `credentials.md`, are preserved; arbitrary files can
+contain secrets regardless of their names. Config redaction and filename
+exclusions do not make the raw database or archive secret-free. The format is
+checksummed, not encrypted. A same-computer copy does not protect against losing
+that computer. Choose a protected off-VM destination explicitly, apply its
+encryption and access controls, and verify that the copied archive can restore.
+Do not upload an archive to a public issue or chat.
+
+This recovery format currently accepts managed `.gbrain/brain.pglite` databases,
+PostgreSQL 17 PGLite clusters, and at most 8 GiB of payload. `backup status` and
+`backup check` report file coverage; neither creates this snapshot. Markdown
+exports alone cannot recover facts that exist only in the database.
+
+## 7. Restore into a new root
+
+Use an available GBrain runtime and a destination that **does not exist**:
+
+```bash
+/workspace/gbrain/bin/gbrain backup restore \
+  /workspace/gbrain-backups/brain-YYYYMMDD-HHMM.gbrain-backup \
+  --into /workspace/gbrain-restored --json
+```
+
+Restore verifies the archive before publishing usable state. It rebases managed
+source, page, and known config paths; detaches external source/config paths; and
+cancels every unfinished background job in one transaction, preserving its
+previous status for inspection. Completed history remains. No worker, connector,
+sync, native routine, or paid operation starts.
+
+External checkout and API sources keep their remembered pages available, but
+their live connector configuration is quarantined and sync is disabled. The
+prior configuration is retained in the private `.gbrain/restore-detached.json`
+inventory and an inert database record. Google token commands, GitHub
+materializers, and remote clone settings cannot reactivate merely because
+someone runs `sync --source ... --repo ...`. Chat connector auto-sync is switched
+off, remote storage is detached, and an `autopilot-paused` marker holds the
+daemon until an operator explicitly resumes it. Keep that pause when using
+the recommended finite CLI commands and native harness routines.
+
+A successful `restore-receipt.json` says `state: ready`, `launcher_ready: false`,
+and `setup_required: true`. Reinstall the runtime at the new root:
+
+```bash
+bash /tmp/gbrain-setup.sh --root /workspace/gbrain-restored --harness grok-bot
+```
+
+Fetch the helper again if `/tmp/gbrain-setup.sh` is gone. For a backup from the
+managed setup, **do not add `--adopt`**: restore writes the ownership receipt
+that repair needs. For a backup of a pre-existing unmanaged local brain, review
+the restored config and use `--adopt`. For Muse, retain `--harness muse`.
+
+Read the reconnect inventory, restore excluded credentials using the platform's
+secure entry mechanism, and explicitly reattach external sources. Re-run the
+randomized memory test against the new launcher before updating the native
+skill. Review quarantined jobs before explicitly resubmitting any. The original
+brain stays intact; use one chosen root for subsequent writes.
+
+Review quarantined source settings before applying any of them: they may name
+old paths, accounts, or executable credential commands. Recreate a connector
+with its normal setup flow under a new source ID if you do not need to retain
+its sync identity; the previous source's pages remain queryable. Reusing an
+existing source ID requires a deliberate configuration repair from that
+inventory, followed by a small explicit sync. Restoring credentials or changing
+a source path alone does not restore quarantined connector settings or enable
+its schedule. Treat the private inventory as sensitive, like the full backup.
+
+If restoration fails or is interrupted, keep that destination for inspection
+and retry into another absent root. An incomplete restore receipt blocks setup.
+Do not rename partial database directories into an active installation.
+
+## Repair, upgrade, and remove
+
+After runtime replacement, repair with the retained shell helper:
+
+```bash
+bash /workspace/gbrain/bin/gbrain-setup
+```
+
+If that file is missing, download the shipped helper again and pass the original
+`--root` and `--harness`. Ordinary repair reinstalls the recorded commit and Bun
+version; it preserves facts, configuration, source choice, and native routine
+identifiers. It refuses to replace edited generated files, malformed config,
+or a previously initialized database that has disappeared.
+
+Choose upgrades explicitly, after a verified backup:
+
+```bash
+bash /workspace/gbrain/bin/gbrain-setup --upgrade
+```
+
+Upgrade installs the currently stable package and applies its migrations.
+Repair is not an upgrade, and neither operation resets the brain.
+
+To stop using GBrain, pause its native routine and disable its saved skill.
+Keep the root and a protected backup until you deliberately choose to remove
+the data. No daemon or system-level installation needs uninstalling. If using
+hosted access, also revoke that installation's grant on the host.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| Setup reports unowned state | Choose an empty root; use `--adopt` only after reviewing a compatible existing local brain |
+| Runtime executable disappeared | Run the retained helper or fetch it again with the same root |
+| Config is malformed or initialized memory is missing | Preserve the root; recover config or restore a full backup into a new root |
+| Generated instructions were edited | Preserve your edited file under a different name, then rerun repair and reattach your additions separately |
+| `pglite_busy` | Wait for the active command to finish and retry; stop a long-lived server through its owning process before using finite CLI mode |
+| Fresh conversation cannot recall the test | Inspect the native skill attachment and exact launcher invocation, then run explicit entity recall |
+| Backup says files changed | Pause the writer and create a new snapshot; do not treat the failed output as a backup |
+| Restore target already exists | Choose another absent root; restore never overwrites existing state |
+| A package or host URL is blocked | Complete the app's normal approval flow; preserve the error if access is denied |
+
+## What has been verified
+
+Repository tests exercise real local initialization, separate installed CLI
+processes, environment isolation, runtime repair, ownership guards, archive
+integrity, path rebasing, and unfinished-job quarantine in temporary roots.
+They do not establish persistence across an actual Grok Bot or Muse computer
+replacement, native skill selection, scheduling, or their network/credential
+policies. Those remain app-level acceptance checks in the product guides.
+
+[Validation evidence and actual-harness acceptance](harness-validation.md).
+
+---
+
+## docs/guides/hosted-harness-access.md
+
+Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md
+
+# Connect your agent to an existing hosted GBrain
+
+Use this guide when your memory already lives on another machine. If you want to run GBrain inside your current agent instead, start with [Grok Bot](grok-bot.md), [Muse](muse.md), or the [coding-agent walkthrough](../tutorials/connect-coding-agent.md).
+
+You do two things in different places: the brain owner grants access **on the host**, then you install a private handoff **inside the agent's environment**. Installing configuration on the host does not configure your laptop or Bot.
+
+## One setup prompt
+
+Paste this into the agent that should use the hosted brain:
+
+```text
+Connect this existing agent to my hosted GBrain. Follow:
+https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md
+Keep my identity and unrelated configuration. Use memory-writer unless I explicitly
+request another capability. Have the brain owner provision the private handoff on
+the host; install it here. Keep secrets out of chat, command arguments, and Git.
+Use the actual harness adapter, verify a unique memory round trip, and report
+server checks separately from observed recall in a new harness conversation.
+Do not claim that generated instructions or a job ID prove a working integration.
+```
+
+## 1. Grant access on the brain host
+
+The owner needs a current GBrain runtime and an initialized brain. Stop older servers and workers while applying the grant migration; do not run mixed authorization implementations. Use your normal upgrade and maintenance procedure before restarting them. The HTTPS endpoint comes from your [server deployment](../mcp/DEPLOY.md).
+
+For ordinary memory, choose `memory-writer`:
+
+```bash
+gbrain mcp grant agent-example --harness codex --profile memory-writer \
+  --source default --url https://brain.example.com/mcp \
+  --credentials-out /absolute/private/agent-example.json --json
+```
+
+Replace `codex` with the actual adapter identifier. For a running PGLite server, add `--admin-token-file /absolute/private/admin-token`; this uses the server's authenticated admin API and existing database connection. An ordinary OAuth token or the endpoint URL cannot provision access. Do not open the live PGLite database from a second process.
+
+Use `--dry-run` first to inspect a proposed grant without creating a client. Default output is redacted. The credential handoff is written with private permissions before any optional client installation or verification. Transfer it through a private file channel, then retain only the copies you need. Uploading credentials or backups is never automatic.
+
+| Profile | Access | Native MCP surface |
+| --- | --- | --- |
+| `memory-reader` | Read selected memory | Starter |
+| `memory-writer` | Read and write selected memory | Starter |
+| `coding-agent` | Isolated project writes and explicit project reads | Starter |
+| `operator` | Read, write, and administration | Full |
+| `delegating-agent` | Memory plus explicitly bound delegation | Starter |
+| `full` | All eligible remote capabilities at grant time, including bound delegation | Full |
+
+A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
+
+New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. Explicitly regrant to include them. Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
+
+Snapshot-bound clients write through approved MCP operations such as `remember`, `capture`, or `put_page`. They cannot use the legacy `POST /ingest` webhook, whose queued writes do not yet enforce operation snapshots. Existing webhook clients with a `NULL` snapshot keep their legacy behavior.
+
+## 2. Install inside the intended harness
+
+Install GBrain there if needed, using the documented GitHub/Bun distribution. Then:
+
+```bash
+gbrain connect https://brain.example.com/mcp --harness codex \
+  --credentials-file /absolute/private/agent-example.json --install
+```
+
+For Grok Bot, Muse, or another supported thin CLI adapter, also supply `--root /absolute/verified/persistent-root`. Grok Bot's recommended root is `/workspace/gbrain`. Discover and verify Muse's durable location before choosing a root. Use the generated **absolute launcher** for every later GBrain call; it pins routing and isolates inherited configuration.
+
+The installer preserves unrelated configuration and refuses an unowned or edited connection. Codex, Claude Code, and opencode receive private managed configuration. Generic adapters supply endpoint/authentication guidance; there is no universal configuration file. [Adapter reference](harness-adapters.md) lists supported mechanisms and reload steps.
+
+A configured server is only one step. Follow the adapter's reload instructions and enable the GBrain standing instruction through the harness's actual controls. Thin CLI installations write that instruction to `<ROOT>/GBRAIN-INSTRUCTIONS.md`. Grok Bot/Muse native skill activation remains a separate, visible step until observed in that harness. Generated files alone do not activate a skill.
+
+## 3. Prove a memory round trip
+
+Run the server verifier from the harness environment:
+
+```bash
+gbrain mcp verify --client CLIENT_ID --harness codex \
+  --url https://brain.example.com/mcp \
+  --credentials-file /absolute/private/agent-example.json --json
+```
+
+It checks transport, authentication, effective permissions, reading, a randomized write/readback, and cleanup separately. Memory profiles use `remember` and `recall`; isolated coding grants use pages inside their fence. The capabilities resource works even on the exact seven-tool surface.
+
+`server_status: "passed"` proves those server checks. Overall `status: "partial"` and exit code **2** mean actual harness evidence is still missing; exit **1** means a failed stage. A fluent response or an SDK probe is not proof that your Bot loaded its standing instructions.
+
+Now ask the actual agent to remember a unique harmless fact, with provenance, and note the observed GBrain call and returned ID. Start a new conversation and ask for it without repeating the fact. Observe `recall`. Correct it, read it back, then withdraw it and check active recall again. Keep the result in your private setup receipt. The harness must identify uncertainty if it cannot load the tool or retrieve the record.
+
+`forget` withdraws a fact from active memory. History, source material, and backup copies may remain; it is not a promise of physical erasure. Verifier cleanup uses the same withdrawal semantics. Failed cleanup stays visible with the fixture identifier.
+
+## Delegation is a separate capability
+
+Only grant delegation when you want this client to start work on the brain host. Supply a nonempty set of tools from the running registry:
+
+```bash
+gbrain mcp grant research-example --harness grok-bot \
+  --profile delegating-agent --source default \
+  --bound-tools search,get_page --delegated-namespace job \
+  --url https://brain.example.com/mcp \
+  --credentials-out /absolute/private/research-example.json --json
+```
+
+**New delegation has unlimited spending and concurrency 1.** Unlimited means no client spending cap; provider charges still apply, and usage remains attributed to the client. To impose a finite cap, explicitly add `--budget-usd-per-day 5`. Existing finite caps are preserved during repair and profile changes unless explicitly changed. A cap of `0` prevents paid work. Finite clients refuse paid calls whose maximum cost or pricing is unknown; unresolved liability stays reserved across midnight and reservation expiry until reconciled.
+
+The default job namespace isolates delegated writes per job. To use another allowed fence, supply `--delegated-slug-prefixes agents/research-example/`. Direct writes and delegated writes have separate fences. The delegated source must also belong to the parent's read grant, and bound tools must fit its operation snapshot. Local-only tools and cross-brain delegation are unsupported.
+
+Delegation verification first checks configuration with a dry run. Add `--delegate` to `mcp verify` only when you want a real worker challenge that may incur API charges. A queued job ID does not pass: the verifier requires terminal completion with the randomized result. An unavailable worker or failed cancellation remains visibly incomplete.
+
+Queued and running work stays restricted by both its submitted policy and the current grant. A changed source invalidates the original target; it does not move the job to another source. Revocation stops newly forbidden work at the next execution boundary and cannot undo an external operation already running.
+
+## Repair permissions without replacing credentials
+
+Inspect `whoami` or the authenticated `gbrain://capabilities` resource. It reports the effective profile, revision, scopes, source access, direct/delegated policies, spending mode, and repair reasons. Worker readiness is reported separately from grant validity.
+
+Preview an explicit profile update:
+
+```bash
+gbrain mcp grant agent-example --client CLIENT_ID --if-version REVISION \
+  --harness codex --profile memory-reader --source default \
+  --url https://brain.example.com/mcp --dry-run --json
+```
+
+Review the before/after grant, then repeat without `--dry-run`. `--if-version` rejects a stale edit. The client ID and secret remain unchanged. When updating a client, omit `--profile` to preserve its profile, scopes, operation snapshot, and bindings while changing only the fields you supply. An explicit profile selection regrants its eligible operations. For advanced repairs, use `gbrain auth rescope-client CLIENT_ID --help`; omitted restrictions are retained.
+
+Scope removals affect existing tokens immediately. Added scopes need a newly issued access token; refresh cannot expand its original scope grant. Source, operation, fence, binding, and surface changes apply on the next authenticated request. Repairing bindings benefits an existing token that already carries `agent`. TTL changes apply only to newly issued tokens. New renewable connections use one-hour access tokens; static-token adapters use 30 days. Check the receipt for the selected expiry.
+
+## Recover an interrupted handoff
+
+The host retains a private delivery journal before committing a new client. If the response or destination write is lost, recover the original handoff without duplicating the client:
+
+```bash
+gbrain mcp grant agent-example --client CLIENT_ID --resume --harness codex \
+  --url https://brain.example.com/mcp \
+  --credentials-out /absolute/private/recovered-agent.json --json
+```
+
+Add `--admin-token-file` when recovering through the running server. Resume changes no permissions and rotates no secret. If the client ID was lost, repeating the original creation reports the existing ID instead of creating a duplicate.
+
+In the admin dashboard, use **Recover credentials** for an existing OAuth client. New confidential clients registered there use the same private host journal. If registration loses its response, the form looks up the existing client before offering recovery. Download the recovered handoff and set its permissions to `0600` on the target computer. Recovery refuses a revoked client or a journal whose secret has since been rotated.
+
+An expired or lost **access token** can be reissued using the existing client secret. A lost **client secret**, when neither the handoff nor host delivery journal remains, requires explicit secret rotation. These are distinct operations; revoking a client is another separate operation. Protect or remove the host's `.gbrain/credential-deliveries` files deliberately after secure delivery; they contain credentials and are excluded from default backups.
+
+## Maintenance, removal, and troubleshooting
+
+Keep the host runtime and schema current together. Keep native instructions enabled for each harness, check token expiry for static adapters, and periodically repeat a harmless memory round trip. The host's normal maintenance schedule serves its connected clients; installing a remote connection does not silently create another server or paid routine.
+
+For a hosted thin CLI connection, a removed runtime is repaired by reinstalling
+GBrain in the harness, then repeating `gbrain connect ... --install` with the
+existing private handoff, endpoint, harness identifier, and root. The installer
+updates its owned launcher while preserving the host's memory and client
+identity. This connection has no local database backup or `bin/gbrain-setup`
+helper; complete backups belong on the brain host. If the handoff was lost,
+recover it through the host's delivery procedure first.
+
+Before this security migration, stop old servers and workers and take a protected backup. Start only runtimes that enforce the migrated grants. If rollout fails, disable the affected entry points and restore a compatible runtime while preserving memory and the tightened grants; do not run an older authorization implementation against the migrated database. Local installations can be released independently of hosted delegation.
+
+Remove a managed native configuration with the same private handoff and `gbrain connect ... --remove`. Disable saved skills/routines through the harness controls. Revoke the client on the host when its authority should end. Removing configuration alone does not revoke access or delete memory.
+
+| Symptom | Next action |
+| --- | --- |
+| PGLite is busy | Use authenticated host administration or wait for the current owner to close. Never remove a live lock. |
+| Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. |
+| `grant_conflict` | Fetch the new revision and preview again. |
+| Delegation missing | Inspect repair reasons and explicitly bind supported tools, an active source, path policy, and positive concurrency. |
+| Read works, writes fail | Check issued/current scopes, operation snapshot, source grant, and direct fence. Full surface alone adds no authority. |
+| Work queues but never finishes | Check the host worker and terminal job status; queue admission is not worker verification. |
+| Finite cap blocks a call | Inspect unresolved reservations and provider pricing/bounds; do not treat unknown usage as zero. |
+| Server checks pass, new conversation fails | Verify native instruction activation, reload, absolute launcher, and observed GBrain calls inside that harness. |
+
+## Evidence and release gates
+
+As of **2026-09-09**, repository tests exercise private configuration writers, credential recovery, grant enforcement, owner consent, and server probes. Exact tests and observed results belong in the change's validation record. **Actual Grok Bot/Muse sessions have not been verified by these tests.** Native Grok Bot OAuth additionally requires confidential-client PKCE/resource checks, authenticated owner approval, and a successful real connector test. Muse personal-agent native MCP configuration remains unverified and is not an advertised installation path.
+
+[Validation evidence and actual-harness acceptance](harness-validation.md).
+
+---
+
 # Core entry points
 
 ## AGENTS.md
@@ -17,12 +819,13 @@ This is your install + operating protocol. Claude Code reads `./CLAUDE.md` autom
 Everyone else (Codex, Cursor, OpenClaw, Aider, Continue, or an LLM fetching via URL):
 start here.
 
-> **Becoming someone's persistent personal agent** (identity + memory + private repo)?
-> Follow [`BOOTSTRAP_FOR_AGENTS.md`](./BOOTSTRAP_FOR_AGENTS.md) — the `gbrain bootstrap`
-> flow — instead of the plain install below, then come back here for the operating
-> protocol. Connecting to an EXISTING remote brain from a laptop agent?
-> `gbrain connect https://your-host/mcp --token gbrain_xxx --install` (see the MCP
-> table in [`README.md`](./README.md)).
+> **Default: add memory to the existing agent.** Preserve its identity and unrelated instructions. Start keyless; automatic capture and paid enrichment are opt-in. No bootstrap interview or private repository is required.
+>
+> **Inside Grok Bot or Muse:** follow [Grok Bot](docs/guides/grok-bot.md) or [Muse](docs/guides/muse.md), using the isolated [in-agent setup](docs/guides/in-agent-setup.md) entry point. Use the absolute recorded launcher on every call. Sources organize local memory; they do not isolate agents that share files or credentials. Do not mark generated skills or routines as activated without native-harness evidence.
+>
+> **Existing hosted brain:** follow [hosted harness access](docs/guides/hosted-harness-access.md). Provision on the host; install the private handoff inside the intended harness. A URL or ordinary OAuth token is not administration authority.
+>
+> **Creating a new personal agent, explicitly requested by the user:** follow [BOOTSTRAP_FOR_AGENTS.md](BOOTSTRAP_FOR_AGENTS.md), then return here for the operating protocol.
 
 ## Install (5 min)
 
@@ -48,7 +851,11 @@ start here.
    exact ask-the-user protocol. Same banner fires on `gbrain post-upgrade`
    for existing users (search modes were added in v0.32.3).
 4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full step-by-step
-   flow (API keys, identity, cron, verification).
+   flow (keyless memory, optional API capabilities, maintenance, verification).
+
+## Memory operating protocol
+
+Recall relevant saved context before answering. Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
 
 ## Read this order
 
@@ -1137,13 +1944,13 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGE
 
 # GBrain Installation Guide for AI Agents
 
-Read this entire file, then follow the steps. Ask the user for API keys when needed.
-Target: ~30 minutes to a fully working brain.
+Read this file, then follow the path appropriate to the user’s request. Default to adding keyless memory to their existing agent, preserving identity and unrelated configuration. API keys, enrichment, automatic capture, and a new personal-agent identity are separate choices.
 
-> **Scope note:** this guide installs the BRAIN (for agent platforms like OpenClaw
-> and Hermes, or a standalone brain). If you are Claude Code or Codex and the human
-> asked you to become their persistent personal agent — identity + memory + private
-> repo — follow `BOOTSTRAP_FOR_AGENTS.md` instead.
+> **Choose the installation path first.** Inside **[Grok Bot](docs/guides/grok-bot.md)** or **[Muse](docs/guides/muse.md)**, use their dedicated guide and `scripts/setup-in-agent.sh`; its receipt tracks repair and native enablement. For an **[existing hosted brain](docs/guides/hosted-harness-access.md)**, provision on the host and install the private handoff inside the harness. This guide covers a local brain for other existing agents.
+>
+> **Memory-only path:** install → initialize → relay and confirm the Step 3.5 search-mode choice → connect the harness → verify memory. Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The required search-mode choice still applies; published API cost examples are not prices for the user’s harness subscription.
+>
+> Only if the user asks for a **new persistent personal agent** with identity and a private repo, follow `BOOTSTRAP_FOR_AGENTS.md`.
 
 ## Step 0: If you are not Claude Code
 
@@ -1199,7 +2006,7 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these. gbrain defaults to the Voyage embedding + reranker stack
+Skip API-key setup for the initial keyless memory path. If the user enables semantic retrieval or paid enrichment, configure the selected provider explicitly. GBrain defaults to the Voyage embedding + reranker stack
 (`voyage:voyage-4` @ 1024d + `voyage:rerank-2.5` — one key covers both); OpenAI is the
 main alternative, chosen at init via `--embedding-model <provider:model>`. ZeroEntropy
 is deprecated (its hosted API shuts down 2026-09-04): init auto-pick and the picker
@@ -1236,11 +2043,7 @@ gbrain doctor --json                  # verify all checks pass
 ```
 
 The user's markdown files (notes, docs, brain repo) are SEPARATE from this tool repo.
-Ask the user where their files are, or create a new brain repo:
-
-```bash
-mkdir -p ~/brain && cd ~/brain && git init
-```
+Use the user's chosen notes directory, or a separate managed memory directory. A Git repository is optional; do not create a private personal-agent repo for a memory-only install.
 
 Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
 structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
@@ -1668,11 +2471,18 @@ map of the same routing: one place to scan every skill and its trigger
 phrases. If a row here and a skill's frontmatter disagree, the frontmatter
 wins; fix the row.
 
-## Always-on (every message)
+## Memory defaults
+
+Preserve the existing agent's identity and instructions. Ordinary setup adds
+keyless memory; personal-agent bootstrap requires an explicit request. Recall
+and explicit remembering do not require automatic capture. Ambient capture is
+off until the user opts in, and paid enrichment is a separate choice.
+
+## Always-on recall and opt-in capture
 
 | Trigger | Skill |
 |---------|-------|
-| Every inbound message (spawn parallel, don't block) | `skills/signal-detector/SKILL.md` |
+| Every substantive inbound message, only after automatic-capture opt-in | `skills/signal-detector/SKILL.md` (delegation additionally requires authorization) |
 | Any brain read/write/lookup/citation | `skills/brain-ops/SKILL.md` |
 
 ## Brain operations
@@ -1762,9 +2572,9 @@ wins; fix the row.
 
 | Trigger | Skill |
 |---------|-------|
-| "Set up GBrain", first boot | `skills/setup/SKILL.md` |
+| "Set up GBrain", "install gbrain into this agent workspace", "add gbrain to my agent", first boot | `skills/setup/SKILL.md` (existing identity, keyless memory by default) |
 | "Now what?", "fill my brain", "cold start", "bootstrap my data", "import my data", "what should I import first" | `skills/cold-start/SKILL.md` |
-| "agent workspace bootstrap", "install gbrain into this agent workspace", "gbrain bootstrap", "paste-in install", "set up the maintenance sweep" | Run `gbrain bootstrap` (paste-in workspace install: interview + identity files + hooks + sweep). See `docs/guides/bootstrap.md` |
+| Explicit request to create a new personal agent with identity and private repository, "gbrain bootstrap" | Run `gbrain bootstrap`; see `BOOTSTRAP_FOR_AGENTS.md`. A generic paste-in install request routes to `skills/setup/SKILL.md`. |
 | "wire this box's coding agents to the brain", "framework-spawned sessions need brain access", "wire gbrain hooks without a workspace", "hook Claude Code/Codex to the running serve" | Run `gbrain bootstrap harness --yes` (machine-level wiring to a running `serve --http`: scoped token + user-scope MCP + headless pre-approval + hooks; no agent.json). See the "Local harness mode" section of `docs/guides/bootstrap.md` |
 | "which gbrain engine", "pglite or postgres", "gbrain engine status", "upgrade to postgres", "switch gbrain to postgres", "install postgres for gbrain", "move my brain to supabase", "set up postgres for the brain" | `skills/postgres-adopt/SKILL.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
@@ -1838,7 +2648,14 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/README.md
 
 # GBrain
 
-**Search gives you raw pages. GBrain gives you the answer.** It's the brain layer your AI agent has been missing — the only one that does synthesis, graph traversal, and gap analysis in one box. Run a full autonomous agent on top of it, or just wire it into Claude Code or Codex as a supercharged retrieval layer in one command; either way your coding agent stops being amnesiac about everything that isn't code.
+**Give the agent you already use a memory you control.** GBrain stores explicit facts with their sources, supports corrections and withdrawal, and makes the same memory available across your agents. Start with keyless memory and keyword retrieval; add semantic search, synthesis, and background enrichment when you need them.
+
+## Choose your setup
+
+1. **Add GBrain to my existing agent — recommended.** Keep your agent's identity and save memory inside its environment. No new personal-agent identity or private repository is required. Start with the guide for **[Grok Bot](docs/guides/grok-bot.md)**, **[Muse](docs/guides/muse.md)**, or **[Codex / Claude Code](docs/tutorials/connect-coding-agent.md)**. [Other harnesses](#connect-gbrain-to-your-ai-client-mcp).
+2. **Connect my existing hosted brain.** Grant access on the brain host, then install the private connection inside the intended harness. Follow **[hosted harness access](docs/guides/hosted-harness-access.md)**. The default profile can read and write memory; delegation is an explicit choice.
+
+Grok **Bot** and Grok **Build** are different products. Muse's personal agent and **Muse Code** are different products too. Muse already has native editable memory; GBrain adds an explicit, portable record with provenance and shared access. See each guide's dated evidence and remaining verification steps.
 
 I'm Garry Tan, President and CEO of Y Combinator. I built GBrain to run my own AI agents. It's the production brain behind my OpenClaw and Hermes deployments: **155,795 pages, 24,589 people, 5,340 companies**, 66 cron jobs running autonomously. My agent ingests meetings, emails, tweets, voice calls, and original ideas while I sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. I wake up smarter than when I went to bed — and so will you.
 
@@ -1853,7 +2670,7 @@ The point of building a 150K-page brain is to use it as a strategic moat. To nev
 
 It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate than it is to keep an agent in chat working hard. GBrain is that daemon, generalized. Install in 30 minutes. Your agent does the work. As my personal agent gets smarter, so does yours.
 
-> **~15 minutes to a working personal agent** on the recommended Codex / Claude Code path (mostly a short interview); ~30 minutes for the always-on OpenClaw / Hermes setup. Database ready in 2 seconds either way (PGLite, no server).
+> **Start keyless.** Your harness subscription and any separately configured model API usage are different costs. The optional personal-agent bootstrap takes about 15 minutes; always-on enrichment needs its own compute and API configuration.
 
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the documentation map, or [`llms-full.txt`](llms-full.txt) for the same map with core docs inlined in one fetch. **Agents:** start with [`AGENTS.md`](AGENTS.md) (or [`CLAUDE.md`](CLAUDE.md) if you're Claude Code).
 
@@ -1913,9 +2730,23 @@ This is the difference between a search engine and a brain. Search finds the pag
 > `bun remove -g gbrain`, then reinstall from GitHub. `gbrain doctor` detects a
 > shadowing npm install and prints the fix.
 
-GBrain is designed to be installed and operated by an AI agent. **New to GBrain? Start with Codex** — it runs on the ChatGPT subscription you already have, takes ~15 minutes, and deploys nothing. Already living in Claude Code? Its path is identical. Want GBrain running the way it was designed to run — always on, enriching your brain around the clock? That's OpenClaw or Hermes, at real server + API cost. Each path below is complete on its own. (Wiring it up by hand instead? Jump to [CLI standalone](#cli-standalone-no-agent) or the [MCP table](#connect-gbrain-to-your-ai-client-mcp).)
+Start with the agent you already use. For Grok Bot and Muse, the dedicated guides above install an isolated launcher, repairable runtime, and memory in a verified persistent directory. For a coding agent, paste:
 
-### For Codex — the recommended first step
+```text
+Add GBrain memory to this existing agent. Read and follow:
+https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
+Keep my current identity and instructions. Start keyless, preserve unrelated
+configuration, and use the memory-only path. Do not create a personal-agent
+identity or private repository. Show me the required search-mode choice.
+Verify a unique remember/recall/correction/withdrawal round trip using observed
+GBrain calls, then tell me how to verify recall in a new conversation.
+```
+
+[Codex guide](docs/mcp/CODEX.md) · [Claude Code guide](docs/mcp/CLAUDE_CODE.md) · [Memory-only walkthrough](docs/tutorials/connect-coding-agent.md) · [CLI standalone](#cli-standalone-no-agent).
+
+The following bootstrap paths are optional: use them when you want GBrain to help create a **new persistent personal agent**, including identity files and a private repository.
+
+### For Codex — optional personal-agent bootstrap
 
 Turn Codex into your persistent personal agent. (Just want the brain + skills without the full agent? `codex plugin marketplace add garrytan/gbrain@codex-plugin` then `codex plugin add gbrain@gbrain` — see [docs/mcp/CODEX.md](docs/mcp/CODEX.md). The paste block below builds the whole agent.) Works in the **ChatGPT desktop app** (open Codex on a folder) and in the **Codex CLI** (`codex` in a terminal) — same install, same result. Open Codex in a **new, empty folder** (not an existing code project) — that folder becomes your agent's own **private GitHub repo**, which bootstrap creates and privacy-verifies for you. Then paste:
 
@@ -1930,11 +2761,11 @@ answers. Ask before anything destructive. You are not done until
 
 Codex will ask for command approvals during the install — approving them is the sandbox working as intended. What you get, in about 15 minutes: a short interview (6 required questions) → your agent's identity (SOUL.md, USER.md, MEMORY.md) rendered from your own answers, never invented → a local PGLite brain (2 seconds, no server, no Docker) → MCP wired so every session can search and write memory → a **private** GitHub repo, created and privacy-verified, as your agent's durable body. Works with **zero API keys** — keyword search plus memory your agent writes itself; one optional key upgrades capabilities (OpenAI: semantic search + automatic fact extraction; Voyage: semantic search; Anthropic: fact extraction). Codex reads brain context through its tools each turn (pull-based). The click moment: tell it one small thing to remember, restart Codex, then ask for it back — the answer comes from the brain, not from this chat's context (which the restart cleared). That cross-session round-trip is the whole product; "what's my name / my top jobs?" is answered from your identity files, which is nice but not the same trick.
 
-Two things worth understanding once it's running: **you own the brain** — every memory is a markdown file in that private repo (read it, clone it to a second machine, delete it and the brain is gone) — and **the first skill to run is `cold-start`**: say "fill my brain" and your agent imports your Gmail, calendar, and contacts — via the native connector (`gbrain google setup`, tokens in gbrain's local credential vault, never held by the agent), via [ClawVisor](https://clawvisor.com) (a hosted OAuth gateway), or from offline archives like Google Takeout — one consented step at a time. An empty brain is a database; a filled one is a memory.
+Two things worth understanding once it's running: **you own the brain** — the repo holds managed source files, while the database also holds facts, corrections, jobs, and accounting. A Git clone alone is not a complete backup; use [complete backup and restoration](docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database) — and **the first skill to run is `cold-start`**: say "fill my brain" and your agent imports your Gmail, calendar, and contacts — via the native connector (`gbrain google setup`, tokens in gbrain's local credential vault, never held by the agent), via [ClawVisor](https://clawvisor.com) (a hosted OAuth gateway), or from offline archives like Google Takeout — one consented step at a time. An empty brain is a database; a filled one is a memory.
 
 > **Prefer to make the repo yourself?** Create a new **empty** private repo **under your own GitHub account** (no README/.gitignore/license), clone it, open the clone in Codex, and paste the same block — bootstrap detects your empty repo and adopts it instead of creating one. The repo must be empty and personal-account-owned; org-owned repos are refused (create one under your account, or let bootstrap make it).
 
-### For Claude Code — turn it into your persistent personal agent
+### For Claude Code — optional personal-agent bootstrap
 
 Works in the **desktop app** and in the **CLI** (`claude` in a terminal) — identical harness, identical result. Open Claude Code in a **new, empty folder** (not an existing code project) — that folder becomes your agent's own **private GitHub repo**, created and privacy-verified for you. Then paste the same block:
 
@@ -1947,7 +2778,7 @@ answers. Ask before anything destructive. You are not done until
 `gbrain bootstrap verify` exits 0.
 ```
 
-Everything from the Codex path applies — interview, identity from your own answers, local brain, private repo, keyless mode — plus Claude Code gets **per-turn context hooks** (on by default, with an opt-out): your brain loads automatically into every prompt, and your work persists to your private repo on a per-turn cadence (debounced ~5 min locally, every turn in a cloud sandbox — this covers the `/exit` case the harness never fires a session-end hook on), with a notice on your next turn if a push ever fails. This works in a **Claude Code cloud session** too, not just on your laptop: verification falls back to pure git protocol when the sandbox blocks the GitHub API, and `gbrain bootstrap cloud-setup-script` prints the environment setup recipe. The click moment: tell it one small thing to remember, restart the session, then ask for it back — a fresh session has no chat context, so the answer can only come from the brain. That cross-session round-trip is the whole product ("what's my name?" is answered from your identity files — nice, but not the same trick). Same two follow-ups as the Codex path: you own the brain (markdown in your private repo), and `cold-start` is the first skill to run — "fill my brain" imports your email, calendar, and contacts (ClawVisor) or offline archives, one consented step at a time. Full contract, security posture, cloud sandboxes, and uninstall: [docs/guides/bootstrap.md](docs/guides/bootstrap.md).
+Everything from the Codex path applies — interview, identity from your own answers, local brain, private repo, keyless mode — plus Claude Code gets **per-turn context hooks** (on by default, with an opt-out): your brain loads automatically into every prompt, and your work persists to your private repo on a per-turn cadence (debounced ~5 min locally, every turn in a cloud sandbox — this covers the `/exit` case the harness never fires a session-end hook on), with a notice on your next turn if a push ever fails. This works in a **Claude Code cloud session** too, not just on your laptop: verification falls back to pure git protocol when the sandbox blocks the GitHub API, and `gbrain bootstrap cloud-setup-script` prints the environment setup recipe. The click moment: tell it one small thing to remember, restart the session, then ask for it back — a fresh session has no chat context, so the answer can only come from the brain. That cross-session round-trip is the whole product ("what's my name?" is answered from your identity files — nice, but not the same trick). Same two follow-ups as the Codex path: you own the brain (managed markdown plus database state; use a full database backup), and `cold-start` is the first skill to run — "fill my brain" imports your email, calendar, and contacts (ClawVisor) or offline archives, one consented step at a time. Full contract, security posture, cloud sandboxes, and uninstall: [docs/guides/bootstrap.md](docs/guides/bootstrap.md).
 
 > **Prefer to make the repo yourself?** Create a new **empty** private repo **under your own GitHub account** (no README/.gitignore/license), clone it, open the clone in Claude Code (CLI or the desktop app's open-a-repo flow), and paste the same block — bootstrap adopts your empty repo instead of creating one. The repo must be empty and personal-account-owned; org-owned repos are refused.
 
@@ -2007,7 +2838,9 @@ Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.
 
 ### Connect GBrain to your AI client (MCP)
 
-GBrain exposes nearly all of its 100+ operations as MCP tools (stdio and HTTP; a handful of local-only ops stay CLI-side) — or exactly the seven memory verbs with `--surface verbs`. The specific snippet depends on which client you use:
+For a hosted brain, start with the [private handoff and profile guide](docs/guides/hosted-harness-access.md). A **profile** controls authority; a **surface** controls which granted tools are visible. New memory profiles use the starter surface. `--surface verbs` retains exactly the seven memory verbs, with orientation available through `gbrain://capabilities`. Thin CLI connections use the full surface and remain restricted by their grants.
+
+The existing connection commands below remain supported. Choose the instructions for your actual product:
 
 **Upgrading an existing brain:** existing search chunks need rebuilding before
 remote chunk retrieval resumes. Semantic result caching is temporarily disabled;
@@ -2017,9 +2850,11 @@ commands, embedding costs, and the restrictions that remain after rebuilding.
 **Say to your agent:** *"Upgrade gbrain and check whether my search index needs rebuilding."*
 
 - **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — plugin: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain` (MCP + skills; persona variants `gbrain-coding` / `gbrain-daily` install curated subsets — pick exactly one gbrain plugin). Marketplace-free skills: `gbrain skillpack scaffold --harness claude-code` copies a persona-curated skill set into your user-scope skills dir with a local-edit-respecting update lens. Or local one-liner: `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
-- **[Codex](docs/mcp/CODEX.md)** — plugin (recommended): `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` installs the MCP server AND the curated skill set. Or connect-only: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`); Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
+- **[Codex](docs/mcp/CODEX.md)** — plugin (recommended): `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` installs the MCP server AND the curated skill set. Or connect-only: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`); That legacy path reads `$GBRAIN_REMOTE_TOKEN` at runtime. The new private-handoff installer writes a private managed HTTP header so the connection survives a new shell.
 - **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
 - **[Hermes](docs/mcp/HERMES.md)** — `printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve`. Keep `--args` last, and verify with `hermes mcp test gbrain` (the add exits 0 even on failure).
+- **[Grok Bot](docs/guides/grok-bot.md)** — install memory inside the Bot computer at `/workspace/gbrain`, or connect a hosted brain through an isolated CLI. Bots share local files and credentials; sources organize memory without isolating Bots.
+- **[Muse personal agent](docs/guides/muse.md)** — first verify its durable user-files location, then install the local CLI. Native MCP configuration and skill activation are not assumed.
 - **[Grok Build](docs/mcp/GROK.md)** — `grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs`. The add is lazy (exit 0 without connecting) — verify with `grok mcp doctor gbrain`, which spawns the server and reports `7 tools discovered`. Verified against Grok Build v1.0.4.
 - **[opencode](docs/mcp/OPENCODE.md)** (opencode.ai / SST — not OpenClaw) — `opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- gbrain serve --surface verbs`, or let `gbrain bootstrap hooks --harness opencode` write the config for you (opencode is a bootstrap-supported harness — it reads AGENTS.md natively). The add is lazy — verify with `opencode mcp list`, which spawns the server (`✓ gbrain connected`). Remote: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]` — the config stores only the `{env:GBRAIN_REMOTE_TOKEN}` interpolation. Verified against opencode v1.18.18.
 - **[OpenClaw](docs/mcp/OPENCLAW.md)** — the ClawHub bundle plugin registers gbrain automatically (`openclaw.plugin.json` ships in this repo), or add `{"command": "gbrain", "args": ["serve"]}` to `~/.openclaw/config.json`'s `mcpServers`.
@@ -2036,7 +2871,7 @@ gbrain serve --http       # HTTP MCP with OAuth 2.1 + admin dashboard at /admin
                           # (required for Claude Desktop, Cowork, Perplexity, ChatGPT)
 ```
 
-The HTTP server includes DCR-style client registration, scope-gated access (`read` / `write` / `admin`), and rate limiting. Deployment guides (ngrok, Railway, Fly.io) live under [`docs/mcp/`](docs/mcp/).
+The HTTP server includes optional dynamic client registration, scope-gated access (`read` / `write` / `admin` / `agent`), owner-approved OAuth authorization, and rate limiting. Dynamic registration cannot grant delegation; `admin` does not imply `agent`. Deployment guides (ngrok, Railway, Fly.io) live under [`docs/mcp/`](docs/mcp/).
 
 Running several brains behind one tool catalog? Give each one an identity: `gbrain config set mcp.instructions "Team wiki brain — route product and roadmap questions here"` rides every transport's initialize response under a `Deployment identity:` banner, so a connected agent can tell your brains apart. Restart `gbrain serve` to pick it up; `GBRAIN_MCP_INSTRUCTIONS` in the serve process's environment overrides it for that process, and `gbrain config unset mcp.instructions` returns to the bare contract. **Say to your agent:** *"Tell connected agents which brain this is"* — your agent runs `gbrain config set mcp.instructions "<identity>"`.
 
@@ -2201,7 +3036,7 @@ Want to see a tutorial that isn't here yet? [Open an issue](https://github.com/g
   message)  retrieval)    by context)   timeline)  + backlinks)     keeps fresh)
 ```
 
-- **Signal detector** runs on every message your agent receives. Captures ideas, entity mentions, time-sensitive todos, names, links.
+- **Signal detector**, after you opt in, captures durable ideas and entity mentions from substantive messages. Explicit remembering works without automatic capture; paid enrichment is a separate choice.
 - **Brain-first lookup** before any external API call. The cheapest, fastest, most personal information source you have.
 - **Auto-link** fires on every page write. No LLM calls; pure pattern matching on `[[wiki/people/bob]]` style references. New entity → new page stub → graph grows.
 - **Cron-driven enrichment** runs while you sleep: dedup people pages, fix citations, score salience, find contradictions, prep tomorrow's tasks.
@@ -2273,7 +3108,7 @@ memorable show procedures/ab12cd34-fix-failing-order-tests
 #   ./test.sh verified it — the steps, in order, with real outcomes
 ```
 
-Your agent skips the diagnosis it already did once and goes straight to the fix. That's the whole product: **capture is automatic** (nothing to remember at the end of a session), and **recall is one command** at the start of the next.
+Your agent skips the diagnosis it already did once and goes straight to the fix. After you explicitly enable Memorable's capture, **capture is automatic** for that integration, and **recall is one command** at the start of the next. Installing GBrain alone does not enable automatic conversation capture.
 
 **Say to your agent:** *"Set up Memorable so you remember how tasks were done"* — your agent installs and initializes the CLI (`npm i -g memorable-cli`, `memorable init`, `memorable enable`); you then run the one consent step below yourself. Day to day: *"Before you start, check Memorable for how we did this last time"* — your agent runs `memorable recall "<the task in your words>"` — and *"What has Memorable stored so far?"* — your agent runs `memorable list`.
 

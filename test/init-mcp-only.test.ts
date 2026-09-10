@@ -17,7 +17,7 @@ import { describe, test as testRaw, expect, beforeAll, afterAll, beforeEach, aft
 function test(name: string, fn: () => void | Promise<unknown>): void {
   testRaw(name, fn, 30000);
 }
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createServer, Server } from 'http';
@@ -296,6 +296,36 @@ describe('gbrain init --mcp-only — pre-flight smoke failures', () => {
 });
 
 describe('gbrain init re-run guard', () => {
+  const remoteArgs = () => ['init', '--mcp-only', '--json', '--issuer-url', `http://127.0.0.1:${port}`, '--mcp-url', `http://127.0.0.1:${port}/mcp`, '--oauth-client-id', 'fixture-client', '--oauth-client-secret', 'fixture-secret'];
+
+  test('local brain requires explicit conversion and preserves both config and data', async () => {
+    const data = join(tmp, '.gbrain', 'brain.pglite'); mkdirSync(data, { recursive: true });
+    writeFileSync(join(data, 'keep'), 'existing memory');
+    const original = JSON.stringify({ engine: 'pglite', database_path: data, schema_pack: 'gbrain-base' });
+    writeFileSync(configPath(), original);
+    const refused = await run(remoteArgs());
+    expect(refused.exitCode).toBe(1);
+    expect(JSON.parse(refused.stdout.trim().split('\n').pop()!).reason).toBe('local_config_present');
+    expect(readFileSync(configPath(), 'utf8')).toBe(original);
+    const converted = await run([...remoteArgs(), '--force'], { OPENAI_API_KEY: 'ambient-not-persisted', DATABASE_URL: 'postgres://foreign.invalid/brain' });
+    expect(converted.exitCode).toBe(0);
+    const config = JSON.parse(readFileSync(configPath(), 'utf8'));
+    expect(config.openai_api_key).toBeUndefined(); expect(config.database_url).toBeUndefined();
+    expect(config.schema_pack).toBe('gbrain-base');
+    expect(readFileSync(join(data, 'keep'), 'utf8')).toBe('existing memory');
+    const backups = readdirSync(join(tmp, '.gbrain')).filter(name => name.startsWith('config.json.before-conversion-'));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(tmp, '.gbrain', backups[0]), 'utf8')).toBe(original);
+  });
+
+  test('malformed configuration is never treated as an empty installation', async () => {
+    mkdirSync(join(tmp, '.gbrain')); writeFileSync(configPath(), '{conflict');
+    const result = await run([...remoteArgs(), '--force']);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout.trim().split('\n').pop()!).reason).toBe('invalid_existing_config');
+    expect(readFileSync(configPath(), 'utf8')).toBe('{conflict');
+  });
+
   function seedThinClientConfig() {
     mkdirSync(join(tmp, '.gbrain'), { recursive: true });
     writeFileSync(configPath(), JSON.stringify({

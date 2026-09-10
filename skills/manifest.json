@@ -42,7 +42,7 @@
     {
       "name": "setup",
       "path": "setup/SKILL.md",
-      "description": "Set up GBrain: auto-provision Supabase or PGLite, AGENTS.md injection, first import"
+      "description": "Add keyless GBrain memory to an existing agent, or connect a hosted brain while preserving identity and configuration"
     },
     {
       "name": "publish",
@@ -57,7 +57,7 @@
     {
       "name": "signal-detector",
       "path": "signal-detector/SKILL.md",
-      "description": "Always-on ambient signal capture. Fires on every message to detect original thinking and entity mentions."
+      "description": "Opt-in ambient signal capture. After explicit enablement, detects original thinking and entity mentions in substantive messages."
     },
     {
       "name": "google-loops",

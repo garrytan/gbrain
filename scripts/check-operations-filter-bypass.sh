@@ -39,6 +39,8 @@ cd "$ROOT"
 # Files allowed to import `operations` directly. Each entry must be
 # accompanied by a one-line rationale (the comment on the same line).
 ALLOWED=(
+  "src/core/grants/profiles.ts"                 # snapshots eligible remote ops with !op.localOnly; grant validation never exposes local-only operations
+  "src/core/harness/capabilities.ts"            # introspection applies !op.localOnly plus effective surface, scope, fence, snapshot and publish-gate filters
   "src/cli.ts"                                  # local CLI; user owns the machine, no trust boundary
   "src/mcp/dispatch.ts"                         # shared dispatch; sets ctx.remote from caller, handlers self-gate
   "src/mcp/server.ts"                           # stdio MCP; local-trusted (binary on user's box)

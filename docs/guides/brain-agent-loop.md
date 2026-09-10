@@ -2,16 +2,19 @@
 
 ## Goal
 
-Every conversation makes the brain smarter. Every brain lookup makes responses
-better. The loop compounds daily.
+Recall relevant saved context, then save explicit requests with provenance.
+Automatic conversation capture is off until the user opts in. The write steps
+below apply only to an explicit save request or authorized capture; chat-only
+requests suppress persistence. Paid enrichment and delegation are separate choices.
 
 ## What the User Gets
 
 Without this: the agent answers from stale context. You discuss a deal on Monday,
 and by Friday the agent has forgotten. Every conversation starts from zero.
 
-With this: six months in, the agent knows more about your world than you can hold
-in working memory. It never forgets. It never stops indexing.
+With this: the agent can retrieve the decisions and facts you chose to retain,
+correct them, and cite their sources. Withdrawal removes active memory; history
+and backups may remain.
 
 ## The Loop
 
@@ -52,8 +55,10 @@ SYNC: gbrain indexes changes
 
 ```
 on_message(text):
-  // 1. DETECT (async, don't block)
-  spawn_entity_detector(text)
+  // 1. DETECT only within the user's capture and delegation choices
+  capture_allowed = explicit_capture_opt_in and not chat_only(text)
+  if capture_allowed and delegation_authorized:
+    spawn_entity_detector(text)
 
   // 2. READ (before composing response)
   entities = extract_entity_names(text)  // quick regex/NER
@@ -68,7 +73,7 @@ on_message(text):
   response = compose_response(text, context)
 
   // 4. WRITE (after responding, if new info emerged)
-  if response_contains_new_info(response):
+  if (explicit_save_request(text) or capture_allowed) and not chat_only(text):
     for entity in mentioned_entities:
       gbrain_add_timeline_entry(entity.slug, {
         date: today,
@@ -76,8 +81,9 @@ on_message(text):
         source: "[Source: User, conversation, {date}]"
       })
 
-  // 5. SYNC
-  gbrain_sync()
+  // 5. SYNC selected source files only when a permitted file write occurred
+  if managed_files_changed:
+    gbrain_sync(no_pull=true, no_embed=true)
 ```
 
 ### The Two Invariants
@@ -97,8 +103,9 @@ on_message(text):
    and update the brain later. But the brain context makes the response better.
    Read first.
 
-2. **Don't skip the write step.** "I'll update the brain later" means never.
-   Write immediately after the conversation, while the context is fresh.
+2. **Verify authorized writes promptly.** Save requested memory while the
+   context is fresh. Without capture opt-in or an explicit save request, keep
+   new information in the current conversation without persisting it.
 
 3. **Sync after every write batch.** Without sync, the brain search index is
    stale. The next query won't find what you just wrote. On installs set up

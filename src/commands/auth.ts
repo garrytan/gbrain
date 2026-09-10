@@ -28,6 +28,8 @@ import { generateToken, isUndefinedColumnError, isUndefinedTableError } from '..
 import { TOKEN_ID_RE } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
+import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
+import { parseRescopeGrantArgs } from '../core/grants/cli.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -424,11 +426,13 @@ export interface RegisterClientArgs {
   redirectUris: string[];
   tokenEndpointAuthMethod: string | undefined;
   boundTools: string[] | undefined;
+  delegatedSlugPrefixes?: string[] | null;
+  delegatedNamespace?: 'prefixes' | 'job';
   boundSourceId: string | undefined;
   boundBrainId: string | undefined;
   boundSlugPrefixes: string[] | undefined;
   boundMaxConcurrent: number | undefined;
-  budgetUsdPerDay: string | undefined;
+  budgetUsdPerDay: string | null | undefined;
   tokenTtlSeconds: number | undefined;
 }
 
@@ -536,6 +540,13 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
         out.boundTools = v.split(',').map(s => s.trim()).filter(Boolean);
         i += 2; break;
       }
+      case '--delegated-slug-prefixes': out.delegatedSlugPrefixes = requireValue().split(',').map(s => s.trim()).filter(Boolean); i += 2; break;
+      case '--delegated-namespace': {
+        const value = requireValue();
+        if (value !== 'job' && value !== 'prefixes') throw new Error('--delegated-namespace must be job or prefixes');
+        out.delegatedNamespace = value;
+        i += 2; break;
+      }
       case '--bound-source': out.boundSourceId = requireValue(); i += 2; break;
       case '--bound-brain': out.boundBrainId = requireValue(); i += 2; break;
       case '--bound-slug-prefixes': {
@@ -553,10 +564,10 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
       }
       case '--budget-usd-per-day': {
         const v = requireValue();
-        if (!/^\d+(?:\.\d{1,2})?$/.test(v)) {
+        if (v !== 'unlimited' && !/^\d+(?:\.\d{1,2})?$/.test(v)) {
           throw new Error('--budget-usd-per-day must be a non-negative decimal with at most 2 decimal places');
         }
-        out.budgetUsdPerDay = v;
+        out.budgetUsdPerDay = v === 'unlimited' ? null : v;
         i += 2; break;
       }
       case '--token-ttl': {
@@ -595,6 +606,8 @@ export async function preflightOauthClientColumns(sql: SqlQuery): Promise<Set<st
 }
 
 export interface RegisterScopedClientOpts {
+  /** Explicit normalized profile snapshot; old callers keep legacy operation grants. */
+  grant?: GrantPatch;
   /** Per-client access-token TTL to persist (oauth_clients.token_ttl). */
   tokenTtlSeconds?: number;
   /** Per-client tool-surface tier, written via provider.rescopeClient — the
@@ -651,6 +664,8 @@ export async function registerScopedClient(
     parsed.boundSlugPrefixes || parsed.boundMaxConcurrent !== undefined || parsed.budgetUsdPerDay !== undefined
     ? {
       boundTools: parsed.boundTools,
+      delegatedSlugPrefixes: parsed.delegatedSlugPrefixes,
+      delegatedNamespace: parsed.delegatedNamespace,
       boundSourceId: parsed.boundSourceId,
       boundBrainId: parsed.boundBrainId,
       boundSlugPrefixes: parsed.boundSlugPrefixes,
@@ -661,7 +676,7 @@ export async function registerScopedClient(
   const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
   const provider = new GBrainOAuthProvider({ sql });
   const { clientId, clientSecret } = await provider.registerClientManual(
-    name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings,
+    name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
   );
 
   const ttl = parsed.tokenTtlSeconds ?? opts.tokenTtlSeconds;
@@ -814,83 +829,35 @@ export function parseRescopeSurfaceValue(value: string): 'verbs' | 'starter' | '
 }
 
 async function rescopeClient(clientId: string, args: string[]) {
-  const usage = 'Usage: auth rescope-client <client_id> [--source SOURCE] [--federated-read SRC1,SRC2,...] [--bound-slug-prefixes P1,P2|none] [--surface verbs|starter|full|clear]';
-  if (!clientId) {
-    console.error(usage);
-    process.exit(1);
-  }
-  let sourceId: string | undefined;
-  let federatedRead: string[] | undefined;
-  // v0.42.72.0: tri-state — undefined = untouched, null = clear ('none'),
-  // array = replace. Lets roster churn (channel joins/leaves) update the
-  // write fence in place instead of register+rotate.
-  let boundSlugPrefixes: string[] | null | undefined;
-  // WP4: tri-state — undefined = untouched, null = clear ('clear'), value =
-  // set + surface_set_by='operator' (the lock request_tools cannot override).
-  let surface: 'verbs' | 'starter' | 'full' | null | undefined;
-  for (let i = 0; i < args.length; i += 2) {
-    const flag = args[i];
-    const value = args[i + 1];
-    if (value === undefined || value.startsWith('--')) {
-      console.error(`Error: ${flag} requires a value`);
-      console.error(usage);
-      process.exit(1);
-    }
-    if (flag === '--source') sourceId = value;
-    else if (flag === '--federated-read') {
-      federatedRead = value.split(',').map(s => s.trim()).filter(Boolean);
-    } else if (flag === '--bound-slug-prefixes') {
-      boundSlugPrefixes = value === 'none'
-        ? null
-        : value.split(',').map(s => s.trim()).filter(Boolean);
-    } else if (flag === '--surface') {
-      surface = parseRescopeSurfaceValue(value);
-      if (surface === undefined) {
-        console.error(`Error: --surface must be verbs | starter | full | clear (got "${value}")`);
-        console.error(usage);
-        process.exit(1);
-      }
-    } else {
-      console.error(`Error: Unknown flag: ${flag}`);
-      console.error(usage);
-      process.exit(1);
-    }
-  }
-  if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined) {
-    console.error('Error: pass --source, --federated-read, --bound-slug-prefixes, and/or --surface');
-    console.error(usage);
-    process.exit(1);
-  }
+  if (!clientId) { console.error('Usage: auth rescope-client <client_id> [--profile PROFILE] [grant flags] [--repair] [--dry-run] [--json]'); process.exit(1); }
   try {
-    await withConfiguredSql(async (sql, engine) => {
-      const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
-      const provider = new GBrainOAuthProvider({ sql });
-      const result = await provider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes, surface });
-      // WP4 (amendment 32 / ENG-8): every surface mutation writes an audit
-      // row (this CLI, the admin endpoint, the request_tools persist).
-      if (surface !== undefined) {
-        const { writeSurfaceChangeAudit } = await import('../core/surface-audit.ts');
-        await writeSurfaceChangeAudit(engine, {
-          actor: 'operator',
-          client_id: clientId,
-          old: result.surfaceOld ?? null,
-          new: result.surface ?? null,
-          via: 'rescope_cli',
-        });
-      }
-      console.log(`OAuth client rescoped: "${result.clientName}" (${result.clientId})\n`);
-      console.log(`  Write source:        ${result.sourceId}`);
-      console.log(`  Federated reads:     ${result.federatedRead.join(', ') || '<none>'}`);
-      if (result.boundSlugPrefixes !== undefined) {
-        console.log(`  Bound slug prefixes: ${result.boundSlugPrefixes?.join(', ') ?? '<none — full-source write authority>'}`);
-      }
-      if (result.surface !== undefined) {
-        console.log(`  Tool surface:        ${result.surface ?? '<cleared — server/config surface applies>'}${result.surface != null ? ' (operator-pinned; request_tools cannot override)' : ''}`);
-      }
-      console.log('\nTakes effect on the client\'s next request (existing tokens included).');
+    const parsed = parseRescopeGrantArgs(args);
+    await withConfiguredSql(async (_sql, engine) => {
+      const existing = await readClientGrant(engine, clientId);
+      const profile = parsed.profile ? resolveGrantProfile({
+        profile: parsed.profile, existing, sourceId: parsed.patch.sourceId ?? existing.sourceId ?? 'default',
+        boundTools: parsed.patch.boundTools ?? undefined,
+        federatedRead: parsed.patch.federatedRead,
+        boundSlugPrefixes: parsed.patch.boundSlugPrefixes,
+        delegatedSlugPrefixes: parsed.patch.delegatedSlugPrefixes ?? undefined,
+        delegatedNamespace: parsed.patch.delegatedNamespace,
+      }) : {};
+      const result = await rescopeClientGrant(engine, clientId, { ...profile, ...parsed.patch }, {
+        actor: 'operator:cli', expectedRevision: parsed.expectedRevision ?? existing.revision,
+        repair: parsed.repair, dryRun: parsed.dryRun,
+      });
+      if (parsed.json) { console.log(JSON.stringify(result, null, 2)); return; }
+      console.log(`OAuth client ${parsed.dryRun ? 'grant preview' : 'rescoped'}: ${result.after.clientName} (${clientId})`);
+      console.log(`  Revision: ${result.before.revision} -> ${result.after.revision}`);
+      console.log(`  Scopes: ${result.after.scopes.join(' ') || '<none>'}`);
+      console.log(`  Write source: ${result.after.sourceId}`);
+      console.log(`  Federated reads: ${result.after.federatedRead.join(', ')}`);
+      console.log(`  Tool surface: ${result.after.surface ?? '<server default>'}`);
+      console.log(`  Delegated spending: ${result.after.budgetUsdPerDay === null ? 'unlimited' : '$' + result.after.budgetUsdPerDay + '/day'}`);
+      console.log('Restrictions apply on the next request. Added scopes require a new access token; the client secret is unchanged.');
     });
-  } catch (e: any) {
-    console.error('Error:', e.message);
+  } catch (error) {
+    console.error('Error:', error instanceof Error ? error.message : String(error));
     process.exit(1);
   }
 }

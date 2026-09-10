@@ -99,6 +99,8 @@ const submit_job: Operation = {
     // exists (spend then records clientId=null, global accounting only).
     // Trusted local callers (ctx.remote === false) pass through unchanged.
     if (ctx.remote !== false) {
+      delete jobData.__owner_client_id;
+      delete jobData.__delegation_grant;
       const authClientId = ctx.auth?.clientId;
       if (typeof authClientId === 'string' && authClientId.length > 0) {
         jobData.client_id = authClientId;
@@ -247,7 +249,7 @@ const submit_agent: Operation = {
     prompt: { type: 'string', required: true, description: 'User prompt for the agent' },
     model: { type: 'string', description: 'provider:model string (defaults to models.tier.subagent)' },
     allowed_tools: { type: 'array', description: 'Subset of bound_tools the agent may invoke', items: { type: 'string' } },
-    allowed_slug_prefixes: { type: 'array', description: 'Subset of bound_slug_prefixes for put_page writes', items: { type: 'string' } },
+    allowed_slug_prefixes: { type: 'array', description: 'Subset of delegated_slug_prefixes for writes; omit for a job-owned namespace', items: { type: 'string' } },
     max_turns: { type: 'number', description: 'Max LLM turns (default 20, hard cap 100)' },
     queue: { type: 'string', description: 'Queue name (default "default")' },
   },
@@ -267,185 +269,74 @@ const submit_agent: Operation = {
       throw new OperationError('permission_denied', 'submit_agent requires an OAuth client with the `agent` scope.');
     }
 
-    // Load the binding row.
-    const { sqlQueryForEngine } = await import('../sql-query.ts');
-    const sql = sqlQueryForEngine(ctx.engine);
-    let bindingRows: Array<Record<string, unknown>>;
+    const { currentDelegationGrant, submissionSnapshot, DelegationDeniedError } = await import('../minions/delegated-policy.ts');
+    const { hasScope } = await import('../scope.ts');
+    if (!hasScope(ctx.auth?.scopes ?? [], 'agent')) {
+      throw new OperationError('permission_denied', 'submit_agent requires the agent scope.');
+    }
+    if (typeof p.prompt !== 'string' || p.prompt.trim() === '') throw new OperationError('invalid_params', 'prompt must be nonempty');
+    const maxTurns = p.max_turns ?? 20;
+    if (!Number.isSafeInteger(maxTurns) || Number(maxTurns) < 1 || Number(maxTurns) > 100) {
+      throw new OperationError('invalid_params', 'max_turns must be an integer from 1 to 100');
+    }
+    if (p.model !== undefined && (typeof p.model !== 'string' || p.model.trim() === '')) {
+      throw new OperationError('invalid_params', 'model must name a supported agent tool-loop model');
+    }
+    if (p.queue !== undefined && (typeof p.queue !== 'string' || !p.queue.trim())) throw new OperationError('invalid_params', 'queue must be nonempty');
+    const { classifyCapabilities } = await import('../ai/capabilities.ts');
+    const { normalizeModelId, splitProviderModelId } = await import('../model-id.ts');
+    const { resolveModel, TIER_DEFAULTS, isAnthropicProvider, isOpenRouterSubagentFamily } = await import('../model-config.ts');
+    const { isConfigTruthy } = await import('../config.ts');
+    const resolvedModel = typeof p.model === 'string' ? p.model : await resolveModel(ctx.engine, { tier: 'subagent', configKey: 'models.subagent', fallback: TIER_DEFAULTS.subagent });
+    const modelForVerdict = splitProviderModelId(resolvedModel).provider === null && isAnthropicProvider(resolvedModel) ? normalizeModelId(resolvedModel) : resolvedModel;
+    if (['unknown', 'unusable:no_tools', 'unusable:no_subagent_loop'].includes(classifyCapabilities(modelForVerdict))) {
+      throw new OperationError('invalid_params', 'model must name a supported agent tool-loop model');
+    }
+    if (!isAnthropicProvider(resolvedModel) && !isOpenRouterSubagentFamily(resolvedModel)
+      && !isConfigTruthy(await ctx.engine.getConfig('agent.use_gateway_loop'))) {
+      throw new OperationError('invalid_params', 'This provider requires agent.use_gateway_loop=true before submitting an agent job.');
+    }
+    let snapshot;
     try {
-      bindingRows = await sql`
-        SELECT bound_tools, bound_source_id, bound_brain_id, bound_slug_prefixes,
-               bound_max_concurrent, budget_usd_per_day::text AS budget_cap
-          FROM oauth_clients
-         WHERE client_id = ${clientId}
-      `;
-    } catch (err) {
-      throw new OperationError(
-        'internal',
-        `submit_agent: could not load OAuth client binding: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      const grant = await currentDelegationGrant(ctx.engine, clientId, ctx.brainId);
+      snapshot = submissionSnapshot(grant, p, ctx.auth?.sourceId);
+    } catch (error) {
+      if (error instanceof DelegationDeniedError) throw new OperationError('permission_denied', error.message);
+      throw error;
     }
-    if (bindingRows.length === 0) {
-      throw new OperationError('permission_denied', `submit_agent: client_id ${clientId} not found.`);
-    }
-    const binding = bindingRows[0];
-    const boundTools = (binding.bound_tools as string[] | null) ?? null;
-    const boundSource = (binding.bound_source_id as string | null) ?? null;
-    const boundSlugPrefixes = (binding.bound_slug_prefixes as string[] | null) ?? null;
-    const boundMaxConcurrent = Number(binding.bound_max_concurrent ?? 1);
-    const budgetCapText = (binding.budget_cap as string | null) ?? null;
-
-    if (boundTools === null) {
-      throw new OperationError(
-        'permission_denied',
-        `submit_agent: client ${clientId} has the agent scope but no bindings. Re-register with --bound-tools, --bound-source, --bound-slug-prefixes, --bound-max-concurrent, --budget-usd-per-day.`,
-      );
-    }
-
-    // Validate each param against the binding.
-    //
-    // An EXPLICIT empty array is not "no restriction" here — downstream the
-    // subagent worker reads empty `allowed_tools` as "the full tool registry"
-    // and empty `allowed_slug_prefixes` as "fall back to the legacy
-    // wiki/agents/<job-id>/ namespace". Both subset loops below pass
-    // vacuously over an empty list, so `{allowed_tools: [], allowed_slug_prefixes: []}`
-    // from a client bound to `['search']` + `['emp-alice/']` would hand its
-    // subagent the whole registry (including put_page) writing outside the
-    // binding. `??` only substitutes null/undefined, so collapse the empty
-    // case to the binding explicitly.
-    const requestedToolsRaw = p.allowed_tools as string[] | undefined;
-    const requestedTools = requestedToolsRaw === undefined || requestedToolsRaw.length === 0
-      ? boundTools
-      : requestedToolsRaw;
-    for (const t of requestedTools) {
-      if (!boundTools.includes(t)) {
-        throw new OperationError(
-          'permission_denied',
-          `submit_agent: tool "${t}" is not in client ${clientId}'s bound_tools (${boundTools.join(', ')}).`,
-        );
-      }
-    }
-    const requestedSlugPrefixesRaw = p.allowed_slug_prefixes as string[] | undefined;
-    const requestedSlugPrefixes =
-      requestedSlugPrefixesRaw === undefined || requestedSlugPrefixesRaw.length === 0
-        ? (boundSlugPrefixes ?? [])
-        : requestedSlugPrefixesRaw;
-    // A bound client must end up with a non-empty delegated fence: an empty
-    // list reaches the subagent as "use the legacy wiki/agents/<id>/ namespace",
-    // which is outside every bound prefix.
-    if (boundSlugPrefixes !== null && requestedSlugPrefixes.length === 0) {
-      throw new OperationError(
-        'permission_denied',
-        `submit_agent: client ${clientId} is slug-bound but its binding resolved to an empty prefix list, which the subagent would read as the unfenced legacy namespace.`,
-        'Re-scope the client with a non-empty --bound-slug-prefixes.',
-      );
-    }
-    if (boundSlugPrefixes !== null) {
-      for (const sp of requestedSlugPrefixes) {
-        // Boundary-aware, same rule as the direct fence: a raw `startsWith`
-        // let a boundary-less binding (`emp-alice`) authorize a requested
-        // prefix in a SIBLING namespace (`emp-alice-2/`), which is then handed
-        // to the child as a full glob grant over another employee's pages.
-        if (!boundSlugPrefixes.some(bp => {
-          const base = normalizeSlugPrefix(bp);
-          const req = normalizeSlugPrefix(sp);
-          if (base === '') return false;
-          return base.endsWith('/')
-            ? req.startsWith(base)
-            : req === base || req.startsWith(`${base}/`);
-        })) {
-          throw new OperationError(
-            'permission_denied',
-            `submit_agent: slug_prefix "${sp}" is not under any of client ${clientId}'s bound_slug_prefixes.`,
-          );
-        }
-      }
-    }
-
-    // Concurrency cap: count active+waiting agent jobs for this client.
-    const inflight = await sql`
-      SELECT COUNT(*)::int AS n
-        FROM minion_jobs j
-       WHERE j.name = 'subagent'
-         AND j.status IN ('waiting', 'active', 'waiting-children')
-         AND j.data->>'__owner_client_id' = ${clientId}
-    `;
-    const inflightCount = Number((inflight[0]?.n as number | string | undefined) ?? 0);
-    if (inflightCount >= boundMaxConcurrent) {
-      throw new OperationError(
-        'rate_limited',
-        `submit_agent: client ${clientId} at concurrency cap (${inflightCount}/${boundMaxConcurrent}).`,
-      );
-    }
-
-    // Dry-run echo.
-    // The subagent fence uses `matchesSlugAllowList`, whose grammar makes a
-    // BARE entry match that one slug exactly — so a plain `emp-alice/` binding
-    // would let the delegated agent write nothing. Normalize the
-    // trailing-slash form into the glob the delegated matcher expects, so one
-    // stored column means the same span of slugs on both paths.
-    const delegatedSlugPrefixes = requestedSlugPrefixes.map(sp =>
-      sp.endsWith('/') ? `${sp}*` : sp);
-
+    const boundSource = snapshot.sourceId;
+    const boundMaxConcurrent = snapshot.maxConcurrent;
+    const budgetCapText = snapshot.budgetUsdPerDay;
+    const requestedTools = snapshot.tools;
+    const requestedSlugPrefixes = snapshot.slugPrefixes;
     if (ctx.dryRun) {
       return {
-        dry_run: true,
-        action: 'submit_agent',
-        client_id: clientId,
-        bound_tools: boundTools,
-        bound_source: boundSource,
+        dry_run: true, action: 'submit_agent', client_id: clientId,
+        bound_tools: requestedTools, bound_source: boundSource,
         bound_max_concurrent: boundMaxConcurrent,
-        // What the delegated job would ACTUALLY be granted, after the binding
-        // is applied — a preview that hides this can't show a widening bug.
-        resolved_tools: requestedTools,
-        resolved_slug_prefixes: delegatedSlugPrefixes,
+        resolved_tools: requestedTools, resolved_slug_prefixes: requestedSlugPrefixes,
+        resolved_model: resolvedModel,
+        spending: budgetCapText === null ? { mode: 'unlimited' } : { mode: 'capped', usd_per_day: budgetCapText },
       };
     }
-
-    // Submit via MinionQueue with allowProtectedSubmit (the agent op is
-    // remote-callable but the underlying job name 'subagent' is protected;
-    // the OAuth scope check above stands in for the protected-name guard).
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-
     const jobData: Record<string, unknown> = {
-      prompt: p.prompt as string,
-      max_turns: Math.min((p.max_turns as number) ?? 20, 100),
-      allowed_tools: requestedTools,
-      allowed_slug_prefixes: delegatedSlugPrefixes,
-      __owner_client_id: clientId,
+      prompt: p.prompt, max_turns: maxTurns, model: resolvedModel,
+      allowed_tools: requestedTools, allowed_slug_prefixes: requestedSlugPrefixes,
+      source_id: snapshot.sourceId, __owner_client_id: clientId,
+      __delegation_grant: snapshot,
     };
-    if (typeof p.model === 'string') jobData.model = p.model;
-    // Write source for the delegated job comes from the AUTHENTICATED client
-    // whenever we have it. `bound_source_id` is an optional, separately-set
-    // column: unset it defaulted the child to 'default', and if it disagreed
-    // with the token's own source the child followed the column — either way
-    // a correctly slug-fenced client could act on the wrong source.
-    const delegatedSource = ctx.auth?.sourceId ?? boundSource;
-    if (boundSource && ctx.auth?.sourceId && boundSource !== ctx.auth.sourceId) {
-      throw new OperationError(
-        'permission_denied',
-        `submit_agent: client ${clientId}'s bound_source_id (${boundSource}) disagrees with its authenticated source (${ctx.auth.sourceId}); refusing to guess which one governs the delegated write.`,
-        'Re-scope the client so the two agree: `gbrain auth rescope-client <id> --source <source>`.',
-      );
-    }
-    if (delegatedSource) jobData.source_id = delegatedSource;
     let job;
     try {
-      job = await queue.add(
-        'subagent',
-        jobData,
+      job = await queue.add('subagent', jobData,
         { queue: (p.queue as string) || 'default' },
-        { allowProtectedSubmit: true },
-      );
-    } catch (e) {
-      // Admission quota (minions.quota_max_waiting.subagent, config-only):
-      // surface as a structured retryable error, not an opaque internal one.
-      // The quota message already omits live cross-tenant queue depth.
+        { allowProtectedSubmit: true, delegatedClientId: clientId });
+    } catch (error) {
       const { isQueueQuotaExceededError } = await import('../minions/admission.ts');
-      if (isQueueQuotaExceededError(e)) {
-        throw new OperationError('rate_limited', e.message, 'Retry after the queue drains, or ask the operator to raise the quota.');
-      }
-      throw e;
+      if (isQueueQuotaExceededError(error)) throw new OperationError('rate_limited', error.message, 'Retry after existing work completes.');
+      if (error instanceof DelegationDeniedError) throw new OperationError('permission_denied', error.message);
+      throw error;
     }
 
     // Audit trail (D4) — best-effort JSONL.
@@ -456,7 +347,7 @@ const submit_agent: Operation = {
       logAgentSubmission({
         client_id: clientId,
         job_id: job.id,
-        model: typeof p.model === 'string' ? p.model : '<default>',
+        model: resolvedModel,
         bound_tools: requestedTools,
         bound_source: boundSource,
         slug_prefixes: requestedSlugPrefixes,

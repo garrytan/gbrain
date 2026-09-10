@@ -94,12 +94,24 @@ describe('resolveRequestedScope — explicit source_id', () => {
     expect(resolveRequestedScope(ctxOf({ remote: false }), 'anything')).toEqual({ sourceId: 'anything' });
   });
 
-  test('remote with no federated grant array can pass an explicit source_id (scalar-floor model)', () => {
+  test('remote with no federated grant array preserves legacy explicit source selection', () => {
     // allowedSources undefined → no federated restriction to enforce; the scalar
-    // sourceId path governs. (Empty [] is treated the same as undefined.)
+    // sourceId path governs. An explicit [] is a distinct restricted grant.
     expect(resolveRequestedScope(ctxOf({ remote: true }), 'z')).toEqual({ sourceId: 'z' });
+  });
+
+  test('empty federated grant cannot escape its scalar source through an explicit request', () => {
     const emptyGrant = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: [] } as any });
-    expect(resolveRequestedScope(emptyGrant, 'z')).toEqual({ sourceId: 'z' });
+    expect(resolveRequestedScope(emptyGrant, 'default')).toEqual({ sourceId: 'default' });
+    expect(() => resolveRequestedScope(emptyGrant, 'z')).toThrow(OperationError);
+    expect(resolveRequestedScope(emptyGrant, '__all__')).toEqual({ sourceId: 'default' });
+  });
+
+  test('empty federated grant without a scalar denies explicit and unqualified reads', () => {
+    const emptyGrant = ctxOf({ sourceId: undefined, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: [] } as any });
+    expect(() => resolveRequestedScope(emptyGrant, 'z')).toThrow(OperationError);
+    expect(() => resolveRequestedScope(emptyGrant, undefined)).toThrow(OperationError);
+    expect(() => resolveRequestedScope(emptyGrant, '__all__')).toThrow(OperationError);
   });
 });
 

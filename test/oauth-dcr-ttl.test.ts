@@ -18,6 +18,7 @@ import {
   DEFAULT_DCR_TTL_MIN_SECONDS,
 } from '../src/core/oauth-provider.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
+import { createHash } from 'node:crypto';
 
 let db: PGlite;
 let sql: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<any>;
@@ -216,16 +217,17 @@ describe('per-client token_ttl across grant paths (#2179)', () => {
     const client = (await provider.clientsStore.getClient(clientId))!;
 
     let redirectUrl = '';
+    const verifier = 'ttl-pkce-verifier-example-'.repeat(3);
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'test-challenge-hash',
+      codeChallenge: createHash('sha256').update(verifier).digest('base64url'),
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
       state: 'ttl-state',
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, verifier);
     expect(tokens.expires_in).toBe(222);
 
     // Refresh issuance honors it too.

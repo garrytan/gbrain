@@ -13,6 +13,9 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { hashToken } from '../src/core/utils.ts';
+const PKCE_VERIFIER = 'oauth-refresh-verifier-example-'.repeat(3);
+const PKCE_CHALLENGE = Buffer.from(hashToken(PKCE_VERIFIER), 'hex').toString('base64url');
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
 import { InvalidGrantError, ServerError, OAuthError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 
@@ -44,12 +47,12 @@ async function mintTokens() {
   let redirectUrl = '';
   const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
   await provider.authorize(client, {
-    codeChallenge: 'challenge',
+    codeChallenge: PKCE_CHALLENGE,
     redirectUri: 'http://localhost:3000/callback',
     scopes: ['read', 'write'],
   }, mockRes);
   const code = new URL(redirectUrl).searchParams.get('code')!;
-  const tokens = await provider.exchangeAuthorizationCode(client, code);
+  const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
   return { client, tokens };
 }
 

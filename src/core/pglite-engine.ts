@@ -1,3 +1,4 @@
+import { GRANT_COLUMNS_SQL } from './grants/schema.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
 import { readRelationalFanout, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
@@ -333,29 +334,24 @@ export function computeSnapshotSchemaHash(
   crypto: typeof import('node:crypto'),
   fs: typeof import('node:fs'),
 ): string | null {
-  // Instrumentation-immune schema hash: the raw FILE BYTES of migrate.ts +
-  // pglite-schema.ts, resolved relative to this module.
-  //
-  // The previous form hashed the in-memory MIGRATIONS array, folding each
-  // migration handler's Function.prototype.toString (W0 D5.13 — editing a
-  // handler must stale the snapshot). But coverage instrumentation rewrites
-  // LOADED function bodies, so under `bun test --coverage` (every CI shard)
-  // the runtime hash never matched the plain-`bun run` builder's, and every
-  // CI engine silently cold-initted ("snapshot stale") — a permanent
-  // CI-vs-local timing divergence that amplified ordering flakes. File bytes
-  // keep the D5.13 property (a handler edit edits the file) and are identical
-  // under any loader, runtime, or instrumentation. They are also the same
-  // inputs CI's snapshot-cache key hashes, so builder, engine, and cache can
-  // no longer disagree in kind.
-  //
-  // Returns null when the source files are unreadable (compiled binary) —
-  // the snapshot is a dev/test fixture; no-snapshot is the safe answer there.
+  // Raw file bytes remain identical under coverage instrumentation, unlike
+  // Function.toString(). Include imported SQL and migration helpers: hashing
+  // only the two entry modules silently reused old grant CHECK constraints.
+  // Keep CI's snapshot cache inputs in sync when adding a schema dependency.
+  // Unreadable sources (compiled binary) safely disable this test optimization.
   try {
     const hash = crypto.createHash('sha256');
-    hash.update('files:v2\n');
-    hash.update(fs.readFileSync(new URL('./migrate.ts', import.meta.url)));
-    hash.update('\n--\n');
-    hash.update(fs.readFileSync(new URL('./pglite-schema.ts', import.meta.url)));
+    hash.update('files:v3\n');
+    for (const file of [
+      'migrate.ts', 'pglite-schema.ts', 'fts-language.ts', 'vector-index.ts', 'ai/defaults.ts',
+      'timeline-dedup-repair.ts', 'pages-upsert-arbiter.ts', 'link-extraction.ts',
+      'grants/schema.ts', 'grants/migration.ts', 'grants/model.ts', 'grants/service.ts', 'grants/profiles.ts',
+      'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',
+    ]) {
+      hash.update(`${file}\n`);
+      hash.update(fs.readFileSync(new URL(`./${file}`, import.meta.url)));
+      hash.update('\n--\n');
+    }
     return hash.digest('hex');
   } catch {
     return null;
@@ -1131,6 +1127,9 @@ export class PGLiteEngine implements BrainEngine {
                 WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='surface') AS oauth_clients_surface_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema='public' AND table_name='oauth_clients' AND column_name='surface_set_by') AS oauth_clients_surface_set_by_exists,
+        (SELECT COUNT(*) = 6 FROM information_schema.columns
+          WHERE table_schema='public' AND table_name='oauth_clients'
+            AND column_name IN ('allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_revision', 'grant_repair_reasons')) AS oauth_client_grants_exist,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema='public' AND table_name='sources') AS sources_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -1207,6 +1206,7 @@ export class PGLiteEngine implements BrainEngine {
       oauth_clients_federated_read_exists: boolean;
       oauth_clients_surface_exists: boolean;
       oauth_clients_surface_set_by_exists: boolean;
+      oauth_client_grants_exist: boolean;
       sources_exists: boolean;
       sources_archived_exists: boolean;
       sources_archived_at_exists: boolean;
@@ -1268,6 +1268,7 @@ export class PGLiteEngine implements BrainEngine {
     // blob's CREATE TABLE — the exact v121 mask class — so the bootstrap adds
     // them defense-in-depth (and satisfies the MIGRATIONS ADD COLUMN
     // coverage gate). They ship in one migration and go missing together.
+    const needsOauthClientGrants = probe.oauth_clients_exists && !probe.oauth_client_grants_exist;
     const needsOauthClientsSurface = probe.oauth_clients_exists
       && (!probe.oauth_clients_surface_exists || !probe.oauth_clients_surface_set_by_exists);
     // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
@@ -1334,7 +1335,7 @@ export class PGLiteEngine implements BrainEngine {
         && !needsMcpLogBootstrap && !needsSubagentProviderId
         && !needsPagesRecency && !needsIngestLogSourceId
         && !needsFilesBootstrap && !needsOauthClientsBootstrap
-        && !needsOauthClientsSurface
+        && !needsOauthClientsSurface && !needsOauthClientGrants
         && !needsSourcesArchive && !needsPagesLastRetrievedAt
         && !needsPagesProvenance
         && !needsContextualRetrievalColumns && !needsPagesGeneration
@@ -1505,6 +1506,8 @@ export class PGLiteEngine implements BrainEngine {
           NOT NULL DEFAULT '{}';
       `);
     }
+
+    if (needsOauthClientGrants) await this.db.exec(GRANT_COLUMNS_SQL);
 
     if (needsOauthClientsSurface) {
       // WP4 (v127): per-client MCP tool surface + operator-lock marker.

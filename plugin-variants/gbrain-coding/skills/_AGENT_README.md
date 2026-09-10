@@ -50,24 +50,24 @@ carries the disambiguation rules for overlapping matches. If the two disagree,
 frontmatter wins. (There is no machine-managed block inside `RESOLVER.md` or
 `AGENTS.md`; that pattern was retired.)
 
-## The always-on memory loop
+## The memory loop
 
-Routing a requested skill is only half the job. On every inbound message,
-apply the bundled `signal-detector` contract directly (or through a host-native
-background lane when the user has authorized delegation), then close the turn
-with same-turn write-back:
+Preserve the existing agent's identity, native memory, and unrelated instructions.
+Start with keyless recall and explicit remembering:
 
 1. Read relevant entity/project context before answering.
-2. Detect durable new facts, preferences, decisions, commitments, relationships,
-   and original thinking in the user's message and in the resulting discussion.
-3. Write atomic facts with GBrain's `remember` verb and explicit provenance.
-   Route richer knowledge through `brain-ops` (`put_page`, timeline, links).
-4. Verify with `recall`, `entity`, or `get_page` before claiming the write landed.
+2. Save facts the user explicitly asks to remember, with provenance and the
+   intended brain/source. Automatic capture is off until the user opts in.
+3. Read the stored record before correcting it, retire the old fact, and save
+   the correction. `forget` withdraws active memory; history and backups may remain.
+4. Verify with `recall`, `entity`, or `get_page` before claiming the change landed.
 
-Context injection is read-side automation; it does not, by itself, capture what
-the agent just learned. A turn that learned something durable and recorded
-nothing is incomplete. Skip only transient logistics, acknowledgments, and facts
-already verified as present.
+After explicit automatic-capture opt-in, apply the bundled `signal-detector`
+contract to substantive messages. Delegation and paid enrichment require their
+own authority. Reading context, installing skills, or possessing an API key does
+not authorize capture. A chat-only request suppresses writes for that message.
+Native skill activation and recall in a new conversation need actual harness
+evidence; generating files alone establishes neither.
 
 ## When the user invokes a skill
 

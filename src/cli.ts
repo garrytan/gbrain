@@ -79,7 +79,7 @@ export function normalizeLocalResult(rawResult: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'connectors', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
+export const CLI_ONLY = new Set(['mcp', 'init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'connectors', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
   // v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep):
   // full handler at `case 'notability-eval'` but never dispatchable.
   'notability-eval',
@@ -112,6 +112,7 @@ export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'pglite-repair', 'upgr
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
 const CLI_ONLY_SELF_HELP = new Set([
+  'mcp',
   'upgrade', 'post-upgrade', 'check-update',
   // cathedral-6: agent ships per-subcommand help (run/logs/register) inside
   // runAgent, answered before any engine or queue is touched. Paired with the
@@ -2201,6 +2202,24 @@ async function handleCliOnly(command: string, args: string[]) {
     await runConnect(args);
     return;
   }
+  if (command === 'mcp') {
+    const { runMcp, mcpNeedsEngine } = await import('./commands/mcp.ts');
+    if (!mcpNeedsEngine(args)) { await runMcp(args); return; }
+    const cfg = loadConfig();
+    if (isThinClient(cfg)) {
+      console.log(JSON.stringify({ status: 'error', reason: 'host_administration_required', message: 'Provision on the brain host, or use --admin-token-file to authenticate to its running server.' }));
+      setCliExitVerdict(1);
+      return;
+    }
+    if (cfg?.database_path && !cfg.database_url) {
+      const { probeLivePgliteHolder } = await import('./core/bootstrap/uninstall.ts');
+      if (probeLivePgliteHolder(cfg.database_path)?.serve) {
+        console.log(JSON.stringify({ status: 'error', reason: 'pglite_live_serve', message: 'Use --admin-token-file with this running server’s admin credential; the command will provision through its existing engine.' }));
+        setCliExitVerdict(1);
+        return;
+      }
+    }
+  }
   if (command === 'bootstrap') {
     // Agent-bootstrap dispatcher (plan D3/ENG-2): ENGINE-FREE by contract —
     // a live serve may hold the PGLite lock mid-install. The `verify`
@@ -3000,6 +3019,11 @@ async function handleCliOnly(command: string, args: string[]) {
   }
   try {
     switch (command) {
+      case 'mcp': {
+        const { runMcp } = await import('./commands/mcp.ts');
+        await runMcp(args, engine);
+        break;
+      }
       case 'import': {
         const { runImport, ImportAbortError } = await import('./commands/import.ts');
         // v0.41 (Codex r2 #3 fix): honor errors counter for exit code.
@@ -3795,6 +3819,8 @@ USAGE
   gbrain <command> [options]
 
 SETUP
+  mcp grant <name> --help           Grant hosted access; private credential handoff
+  mcp verify --help                 Verify connection, permissions, and memory
   init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
   init --prefer-postgres [--allow-docker]
                                      Postgres-first install ladder (env URL >
@@ -4014,6 +4040,12 @@ if (import.meta.main) {
       if (shouldForceExitAfterMain()) flushThenExit(currentExitCode());
     },
     (e) => {
+      if (e?.code === 'pglite_busy' && process.argv.includes('--json')) {
+        console.log(JSON.stringify({ error: 'pglite_busy', retryable: true, reason: e.reason,
+          next_action: 'Wait for the current command or server to close, then retry. Do not remove a live lock.' }));
+        flushThenExit(1);
+        return;
+      }
       // db-availability loop: this choke point covers CONNECT-TIME failures
       // for every engine-needing command. The happy path redacts (the old
       // bare `e.message` was itself an unredacted-DSN surface); DB-access

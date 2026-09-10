@@ -25,7 +25,6 @@ import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/serv
 import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { InvalidTokenError, InvalidClientMetadataError, InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
-import { assertValidSourceId } from './source-id.ts';
 import {
   hasScope,
   assertAllowedScopes,
@@ -36,6 +35,10 @@ import {
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
 import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes } from './legacy-token-scope.ts';
+import { grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
+import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
+import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
+import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
 
 /**
  * A slug-prefix write binding is only meaningful if every entry actually
@@ -44,30 +47,8 @@ import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissi
  * a binding into a silent wildcard while still displaying as "fenced".
  * Reject at every write surface: registration, rescope, admin API.
  */
-export function assertValidSlugPrefixes(prefixes: readonly string[]): void {
-  for (const p of prefixes) {
-    if (typeof p !== 'string' || p.trim() === '') {
-      throw new Error('bound_slug_prefixes entries must be non-empty, non-whitespace slug prefixes (e.g. "emp-alice/")');
-    }
-    if (p !== p.trim()) {
-      throw new Error(`bound_slug_prefixes entry "${p}" has leading/trailing whitespace; slugs never do, so it would fence nothing`);
-    }
-    // Slugs are lowercased by validateSlug before storage, so a prefix with
-    // uppercase in it cannot correspond to anything actually written.
-    if (p !== p.toLowerCase()) {
-      throw new Error(`bound_slug_prefixes entry "${p}" must be lowercase; stored slugs are lowercased, so a mixed-case prefix fences unpredictably`);
-    }
-    // Require an explicit segment boundary. Slug namespaces collide on their
-    // own naming scheme — `emp-alice` and `emp-alice-2` are different people —
-    // and a boundary-less entry reads as "everything starting with these
-    // characters". The matcher is boundary-aware regardless, but saying it at
-    // registration is what stops an operator writing a binding whose meaning
-    // isn't what it looks like.
-    if (!p.endsWith('/') && !p.endsWith('/*')) {
-      throw new Error(`bound_slug_prefixes entry "${p}" must end with "/" (or "/*"); a boundary-less prefix reads as a character prefix, so "${p}" would look like it covers only "${p}/..." while naming sibling namespaces like "${p}-2/..."`);
-    }
-  }
-}
+export { assertValidSlugPrefixes } from './grants/encoding.ts';
+
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 export type { SqlQuery, SqlValue };
 
@@ -77,7 +58,10 @@ export interface AgentClientBindings {
   boundBrainId?: string;
   boundSlugPrefixes?: string[];
   boundMaxConcurrent?: number;
-  budgetUsdPerDay?: string;
+  budgetUsdPerDay?: string | null;
+  delegatedSlugPrefixes?: string[] | null;
+  delegatedNamespace?: 'prefixes' | 'job';
+  allowedOperations?: string[] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,11 +80,6 @@ export interface AgentClientBindings {
  * `redirect_uri` containing `,`) would be parsed by Postgres as MULTIPLE
  * array elements, smuggling values past validation. See CSO finding #5.
  */
-function pgArray(arr: string[]): string {
-  if (!arr || arr.length === 0) return '{}';
-  const escaped = arr.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
-  return `{${escaped.join(',')}}`;
-}
 
 /**
  * Allow-list of RFC 7591 §2 `token_endpoint_auth_method` values gbrain
@@ -402,6 +381,9 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       // safe. Empty-after-filter with a non-empty request is a hard 400.
       // Operator CLI/admin paths still use assertAllowedScopes (typo-loud).
       const requestedScopes = parseScopeString(client.scope);
+      if (requestedScopes.includes('agent')) {
+        throw new InvalidClientMetadataError('agent scope requires an operator-approved grant with explicit delegation bindings; dynamic registration cannot grant it');
+      }
       const { allowed, dropped } = filterAllowedScopes(requestedScopes);
       if (dropped.length > 0) {
         console.warn(
@@ -570,6 +552,10 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
 // ---------------------------------------------------------------------------
 
 export class GBrainOAuthProvider implements OAuthServerProvider {
+  // The SDK otherwise consumes the verifier and calls our exchange with
+  // undefined. This provider validates S256 itself before consuming the code,
+  // for both the SDK's public-client route and our confidential-client route.
+  readonly skipLocalPkceValidation = true;
   private sql: SqlQuery;
   private _clientsStore: GBrainClientsStore;
   private readonly dcrDisabled: boolean;
@@ -681,12 +667,23 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   async exchangeAuthorizationCode(
     client: OAuthClientInformationFull,
     authorizationCode: string,
-    _codeVerifier?: string,
+    codeVerifier?: string,
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
     const codeHash = hashToken(authorizationCode);
     const now = Math.floor(Date.now() / 1000);
+    const pending = await this.sql`SELECT code_challenge, code_challenge_method, resource
+      FROM oauth_codes WHERE code_hash = ${codeHash} AND client_id = ${client.client_id} AND expires_at > ${now}`;
+    if (!pending.length) throw new InvalidGrantError('Authorization code not found or expired');
+    const challenge = typeof codeVerifier === 'string' && /^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)
+      ? Buffer.from(hashToken(codeVerifier), 'hex').toString('base64url') : null;
+    if (pending[0].code_challenge_method !== 'S256' || challenge === null || challenge !== pending[0].code_challenge) {
+      throw new InvalidGrantError('Invalid PKCE code verifier');
+    }
+    const boundResource = typeof pending[0].resource === 'string' ? pending[0].resource : null;
+    if (resource !== undefined && resource.toString() !== boundResource) throw new InvalidGrantError('Authorization code resource mismatch');
+    const effectiveResource = boundResource ? new URL(boundResource) : undefined;
 
     // F1 + F7c hardening: bind client_id AND redirect_uri atomically into the
     // DELETE WHERE clause. RFC 6749 §10.5 requires auth codes be single-use;
@@ -708,6 +705,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
             AND client_id = ${client.client_id}
             AND redirect_uri = ${redirectUri}
             AND expires_at > ${now}
+            AND code_challenge = ${challenge}
+            AND resource IS NOT DISTINCT FROM ${boundResource}
           RETURNING client_id, scopes, resource
         `
       : await this.sql`
@@ -715,6 +714,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           WHERE code_hash = ${codeHash}
             AND client_id = ${client.client_id}
             AND expires_at > ${now}
+            AND code_challenge = ${challenge}
+            AND resource IS NOT DISTINCT FROM ${boundResource}
           RETURNING client_id, scopes, resource
         `;
     if (rows.length === 0) throw new Error('Authorization code not found or expired');
@@ -723,7 +724,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     // Issue tokens
     const scopes = (codeRow.scopes as string[]) || [];
-    return this.issueTokens(client.client_id, scopes, resource, true);
+    return this.issueTokens(client.client_id, scopes, effectiveResource, true);
   }
 
   // -------------------------------------------------------------------------
@@ -752,7 +753,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       WHERE token_hash = ${tokenHash}
         AND token_type = 'refresh'
         AND client_id = ${client.client_id}
-      RETURNING client_id, scopes, expires_at
+        AND (${resource === undefined} OR resource IS NOT DISTINCT FROM ${resource?.toString() ?? null})
+      RETURNING client_id, scopes, expires_at, resource
     `;
     // #4532: InvalidGrantError (not bare Error) — the SDK's token handler maps
     // OAuthError subclasses to their RFC 6749 wire shape (400 invalid_grant)
@@ -786,8 +788,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     if (scopes && scopes.some(s => !hasScope(grantedScopes, s))) {
       throw new Error('Requested scope exceeds refresh token grant');
     }
-    const tokenScopes = scopes ?? grantedScopes;
-    return this.issueTokens(client.client_id, tokenScopes, resource, true);
+    const current = await this._clientsStore.getClient(client.client_id);
+    if (!current) throw new InvalidGrantError('Client no longer exists');
+    const liveGrant = parseScopeString(current.scope);
+    if (scopes && scopes.some(scope => !hasScope(liveGrant, scope))) throw new InvalidGrantError('Requested scope exceeds current client grant');
+    const tokenScopes = intersectGrantedScopes(scopes ?? grantedScopes, liveGrant);
+    return this.issueTokens(client.client_id, tokenScopes, typeof row.resource === 'string' ? new URL(row.resource) : undefined, true);
   }
 
   // -------------------------------------------------------------------------
@@ -812,7 +818,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let oauthRows: Record<string, unknown>[];
     try {
       oauthRows = await this.sql`
-        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
                c.source_id, c.federated_read, c.bound_slug_prefixes,
                c.surface, c.surface_set_by
         FROM oauth_tokens t
@@ -852,7 +863,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // request, so a missing per-client surface only means "server
         // surface applies", never a widened catalog.
         oauthRows = await this.sql`
-          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
                  c.source_id, c.federated_read, c.bound_slug_prefixes
           FROM oauth_tokens t
           LEFT JOIN oauth_clients c ON c.client_id = t.client_id
@@ -863,7 +879,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         try {
           // v85 missing: keep source_id + federated_read, drop the fence column.
           oauthRows = await this.sql`
-            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
                    c.source_id, c.federated_read
             FROM oauth_tokens t
             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
@@ -874,7 +895,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           try {
             // v61 missing: source_id only.
             oauthRows = await this.sql`
-              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources, c.source_id
               FROM oauth_tokens t
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
@@ -883,7 +909,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
             if (!missingOAuthColumn(err3)) throw err3;
             // Truly pre-v60: pre-v0.34 projection.
             oauthRows = await this.sql`
-              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources
               FROM oauth_tokens t
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
@@ -895,6 +926,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     if (oauthRows.length > 0) {
       const row = oauthRows[0];
+      const currentGrant = row.current_grant && typeof row.current_grant === 'object' ? row.current_grant as Record<string, unknown> : {};
+      for (const field of ['allowed_operations', 'grant_revision', 'grant_profile', 'grant_repair_reasons', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'delegated_slug_prefixes', 'delegated_namespace', 'bound_max_concurrent', 'budget_usd_per_day']) row[field] = currentGrant[field];
+      row.client_deleted_at = currentGrant.deleted_at;
+      row.grant_projection_present = 'allowed_operations' in currentGrant;
+      if (row.client_deleted_at != null || row.current_scopes == null) throw new InvalidTokenError('Client revoked or missing');
+      const issuedScopes = Array.isArray(row.scopes) ? row.scopes as string[] : [];
+      const effectiveScopes = intersectGrantedScopes(issuedScopes, parseScopeString(String(row.current_scopes)));
+      const grantProjectionDegraded = row.grant_profile != null && (row.grant_projection_present !== true || !Array.isArray(row.allowed_operations));
+      if (grantProjectionDegraded) throw new InvalidTokenError('Client grant schema incomplete; run gbrain apply-migrations --yes');
       // NULL expires_at is treated as expired (fail-closed). Schema permits NULL,
       // and the SDK's bearerAuth requires `typeof expiresAt === 'number'` — we
       // throw here rather than return an undefined-bearing AuthInfo.
@@ -923,6 +963,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // covers the OAuth rows whose column we just dropped.)
       if (allowedSources === undefined && rowSourceId !== undefined) {
         allowedSources = [rowSourceId];
+      }
+      // Grant membership is live: archiving a previously granted source must
+      // not leave its old snapshot readable. A wholly inactive grant exposes
+      // no operations; authenticated capability metadata can explain why.
+      if (rowSourceId !== undefined && row.source_active === false) effectiveScopes.length = 0;
+      if (allowedSources?.length && Array.isArray(row.active_read_sources)) {
+        allowedSources = allowedSources.filter(id => (row.active_read_sources as string[]).includes(id));
+        if (allowedSources.length === 0) effectiveScopes.length = 0;
       }
       // v0.42.72.0: slug-prefix write binding. Array (even empty — the
       // fence treats [] as deny-all, matching submit_agent's fail-closed
@@ -953,7 +1001,20 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         clientName: (row.client_name as string | null) ?? undefined,
-        scopes: (row.scopes as string[]) || [],
+        scopes: effectiveScopes,
+        issuedScopes,
+        sourceActive: rowSourceId === undefined ? undefined : row.source_active === true,
+        allowedOperations: Array.isArray(row.allowed_operations) ? row.allowed_operations as string[] : null,
+        grantRevision: Number(row.grant_revision ?? 0),
+        grantProfile: typeof row.grant_profile === 'string' ? row.grant_profile : null,
+        grantRepairReasons: Array.isArray(row.grant_repair_reasons) ? row.grant_repair_reasons as string[] : [],
+        boundTools: Array.isArray(row.bound_tools) ? row.bound_tools as string[] : null,
+        boundSourceId: typeof row.bound_source_id === 'string' ? row.bound_source_id : null,
+        boundBrainId: typeof row.bound_brain_id === 'string' ? row.bound_brain_id : null,
+        delegatedSlugPrefixes: Array.isArray(row.delegated_slug_prefixes) ? row.delegated_slug_prefixes as string[] : null,
+        delegatedNamespace: row.delegated_namespace === 'job' ? 'job' : 'prefixes',
+        boundMaxConcurrent: Number(row.bound_max_concurrent ?? 1),
+        budgetUsdPerDay: row.budget_usd_per_day == null ? null : String(row.budget_usd_per_day),
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
         // v0.34.1 (#861, D2): source-isolation scope from oauth_clients.
@@ -1206,6 +1267,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     federatedRead?: string[],
     tokenEndpointAuthMethod?: string,
     agentBindings?: AgentClientBindings,
+    grantPatch?: GrantPatch,
   ): Promise<{ clientId: string; clientSecret?: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -1251,6 +1313,32 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     //   federated_read = [source_id] when omitted (a non-federated client
     //                    has read scope == write scope, the v0.33 default)
     const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+    const schema = await this.sql`SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
+        AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`;
+    if (schema.length === 17) {
+      const initial = grantFromRow({
+        client_id: clientId, client_name: name, scope: scopes, source_id: sourceId,
+        federated_read: federated, bound_slug_prefixes: agentBindings?.boundSlugPrefixes ?? null,
+        allowed_operations: agentBindings?.allowedOperations ?? null,
+        bound_tools: agentBindings?.boundTools ?? null,
+        bound_source_id: agentBindings?.boundSourceId ?? null, bound_brain_id: agentBindings?.boundBrainId ?? null,
+        delegated_slug_prefixes: agentBindings?.delegatedSlugPrefixes ?? agentBindings?.boundSlugPrefixes ?? null,
+        delegated_namespace: agentBindings?.delegatedNamespace ?? (agentBindings?.boundSlugPrefixes || agentBindings?.delegatedSlugPrefixes ? 'prefixes' : 'job'),
+        bound_max_concurrent: agentBindings?.boundMaxConcurrent ?? 1,
+        budget_usd_per_day: agentBindings?.budgetUsdPerDay ?? null,
+      });
+      if (grantPatch) assertGrantPatch(grantPatch);
+      const changes = Object.fromEntries(Object.entries(grantPatch ?? {}).filter(([, value]) => value !== undefined)) as GrantPatch;
+      const grant = { ...initial, ...changes, revision: 1 };
+      grant.boundBrainId = normalizeGrantBrain(grant.boundBrainId);
+      validateClientGrant(grant, await grantValidationContext(this.sql));
+      await insertClientGrant(this.sql, grant, { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now });
+      return { clientId, clientSecret };
+    }
+    if (grantPatch || hasScope(parseScopeString(scopes), 'agent')) {
+      throw new Error('Client grants require an up-to-date OAuth schema; run gbrain apply-migrations --yes');
+    }
     try {
       if (agentBindings) {
         await this.sql`
@@ -1344,144 +1432,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
    * client's NEXT request even for already-issued tokens, because
    * verifyAccessToken re-reads oauth_clients on every verification.
    */
-  async rescopeClient(
-    clientId: string,
-    opts: {
-      sourceId?: string;
-      federatedRead?: string[];
-      boundSlugPrefixes?: string[] | null;
-      /**
-       * WP4 (D2/amendment 19): per-client tool surface. Tri-state —
-       * undefined = untouched, null = clear (both surface AND
-       * surface_set_by go NULL), value = set + surface_set_by='operator'
-       * (the operator lock: request_tools persist cannot override it).
-       */
-      surface?: 'verbs' | 'starter' | 'full' | null;
-    },
-  ): Promise<{ clientId: string; clientName: string; sourceId: string; federatedRead: string[]; boundSlugPrefixes?: string[] | null; surface?: string | null; surfaceOld?: string | null }> {
-    const { sourceId, federatedRead, boundSlugPrefixes, surface } = opts;
-    if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined) {
-      throw new Error('rescope-client requires --source, --federated-read, --bound-slug-prefixes, and/or --surface');
-    }
-    if (sourceId !== undefined) assertValidSourceId(sourceId);
-    if (federatedRead !== undefined) {
-      if (federatedRead.length === 0) {
-        throw new Error('--federated-read cannot be empty (pass at least one source id)');
-      }
-      for (const s of federatedRead) assertValidSourceId(s);
-    }
-    // WP4: only the three known surfaces are OPERATOR-writable here; the
-    // column value space stays open (amendment 18) for future tier writers,
-    // but this surface validates so a typo'd rescope fails loud, not silent.
-    if (surface !== undefined && surface !== null
-        && surface !== 'verbs' && surface !== 'starter' && surface !== 'full') {
-      throw new Error(`--surface must be verbs | starter | full | clear (got "${String(surface)}")`);
-    }
-    // v0.42.72.0: bound_slug_prefixes rescope, so channel-membership churn
-    // (the qm-harness roster case) updates the write fence in place instead
-    // of forcing a register+rotate cycle. Tri-state: undefined = untouched,
-    // null = clear the binding (client returns to unbound full-source write
-    // authority), non-empty array = replace. Empty array is rejected here —
-    // it means deny-all at the fence, which an operator should express by
-    // revoking write scope, not by an ambiguous empty list.
-    if (Array.isArray(boundSlugPrefixes)) {
-      if (boundSlugPrefixes.length === 0) {
-        throw new Error('--bound-slug-prefixes cannot be an empty list (pass prefixes, or "none" to clear the binding)');
-      }
-      assertValidSlugPrefixes(boundSlugPrefixes);
-    }
-    let rows: Record<string, unknown>[];
-    // WP4: when the surface axis is being touched, capture the OLD value
-    // first so callers can write the amendment-32 audit row ({old, new}).
-    let surfaceOld: string | null | undefined;
-    try {
-      if (surface !== undefined) {
-        const prior = await this.sql`
-          SELECT surface FROM oauth_clients WHERE client_id = ${clientId}
-        `;
-        surfaceOld = prior.length > 0 ? ((prior[0].surface as string | null) ?? null) : null;
-      }
-      // Only touch bound_slug_prefixes / surface when the caller actually
-      // passed them. Naming a column unconditionally would make a plain
-      // `rescope-client --source wiki` fail on a brain that has the v60/v61
-      // OAuth columns but not v85's bound_* set (or v127's surface set) — a
-      // regression on an axis the caller never asked about.
-      const surfaceSetBy = surface === null ? null : 'operator';
-      if (boundSlugPrefixes === undefined && surface === undefined) {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read)
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read
-          `;
-      } else if (boundSlugPrefixes === undefined) {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
-                   surface = ${surface ?? null}::text,
-                   surface_set_by = ${surfaceSetBy}::text
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read, surface, surface_set_by
-          `;
-      } else if (surface === undefined) {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
-                   bound_slug_prefixes = ${boundSlugPrefixes ? pgArray(boundSlugPrefixes) : null}::text[]
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read, bound_slug_prefixes
-          `;
-      } else {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
-                   bound_slug_prefixes = ${boundSlugPrefixes ? pgArray(boundSlugPrefixes) : null}::text[],
-                   surface = ${surface ?? null}::text,
-                   surface_set_by = ${surfaceSetBy}::text
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read, bound_slug_prefixes, surface, surface_set_by
-          `;
-      }
-    } catch (err) {
-      if (
-        isUndefinedColumnError(err, 'source_id') ||
-        isUndefinedColumnError(err, 'federated_read') ||
-        isUndefinedColumnError(err, 'bound_slug_prefixes') ||
-        isUndefinedColumnError(err, 'surface') ||
-        isUndefinedColumnError(err, 'surface_set_by')
-      ) {
-        throw new Error('rescope-client requires an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
-      }
-      // FK oauth_clients.source_id → sources(id): translate the raw 23503
-      // into an actionable message.
-      if ((err as { code?: string })?.code === '23503') {
-        throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
-      }
-      throw err;
-    }
-    if (rows.length === 0) {
-      throw new Error(`No OAuth client found with id "${clientId}"`);
-    }
-    const row = rows[0];
-    return {
-      clientId: row.client_id as string,
-      clientName: (row.client_name as string | null) ?? '',
-      sourceId: (row.source_id as string | null) ?? 'default',
-      federatedRead: Array.isArray(row.federated_read) ? (row.federated_read as string[]) : [],
-      // undefined = the column wasn't read this call (caller left the
-      // binding untouched), which is distinct from null = no binding set.
-      boundSlugPrefixes: 'bound_slug_prefixes' in row
-        ? (Array.isArray(row.bound_slug_prefixes) ? (row.bound_slug_prefixes as string[]) : null)
-        : undefined,
-      // WP4: undefined = surface untouched this call; null = cleared.
-      ...(surface !== undefined
-        ? { surface: (row.surface as string | null) ?? null, surfaceOld: surfaceOld ?? null }
-        : {}),
-    };
+  async rescopeClient(clientId: string, opts: RescopeClientOptions): Promise<RescopeClientResult> {
+    return rescopeOAuthClient(this.sql, clientId, opts);
   }
 
   // -------------------------------------------------------------------------
@@ -1511,6 +1463,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     resource: URL | undefined,
     includeRefresh: boolean,
   ): Promise<OAuthTokens> {
+    const currentClient = await this._clientsStore.getClient(clientId);
+    if (!currentClient) throw new InvalidGrantError('Client no longer exists');
+    scopes = intersectGrantedScopes(scopes, parseScopeString(currentClient.scope));
     const accessToken = generateToken('gbrain_at_');
     const accessHash = hashToken(accessToken);
     const now = Math.floor(Date.now() / 1000);

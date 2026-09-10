@@ -1473,18 +1473,6 @@ deferred M-effort issues above are NOT repeated here.
   base-phase.ts. **Effort:** S each. **P3.**
 ## Multi-agent wave follow-ups (cathedral-6, `gbrain agent register`)
 
-- [ ] **P2 — archived sources keep previously-granted federated reads until
-  re-registration.** **What:** grants are validated at mint time only — a
-  client whose `federated_read` names a source that is archived AFTER
-  registration keeps reading it; there is no per-request archived-source
-  filtering and no grant invalidation on archive. **How:** this is a
-  platform-wide read-path decision affecting every federated op (recall,
-  search, entity, boundary verbs), not just recall — either fold an
-  `archived = false` join into the shared source-scope resolution or sweep
-  grants on `sources archive`; decide once, apply everywhere. **Where:**
-  `src/core/ops/context.ts` (sourceScopeOpts consumers), engine read paths,
-  `src/core/destructive-guard.ts` (archive lifecycle). **Effort:** M.
-  **Priority:** P2.
 - [ ] **P2 — federate the remaining read verbs across allowedSources.**
   **What:** `recall` now honors a federated grant (every fact arm fans out
   across `ctx.auth.allowedSources` and merges per-arm — see the `factSources`
@@ -7127,6 +7115,23 @@ keeping both skills' triggers intact for chaining.
 **Found:** 2026-04-24 during v0.19.0 production-readiness review.
 
 ## Completed
+
+- [x] **P2 — archived sources keep previously-granted federated reads until
+  re-registration.** **What:** grants are validated at mint time only — a
+  client whose `federated_read` names a source that is archived AFTER
+  registration keeps reading it; there is no per-request archived-source
+  filtering and no grant invalidation on archive. **How:** this is a
+  platform-wide read-path decision affecting every federated op (recall,
+  search, entity, boundary verbs), not just recall — either fold an
+  `archived = false` join into the shared source-scope resolution or sweep
+  grants on `sources archive`; decide once, apply everywhere. **Where:**
+  `src/core/ops/context.ts` (sourceScopeOpts consumers), engine read paths,
+  `src/core/destructive-guard.ts` (archive lifecycle). **Effort:** M.
+  **Priority:** P2.
+  **Completed:** v0.49.0.0 (2026-09-10). OAuth clients, including legacy NULL
+  operation snapshots, now recheck active sources on every authenticated
+  request. The scalar archived source also clears effective scopes.
+
 
 ### ~~(v0.42.20.0 follow-up) Decouple the op-dispatch force-exit timer~~
 **Completed:** v0.42.39.0 (2026-06-10)

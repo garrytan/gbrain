@@ -4,6 +4,15 @@
 
 Repo: https://github.com/garrytan/gbrain
 
+## Choose your agent setup
+
+- [Grok Bot](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md): Add repairable local memory inside Grok Bot, enable its native skill, or connect a hosted brain. Shared-computer trust and dated evidence.
+- [Muse personal agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md): Verify durable storage and add explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.
+- [Inside an existing agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/in-agent-setup.md): Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration.
+- [Connect a hosted brain](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md): Host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification.
+- [Harness adapter reference](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/harness-adapters.md): Registry-generated transport, authentication lifetime and configuration facts.
+- [Harness validation evidence](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/harness-validation.md): Local lifecycle and HTTP/worker proof, reproducible tests, and the remaining actual-harness acceptance checks.
+
 ## Core entry points
 
 - [AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.
@@ -44,7 +53,7 @@ Repo: https://github.com/garrytan/gbrain
 ## Migrations
 
 - [docs/UPGRADING_DOWNSTREAM_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md): Patches for downstream agent skill forks. One section per release.
-- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions (latest: v0.48.3.0 — index rebuilds and temporary search/report/tool availability).
+- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions (latest: v0.49.0.0 — isolated agent setup, hosted grant migration, and verification).
 - [CHANGELOG.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md): Release-summary voice + itemized changes + self-repair block per version.
 
 ## Contributing

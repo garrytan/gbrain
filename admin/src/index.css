@@ -153,7 +153,7 @@ tr:hover td { background: var(--bg-tertiary); }
 .btn-danger:hover { background: rgba(239,68,68,0.1); }
 
 /* Forms */
-input, select {
+input, select, textarea {
   background: var(--bg-primary);
   border: 1px solid #333;
   color: var(--text-primary);
@@ -163,13 +163,14 @@ input, select {
   font-family: var(--font-sans);
   width: 100%;
 }
-input:focus, select:focus {
+input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
 }
 input::placeholder { color: var(--text-muted); }
 label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
+.grant-help { color: var(--text-secondary); font-size: 12px; line-height: 1.5; margin: 6px 0 12px; }
 
 /* Modal */
 .modal-overlay {
@@ -322,6 +323,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; }
   font-size: 13px;
   cursor: pointer;
 }
+.checkbox-label input[type="checkbox"] { width: auto; flex-shrink: 0; }
 
 /* Tabs */
 .tabs { display: flex; gap: 0; margin-bottom: 12px; }

@@ -14,6 +14,9 @@ import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
 import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { AuthInfo as CoreAuthInfo } from '../src/core/operations.ts';
 
+const PKCE_VERIFIER = 'oauth-test-verifier-example-'.repeat(3);
+const PKCE_CHALLENGE = Buffer.from(hashToken(PKCE_VERIFIER), 'hex').toString('base64url');
+
 // ---------------------------------------------------------------------------
 // Test setup: in-memory PGLite with OAuth tables
 // ---------------------------------------------------------------------------
@@ -144,8 +147,7 @@ describe('client registration', () => {
     const { clientId } = await provider.registerClientManual(
       'bound-agent', ['client_credentials'], 'read agent', [], 'default', undefined, undefined, {
         boundTools: ['search', 'get_page'],
-        boundSourceId: 'dept-x',
-        boundBrainId: 'brain-a',
+        boundSourceId: 'default',
         boundSlugPrefixes: ['wiki/agents/bound-agent/'],
         boundMaxConcurrent: 2,
         budgetUsdPerDay: '7.50',
@@ -158,8 +160,8 @@ describe('client registration', () => {
         FROM oauth_clients WHERE client_id = ${clientId}
     `;
     expect(rows[0].bound_tools).toEqual(['search', 'get_page']);
-    expect(rows[0].bound_source_id).toBe('dept-x');
-    expect(rows[0].bound_brain_id).toBe('brain-a');
+    expect(rows[0].bound_source_id).toBe('default');
+    expect(rows[0].bound_brain_id).toBeNull();
     expect(rows[0].bound_slug_prefixes).toEqual(['wiki/agents/bound-agent/']);
     expect(Number(rows[0].bound_max_concurrent)).toBe(2);
     expect(rows[0].budget).toBe('7.50');
@@ -173,7 +175,7 @@ describe('client registration', () => {
 describe('rescopeClient', () => {
   beforeAll(async () => {
     // oauth_clients.source_id has FK → sources(id); create the targets.
-    for (const id of ['wiki', 'essays', 'alpha', 'gamma']) {
+    for (const id of ['wiki', 'essays', 'alpha', 'beta', 'gamma']) {
       await sql`INSERT INTO sources (id, name) VALUES (${id}, ${id}) ON CONFLICT (id) DO NOTHING`;
     }
   });
@@ -686,7 +688,7 @@ describe('authorization code flow', () => {
     } as any;
 
     await provider.authorize(client, {
-      codeChallenge: 'test-challenge-hash',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read', 'write'],
       state: 'test-state',
@@ -700,7 +702,7 @@ describe('authorization code flow', () => {
     const code = url.searchParams.get('code')!;
 
     // Exchange code for tokens
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
     expect(tokens.access_token).toStartWith('gbrain_at_');
     expect(tokens.refresh_token).toBeDefined(); // Auth code flow includes refresh
   });
@@ -716,7 +718,7 @@ describe('authorization code flow', () => {
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
 
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -724,10 +726,10 @@ describe('authorization code flow', () => {
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     // First exchange works
-    await provider.exchangeAuthorizationCode(client, code);
+    await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     // Second exchange fails (code consumed)
-    await expect(provider.exchangeAuthorizationCode(client, code)).rejects.toThrow();
+    await expect(provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER)).rejects.toThrow();
   });
 
   test('expired code is rejected', async () => {
@@ -744,7 +746,7 @@ describe('authorization code flow', () => {
     `;
 
     const client = (await provider.clientsStore.getClient(firstClient.client_id as string))!;
-    await expect(provider.exchangeAuthorizationCode(client, expiredCode)).rejects.toThrow();
+    await expect(provider.exchangeAuthorizationCode(client, expiredCode, PKCE_VERIFIER)).rejects.toThrow();
   });
 
   // F-AUTHZ regression. The MCP SDK's authorize handler splits `?scope=...`
@@ -766,13 +768,13 @@ describe('authorization code flow', () => {
 
     // Read-only client requests admin via the SDK's parsed scopes array.
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read', 'write', 'admin'],
     }, mockRes);
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     // The token's stored scopes must equal the clamped subset.
     const auth = await provider.verifyAccessToken(tokens.access_token);
@@ -792,13 +794,13 @@ describe('authorization code flow', () => {
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
 
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
     const auth = await provider.verifyAccessToken(tokens.access_token);
     expect(auth.scopes).toEqual(['read']);
   });
@@ -818,7 +820,7 @@ describe('authorization code flow', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -826,7 +828,7 @@ describe('authorization code flow', () => {
 
     const N = 10;
     const results = await Promise.allSettled(
-      Array.from({ length: N }, () => provider.exchangeAuthorizationCode(client, code)),
+      Array.from({ length: N }, () => provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER)),
     );
     const successes = results.filter(r => r.status === 'fulfilled');
     const failures = results.filter(r => r.status === 'rejected');
@@ -851,13 +853,13 @@ describe('refresh token', () => {
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
 
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read', 'write'],
     }, mockRes);
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     // Refresh
     const newTokens = await provider.exchangeRefreshToken(client, tokens.refresh_token!, ['read']);
@@ -882,12 +884,12 @@ describe('refresh token', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     const N = 10;
     const results = await Promise.allSettled(
@@ -1136,19 +1138,19 @@ describe('F1/F4 cross-client isolation', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(owner, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     // Attacker holding the same code MUST be rejected.
-    await expect(provider.exchangeAuthorizationCode(attacker, code)).rejects.toThrow();
+    await expect(provider.exchangeAuthorizationCode(attacker, code, PKCE_VERIFIER)).rejects.toThrow();
 
     // The atomic predicate's payoff: the legitimate owner can STILL redeem
     // the code afterward. Without it, the attacker would have burned the
     // row in the DELETE and the owner's redemption would 404.
-    const tokens = await provider.exchangeAuthorizationCode(owner, code);
+    const tokens = await provider.exchangeAuthorizationCode(owner, code, PKCE_VERIFIER);
     expect(tokens.access_token).toStartWith('gbrain_at_');
   });
 
@@ -1167,14 +1169,14 @@ describe('F1/F4 cross-client isolation', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(owner, {
-      codeChallenge: 'owner-challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     await expect(provider.challengeForAuthorizationCode!(attacker, code)).rejects.toThrow();
-    await expect(provider.challengeForAuthorizationCode!(owner, code)).resolves.toBe('owner-challenge');
+    await expect(provider.challengeForAuthorizationCode!(owner, code)).resolves.toBe(PKCE_CHALLENGE);
   });
 
   test('wrong client cannot revoke another client token', async () => {
@@ -1215,12 +1217,12 @@ describe('F2/F3 refresh hardening', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(owner, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(owner, code);
+    const tokens = await provider.exchangeAuthorizationCode(owner, code, PKCE_VERIFIER);
 
     // Attacker rejected.
     await expect(provider.exchangeRefreshToken(attacker, tokens.refresh_token!)).rejects.toThrow();
@@ -1248,12 +1250,12 @@ describe('F2/F3 refresh hardening', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     // Attempt to escalate to write — must reject.
     await expect(
@@ -1275,12 +1277,12 @@ describe('F2/F3 refresh hardening', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['admin'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     // Refresh requesting only sources_admin — admin implies it, so this
     // must succeed and the new token must carry only the requested subset.
@@ -1313,12 +1315,12 @@ describe('F2/F3 refresh hardening', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['admin'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     const rotated = await provider.exchangeRefreshToken(
       client, tokens.refresh_token!, ['users_admin'],
@@ -1337,12 +1339,12 @@ describe('F2/F3 refresh hardening', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['write'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
 
     await expect(
       provider.exchangeRefreshToken(client, tokens.refresh_token!, ['sources_admin']),
@@ -1479,14 +1481,14 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     const tokens = await provider.exchangeAuthorizationCode(
-      client, code, undefined, 'http://localhost:3000/callback',
+      client, code, PKCE_VERIFIER, 'http://localhost:3000/callback',
     );
     expect(tokens.access_token).toStartWith('gbrain_at_');
   });
@@ -1501,7 +1503,7 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -1511,7 +1513,7 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     // an attacker-controlled callback URL) MUST be rejected. RFC 6749 §4.1.3.
     await expect(
       provider.exchangeAuthorizationCode(
-        client, code, undefined, 'https://attacker.example/cb',
+        client, code, PKCE_VERIFIER, 'https://attacker.example/cb',
       ),
     ).rejects.toThrow();
   });
@@ -1532,14 +1534,14 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     await expect(
-      provider.exchangeAuthorizationCode(client, code, undefined, ''),
+      provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER, ''),
     ).rejects.toThrow();
   });
 
@@ -1557,13 +1559,13 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'challenge',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
     expect(tokens.access_token).toStartWith('gbrain_at_');
   });
 });
@@ -1686,7 +1688,7 @@ describe('PKCE DCR public-client gate (#909)', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
     await provider.authorize(client, {
-      codeChallenge: 'test-challenge-value',
+      codeChallenge: PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -1694,7 +1696,7 @@ describe('PKCE DCR public-client gate (#909)', () => {
     expect(code).toMatch(/^gbrain_code_/);
 
     // Exchange the code — public client; no secret on the wire.
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
     expect(tokens.access_token).toStartWith('gbrain_at_');
     // SDK normalizes token_type per RFC 6750 §6.1.1 (case-insensitive);
     // implementations may emit "bearer" lowercase.

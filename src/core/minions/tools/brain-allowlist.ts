@@ -25,7 +25,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
-import type { Operation, OperationContext } from '../../operations.ts';
+import type { AuthInfo, Operation, OperationContext } from '../../operations.ts';
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
 import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
@@ -203,18 +203,20 @@ export interface BuildBrainToolsOpts {
   /**
    * Trusted-workspace allow-list (v0.23). When set, put_page is bounded
    * to slugs matching these prefix globs instead of the legacy
-   * `wiki/agents/<id>/...` namespace. Trust comes from PROTECTED_JOB_NAMES
-   * (MCP can't submit subagent jobs) — this flows from
-   * SubagentHandlerData.allowed_slug_prefixes via the handler.
+   * `wiki/agents/<id>/...` namespace. Trusted local jobs get these from the
+   * submitter; remote-owned jobs get the validated grant intersection and
+   * delegatedAuth. Prefixes alone do not make a remote job trusted.
    */
   allowedSlugPrefixes?: readonly string[];
   /**
    * Brain source every tool-call OperationContext is scoped to (#1586).
-   * Trusted (flows from SubagentHandlerData.source_id, which only
-   * PROTECTED_JOB_NAMES-gated submitters can set); validated at build time.
+   * Remote-owned jobs also carry delegatedAuth.allowedSources so a per-call
+   * source_id cannot override this boundary. Validated at build time.
    * Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** Current remote owner grant; never populated from caller tool arguments. */
+  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources'>;
 }
 
 interface OpContextDeps {
@@ -227,6 +229,7 @@ interface OpContextDeps {
   allowedSlugPrefixes?: readonly string[];
   sourceId?: string;
   deferEmbeds?: boolean;
+  delegatedAuth?: BuildBrainToolsOpts['delegatedAuth'];
 }
 
 function buildOpContext(deps: OpContextDeps): OperationContext {
@@ -242,6 +245,9 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     remote: true,                // match MCP trust boundary for auto-link skip
     // #1586: cycle-resolved source when provided; legacy host default else.
     sourceId: deps.sourceId ?? 'default',
+    // Preserve explicit per-call source checks without importing direct-write
+    // fences or requiring direct read/write scopes for agent-only grants.
+    ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth } } : {}),
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
@@ -304,6 +310,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
           sourceId: opts.sourceId,
           deferEmbeds: opts.deferEmbeds,
+          delegatedAuth: opts.delegatedAuth,
         });
         const raw = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
         // Same order the MCP dispatchers keep: normalize the optional-param

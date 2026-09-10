@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.48.5.0 -->
+<!-- gbrain-runbook-stamp: 0.49.0.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -251,11 +251,15 @@ placeholder). Trust the CLI's detection over your own guesses.
 Two things the human must UNDERSTAND before you finish — say them plainly, in
 this order, and confirm they landed:
 
-1. **They own the brain.** Every memory you keep is a markdown file in THEIR
-   private GitHub repo — name the URL. Owning it means: they can read it any
-   time, take it to a second machine (`gbrain bootstrap attach`), or delete the
-   repo and the brain is gone. If they went local-only, say that instead, with
-   `gbrain bootstrap repo` as the any-time upgrade.
+1. **They own the brain.** Their private GitHub repo holds the agent's identity
+   files and committed Markdown pages — name the URL. They can read those files
+   or clone the workspace on another machine and run `gbrain bootstrap attach`.
+   Facts, corrections, jobs, and accounting can exist only in the database, so
+   a Git clone is not a complete memory backup. Back up and restore the full
+   database separately. Deleting the repository does not erase database records,
+   history, source material, or backups. If they went local-only, say the files
+   and database remain on this machine; `gbrain bootstrap repo` can add a private
+   GitHub copy of the workspace files later.
 2. **The first skill to run is cold-start.** An empty brain is a database; a
    filled one is a memory — and every flagship skill (book-mirror, briefings,
    meeting prep) only becomes magical once the brain holds their real life.

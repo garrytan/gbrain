@@ -37,6 +37,17 @@ export const PROJECT = {
 
 export const SECTIONS: DocSection[] = [
   {
+    heading: "Choose your agent setup",
+    entries: [
+      { title: "Grok Bot", path: "docs/guides/grok-bot.md", description: "Add repairable local memory inside Grok Bot, enable its native skill, or connect a hosted brain. Shared-computer trust and dated evidence." },
+      { title: "Muse personal agent", path: "docs/guides/muse.md", description: "Verify durable storage and add explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP." },
+      { title: "Inside an existing agent", path: "docs/guides/in-agent-setup.md", description: "Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration." },
+      { title: "Connect a hosted brain", path: "docs/guides/hosted-harness-access.md", description: "Host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification." },
+      { title: "Harness adapter reference", path: "docs/guides/harness-adapters.md", description: "Registry-generated transport, authentication lifetime and configuration facts.", includeInFull: false },
+      { title: "Harness validation evidence", path: "docs/guides/harness-validation.md", description: "Local lifecycle and HTTP/worker proof, reproducible tests, and the remaining actual-harness acceptance checks.", includeInFull: false },
+    ],
+  },
+  {
     heading: "Core entry points",
     entries: [
       {
@@ -236,7 +247,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "skills/migrations/",
         description:
-          "Per-version agent-executable migration instructions (latest: v0.48.3.0 — index rebuilds and temporary search/report/tool availability).",
+          "Per-version agent-executable migration instructions (latest: v0.49.0.0 — isolated agent setup, hosted grant migration, and verification).",
         path: "skills/migrations/",
       },
       {

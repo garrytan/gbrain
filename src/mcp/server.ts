@@ -15,6 +15,7 @@ import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
 import { resolveMcpInstructions } from './instructions.ts';
+import { installCapabilitiesResource } from './capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
@@ -209,7 +210,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // op on engine failure) and caches it — recovery sends the notification
     // so the full catalog comes back without a harness restart.
     {
-      capabilities: { tools: { listChanged: true } },
+      capabilities: { tools: { listChanged: true }, resources: {} },
       // #4748: canonical contract (+ opt-in ambient-writeback section) plus the
       // optional operator-set deployment identity, appended last.
       instructions: resolveMcpInstructions(config, process.env, {
@@ -222,6 +223,13 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   );
 
   // WP3: strict-params schema emission, resolved ONCE at startup from the
+  installCapabilitiesResource(server, async () => {
+    const scope = await resolveMcpStdioSourceScope(engine);
+    return { transport: 'stdio', scopes: [], surface, source_id: scope.sourceId,
+      available_operations: (await stdioVisibleTools(engine, surfacedOps)).map(op => op.name),
+      worker: { status: 'unknown' }, note: 'This local MCP pipe has no OAuth profile; agent-facing operation restrictions still apply.' };
+  });
+
   // FILE config plane only — stdio has no per-request list cycle, so a
   // `mcp.strict_params` flip needs a serve restart here (deliberate; the
   // OAuth HTTP path re-reads dual-plane per request).

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../api';
-import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
+import { ClientGrantEditor, GrantFields, GrantPreview, HarnessGuides, grantDraft, grantRequest, reviewedGrantRequest, type GrantCatalog, type GrantPreviewResult } from '../components/ClientGrant';
 
 function timeAgo(date: Date): string {
   const s = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -42,12 +42,19 @@ interface ApiKey {
   status: 'active' | 'revoked';
 }
 
+interface ClientCredentials {
+  clientId: string;
+  clientSecret: string;
+  name: string;
+  credentials?: Record<string, unknown>;
+}
+
 export function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [hideRevoked, setHideRevoked] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
-  const [showCredentials, setShowCredentials] = useState<{ clientId: string; clientSecret: string; name: string } | null>(null);
+  const [showCredentials, setShowCredentials] = useState<ClientCredentials | null>(null);
   const [showApiKeyCreate, setShowApiKeyCreate] = useState(false);
   const [showApiKeyToken, setShowApiKeyToken] = useState<{ name: string; token: string } | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
@@ -149,6 +156,7 @@ export function AgentsPage() {
 
       {showRegister && (
         <RegisterModal
+          sources={sources}
           onClose={() => setShowRegister(false)}
           onRegistered={(creds) => { setShowRegister(false); setShowCredentials(creds); loadAgents(); }}
         />
@@ -168,6 +176,7 @@ export function AgentsPage() {
           sources={sources}
           onClose={() => setSelectedAgent(null)}
           onRevoked={loadAgents}
+          onRecovered={(credentials) => { setSelectedAgent(null); setShowCredentials(credentials); }}
           onRescoped={({ sourceId, federatedRead }) => {
             setSelectedAgent(current => current ? {
               ...current,
@@ -277,99 +286,77 @@ function ApiKeyTokenModal({ token, onClose }: {
   );
 }
 
-function RegisterModal({ onClose, onRegistered }: {
+function RegisterModal({ sources, onClose, onRegistered }: {
+  sources: Source[];
   onClose: () => void;
-  onRegistered: (creds: { clientId: string; clientSecret: string; name: string }) => void;
+  onRegistered: (creds: ClientCredentials) => void;
 }) {
   const [name, setName] = useState('');
-  // v0.28: scope set sourced from admin/src/lib/scope-constants.ts (mirror
-  // of src/core/scope.ts). CI drift check at scripts/check-admin-scope-drift.sh
-  // fails the build if these diverge.
-  const [scopes, setScopes] = useState<Record<Scope, boolean>>(() =>
-    Object.fromEntries(ALLOWED_SCOPES_LIST.map(s => [s, s === 'read'])) as Record<Scope, boolean>,
-  );
-  const [ttl, setTtl] = useState('86400'); // 24h default
+  const [draft, setDraft] = useState(() => grantDraft());
+  const [catalog, setCatalog] = useState<GrantCatalog>();
+  const [preview, setPreview] = useState<GrantPreviewResult>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const ttlOptions = [
-    { label: '1 hour', value: '3600' },
-    { label: '24 hours', value: '86400' },
-    { label: '7 days', value: '604800' },
-    { label: '30 days', value: '2592000' },
-    { label: '1 year', value: '31536000' },
-    { label: 'No expiry', value: '0' },
-  ];
-
+  const [recovery, setRecovery] = useState<{ clientId: string; name: string }>();
+  useEffect(() => { void api.grantCatalog().then(setCatalog).catch(e => setError(e.message)); }, []);
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { setError('Name required'); return; }
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
-      // Use the CLI registration endpoint (POST to admin API)
-      const selectedScopes = Object.entries(scopes).filter(([, v]) => v).map(([k]) => k).join(' ');
-      const res = await fetch('/admin/api/register-client', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), scopes: selectedScopes, tokenTtl: ttl === '0' ? 315360000 : Number(ttl) }),
-      });
-      if (!res.ok) throw new Error('Registration failed');
-      const data = await res.json();
-      onRegistered({ clientId: data.clientId, clientSecret: data.clientSecret, name: name.trim() });
+      const result = await api.registerClient({ ...(preview ? reviewedGrantRequest(preview.after) : grantRequest(draft)), name: name.trim(), dryRun: !preview });
+      if (!preview) setPreview(result);
+      else onRegistered({ clientId: result.clientId, clientSecret: result.clientSecret, name: name.trim(), credentials: result.credentials });
     } catch (err) {
+      setPreview(undefined);
       setError(err instanceof Error ? err.message : 'Registration failed');
-    } finally {
-      setLoading(false);
+      if (preview) {
+        // A lost response may follow a committed registration. Reconcile by
+        // the submitted name before offering a distinct credential recovery.
+        try {
+          const existing = (await api.agents() as Agent[]).filter(agent => agent.auth_type === 'oauth' && agent.status === 'active' && (agent.name || agent.client_name) === name.trim());
+          if (existing.length === 1) setRecovery({ clientId: existing[0].id || existing[0].client_id!, name: name.trim() });
+        } catch { /* Retain the registration error; the Agents list also offers recovery. */ }
+      }
     }
+    finally { setLoading(false); }
   };
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <div className="modal-title">Register Agent</div>
-        <div style={{ marginBottom: 16 }}>
-          <label>Agent Name</label>
-          <input placeholder="e.g. perplexity-production" value={name} onChange={e => setName(e.target.value)} autoFocus />
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <label>Scopes</label>
-          <div className="checkbox-group">
-            {ALLOWED_SCOPES_LIST.map(s => (
-              <label key={s} className="checkbox-label">
-                <input type="checkbox" checked={scopes[s]} onChange={e => setScopes(p => ({ ...p, [s]: e.target.checked }))} />
-                {s}
-              </label>
-            ))}
-          </div>
-        </div>
-        <div style={{ marginBottom: 20 }}>
-          <label>Token Lifetime</label>
-          <select value={ttl} onChange={e => setTtl(e.target.value)}
-            style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14 }}>
-            {ttlOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-        {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Registering...' : 'Register'}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
+  const recover = async () => {
+    if (!recovery) return;
+    setLoading(true); setError('');
+    try { onRegistered(await api.recoverClient(recovery.clientId)); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Credential recovery failed'); }
+    finally { setLoading(false); }
+  };
+  return <div className="modal-overlay" onClick={onClose}>
+    <form className="modal" style={{ maxWidth: 700, width: '90vw', minWidth: 0, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
+      <div className="modal-title">Register agent</div>
+      <fieldset disabled={loading || !!recovery} style={{ border: 0, padding: 0, margin: 0 }}>
+        <div style={{ marginBottom: 16 }}><label htmlFor="agent-name">Agent name</label><input id="agent-name" placeholder="muse-personal-example" value={name} onChange={e => { setName(e.target.value); setPreview(undefined); }} autoFocus /></div>
+        {catalog && <GrantFields draft={draft} setDraft={next => { setDraft(next); setPreview(undefined); }} catalog={catalog} sources={sources} />}
+      </fieldset>
+      {preview && <GrantPreview preview={preview} />}
+      {error && <p role="alert" style={{ color: 'var(--error)' }}>{error}</p>}
+      {recovery && <div role="status">
+        <p>A registered client named {recovery.name} exists. Recover its saved credential delivery before retrying registration. This preserves its permissions and secret.</p>
+        <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => void recover()}>Recover credentials</button>
+      </div>}
+      <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+        <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={loading || !catalog || !!recovery}>{loading ? 'Checking…' : preview ? 'Register with reviewed permissions' : 'Preview permissions'}</button>
+      </div>
+    </form>
+  </div>;
 }
 
 function CredentialsModal({ credentials, onClose }: {
-  credentials: { clientId: string; clientSecret: string; name: string };
+  credentials: ClientCredentials;
   onClose: () => void;
 }) {
   const copy = (text: string) => navigator.clipboard.writeText(text);
   const downloadJson = () => {
-    const blob = new Blob([JSON.stringify(credentials, null, 2)], { type: 'application/json' });
+    const handoff = credentials.credentials ?? { version: 1, mcp_url: `${window.location.origin}/mcp`, issuer_url: window.location.origin, client_id: credentials.clientId, client_secret: credentials.clientSecret };
+    const blob = new Blob([JSON.stringify(handoff, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = `${credentials.name}-credentials.json`; a.click();
@@ -401,7 +388,7 @@ function CredentialsModal({ credentials, onClose }: {
         </div>
 
         <div className="warning-bar">
-          Save this secret now. It will not be shown again.
+          Download the credential file now. Keep it private, set its permissions to 0600 on the target computer, and use it with gbrain connect. If delivery is lost, use Recover credentials in this client's Agents entry.
         </div>
 
         <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 20 }}>
@@ -413,274 +400,26 @@ function CredentialsModal({ credentials, onClose }: {
   );
 }
 
-function SourceAccessEditor({ clientId, agent, sources, onRescoped }: {
-  clientId: string;
-  agent: Agent;
-  sources: Source[];
-  onRescoped: (scope: { sourceId: string; federatedRead: string[] }) => void;
-}) {
-  const [writeSource, setWriteSource] = useState(agent.source_id || 'default');
-  const [readSources, setReadSources] = useState<string[]>(agent.federated_read || []);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
-  const readableSet = new Set(readSources);
-  const activeSourceIds = new Set(sources.map(source => source.id));
-  const unavailableReadSources = readSources.filter(sourceId => !activeSourceIds.has(sourceId));
-  const primaryUnavailable = !activeSourceIds.has(writeSource);
 
-  const save = async () => {
-    if (readSources.length === 0) {
-      setError('Select at least one readable source.');
-      return;
-    }
-    setSaving(true);
-    setError('');
-    setSaved(false);
-    try {
-      const result = await api.rescopeClient(clientId, writeSource, readSources) as {
-        sourceId: string;
-        federatedRead: string[];
-      };
-      setWriteSource(result.sourceId);
-      setReadSources(result.federatedRead);
-      setSaved(true);
-      onRescoped(result);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save source access');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <div className="section-title">Source Access</div>
-      <div style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
-        The primary source is the write destination. Read access is an explicit allowlist and does not widen automatically.
-      </div>
-      <div style={{ marginBottom: 14 }}>
-        <label htmlFor="agent-write-source">Primary / write source</label>
-        <select
-          id="agent-write-source"
-          value={writeSource}
-          onChange={e => { setWriteSource(e.target.value); setSaved(false); }}
-          style={{ width: '100%', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px', fontSize: 14 }}
-        >
-          {primaryUnavailable && (
-            <option value={writeSource} disabled>{writeSource} · unavailable</option>
-          )}
-          {sources.map(source => (
-            <option key={source.id} value={source.id}>{source.name} ({source.id})</option>
-          ))}
-        </select>
-      </div>
-      <fieldset style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
-        <legend>Readable sources</legend>
-        <div className="checkbox-group" style={{ marginTop: 6 }}>
-          {sources.map(source => (
-            <label key={source.id} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={readableSet.has(source.id)}
-                onChange={e => {
-                  setSaved(false);
-                  setReadSources(current => e.target.checked
-                    ? [...current, source.id]
-                    : current.filter(id => id !== source.id));
-                }}
-              />
-              {source.name} ({source.id}){source.federated ? ' · federated' : ' · private'}
-            </label>
-          ))}
-          {unavailableReadSources.map(sourceId => (
-            <label key={sourceId} className="checkbox-label" style={{ color: 'var(--warning)' }}>
-              <input
-                type="checkbox"
-                checked
-                onChange={() => {
-                  setSaved(false);
-                  setReadSources(current => current.filter(id => id !== sourceId));
-                }}
-              />
-              {sourceId} · unavailable (clear to remove grant)
-            </label>
-          ))}
-        </div>
-      </fieldset>
-      {(primaryUnavailable || unavailableReadSources.length > 0) && (
-        <div style={{ color: 'var(--warning)', fontSize: 13, marginBottom: 10 }}>
-          This client references unavailable or archived sources. Choose an active primary source and clear unavailable read grants before saving.
-        </div>
-      )}
-      {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 10 }}>{error}</div>}
-      {saved && <div style={{ color: 'var(--success)', fontSize: 13, marginBottom: 10 }}>Source access saved.</div>}
-      <button
-        type="button"
-        className="btn btn-primary"
-        disabled={saving || readSources.length === 0 || sources.length === 0 || primaryUnavailable || unavailableReadSources.length > 0}
-        onClick={save}
-      >
-        {saving ? 'Saving...' : 'Save Source Access'}
-      </button>
-    </>
-  );
-}
-
-function AgentDrawer({ agent, sources, onClose, onRevoked, onRescoped }: {
+function AgentDrawer({ agent, sources, onClose, onRevoked, onRescoped, onRecovered }: {
   agent: Agent;
   sources: Source[];
   onClose: () => void;
   onRevoked: () => void;
+  onRecovered: (credentials: ClientCredentials) => void;
   onRescoped: (scope: { sourceId: string; federatedRead: string[] }) => void;
 }) {
-  const [tab, setTab] = useState<'claude-code' | 'chatgpt' | 'claude-cowork' | 'perplexity' | 'cursor' | 'json'>('claude-code');
-  const copy = (text: string) => navigator.clipboard.writeText(text);
   const serverUrl = window.location.origin;
 
   const cid = agent.id || agent.client_id || '';
   const isOAuth = agent.auth_type === 'oauth';
-  const agentName = agent.name || agent.client_name || 'unknown';
-
-  // For API keys, we can't show the actual token (it was shown once at creation).
-  // For OAuth, we show the client_id and tell them to use their secret.
-
-  const configSnippets: Record<string, string> = {
-    'claude-code': isOAuth
-      ? [
-        `The user wants to connect GBrain MCP to your context. Here's how.`,
-        ``,
-        `# Step 1 — read the client secret from the operator without putting it in shell history.`,
-        `# read -s suppresses the echo; export keeps it scoped to this shell session.`,
-        `read -rs -p "Client Secret: " GBRAIN_CS && echo`,
-        ``,
-        `# Step 2 — mint a token and register GBrain in one go.`,
-        `claude mcp add --transport http gbrain ${serverUrl}/mcp \\`,
-        `  --header "Authorization: Bearer $(curl -s -X POST ${serverUrl}/token \\`,
-        `    -d 'grant_type=client_credentials' \\`,
-        `    -d 'client_id=${cid}' \\`,
-        `    --data-urlencode "client_secret=$GBRAIN_CS" \\`,
-        `    -d 'scope=${agent.scope || 'read write'}' | jq -r .access_token)"`,
-        ``,
-        `# Step 3 — clear the secret from this shell.`,
-        `unset GBRAIN_CS`,
-        ``,
-        `The token will last ${agent.token_ttl ? (agent.token_ttl >= 86400 ? Math.floor(agent.token_ttl / 86400) + ' days' : Math.floor(agent.token_ttl / 3600) + ' hours') : '1 hour (default)'}.`,
-        ``,
-        `─── Fallback: 2-step curl + paste ───`,
-        ``,
-        `If your shell doesn't support read -s, mint the token first, then paste:`,
-        ``,
-        `curl -s -X POST ${serverUrl}/token \\`,
-        `  -d 'grant_type=client_credentials' \\`,
-        `  -d 'client_id=${cid}' \\`,
-        `  -d 'client_secret=PASTE_YOUR_CLIENT_SECRET_HERE' \\`,
-        `  -d 'scope=${agent.scope || 'read write'}' | jq -r .access_token`,
-        ``,
-        `claude mcp add --transport http gbrain ${serverUrl}/mcp \\`,
-        `  --header "Authorization: Bearer PASTE_TOKEN_FROM_ABOVE"`,
-        ``,
-        `# Then run: history -d $((HISTCMD-1))   # zsh: print -s -- '' && fc -p`,
-      ].join('\n')
-      : [
-        `The user wants to connect GBrain MCP to your context. Here's how.`,
-        ``,
-        `Run this command in terminal to register GBrain:`,
-        ``,
-        `claude mcp add --transport http gbrain ${serverUrl}/mcp \\`,
-        `  --header "Authorization: Bearer PASTE_YOUR_API_KEY_HERE"`,
-        ``,
-        `Replace PASTE_YOUR_API_KEY_HERE with the API key shown when "${agentName}" was created.`,
-        `API keys never expire.`,
-      ].join('\n'),
-
-    'chatgpt': [
-      `The user wants to connect GBrain MCP to ChatGPT.`,
-      ``,
-      `1. Open ChatGPT > Settings > Tools & Integrations > Add MCP Server`,
-      `2. Enter this URL — ChatGPT will auto-discover the OAuth configuration:`,
-      ``,
-      `   ${serverUrl}/.well-known/oauth-authorization-server`,
-      ``,
-      `3. When prompted for credentials:`,
-      `   Client ID: ${cid}`,
-      `   Client Secret: (the secret from agent registration)`,
-      `   Grant Type: client_credentials`,
-      `   Scope: ${agent.scope || 'read write'}`,
-    ].join('\n'),
-
-    'claude-cowork': [
-      `The user wants to connect GBrain MCP to Claude.ai.`,
-      ``,
-      `1. Open claude.ai > Settings > Connected Apps > Add MCP Server`,
-      `2. Server URL: ${serverUrl}/mcp`,
-      `3. When prompted for auth:`,
-      `   Token endpoint: ${serverUrl}/token`,
-      `   Client ID: ${cid}`,
-      `   Client Secret: (the secret from agent registration)`,
-      `   Scope: ${agent.scope || 'read write'}`,
-      ``,
-      `Discovery URL: ${serverUrl}/.well-known/oauth-authorization-server`,
-    ].join('\n'),
-
-    cursor: isOAuth
-      ? [
-        `The user wants to connect GBrain MCP to Cursor.`,
-        ``,
-        `Cursor supports OAuth for remote MCP. Add to .cursor/mcp.json:`,
-        ``,
-        `{`,
-        `  "mcpServers": {`,
-        `    "gbrain": {`,
-        `      "url": "${serverUrl}/mcp",`,
-        `      "transport": "sse"`,
-        `    }`,
-        `  }`,
-        `}`,
-        ``,
-        `Cursor will auto-discover OAuth via:`,
-        `${serverUrl}/.well-known/oauth-authorization-server`,
-        ``,
-        `When prompted: Client ID ${cid}, use the secret from registration.`,
-      ].join('\n')
-      : [
-        `The user wants to connect GBrain MCP to Cursor.`,
-        ``,
-        `Add to .cursor/mcp.json:`,
-        ``,
-        `{`,
-        `  "mcpServers": {`,
-        `    "gbrain": {`,
-        `      "url": "${serverUrl}/mcp",`,
-        `      "transport": "sse",`,
-        `      "headers": {`,
-        `        "Authorization": "Bearer PASTE_YOUR_API_KEY_HERE"`,
-        `      }`,
-        `    }`,
-        `  }`,
-        `}`,
-        ``,
-        `Replace PASTE_YOUR_API_KEY_HERE with the API key shown when "${agentName}" was created.`,
-      ].join('\n'),
-
-    perplexity: [
-      `The user wants to connect GBrain MCP to Perplexity.`,
-      ``,
-      `1. Go to Settings > Connectors > Add MCP`,
-      `2. Server URL: ${serverUrl}/mcp`,
-      `3. Client ID: ${cid}`,
-      `4. Client Secret: (the secret from agent registration)`,
-    ].join('\n'),
-
-    json: JSON.stringify({
-      server_url: serverUrl + '/mcp',
-      token_url: serverUrl + '/token',
-      discovery_url: serverUrl + '/.well-known/oauth-authorization-server',
-      client_id: cid,
-      client_name: agentName,
-      auth_type: agent.auth_type,
-      scope: agent.scope,
-    }, null, 2),
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryError, setRecoveryError] = useState('');
+  const recoverCredentials = async () => {
+    setRecovering(true); setRecoveryError('');
+    try { onRecovered(await api.recoverClient(cid)); }
+    catch (error) { setRecoveryError(error instanceof Error ? error.message : 'Credential recovery failed'); }
+    finally { setRecovering(false); }
   };
 
   return (
@@ -702,74 +441,23 @@ function AgentDrawer({ agent, sources, onClose, onRevoked, onRescoped }: {
           <span style={{ color: 'var(--text-secondary)' }}>Registered</span>
           <span>{new Date(agent.created_at).toLocaleDateString()}</span>
           <span style={{ color: 'var(--text-secondary)' }}>Token TTL</span>
-          <span>{agent.token_ttl ? (agent.token_ttl >= 31536000 ? 'No expiry' : agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
+          <span>{agent.token_ttl ? (agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
         </div>
 
         {isOAuth && (
-          <SourceAccessEditor
+          <ClientGrantEditor
             clientId={cid}
-            agent={agent}
             sources={sources}
             onRescoped={onRescoped}
           />
         )}
 
-        {/*
-          Config Export visible for both auth_type=oauth AND auth_type=api_key.
-          Claude Code + Cursor + JSON tabs render real snippets regardless
-          (commit 15's snippets are auth-type-aware for those two clients;
-          JSON is just structured metadata). ChatGPT, Claude.ai, and
-          Perplexity tabs render an "OAuth client required" message on
-          api_key agents — those MCP clients only speak OAuth 2.0
-          client_credentials, not raw bearer tokens.
-
-          Pre-fix (Wintermute commit 16): the entire Config Export
-          section was hidden for api_key agents, dropping the working
-          Claude Code + Cursor snippets along with the broken ones.
-          (D5=C in the eng review.)
-        */}
-        <div className="section-title">Config Export</div>
-        <div className="tabs" style={{ flexWrap: 'wrap' }}>
-          <div className={`tab ${tab === 'claude-code' ? 'active' : ''}`} onClick={() => setTab('claude-code')}>Claude Code</div>
-          <div className={`tab ${tab === 'chatgpt' ? 'active' : ''}`} onClick={() => setTab('chatgpt')}>ChatGPT</div>
-          <div className={`tab ${tab === 'claude-cowork' ? 'active' : ''}`} onClick={() => setTab('claude-cowork')}>Claude.ai</div>
-          <div className={`tab ${tab === 'cursor' ? 'active' : ''}`} onClick={() => setTab('cursor')}>Cursor</div>
-          <div className={`tab ${tab === 'perplexity' ? 'active' : ''}`} onClick={() => setTab('perplexity')}>Perplexity</div>
-          <div className={`tab ${tab === 'json' ? 'active' : ''}`} onClick={() => setTab('json')}>JSON</div>
-        </div>
-        {(() => {
-          const oauthOnlyTabs = new Set(['chatgpt', 'claude-cowork', 'perplexity']);
-          if (!isOAuth && oauthOnlyTabs.has(tab)) {
-            const clientName = tab === 'chatgpt'
-              ? 'ChatGPT'
-              : tab === 'claude-cowork'
-                ? 'Claude.ai'
-                : 'Perplexity';
-            return (
-              <div style={{
-                background: 'rgba(255, 200, 100, 0.08)',
-                border: '1px solid rgba(255, 200, 100, 0.2)',
-                borderRadius: 8,
-                padding: '14px 16px',
-                marginTop: 12,
-                fontSize: 13,
-                lineHeight: 1.6,
-                color: 'var(--text-secondary)',
-              }}>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                  {clientName} requires an OAuth client
-                </div>
-                {clientName} only supports OAuth 2.0 (client_credentials). API keys use raw bearer tokens, which {clientName} does not accept. Register a separate OAuth client and use that to connect this AI.
-              </div>
-            );
-          }
-          return (
-            <div className="code-block">
-              <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{configSnippets[tab]}</pre>
-              <button className="copy-btn" onClick={() => copy(configSnippets[tab])}>Copy</button>
-            </div>
-          );
-        })()}
+        <HarnessGuides serverUrl={serverUrl} clientId={cid} credentialFile={isOAuth && agent.grant_types.includes('client_credentials')} />
+        {isOAuth && agent.status === 'active' && agent.grant_types.includes('client_credentials') && <div>
+          <p className="grant-help">If registration finished but its download was lost, recover the saved credential delivery. Existing permissions and credentials stay unchanged.</p>
+          <button type="button" className="btn btn-secondary" disabled={recovering} onClick={() => void recoverCredentials()}>{recovering ? 'Recovering…' : 'Recover credentials'}</button>
+          {recoveryError && <p role="alert" style={{ color: 'var(--error)' }}>{recoveryError}</p>}
+        </div>}
 
         <div style={{ marginTop: 32 }}>
           {agent.status === 'active' && (

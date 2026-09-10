@@ -1,41 +1,13 @@
 /**
- * v0.32.2 — forget-as-fence path (Codex R2-#3).
+ * Forget records a durable, source- and visibility-scoped withdrawal before
+ * updating its Markdown fence. Reimport and facts-index reconstruction cannot
+ * silently reactivate the same normalized claim while that record exists.
  *
- * Before v0.32.2 `gbrain forget` and the MCP `forget_fact` op called
- * `engine.expireFact(id)` directly, which UPDATEs `facts.expired_at`
- * in the DB. After `gbrain rebuild` (v0.32.3) that DB-only mutation
- * would evaporate because the canonical markdown fence is unchanged
- * — the forget would un-happen.
- *
- * The fix: forget becomes a fence rewrite. Strike through the target
- * row's `claim` cell, set its `valid_until` to today, append
- * `forgotten: <reason>` to its `context` cell. The DB's existing
- * `expired_at = valid_until + now()` rule reconstructs the forget
- * state on every rebuild because the fence is canonical.
- *
- * Strikethrough parse contract (extends commit 2's two-mode design):
- *   `~~claim~~` + `context: superseded by #N`    → supersededBy=N
- *   `~~claim~~` + `context: forgotten: <reason>` → forgotten=true
- *   `~~claim~~` + anything else                  → active=false; the
- *      mapper treats this as forgotten for DB-derivation purposes.
- *
- * Two-tier fallback for cross-state safety:
- *   1. If the target row has v51 columns (row_num + source_markdown_slug
- *      + sources.local_path), do the fence rewrite. The forget survives
- *      rebuild.
- *   2. If any of those is missing (pre-v51 legacy row, NULL entity_slug,
- *      no local_path on the source), fall through to the legacy
- *      `engine.expireFact(id)` direct-DB path. A once-per-process
- *      stderr warning names the case so operators see the degraded
- *      mode. These forgets DO NOT survive rebuild — the architecture
- *      doc names this as the explicit DB-only exception for legacy
- *      / thin-client state.
- *
- * Both tiers ALSO strike the row in `pages.compiled_truth` (#4696): the
- * extract_facts reconcile reads the DB body, not the file, and treats a
- * live DB fence row with an expired facts row as drift to heal by
- * re-inserting the claim active. Without the DB-body strike the routine
- * dream cycle undid every forget that landed before the next sync.
+ * With a writable source file, strike the row, set valid_until and append the
+ * reason atomically. Without a file, retain the same withdrawal and best-effort
+ * DB-body strike. Imports overlay stale matching fence rows before chunking.
+ * These are retractions: original prose, files and backups may retain text.
+ * A Markdown-only clone does not carry DB-only withdrawal records.
  */
 
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
@@ -47,6 +19,7 @@ import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fen
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
+import { recordFactWithdrawal } from './withdrawal.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -111,7 +84,7 @@ function strikeFenceRow(body: string, rowNum: number, reason: string, today: str
 /**
  * Forget a fact by id. Routes through the fence when the row carries
  * v51 columns + the source has a local_path; falls through to legacy
- * `expireFact` otherwise. Idempotent: returns `already_expired` when
+ * DB-body mirroring otherwise. Idempotent: returns `already_expired` when
  * the row's `expired_at` is already non-null.
  *
  * Reason defaults to `'forgotten'` when the caller doesn't provide one
@@ -165,16 +138,16 @@ export async function forgetFactInFence(
   }
   const row = rows[0];
 
+  // A stale source file or rebuilt index must not silently restore an exact
+  // withdrawn claim. Intent commits independently of filesystem availability.
+  await recordFactWithdrawal(engine, factId, row.source_id, opts.worldOnly === true);
+
   if (row.expired_at !== null) {
     return { ok: false, path: 'already_expired', reason };
   }
 
-  // #4696: a forget that cannot rewrite the file still strikes the row in
-  // the DB body, or the next extract_facts reconcile re-inserts the claim
-  // active at the same row_num (see the module header). Best-effort: the
-  // facts row is already expired, so a failure here only degrades to the
-  // pre-#4696 window. The fence file stays canonical — a later absorb of a
-  // file whose row is still live legitimately revives it.
+  // Mirror the retraction in the page body. The withdrawal record protects
+  // active facts even if this best-effort mirror fails or a stale file returns.
   const strikeDbBody = async (): Promise<void> => {
     if (row.row_num === null || row.source_markdown_slug === null) return;
     const slug = row.source_markdown_slug;
@@ -186,19 +159,17 @@ export async function forgetFactInFence(
     // importer's hash: sync would see file == row and skip, leaving
     // content_chunks with the live claim for good. A row-shaped hash over the
     // struck body can never equal the unchanged file's, so the next sync
-    // re-imports + re-chunks — and, the fence being canonical, legitimately
-    // revives a row the file still carries, in body AND chunks as one state.
+    // re-imports + re-chunks through the withdrawal overlay.
     await engine.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '',
       contentHash({ ...page, compiled_truth: struck }));
   };
 
-  // Legacy path — DB-only forget. Doesn't survive `gbrain rebuild` (the
-  // canonical fence is untouched) but does survive the reconcile (#4696).
+  // DB-only path: the withdrawal remains authoritative during reimport.
   // The DB-body strike is a read-modify-write on pages.compiled_truth, so it
   // holds the same per-page lock the fence writers do (`locked` = the fence
   // tier is calling from inside its own withPageLock).
   const legacyExpire = async (locked = false): Promise<ForgetFactResult> => {
-    const ok = await engine.expireFact(factId); // gbrain-allow-direct-insert: legacy fallback path inside forgetFactInFence — fence rewrite not possible (pre-v51 row / missing local_path / file deleted / row_num drift)
+    const ok = row.expired_at === null; // recordFactWithdrawal already committed the expiry.
     if (ok && row.source_markdown_slug !== null) {
       const slug = row.source_markdown_slug;
       await (locked ? strikeDbBody() : withPageLock(slug, strikeDbBody, { timeoutMs: 5_000 }))
