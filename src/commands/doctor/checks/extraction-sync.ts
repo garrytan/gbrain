@@ -779,12 +779,12 @@ export async function computeExtractAtomsBacklogCheck(
  * unreferenced.
  *
  * Why this needs a signal: a drifted atom is still returned by search, still
- * carries a `source_quote`, and still reads as sourced — but the hash
- * mismatch only proves the source page changed since extraction; whether the
- * quote itself survived that edit is unverified (it often does — see the
- * `source_changed`/`source_gone` split below). It is the one class of
- * derived page whose provenance has silently gone unverified against the
- * corpus it claims to summarize.
+ * carries a `source_quote`, and still reads as sourced — but a changed
+ * source_hash only means the source page (or its record) changed since
+ * extraction. This check does not string-match the quote against current
+ * page content, so it cannot say whether the quote itself survived that
+ * change. It is the one class of derived page whose provenance has silently
+ * gone unverified against the corpus it claims to summarize.
  *
  * Measured on a 17-source brain (30.7k pages, 4.0k atoms) before shipping this:
  * 1,001 of 3,999 atoms (25.0%) had drifted; 932 still had a live source page
@@ -917,7 +917,7 @@ export async function computeAtomProvenanceDriftCheck(
           `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
           `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
           (oldestDays != null ? `; oldest ${oldestDays}d` : '') + su +
-          `. These still surface in search with a source_quote whose presence in the current page has not been reverified — the hash mismatch only proves the source changed, not that the quote is gone (it often still is). Fix: ${fix}`,
+          `. These atoms still surface in search. This check does not verify whether their source_quote remains in any live page; a changed source hash alone does not establish that the quote is gone. Fix: ${fix}`,
         details,
       };
     }
