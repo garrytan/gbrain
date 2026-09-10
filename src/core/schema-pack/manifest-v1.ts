@@ -147,6 +147,10 @@ const FrontmatterLinkSchema = z.object({
   page_type: z.string(),
   fields: z.array(z.string()).min(1),
   link_type: z.string(),
+  /** Directory the bare field values live under (e.g. `concepts` so
+   *  `concepts: [cloud-drift]` resolves to `concepts/cloud-drift` exactly
+   *  instead of by fuzzy title). Omit for slug-shaped values. */
+  dir_hint: z.string().optional(),
 }).strict();
 
 const EnrichableSchema = z.object({

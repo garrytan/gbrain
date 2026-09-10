@@ -186,6 +186,10 @@ page_types:
 link_types: []
 takes_kinds: [fact, take, bet, hunch]
 borrow_from: []
+# frontmatter_links: a page-type field whose values are links. With
+# `dir_hint`, bare values resolve EXACTLY to `<dir_hint>/<value>` (never by
+# fuzzy title), e.g. an atom's `concepts: [cloud-drift]` → concepts/cloud-drift.
+#   - { page_type: atom, fields: [concepts], link_type: discusses, dir_hint: concepts }
 frontmatter_links: []
 enrichable_types: []
 filing_rules: []

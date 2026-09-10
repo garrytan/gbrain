@@ -175,6 +175,38 @@ describe('#3190 gate 3 — pack frontmatter_links in extractFrontmatterLinks', (
     );
     expect(candidates).toEqual([]);
   });
+
+  test('pack dir_hint reaches the resolver so bare values resolve under that directory', async () => {
+    const hintedPack = parseSchemaPackManifest({
+      api_version: 'gbrain-schema-pack-v1',
+      name: 'pack-3190-hint',
+      version: '0.1.0',
+      extends: null,
+      page_types: [],
+      link_types: [{ name: 'discusses' }],
+      frontmatter_links: [
+        { page_type: 'atom', fields: ['concepts'], link_type: 'discusses', dir_hint: 'concepts' },
+      ],
+    });
+    const asked: string[] = [];
+    // Mimics the DB resolver: exact slug hit, else a fuzzy title near-miss.
+    const hintResolver: SlugResolver = {
+      resolve: async (name) => {
+        asked.push(name);
+        return name === 'concepts/cloud-drift' ? name : 'concepts/cloud-drift';
+      },
+    };
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'atoms/a1', 'atom' as never, { concepts: ['Cloud Drift', 'cloud-drift-typo'] },
+      hintResolver, false, hintedPack,
+    );
+    expect(asked).toEqual(['concepts/cloud-drift', 'concepts/cloud-drift-typo']);
+    // Exact hit → edge. Fuzzy near-miss → rejected, reported unresolved.
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].targetSlug).toBe('concepts/cloud-drift');
+    expect(candidates[0].linkType).toBe('discusses');
+    expect(unresolved).toEqual([{ field: 'concepts', name: 'cloud-drift-typo' }]);
+  });
 });
 
 describe('#3190 gate 4 — PGLite e2e: active pack types edges via extract --stale', () => {

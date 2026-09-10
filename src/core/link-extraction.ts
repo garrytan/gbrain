@@ -1050,6 +1050,12 @@ export interface FrontmatterFieldMapping {
    * array; resolver tries each. E.g. investors → ['companies', 'funds', 'people'].
    */
   dirHint: string | string[];
+  /**
+   * Values are slug tails under `dirHint`: resolve `${dirHint}/${value}`
+   * exactly, never by fuzzy title (a pack `dir_hint`). A near-miss title in
+   * that directory is a wrong edge, not a match.
+   */
+  exact?: boolean;
 }
 
 /**
@@ -1386,7 +1392,13 @@ export async function extractFrontmatterLinks(
         seenFields.add(field);
         const type = frontmatterLinkTypeFromPack(pack, pageType as string, field);
         if (!type) continue; // no pack rule for this page type
-        packMappings.push({ fields: [field], type, direction: 'outgoing', dirHint: '' });
+        const rule = pack.frontmatter_links.find(
+          (r) => (r.page_type === undefined || r.page_type === pageType) && r.fields.includes(field),
+        );
+        packMappings.push({
+          fields: [field], type, direction: 'outgoing',
+          dirHint: rule?.dir_hint ?? '', exact: Boolean(rule?.dir_hint),
+        });
       }
     }
   }
@@ -1424,7 +1436,15 @@ export async function extractFrontmatterLinks(
         // through unchanged; the original `name` is preserved for the
         // unresolved report and edge context.
         const linkTarget = unwrapWikilink(name);
-        let resolved = await resolver.resolve(linkTarget, mapping.dirHint);
+        let resolved: string | null;
+        if (mapping.exact) {
+          // Exact slug only: a resolver that falls through to fuzzy title
+          // matching returns some OTHER slug, which is rejected here.
+          const full = `${mapping.dirHint}/${normalizeBasename(linkTarget)}`;
+          resolved = (await resolver.resolve(full, '')) === full ? full : null;
+        } else {
+          resolved = await resolver.resolve(linkTarget, mapping.dirHint);
+        }
         if (!resolved && globalBasename && typeof resolver.resolveBasenameMatches === 'function') {
           // Issue #972 follow-up: extend global_basename resolution to
           // frontmatter link fields. resolve() can't reach a bare-title
