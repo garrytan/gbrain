@@ -8,12 +8,12 @@ conversation. Those are separate release checks.
 | Area | Automated evidence | Remaining platform evidence |
 | --- | --- | --- |
 | Local setup | Real PGLite initialization, isolated routing, explicit adoption, interrupted initialization/upgrade with durable schema resume, live-owner busy errors, ownership conflicts, and runtime replacement | Verify the chosen persistent directory survives the harness's lifecycle |
-| Backup and restore | Database-only facts, private archive permissions, checksums/path rejection, relocated writes, original-brain preservation, and unfinished-job quarantine | Explicitly choose and verify a protected off-VM copy |
+| Backup and restore | Database-only facts, private archive permissions, checksums/path rejection, changing-file rejection, private staging after interrupted publication, relocated writes, original-brain preservation, and unfinished-job quarantine | Explicitly choose and verify a protected off-VM copy |
 | Memory behavior | Remember, recall, correction, withdrawal, restart, and withdrawal surviving stale-source reimport | Observe GBrain calls across actual harness conversations |
 | Hosted onboarding | Real CLI → HTTP administration → private credential handoff → MCP memory round trip, on PostgreSQL and PGLite | Reload the native client and observe its calls |
 | Grants and tokens | Profiles, separate write fences, operation ceilings, source restrictions, revision conflicts, stable credentials, scope removal, refresh ceilings, and confidential/public PKCE flows | A real Grok Bot native OAuth connector test before promoting that adapter |
 | Delegation | Atomic admission, queued/running policy changes, replay restrictions, per-client accounting, and a real HTTP → queue → CLI worker journey | Confirm the deployed worker and configured provider complete the actual task |
-| Admin UI | Headless Chrome against the real HTTP/PostgreSQL service: preview, creation, unlimited/concurrency-1 defaults, stale-edit rejection, and reload | Normal operator deployment checks |
+| Admin UI | Headless Chrome against the real HTTP/PostgreSQL service: preview, creation, unlimited/concurrency-1 defaults, stale-edit rejection, reload, lost-response reconciliation, and credential recovery without duplicate grants or secret rotation | Normal operator deployment checks |
 
 The packaged-install smoke used an archive of the review workspace and the
 downloaded, checksummed Bun 1.3.13 runtime. It exercised the packaged TypeScript
