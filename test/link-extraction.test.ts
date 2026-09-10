@@ -136,6 +136,26 @@ describe('extractEntityRefs', () => {
     expect(refs[0].slug).toBe('people/alice%zzchen');
   });
 
+  test('strips section anchors from directory markdown links', () => {
+    const refs = extractEntityRefs(
+      'See [Session](registry/sessions/example.md#decisions) and [Profile](../people/alice-example.md#notes).',
+    );
+    expect(refs).toEqual([
+      { name: 'Session', slug: 'registry/sessions/example', dir: 'registry' },
+      { name: 'Profile', slug: 'people/alice-example', dir: 'people', upLevels: 1 },
+    ]);
+  });
+
+  test('strips section anchors from same-directory markdown links', () => {
+    const refs = extractEntityRefs(
+      'See [Overview](overview.md#status) and [Sibling](./sibling.md#next-steps).',
+    );
+    expect(refs).toEqual([
+      { name: 'Overview', slug: 'overview', dir: '', sameDir: true },
+      { name: 'Sibling', slug: 'sibling', dir: '', sameDir: true },
+    ]);
+  });
+
   // ─── issue #972: generic `[[bare-name]]` wikilinks (pass 2c) ─────────────
 
   test('tags bare wikilinks with needsResolution flag', () => {

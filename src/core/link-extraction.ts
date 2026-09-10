@@ -49,6 +49,8 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
+// 2026-09-10: #4995 — markdown-link targets consume section anchors without
+// including them in the page slug, matching the adjacent wikilink passes.
 // 2026-09-06: #4873 — pass 1b accepts a leading `./` (and, same wave, the
 // `../` / `./../` sibling forms + the folded bare-wikilink grammar), so pages
 // whose links were pruned by the sweep reconcile re-extract on `extract --stale`.
@@ -66,7 +68,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-09-06T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-09-10T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -165,6 +167,7 @@ const ANY_DIR_SEGMENT = '[a-z0-9][a-z0-9_-]*';
  *
  * The regex permits an optional `../` prefix (any number) and an optional
  * `.md` suffix so the same function works for both filesystem and DB content.
+ * A trailing section anchor is consumed but excluded from the captured slug.
  *
  * #2576 (bug 2): the first segment is ANY_DIR_SEGMENT, not the DIR_PATTERN
  * whitelist — `[Pointer](../ops/services/pointer-agent.md)` must produce a
@@ -172,7 +175,7 @@ const ANY_DIR_SEGMENT = '[a-z0-9][a-z0-9_-]*';
  * are dropped by the callers' existence checks, exactly as before.
  */
 const ENTITY_REF_RE = new RegExp(
-  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${ANY_DIR_SEGMENT}\\/[^)\\s]+?)(?:\\.md)?\\)`,
+  `\\[([^\\]]+)\\]\\((?:\\.\\.\\/)*(${ANY_DIR_SEGMENT}\\/[^)\\s#]+?)(?:\\.md)?(?:#[^)\\s]*)?\\)`,
   'g',
 );
 
@@ -240,7 +243,8 @@ const MARKDOWN_LABEL_WIKILINK_RE = /\[[^\]\n]*\[\[[^\]\n]+\]\][^\]\n]*\]\([^)\n]
 
 /**
  * #3190: same-directory markdown link — `[Name](slug.md)` whose target has
- * NO directory segment and NO scheme/anchor (`/`, `:`, `#` all excluded).
+ * NO directory segment and NO scheme (`/` and `:` excluded). A section anchor
+ * may follow the required `.md` suffix and is excluded from the target capture.
  * #4873: an explicit `./` prefix (`[Name](./slug.md)`, `[Name](./sub/x.md)`)
  * is the same page-dir-relative intent — the FS walker's join() eats it — so
  * the relative arm admits `/` in the tail. The arm takes ANY leading run of
@@ -254,7 +258,7 @@ const MARKDOWN_LABEL_WIKILINK_RE = /\[[^\]\n]*\[\[[^\]\n]+\]\][^\]\n]*\]\([^)\n]
  * linking page's directory happens in extractPageLinks (this module has no
  * page context here).
  */
-const SAME_DIR_MD_RE = /\[([^\]]+)\]\((?:((?:\.{1,2}\/)+)([^):#\s]+?)|([^)/:#\s]+?))\.md\)/g;
+const SAME_DIR_MD_RE = /\[([^\]]+)\]\((?:((?:\.{1,2}\/)+)([^):#\s]+?)|([^)/:#\s]+?))\.md(?:#[^)\s]*)?\)/g;
 
 /**
  * A code-reference found in markdown prose. Created by extractCodeRefs and
