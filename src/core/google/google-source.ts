@@ -58,6 +58,7 @@ import {
   type GoogleService,
   type GoogleSourceConfig,
   type GoogleSourceState,
+  CalendarEventData,
 } from './types.ts';
 import { LOOPS_EXTRACT_WINDOW_DAYS, loopExtractionEligibility } from './loops-extract.ts';
 
@@ -174,6 +175,8 @@ export function myAddressSet(entry: CredentialEntry): Set<string> {
 interface GoogleSyncSummary {
   /** 'up_to_date'/'first_sync' are computed on the SyncResult, never here. */
   status: 'synced' | 'partial';
+  /** Calendar instances skipped because they start beyond CALENDAR_DELTA_HORIZON_DAYS (recurring-series expansion). */
+  calendarSkippedBeyondHorizon?: number;
   added: number;
   modified: number;
   deleted: number;
@@ -392,6 +395,15 @@ async function calendarPageRelPathByEventId(
 
 
 
+/** Recurring-series expansion horizon for the syncToken delta (see sweepCalendar). */
+export const CALENDAR_DELTA_HORIZON_DAYS = 365;
+
+/** True when the instance starts after `beforeMs`. An unparseable start is kept: cancelled skeletons carry no start and must still reach the reconcile path below. */
+function startsBeyond(ev: CalendarEventData, beforeMs: number): boolean {
+  const ms = Date.parse(ev.startIso);
+  return Number.isFinite(ms) && ms > beforeMs;
+}
+
 async function sweepCalendar(
   deps: GoogleSyncDeps,
   calendar: CalendarClient,
@@ -405,6 +417,16 @@ async function sweepCalendar(
     timeMinIso: new Date(now - deps.cfg.historyDays * 86_400_000).toISOString(),
     timeMaxIso: new Date(now + 60 * 86_400_000).toISOString(),
   };
+  // The windowed listing is bounded by timeMax, but the syncToken delta is
+  // not: the Calendar API rejects timeMin/timeMax alongside a syncToken, and
+  // when a recurring series is touched (rescheduled, retitled, an attendee
+  // added) the delta carries EVERY expanded instance to the end of the
+  // series. Measured on a weekly meeting: ~700 instances reaching into 2040,
+  // and 8,840 pages past 2027 across one account. Those pages then burn the
+  // sync's page budget and dominate date-sorted views. Instances that start
+  // beyond this horizon are skipped; they re-enter naturally once the series
+  // is touched again within a year of their start.
+  const materializeBeforeMs = now + CALENDAR_DELTA_HORIZON_DAYS * 86_400_000;
   // The stored token is bound to the calendar it was minted for (legacy state
   // without calendar_id predates secondary calendars, so it was primary's).
   // A re-pointed source starts a fresh window; pairing the NEW calendar with
@@ -438,6 +460,10 @@ async function sweepCalendar(
   }
   for (const ev of result.events) {
     if (deps.opts.signal?.aborted) return;
+    if (startsBeyond(ev, materializeBeforeMs)) {
+      summary.calendarSkippedBeyondHorizon = (summary.calendarSkippedBeyondHorizon ?? 0) + 1;
+      continue;
+    }
     // The page path derives from MUTABLE fields (start date, summary) while
     // identity is the immutable event id — look up the existing page by
     // frontmatter event_id so reschedules move (old page deleted) and
@@ -453,6 +479,11 @@ async function sweepCalendar(
       await deletePageByRelPath(deps, existingPath, summary); // rescheduled → moved
     }
     await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
+  }
+  if (summary.calendarSkippedBeyondHorizon) {
+    deps.log(
+      `[google] calendar: skipped ${summary.calendarSkippedBeyondHorizon} instance(s) starting more than ${CALENDAR_DELTA_HORIZON_DAYS} days out`,
+    );
   }
   if (result.nextSyncToken) {
     state.calendar_sync_token = result.nextSyncToken;
