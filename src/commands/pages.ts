@@ -67,7 +67,8 @@ Subcommands:
                                     Mirror of the autopilot purge phase.
 
 Notes:
-  Soft-delete a page via the MCP \`delete_page\` op. Restore via \`restore_page\`.
+  Soft-delete a page via \`gbrain delete <slug>\`; restore via \`gbrain restore <slug>\`
+  (the delete_page / restore_page ops, equally reachable over MCP).
   This command is the manual operator escape hatch — the autopilot cycle's
   purge phase already calls the same library function on every run.
 `);

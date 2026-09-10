@@ -213,7 +213,12 @@ export async function checkUnverifiedExtractions(
  */
 export async function checkContentHashDuplicates(engine: BrainEngine): Promise<Check> {
   const name = 'content_hash_duplicates';
-  const fix = 'Fix: gbrain pages delete <bare-slug> for each pair, then gbrain pages purge-deleted --older-than 0';
+  // The soft-delete verb is `gbrain delete` (delete_page's cliHints name), NOT
+  // `gbrain pages delete`. `pages` is a CLI_ONLY command whose only subcommand is
+  // `purge-deleted`, so the namespaced form exits 2 with `Unknown subcommand:
+  // delete` and step 1 of this remediation never runs — leaving step 2 with
+  // nothing soft-deleted to purge, so the check stays warn forever.
+  const fix = 'Fix: gbrain delete <bare-slug> for each pair, then gbrain pages purge-deleted --older-than 0';
   try {
     // #3946: no shape predicates — EVERY same-source duplicate-content group
     // surfaces (HAVING count(*) > 1 alone). Classification happens at render:
