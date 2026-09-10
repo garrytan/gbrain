@@ -629,6 +629,48 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('calendar delta: instances starting beyond the horizon are skipped, near ones land, the token still advances', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-cal-horizon-'));
+    const fx = emptyFx();
+    calendarFixture(fx);
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'calendar');
+        expect(readGoogleState(dir).calendar_sync_token).toBe('cal-sync-1');
+
+        // A touched weekly series comes back through the syncToken delta as
+        // EVERY expanded instance to the end of the series. Two arrive: one
+        // next week, one three years out. Only the first may materialize.
+        const inst = (id: string, startMs: number) => ({
+          id,
+          status: 'confirmed',
+          summary: 'Weekly zephyr standup',
+          start: { dateTime: new Date(startMs).toISOString() },
+          end: { dateTime: new Date(startMs + 1_800_000).toISOString() },
+          organizer: { email: 'a@example.com' },
+          attendees: [{ email: 'a@example.com', self: true, responseStatus: 'accepted' }],
+          htmlLink: `https://calendar.google.com/calendar/event?eid=${id}`,
+        });
+        fx.calendarDelta = [inst('evt0000000000w001', NOW_MS + 7 * 86_400_000), inst('evt0000000000w999', NOW_MS + 3 * 365 * 86_400_000)];
+        // Calendar-only source: the result status reflects the gmail lane (never run here), so assert on what landed.
+        const res = await sweep(dir, fx, vault, {}, 'calendar');
+        expect(res.added).toBe(1);
+
+        const meetings = await slugsWhere(`slug LIKE 'calendar/%'`);
+        expect(meetings.length).toBe(2); // the original fixture meeting + the near instance
+        expect(meetings.some((s) => s.includes('weekly-zephyr-standup'))).toBe(true);
+        const farYear = new Date(NOW_MS + 3 * 365 * 86_400_000).getUTCFullYear();
+        expect(meetings.some((s) => s.startsWith(`calendar/${farYear}/`))).toBe(false);
+        // The delta was consumed: the token advances even though an instance was skipped.
+        expect(readGoogleState(dir).calendar_sync_token).toBe('cal-sync-2');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('history 404 falls back to a bookmark window and re-anchors a fresh historyId', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-expired-'));
     const fx = emptyFx();
