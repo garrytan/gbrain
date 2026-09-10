@@ -61,13 +61,13 @@ describe('extractEntityRefs', () => {
   test('extracts filesystem-relative refs ([Name](../people/slug.md))', () => {
     const refs = extractEntityRefs('Met with [Alice Chen](../people/alice-chen.md) at the office.');
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', upLevels: 1 });
+    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', upLevels: 1, index: 9 });
   });
 
   test('extracts engine-style slug refs ([Name](people/slug))', () => {
     const refs = extractEntityRefs('See [Alice Chen](people/alice-chen) for context.');
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people' });
+    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', index: 4 });
   });
 
   test('extracts company refs', () => {
@@ -1591,7 +1591,7 @@ describe("extractEntityRefs — v0.18.0 qualified wikilinks", () => {
   test("[[gstack:projects/foo|Display Name]] preserves display + sourceId", () => {
     const refs = extractEntityRefs("See [[gstack:projects/foo|The Foo Project]] for details.");
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: "The Foo Project", slug: "projects/foo", dir: "projects", sourceId: "gstack" });
+    expect(refs[0]).toEqual({ name: "The Foo Project", slug: "projects/foo", dir: "projects", sourceId: "gstack", index: 4 });
   });
 
   test("qualified source-id format is validated (must match [a-z0-9-]+ kebab rules)", () => {
@@ -2047,6 +2047,91 @@ describe('#4062 — bare [[name]] emits a root-exact direct candidate flag-off',
       'example-rail:mentions',
       'projects/example-rail:wikilink_basename',
     ]);
+  });
+});
+
+// ─── Role-prior suppression in Timeline / See-also / machine-list sections ─
+//
+// The page-role prior (advisor/employee/partner bio language biasing bare
+// person→company links) must not type list-shaped links inside Timeline or
+// See-also sections — that is what re-minted thousands of unevidenced
+// works_at/advises edges on re-import. Per-edge verbs still win everywhere.
+describe('extractPageLinks — role prior suppressed in Timeline/See-also', () => {
+  // Real entity pages separate the bio from Timeline/See-also by far more
+  // than the 240-char per-edge window; the padding keeps the fixtures from
+  // letting per-edge verb regexes see bio text (that bleed is pre-existing
+  // behavior, not what these tests exercise).
+  const advisorBio =
+    'Jane is an advisor to several startups and serves as advisor across fintech.\n' +
+    'Filler context about the neighborhood, the weather, and travel plans. '.repeat(6) + '\n';
+
+  test('advisor bio no longer types a Timeline company link (advises -> mentions)', async () => {
+    const content =
+      advisorBio +
+      '\n## Timeline\n' +
+      '- 2026-05-12 — met with [Acme](companies/acme) about the roadmap\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('mentions');
+  });
+
+  test('advisor bio still types a prose company link outside those sections', async () => {
+    const content =
+      advisorBio +
+      '\nShe spends most weeks with [Acme](companies/acme) and the broader group.\n' +
+      '\n## Timeline\n- 2026-05-12 — quarterly review\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+
+  test('per-edge verb inside Timeline still wins over suppression', async () => {
+    const content =
+      advisorBio +
+      '\n## Timeline\n' +
+      '- 2026-05-12 — Jane is an advisor to [Acme](companies/acme) as of this week\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+
+  test('See-also bare wikilink stays mentions despite employee bio', async () => {
+    const content =
+      'Jane is a senior engineer at somewhere important.\n' +
+      'Filler context about the neighborhood, the weather, and travel plans. '.repeat(6) + '\n' +
+      '\n## See also\n- [[companies/acme]]\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('mentions');
+  });
+
+  test('section ends at the next same-level heading — prior applies again after', async () => {
+    const content =
+      advisorBio +
+      '\n## Timeline\n- 2026-05-12 — planning\n' +
+      '\n## Work\nCurrent focus is [Acme](companies/acme) strategy.\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    const acme = candidates.find(c => c.targetSlug === 'companies/acme');
+    expect(acme).toBeDefined();
+    expect(acme!.linkType).toBe('advises');
+  });
+
+  test('machine-list sections (Related / Email mention links) are suppressed too', async () => {
+    const content =
+      'Jane is an advisor to several startups and serves as advisor across fintech.\n' +
+      'Filler context about the neighborhood, the weather, and travel plans. '.repeat(6) + '\n' +
+      '\n## Related\n- [[companies/acme]]\n' +
+      '\n## Email mention links\n- mentions [[companies/beta-corp]] — forwarded thread\n';
+    const { candidates } = await extractPageLinks('people/jane', content, {}, 'person', allowAllResolver);
+    for (const t of ['companies/acme', 'companies/beta-corp']) {
+      const c = candidates.find(x => x.targetSlug === t);
+      expect(c).toBeDefined();
+      expect(c!.linkType).toBe('mentions');
+    }
   });
 });
 

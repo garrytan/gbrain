@@ -66,7 +66,12 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-09-06T00:00:00Z';
+// 2026-09-08 bump: the page-role prior no longer applies to links inside
+// Timeline / See-also and the other machine-written list sections
+// (rolePriorSuppressedRanges), so pre-fix extractions carrying prior-typed
+// works_at/advises edges from those sections must re-run to demote them
+// to 'mentions'.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-09-08T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -117,6 +122,16 @@ export interface EntityRef {
    * so flat directories and sibling links produced zero DB-path edges.
    */
   sameDir?: boolean;
+  /**
+   * Char offset of the link match in the page content
+   * (stripCodeBlocks and the pass masks are length-preserving, so the
+   * offset is valid against the original content). Lets extractPageLinks
+   * anchor the context window and the Timeline/See-also role-prior
+   * suppression at the ACTUAL link, not at the first occurrence of the
+   * display text — a Timeline link whose display name also appears in the
+   * bio used to anchor early and take the bio's typing.
+   */
+  index?: number;
 }
 
 /**
@@ -389,6 +404,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     // exact {name, slug, dir} shape (no upLevels key) so equality consumers
     // are unaffected.
     if (up) ref.upLevels = up[0].length / 3;
+    ref.index = match.index;
     refs.push(ref);
     markdownRanges.push([match.index, match.index + match[0].length]);
   }
@@ -413,6 +429,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     const ref: EntityRef = { name, slug: target, dir: '', sameDir: true };
     const ups = match[2] ? match[2].split('/').filter(seg => seg === '..').length : 0;
     if (ups) ref.upLevels = ups;
+    ref.index = at;
     refs.push(ref);
     markdownRanges.push([at, at + match[0].length]);
   }
@@ -430,7 +447,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[3] || slug).trim();
     const dir = slug.split('/')[0];
-    refs.push({ name: displayName, slug, dir, sourceId });
+    refs.push({ name: displayName, slug, dir, sourceId, index: match.index });
     qualifiedRanges.push([match.index, match.index + match[0].length]);
   }
 
@@ -446,7 +463,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[2] || slug).trim();
     const dir = slug.split('/')[0];
-    refs.push({ name: displayName, slug, dir });
+    refs.push({ name: displayName, slug, dir, index: match.index });
     unqualifiedRanges.push([match.index, match.index + match[0].length]);
   }
 
@@ -478,7 +495,7 @@ export function extractEntityRefs(content: string): EntityRef[] {
     if (slug.endsWith('.md')) slug = slug.slice(0, -3);
     const displayName = (match[2] || slug).trim();
     const dir = slug.includes('/') ? slug.split('/')[0] : '';
-    refs.push({ name: displayName, slug, dir, needsResolution: true });
+    refs.push({ name: displayName, slug, dir, needsResolution: true, index: match.index });
   }
 
   return refs;
@@ -617,12 +634,18 @@ export async function extractPageLinks(
   // here and every such edge landed as 'mentions'.
   const pack = opts.pack ?? null;
   const packBudget = pack ? new PageRegexBudget() : undefined;
-  const typeFor = (ctx: string, targetSlug: string): string => {
+  // Timeline / See-also links never receive the page-role prior — see
+  // rolePriorSuppressedRanges. idx is the link's position in `content`
+  // (stripCodeBlocks and the wikilink mask are both length-preserving, so
+  // pass-2 indices line up); idx < 0 / undefined keeps the old behavior.
+  const suppressedRanges = rolePriorSuppressedRanges(content);
+  const typeFor = (ctx: string, targetSlug: string, idx?: number): string => {
     if (pack) {
       const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget);
       if (packVerb) return packVerb;
     }
-    return inferLinkType(pageType, ctx, content, targetSlug);
+    const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
+    return inferLinkType(pageType, ctx, suppressPrior ? undefined : content, targetSlug);
   };
 
   // 1. Markdown entity refs.
@@ -646,11 +669,11 @@ export async function extractPageLinks(
       }
       const target = climbed ? '' : slugifyPath(segs.join('/'));
       if (target && target !== slug) {
-        const idx = content.indexOf(ref.name);
+        const idx = ref.index ?? content.indexOf(ref.name);
         const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
         candidates.push({
           targetSlug: target,
-          linkType: typeFor(context, target),
+          linkType: typeFor(context, target, idx),
           context,
           linkSource: 'markdown',
         });
@@ -676,11 +699,11 @@ export async function extractPageLinks(
       // Pre-fix these refs were silently dropped (flag off) or demoted to
       // untyped wikilink_basename edges (flag on).
       if (slashIdx !== -1 && ref.slug !== slug) {
-        const litIdx = content.indexOf(ref.slug);
+        const litIdx = ref.index ?? content.indexOf(ref.slug);
         const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
         candidates.push({
           targetSlug: ref.slug,
-          linkType: typeFor(litContext, ref.slug),
+          linkType: typeFor(litContext, ref.slug, litIdx),
           context: litContext,
           linkSource: 'markdown',
         });
@@ -704,11 +727,11 @@ export async function extractPageLinks(
           // Self-loop guard: `[[own-basename]]` on the root page itself.
           if (!form || form === slug) continue;
           bareDirect.add(form);
-          const litIdx = content.indexOf(ref.slug);
+          const litIdx = ref.index ?? content.indexOf(ref.slug);
           const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
           candidates.push({
             targetSlug: form,
-            linkType: typeFor(litContext, form),
+            linkType: typeFor(litContext, form, litIdx),
             context: litContext,
             linkSource: 'markdown',
           });
@@ -759,7 +782,10 @@ export async function extractPageLinks(
       }
       continue;
     }
-    const idx = content.indexOf(ref.name);
+    // Anchor at the ref's true match offset when the pass
+    // recorded one — first-occurrence-of-display-text anchoring let a
+    // Timeline link inherit the bio's context (and its verb typing).
+    const idx = ref.index ?? content.indexOf(ref.name);
     // Wider context window (240 chars vs original 80) catches verbs that
     // appear at sentence-or-paragraph distance from the slug — common in
     // narrative prose where a partner's investment verbs appear once and
@@ -771,7 +797,7 @@ export async function extractPageLinks(
     const targetSlug = resolveRelativeSlug(slug, ref);
     candidates.push({
       targetSlug,
-      linkType: typeFor(context, targetSlug),
+      linkType: typeFor(context, targetSlug, idx),
       context,
       linkSource: 'markdown',
     });
@@ -805,7 +831,7 @@ export async function extractPageLinks(
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],
-      linkType: typeFor(context, m[1]),
+      linkType: typeFor(context, m[1], m.index),
       context,
       linkSource: 'markdown',
     });
@@ -971,6 +997,43 @@ const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|fro
  * lists portfolio companies without repeating the investment verb each time
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
  */
+/**
+ * Content index ranges where the page-role prior must NOT apply: Timeline
+ * and See-also sections. Links there are list-shaped, per-event references
+ * ("2026-05-12 — met with [[companies/x]]", Iron-Law back-links) — the
+ * role prior is a statement about the AUTHOR's standing relationships, not
+ * about every entity that passes through their timeline, so applying it
+ * there mints unevidenced works_at/advises edges on every re-import (on
+ * one 12k-page brain: ~7.4k such edges re-minted in a month, right after
+ * a ~19.5k cleanup; same class as #3466). Per-edge verbs inside these
+ * sections still type normally — only the globalContext fallback is
+ * suppressed, so absent explicit evidence the edge stays 'mentions'.
+ *
+ * A range runs from its heading to the next heading of the same or higher
+ * level (or EOF). Case-insensitive; matches "See also" / "See-also".
+ */
+export function rolePriorSuppressedRanges(content: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const headingRe = /^(#{1,6})[ \t]*(?:timeline|see[ -]also|related|facts|sources|links|email mention links|backlinks|significant moments)\b[^\n]*$/gim;
+  let m: RegExpExecArray | null;
+  while ((m = headingRe.exec(content)) !== null) {
+    const level = m[1].length;
+    const bodyStart = m.index + m[0].length;
+    const nextRe = new RegExp(`^#{1,${level}}[ \\t]`, 'gm');
+    nextRe.lastIndex = bodyStart;
+    const next = nextRe.exec(content);
+    ranges.push([m.index, next ? next.index : content.length]);
+  }
+  return ranges;
+}
+
+function inSuppressedRange(ranges: Array<[number, number]>, idx: number): boolean {
+  for (const [start, end] of ranges) {
+    if (idx >= start && idx < end) return true;
+  }
+  return false;
+}
+
 export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string): string {
   if (pageType === 'media') {
     return 'mentions';
