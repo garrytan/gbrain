@@ -1876,8 +1876,8 @@ function printHelp(): void {
 
 Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
-                                    Register a new source. --path must be a git repo with
-                                    committed files, not an ephemeral CI checkout; --force skips both.
+                                    Register a new source. --path must be a git repo with committed
+                                    files, not an ephemeral CI checkout; --force skips both checks.
   list [--json]                     List registered sources with page counts.
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.

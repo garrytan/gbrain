@@ -11,6 +11,7 @@ import { ownsGlobalSyncAnchor, sameRepoDir } from './sync.ts';
 import { isWithinRoot } from './sync-git.ts';
 import { serr } from './console-prefix.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
+import { classifyEphemeralCiPath, allowEphemeralPersist } from './ci-path-guard.ts';
 
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
@@ -240,12 +241,9 @@ export async function writeSyncAnchor(
   // exactly the contamination. The sync stays session-scoped: content lands
   // and last_commit advances; only the path binding is skipped.
   // GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 persists anyway.
-  if (which === 'repo_path') {
-    const { classifyEphemeralCiPath, allowEphemeralPersist } = await import(
-      './ci-path-guard.ts'
-    );
+  if (which === 'repo_path' && !allowEphemeralPersist()) {
     const verdict = classifyEphemeralCiPath(value);
-    if (verdict.ephemeral && !allowEphemeralPersist()) {
+    if (verdict.ephemeral) {
       const target = sourceId
         ? `sources.local_path for "${sourceId}"`
         : 'sync.repo_path';

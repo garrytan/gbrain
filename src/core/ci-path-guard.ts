@@ -60,8 +60,8 @@ export interface EphemeralPathVerdict {
 
 /**
  * Workspace prefixes that only exist inside hosted CI runners. Fire without
- * env corroboration. Trailing slash = subtree match; the bare prefix itself
- * also matches.
+ * env corroboration. Matched segment-exact: the prefix directory itself and
+ * anything nested inside it.
  */
 const EPHEMERAL_RUNNER_PREFIXES: ReadonlyArray<readonly [prefix: string, label: string]> = [
   ['/home/runner/work/', 'GitHub Actions hosted Linux runner workspace'],
@@ -119,13 +119,14 @@ export function allowEphemeralPersist(env: NodeJS.ProcessEnv = process.env): boo
   return envTruthy(env.GBRAIN_ALLOW_EPHEMERAL_REPO_PATH);
 }
 
-function underPrefix(resolvedPath: string, prefix: string): boolean {
-  if (prefix.endsWith('/')) {
-    return (
-      resolvedPath.startsWith(prefix) || resolvedPath === prefix.slice(0, -1)
-    );
-  }
-  return resolvedPath === prefix || resolvedPath.startsWith(prefix + '/');
+/**
+ * Is `resolvedPath` the directory `root` itself, or nested inside it? Lexical
+ * and segment-exact — `/srv/app2` is NOT under `/srv/app`. A trailing slash on
+ * `root` is tolerated so the tables above can be spelled either way.
+ */
+function isAtOrUnder(resolvedPath: string, root: string): boolean {
+  const dir = root.endsWith('/') ? root.slice(0, -1) : root;
+  return resolvedPath === dir || resolvedPath.startsWith(dir + '/');
 }
 
 /**
@@ -139,26 +140,26 @@ export function classifyEphemeralCiPath(
   const p = resolve(path);
 
   for (const [prefix, label] of EPHEMERAL_RUNNER_PREFIXES) {
-    if (underPrefix(p, prefix)) {
+    if (isAtOrUnder(p, prefix)) {
       return { ephemeral: true, rule: 'ci_runner_path', detail: label };
     }
   }
 
   if (isCiEnv(env)) {
     for (const [prefix, label] of CI_CORROBORATED_PREFIXES) {
-      if (underPrefix(p, prefix)) {
+      if (isAtOrUnder(p, prefix)) {
         return { ephemeral: true, rule: 'ci_runner_path', detail: label };
       }
     }
   }
 
   for (const [envVar, label] of WORKSPACE_ENV_VARS) {
-    const raw = env[envVar];
-    if (!raw || raw.trim() === '') continue;
-    const ws = resolve(raw.trim());
+    const raw = env[envVar]?.trim();
+    if (!raw) continue;
+    const ws = resolve(raw);
     // Guard the degenerate ws='/' (would contain every path).
     if (ws === '/') continue;
-    if (p === ws || p.startsWith(ws + '/')) {
+    if (isAtOrUnder(p, ws)) {
       return { ephemeral: true, rule: 'ci_workspace_env', detail: `inside ${label}` };
     }
   }
