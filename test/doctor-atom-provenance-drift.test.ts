@@ -54,7 +54,7 @@ async function seedSource(slug: string, body: string) {
   await engine.putPage(slug, { type: 'article', title: slug, compiled_truth: body });
 }
 
-async function seedAtom(slug: string, sourceSlug: string, sourceHash: string) {
+async function seedAtom(slug: string, sourceSlug: string, sourceHash: string, sourceQuote?: string) {
   await engine.putPage(slug, {
     type: 'atom',
     title: slug,
@@ -64,6 +64,7 @@ async function seedAtom(slug: string, sourceSlug: string, sourceHash: string) {
       source_slug: sourceSlug,
       source_hash: sourceHash,
       extracted_at: new Date().toISOString(),
+      ...(sourceQuote != null ? { source_quote: sourceQuote } : {}),
     },
   });
 }
@@ -278,6 +279,61 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).toContain('30/30');
     expect(c.message).toContain('source page is gone');
   });
+
+  it('warns with an accurate (not overclaiming) message when the edit that caused drift left the atom quote intact', async () => {
+    // Regression for the warning-text overclaim: the hash check can only see
+    // that the source page's content_hash moved, not whether the specific
+    // quote an atom cites survived the edit. Prepending unrelated text to a
+    // page still moves the hash (drift correctly fires) even though the
+    // quoted passage itself is untouched — the message must not assert the
+    // quote is gone.
+    const quote = 'the treaty was signed under a full moon';
+    await seedSource('src-w', `${quote} — background paragraph.`);
+    const originalHash = await hashOf('src-w');
+    for (let i = 0; i < 30; i++) {
+      await seedAtom(`atoms/2026-01-01/w-${String(i).padStart(6, '0')}`, 'src-w', originalHash, quote);
+    }
+    // Edit prepends unrelated text; the quoted passage itself is untouched.
+    await seedSource('src-w', `An unrelated new intro paragraph.\n\n${quote} — background paragraph.`);
+
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    const d = c.details as Record<string, number>;
+    expect(c.status).toBe('warn');
+    expect(d.drifted).toBe(30);
+    expect(d.source_changed).toBe(30);
+
+    // Ground truth: each drifted atom's OWN stored source_quote is, in fact,
+    // still present verbatim in the current live page — this is the case
+    // the old "no current page contains [the quote]" wording overclaimed
+    // against. Read the quote back from the atom's frontmatter rather than
+    // asserting against the free-standing `quote` variable, so the check
+    // exercises what the atom actually cites, not just test-local state.
+    const atomRows = await engine.executeRaw<{ q: string }>(
+      `SELECT frontmatter->>'source_quote' AS q FROM pages
+        WHERE type = 'atom' AND deleted_at IS NULL AND slug LIKE 'atoms/2026-01-01/w-%'`,
+      [],
+    );
+    expect(atomRows.length).toBe(30);
+    const pageRows = await engine.executeRaw<{ compiled_truth: string }>(
+      `SELECT compiled_truth FROM pages WHERE slug = $1 AND deleted_at IS NULL`,
+      ['src-w'],
+    );
+    for (const { q } of atomRows) {
+      expect(q).toBe(quote);
+      expect(pageRows[0].compiled_truth).toContain(q);
+    }
+
+    // The message must not assert the quote is unreachable...
+    expect(c.message).not.toContain('no current page contains');
+    // ...and must instead say the check never verified it, without claiming
+    // any particular frequency for how often the quote survives (Codex
+    // review: "it often does/still is" is an unsupported frequency claim —
+    // source_changed/source_gone measure page liveness, not quote survival).
+    expect(c.message).toContain('does not verify whether their source_quote remains in any live page');
+    expect(c.message).toContain('does not establish that the quote is gone');
+    expect(c.message).not.toMatch(/\bit often\b/i);
+  }, 60_000);
+
   it('does not count a slug-unbound atom (source_path only, no source_slug) as source_gone — or as drift at all (#4806)', async () => {
     // Transcript-origin atoms carry `source_path` but no `source_slug`
     // (isCompatibleAtomBinding in extract-atoms.ts) -- this is the CURRENT,
