@@ -2,6 +2,56 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.50.0.0] - 2026-09-10
+
+**Approve client connection requests and keep background work within the access you granted.**
+
+New authorization-code connections now bring you to the existing admin login to review the client, destination, permissions and source before approving. Existing active sessions stay signed in. Background work keeps the authority it was accepted with and checks current permissions before starting, so a later permission change takes effect on pending work.
+
+This release also tightens document handling and outbound requests. Your notes retain their existing metadata types and formatting behavior. Imports report rejected documents as errors and keep useful retry checkpoints. There is no bulk rewrite, reindex or content migration.
+
+### What to expect
+
+| When you… | What happens |
+|---|---|
+| Start an authorization-code connection | Review its requested access in the admin page, then approve or deny. |
+| Upgrade an existing installation | Keep active sessions; stop services and explicitly review pending work before restarting. |
+| Submit background filesystem work remotely | Use the registered source with the supported sync, import and lint parameters. |
+| Check URLs or load remote images | Use bounded direct requests; remove ambient proxy settings for these operations. |
+
+### Things to watch
+
+The minimum Bun version is **1.3.11**. Builds use **1.3.13**, and CI tests both versions. This release requires a coordinated queue cutover: pause ingress, producers and automatic upgraders; drain active work; stop the remaining services and back up; then install matching versions and review or cancel nonterminal legacy jobs. Do not run old and new workers together. Read the [authorization upgrade guide](docs/guides/authorization-upgrade.md) before upgrading an existing installation.
+
+## To take advantage of v0.50.0.0
+
+**Say to your agent:** *“Help me upgrade GBrain and review pending jobs before restarting services.”* Your agent follows `skills/migrations/v0.50.0.0.md` and the authorization upgrade guide.
+
+With the backup verified and all services stopped, install the chosen release
+without starting its setup phases. Published binary installations use
+`gbrain upgrade --swap-only`; Bun installations must follow the guide's
+`--ignore-scripts` path. Then apply only schema migrations:
+
+```bash
+gbrain --version
+gbrain apply-migrations --force-schema --yes
+gbrain jobs list --json
+```
+
+Preview only selected legacy job IDs with `gbrain jobs authorize-legacy --ids <ids> --json`. Apply the reviewed snapshot only with its digest and `--yes`, or cancel unwanted jobs. Resolve all nonterminal legacy work before restarting the new services. If migration or review fails, keep services stopped and follow the guide's recovery steps. Verify with `gbrain doctor` and the existing admin agent-management page; report upgrade problems without posting credentials or private content.
+
+### Itemized changes
+
+- New authorization-code connections use owner consent through the existing admin authentication flow. Grant issuance, replacement and client revocation share transactional enforcement while preserving active sessions.
+- Background jobs retain immutable submission authority through queue lifecycle operations. Migration 147 and the explicit legacy-review command support coordinated upgrades.
+- Generic remote filesystem jobs use registered roots and constrained parameters. Delegated tools and source grants follow the same authorization boundaries as direct operations.
+- Shared data-only frontmatter handling preserves ordinary YAML/JSON behavior. CLI and queued imports report parse failures accurately.
+- Outbound status checks and image requests share destination validation, bounded decoding and a single deadline. Error diagnostics omit caller credentials and content.
+
+### For contributors
+
+Dependency patches cover the root application and admin audit gates. CI checks supported Bun versions, trust-boundary regressions and narrowly documented secret-scanner fixtures.
+
 ## [0.48.5.0] - 2026-09-07
 
 **The community fix wave: 57 contributor pull requests adopted or reworked

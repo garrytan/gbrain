@@ -4,9 +4,6 @@
 
 - [ ] **P2 — bump MARKDOWN_CHUNKER_VERSION to 5 so already-indexed CJK-dominant pages pick up the CJK overlap fix.**
   **What:** #4871 (wave adoption) made `extractTrailingContext` count chars for CJK-dominant chunks (the unit `countCJKAwareWords` uses) instead of whitespace tokens, so CJK pages get a real, bounded overlap instead of none / a near-total duplicate; the L4 char-slice fallback also stopped halving astral pairs. Both change chunk boundaries for CJK-dominant text only and apply to pages chunked from now on — pages already in the index keep their old boundaries until the chunker version moves. **How:** `export const MARKDOWN_CHUNKER_VERSION = 5;` in `src/core/chunkers/recursive.ts`, DECOUPLED from `SAFE_FENCE_CHUNKER_VERSION` (stays 4 as the safe-chunks provenance floor; `safeChunksFilter` is `>= 4`, so 5 passes); update the `MARKDOWN_CHUNKER_VERSION is 4` pin in `test/chunkers/recursive.test.ts`. **Cost (why this is a maintainer decision, not a fix-wave change):** the post-upgrade sweep re-chunks AND re-embeds every markdown page in every brain (markdown import has no embedding reuse) — the same full-brain re-embed shape as the v4 bump in 0.48.3.0, for a boundary change that only affects CJK-dominant pages. Coalescing it with the next planned chunker bump spares a standalone sweep. English output is byte-identical (pinned by `test/chunkers/recursive-cjk-overlap.test.ts`). **Effort:** S.
-## Community fix wave follow-ups (filed 2026-09-07, sync-import train)
-- [ ] **P3 — `gbrain import` human summary labels returned per-file failures as "unchanged".**
-  **What:** the non-`--json` summary line in `src/commands/import.ts` prints `${skipped - errors} unchanged`, but `skipped` also counts the failures `importFile` RETURNS (invalid frontmatter, oversize, symlink, slug mismatch) while `errors` counts only the thrown ones, so a returned failure reads as an unchanged no-op. The `--json` payload was fixed in #4803 (`unchanged` / `malformed_skipped` / `failures`); the human line was deliberately left alone in that wave. **How:** reuse the same `skipped - failures.length - malformedFileSkips` arithmetic and print the returned-failure count as its own term. **Effort:** S. **Priority:** P3.
 ## Community fix wave follow-ups (filed 2026-09-07, minions-autopilot train)
 - [ ] **P3 — pglite-lock `readProcessArgs` has the same win32 gap as #4563, failing the other way.** **What:** `src/core/pglite-lock.ts` `readProcessArgs` probes `ps` then `/proc` with no Windows branch; on win32 it returns null, which that caller treats as "unknowable => alive", so a recycled-pid PGLite lock is never reaped and `acquire` waits out its timeout instead of stealing. Distinct symptom from the autopilot classifier (which now has the CIM branch in `src/core/autopilot-lock.ts` `readProcessCommand`). **How:** route `readProcessArgs` through the shared `readProcessCommand(pid)` (already handles /proc, ps, and win32 CIM) and delete the duplicate probe. **Effort:** S. **Priority:** P3.
 
@@ -7127,6 +7124,14 @@ keeping both skills' triggers intact for chaining.
 **Found:** 2026-04-24 during v0.19.0 production-readiness review.
 
 ## Completed
+
+### ~~Report returned import failures accurately in the human summary~~
+**Completed:** v0.50.0.0 (2026-09-10)
+
+The human and JSON summaries distinguish unchanged files, malformed files, and
+returned or thrown failures. Imports report errors with a nonzero exit and
+preserve retry checkpoints; queued imports also fail when documents are rejected.
+Covered by the import stdout/checkpoint and queued-import error regressions.
 
 ### ~~(v0.42.20.0 follow-up) Decouple the op-dispatch force-exit timer~~
 **Completed:** v0.42.39.0 (2026-06-10)
