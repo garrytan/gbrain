@@ -25,6 +25,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { BudgetMeter } from './budget-meter.ts';
 import { resolveModel } from '../model-config.ts';
+import { sizeMaxOutputTokens } from '../ai/gateway.ts';
 import type { DreamPhaseResult } from './auto-think.ts';
 
 export interface DriftPhaseOpts {
@@ -87,6 +88,9 @@ export type DriftJudgeFn = (input: {
   evidence: string;
   modelHint?: string;
 }) => Promise<DriftVerdict>;
+
+/** Answer budget for the drift verdict envelope (short JSON). */
+const DRIFT_ANSWER_MAX_TOKENS = 400;
 
 export const DRIFT_JUDGE_PROMPT = `You are auditing a knowledge-base "take" (a weighted claim) for drift:
 has newer evidence shifted the ground under this claim since it was made?
@@ -159,7 +163,10 @@ export async function defaultDriftJudge(input: {
   const result = await chat({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens: 400,
+    // The verdict is a short JSON envelope, so 400 sizes the ANSWER. This
+    // phase resolves at tier 'reasoning' (models.drift), so modelHint can be a
+    // thinking model, which would spend all 400 on reasoning and return empty.
+    maxTokens: sizeMaxOutputTokens(input.modelHint, DRIFT_ANSWER_MAX_TOKENS),
   });
   const parsed = parseDriftOutput(result.text);
   if (!parsed) {

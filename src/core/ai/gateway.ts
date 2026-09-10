@@ -3255,8 +3255,21 @@ export function isThinkingModel(modelStr: string | undefined): boolean {
     return false;
   }
 }
+/**
+ * Size an output cap while preserving the caller's intended ANSWER budget.
+ * A thinking model bills reasoning as output against max_tokens, so a cap
+ * sized for the answer alone is spent before any answer text and returns
+ * empty content with finish_reason "length" — malformed output, not an error.
+ * Thinking models get the shared cap, not `answerTokens` plus a local margin
+ * (a phase-private number contradicted it in #4889); everything else keeps
+ * `answerTokens` exactly, so per-call budgets stay intentional.
+ */
+export function sizeMaxOutputTokens(modelStr: string | undefined, answerTokens: number): number {
+  return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : answerTokens;
+}
+
 export function defaultMaxOutputTokens(modelStr: string | undefined): number {
-  return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
+  return sizeMaxOutputTokens(modelStr, DEFAULT_MAX_OUTPUT_TOKENS);
 }
 
 /**

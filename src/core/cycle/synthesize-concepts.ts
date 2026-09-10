@@ -26,7 +26,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
-import { chat as gatewayChat, isAvailable, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../ai/gateway.ts';
+import { chat as gatewayChat, isAvailable, sizeMaxOutputTokens } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 // #2163: concept pages route through importFromContent (the same
 // parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
@@ -75,7 +75,7 @@ const DEFAULT_SYNTH_MAX_OUTPUT_TOKENS = 500;
  * answer text.
  */
 export function resolveSynthMaxOutputTokens(modelStr: string): number {
-  return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_SYNTH_MAX_OUTPUT_TOKENS;
+  return sizeMaxOutputTokens(modelStr, DEFAULT_SYNTH_MAX_OUTPUT_TOKENS);
 }
 
 export interface SynthesizeConceptsOpts {
