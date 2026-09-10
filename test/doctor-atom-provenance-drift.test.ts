@@ -278,6 +278,44 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).toContain('30/30');
     expect(c.message).toContain('source page is gone');
   });
+
+  it('warns with an accurate (not overclaiming) message when the edit that caused drift left the atom quote intact', async () => {
+    // Regression for the warning-text overclaim: the hash check can only see
+    // that the source page's content_hash moved, not whether the specific
+    // quote an atom cites survived the edit. Prepending unrelated text to a
+    // page still moves the hash (drift correctly fires) even though the
+    // quoted passage itself is untouched — the message must not assert the
+    // quote is gone.
+    const quote = 'the treaty was signed under a full moon';
+    await seedSource('src-w', `${quote} — background paragraph.`);
+    for (let i = 0; i < 30; i++) {
+      await seedAtom(`atoms/2026-01-01/w-${String(i).padStart(6, '0')}`, 'src-w', await hashOf('src-w'));
+    }
+    // Edit prepends unrelated text; the quoted passage itself is untouched.
+    await seedSource('src-w', `An unrelated new intro paragraph.\n\n${quote} — background paragraph.`);
+
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    const d = c.details as Record<string, number>;
+    expect(c.status).toBe('warn');
+    expect(d.drifted).toBe(30);
+    expect(d.source_changed).toBe(30);
+
+    // Ground truth: the quote the drifted atoms cite is, in fact, still
+    // present verbatim in the current live page — this is the case the old
+    // "no current page contains [the quote]" wording overclaimed against.
+    const rows = await engine.executeRaw<{ compiled_truth: string }>(
+      `SELECT compiled_truth FROM pages WHERE slug = $1 AND deleted_at IS NULL`,
+      ['src-w'],
+    );
+    expect(rows[0].compiled_truth).toContain(quote);
+
+    // The message must not assert the quote is unreachable...
+    expect(c.message).not.toContain('no current page contains');
+    // ...and must instead flag it as unverified rather than gone.
+    expect(c.message).toContain('has not been reverified');
+    expect(c.message).toContain('not that the quote is gone');
+  }, 60_000);
+
   it('does not count a slug-unbound atom (source_path only, no source_slug) as source_gone — or as drift at all (#4806)', async () => {
     // Transcript-origin atoms carry `source_path` but no `source_slug`
     // (isCompatibleAtomBinding in extract-atoms.ts) -- this is the CURRENT,
