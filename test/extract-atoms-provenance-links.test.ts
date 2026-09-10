@@ -657,16 +657,21 @@ describe('provenance edges are banked BEFORE the completion flip (#4733)', () =>
  * different identity slugs (the identity hash was never lowercased), so
  * both lived simultaneously with no reconciliation. Fixed in two parts:
  *   A. atomSlug's page-derived identity hash now hashes `title.toLowerCase()`
- *      (plain ASCII/BMP lowercasing, not full Unicode case-folding).
+ *      (plain JavaScript lowercasing, not full Unicode case-folding).
  *   B. resolvePageAtomSlug gained a third fallback: when neither the exact
  *      new-shape slug nor the exact pre-#4733 legacy-shape slug exist, it
- *      searches this page's live atoms case-insensitively by title and
- *      adopts the single compatible match (via the shared
- *      isCompatibleAtomBinding predicate) — needed because an atom minted
- *      under the OLD un-lowercased hash won't be found by the NEW lowercased
- *      hash computation, even when re-extracted with the exact same title
- *      case as before (whenever that title wasn't already all-lowercase).
- *      Two or more compatible matches is treated as ambiguous: no guessing,
+ *      searches THIS PAGE's (not the whole source's) live atoms — matched
+ *      in application code with JS `.toLowerCase()`, not SQL `LOWER()`,
+ *      since the two disagree for some non-ASCII titles — and adopts the
+ *      single same-page match. Deliberately narrower than the legacy-slug
+ *      path's `isCompatibleAtomBinding` rule: this path claims an atom by
+ *      title search rather than by a deterministic address, so it must NOT
+ *      also adopt unbound (pre-binding-era) atoms from elsewhere in the
+ *      source — needed because an atom minted under the OLD un-lowercased
+ *      hash won't be found by the NEW lowercased hash computation, even
+ *      when re-extracted with the exact same title case as before (whenever
+ *      that title wasn't already all-lowercase).
+ *      Two or more same-page matches is treated as ambiguous: no guessing,
  *      fall through and mint a fresh slug.
  */
 function expectedAtomStem(title: string): string {
@@ -928,5 +933,89 @@ describe('case-insensitive atom identity (#4908)', () => {
       [sourceSlug],
     );
     expect(atoms[0]!.n).toBe(2);
+  });
+
+  test('an UNBOUND (pre-binding-era) atom with a matching case-variant title is NOT adopted — the fallback is scoped to same-page-bound atoms only', async () => {
+    const sourceSlug = 'writings/2026-08-31-unbound-title-collision-page';
+    const title = 'Unbound Title Collision Claim';
+    // An unbound atom (no source_slug, no source_path at all — the
+    // pre-binding-era shape `isCompatibleAtomBinding` treats as compatible
+    // for the LEGACY-SLUG path). Its slug is unrelated to this page/run —
+    // it is NOT at either the new-shape or legacy-shape address the
+    // extraction would compute, so it can only be found (if at all) by the
+    // case-insensitive title-search fallback under test.
+    const unboundSlug = 'atoms/2026-01-01/some-unrelated-pre-binding-atom-11112222';
+    await engine.putPage(unboundSlug, {
+      type: 'atom', title,
+      compiled_truth: 'An unbound atom that happens to share a title, case-insensitively.', timeline: '',
+      frontmatter: { source_hash: 'aaaa111122223333', atom_type: 'insight' }, // no source_slug/source_path
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Unbound collision source', compiled_truth: 'Body.', timeline: '',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'Body.', contentHash: 'bbbb555566667777' }],
+      _chat: stubChat(title.toUpperCase()), // case-variant of the unbound atom's title
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    // The unbound atom must be untouched — not adopted, binding not changed.
+    const unbound = await engine.getPage(unboundSlug, { sourceId: 'default' });
+    expect(unbound).not.toBeNull();
+    expect(unbound!.frontmatter.source_hash).toBe('aaaa111122223333');
+    expect(unbound!.frontmatter.source_slug ?? null).toBeNull();
+
+    // A FRESH atom was minted for this page instead of claiming the unbound one.
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(1);
+  });
+
+  test('non-ASCII case variance (Greek): adoption is matched with JavaScript `.toLowerCase()`, not SQL `LOWER()`, which disagree for some titles', async () => {
+    // PostgreSQL/PGLite's LOWER('ΟΣ') is 'οσ'; JavaScript's 'ΟΣ'.toLowerCase()
+    // is 'ος' (a different final sigma form). If the case-insensitive
+    // fallback's title comparison were pushed into SQL, this exact adoption
+    // would silently miss and mint a duplicate — the defect this test guards.
+    const seedTitle = 'ΟΣ';
+    const reExtractedTitle = 'ος';
+    expect(seedTitle.toLowerCase()).toBe(reExtractedTitle); // sanity: JS agrees they're the same identity
+    const sourceSlug = 'writings/2026-08-30-greek-case-page';
+    const oldHash = createHash('sha256').update(`${sourceSlug}\0${seedTitle}`).digest('hex').slice(0, 8);
+    const oldSlug = `atoms/2026-08-30/${expectedAtomStem(seedTitle)}-${oldHash}`;
+    await engine.putPage(oldSlug, {
+      type: 'atom', title: seedTitle,
+      compiled_truth: 'Pre-#4908 atom body, seeded under the raw (non-lowercased) Greek title.', timeline: '',
+      frontmatter: { source_slug: sourceSlug, source_hash: 'cccc888899990000', atom_type: 'insight' },
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Greek case source', compiled_truth: 'Edited body.', timeline: '',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'Edited body.', contentHash: 'dddd333344445555' }],
+      _chat: stubChat(reExtractedTitle),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    const seeded = await engine.getPage(oldSlug, { sourceId: 'default' });
+    expect(seeded).not.toBeNull();
+    expect(seeded!.frontmatter.source_hash).toBe('dddd333344445555'); // adopted, not orphaned
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(1); // no duplicate minted under the Unicode-different SQL LOWER() form
   });
 });
