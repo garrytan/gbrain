@@ -231,7 +231,11 @@ export async function checkUnverifiedExtractions(
  */
 export async function checkContentHashDuplicates(engine: BrainEngine): Promise<Check> {
   const name = 'content_hash_duplicates';
-  const fix = 'Fix: gbrain pages delete <bare-slug> for each pair, then gbrain pages purge-deleted --older-than 0';
+  // `gbrain delete` (delete_page's cliHints name), not `gbrain pages delete`:
+  // `pages` only has `purge-deleted`, so that form exits 2 and step 2 has nothing
+  // to purge. `--force` because writes are revisioned (v0.51): a delete without
+  // --expected-revision or --force is refused with revision_conflict.
+  const fix = 'Fix: gbrain delete <bare-slug> --force for each pair, then gbrain pages purge-deleted --older-than 0';
   try {
     // #3946: no shape predicates — EVERY same-source duplicate-content group
     // surfaces (HAVING count(*) > 1 alone). Classification happens at render:
