@@ -8,7 +8,7 @@ import { setupInAgent } from '../src/core/agent-install/setup.ts';
 import { runAgentSetupCli } from '../src/core/agent-install/entry.ts';
 import { acquireBootstrapLock } from '../src/core/bootstrap/lock.ts';
 import { readInstallReceipt, writeInstallReceipt } from '../src/core/agent-install/state.ts';
-import { createPgliteBackup, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
+import { createPgliteBackup, rebaseManagedConfig, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
 import { writeBackupArchive } from '../src/core/backup/archive.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { acquireLock, releaseLock, PgliteBusyError } from '../src/core/pglite-lock.ts';
@@ -63,6 +63,28 @@ beforeAll(async () => {
 });
 
 afterAll(() => { if (temporary) rmSync(temporary, { recursive: true, force: true }); });
+
+test('restored configuration never traverses or copies inherited path fields', () => {
+  const inheritedContainer = { skills_dir: join(root, 'instructions') };
+  const prototype = Object.prototype;
+  const priorContainer = Object.getOwnPropertyDescriptor(prototype, 'mcp');
+  const priorLeaf = Object.getOwnPropertyDescriptor(prototype, 'session_corpus_dir');
+  try {
+    Object.defineProperty(prototype, 'mcp', { value: inheritedContainer, configurable: true, writable: true });
+    Object.defineProperty(prototype, 'session_corpus_dir', { value: join(root, 'memory'), configurable: true, writable: true });
+    const detached: string[] = [];
+    const restored = rebaseManagedConfig({ engine: 'pglite', dream: { synthesize: {} } }, root, join(temporary, 'new-root'), ['memory', 'instructions'], detached);
+    expect(inheritedContainer.skills_dir).toBe(join(root, 'instructions'));
+    expect(Object.hasOwn(restored, 'mcp')).toBe(false);
+    expect(Object.hasOwn(restored.dream!.synthesize!, 'session_corpus_dir')).toBe(false);
+    expect(detached).toEqual([]);
+  } finally {
+    if (priorContainer) Object.defineProperty(prototype, 'mcp', priorContainer);
+    else Reflect.deleteProperty(prototype, 'mcp');
+    if (priorLeaf) Object.defineProperty(prototype, 'session_corpus_dir', priorLeaf);
+    else Reflect.deleteProperty(prototype, 'session_corpus_dir');
+  }
+});
 
 test('real keyless initialization stays local, and repair preserves facts/configuration', async () => {
   const configPath = join(root, '.gbrain', 'config.json');

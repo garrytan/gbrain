@@ -100,11 +100,14 @@ export function rebaseManagedConfig(config: GBrainConfig, originalRoot: string, 
   ]) {
     let parent: Record<string, unknown> = result;
     for (const part of parts.slice(0, -1)) {
-      if (!parent[part] || typeof parent[part] !== 'object' || Array.isArray(parent[part])) { parent = {}; break; }
-      parent = parent[part] as Record<string, unknown>;
+      // Restore only data present in the file configuration, never inherited
+      // objects or accessors that could redirect writes outside this clone.
+      const child = Object.getOwnPropertyDescriptor(parent, part)?.value;
+      if (!child || typeof child !== 'object' || Array.isArray(child)) { parent = {}; break; }
+      parent = child as Record<string, unknown>;
     }
     const leaf = parts[parts.length - 1];
-    const value = parent[leaf];
+    const value = Object.getOwnPropertyDescriptor(parent, leaf)?.value;
     if (typeof value !== 'string') continue;
     const rel = isAbsolute(value) ? relativeInside(originalRoot, value) : null;
     if (rel && managedPaths.some(p => rel === p || rel.startsWith(p + '/'))) parent[leaf] = confinedPath(root, rel);
