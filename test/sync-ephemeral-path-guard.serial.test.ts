@@ -29,6 +29,7 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { GUARD_ENV_VARS } from '../src/core/ci-path-guard.ts';
 
 /**
  * Neutralize every env signal the guard reads, then apply per-test overrides.
@@ -36,18 +37,12 @@ import { withEnv } from './helpers/with-env.ts';
  * set), so control cases must not inherit ambient CI env.
  */
 function guardEnv(overrides: Record<string, string | undefined> = {}) {
+  // Built from the guard's own canonical env-var list so a provider added to
+  // the classifier automatically reaches this control map — a hand-copied
+  // list here would silently go stale and let ambient CI env leak into the
+  // "outside CI" control cases.
   return {
-    CI: undefined,
-    GITHUB_ACTIONS: undefined,
-    GITHUB_WORKSPACE: undefined,
-    GITLAB_CI: undefined,
-    CI_PROJECT_DIR: undefined,
-    BUILDKITE: undefined,
-    BUILDKITE_BUILD_CHECKOUT_PATH: undefined,
-    CIRCLECI: undefined,
-    CIRCLE_WORKING_DIRECTORY: undefined,
-    TF_BUILD: undefined,
-    GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: undefined,
+    ...Object.fromEntries(GUARD_ENV_VARS.map((k) => [k, undefined])),
     ...overrides,
   };
 }
@@ -133,6 +128,14 @@ describe('writeSyncAnchor ephemeral-CI-path guard (incident replica)', () => {
 
     // THE regression: the durable pointer is never bound to the CI checkout.
     expect(await sourceLocalPath(engine, 'wiki')).toBeNull();
+
+    // Session-scoped means ONLY the path binding is skipped: the incremental
+    // anchor still advances (a guard that also blocked last_commit would turn
+    // every CI sync into a silent full re-walk).
+    const anchorRows = await engine.executeRaw<{ last_commit: string | null }>(
+      `SELECT last_commit FROM sources WHERE id = 'wiki'`,
+    );
+    expect(anchorRows[0]!.last_commit).not.toBeNull();
   });
 
   test('outside CI the same sync bootstraps local_path (existing behavior preserved)', async () => {
@@ -247,6 +250,29 @@ describe('addSource ephemeral-CI-path guard', () => {
       `SELECT local_path FROM sources WHERE id = 'wiki'`,
     );
     expect(rows[0]!.local_path).toBeNull();
+  });
+
+  test('fires BEFORE the collision check: a re-run against an already-bound id reports the real problem', async () => {
+    // The docstring claim: a CI bootstrap re-running `sources add` must see
+    // ephemeral_ci_path (actionable), not source_id_taken (a red herring that
+    // steers the operator toward `sources remove --confirm-destructive`).
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('wiki', 'wiki', '/Users/alice-example/brain', '{}'::jsonb)`,
+    );
+    const { addSource, SourceOpError } = await import('../src/core/sources-ops.ts');
+    const err = await withEnv(guardEnv(), () =>
+      addSource(engine, { id: 'wiki', localPath: '/home/runner/work/brain/brain' })
+        .then(() => null)
+        .catch((e: unknown) => e),
+    );
+    expect(err).toBeInstanceOf(SourceOpError);
+    expect((err as InstanceType<typeof SourceOpError>).code).toBe('ephemeral_ci_path');
+    // The existing binding is untouched.
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = 'wiki'`,
+    );
+    expect(rows[0]!.local_path).toBe('/Users/alice-example/brain');
   });
 
   test('force: true bypasses the refusal', async () => {

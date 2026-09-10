@@ -55,7 +55,7 @@ import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
-import { classifyEphemeralCiPath, allowEphemeralPersist } from './ci-path-guard.ts';
+import { classifyEphemeralCiPath, allowEphemeralPersist, ephemeralCiPathAdvice } from './ci-path-guard.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -497,13 +497,7 @@ export async function addSource(
       throw new SourceOpError(
         'ephemeral_ci_path',
         `Refusing to register source "${opts.id}" with local_path ` +
-          `${opts.localPath}: it looks like an ephemeral CI checkout ` +
-          `(${verdict.detail}). On a shared brain this path would break ` +
-          `capture and sync on every other machine once the runner is gone. ` +
-          `To sync CI content without binding the path, run 'gbrain sync ` +
-          `--repo <path> --source <id>' (the path stays session-scoped). ` +
-          `If this path really is durable, pass --force or set ` +
-          `GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1.`,
+          `${opts.localPath}: ${ephemeralCiPathAdvice(verdict.detail!)}`,
       );
     }
   }

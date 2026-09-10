@@ -8,9 +8,11 @@ path was persisted into the shared `sources.local_path` row, breaking
 `gbrain capture` (repo_not_found) on every other machine until repaired via
 `gbrain sources set-path`. The prevention shipped: `src/core/ci-path-guard.ts`
 classifier wired into `sync-anchor.ts:writeSyncAnchor` (skip persist,
-session-scoped sync), `sources-ops.ts:addSource` (`ephemeral_ci_path`), and
-`sources-set-path.ts` (exit 7). Escape hatches: `--force` /
-`GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1`.
+session-scoped sync), `sources-ops.ts:addSource` (`ephemeral_ci_path`),
+`sources-set-path.ts` (exit 7), and `import.ts:runImport` (skip the
+`sync.repo_path` bookmark persist — the ship review's testing specialist
+found this fourth writer). Escape hatches: `--force` /
+`GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1` (affirmative allowlist).
 
 - [ ] **P2 — `gbrain doctor` check for already-contaminated path bindings.**
   The guard prevents NEW ephemeral persists but does not clean rows poisoned

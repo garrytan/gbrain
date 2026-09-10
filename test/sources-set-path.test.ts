@@ -10,6 +10,9 @@
  *   - Path that exists but is a FILE → exit 5, no mutation.
  *   - Path overlapping another source's tree → exit 6 (`overlapping_path`,
  *     the same guard addSource enforces), no mutation; --force bypasses.
+ *   - Path classifying as an ephemeral CI checkout → exit 7
+ *     (`ephemeral_ci_path`), no mutation; --force and
+ *     GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 bypass.
  *
  * Modeled on test/sources-set-cr-mode.test.ts (same runSources dispatch,
  * same process.exit stub).
@@ -22,6 +25,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { GUARD_ENV_VARS } from '../src/core/ci-path-guard.ts';
 import { runSources } from '../src/commands/sources.ts';
 
 describe('gbrain sources set-path', () => {
@@ -285,19 +289,11 @@ describe('gbrain sources set-path', () => {
   // through withEnv (this file also runs FOR REAL under GitHub Actions, so
   // each case neutralizes the ambient CI env it doesn't set).
 
-  const guardEnvOff = {
-    CI: undefined,
-    GITHUB_ACTIONS: undefined,
-    GITHUB_WORKSPACE: undefined,
-    GITLAB_CI: undefined,
-    CI_PROJECT_DIR: undefined,
-    BUILDKITE: undefined,
-    BUILDKITE_BUILD_CHECKOUT_PATH: undefined,
-    CIRCLECI: undefined,
-    CIRCLE_WORKING_DIRECTORY: undefined,
-    TF_BUILD: undefined,
-    GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: undefined,
-  };
+  // Built from the guard's canonical env-var list (see guardEnv in
+  // test/sync-ephemeral-path-guard.serial.test.ts for the rationale).
+  const guardEnvOff = Object.fromEntries(
+    GUARD_ENV_VARS.map((k) => [k, undefined]),
+  ) as Record<string, string | undefined>;
 
   test('rejection: path inside $GITHUB_WORKSPACE → exit 7, no mutation (incident shape)', async () => {
     const durable = makeDir();

@@ -938,7 +938,27 @@ export async function runImport(
         );
       }
       await engine.setConfig('sync.last_run', new Date().toISOString());
-      await engine.setConfig('sync.repo_path', dir);
+      // Ephemeral-CI-path guard (2026-09-08 shared-brain incident): the
+      // ownership gate above deliberately allows a null-anchor BOOTSTRAP,
+      // and `gbrain import <dir>` from a CI checkout would bootstrap the
+      // runner path into the shared brain — the same contamination
+      // writeSyncAnchor refuses. Import stays session-scoped: content and
+      // the sync bookmark land; only the path binding is skipped.
+      const { classifyEphemeralCiPath, allowEphemeralPersist } = await import(
+        '../core/ci-path-guard.ts'
+      );
+      const verdict = classifyEphemeralCiPath(dir);
+      if (verdict.ephemeral && !allowEphemeralPersist()) {
+        console.error(
+          `[import] sync.repo_path not updated — "${dir}" looks like an ephemeral ` +
+          `CI checkout (${verdict.detail}). The stored path is left untouched so ` +
+          `other machines sharing this brain keep a working pointer; this run ` +
+          `still imported from "${dir}". Set GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 ` +
+          `to persist it anyway.`,
+        );
+      } else {
+        await engine.setConfig('sync.repo_path', dir);
+      }
     } else if ((sourceId ?? 'default') === 'default') {
       console.error(
         `\n[import] sync.repo_path stays at ${configured ?? '(unset)'} — NOT repointing to "${dir}". ` +

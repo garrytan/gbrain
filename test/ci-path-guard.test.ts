@@ -5,8 +5,10 @@
  * job running gbrain against a shared brain persisted its runner checkout
  * (/home/runner/work/brain/brain) into `sources.local_path`, breaking
  * `gbrain capture` (repo_not_found) on every other machine until the row was
- * repaired by hand. classifyEphemeralCiPath is the shared detector consumed by
- * sync's writeSyncAnchor and sources-ops addSource.
+ * repaired by hand. classifyEphemeralCiPath is the shared detector; the
+ * canonical consumer list lives in the `Consumers:` block of
+ * src/core/ci-path-guard.ts (writeSyncAnchor, addSource, sources set-path,
+ * runImport).
  *
  * Every case passes an explicit `env` object — the classifier must never be
  * tested through ambient process.env (this suite itself runs under CI=true on
@@ -62,6 +64,27 @@ describe('classifyEphemeralCiPath — unconditional runner prefixes', () => {
   test('prefix match is path-segment-exact: /home/runner/workspace is NOT /home/runner/work/', () => {
     expect(classifyEphemeralCiPath('/home/runner/workspace/repo', NO_ENV).ephemeral).toBe(false);
   });
+
+  test('GitHub Actions hosted Windows runner workspace (D:\\a\\...)', () => {
+    // Win32-absolute spellings are recognized on any host: backslashes
+    // normalize to forward slashes and the drive letter is uppercased, so
+    // a Windows-origin path in a shared brain classifies from a Mac too.
+    expect(classifyEphemeralCiPath('D:\\a\\repo\\repo', NO_ENV).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('d:/a/repo/repo/sub', NO_ENV).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('D:/awork/repo', NO_ENV).ephemeral).toBe(false);
+  });
+
+  test('non-canonical spellings are resolved before matching (.., trailing slash)', () => {
+    // The header contract: comparison is lexical via path.resolve, so a
+    // runner path spelled with traversal or a trailing slash cannot dodge
+    // the prefix match.
+    expect(classifyEphemeralCiPath('/tmp/../home/runner/work/brain/brain', NO_ENV).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('/home/runner/work/brain/brain/', NO_ENV).ephemeral).toBe(true);
+    // And a workspace env var with a trailing slash still contains its tree.
+    expect(
+      classifyEphemeralCiPath('/srv/agent/_work/repo', { GITHUB_WORKSPACE: '/srv/agent/_work/' }).ephemeral,
+    ).toBe(true);
+  });
 });
 
 describe('classifyEphemeralCiPath — CI-corroborated prefixes', () => {
@@ -110,8 +133,26 @@ describe('classifyEphemeralCiPath — workspace-env containment (self-hosted run
     ).toBe(true);
   });
 
+  test('win32-shaped workspace var contains its backslash-spelled checkout', () => {
+    const env = { GITHUB_WORKSPACE: 'D:\\w\\brain\\brain' };
+    expect(classifyEphemeralCiPath('D:\\w\\brain\\brain\\notes', env).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('D:/w/brain/brain', env).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('D:/w/brain2', env).ephemeral).toBe(false);
+  });
+
+  test('literal ~ workspace value is expanded (CircleCI CIRCLE_WORKING_DIRECTORY convention)', async () => {
+    const { homedir } = await import('os');
+    const env = { CIRCLE_WORKING_DIRECTORY: '~/project' };
+    expect(classifyEphemeralCiPath(`${homedir()}/project/repo`, env).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath(`${homedir()}/elsewhere`, env).ephemeral).toBe(false);
+  });
+
   test('degenerate workspace "/" never swallows every path', () => {
     expect(classifyEphemeralCiPath('/Users/alice/brain', { GITHUB_WORKSPACE: '/' }).ephemeral).toBe(false);
+  });
+
+  test('degenerate drive-root workspace (D:/) never swallows a drive', () => {
+    expect(classifyEphemeralCiPath('D:/some/brain', { GITHUB_WORKSPACE: 'D:/' }).ephemeral).toBe(false);
   });
 
   test('empty workspace var is ignored', () => {
@@ -146,11 +187,34 @@ describe('isCiEnv / allowEphemeralPersist', () => {
     expect(isCiEnv({ TF_BUILD: 'True' })).toBe(true);
   });
 
-  test('allowEphemeralPersist reads GBRAIN_ALLOW_EPHEMERAL_REPO_PATH', () => {
+  test('whitespace-only env values are falsy (trim before truthiness)', () => {
+    expect(isCiEnv({ CI: '   ' })).toBe(false);
+    expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: '  ' })).toBe(false);
+  });
+
+  test('allowEphemeralPersist reads GBRAIN_ALLOW_EPHEMERAL_REPO_PATH (affirmative allowlist)', () => {
     expect(allowEphemeralPersist(NO_ENV)).toBe(false);
     expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: '1' })).toBe(true);
     expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: 'true' })).toBe(true);
+    expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: 'yes' })).toBe(true);
+    expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: 'ON' })).toBe(true);
     expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: '0' })).toBe(false);
     expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: 'false' })).toBe(false);
+    // A hatch DISABLES a protection: negations spelled outside the falsy
+    // list must not silently open the bypass (fail-open would defeat it).
+    expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: 'no' })).toBe(false);
+    expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: 'off' })).toBe(false);
+    expect(allowEphemeralPersist({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: 'disabled' })).toBe(false);
+  });
+
+  test('GUARD_ENV_VARS covers every env var the guard reads (test-neutralization contract)', async () => {
+    const { GUARD_ENV_VARS } = await import('../src/core/ci-path-guard.ts');
+    for (const name of [
+      'GITHUB_WORKSPACE', 'CI_PROJECT_DIR', 'BUILDKITE_BUILD_CHECKOUT_PATH',
+      'CIRCLE_WORKING_DIRECTORY', 'CI', 'GITHUB_ACTIONS', 'GITLAB_CI',
+      'BUILDKITE', 'CIRCLECI', 'TF_BUILD', 'GBRAIN_ALLOW_EPHEMERAL_REPO_PATH',
+    ]) {
+      expect(GUARD_ENV_VARS).toContain(name);
+    }
   });
 });
