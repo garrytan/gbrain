@@ -1648,16 +1648,38 @@ function sourceDate(ref: string): string {
  *   hash is deliberately NOT folded in: an edited/reworded source page must
  *   re-resolve to the same slug and upsert rather than mint a duplicate atom
  *   set on every body edit (the reword-still-upserts property).
- * - Transcript atoms keep the legacy title-only 6-char hash (their locator is
- *   a file path, not page identity; changing their persisted slugs would
- *   re-mint every transcript atom on upgrade for no correctness gain).
+ * - #4908: for PAGE-derived atoms the identity hash is computed over the
+ *   LOWERCASED title (plain `.toLowerCase()` — simple ASCII/BMP lowercasing,
+ *   NOT full Unicode case-folding; "case-insensitive" here means exactly
+ *   that and no more). Pre-fix the hash was computed over the raw title, so
+ *   re-extracting the same underlying claim with a title that differed only
+ *   in letter case (a common model non-determinism) hashed to a DIFFERENT
+ *   slug and minted a duplicate atom instead of upserting the existing one.
+ *   Lowercasing only the hash INPUT (not the persisted title, not the
+ *   human-readable stem below) keeps the slug's readable prefix showing the
+ *   model's actual casing while identity comparison ignores it. This is
+ *   paired with the resolvePageAtomSlug adoption fallback below: an atom
+ *   already minted under the pre-fix RAW-title hash needs a way to be found
+ *   by a post-fix re-extraction of an unchanged-case title, or the hash
+ *   change alone would mint yet another duplicate on the very next run.
+ * - Transcript atoms keep the legacy title-only 6-char hash, computed over
+ *   the RAW (non-lowercased) title (their locator is a file path, not page
+ *   identity; changing their persisted slugs would re-mint every transcript
+ *   atom on upgrade for no correctness gain — this is a separate, narrower
+ *   fix than #4908, which is page-derived atoms only).
  * - The hash suffix keeps two distinct atoms whose titles share the first 60
  *   chars on separate slugs, so a deterministic slug never silently clobbers
- *   a *different* atom.
+ *   a *different* atom. `atomSlugStem` below lowercases too (via
+ *   `slugifySegment`), but that's for the human-readable prefix only — it
+ *   also strips characters and truncates to 60 chars, a lossier transform
+ *   than identity comparison needs, so it is never used as the hash INPUT.
  */
 function atomSlug(title: string, srcRef: string, sourcePageSlug?: string): string {
+  // #4908: page-derived identity hashing ignores letter case; the transcript
+  // (sourcePageSlug === undefined) branch is untouched — see the doc comment.
+  const identityTitle = sourcePageSlug !== undefined ? title.toLowerCase() : title;
   const hash = sourcePageSlug !== undefined
-    ? createHash('sha256').update(`${sourcePageSlug}\0${title}`).digest('hex').slice(0, 8)
+    ? createHash('sha256').update(`${sourcePageSlug}\0${identityTitle}`).digest('hex').slice(0, 8)
     : createHash('sha256').update(title).digest('hex').slice(0, 6);
   return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}`;
 }
@@ -1679,7 +1701,25 @@ function atomSlug(title: string, srcRef: string, sourcePageSlug?: string): strin
  *   3. A legacy-slug atom bound to a DIFFERENT source locator (the #4733
  *      collision class) is left untouched; the new-shape slug lands beside
  *      it — that separation is the whole point of the locator fold.
- * Both reads are scoped to the write's source (unscoped-check/scoped-write).
+ *   4. #4908 upgrade idempotency: neither exact-shape slug (1) nor the
+ *      exact legacy-shape slug (2) name an existing row — the current title
+ *      hashes to slug (1) using the FIXED (lowercased) identity, but the
+ *      atom may still be live under the OLD hash of this same page+title
+ *      (minted pre-#4908, when the identity hash was NOT lowercased; note
+ *      this is a DIFFERENT old shape than (2) — it's the locator-folded
+ *      8-char shape, just computed over the raw un-lowercased title, so an
+ *      identical-case re-extraction can also miss (1) whenever the atom's
+ *      original title was not already all-lowercase). Search this page's
+ *      live atoms case-insensitively by title and adopt the single
+ *      compatible match, if there is exactly one — same compatibility rule
+ *      as (2), via `isCompatibleAtomBinding`, so the two adoption paths can
+ *      never disagree about what "compatible" means. Two or more
+ *      compatible matches is an AMBIGUOUS case this safety net does not
+ *      resolve: deliberately no "pick the newest" / "pick the first"
+ *      heuristic — fall through to minting the fresh slug (1), leaving the
+ *      ambiguity for a human/future decision, exactly like the "no
+ *      compatible legacy row" case already does.
+ * Every read is scoped to the write's source (unscoped-check/scoped-write).
  */
 async function resolvePageAtomSlug(
   engine: BrainEngine,
@@ -1694,6 +1734,37 @@ async function resolvePageAtomSlug(
   if (legacy && legacy.type === 'atom' && isCompatibleAtomBinding(legacy.frontmatter, sourcePageSlug)) {
     return legacySlug;
   }
+  // #4908 fallback (4): a case-variant twin may exist under some other,
+  // pre-fix identity hash (see the doc comment above). Scope is source_id +
+  // case-insensitive title only — deliberately NOT filtered on
+  // `frontmatter->>'source_hash'`, so a `pending:<hash>` row from an
+  // in-progress/retried run is included in the candidate search too (a
+  // retry with a mid-run case-different title must still resolve to the
+  // SAME atom, matching how isCompatibleAtomBinding's binding check has no
+  // opinion on hash state either). Compatibility is decided in application
+  // code via the shared `isCompatibleAtomBinding` predicate (not duplicated
+  // as a raw-SQL equality) so this path can never drift from (2)'s rule —
+  // this also means a compatible match here can be a pre-binding-era row
+  // (no source_slug/source_path at all), not just a same-page one.
+  const caseVariantRows = await engine.executeRaw<{
+    slug: string;
+    source_slug: string | null;
+    source_path: string | null;
+  }>(
+    `SELECT slug,
+            frontmatter->>'source_slug' AS source_slug,
+            frontmatter->>'source_path' AS source_path
+       FROM pages
+      WHERE type = 'atom' AND deleted_at IS NULL
+        AND source_id = $1
+        AND LOWER(title) = LOWER($2)`,
+    [sourceId, title],
+  );
+  const compatibleCaseVariants = caseVariantRows.filter((row) =>
+    isCompatibleAtomBinding({ source_slug: row.source_slug, source_path: row.source_path }, sourcePageSlug),
+  );
+  // Ambiguous (0 or 2+ compatible candidates) → do not guess; mint fresh.
+  if (compatibleCaseVariants.length === 1) return compatibleCaseVariants[0]!.slug;
   return slug;
 }
 

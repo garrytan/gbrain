@@ -18,6 +18,11 @@
  * emitting the same atom title can't alias one slug, plus the fail-closed
  * binding guard and the upgrade path for pre-#4733 title-only-hash rows.
  *
+ * Also pins the #4908 case-insensitive identity fix: the page-derived
+ * identity hash lowercases its title input, plus the resolvePageAtomSlug
+ * case-variant adoption fallback that lets an atom minted under the OLD
+ * (un-lowercased) hash still be found and upserted, not duplicated.
+ *
  * PGLite round-trip with a stubbed chat gateway (no model calls).
  */
 
@@ -25,6 +30,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
+import { slugifySegment } from '../src/core/sync.ts';
 import type { ChatResult, ChatOpts } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -377,8 +383,9 @@ describe('atom identity folds the source locator (#4733)', () => {
     const legacy = await engine.getPage(legacySlug, { sourceId: 'default' });
     expect(legacy!.frontmatter.source_slug).toBe(foreignSource);
     expect(legacy!.frontmatter.source_hash).toBe('ffff000011112222');
-    // The new atom lands on the locator-folded slug beside it.
-    const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    // The new atom lands on the locator-folded slug beside it. #4908: the
+    // new-shape hash input is lowercased (Part A) — mirror that here.
+    const newHash = createHash('sha256').update(`${sourceSlug}\0${title.toLowerCase()}`).digest('hex').slice(0, 8);
     const fresh = await engine.getPage(`atoms/2026-08-26/upgrade-foreign-title-${newHash}`, { sourceId: 'default' });
     expect(fresh).not.toBeNull();
     expect(fresh!.frontmatter.source_slug).toBe(sourceSlug);
@@ -423,7 +430,9 @@ describe('atom identity folds the source locator (#4733)', () => {
     // human note into an atom — refuse, record the failure, leave it alone.
     const title = 'Squatted atom title';
     const sourceSlug = 'writings/2026-08-28-squatter-source';
-    const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    // #4908: the new-shape hash input is lowercased (Part A) — the squatter
+    // must occupy the EXACT slug production will compute, so mirror that here.
+    const newHash = createHash('sha256').update(`${sourceSlug}\0${title.toLowerCase()}`).digest('hex').slice(0, 8);
     const squatSlug = `atoms/2026-08-28/squatted-atom-title-${newHash}`;
     await engine.putPage(squatSlug, {
       type: 'note', title: 'A note, not an atom', compiled_truth: 'Human-written note body.', timeline: '',
@@ -490,7 +499,8 @@ describe('atom identity folds the source locator (#4733)', () => {
     expect(legacy!.frontmatter.source_hash).toBe('aaaa111122223333');
     expect(legacy!.frontmatter.source_slug).toBeUndefined();
     // The page-derived atom lands on the locator-folded slug beside it.
-    const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    // #4908: the new-shape hash input is lowercased (Part A) — mirror that here.
+    const newHash = createHash('sha256').update(`${sourceSlug}\0${title.toLowerCase()}`).digest('hex').slice(0, 8);
     const fresh = await engine.getPage(`atoms/2026-08-24/upgrade-transcript-title-${newHash}`, { sourceId: 'default' });
     expect(fresh).not.toBeNull();
     expect(fresh!.frontmatter.source_slug).toBe(sourceSlug);
@@ -636,5 +646,287 @@ describe('provenance edges are banked BEFORE the completion flip (#4733)', () =>
     } finally {
       engine.addLinksBatch = originalAddLinksBatch;
     }
+  });
+});
+
+/**
+ * gbrain#4908 — case-only title drift used to mint duplicate atoms.
+ *
+ * Two same-date, same-source-page extractions of the same underlying claim
+ * whose model-returned titles differed ONLY in letter case hashed to
+ * different identity slugs (the identity hash was never lowercased), so
+ * both lived simultaneously with no reconciliation. Fixed in two parts:
+ *   A. atomSlug's page-derived identity hash now hashes `title.toLowerCase()`
+ *      (plain ASCII/BMP lowercasing, not full Unicode case-folding).
+ *   B. resolvePageAtomSlug gained a third fallback: when neither the exact
+ *      new-shape slug nor the exact pre-#4733 legacy-shape slug exist, it
+ *      searches this page's live atoms case-insensitively by title and
+ *      adopts the single compatible match (via the shared
+ *      isCompatibleAtomBinding predicate) — needed because an atom minted
+ *      under the OLD un-lowercased hash won't be found by the NEW lowercased
+ *      hash computation, even when re-extracted with the exact same title
+ *      case as before (whenever that title wasn't already all-lowercase).
+ *      Two or more compatible matches is treated as ambiguous: no guessing,
+ *      fall through and mint a fresh slug.
+ */
+function expectedAtomStem(title: string): string {
+  // Mirrors atomSlugStem exactly (private to extract-atoms.ts): slugify,
+  // truncate to 60 chars, re-strip a trailing dash the truncation can expose.
+  return slugifySegment(title).slice(0, 60).replace(/-+$/g, '') || 'untitled';
+}
+
+describe('case-insensitive atom identity (#4908)', () => {
+  test('core regression: re-extracting the same claim with a different-case title leaves exactly ONE live atom', async () => {
+    const sourceSlug = 'writings/2026-09-05-case-regression-page';
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Case regression source',
+      compiled_truth: 'A claim whose title case may drift between extractions.', timeline: '',
+    });
+
+    const first = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{
+        slug: sourceSlug,
+        content: 'A claim whose title case may drift between extractions.',
+        contentHash: 'case000000000001',
+      }],
+      _chat: stubChat('12-month price momentum predicts next-month returns'),
+    });
+    expect(first.status).toBe('ok');
+    expect(first.details?.atoms_extracted).toBe(1);
+
+    // Body edit (new content hash — the extraction target is not a no-op
+    // repeat) but the SAME underlying claim, re-titled by the model with
+    // different letter case only (gbrain#4908's exact reported shape).
+    const second = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{
+        slug: sourceSlug,
+        content: 'A claim whose title case may drift between extractions, reworded.',
+        contentHash: 'case000000000002',
+      }],
+      _chat: stubChat('12-Month Price Momentum Predicts Next-Month Returns'),
+    });
+    expect(second.status).toBe('ok');
+    expect(second.details?.atoms_extracted).toBe(1);
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(1);
+    const links = (await engine.getLinks(sourceSlug)).filter(l => l.link_source === 'atom-provenance');
+    expect(links).toHaveLength(1);
+  });
+
+  test('upgrade: an atom seeded under the OLD un-lowercased locator-folded hash is adopted on re-extraction — IDENTICAL title case', async () => {
+    const title = 'Old Hash Identical Case Title';
+    const sourceSlug = 'writings/2026-09-04-old-hash-identical-case';
+    // The pre-#4908 formula: locator-folded, but the title is NOT lowercased.
+    const oldHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    const oldSlug = `atoms/2026-09-04/${expectedAtomStem(title)}-${oldHash}`;
+    await engine.putPage(oldSlug, {
+      type: 'atom', title,
+      compiled_truth: 'Pre-#4908 atom body, seeded under the raw-title hash.', timeline: '',
+      frontmatter: { source_slug: sourceSlug, source_hash: 'aaaa666677778888', atom_type: 'insight' },
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Old hash identical case source', compiled_truth: 'Edited body.', timeline: '',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'Edited body.', contentHash: 'bbbb111122223333' }],
+      _chat: stubChat(title), // exact same case as the seeded title
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    // Adopted in place — same slug, binding kept, hash flipped to the new run.
+    const seeded = await engine.getPage(oldSlug, { sourceId: 'default' });
+    expect(seeded).not.toBeNull();
+    expect(seeded!.frontmatter.source_slug).toBe(sourceSlug);
+    expect(seeded!.frontmatter.source_hash).toBe('bbbb111122223333');
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(1); // no duplicate minted on the new-shape (lowercased) slug
+    const links = (await engine.getLinks(sourceSlug)).filter(l => l.link_source === 'atom-provenance');
+    expect(links).toHaveLength(1);
+    expect(links[0]!.to_slug).toBe(oldSlug);
+  });
+
+  test('upgrade: an atom seeded under the OLD un-lowercased locator-folded hash is adopted on re-extraction — DIFFERENT title case', async () => {
+    const seedTitle = 'Old Hash Different Case Title';
+    const sourceSlug = 'writings/2026-09-03-old-hash-different-case';
+    const oldHash = createHash('sha256').update(`${sourceSlug}\0${seedTitle}`).digest('hex').slice(0, 8);
+    const oldSlug = `atoms/2026-09-03/${expectedAtomStem(seedTitle)}-${oldHash}`;
+    await engine.putPage(oldSlug, {
+      type: 'atom', title: seedTitle,
+      compiled_truth: 'Pre-#4908 atom body, seeded under the raw-title hash.', timeline: '',
+      frontmatter: { source_slug: sourceSlug, source_hash: 'cccc666677778888', atom_type: 'insight' },
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Old hash different case source', compiled_truth: 'Edited body, take two.', timeline: '',
+    });
+
+    const differentCaseTitle = 'OLD HASH DIFFERENT CASE TITLE';
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'Edited body, take two.', contentHash: 'dddd222233334444' }],
+      _chat: stubChat(differentCaseTitle),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    const seeded = await engine.getPage(oldSlug, { sourceId: 'default' });
+    expect(seeded).not.toBeNull();
+    expect(seeded!.frontmatter.source_slug).toBe(sourceSlug);
+    expect(seeded!.frontmatter.source_hash).toBe('dddd222233334444');
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(1);
+    const links = (await engine.getLinks(sourceSlug)).filter(l => l.link_source === 'atom-provenance');
+    expect(links).toHaveLength(1);
+    expect(links[0]!.to_slug).toBe(oldSlug);
+  });
+
+  test('ambiguous: two or more pre-existing case-variant candidates are NOT guessed between — a fresh slug is minted instead', async () => {
+    const sourceSlug = 'writings/2026-09-02-ambiguous-case-page';
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Ambiguous case source',
+      compiled_truth: 'A claim with an ambiguous title history.', timeline: '',
+    });
+
+    // Two pre-existing case-variant atoms, both bound to this page — as if
+    // an earlier bug (or manual data) had already produced two duplicates
+    // before this fix existed. Deliberately neither is the fully-lowercase
+    // spelling: the NEW-shape check (tried before the ambiguity fallback)
+    // hashes the CURRENT run's title lowercased, so a seed that already sat
+    // at exactly that address would be found — and correctly upserted — by
+    // the earlier check, never reaching the ambiguous-candidate search this
+    // test means to exercise.
+    const titleA = 'Ambiguous Duplicate Title';
+    const titleB = 'AMBIGUOUS DUPLICATE TITLE';
+    const hashA = createHash('sha256').update(`${sourceSlug}\0${titleA}`).digest('hex').slice(0, 8);
+    const hashB = createHash('sha256').update(`${sourceSlug}\0${titleB}`).digest('hex').slice(0, 8);
+    const slugA = `atoms/2026-09-02/${expectedAtomStem(titleA)}-${hashA}`;
+    const slugB = `atoms/2026-09-02/${expectedAtomStem(titleB)}-${hashB}`;
+    expect(slugA).not.toBe(slugB); // sanity: two genuinely distinct pre-existing rows
+
+    await engine.putPage(slugA, {
+      type: 'atom', title: titleA, compiled_truth: 'Duplicate atom A.', timeline: '',
+      frontmatter: { source_slug: sourceSlug, source_hash: 'eeee111122223333', atom_type: 'insight' },
+    });
+    await engine.putPage(slugB, {
+      type: 'atom', title: titleB, compiled_truth: 'Duplicate atom B.', timeline: '',
+      frontmatter: { source_slug: sourceSlug, source_hash: 'ffff444455556666', atom_type: 'insight' },
+    });
+
+    // Re-extraction returns yet a THIRD case variant of the same title. Must
+    // not throw, and must not silently adopt either pre-existing duplicate.
+    const thirdCaseTitle = 'ambiguous Duplicate title';
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'A claim with an ambiguous title history.', contentHash: 'gggg777788889999' }],
+      _chat: stubChat(thirdCaseTitle),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    // Neither pre-existing duplicate was touched.
+    const a = await engine.getPage(slugA, { sourceId: 'default' });
+    const b = await engine.getPage(slugB, { sourceId: 'default' });
+    expect(a!.frontmatter.source_hash).toBe('eeee111122223333');
+    expect(b!.frontmatter.source_hash).toBe('ffff444455556666');
+
+    // A third, FRESH slug was minted instead of guessing between them.
+    const newHash = createHash('sha256')
+      .update(`${sourceSlug}\0${thirdCaseTitle.toLowerCase()}`)
+      .digest('hex').slice(0, 8);
+    const freshSlug = `atoms/2026-09-02/${expectedAtomStem(thirdCaseTitle)}-${newHash}`;
+    expect(freshSlug).not.toBe(slugA);
+    expect(freshSlug).not.toBe(slugB);
+    const fresh = await engine.getPage(freshSlug, { sourceId: 'default' });
+    expect(fresh).not.toBeNull();
+    expect(fresh!.frontmatter.source_hash).toBe('gggg777788889999');
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(3); // 2 pre-existing duplicates + 1 freshly minted
+  });
+
+  test('two titles sharing the same 60-char truncated stem stay on DISTINCT slugs (the full title is hashed, never the truncated stem)', async () => {
+    const sourceSlug = 'writings/2026-09-01-shared-stem-page';
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Shared stem source',
+      compiled_truth: 'A page yielding two claims with a shared title prefix.', timeline: '',
+    });
+
+    const sharedPrefix = Array(6).fill('sharedstemword').join(' '); // well over 60 chars once slugified
+    const titleAlpha = `${sharedPrefix} variant Alpha unique tail`;
+    const titleBeta = `${sharedPrefix} variant Beta unique tail`;
+    // Sanity: this test is only meaningful if the two titles really do
+    // collapse to the identical 60-char stem — confirm that up front.
+    expect(expectedAtomStem(titleAlpha)).toBe(expectedAtomStem(titleBeta));
+
+    const twoAtomsChat = async (): Promise<ChatResult> => ({
+      text: JSON.stringify([
+        { title: titleAlpha, atom_type: 'insight', body: 'Alpha claim body.' },
+        { title: titleBeta, atom_type: 'insight', body: 'Beta claim body.' },
+      ]),
+      blocks: [{ type: 'text', text: '' }],
+      stopReason: 'end',
+      usage: { input_tokens: 500, output_tokens: 200, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-haiku-4-5',
+      providerId: 'anthropic',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{
+        slug: sourceSlug,
+        content: 'A page yielding two claims with a shared title prefix.',
+        contentHash: 'stem000000000001',
+      }],
+      _chat: twoAtomsChat,
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.atoms_extracted).toBe(2);
+
+    const hashAlpha = createHash('sha256').update(`${sourceSlug}\0${titleAlpha.toLowerCase()}`).digest('hex').slice(0, 8);
+    const hashBeta = createHash('sha256').update(`${sourceSlug}\0${titleBeta.toLowerCase()}`).digest('hex').slice(0, 8);
+    expect(hashAlpha).not.toBe(hashBeta);
+
+    const stem = expectedAtomStem(titleAlpha);
+    const slugAlpha = `atoms/2026-09-01/${stem}-${hashAlpha}`;
+    const slugBeta = `atoms/2026-09-01/${stem}-${hashBeta}`;
+    const atomAlpha = await engine.getPage(slugAlpha, { sourceId: 'default' });
+    const atomBeta = await engine.getPage(slugBeta, { sourceId: 'default' });
+    expect(atomAlpha).not.toBeNull();
+    expect(atomBeta).not.toBeNull();
+    expect(atomAlpha!.compiled_truth).toContain('Alpha claim body');
+    expect(atomBeta!.compiled_truth).toContain('Beta claim body');
+
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(2);
   });
 });
