@@ -43,6 +43,7 @@ import {
   GoogleCursorExpiredError,
   PeopleClient,
   type FetchImpl,
+  GooglePaginationCapError,
 } from './google-clients.ts';
 import {
   calendarRelPath,
@@ -785,13 +786,26 @@ async function sweepGmail(
       ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
     }));
   } catch (e) {
-    if (!(e instanceof GoogleCursorExpiredError)) throw e;
-    // History expired (~1 week idle): windowed fallback from the newest
-    // imported message. BOUNDED like the backfill (the same >cap population
-    // exists here) — and the fresh historyId is only re-anchored when the
-    // listing was COMPLETE; a capped partial listing keeps the fallback lane
-    // active (gmail_newest_ms advances per processed thread, converging).
-    deps.log('[google] historyId expired; falling back to bookmark window');
+    if (!(e instanceof GoogleCursorExpiredError) && !(e instanceof GooglePaginationCapError)) throw e;
+    // Two ways into the same bounded lane:
+    //  - History expired (~1 week idle): the cursor is gone.
+    //  - History too large: history.list needed more than the pagination cap.
+    //    This is the only unbounded listing in the sweep, and a cap here used
+    //    to abort the whole sweep WITHOUT advancing gmail_history_id — so the
+    //    delta grew every day and the sweep failed the same way every night
+    //    (measured: eight days of mail missing behind a cursor that never
+    //    moved). Too much to drain in one go is the same situation as an
+    //    expired cursor: replay from the bookmark instead.
+    // Windowed fallback from the newest imported message. BOUNDED like the
+    // backfill (the same >cap population exists here) — and the fresh
+    // historyId is only re-anchored when the listing was COMPLETE; a capped
+    // partial listing keeps the fallback lane active (gmail_newest_ms
+    // advances per processed thread, converging).
+    deps.log(
+      e instanceof GooglePaginationCapError
+        ? `[google] history delta exceeded the pagination cap (${e.cap} pages); falling back to bookmark window`
+        : '[google] historyId expired; falling back to bookmark window',
+    );
     // Anchor BEFORE listing (mirrors the backfill's zero-gap ordering): a
     // message arriving between these two calls is either in the listing
     // (post-anchor arrival) or replayed by history.list from the anchor.
