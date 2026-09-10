@@ -98,6 +98,21 @@ describe('rowToChunk', () => {
     }, true);
     expect(chunk.embedding).not.toBeNull();
   });
+
+  test('parses a pgvector string embedding into a real Float32Array (regression: postgres driver returns vector columns as text, not typed arrays)', () => {
+    const chunk = rowToChunk({
+      id: 1, page_id: 1, chunk_index: 0, chunk_text: 'text',
+      chunk_source: 'compiled_truth', embedding: '[0.1,0.2,0.3]',
+      model: 'test', token_count: 5, embedded_at: '2024-01-01',
+    }, true);
+    expect(chunk.embedding).toBeInstanceOf(Float32Array);
+    expect(chunk.embedding![0]).toBeCloseTo(0.1, 5);
+    expect(chunk.embedding![1]).toBeCloseTo(0.2, 5);
+    expect(chunk.embedding![2]).toBeCloseTo(0.3, 5);
+    // A naive `as Float32Array` cast on the raw string would leave every
+    // element `undefined`, which propagates to NaN in cosine similarity math.
+    expect(Number.isNaN(chunk.embedding![0])).toBe(false);
+  });
 });
 
 describe('rowToSearchResult', () => {
