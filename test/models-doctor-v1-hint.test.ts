@@ -1,11 +1,11 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import { versionRoot, maybeAttachVersionSuffixHint } from '../src/core/ai/base-url-probe.ts';
 import {
   probeModel,
   probeEmbeddingReachability,
   probeRerankerReachability,
 } from '../src/commands/models.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { AIGatewayConfig } from '../src/core/ai/types.ts';
 
 /**
@@ -43,6 +43,14 @@ import type { AIGatewayConfig } from '../src/core/ai/types.ts';
  * and the model_not_found "silent: all 404" test (a model-name typo -> no
  * misleading "fix your URL").
  */
+
+// configureGateway() below writes process-global state, and the preload
+// restores its baseline only when the gateway is UNCONFIGURED — a leftover
+// litellm config outlives this file and stalls the next file's embed call on
+// localhost:4000 (#3554 class).
+afterEach(() => {
+  resetGateway();
+});
 
 type ProbeResult = Awaited<ReturnType<typeof probeModel>>;
 type ChatFn = typeof import('../src/core/ai/gateway.ts').chat;
