@@ -145,3 +145,46 @@ describe('#3700: Hebrew niqqud + cantillation strip', () => {
     expect(slugifySegment('ภาษาไทย')).toBe('ภาษาไทย');
   });
 });
+
+// Variation selectors — emoji VS1–VS16 (U+FE00–FE0F) and ideographic IVS
+// (U+E0100–E01EF) are Mn-category invisibles. #3417 kept \p{M} in
+// SLUG_WORD_CHARS to protect Devanagari matras / Thai vowels, so variation
+// selectors survive slugification too: a folder named `🗂️ entities`
+// (U+1F5C2 U+FE0F) emitted a slug with a leading invisible U+FE0F and forked
+// duplicate pages from clean-slug canon. Selectors never alter letter
+// identity, so stripping them is lossless for every script above.
+describe('variation selectors strip (emoji VS16 / ideographic IVS)', () => {
+  test('emoji + VS16 folder name lands on the clean slug', () => {
+    expect(slugifySegment('🗂️ entities')).toBe('entities');
+    // With and without VS16 converge on the same page.
+    expect(slugifySegment('🗂 entities')).toBe(slugifySegment('🗂️ entities'));
+  });
+
+  test('ideographic IVS strips too', () => {
+    // 巻 with an ideographic variation selector (U+E0101) vs bare.
+    expect(slugifySegment('巻\u{E0101}')).toBe('巻');
+    expect(slugifySegment('巻\u{E0101}')).toBe(slugifySegment('巻'));
+  });
+
+  test('emoji-only input still collapses to empty (VS16 no longer rescues it)', () => {
+    expect(slugifySegment('🗂️')).toBe('');
+    expect(slugifySegment('🎉\uFE0F')).toBe('');
+  });
+
+  test('diacritic-bearing scripts unaffected by the strip', () => {
+    expect(slugifySegment('café')).toBe('cafe');
+    expect(slugifySegment('בְּרֵאשִׁית')).toBe('בראשית');        // niqqud still strips
+    expect(slugifySegment('हिन्दी')).toBe('हिन्दी');             // Devanagari matras preserved
+    expect(slugifySegment('한글'.normalize('NFD'))).toBe('한글'); // Hangul recomposition preserved
+    expect(slugifySegment('ภาษาไทย')).toBe('ภาษาไทย');          // Thai vowels preserved
+  });
+
+  test('NFC and NFD emoji filenames converge', () => {
+    expect(slugifySegment('🗂️ entities'.normalize('NFC'))).toBe('entities');
+    expect(slugifySegment('🗂️ entities'.normalize('NFD'))).toBe('entities');
+  });
+
+  test('emitted slugs are ACCEPTED by validatePageSlug', () => {
+    expect(() => validatePageSlug(slugifyPath('🗂️ entities/README.md'))).not.toThrow();
+  });
+});

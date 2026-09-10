@@ -637,6 +637,13 @@ export function slugifySegment(segment: string): string {
     // are already decomposed and their points strip too.
     .replace(/[\u0591-\u05c7]/g, '')      // Strip Hebrew niqqud + cantillation
     .normalize('NFC')                     // Recompose Hangul Jamo back to Syllables (v0.32.7)
+    // Strip variation selectors (emoji VS1–VS16 U+FE00–FE0F, ideographic IVS
+    // U+E0100–E01EF): they are Mn-category invisibles that survive \p{M} in
+    // SLUG_WORD_CHARS, so an emoji folder name like `🗂️ entities` produced a
+    // leading invisible U+FE0F in the slug and forked duplicate pages from
+    // clean-slug canon written via put_page. Selectors never alter letter
+    // identity, so stripping them is lossless for every script.
+    .replace(/[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu, '')
     .toLowerCase()
     .replace(SLUGIFY_KEEP_RE, '')         // Keep alnum, dots, spaces, _-, and CJK (v0.32.7)
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
