@@ -177,7 +177,25 @@ export class GoogleApiClient {
       pageToken = nextPageToken;
     }
     if (opts.partialOk) return out;
-    throw new CredentialError('upstream', `: pagination cap (${cap}) hit on ${apiHint}`);
+    throw new GooglePaginationCapError(cap, apiHint);
+  }
+}
+
+/**
+ * Thrown by drainPages when a listing needs more than `cap` pages and the
+ * caller did not opt into a partial result. A CredentialError subclass so the
+ * existing 'upstream' rendering (problem / fix / docs) is unchanged; the
+ * dedicated class exists so a caller can recognise "too much to drain in one
+ * go" and switch to a bounded lane instead of failing the whole sweep.
+ */
+export class GooglePaginationCapError extends CredentialError {
+  readonly cap: number;
+  readonly apiHint: ApiHint;
+  constructor(cap: number, apiHint: ApiHint) {
+    super('upstream', `: pagination cap (${cap}) hit on ${apiHint}`);
+    this.name = 'GooglePaginationCapError';
+    this.cap = cap;
+    this.apiHint = apiHint;
   }
 }
 
