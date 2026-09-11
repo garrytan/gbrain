@@ -783,7 +783,11 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // bump 15→16 (#3515): `detail` folds into the key via ctx.detail (det=).
 // Detail changes the result shape, so a compact scout lookup must never
 // contaminate a later evidence-hydration lookup (or vice versa).
-export const KNOBS_HASH_VERSION = 16;
+//
+// bump 16→17: the fully resolved adaptive-return policy folds into the key.
+// Adaptive-on calls can now use the cache without serving a trimmed result set
+// to a gate-off caller or crossing differently tuned entity/other caps.
+export const KNOBS_HASH_VERSION = 17;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -824,6 +828,13 @@ export interface KnobsHashContext {
   hardExcludes?: string[];
   /** Effective result detail for this call. Undefined is the medium default. */
   detail?: 'low' | 'medium' | 'high';
+  /** Fully resolved adaptive-return policy for this call. */
+  adaptiveReturn?: {
+    enabled: boolean;
+    entityMax: number;
+    otherMax: number;
+    minKeep: number;
+  };
 }
 
 export function knobsHash(
@@ -929,6 +940,12 @@ export function knobsHash(
     `fts=${getFtsLanguage()}`,
     // v=16 addition: compact scout and hydrated evidence rows are isolated.
     `det=${ctx?.detail ?? 'medium'}`,
+    // v=17 additions: adaptive return is safe to cache only when both the
+    // toggle and every cardinality-affecting parameter participate.
+    `ar=${ctx?.adaptiveReturn?.enabled ? 1 : 0}`,
+    `are=${ctx?.adaptiveReturn?.entityMax ?? 2}`,
+    `aro=${ctx?.adaptiveReturn?.otherMax ?? 6}`,
+    `arm=${ctx?.adaptiveReturn?.minKeep ?? 1}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

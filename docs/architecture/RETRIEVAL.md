@@ -118,6 +118,24 @@ For `detail: 'high'` searches, `src/core/search/expansion.ts` runs a Haiku-class
 
 Expansion is opt-in per mode bundle (`tokenmax` on by default; `balanced` + `conservative` off). Default off in the cheap tiers because the LLM call adds ~$0.001/query and ~200ms — real money at scale.
 
+## Think evidence gathering
+
+`gbrain think` gathers broadly, then spends synthesis tokens once. Its page arm
+uses the semantic query cache but disables expansion, adaptive return-sizing,
+and autocut so display-oriented trimming cannot discard evidence before the
+reasoning pass. Date windows are forwarded into retrieval. A bounded,
+zero-LLM exact-name arm protects named companies and products from being
+diluted inside a long decision question.
+
+An explicit `--anchor` is a hard evidence request: the page is fetched directly
+and injected at rank 1, in addition to seeding graph traversal. This distinction
+matters because graph neighbors are context for an anchor, not a substitute for
+the anchor's own compiled truth and timeline.
+
+Adaptive-return searches remain cacheable. The fully resolved toggle and caps
+are part of the cache-key hash, so gate-on, gate-off, and differently tuned
+policies cannot cross-serve result sets.
+
 ## Putting it together
 
 The full pipeline for a `query` op:

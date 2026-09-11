@@ -15,9 +15,9 @@
  * cliff-cutting just adds noise. So the mechanism is a cap, with intent as the
  * (admittedly coarse) prior on how many answers the query wants.
  *
- * Default OFF. Cache-safe via a skip in hybridSearchCached when enabled (the
- * trimmed set must not be served to a gate-off lookup); folding the params into
- * KNOBS_HASH is a v0.42+ follow-up before any mode-default flip.
+ * Default OFF. Cache-safe because hybridSearchCached folds the fully resolved
+ * policy (toggle + caps + minimum) into knobsHash, isolating differently
+ * trimmed result sets.
  *
  * Pure + dependency-light so it unit-tests in isolation.
  */
@@ -96,7 +96,7 @@ export function resolveAdaptiveReturn(
   };
 }
 
-/** True iff the gate is on (per-call or config). Used for the cache skip. */
+/** True iff the gate is on (per-call or config). */
 export function adaptiveReturnEnabled(
   perCall: AdaptiveReturnInput,
   cfg: Record<string, unknown> | null | undefined,

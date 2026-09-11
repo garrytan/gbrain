@@ -130,4 +130,28 @@ describe('cache HIT — token_budget provenance', () => {
     expect(hitMeta?.token_budget?.dropped).toBe(missDropped);
     expect(hitMeta?.token_budget?.kept).toBe(missMeta?.token_budget?.kept);
   });
+
+  test('adaptive-return calls populate and reuse an isolated cache row', async () => {
+    let missMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const missResults = await hybridSearchCached(engine, 'builder adaptive scout', {
+      limit: 10,
+      adaptiveReturn: true,
+      onMeta: (m) => { missMeta = m; },
+    });
+    expect(missResults.length).toBeGreaterThan(0);
+    expect(missMeta?.cache?.status).toBe('miss');
+    expect(missMeta?.adaptive_return?.applied).toBe(true);
+
+    await awaitPendingSearchCacheWrites();
+
+    let hitMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const hitResults = await hybridSearchCached(engine, 'builder adaptive scout', {
+      limit: 10,
+      adaptiveReturn: true,
+      onMeta: (m) => { hitMeta = m; },
+    });
+    expect(hitMeta?.cache?.status).toBe('hit');
+    expect(hitMeta?.adaptive_return).toEqual(missMeta?.adaptive_return);
+    expect(hitResults.map(r => r.slug)).toEqual(missResults.map(r => r.slug));
+  });
 });

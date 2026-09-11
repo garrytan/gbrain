@@ -20,7 +20,6 @@ import {
   resolveAdaptiveReturn,
   applyAdaptiveReturn,
   adaptiveReturnFromConfig,
-  adaptiveReturnEnabled,
   type AdaptiveReturnDecision,
 } from './return-policy.ts';
 import { applyAutocut, type AutocutDecision } from './autocut.ts';
@@ -810,8 +809,8 @@ export interface HybridSearchOpts extends SearchOpts {
    * the inner `hybridSearch` so the ONE telemetry record per search (emitted
    * by the inner function) carries the cache classification: 'miss' when the
    * semantic cache was consulted and had no row, 'disabled' when the consult
-   * was skipped (cache off, walk/near-symbol/non-default-column/adaptive
-   * skip, or the lookup embed failed). Folded into the RECORDED meta only —
+   * was skipped (cache off, walk/near-symbol/non-default-column/date filter,
+   * or the lookup embed failed). Folded into the RECORDED meta only —
    * `onMeta` payloads are unchanged. Direct `hybridSearch` callers leave it
    * undefined and keep recording with no cache field (they never consulted
    * the cache). The cache-HIT record is emitted by `hybridSearchCached`
@@ -1829,6 +1828,10 @@ export async function hybridSearchCached(
   const cfgCached = mergedCfgCached ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
   const resolvedColCached = resolveEmbeddingColumn(opts, cfgCached);
   const isNonDefaultColumn = !isCacheSafe(resolvedColCached, cfgCached);
+  const adaptiveCacheConfig = resolveAdaptiveReturn(
+    opts?.adaptiveReturn,
+    adaptiveReturnFromConfig(cfgCached as unknown as Record<string, unknown> | null),
+  );
 
   // Cache key carries the column + provider so different embedding spaces
   // never collide on the same `(source_id, query_text)` row.
@@ -1844,6 +1847,10 @@ export async function hybridSearchCached(
     // Compact scout results and hydrated evidence results have different
     // shapes and must occupy different semantic-cache rows.
     detail: opts?.detail ?? autoDetectDetail(query),
+    // Adaptive return changes the final result cardinality. Fold the fully
+    // resolved policy into the key so adaptive-on/off and tuned caps can use
+    // the cache without cross-serving differently trimmed result sets.
+    adaptiveReturn: adaptiveCacheConfig,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
@@ -1862,14 +1869,6 @@ export async function hybridSearchCached(
   // a non-default embedding column (per-call or via config default —
   // D8 closes the silent-corruption bug class), or near-symbol mode
   // (structural state that the cache can't safely express).
-  // v0.42 — when adaptive return-sizing is on, skip the cache: a gated
-  // (trimmed) result set must not be served to a gate-off lookup, and vice
-  // versa. Folding the gate params into knobsHash is the v0.42+ follow-up
-  // (TODO) that lets adaptive-on calls cache safely; until then, skip.
-  const adaptiveReturnOn = adaptiveReturnEnabled(
-    opts?.adaptiveReturn,
-    cfgCached as unknown as Record<string, unknown> | null,
-  );
   // #3442: date-filtered requests skip the cache — since/until are not part
   // of knobsHash, so a filtered result set could be served to an unfiltered
   // lookup (and vice versa). Relative forms ('60d') also resolve to a
@@ -1881,7 +1880,6 @@ export async function hybridSearchCached(
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
-    adaptiveReturnOn ||
     dateFiltered;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';

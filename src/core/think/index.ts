@@ -145,9 +145,11 @@ export interface ThinkResult {
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
   diagnostics: {
     pagesFromHybrid: number;
+    pagesFromEntity?: number;
     takesFromKeyword: number;
     takesFromVector: number;
     graphHits: number;
+    anchorInjected?: boolean;
   };
   /**
    * Token usage from the real LLM call, when one happened. Undefined on the
@@ -304,6 +306,8 @@ export async function runThink(
   const gather = await runGather(engine, {
     question: opts.question,
     anchor: opts.anchor,
+    since: opts.since,
+    until: opts.until,
     questionEmbedding,
     takesHoldersAllowList: opts.takesHoldersAllowList,
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
@@ -311,11 +315,14 @@ export async function runThink(
   });
 
   // Render evidence blocks for the prompt
-  const pagesBlock = renderPagesBlock(gather.pages, 600, opts.question);
+  const pagesBlock = renderPagesBlock(gather.pages, 600, opts.question, opts.anchor);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
     warnings.push(`SANITIZED_${sanitizedCount}_TAKE_CLAIMS`);
+  }
+  if (opts.anchor && !gather.diagnostics.anchorInjected) {
+    warnings.push(`ANCHOR_PAGE_NOT_FOUND: ${opts.anchor}`);
   }
   const graphBlock = gather.graphSlugs.length > 0
     ? `<anchor>${opts.anchor}</anchor>\nReachable: ${gather.graphSlugs.slice(0, 30).join(', ')}`
@@ -515,9 +522,11 @@ export async function runThink(
         synthesisOk: false,  // #1698: no LLM ran — never persist this
         diagnostics: {
           pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+          pagesFromEntity: gather.diagnostics.pagesFromEntity,
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
           takesFromVector: gather.diagnostics.takesFromVector,
           graphHits: gather.diagnostics.graphHits,
+          anchorInjected: gather.diagnostics.anchorInjected,
         },
       };
     }
@@ -574,9 +583,11 @@ export async function runThink(
     synthesisOk: synthesisOk && response.answer.trim().length > 0,
     diagnostics: {
       pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+      pagesFromEntity: gather.diagnostics.pagesFromEntity,
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
+      anchorInjected: gather.diagnostics.anchorInjected,
     },
     usage,
   };

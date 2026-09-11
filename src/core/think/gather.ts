@@ -16,8 +16,8 @@
  */
 
 import type { BrainEngine, TakeHit, Take } from '../engine.ts';
-import { hybridSearch } from '../search/hybrid.ts';
-import type { SearchResult } from '../types.ts';
+import { hybridSearchCached } from '../search/hybrid.ts';
+import type { Page, SearchResult } from '../types.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
@@ -32,6 +32,9 @@ export interface ThinkGatherOpts {
   takesLimit?: number;
   /** Graph traversal depth when anchor is set. Default 2. */
   graphDepth?: number;
+  /** Optional effective-date window. Forwarded to page retrieval. */
+  since?: string;
+  until?: string;
   /** Optional pre-computed embedding for the question. Lets the caller share embedding cost. */
   questionEmbedding?: Float32Array;
   /** When set, MCP-bound calls forward this allow-list to takes_search. Local CLI leaves unset. */
@@ -51,9 +54,11 @@ export interface ThinkGatherResult {
   /** Diagnostics for telemetry / `--explain` path (Lane D follow-up). */
   diagnostics: {
     pagesFromHybrid: number;
+    pagesFromEntity: number;
     takesFromKeyword: number;
     takesFromVector: number;
     graphHits: number;
+    anchorInjected: boolean;
     questionSanitizedFor: 'expansion' | 'none';
   };
 }
@@ -94,6 +99,101 @@ function fuseRanked<T>(
     .map(s => s.item);
 }
 
+const ENTITY_TERM_STOP_WORDS = new Set([
+  'A', 'An', 'And', 'Are', 'As', 'At', 'Before', 'By', 'Can', 'Could',
+  'Did', 'Do', 'Does', 'For', 'From', 'Give', 'Has', 'Have', 'How', 'I',
+  'If', 'In', 'Is', 'It', 'May', 'Might', 'Must', 'Of', 'On', 'Or', 'Our',
+  'Please', 'Should', 'The', 'Their', 'Then', 'This', 'Those', 'To', 'Was',
+  'We', 'Were', 'What', 'When', 'Where', 'Which', 'Who', 'Why', 'Will',
+  'With', 'Would', 'You', 'Your',
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+  'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December',
+]);
+
+interface EntityTermMatch {
+  value: string;
+  index: number;
+  end: number;
+}
+
+/**
+ * Extract a tiny, high-precision set of named terms for the lexical recall arm.
+ * This is deliberately conservative: the normal hybrid question still runs,
+ * while proper names and mixed-case product/company names get an exact keyword
+ * vote that cannot be diluted by the rest of a long decision question.
+ */
+export function extractEntitySearchTerms(question: string, maxTerms = 4): string[] {
+  if (!question || maxTerms <= 0) return [];
+  const matches: EntityTermMatch[] = [];
+  const rx = /[\p{Lu}][\p{L}\p{N}'’.-]*/gu;
+  for (const match of question.matchAll(rx)) {
+    const value = match[0];
+    if (ENTITY_TERM_STOP_WORDS.has(value)) continue;
+    const index = match.index;
+    matches.push({ value, index, end: index + value.length });
+  }
+
+  const candidates: Array<{ value: string; index: number; priority: number }> = [];
+  for (let i = 0; i < matches.length; i++) {
+    const current = matches[i];
+    let value = current.value;
+    let end = current.end;
+    let j = i + 1;
+    while (j < matches.length && /^[\s&]+$/.test(question.slice(end, matches[j].index))) {
+      value += ` ${matches[j].value}`;
+      end = matches[j].end;
+      j++;
+    }
+    const isMultiWord = j > i + 1;
+    const isAcronym = /^[\p{Lu}\d]{2,}$/u.test(value);
+    const hasInternalCapital = /^\p{Lu}[\p{Ll}\d]+\p{Lu}/u.test(value);
+    candidates.push({
+      value,
+      index: current.index,
+      priority: isMultiWord || isAcronym || hasInternalCapital ? 2 : 1,
+    });
+    i = j - 1;
+  }
+
+  const seen = new Set<string>();
+  return candidates
+    .sort((a, b) => b.priority - a.priority || a.index - b.index)
+    .filter(({ value }) => {
+      const key = value.normalize('NFKC').toLocaleLowerCase('en');
+      if (key.length < 3 || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, maxTerms)
+    .map(({ value }) => value);
+}
+
+function anchorPageToSearchResult(page: Page, sourceId?: string): SearchResult {
+  const body = [
+    page.compiled_truth,
+    page.timeline.trim() ? `## Timeline\n${page.timeline}` : '',
+  ].filter(Boolean).join('\n\n');
+  return {
+    slug: page.slug,
+    page_id: page.id,
+    title: page.title,
+    type: page.type,
+    chunk_text: body,
+    chunk_source: 'compiled_truth',
+    // Negative ids identify synthetic page-grain evidence without colliding
+    // with persisted content_chunks ids.
+    chunk_id: -Math.max(1, page.id),
+    chunk_index: -1,
+    score: 1,
+    base_score: 1,
+    stale: false,
+    ...(sourceId ? { source_id: sourceId } : {}),
+    evidence: 'exact_title_match',
+    create_safety: 'exists',
+  };
+}
+
 /**
  * Run the four-stream gather. Each stream is wrapped in a try/catch so a
  * single retriever failure doesn't crash the whole pipeline — synthesis
@@ -116,15 +216,53 @@ export async function runGather(
   // (Direct DB search is fine — those are parameterized queries.)
   const sanitizedQuestion = sanitizeQueryForPrompt(opts.question);
 
-  // Stream 1: hybrid page search (existing primitive).
-  const pagesPromise = hybridSearch(engine, opts.question, {
+  // Stream 1: full hybrid page search. Think gathers evidence rather than a
+  // display-sized answer, so intent caps and score-cliff trimming are disabled
+  // here; gatherLimit + the mode token budget remain the hard bounds.
+  const pagesPromise = hybridSearchCached(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
+    detail: opts.since || opts.until ? 'high' : 'medium',
+    adaptiveReturn: false,
+    autocut: false,
+    since: opts.since,
+    until: opts.until,
     ...sourceScope,
   }).catch((e) => {
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
     return [] as SearchResult[];
   });
+
+  // Stream 1b: exact named-term recall. A long decision question can swamp the
+  // lexical signal for the entity it is about; a few zero-LLM keyword searches
+  // run in parallel and get an independent RRF vote. An explicit anchor already
+  // supplies the exact page, so avoid redundant entity searches in that case.
+  const entityTerms = opts.anchor ? [] : extractEntitySearchTerms(opts.question);
+  const entityPagesPromise = Promise.all(entityTerms.map(term =>
+    engine.searchKeyword(term, {
+      limit: Math.min(gatherLimit, 12),
+      detail: 'high',
+      since: opts.since,
+      until: opts.until,
+      ...sourceScope,
+    }).catch((e) => {
+      process.stderr.write(`[think.gather] entity-keyword stream failed for "${term}": ${(e as Error).message}\n`);
+      return [] as SearchResult[];
+    }),
+  )).then(lists => lists.reduce(
+    (merged, list) => fuseRanked(merged, list, p => `${p.source_id ?? 'default'}:${p.slug}`),
+    [] as SearchResult[],
+  ));
+
+  // Stream 1c: the anchor is evidence, not merely a graph seed. Fetch it
+  // directly and inject it ahead of ranked retrieval so synthesis always sees
+  // the page the caller explicitly named.
+  const anchorPagePromise: Promise<Page | null> = opts.anchor
+    ? engine.getPage(opts.anchor, sourceScope).catch((e) => {
+        process.stderr.write(`[think.gather] anchor page fetch failed: ${(e as Error).message}\n`);
+        return null;
+      })
+    : Promise.resolve(null);
 
   // Stream 2: keyword search across takes.
   const takesKwPromise = engine.searchTakes(opts.question, {
@@ -165,9 +303,20 @@ export async function runGather(
         })
     : Promise.resolve([] as string[]);
 
-  const [pages, takesKw, takesVec, graphSlugs] = await Promise.all([
-    pagesPromise, takesKwPromise, takesVecPromise, graphPromise,
+  const [pages, entityPages, anchorPage, takesKw, takesVec, graphSlugs] = await Promise.all([
+    pagesPromise, entityPagesPromise, anchorPagePromise, takesKwPromise, takesVecPromise, graphPromise,
   ]);
+
+  const entityFusedPages = entityPages.length > 0
+    ? fuseRanked(entityPages, pages, p => `${p.source_id ?? 'default'}:${p.slug}`)
+    : pages;
+  const anchorInjected = anchorPage !== null;
+  const gatheredPages = anchorPage
+    ? [
+        anchorPageToSearchResult(anchorPage, opts.sourceId),
+        ...entityFusedPages.filter(p => p.slug !== anchorPage.slug),
+      ]
+    : entityFusedPages;
 
   // Fuse takes streams (keyword + vector). Key by (page_slug, row_num).
   const fusedTakes = fuseRanked(
@@ -176,14 +325,16 @@ export async function runGather(
   ).slice(0, takesLimit);
 
   return {
-    pages: pages.slice(0, gatherLimit),
+    pages: gatheredPages.slice(0, gatherLimit),
     takes: fusedTakes,
     graphSlugs,
     diagnostics: {
       pagesFromHybrid: pages.length,
+      pagesFromEntity: entityPages.length,
       takesFromKeyword: takesKw.length,
       takesFromVector: takesVec.length,
       graphHits: graphSlugs.length,
+      anchorInjected,
       questionSanitizedFor: sanitizedQuestion === opts.question ? 'none' : 'expansion',
     },
   };
@@ -420,6 +571,7 @@ export function renderPagesBlock(
   pages: SearchResult[],
   excerptLen = 600,
   query = '',
+  anchorSlug?: string,
 ): string {
   return pages.map((p, idx) => {
     const page = p as unknown as {
@@ -433,10 +585,13 @@ export function renderPagesBlock(
     const title = String(page.title ?? '');
     const slugIdentity = slug.split('/').pop()?.replace(/[-_]/g, ' ') ?? '';
     const content = String(page.chunk_text ?? page.compiled_truth ?? page.snippet ?? '');
+    const pageExcerptLen = anchorSlug && slug === anchorSlug
+      ? Math.max(excerptLen, 1200)
+      : excerptLen;
     const excerpt = selectRelevantExcerpt(
       content,
       query,
-      excerptLen,
+      pageExcerptLen,
       `${title} ${slugIdentity}`,
     );
     return `<page slug="${slug}" rank="${idx + 1}">\n${excerpt}\n</page>`;

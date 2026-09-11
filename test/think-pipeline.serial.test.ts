@@ -4,7 +4,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
-import { runGather } from '../src/core/think/gather.ts';
+import { extractEntitySearchTerms, runGather } from '../src/core/think/gather.ts';
 import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 
 let engine: PGLiteEngine;
@@ -127,6 +127,12 @@ describe('cite-render', () => {
 });
 
 describe('runGather', () => {
+  test('extracts proper names for the exact lexical recall arm', () => {
+    expect(extractEntitySearchTerms(
+      'What is the current Acme and WidgetCloud compliance decision and what changed?',
+    )).toEqual(expect.arrayContaining(['Acme', 'WidgetCloud']));
+  });
+
   test('gathers pages + takes (no anchor)', async () => {
     const r = await runGather(engine, { question: 'technical founder' });
     expect(r.takes.length).toBeGreaterThan(0);
@@ -138,6 +144,16 @@ describe('runGather', () => {
   test('honors takesHoldersAllowList filter', async () => {
     const r = await runGather(engine, { question: 'founder', takesHoldersAllowList: ['world'] });
     expect(r.takes.every(h => h.holder === 'world')).toBe(true);
+  });
+
+  test('injects the exact anchor page as evidence even when the question is unrelated', async () => {
+    const r = await runGather(engine, {
+      question: 'Summarize the unrelated quantum orchard decision.',
+      anchor: 'people/alice-example',
+    });
+    expect(r.diagnostics.anchorInjected).toBe(true);
+    expect(r.pages[0]?.slug).toBe('people/alice-example');
+    expect(r.pages[0]?.chunk_text).toContain('Alice founded Acme.');
   });
 });
 

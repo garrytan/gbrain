@@ -201,7 +201,14 @@ function runClaude(
     const args = [
       '--print',
       '--output-format', 'json',
-      '--model', model,
+    ];
+    // `claude-cli:default` is a virtual gateway model: omitting --model lets
+    // Claude Code honor the model currently selected in the user's settings.
+    // Explicit model ids preserve the previous pinned-model behavior.
+    if (!/^(?:default|selected)$/i.test(model.trim())) {
+      args.push('--model', model);
+    }
+    args.push(
       '--disable-slash-commands',
       // Agent isolation: this subprocess must behave like a raw LLM, not a
       // full Claude Code agent. `--tools ""` disables every built-in tool
@@ -211,7 +218,7 @@ function runClaude(
       // contention). Verified against claude CLI 2.1.145 --help.
       '--tools', '',
       '--strict-mcp-config',
-    ];
+    );
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
     }

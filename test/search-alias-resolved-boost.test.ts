@@ -89,7 +89,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 16 (15→16 separates low/medium/high result payloads)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(16);
+  it('is 17 (16→17 separates adaptive-return policies)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(17);
   });
 });

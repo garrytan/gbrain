@@ -420,7 +420,8 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // GBRAIN_FTS_LANGUAGE retokenizes both the trigger-built search_vector and
     // the query-side tsquery, so rows written under the previous language must
     // not survive a `reindex-search-vector` switch.
-    expect(KNOBS_HASH_VERSION).toBe(16);
+    // v=17 folds adaptive-return policy into the cache key.
+    expect(KNOBS_HASH_VERSION).toBe(17);
   });
 
   test('detail levels occupy distinct cache-key spaces', () => {
@@ -431,6 +432,21 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     expect(low).not.toBe(medium);
     expect(medium).not.toBe(high);
     expect(knobsHash(knobs)).toBe(medium);
+  });
+
+  test('adaptive-return policies occupy distinct cache-key spaces', () => {
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const off = knobsHash(knobs, {
+      adaptiveReturn: { enabled: false, entityMax: 2, otherMax: 6, minKeep: 1 },
+    });
+    const on = knobsHash(knobs, {
+      adaptiveReturn: { enabled: true, entityMax: 2, otherMax: 6, minKeep: 1 },
+    });
+    const tuned = knobsHash(knobs, {
+      adaptiveReturn: { enabled: true, entityMax: 3, otherMax: 8, minKeep: 2 },
+    });
+    expect(off).not.toBe(on);
+    expect(on).not.toBe(tuned);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -595,8 +611,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 16 (15→16 detail fold)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(16);
+  test('KNOBS_HASH_VERSION is 17 (16→17 adaptive-return fold)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(17);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {
