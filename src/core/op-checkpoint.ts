@@ -58,7 +58,7 @@ async function durableWrite(
  *   1. **Param-shape collisions.** `extract links` and `extract timeline`
  *      walked the same files but shared a single checkpoint, so a killed
  *      `links` run made `timeline` skip files (codex #11). `reindex
- *      --markdown` and `reindex --code` had the same issue. Fix: every
+ *      --markdown` and `reindex-code` had the same issue. Fix: every
  *      checkpoint is keyed by `(op, fingerprint)` where fingerprint is
  *      sha8 of canonical-JSON of the relevant params per op.
  *
