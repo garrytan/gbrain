@@ -277,7 +277,9 @@ export async function doctorReportRemote(
   // doctor's check at the same name. Runs server-side; the result is
   // returned to the thin-client over MCP.
   try {
-    const { findMisroutedPages } = await import('../../core/multi-source-drift.ts');
+    const { findMisroutedPages, driftBudgetFromEnv } = await import(
+      '../../core/multi-source-drift.ts'
+    );
     // Source isolation: a scoped caller's roster (and the sample slugs the
     // walk returns) stays inside its grant; unscoped = brain-wide.
     const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
@@ -286,9 +288,15 @@ export async function doctorReportRemote(
     );
     const nonDefaultWithPath = sources.filter(s => s.id !== 'default' && s.local_path);
     if (sources.length > 1 && nonDefaultWithPath.length > 0) {
+      // Same budget as the local check. The values come from the brain
+      // server's own environment, never from the MCP caller, so this does not
+      // widen what a scoped client can influence -- and an operator who raises
+      // the walk budget on the host should not find one of the two call sites
+      // quietly ignoring it.
       const result = await findMisroutedPages(
         engine,
         nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
+        driftBudgetFromEnv(),
       );
       if (result.walk_truncated) {
         checks.push({
