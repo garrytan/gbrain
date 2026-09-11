@@ -25,6 +25,8 @@ import { hermesAdapter } from './hermes.ts';
 import { grokAdapter } from './grok.ts';
 import { chatgptExportAdapter } from './chatgpt-export.ts';
 import { claudeExportAdapter } from './claude-export.ts';
+import { dshAdapter } from './dsh.ts';
+import { isDshSessionFile } from './dsh.ts';
 
 // ── Harness discovery roots (discovery mode only) ───────────────────────────
 
@@ -33,7 +35,7 @@ export interface HarnessRoot {
   /** Directory scanned recursively for session files (or the single store file). */
   root: string;
   /** Glob-ish suffix filter applied during discovery. */
-  extension: '.jsonl' | '.db';
+  extension: '.jsonl' | '.db' | '.zstd';
 }
 
 /** The static discovery surface. Injectable (`overrides`) for tests. */
@@ -57,6 +59,16 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
       format: 'grok',
       root: join(process.env.GROK_HOME ?? join(home, '.grok'), 'sessions'),
       extension: '.jsonl',
+    },
+    // DSH (DeepSeek Harness) keeps one session per directory under
+    // <DSH_HOME>/sessions/<workspace>/<session-id>/ — `session.v3.jsonl.zstd`
+    // once migrated, `session.jsonl.zstd` before that (DSH_HOME honored).
+    // Pre-migration `.plain.done` copies are the same sessions and are
+    // excluded by the basename guard in isDshSessionFile.
+    {
+      format: 'dsh',
+      root: join(process.env.DSH_HOME ?? join(home, '.dsh'), 'sessions'),
+      extension: '.zstd',
     },
   ];
 }
@@ -82,6 +94,7 @@ export function transcriptAdapters(): TranscriptAdapter[] {
     grokAdapter,
     claudeExportAdapter,
     chatgptExportAdapter,
+    dshAdapter,
   ];
 }
 

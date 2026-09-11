@@ -16,7 +16,7 @@
  * reported at session granularity only.
  */
 
-import { lstatSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { TranscriptFormat } from './types.ts';
@@ -24,6 +24,7 @@ import { harnessRoots, type HarnessRoot } from './detect.ts';
 import { isOpenclawCheckpointFile } from './openclaw.ts';
 import { isGrokChatHistoryFile } from './grok.ts';
 import { isClaudeCodeSubagentFile } from './claude-code.ts';
+import { isDshLegacySessionFile, isDshSessionFile } from './dsh.ts';
 import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
 
 export interface DiscoveredFile {
@@ -98,6 +99,23 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
       // session id, so they can never import. Left in, each one is a
       // permanent gap-table phantom + a false DRIFT WARNING every ingest.
       if (format === 'claude-code' && isClaudeCodeSubagentFile(p)) continue;
+      // DSH: only the canonical per-session basenames participate. The
+      // pre-migration `.plain.done` copies are the same sessions and `.bak-*`
+      // files are repair leftovers — either would double-import or freeze the
+      // watermark as drift.
+      if (format === 'dsh' && !isDshSessionFile(p)) continue;
+      // DSH session format V3 lands `session.v3.jsonl.zstd` NEXT TO the frozen
+      // pre-migration `session.jsonl.zstd` in the same session directory, so
+      // admitting both names would import every migrated session twice: two
+      // conversation pages for one session id, and a permanent re-import on
+      // every ingest because neither file's content hash can ever match the
+      // other's. The V3 log is the live one; its legacy sibling is superseded
+      // the moment it exists. Sessions that never migrated keep importing from
+      // `session.jsonl.zstd`, and the substring match in
+      // pathMatchesImportedSession() keeps that name resolvable to the page the
+      // V3 log created, so the watermark still advances normally.
+      if (format === 'dsh' && isDshLegacySessionFile(p)
+          && existsSync(p.replace(/session\.jsonl/, 'session.v3.jsonl'))) continue;
       // #4472: skip gbrain's own claude-cli subprocess sessions (see
       // DiscoverOpts.includeSelf) — the scratch-cwd fingerprint survives
       // Claude Code's project-dir slugification.

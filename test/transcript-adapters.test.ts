@@ -44,6 +44,7 @@ import {
   isGrokSessionSidecar,
   mapGrokLine,
 } from '../src/core/transcripts/grok.ts';
+import { dshAdapter, isDshSessionFile } from '../src/core/transcripts/dsh.ts';
 import { chatgptExportAdapter } from '../src/core/transcripts/chatgpt-export.ts';
 import { claudeExportAdapter } from '../src/core/transcripts/claude-export.ts';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
@@ -58,6 +59,7 @@ const CLAUDE_EXPORT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', '
 const FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'claude-code.jsonl');
 const CODEX_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'codex-rollout.jsonl');
 const GROK_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'grok-session', 'chat_history.jsonl');
+const DSH_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'dsh-session', 'session.jsonl');
 const AGENT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'agent-session.jsonl');
 const CHECKPOINT_FIXTURE = join(
   import.meta.dir,
@@ -231,9 +233,9 @@ describe('detectAdapter', () => {
 });
 
 describe('harnessRoots', () => {
-  test('covers the five harnesses and is override-injectable for tests', () => {
+  test('covers the discovered harnesses and is override-injectable for tests', () => {
     const formats = harnessRoots().map((r) => r.format);
-    expect(formats).toEqual(['claude-code', 'codex', 'openclaw', 'hermes', 'grok']);
+    expect(formats).toEqual(['claude-code', 'codex', 'openclaw', 'hermes', 'grok', 'dsh']);
     const injected = harnessRoots([{ format: 'codex', root: '/tmp/x', extension: '.jsonl' }]);
     expect(injected).toHaveLength(1);
     expect(injected[0].root).toBe('/tmp/x');
@@ -970,6 +972,29 @@ describe('grokAdapter', () => {
 
 // ── ChatGPT export adapter [mapping-tree walk: T13 edge fixture] ────────────
 
+describe('dshAdapter', () => {
+  test('parses a plain session.jsonl: user + assistant turns, cwd from the header', async () => {
+    const { sessions } = await drain(dshAdapter.parse(DSH_FIXTURE));
+    expect(sessions).toHaveLength(1);
+    const s = sessions[0]!;
+    expect(s.meta.harness).toBe('dsh');
+    // sessionId is the directory name — one directory per session.
+    expect(s.meta.sessionId).toBe('dsh-session');
+    expect(s.meta.cwd).toBe('/w/dsh');
+    expect(s.meta.startedAt).toBe('2026-01-02T03:04:05.000Z');
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(s.messages[0]!.text).toContain('hello from dsh');
+    expect(s.meta.raw.parentSessionId).toBe(null);
+  });
+
+  test('only the canonical per-session basenames participate in discovery', () => {
+    expect(isDshSessionFile('/x/abc/session.jsonl')).toBe(true);
+    expect(isDshSessionFile('/x/abc/session.jsonl.zstd')).toBe(true);
+    expect(isDshSessionFile('/x/abc/session.v3.jsonl.zstd')).toBe(true);
+    expect(isDshSessionFile('/x/abc/other.jsonl')).toBe(false);
+  });
+});
+
 describe('chatgptExportAdapter', () => {
   test('canonical path via current_node; branches, tool nodes, and system-only convs never leak', async () => {
     const { sessions, diag } = await drain(chatgptExportAdapter.parse(CHATGPT_FIXTURE));
@@ -1045,6 +1070,7 @@ describe('detection matrix', () => {
       [GROK_FIXTURE, 'grok'],
       [CHATGPT_FIXTURE, 'chatgpt'],
       [CLAUDE_EXPORT_FIXTURE, 'claude-export'],
+      [DSH_FIXTURE, 'dsh'],
     ];
     for (const [path, format] of cases) {
       const r = detectAdapter(path);

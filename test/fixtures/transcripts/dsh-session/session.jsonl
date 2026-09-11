@@ -1,0 +1,3 @@
+{"type": "session", "time": 1767323045000, "cwd": "/w/dsh", "createdAt": 1767323045000, "version": "0.1.5"}
+{"type": "user/message", "time": 1767323045000, "data": {"source": {"kind": "user"}, "content": [{"type": "text", "text": "hello from dsh"}]}}
+{"type": "assistant/message", "time": 1767323049000, "data": {"turn": 1, "step": 1, "message": {"role": "assistant", "content": [{"type": "text", "text": "acknowledged"}, {"type": "reasoning", "text": "chain of thought, must not be imported"}, {"type": "tool-call", "name": "bash", "input": {"command": "echo hi"}}]}}}
