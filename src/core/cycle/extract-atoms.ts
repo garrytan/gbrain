@@ -78,6 +78,7 @@ import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
+import { countSourceChangedAtoms } from './extract-atoms-source-drift.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -804,6 +805,7 @@ export async function runPhaseExtractAtoms(
         reason: 'no_work',
         source_id: sourceId,
         atoms_extracted: 0,
+        atoms_source_changed: 0,
         transcripts_processed: 0,
         transcripts_total: 0,
         transcripts_skipped_budget: 0,
@@ -820,6 +822,8 @@ export async function runPhaseExtractAtoms(
 
   // 4. Per work-item: extract atoms via the configured extract_atoms model
   let totalAtomsExtracted = 0;
+  // Read-only drift visibility; see ./extract-atoms-source-drift.ts.
+  let atomsSourceChanged = 0;
   let transcriptsProcessed = 0;
   let pagesProcessed = 0;
   let transcriptsSkipped = 0;
@@ -1160,6 +1164,10 @@ export async function runPhaseExtractAtoms(
           if (item.kind === 'page') await stampAtomsScanHash(item);
           else await stampTranscriptTombstone(item.filePath, item.contentHash);
         }
+        // Zero yield ≠ zero atoms: earlier runs can have left stale rows.
+        if (item.kind === 'page') {
+          atomsSourceChanged += await countSourceChangedAtoms(engine, sourceId, item.slug, item.contentHash.slice(0, 16));
+        }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
@@ -1304,6 +1312,12 @@ export async function runPhaseExtractAtoms(
       } else {
         totalAtomsExtracted += atoms.length; // count for dry-run reporting
       }
+      // After the completion flip, so atoms this run refreshed carry the run's
+      // hash16 and are correctly NOT counted. Dry-run wrote nothing, so the
+      // same query reports the pre-run state; same code path either way.
+      if (item.kind === 'page') {
+        atomsSourceChanged += await countSourceChangedAtoms(engine, sourceId, item.slug, item.contentHash.slice(0, 16));
+      }
       if (item.kind === 'transcript') transcriptsProcessed++;
       else pagesProcessed++;
       // v0.41.19.0 (T4): one tick per processed item, with a count note.
@@ -1409,9 +1423,11 @@ export async function runPhaseExtractAtoms(
       (failures.length > 0 ? ` (${failures.length} failed)` : '') +
       (transcriptsSkipped + pagesSkipped > 0
         ? ` (${transcriptsSkipped + pagesSkipped} budget-skipped)`
-        : ''),
+        : '') +
+      (atomsSourceChanged > 0 ? ` (${atomsSourceChanged} source-changed atoms)` : ''),
     details: {
       atoms_extracted: totalAtomsExtracted,
+      atoms_source_changed: atomsSourceChanged,
       transcripts_processed: transcriptsProcessed,
       transcripts_total: transcripts.length,
       transcripts_skipped_budget: transcriptsSkipped,
