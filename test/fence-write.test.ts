@@ -44,6 +44,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await engine.executeRaw('DELETE FROM fact_withdrawals');
   // Fresh tempdir per test so the fence-write FS state is hermetic.
   brainDir = mkdtempSync(join(tmpdir(), 'fence-write-test-'));
   _resetWriteThroughCacheForTest();

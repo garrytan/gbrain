@@ -95,7 +95,7 @@ describe('readRecentSourceFailures + isSourceInCooldown (PGLite)', () => {
     const finished = new Date(Date.now() - finishedMinAgo * 60_000).toISOString();
     const data = sourceId === null ? {} : { source_id: sourceId };
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data, finished_at) VALUES ('autopilot-cycle', $1, $2, $3)`,
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, finished_at) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'autopilot-cycle', $1, $2, $3)`,
       [status, data, finished],
     );
   }

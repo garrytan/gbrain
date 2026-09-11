@@ -1,3 +1,4 @@
+import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 /**
  * #2179 — DCR `token_ttl_seconds`: clamp boundaries, persistence, response
  * echo, and per-client TTL enforcement across grant paths.
@@ -91,7 +92,7 @@ describe('clampDcrTokenTtl', () => {
 
 function makeProvider(bounds?: { min?: number; max?: number }) {
   return new GBrainOAuthProvider({
-    sql,
+    transaction: pgliteOAuthTransaction(db), sql,
     tokenTtl: 60,
     allowClientCredentialsDcr: true,
     dcrTtlMinSeconds: bounds?.min,
@@ -176,7 +177,7 @@ describe('DCR registration with token_ttl_seconds (#2179)', () => {
   // --enable-dcr server from handing anonymous registrants 7-day tokens.
   test('unset max cannot exceed the server --token-ttl (fail-closed)', async () => {
     const provider = new GBrainOAuthProvider({
-      sql,
+      transaction: pgliteOAuthTransaction(db), sql,
       tokenTtl: 3600,
       allowClientCredentialsDcr: true,
     });
@@ -189,7 +190,7 @@ describe('DCR registration with token_ttl_seconds (#2179)', () => {
 
   test('explicitly configured max above --token-ttl is honored (admin opt-in)', async () => {
     const provider = new GBrainOAuthProvider({
-      sql,
+      transaction: pgliteOAuthTransaction(db), sql,
       tokenTtl: 3600,
       allowClientCredentialsDcr: true,
       dcrTtlMaxSeconds: 86_400,
@@ -217,15 +218,15 @@ describe('per-client token_ttl across grant paths (#2179)', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'test-challenge-hash',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
       state: 'ttl-state',
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
     expect(tokens.expires_in).toBe(222);
 
     // Refresh issuance honors it too.

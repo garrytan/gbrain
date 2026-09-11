@@ -15,9 +15,9 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
-// Load .env.testing if present
+// Local opt-in configuration; container CI must not import developer credentials.
 const envPath = resolve(import.meta.dir, '../../.env.testing');
-if (existsSync(envPath)) {
+if (process.env.GBRAIN_CI_DISABLE_TEST_ENV_FILE !== '1' && existsSync(envPath)) {
   const lines = readFileSync(envPath, 'utf-8').split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
@@ -36,6 +36,7 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  'fact_withdrawals',
   // v0.31: facts must come BEFORE pages too (FK to sources, but tests
   // seed via direct SQL so the row stays referenced until truncated).
   'facts',

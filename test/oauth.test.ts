@@ -1,3 +1,4 @@
+import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
@@ -33,7 +34,7 @@ beforeAll(async () => {
     return result.rows;
   };
 
-  provider = new GBrainOAuthProvider({ sql, tokenTtl: 60, refreshTtl: 300 });
+  provider = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, tokenTtl: 60, refreshTtl: 300 });
 }, 30_000); // PGLITE_SCHEMA_SQL execution under full-suite load can exceed default 5s
 
 afterAll(async () => {
@@ -144,8 +145,7 @@ describe('client registration', () => {
     const { clientId } = await provider.registerClientManual(
       'bound-agent', ['client_credentials'], 'read agent', [], 'default', undefined, undefined, {
         boundTools: ['search', 'get_page'],
-        boundSourceId: 'dept-x',
-        boundBrainId: 'brain-a',
+        boundSourceId: 'default',
         boundSlugPrefixes: ['wiki/agents/bound-agent/'],
         boundMaxConcurrent: 2,
         budgetUsdPerDay: '7.50',
@@ -158,8 +158,8 @@ describe('client registration', () => {
         FROM oauth_clients WHERE client_id = ${clientId}
     `;
     expect(rows[0].bound_tools).toEqual(['search', 'get_page']);
-    expect(rows[0].bound_source_id).toBe('dept-x');
-    expect(rows[0].bound_brain_id).toBe('brain-a');
+    expect(rows[0].bound_source_id).toBe('default');
+    expect(rows[0].bound_brain_id).toBeNull();
     expect(rows[0].bound_slug_prefixes).toEqual(['wiki/agents/bound-agent/']);
     expect(Number(rows[0].bound_max_concurrent)).toBe(2);
     expect(rows[0].budget).toBe('7.50');
@@ -173,7 +173,7 @@ describe('client registration', () => {
 describe('rescopeClient', () => {
   beforeAll(async () => {
     // oauth_clients.source_id has FK → sources(id); create the targets.
-    for (const id of ['wiki', 'essays', 'alpha', 'gamma']) {
+    for (const id of ['wiki', 'essays', 'alpha', 'beta', 'gamma']) {
       await sql`INSERT INTO sources (id, name) VALUES (${id}, ${id}) ON CONFLICT (id) DO NOTHING`;
     }
   });
@@ -183,7 +183,7 @@ describe('rescopeClient', () => {
     // source_id='default', federated_read=['default']. client_credentials
     // over DCR needs the explicit --enable-dcr-insecure opt-in, so build a
     // provider with that flag just for this registration.
-    const dcrProvider = new GBrainOAuthProvider({ sql, tokenTtl: 60, allowClientCredentialsDcr: true });
+    const dcrProvider = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, tokenTtl: 60, allowClientCredentialsDcr: true });
     const dcr = await dcrProvider.clientsStore.registerClient!({
       client_name: 'dcr-stuck-client',
       redirect_uris: [],
@@ -685,8 +685,8 @@ describe('authorization code flow', () => {
       redirect: (url: string) => { redirectUrl = url; },
     } as any;
 
-    await provider.authorize(client, {
-      codeChallenge: 'test-challenge-hash',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read', 'write'],
       state: 'test-state',
@@ -700,7 +700,7 @@ describe('authorization code flow', () => {
     const code = url.searchParams.get('code')!;
 
     // Exchange code for tokens
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
     expect(tokens.access_token).toStartWith('gbrain_at_');
     expect(tokens.refresh_token).toBeDefined(); // Auth code flow includes refresh
   });
@@ -715,8 +715,8 @@ describe('authorization code flow', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
 
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -724,10 +724,10 @@ describe('authorization code flow', () => {
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     // First exchange works
-    await provider.exchangeAuthorizationCode(client, code);
+    await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     // Second exchange fails (code consumed)
-    await expect(provider.exchangeAuthorizationCode(client, code)).rejects.toThrow();
+    await expect(provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0])).rejects.toThrow();
   });
 
   test('expired code is rejected', async () => {
@@ -744,7 +744,7 @@ describe('authorization code flow', () => {
     `;
 
     const client = (await provider.clientsStore.getClient(firstClient.client_id as string))!;
-    await expect(provider.exchangeAuthorizationCode(client, expiredCode)).rejects.toThrow();
+    await expect(provider.exchangeAuthorizationCode(client, expiredCode, TEST_PKCE_VERIFIER, client.redirect_uris![0])).rejects.toThrow();
   });
 
   // F-AUTHZ regression. The MCP SDK's authorize handler splits `?scope=...`
@@ -765,14 +765,14 @@ describe('authorization code flow', () => {
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
 
     // Read-only client requests admin via the SDK's parsed scopes array.
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read', 'write', 'admin'],
     }, mockRes);
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     // The token's stored scopes must equal the clamped subset.
     const auth = await provider.verifyAccessToken(tokens.access_token);
@@ -791,14 +791,14 @@ describe('authorization code flow', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
 
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
     const auth = await provider.verifyAccessToken(tokens.access_token);
     expect(auth.scopes).toEqual(['read']);
   });
@@ -817,8 +817,8 @@ describe('authorization code flow', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -826,7 +826,7 @@ describe('authorization code flow', () => {
 
     const N = 10;
     const results = await Promise.allSettled(
-      Array.from({ length: N }, () => provider.exchangeAuthorizationCode(client, code)),
+      Array.from({ length: N }, () => provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0])),
     );
     const successes = results.filter(r => r.status === 'fulfilled');
     const failures = results.filter(r => r.status === 'rejected');
@@ -850,14 +850,14 @@ describe('refresh token', () => {
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
 
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read', 'write'],
     }, mockRes);
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     // Refresh
     const newTokens = await provider.exchangeRefreshToken(client, tokens.refresh_token!, ['read']);
@@ -881,13 +881,13 @@ describe('refresh token', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     const N = 10;
     const results = await Promise.allSettled(
@@ -1135,20 +1135,20 @@ describe('F1/F4 cross-client isolation', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(owner, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, owner, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     // Attacker holding the same code MUST be rejected.
-    await expect(provider.exchangeAuthorizationCode(attacker, code)).rejects.toThrow();
+    await expect(provider.exchangeAuthorizationCode(attacker, code, TEST_PKCE_VERIFIER, attacker.redirect_uris![0])).rejects.toThrow();
 
     // The atomic predicate's payoff: the legitimate owner can STILL redeem
     // the code afterward. Without it, the attacker would have burned the
     // row in the DELETE and the owner's redemption would 404.
-    const tokens = await provider.exchangeAuthorizationCode(owner, code);
+    const tokens = await provider.exchangeAuthorizationCode(owner, code, TEST_PKCE_VERIFIER, owner.redirect_uris![0]);
     expect(tokens.access_token).toStartWith('gbrain_at_');
   });
 
@@ -1166,15 +1166,15 @@ describe('F1/F4 cross-client isolation', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(owner, {
-      codeChallenge: 'owner-challenge',
+    await authorizeAsOwner(provider, owner, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     await expect(provider.challengeForAuthorizationCode!(attacker, code)).rejects.toThrow();
-    await expect(provider.challengeForAuthorizationCode!(owner, code)).resolves.toBe('owner-challenge');
+    await expect(provider.challengeForAuthorizationCode!(owner, code)).resolves.toBe(TEST_PKCE_CHALLENGE);
   });
 
   test('wrong client cannot revoke another client token', async () => {
@@ -1214,13 +1214,13 @@ describe('F2/F3 refresh hardening', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(owner, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, owner, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(owner, code);
+    const tokens = await provider.exchangeAuthorizationCode(owner, code, TEST_PKCE_VERIFIER, owner.redirect_uris![0]);
 
     // Attacker rejected.
     await expect(provider.exchangeRefreshToken(attacker, tokens.refresh_token!)).rejects.toThrow();
@@ -1247,13 +1247,13 @@ describe('F2/F3 refresh hardening', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     // Attempt to escalate to write — must reject.
     await expect(
@@ -1274,13 +1274,13 @@ describe('F2/F3 refresh hardening', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['admin'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     // Refresh requesting only sources_admin — admin implies it, so this
     // must succeed and the new token must carry only the requested subset.
@@ -1312,13 +1312,13 @@ describe('F2/F3 refresh hardening', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['admin'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     const rotated = await provider.exchangeRefreshToken(
       client, tokens.refresh_token!, ['users_admin'],
@@ -1336,13 +1336,13 @@ describe('F2/F3 refresh hardening', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['write'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
 
     await expect(
       provider.exchangeRefreshToken(client, tokens.refresh_token!, ['sources_admin']),
@@ -1417,23 +1417,8 @@ describe('F5 verifyAccessToken / client_credentials column probes', () => {
     // the client as not-revoked. Without the predicate this throw used to
     // disappear into the void.
     const sqlFailure = Object.assign(new Error('database session failed'), { code: '57P01' });
-    const fakeSql = async (strings: TemplateStringsArray): Promise<Record<string, unknown>[]> => {
-      const query = strings.join('$');
-      if (query.includes('SELECT client_id, client_secret_hash')) {
-        return [{
-          client_id: 'gbrain_cl_fake',
-          client_secret_hash: hashToken('secret'),
-          client_name: 'fake',
-          redirect_uris: [],
-          grant_types: ['client_credentials'],
-          scope: 'read',
-          client_id_issued_at: 1,
-        }];
-      }
-      if (query.includes('SELECT deleted_at')) throw sqlFailure;
-      return [];
-    };
-    const failingProvider = new GBrainOAuthProvider({ sql: fakeSql as any });
+    const fakeSql = async (): Promise<Record<string, unknown>[]> => { throw sqlFailure; };
+    const failingProvider = new GBrainOAuthProvider({ sql: fakeSql, transaction: fn => fn(fakeSql) });
 
     await expect(
       failingProvider.exchangeClientCredentials('gbrain_cl_fake', 'secret', 'read'),
@@ -1478,15 +1463,15 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     const tokens = await provider.exchangeAuthorizationCode(
-      client, code, undefined, 'http://localhost:3000/callback',
+      client, code, TEST_PKCE_VERIFIER, 'http://localhost:3000/callback',
     );
     expect(tokens.access_token).toStartWith('gbrain_at_');
   });
@@ -1500,8 +1485,8 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -1511,7 +1496,7 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
     // an attacker-controlled callback URL) MUST be rejected. RFC 6749 §4.1.3.
     await expect(
       provider.exchangeAuthorizationCode(
-        client, code, undefined, 'https://attacker.example/cb',
+        client, code, TEST_PKCE_VERIFIER, 'https://attacker.example/cb',
       ),
     ).rejects.toThrow();
   });
@@ -1531,23 +1516,20 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
     await expect(
-      provider.exchangeAuthorizationCode(client, code, undefined, ''),
+      provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, ''),
     ).rejects.toThrow();
   });
 
-  test('omitted redirect_uri (back-compat) still succeeds', async () => {
-    // Existing callers that don't pass redirectUri keep working — the
-    // predicate only fires when redirectUri is provided. This protects
-    // against breaking SDK consumers that haven't adopted the parameter
-    // yet, while still hardening the path for those that have.
+  test('omitted redirect_uri cannot bypass code binding', async () => {
+    // The exact redirect selected at authorization remains required at redemption.
     const { clientId } = await provider.registerClientManual(
       'redir-omitted-test', ['authorization_code'], 'read',
       ['http://localhost:3000/callback'],
@@ -1556,15 +1538,14 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'challenge',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
     const code = new URL(redirectUrl).searchParams.get('code')!;
 
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
-    expect(tokens.access_token).toStartWith('gbrain_at_');
+    await expect(provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER)).rejects.toThrow('Redirect URI');
   });
 });
 
@@ -1574,7 +1555,7 @@ describe('F7c redirect_uri binding on auth code exchange', () => {
 
 describe('F12 dcrDisabled constructor option', () => {
   test('clientsStore omits registerClient when dcrDisabled=true', () => {
-    const dcrOff = new GBrainOAuthProvider({ sql, dcrDisabled: true });
+    const dcrOff = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, dcrDisabled: true });
     const store = dcrOff.clientsStore;
     expect(typeof store.getClient).toBe('function');
     // SDK's mcpAuthRouter checks for registerClient before wiring up the
@@ -1583,14 +1564,14 @@ describe('F12 dcrDisabled constructor option', () => {
   });
 
   test('clientsStore exposes registerClient when dcrDisabled is false/unset', () => {
-    const dcrOn = new GBrainOAuthProvider({ sql });
+    const dcrOn = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql });
     expect(typeof dcrOn.clientsStore.registerClient).toBe('function');
   });
 
   test('registerClientManual still works on dcrDisabled providers (CLI path)', async () => {
     // The CLI code path uses registerClientManual, which is independent of
     // the DCR /register endpoint. dcrDisabled must NOT break it.
-    const dcrOff = new GBrainOAuthProvider({ sql, dcrDisabled: true });
+    const dcrOff = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, dcrDisabled: true });
     const result = await dcrOff.registerClientManual(
       'dcr-disabled-cli-test', ['client_credentials'], 'read',
     );
@@ -1685,8 +1666,8 @@ describe('PKCE DCR public-client gate (#909)', () => {
 
     let redirectUrl = '';
     const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-    await provider.authorize(client, {
-      codeChallenge: 'test-challenge-value',
+    await authorizeAsOwner(provider, client, {
+      codeChallenge: TEST_PKCE_CHALLENGE,
       redirectUri: 'http://localhost:3000/callback',
       scopes: ['read'],
     }, mockRes);
@@ -1694,7 +1675,7 @@ describe('PKCE DCR public-client gate (#909)', () => {
     expect(code).toMatch(/^gbrain_code_/);
 
     // Exchange the code — public client; no secret on the wire.
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
     expect(tokens.access_token).toStartWith('gbrain_at_');
     // SDK normalizes token_type per RFC 6750 §6.1.1 (case-insensitive);
     // implementations may emit "bearer" lowercase.
@@ -1909,7 +1890,7 @@ describe('#1353 DCR default-grant hardening', () => {
   });
 
   test('--enable-dcr-insecure (allowClientCredentialsDcr) permits client_credentials', async () => {
-    const insecure = new GBrainOAuthProvider({ sql, allowClientCredentialsDcr: true });
+    const insecure = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, allowClientCredentialsDcr: true });
     const reg = await insecure.clientsStore.registerClient!({
       client_name: 'cc-allowed-test',
       grant_types: ['client_credentials'],

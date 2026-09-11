@@ -23,7 +23,10 @@
  */
 
 import { lookup as nodeDnsLookup } from 'node:dns/promises';
-import { isInternalUrl, isPrivateIpv4, hostnameToOctets } from './url-safety.ts';
+import { isIP } from 'node:net';
+import { isInternalUrl, hostnameToOctets } from './url-safety.ts';
+import { fetchPinnedHttp, readBoundedHttpBody, type PinnedHttpFetch } from './guarded-http.ts';
+export { HttpBodyError, HttpProxyError } from './guarded-http.ts';
 
 // Module-level seam so tests can swap DNS resolution without `mock.module`
 // (which is banned in non-serial unit tests per scripts/check-test-isolation.sh R2).
@@ -63,7 +66,9 @@ export type SSRFErrorCode =
   | 'DNS_RESOLUTION_FAILED'
   | 'DNS_RESOLVED_INTERNAL'
   | 'SSRF_REDIRECT_DENIED'
-  | 'SSRF_HOP_LIMIT';
+  | 'SSRF_HOP_LIMIT'
+  | 'REQUEST_TIMEOUT'
+  | 'REQUEST_ABORTED';
 
 /**
  * Validate a URL against SSRF policy and resolve its hostname to an IP.
@@ -83,11 +88,11 @@ export async function validateAndResolveUrl(urlStr: string): Promise<ResolvedTar
   try {
     url = new URL(urlStr);
   } catch {
-    throw new SSRFError('INVALID_URL', `Malformed URL: ${truncate(urlStr)}`);
+    throw new SSRFError('INVALID_URL', 'Malformed HTTP URL');
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new SSRFError('INVALID_SCHEME', `Unsupported scheme ${url.protocol}; only http(s) allowed`);
+    throw new SSRFError('INVALID_SCHEME', 'Unsupported URL scheme; only http(s) allowed');
   }
 
   if (url.username || url.password) {
@@ -97,7 +102,7 @@ export async function validateAndResolveUrl(urlStr: string): Promise<ResolvedTar
   // Layer 1: static check covers IPv4 hex/octal/single-int, IPv6 ULA + link-local,
   // metadata hostnames, CGNAT, IPv4-mapped IPv6.
   if (isInternalUrl(urlStr)) {
-    throw new SSRFError('INTERNAL_HOST', `URL targets internal/private network: ${truncate(urlStr)}`);
+    throw new SSRFError('INTERNAL_HOST', 'URL targets an internal, private, or otherwise nonpublic network');
   }
 
   let host = url.hostname;
@@ -119,22 +124,22 @@ export async function validateAndResolveUrl(urlStr: string): Promise<ResolvedTar
   let addrs: Array<{ address: string; family: number }>;
   try {
     addrs = await _dnsLookup(host, { all: true, family: 0 });
-  } catch (err) {
+  } catch {
     throw new SSRFError(
       'DNS_RESOLUTION_FAILED',
-      `Failed to resolve ${host}: ${err instanceof Error ? err.message : String(err)}`,
+      'DNS resolution failed for the requested destination',
     );
   }
 
   if (addrs.length === 0) {
-    throw new SSRFError('DNS_RESOLUTION_FAILED', `No DNS records for ${host}`);
+    throw new SSRFError('DNS_RESOLUTION_FAILED', 'No DNS records for the requested destination');
   }
 
   for (const a of addrs) {
     if (isAddressInternal(a.address, a.family)) {
       throw new SSRFError(
         'DNS_RESOLVED_INTERNAL',
-        `${host} resolves to internal address ${a.address} (DNS rebinding attempt?)`,
+        'DNS returned a nonpublic or invalid address',
       );
     }
   }
@@ -164,95 +169,152 @@ function isIpLiteral(host: string): boolean {
 }
 
 function isAddressInternal(addr: string, family: number): boolean {
-  if (family === 4) {
-    const octets = hostnameToOctets(addr);
-    return octets ? isPrivateIpv4(octets) : true; // fail-closed on parse failure
-  }
-  if (family === 6) {
-    const lower = addr.toLowerCase();
-    if (lower === '::1' || lower === '::') return true;
-    if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true; // ULA fc00::/7
-    if (/^fe[89ab][0-9a-f]:/.test(lower)) return true; // link-local fe80::/10
-    if (lower.startsWith('::ffff:')) {
-      const tail = lower.slice(7);
-      const dotted = hostnameToOctets(tail);
-      if (dotted && isPrivateIpv4(dotted)) return true;
-    }
-    return false;
-  }
-  return true; // unknown family — fail-closed
+  // WHATWG URL canonicalization compresses IPv6 and converts mapped dotted
+  // addresses to hextets. Reuse the same classifier as literal URL inputs.
+  if ((family !== 4 && family !== 6) || isIP(addr) !== family) return true;
+  return isInternalUrl(`http://${family === 6 ? `[${addr}]` : addr}/`);
 }
 
+export interface GuardedHttpOptions {
+  method?: string;
+  headers?: HeadersInit;
+  body?: string;
+  signal?: AbortSignal | null;
+  maxRedirects?: number;
+  timeoutMs?: number;
+  /** Header-only probes destroy the body immediately, including GET fallback. */
+  headerOnly?: boolean;
+  /** Required for body reads; counts decoded bytes, not Content-Length. */
+  maxBytes?: number;
+  /** Recipe-configured headers/auth/body must never cross an origin. */
+  sameOrigin?: boolean;
+  /** HEAD probes retry 405/501 once with GET without resetting their budget. */
+  headFallback?: boolean;
+}
+
+export interface GuardedHttpResponse {
+  status: number;
+  statusText: string;
+  ok: boolean;
+  headers: Headers;
+  url: string;
+  body: Buffer;
+}
+
+/** @internal Dependency injection keeps transport tests off real DNS/targets. */
+export interface GuardedHttpDependencies {
+  resolve?: typeof validateAndResolveUrl;
+  fetch?: PinnedHttpFetch;
+}
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const PUBLIC_HEADERS = new Set(['accept', 'accept-language', 'user-agent']);
+
 /**
- * Fetch a URL with full SSRF protection including per-redirect-hop validation.
- *
- * On every Location response header, the new URL is re-validated via
- * `validateAndResolveUrl` — fresh DNS resolution per hop defeats rebinding
- * across the redirect chain. Max 3 hops by default.
- *
- * Returns the final Response. Caller is responsible for body size limits
- * (use `init.signal` to abort, or check `Content-Length` before consuming).
+ * Validate -> pin -> request, repeated for every redirect. One abort deadline
+ * covers DNS, TLS, redirects and bounded decoded-body consumption. There is no
+ * unrestricted Response escaping this boundary.
  */
 export async function fetchWithSSRFGuard(
   urlStr: string,
-  init: RequestInit & {
-    maxRedirects?: number;
-    timeoutMs?: number;
-  } = {},
-): Promise<Response> {
+  init: GuardedHttpOptions = {},
+  deps: GuardedHttpDependencies = {},
+): Promise<GuardedHttpResponse> {
   const maxRedirects = init.maxRedirects ?? 3;
   const timeoutMs = init.timeoutMs ?? 5000;
-
+  if (!Number.isInteger(maxRedirects) || maxRedirects < 0 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError('Invalid HTTP redirect limit or timeout');
+  }
+  if (!init.headerOnly && (!Number.isSafeInteger(init.maxBytes) || init.maxBytes! <= 0)) {
+    throw new TypeError('A positive maxBytes is required when reading an HTTP body');
+  }
+  const initialMethod = (init.method ?? 'GET').toUpperCase();
+  if (!/^[!#$%&'*+.^_`|~0-9A-Z-]+$/.test(initialMethod) || ['CONNECT', 'TRACE', 'TRACK'].includes(initialMethod)) {
+    throw new TypeError('Unsupported HTTP method');
+  }
+  if (init.body !== undefined && (typeof init.body !== 'string' || ['GET', 'HEAD'].includes(initialMethod))) {
+    throw new TypeError('HTTP bodies must be strings on a method other than GET/HEAD');
+  }
+  const headers = new Headers(init.headers);
+  const sameOrigin = init.sameOrigin || !['GET', 'HEAD'].includes(initialMethod) || init.body !== undefined
+    || [...headers.keys()].some(key => !PUBLIC_HEADERS.has(key));
   const controller = new AbortController();
   const externalSignal = init.signal;
-  const onAbort = () => controller.abort();
+  const onAbort = () => controller.abort(new SSRFError('REQUEST_ABORTED', 'HTTP request aborted'));
   if (externalSignal) {
-    if (externalSignal.aborted) controller.abort();
+    if (externalSignal.aborted) onAbort();
     else externalSignal.addEventListener('abort', onAbort, { once: true });
   }
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(new SSRFError('REQUEST_TIMEOUT', 'HTTP request timeout')), timeoutMs);
+  const resolve = deps.resolve ?? validateAndResolveUrl;
+  const request = deps.fetch ?? fetchPinnedHttp;
 
   try {
     let currentUrl = urlStr;
     let hops = 0;
+    let method = initialMethod;
     while (true) {
-      const target = await validateAndResolveUrl(currentUrl);
-      const fetchInit: RequestInit = {
-        ...init,
-        redirect: 'manual',
-        signal: controller.signal,
-      };
-      // Set Host header to the original hostname so SNI/TLS works correctly
-      // (we're fetching by resolved IP but the server expects the real host).
-      const headers = new Headers(init.headers || {});
-      if (target.originalHost) {
-        headers.set('Host', target.originalHost);
-      }
-      fetchInit.headers = headers;
-      const res = await fetch(target.resolvedUrl, fetchInit);
-      // Redirect status codes
-      if ([301, 302, 303, 307, 308].includes(res.status)) {
-        if (hops >= maxRedirects) {
-          throw new SSRFError('SSRF_HOP_LIMIT', `Exceeded ${maxRedirects} redirect hops`);
+      controller.signal.throwIfAborted();
+      const target = await abortable(resolve(currentUrl), controller.signal);
+      controller.signal.throwIfAborted();
+      const url = new URL(currentUrl);
+      const hop = new AbortController();
+      const abortHop = () => hop.abort(controller.signal.reason);
+      controller.signal.addEventListener('abort', abortHop, { once: true });
+      try {
+        const res = await abortable(request(target, url, { method, headers, body: init.body, signal: hop.signal }), controller.signal);
+        if (init.headFallback && method === 'HEAD' && [405, 501].includes(res.status)) {
+          await res.body?.cancel();
+          method = 'GET';
+          continue;
         }
         const location = res.headers.get('location');
-        if (!location) {
-          return res; // redirect with no Location — return as-is, caller decides
+        if (REDIRECT_STATUSES.has(res.status) && location) {
+          await res.body?.cancel();
+          if (hops >= maxRedirects) {
+            throw new SSRFError('SSRF_HOP_LIMIT', `Exceeded ${maxRedirects} redirect hops`);
+          }
+          let next: URL;
+          try {
+            next = new URL(location, url);
+          } catch {
+            throw new SSRFError('SSRF_REDIRECT_DENIED', 'Malformed redirect Location');
+          }
+          if ((url.protocol === 'https:' && next.protocol !== 'https:') || (sameOrigin && next.origin !== url.origin)) {
+            throw new SSRFError('SSRF_REDIRECT_DENIED', 'Redirect would downgrade TLS or cross a protected origin');
+          }
+          currentUrl = next.toString();
+          method = initialMethod;
+          hops++;
+          continue;
         }
-        // Resolve relative location against current URL
-        const next = new URL(location, currentUrl).toString();
-        currentUrl = next;
-        hops++;
-        continue;
+        let body: Buffer = Buffer.alloc(0);
+        if (init.headerOnly || method === 'HEAD' || !res.ok) await res.body?.cancel();
+        else body = await readBoundedHttpBody(res, init.maxBytes!, controller.signal);
+        controller.signal.throwIfAborted();
+        return { status: res.status, statusText: res.statusText, ok: res.ok, headers: res.headers, url: currentUrl, body };
+      } finally {
+        // Bun body cancellation alone does not reliably close the connection.
+        // Abort every completed/redirected/failed request, keeping the overall
+        // deadline independent so the next permitted hop can still run.
+        hop.abort();
+        controller.signal.removeEventListener('abort', abortHop);
       }
-      return res;
     }
+  } catch (err) {
+    if (controller.signal.aborted) throw controller.signal.reason;
+    throw err;
   } finally {
     clearTimeout(timer);
     if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
   }
 }
 
-function truncate(s: string, n = 200): string {
-  return s.length > n ? s.slice(0, n) + '...' : s;
+function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
 }

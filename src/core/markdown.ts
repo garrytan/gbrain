@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { dataFrontmatter as matter, FrontmatterLanguageError } from './data-frontmatter.ts';
 import { safeLoad as yamlSafeLoad } from 'js-yaml';
 import type { Page, PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
@@ -260,6 +260,7 @@ export function parseMarkdown(
   try {
     parsed = matter(safeContent);
   } catch (e) {
+    if (e instanceof FrontmatterLanguageError && !opts?.validate) throw e;
     yamlParseError = e as Error;
   }
 
@@ -269,6 +270,11 @@ export function parseMarkdown(
       expectedSlug: opts.expectedSlug,
       parsedFrontmatter: parsed?.data ?? {},
     });
+    // Language selectors do not look like the plain YAML fence expected by
+    // structural validation. Keep their rejection visible to ingestion callers.
+    if (yamlParseError instanceof FrontmatterLanguageError && !errors.some(error => error.code === 'YAML_PARSE')) {
+      errors.push({ code: 'YAML_PARSE', line: 1, message: `YAML parse failed: ${yamlParseError.message}` });
+    }
   }
 
   // When YAML parsing failed (rare; gray-matter is forgiving), fall back to
@@ -371,7 +377,7 @@ function collectValidationErrors(
     });
     return;
   }
-  if (lines[firstNonEmpty].trim() !== '---') {
+  if (!/^---(?:\s*(?:yaml|yml|json))?\s*$/i.test(lines[firstNonEmpty].trim())) {
     errors.push({
       code: 'MISSING_OPEN',
       message: 'Frontmatter must start with --- on the first non-empty line',

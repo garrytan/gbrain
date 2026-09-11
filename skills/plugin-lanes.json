@@ -139,7 +139,6 @@
       "sync_brain"
     ],
     "minion-orchestrator": [
-      "cancel_job",
       "get_job",
       "get_job_progress",
       "list_jobs",

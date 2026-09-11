@@ -18,7 +18,7 @@
 import { describe, expect, it } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../src/core/data-frontmatter.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const RECIPE_ROOT = join(REPO_ROOT, 'recipes', 'retrieval-reflex');

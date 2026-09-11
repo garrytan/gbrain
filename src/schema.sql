@@ -671,6 +671,12 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   -- tier names into surface); NULL = server/config surface resolution.
   surface                 TEXT NULL,
   surface_set_by          TEXT NULL,
+  allowed_operations      TEXT[] NULL,
+  delegated_slug_prefixes TEXT[] NULL,
+  delegated_namespace    TEXT NOT NULL DEFAULT 'prefixes',
+  grant_profile           TEXT NULL,
+  grant_revision          INTEGER NOT NULL DEFAULT 0,
+  grant_repair_reasons    TEXT[] NOT NULL DEFAULT '{}',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
@@ -680,6 +686,28 @@ CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
   ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
   ON oauth_clients USING GIN (federated_read);
+
+
+CREATE TABLE IF NOT EXISTS oauth_grant_audit (
+  id BIGSERIAL PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  before_grant JSONB,
+  after_grant JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_grant_audit_client ON oauth_grant_audit(client_id, created_at);
+
+-- The facts index and withdrawal trigger are installed by migrations 60/148.
+CREATE TABLE IF NOT EXISTS fact_withdrawals (
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  visibility TEXT NOT NULL CHECK (visibility IN ('private','world')),
+  fact_hash TEXT NOT NULL,
+  withdrawn_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, visibility, fact_hash)
+);
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   token_hash   TEXT PRIMARY KEY,
@@ -1017,6 +1045,8 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   queue            TEXT        NOT NULL DEFAULT 'default',
   status           TEXT        NOT NULL DEFAULT 'waiting',
   priority         INTEGER     NOT NULL DEFAULT 0,
+  submission_authority JSONB, -- NULL legacy rows require local authorization before workers start
+  claim_generation BIGINT NOT NULL DEFAULT 0, -- advanced atomically by protocol-aware claims
   data             JSONB       NOT NULL DEFAULT '{}',
   max_attempts     INTEGER     NOT NULL DEFAULT 3,
   attempts_made    INTEGER     NOT NULL DEFAULT 0,
@@ -1543,6 +1573,28 @@ CREATE TABLE IF NOT EXISTS think_ab_results (
 );
 CREATE INDEX IF NOT EXISTS think_ab_results_recent_idx
   ON think_ab_results (source_id, ran_at DESC);
+
+-- Reject pre-upgrade producers/claims; old reapers must still be stopped during cutover.
+
+CREATE OR REPLACE FUNCTION enforce_minion_queue_protocol() RETURNS trigger SET search_path = pg_catalog, public AS $protocol$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.submission_authority IS NULL OR NEW.claim_generation <> 0 THEN
+      RAISE EXCEPTION 'Minion queue protocol 1 required: upgrade every producer and worker before restart';
+    END IF;
+  ELSIF NEW.status = 'active' AND (OLD.status <> 'active' OR NEW.lock_token IS DISTINCT FROM OLD.lock_token) THEN
+    IF NEW.submission_authority IS NULL OR NEW.claim_generation IS DISTINCT FROM OLD.claim_generation + 1 THEN
+      RAISE EXCEPTION 'Minion queue protocol 1 required: old workers cannot claim upgraded queue jobs';
+    END IF;
+  ELSIF NEW.claim_generation IS DISTINCT FROM OLD.claim_generation THEN
+    RAISE EXCEPTION 'Minion queue claim generation may advance only with a claim';
+  END IF;
+  RETURN NEW;
+END;
+$protocol$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS minion_queue_protocol ON minion_jobs;
+CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
+  FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
 
 -- NOTIFY trigger for real-time job events (Postgres only, not PGLite)
 CREATE OR REPLACE FUNCTION notify_minion_job_change() RETURNS trigger SET search_path = pg_catalog, public AS $$

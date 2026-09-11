@@ -48,8 +48,8 @@ async function seedAutopilotCycle(engine: PGLiteEngine, opts: {
     ? { partial: false, status: 'ok', report: { totals: opts.totals } }
     : { partial: false, status: 'ok', report: {} };
   await engine.executeRaw(
-    `INSERT INTO minion_jobs (queue, name, data, status, started_at, finished_at, result)
-     VALUES ('default', $1, '{}'::jsonb, 'completed',
+    `INSERT INTO minion_jobs (submission_authority, queue, name, data, status, started_at, finished_at, result)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', $1, '{}'::jsonb, 'completed',
              $2::timestamptz - INTERVAL '5 seconds', $2::timestamptz, $3::jsonb)`,
     [opts.name, opts.finishedAt, JSON.stringify(result)],
   );
@@ -130,8 +130,8 @@ describe('gbrain status E2E (PGLite)', () => {
     // status renderer should IGNORE them (returns null), not silently surface
     // the wrong shape.
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (queue, name, data, status, started_at, finished_at, result)
-       VALUES ('default', 'autopilot-cycle', '{}'::jsonb, 'completed',
+      `INSERT INTO minion_jobs (submission_authority, queue, name, data, status, started_at, finished_at, result)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', 'autopilot-cycle', '{}'::jsonb, 'completed',
                NOW() - INTERVAL '5 seconds', NOW(),
                '{"totals":{"wrong_place":42}}'::jsonb)`,
     );
@@ -173,8 +173,8 @@ describe('gbrain status E2E (PGLite)', () => {
     // Seed an OLD waiting job (created 10 days ago). The status query MUST
     // surface it — that's exactly the kind of stuck job operators want to see.
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (queue, name, data, status, created_at)
-       VALUES ('default', 'stale-waiting', '{}'::jsonb, 'waiting',
+      `INSERT INTO minion_jobs (submission_authority, queue, name, data, status, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', 'stale-waiting', '{}'::jsonb, 'waiting',
                NOW() - INTERVAL '10 days')`,
     );
     let jsonOut = '';

@@ -71,6 +71,7 @@ const FALLBACK_DAILY_OPS: readonly string[] = [
   ...BRAIN_TOOL_ALLOWLIST,
   'submit_agent',
   'get_agent_job',
+  'cancel_job',
 ];
 
 /**

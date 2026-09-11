@@ -66,9 +66,9 @@ describe('doctor subagent_health (v0.41 Bug 2 / Eng D8)', () => {
     for (let i = 0; i < 3; i++) {
       await engine.executeRaw(
         `INSERT INTO minion_jobs
-           (name, queue, status, attempts_made, attempts_started,
+           (submission_authority, name, queue, status, attempts_made, attempts_started,
             finished_at, started_at, max_attempts)
-         VALUES ('subagent', 'default', 'completed', 1, 1,
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'default', 'completed', 1, 1,
                  now(), now() - interval '1 second', 3)`,
       );
     }

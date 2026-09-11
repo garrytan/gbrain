@@ -45,7 +45,7 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(missing).toEqual([]);
   });
 
-  test('contains the v0.15 read-only 10 + put_page + v0.29 salience pair + v114 list_link_sources', () => {
+  test('contains delegated page tools and excludes local-only attachments', () => {
     // v0.29 added get_recent_salience + find_anomalies (read-only).
     // get_recent_transcripts is deliberately excluded — subagent calls always
     // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
@@ -53,7 +53,9 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     // the edge-WRITE ops add_link/remove_link stay out (separate trust call).
     // #2778 added add_timeline_entry (write, fenced like put_page via
     // operations.ts:enforceSubagentSlugFence).
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(15);
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(13);
+    expect(BRAIN_TOOL_ALLOWLIST.has('file_list')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('file_url')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('add_timeline_entry')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);

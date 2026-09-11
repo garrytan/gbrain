@@ -15,8 +15,10 @@
  *    cycles per (name, queue, source scope). Manual submissions (no ticker
  *    idempotency-key prefix) and parented rows are never touched; distinct
  *    sources each keep their newest row; cancelled rows carry error_text.
- * 4. Ledger round-trip: rewind to 127 → runMigrations applies v128; re-run
- *    is 0 applied. AND (Codex C9) SQL-level idempotency: re-executing the
+ * 4. Ledger round-trip on a waiting fixture: rewind to 127 → runMigrations
+ *    applies v128; re-run is 0 applied. The active-row matrix runs v128 SQL
+ *    directly because later authority cutovers require active jobs drained.
+ *    AND (Codex C9) SQL-level idempotency: re-executing the
  *    v128 SQL directly changes zero rows — the ledger check alone only
  *    proves version bookkeeping.
  * 5. Empty table → 0-row no-op.
@@ -117,7 +119,7 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
       idempotency_key: 'autopilot-cycle:src-active:slot-0',
     });
     await forceRow(legacyActive.id,
-      `timeout_ms = NULL, timeout_at = NULL, status = 'active',
+      `timeout_ms = NULL, timeout_at = NULL, status = 'active', claim_generation = claim_generation + 1,
        lock_token = 'legacy-worker', lock_until = now() + interval '30 seconds',
        started_at = now() - interval '10 minutes'`);
     // Terminal row: NULL budget stays NULL (completed is not rescued).
@@ -179,11 +181,9 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     await forceRow(parented.id,
       `created_at = now() - interval '6 hours', parent_job_id = $1`, [dupNew.id]);
 
-    // --- Apply v128 via the real migration runner (ledger rewind). ---
-    await engine.setConfig('version', '127');
-    const res = await runMigrations(engine);
-    expect(res.applied).toBeGreaterThanOrEqual(1);
-    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    // Keep the active-row contract local to v128; the v149 authority
+    // cutover independently requires active jobs to have drained.
+    await execV128Directly();
 
     const rows = await engine.executeRaw<{
       id: number; status: string; timeout_ms: string | null;
@@ -214,10 +214,6 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     expect(byId.get(parented.id)!.status).toBe('waiting');          // parented never touched
     expect(byId.get(camelMimic.id)!.status).toBe('waiting');        // camelCase sourceId never swept
 
-    // Ledger idempotency: re-run applies nothing.
-    const rerun = await runMigrations(engine);
-    expect(rerun.applied).toBe(0);
-
     // SQL-level idempotency (Codex C9): re-execute the v128 SQL directly and
     // prove zero rows change — version bookkeeping alone can't show this.
     const before = await snapshot();
@@ -228,6 +224,18 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     // Sanity on the split used above: exactly the two statements shipped.
     expect(V128_STATEMENTS.length).toBe(2);
   }, 30_000);
+
+  test('migration runner backfills a waiting fixture and records an idempotent ledger', async () => {
+    const waiting = await queue.add('subagent', {}, undefined, { allowProtectedSubmit: true });
+    await forceRow(waiting.id, `timeout_ms = NULL, timeout_at = NULL`);
+    await engine.setConfig('version', '127');
+
+    const res = await runMigrations(engine);
+    expect(res.applied).toBeGreaterThanOrEqual(1);
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    expect((await queue.getJob(waiting.id))?.timeout_ms).toBe(1_800_000);
+    expect((await runMigrations(engine)).applied).toBe(0);
+  });
 
   test('empty table: v128 SQL is a 0-row no-op', async () => {
     const before = await snapshot();

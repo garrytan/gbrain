@@ -125,7 +125,7 @@ describeE2E('E2E: Minions shell handler', () => {
           { engine, remote: true, dryRun: false } as any,
           { name: 'shell', data: { cmd: 'echo hi', cwd: '/tmp' } },
         ),
-      ).rejects.toThrow(/permission_denied|cannot be submitted over MCP/i);
+      ).rejects.toMatchObject({ code: 'permission_denied' });
     } finally {
       await engine.disconnect();
     }

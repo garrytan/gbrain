@@ -22,6 +22,11 @@ function connEndedError(): Error & { code: string } {
   return e;
 }
 
+function isAuthorityInventory(sql: string): boolean {
+  return sql.includes('SELECT id, submission_authority FROM minion_jobs') &&
+    sql.includes('submission_authority IS DISTINCT FROM');
+}
+
 const AUDIT_DIR = join(tmpdir(), `gbrain-queue-lock-retry-${process.pid}-${Date.now()}`);
 // Fast retry + isolated audit dir so the test doesn't sleep ~1s or pollute ~/.gbrain.
 const FAST_ENV = {
@@ -37,7 +42,12 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
       let reconnects = 0;
       const engine = {
         kind: 'postgres',
-        executeRaw: async () => {
+        executeRaw: async (sql: string) => {
+          if (isAuthorityInventory(sql)) return [];
+          if (!sql.startsWith('UPDATE minion_jobs SET') ||
+              !sql.includes("WHERE status = 'delayed' AND delay_until <= now()")) {
+            throw new Error('Unexpected SQL in promotion retry fixture');
+          }
           calls++;
           if (calls === 1) throw connEndedError();
           return [];
@@ -59,16 +69,45 @@ describe('MinionQueue lock-path recovery (issue #1678)', () => {
       const engine = {
         kind: 'postgres',
         // claim() routes through executeRawDirect (direct session pool) as of
-        // the lock-hot-path fix; executeRaw is kept as a throwing guard to
-        // prove claim never falls back to it.
-        executeRawDirect: async () => { calls++; throw connEndedError(); },
-        executeRaw: async () => { throw new Error('claim must not use executeRaw'); },
+        // the lock-hot-path fix. Only the read-only authority inventory may
+        // use executeRaw; the claim mutation must stay on the direct pool.
+        executeRawDirect: async (sql: string) => {
+          if (!sql.includes("status = 'active'") || !sql.includes('FOR UPDATE SKIP LOCKED')) {
+            throw new Error('Unexpected SQL in claim retry fixture');
+          }
+          calls++;
+          throw connEndedError();
+        },
+        executeRaw: async (sql: string) => {
+          if (isAuthorityInventory(sql)) return [];
+          throw new Error('claim mutation must not use executeRaw');
+        },
         reconnect: async () => {},
       } as unknown as ConstructorParameters<typeof MinionQueue>[0];
 
       const q = new MinionQueue(engine);
       await expect(q.claim('tok', 1000, 'default', ['sync'])).rejects.toThrow('CONNECTION_ENDED');
       expect(calls).toBe(1); // exactly one attempt — no inline retry
+    });
+  });
+
+  it('an unavailable authority inventory prevents both claim and promotion mutations', async () => {
+    await withEnv(FAST_ENV, async () => {
+      let mutations = 0;
+      const engine = {
+        kind: 'postgres',
+        executeRaw: async (sql: string) => {
+          if (isAuthorityInventory(sql)) throw connEndedError();
+          mutations++;
+          return [];
+        },
+        executeRawDirect: async () => { mutations++; return []; },
+        reconnect: async () => {},
+      } as unknown as ConstructorParameters<typeof MinionQueue>[0];
+      const q = new MinionQueue(engine);
+      await expect(q.promoteDelayed()).rejects.toThrow('CONNECTION_ENDED');
+      await expect(q.claim('tok', 1000, 'default', ['sync'])).rejects.toThrow('CONNECTION_ENDED');
+      expect(mutations).toBe(0);
     });
   });
 });

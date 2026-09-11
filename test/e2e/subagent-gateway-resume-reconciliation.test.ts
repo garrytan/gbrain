@@ -61,8 +61,8 @@ beforeEach(async () => {
 
 async function makeJob(prompt: string, model: string): Promise<{ jobId: number; ctx: MinionJobContext }> {
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-     VALUES ('subagent', 'active', $1::text::jsonb, 'default', 0, now()) RETURNING id`,
+    `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', $1::text::jsonb, 'default', 0, now()) RETURNING id`,
     [JSON.stringify({ prompt, model })],
   );
   const jobId = rows[0].id;

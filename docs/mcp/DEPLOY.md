@@ -15,6 +15,11 @@ Access your brain from any device, any AI client. GBrain ships two transports:
 `gbrain serve` (stdio) for local agents, and `gbrain serve --http` for remote
 clients over OAuth 2.1.
 
+Authorization-code connections require owner approval in the admin dashboard.
+Existing sessions are preserved. Before upgrading an installation with queued
+work, follow the [authorization and worker upgrade guide](../guides/authorization-upgrade.md)
+for the coordinated cutover, consent recovery, and Bun requirements.
+
 ## Three Paths
 
 ### Local stdio (zero setup)

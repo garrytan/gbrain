@@ -51,15 +51,15 @@ describe('jobs stats — ABANDONED PRIVATE QUEUE classifier gating', () => {
   test('orphan (terminal owner, aged, expired lease) screams ABANDONED with the auto-recovery remediation', async () => {
     const q = 'dream-inline-1700000000000-dead0001';
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data, created_at)
-       VALUES ('dream-cycle', 'default', 'completed', '{}'::jsonb, now() - interval '3 hours')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'dream-cycle', 'default', 'completed', '{}'::jsonb, now() - interval '3 hours')`,
       [],
     );
     const owner = await engine.executeRaw<{ id: number }>(`SELECT max(id)::int AS id FROM minion_jobs`, []);
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data, created_at, updated_at,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, created_at, updated_at,
                                 private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until)
-       SELECT 'subagent', $1, 'waiting', '{}'::jsonb, now() - interval '2 hours', now() - interval '2 hours',
+       SELECT '{"version":1,"kind":"application"}'::jsonb, 'subagent', $1, 'waiting', '{}'::jsonb, now() - interval '2 hours', now() - interval '2 hours',
               $2, 'tok', now() - interval '1 hour'
          FROM generate_series(1, 2)`,
       [q, owner[0].id],
@@ -73,8 +73,8 @@ describe('jobs stats — ABANDONED PRIVATE QUEUE classifier gating', () => {
   test('legacy unowned (no owner metadata, aged) screams ABANDONED with the retriage remediation', async () => {
     const q = 'dream-inline-1700000000000-dead0002';
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data, created_at, updated_at)
-       VALUES ('subagent', $1, 'waiting', '{}'::jsonb, now() - interval '2 hours', now() - interval '2 hours')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, created_at, updated_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', $1, 'waiting', '{}'::jsonb, now() - interval '2 hours', now() - interval '2 hours')`,
       [q],
     );
     const out = await captureStats(['stats', '--queue', q]);
@@ -88,8 +88,8 @@ describe('jobs stats — ABANDONED PRIVATE QUEUE classifier gating', () => {
     // Aged enough to be a candidate, but the future lease classifies live —
     // a healthy mid-drain queue must not scream.
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data, created_at, updated_at, private_queue_lease_until)
-       VALUES ('subagent', $1, 'waiting', '{}'::jsonb, now() - interval '2 hours', now() - interval '2 hours',
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, created_at, updated_at, private_queue_lease_until)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', $1, 'waiting', '{}'::jsonb, now() - interval '2 hours', now() - interval '2 hours',
                now() + interval '30 minutes')`,
       [q],
     );

@@ -1,3 +1,5 @@
+import { readSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
+import { currentJobSignal } from '../core/minions/submission-authority.ts';
 import { existsSync, readFileSync, writeFileSync, statSync, lstatSync, realpathSync } from 'fs';
 import { join, relative, resolve as pathResolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -53,6 +55,7 @@ import {
 import {
   withRefreshingLock,
   LockUnavailableError,
+  LockStolenError,
   syncLockId,
 } from '../core/db-lock.ts';
 import {
@@ -603,6 +606,48 @@ See also:
 export { SyncLockBusyError, runBreakLock } from '../core/sync-lock.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  assertSourceFilesystemActive(true);
+  const jobSignal = currentJobSignal();
+  if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
+  const finish = (result: SyncResult): SyncResult => {
+    assertSourceFilesystemActive(true);
+    if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
+    return result;
+  };
+  const inheritedSignal = currentSourceFilesystemSignal();
+  if (inheritedSignal) opts = { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, inheritedSignal]) : inheritedSignal };
+  const interruptedBeforeWork = async (): Promise<SyncResult> => {
+    assertSourceFilesystemActive(true);
+    const lastCommit = opts.full ? null : await readSyncAnchor(engine, opts.sourceId, 'last_commit');
+    return buildPartialResult({
+      fromCommit: lastCommit, toCommit: lastCommit ?? '', filesImported: 0,
+      pagesAffected: [], chunksCreated: 0, added: 0, modified: 0, deleted: 0, renamed: 0,
+      reason: 'timeout',
+    });
+  };
+  // The delegated runner treats interruption as a resumable partial result,
+  // including cancellation before acquisition of the new filesystem lock.
+  if (opts.signal?.aborted) return finish(await interruptedBeforeWork());
+  const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
+  if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
+    let entered = false;
+    let result: SyncResult | undefined;
+    try {
+      return finish(await withSourceFilesystemLock(engine, filesystemRoot, async () => {
+        entered = true;
+        return result = await performSync(engine, opts);
+      }, { signal: opts.signal }));
+    } catch (err) {
+      if (err instanceof LockStolenError) throw err;
+      const isCallerAbort = err === opts.signal?.reason || (err instanceof Error && err.name === 'AbortError');
+      if (opts.signal?.aborted && isCallerAbort && !jobSignal?.aborted) {
+        if (result?.status === 'partial') return finish(result);
+        if (!entered) return finish(await interruptedBeforeWork());
+      }
+      if (err instanceof LockUnavailableError) throw new SyncLockBusyError(await formatLockBusyMessage(engine, err.lockId), err.lockId);
+      throw err;
+    }
+  }
   // v0.22.13 CODEX-2: cross-process writer lock prevents two concurrent
   // syncs from racing on the same last_commit anchor (last writer wins,
   // bookmark regresses, silent corruption).
@@ -620,7 +665,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // skipLock is reserved for callers that already serialize via another
   // mechanism (e.g. cycle.ts holds gbrain-cycle for the broader scope).
   if (opts.skipLock) {
-    return await performSyncInner(engine, opts);
+    return finish(await performSyncInner(engine, opts));
   }
 
   const lockKey = opts.lockId ?? syncLockId(opts.sourceId ?? 'default');
@@ -633,7 +678,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // alive (the import loop's event-loop yields ensure the timer fires), and the
   // heartbeat-aware takeover refuses to steal a live, refreshing holder.
   try {
-    return await withRefreshingLock(engine, lockKey, () => performSyncInner(engine, opts));
+    return finish(await withRefreshingLock(engine, lockKey, () => performSyncInner(engine, opts)));
   } catch (err) {
     if (err instanceof LockUnavailableError) {
       throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
@@ -1056,7 +1101,7 @@ function fallbackSlugsForFile(
       const st = lstatSync(abs);
       if (!st.isSymbolicLink()) {
         if (st.size > MAX_FILE_SIZE) proofIntact = false;
-        else contents.push(readFileSync(abs, 'utf-8'));
+        else contents.push(readSourceFileSync(abs, 'utf-8'));
       }
     }
     // A symlink's own registrable content is its index blob (the target
@@ -4031,7 +4076,7 @@ async function performFullSync(
   const FULL_SYNC_LARGE_MARKER = Number.MAX_SAFE_INTEGER;
   const fullConcurrency = autoConcurrency(engine, FULL_SYNC_LARGE_MARKER, opts.concurrency);
   slog(`Running full import of ${syncScopeRoot}${fullConcurrency > 1 ? ` (${fullConcurrency} workers)` : ''}...`);
-  const { runImport } = await import('./import.ts');
+  const { runImport, ImportAbortError } = await import('./import.ts');
   const importArgs = [syncScopeRoot];
   if (opts.noEmbed) importArgs.push('--no-embed');
   if (opts.includeGitignored) importArgs.push('--include-gitignored');
@@ -4044,18 +4089,32 @@ async function performFullSync(
   const _fullImportT0 = Date.now();
   serr(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
   opts.onProgress?.({ phase: 'full_import' });
-  const result = await runImport(engine, importArgs, {
-    commit: headCommit,
-    strategy: opts.strategy,
-    sourceId: opts.sourceId,
-    exclude: opts.exclude,
-    includeHidden: opts.includeHidden,
-    includeGitignored: opts.includeGitignored,
-    slugRoot,
-    // issue #1939: performFullSync owns the failure ledger + bookmark via the
-    // shared gate below; don't let runImport double-record or write its own.
-    managedBookmark: true,
-  });
+  let result: import('./import.ts').RunImportResult;
+  try {
+    result = await runImport(engine, importArgs, {
+      signal: opts.signal,
+      commit: headCommit,
+      strategy: opts.strategy,
+      sourceId: opts.sourceId,
+      exclude: opts.exclude,
+      includeHidden: opts.includeHidden,
+      includeGitignored: opts.includeGitignored,
+      slugRoot,
+      // issue #1939: performFullSync owns the failure ledger + bookmark via the
+      // shared gate below; don't let runImport double-record or write its own.
+      managedBookmark: true,
+    });
+    if (opts.signal?.aborted) throw new ImportAbortError('interrupted', 1, result);
+  } catch (error) {
+    assertSourceFilesystemActive(true);
+    if (!(error instanceof ImportAbortError) || !error.partialResult || !opts.signal?.aborted || currentJobSignal()?.aborted) throw error;
+    const partial = error.partialResult;
+    return buildPartialResult({
+      fromCommit: await readSyncAnchor(engine, opts.sourceId, 'last_commit'), toCommit: headCommit,
+      filesImported: partial.imported, pagesAffected: [], chunksCreated: partial.chunksCreated,
+      added: partial.imported, modified: 0, deleted: 0, renamed: 0, reason: 'timeout',
+    });
+  }
   serr(
     `[gbrain phase] sync.fullsync.import done ${Date.now() - _fullImportT0}ms ` +
     `imported=${result.imported} skipped=${result.skipped} errors=${result.errors}`,

@@ -9,6 +9,7 @@
 import type { Operation } from './contract.ts';
 import { OperationError } from './contract.ts';
 import { sourceScopeOpts } from './context.ts';
+import { resolveAuthCapabilities } from '../harness/capabilities.ts';
 
 // --- v0.28: whoami + sources management ---
 
@@ -56,12 +57,7 @@ const whoami: Operation = {
         transport: 'oauth',
         client_id: ctx.auth.clientId,
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
-        scopes: ctx.auth.scopes,
-        expires_at: ctx.auth.expiresAt ?? null,
-        // Read-only self-introspection of the token's source grants —
-        // widens nothing; absent grants serialize fail-closed (null / []).
-        source_id: ctx.auth.sourceId ?? null,
-        federated_read: ctx.auth.allowedSources ?? [],
+        ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config),
       };
     }
     return {

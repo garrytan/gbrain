@@ -387,8 +387,8 @@ async function seedWaitingLoopsJobs(
   status: 'waiting' | 'delayed' | 'active' = 'waiting',
 ): Promise<void> {
   await engine.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, delay_until)
-     SELECT 'loops_extract', 'default', $4::text, jsonb_build_object('sourceId', $2::text), $3::text || '-' || i,
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key, delay_until)
+     SELECT '{"version":1,"kind":"application"}'::jsonb, 'loops_extract', 'default', $4::text, jsonb_build_object('sourceId', $2::text), $3::text || '-' || i,
             CASE WHEN $4::text = 'delayed' THEN now() + interval '10 minutes' END
        FROM generate_series(1, $1) AS i`,
     [n, sourceId, keyPrefix, status],

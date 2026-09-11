@@ -57,6 +57,7 @@ import {
   type WriteThroughResult,
 } from './write-through.ts';
 import { withPageLock } from './page-lock.ts';
+import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from './minions/source-filesystem.ts';
 import { findTimelineSplitIndex } from './markdown.ts';
 import {
   isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
@@ -333,6 +334,9 @@ export async function writeTimelineEntryThrough(
       return { handled: false, skipped: target.skipped };
     }
     const { filePath, writeRoot } = target;
+    if (!hasSourceFilesystemLock(writeRoot)) {
+      return await withSourceFilesystemLock(engine, writeRoot, () => writeTimelineEntryThrough(engine, slug, sourceId, entry, opts));
+    }
 
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {
@@ -391,6 +395,7 @@ export async function writeTimelineEntryThrough(
         // convention). Clean the temp up on failure — never leak a stray.
         const tmpPath = `${filePath}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
         try {
+          assertSourceFilesystemActive();
           writeFileSync(tmpPath, afterText, 'utf8');
           renameSync(tmpPath, filePath);
         } catch (writeErr) {

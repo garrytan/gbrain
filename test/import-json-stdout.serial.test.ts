@@ -127,37 +127,47 @@ describe('import --json stdout is parseable JSON (#3637) and lists per-file fail
         '---\ntitle: a: b\ntags: [\n---\n\n# broken\n',
       );
       const mixed = await runCli(['import', mixedNotes, '--no-embed', '--json'], env, 120_000);
-      if (mixed.exitCode !== 0) {
+      if (mixed.exitCode !== 1) {
         console.error('--- import mixed stdout ---\n' + mixed.stdout);
         console.error('--- import mixed stderr ---\n' + mixed.stderr);
       }
-      expect(mixed.exitCode).toBe(0);
+      expect(mixed.exitCode).toBe(1);
       const mixedJson = JSON.parse(mixed.stdout);
+      expect(mixedJson.status).toBe('partial');
       expect(mixedJson.imported).toBe(1);
       expect(mixedJson.skipped).toBe(1);
-      expect(mixedJson.errors).toBe(0);
+      expect(mixedJson.errors).toBe(1);
       expect(mixedJson.unchanged).toBe(0);
       expect(mixedJson.malformed_skipped).toBe(0);
       expect(mixedJson.failures).toHaveLength(1);
       expect(mixedJson.failures[0].path).toBe('broken.md');
       expect(mixedJson.failures[0].error).toContain('Invalid YAML frontmatter');
 
-      // Re-import the same dir: the good note is now a content-hash no-op and
+      // A failed import retains its checkpoint: a normal retry only processes
+      // the failed document and reports its error again.
+      const resumed = await runCli(['import', mixedNotes, '--no-embed', '--json'], env, 120_000);
+      expect(resumed.exitCode).toBe(1);
+      expect(JSON.parse(resumed.stdout)).toMatchObject({
+        status: 'partial', total_files: 2, imported: 0, skipped: 1, errors: 1, unchanged: 0,
+      });
+
+      // A fresh re-import scans both files: the good note is a content-hash no-op and
       // must land in `unchanged` (not `imported`, not `failures`), while the
       // broken note fails again and stays a named failure. Pins the
       // `unchanged = skipped - failures - malformed_skipped` derivation and
       // that a repeat run still lists the failing file by path.
-      const again = await runCli(['import', mixedNotes, '--no-embed', '--json'], env, 120_000);
-      if (again.exitCode !== 0) {
+      const again = await runCli(['import', mixedNotes, '--no-embed', '--fresh', '--json'], env, 120_000);
+      if (again.exitCode !== 1) {
         console.error('--- import mixed (re-run) stdout ---\n' + again.stdout);
         console.error('--- import mixed (re-run) stderr ---\n' + again.stderr);
       }
-      expect(again.exitCode).toBe(0);
+      expect(again.exitCode).toBe(1);
       const againJson = JSON.parse(again.stdout);
+      expect(againJson.status).toBe('partial');
       expect(againJson.total_files).toBe(2);
       expect(againJson.imported).toBe(0);
       expect(againJson.skipped).toBe(2);
-      expect(againJson.errors).toBe(0);
+      expect(againJson.errors).toBe(1);
       expect(againJson.unchanged).toBe(1);
       expect(againJson.malformed_skipped).toBe(0);
       expect(againJson.failures.map((f: { path: string }) => f.path)).toEqual(['broken.md']);

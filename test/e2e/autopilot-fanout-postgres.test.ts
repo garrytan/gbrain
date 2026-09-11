@@ -154,7 +154,7 @@ describeIfDB('autopilot fan-out — Postgres E2E', () => {
     const r1 = await dispatchPerSource(engine, queue, mkOpts('slot-A'));
     expect(r1.dispatched).toEqual(['stuck']);
     await engine.executeRaw(
-      `UPDATE minion_jobs SET status = 'active', lock_token = 'stuck-worker',
+      `UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_token = 'stuck-worker',
               lock_until = now() + interval '5 minutes', started_at = now()
         WHERE name = 'autopilot-cycle'`,
     );

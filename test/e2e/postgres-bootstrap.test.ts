@@ -26,6 +26,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { applyPostgresForwardReferenceBootstrap } from '../../src/core/postgres-engine/forward-reference-bootstrap.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const skip = !DATABASE_URL;
@@ -42,6 +43,71 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
   afterAll(async () => {
     await engine.disconnect();
   });
+
+  test('grant bootstrap repairs a partial installation without changing existing client policy', async () => {
+    await engine.initSchema();
+    const conn = await (engine as any).sql.reserve();
+    try {
+      await conn.unsafe('SELECT pg_advisory_lock(42)');
+      await conn.unsafe(`
+        INSERT INTO oauth_clients (client_id, client_name, scope, grant_revision)
+        VALUES ('fixture-bootstrap-client', 'fixture client', 'read', 4);
+        ALTER TABLE oauth_clients DROP COLUMN grant_profile;
+        ALTER TABLE oauth_clients DROP COLUMN allowed_operations;
+      `);
+      await expect((async () => { await conn.unsafe('SELECT grant_profile FROM oauth_clients LIMIT 1'); })())
+        .rejects.toThrow('does not exist');
+      await applyPostgresForwardReferenceBootstrap(conn);
+      await applyPostgresForwardReferenceBootstrap(conn);
+      expect(await conn.unsafe(`
+        SELECT scope, grant_revision, grant_profile, allowed_operations
+        FROM oauth_clients WHERE client_id = 'fixture-bootstrap-client'
+      `)).toEqual([{ scope: 'read', grant_revision: 4, grant_profile: null, allowed_operations: null }]);
+    } finally {
+      await applyPostgresForwardReferenceBootstrap(conn);
+      await conn.unsafe("DELETE FROM oauth_clients WHERE client_id = 'fixture-bootstrap-client'");
+      await conn.unsafe('SELECT pg_advisory_unlock(42)');
+      conn.release();
+    }
+  }, 30_000);
+
+  test('queue bootstrap preserves historical NULL authority and repairs either missing protocol column', async () => {
+    await engine.initSchema();
+    const conn = await (engine as any).sql.reserve();
+    try {
+      await conn.unsafe('SELECT pg_advisory_lock(42)');
+      await conn.unsafe(`
+        TRUNCATE minion_jobs RESTART IDENTITY CASCADE;
+        DROP TRIGGER IF EXISTS minion_queue_protocol ON minion_jobs;
+        ALTER TABLE minion_jobs DROP COLUMN submission_authority;
+        ALTER TABLE minion_jobs DROP COLUMN claim_generation;
+        INSERT INTO minion_jobs (name, status, data, attempts_made, attempts_started, delay_until)
+        VALUES ('sync', 'delayed', '{"sourceId":"default"}', 1, 2, '2026-09-01T00:00:00Z'),
+               ('lint', 'completed', '{}', 0, 1, NULL);
+      `);
+      const snapshotSql = 'SELECT id, name, status, data, attempts_made, attempts_started, delay_until FROM minion_jobs ORDER BY id';
+      const original = await conn.unsafe(snapshotSql);
+      await applyPostgresForwardReferenceBootstrap(conn);
+      await applyPostgresForwardReferenceBootstrap(conn);
+      expect(await conn.unsafe(snapshotSql)).toEqual(original);
+      expect(await conn.unsafe('SELECT submission_authority, claim_generation::int FROM minion_jobs ORDER BY id'))
+        .toEqual([{ submission_authority: null, claim_generation: 0 }, { submission_authority: null, claim_generation: 0 }]);
+      await conn.unsafe(`ALTER TABLE minion_jobs DROP COLUMN submission_authority;
+        UPDATE minion_jobs SET claim_generation = 7 WHERE name = 'lint';`);
+      await applyPostgresForwardReferenceBootstrap(conn);
+      expect(await conn.unsafe("SELECT submission_authority, claim_generation::int FROM minion_jobs WHERE name = 'lint'"))
+        .toEqual([{ submission_authority: null, claim_generation: 7 }]);
+      await conn.unsafe(`ALTER TABLE minion_jobs DROP COLUMN claim_generation;
+        UPDATE minion_jobs SET submission_authority = '{"version":1,"kind":"application"}' WHERE name = 'lint';`);
+      await applyPostgresForwardReferenceBootstrap(conn);
+      expect(await conn.unsafe("SELECT submission_authority, claim_generation::int FROM minion_jobs WHERE name = 'lint'"))
+        .toEqual([{ submission_authority: { version: 1, kind: 'application' }, claim_generation: 0 }]);
+    } finally {
+      await conn.unsafe('SELECT pg_advisory_unlock(42)');
+      conn.release();
+    }
+    await engine.initSchema();
+  }, 30_000);
 
   test('PostgresEngine.initSchema applies bootstrap → SCHEMA_SQL → migrations on pre-v0.18 brain', async () => {
     // First call: bring the test DB to LATEST shape so we have something to mutate.

@@ -35,11 +35,11 @@ beforeAll(async () => {
   // The function only reads tool_executions; minion_jobs just needs to exist.
   const db = (engine as any).db;
   await db.exec(`
-    INSERT INTO minion_jobs (id, queue, name, data, status)
+    INSERT INTO minion_jobs (submission_authority, id, queue, name, data, status)
     VALUES
-      (1001, 'default', 'subagent', '{}'::jsonb, 'completed'),
-      (1002, 'default', 'subagent', '{}'::jsonb, 'completed'),
-      (1003, 'default', 'subagent', '{}'::jsonb, 'completed')
+      ('{"version":1,"kind":"application"}'::jsonb, 1001, 'default', 'subagent', '{}'::jsonb, 'completed'),
+      ('{"version":1,"kind":"application"}'::jsonb, 1002, 'default', 'subagent', '{}'::jsonb, 'completed'),
+      ('{"version":1,"kind":"application"}'::jsonb, 1003, 'default', 'subagent', '{}'::jsonb, 'completed')
     ON CONFLICT (id) DO NOTHING;
   `);
 });

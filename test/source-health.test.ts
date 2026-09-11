@@ -324,11 +324,11 @@ describe('computeAllSourceMetrics', () => {
     // 2 queued + 1 active embed-backfill for default; a non-backfill 'sync'
     // job must NOT inflate the backfill counts (only the generic queue_depth).
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data) VALUES
-         ('embed-backfill', 'waiting', '{"sourceId":"default"}'::jsonb),
-         ('embed-backfill', 'waiting', '{"sourceId":"default"}'::jsonb),
-         ('embed-backfill', 'active',  '{"sourceId":"default"}'::jsonb),
-         ('sync',           'waiting', '{"sourceId":"default"}'::jsonb)`,
+      `INSERT INTO minion_jobs (submission_authority, name, status, data) VALUES
+         ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'waiting', '{"sourceId":"default"}'::jsonb),
+         ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'waiting', '{"sourceId":"default"}'::jsonb),
+         ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'active',  '{"sourceId":"default"}'::jsonb),
+         ('{"version":1,"kind":"application"}'::jsonb, 'sync',           'waiting', '{"sourceId":"default"}'::jsonb)`,
     );
     const sources = await loadAllSources(engine);
     const dflt = (await computeAllSourceMetrics(engine, sources)).find((m) => m.source_id === 'default')!;

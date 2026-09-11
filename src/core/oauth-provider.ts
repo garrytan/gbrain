@@ -13,6 +13,8 @@
  * - Legacy access_tokens fallback for backward compat
  */
 
+import { OAuthGrants, type OAuthTransaction } from './oauth-grants.ts';
+import { safeHexEqual } from './timing-safe.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Response } from 'express';
 import type {
@@ -23,9 +25,8 @@ import type {
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { InvalidTokenError, InvalidClientMetadataError, InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidTokenError, InvalidClientMetadataError, InvalidClientError, InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
-import { assertValidSourceId } from './source-id.ts';
 import {
   hasScope,
   assertAllowedScopes,
@@ -36,6 +37,10 @@ import {
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
 import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes } from './legacy-token-scope.ts';
+import { grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
+import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
+import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
+import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
 
 /**
  * A slug-prefix write binding is only meaningful if every entry actually
@@ -44,30 +49,8 @@ import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissi
  * a binding into a silent wildcard while still displaying as "fenced".
  * Reject at every write surface: registration, rescope, admin API.
  */
-export function assertValidSlugPrefixes(prefixes: readonly string[]): void {
-  for (const p of prefixes) {
-    if (typeof p !== 'string' || p.trim() === '') {
-      throw new Error('bound_slug_prefixes entries must be non-empty, non-whitespace slug prefixes (e.g. "emp-alice/")');
-    }
-    if (p !== p.trim()) {
-      throw new Error(`bound_slug_prefixes entry "${p}" has leading/trailing whitespace; slugs never do, so it would fence nothing`);
-    }
-    // Slugs are lowercased by validateSlug before storage, so a prefix with
-    // uppercase in it cannot correspond to anything actually written.
-    if (p !== p.toLowerCase()) {
-      throw new Error(`bound_slug_prefixes entry "${p}" must be lowercase; stored slugs are lowercased, so a mixed-case prefix fences unpredictably`);
-    }
-    // Require an explicit segment boundary. Slug namespaces collide on their
-    // own naming scheme — `emp-alice` and `emp-alice-2` are different people —
-    // and a boundary-less entry reads as "everything starting with these
-    // characters". The matcher is boundary-aware regardless, but saying it at
-    // registration is what stops an operator writing a binding whose meaning
-    // isn't what it looks like.
-    if (!p.endsWith('/') && !p.endsWith('/*')) {
-      throw new Error(`bound_slug_prefixes entry "${p}" must end with "/" (or "/*"); a boundary-less prefix reads as a character prefix, so "${p}" would look like it covers only "${p}/..." while naming sibling namespaces like "${p}-2/..."`);
-    }
-  }
-}
+export { assertValidSlugPrefixes } from './grants/encoding.ts';
+
 import type { SqlQuery, SqlValue } from './sql-query.ts';
 export type { SqlQuery, SqlValue };
 
@@ -77,30 +60,15 @@ export interface AgentClientBindings {
   boundBrainId?: string;
   boundSlugPrefixes?: string[];
   boundMaxConcurrent?: number;
-  budgetUsdPerDay?: string;
+  budgetUsdPerDay?: string | null;
+  delegatedSlugPrefixes?: string[] | null;
+  delegatedNamespace?: 'prefixes' | 'job';
+  allowedOperations?: string[] | null;
 }
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/**
- * Convert a JS array to a PostgreSQL array literal for PGLite compat.
- *
- * PGLite's `db.query(sql, params)` rejects JS arrays bound directly to TEXT[]
- * columns ("insufficient data left in message"), so we hand-build the array
- * literal `{...}` and let Postgres parse it on insert.
- *
- * SECURITY: every element is wrapped in double quotes with `"` and `\`
- * escaped. Without this, an element containing a comma (e.g., a malicious
- * `redirect_uri` containing `,`) would be parsed by Postgres as MULTIPLE
- * array elements, smuggling values past validation. See CSO finding #5.
- */
-function pgArray(arr: string[]): string {
-  if (!arr || arr.length === 0) return '{}';
-  const escaped = arr.map(s => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
-  return `{${escaped.join(',')}}`;
-}
 
 /**
  * Allow-list of RFC 7591 §2 `token_endpoint_auth_method` values gbrain
@@ -254,6 +222,8 @@ export function coerceTimestamp(value: unknown): number | undefined {
 
 interface GBrainOAuthProviderOptions {
   sql: SqlQuery;
+  /** Required for grant issuance/rotation/revocation; registration and verification need only sql. */
+  transaction?: OAuthTransaction;
   /** Default token TTL in seconds (default: 3600 = 1 hour) */
   tokenTtl?: number;
   /** Default refresh token TTL in seconds (default: 30 days) */
@@ -354,6 +324,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
              grant_types, scope, token_endpoint_auth_method,
              client_id_issued_at, client_secret_expires_at
       FROM oauth_clients WHERE client_id = ${clientId}
+        AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL
     `;
     if (rows.length === 0) return undefined;
     const r = rows[0];
@@ -402,6 +373,9 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       // safe. Empty-after-filter with a non-empty request is a hard 400.
       // Operator CLI/admin paths still use assertAllowedScopes (typo-loud).
       const requestedScopes = parseScopeString(client.scope);
+      if (requestedScopes.includes('agent')) {
+        throw new InvalidClientMetadataError('agent scope requires an operator-approved grant with explicit delegation bindings; dynamic registration cannot grant it');
+      }
       const { allowed, dropped } = filterAllowedScopes(requestedScopes);
       if (dropped.length > 0) {
         console.warn(
@@ -570,17 +544,23 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
 // ---------------------------------------------------------------------------
 
 export class GBrainOAuthProvider implements OAuthServerProvider {
+  // The SDK otherwise consumes the verifier and calls our exchange with
+  // undefined. This provider validates S256 itself before consuming the code,
+  // for both the SDK's public-client route and our confidential-client route.
+  readonly skipLocalPkceValidation = true;
   private sql: SqlQuery;
   private _clientsStore: GBrainClientsStore;
   private readonly dcrDisabled: boolean;
   private tokenTtl: number;
   private refreshTtl: number;
+  readonly grants: OAuthGrants;
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
+    this.grants = new OAuthGrants({ sql: this.sql, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl });
     // #2179 fail-closed: an unset DCR max is bounded by the operator's own
     // token TTL — never a fixed permissive ceiling — so a self-registering
     // client cannot elect a longer-lived token than the server default
@@ -618,46 +598,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    const code = generateToken('gbrain_code_');
-    const codeHash = hashToken(code);
-    const expiresAt = Math.floor(Date.now() / 1000) + 600; // 10 minute TTL
-
-    // Scope clamp (RFC 6749 §3.3): the SDK's authorize handler splits
-    // `?scope=...` verbatim and forwards the raw list to the provider, so
-    // the provider MUST clamp against the client's registered grant. Without
-    // this, a `read`-registered client requesting `?scope=admin` would have
-    // `['admin']` stored in oauth_codes and returned by exchangeAuthorizationCode
-    // as a fully-admin access token. Mirrors the filter pattern already used
-    // by exchangeClientCredentials (this file) and exchangeRefreshToken's F3
-    // subset enforcement (RFC 6749 §6) so all three grant entry points clamp
-    // consistently. When the client requests NO scope, RFC 6749 §3.3 lets the
-    // server fall back to a default — we default to the client's full
-    // registered scope (matching exchangeClientCredentials, which already does
-    // `requestedScope ? ... : allowedScopes`). Previously an omitted request
-    // granted the empty set, which then propagated into the access+refresh
-    // tokens and never self-healed: every op failed `insufficient_scope` even
-    // though the client was registered with `read write`. Clients that omit
-    // `scope` on /authorize (e.g. some MCP connectors) hit this. Still clamped
-    // to the allowed set, so an explicit over-broad request can't escalate.
-    const allowedScopes = parseScopeString(client.scope);
-    const requestedScopes = (params.scopes && params.scopes.length) ? params.scopes : allowedScopes;
-    const grantedScopes = requestedScopes.filter(s => hasScope(allowedScopes, s));
-
-    await this.sql`
-      INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,
-                                code_challenge_method, redirect_uri, state, resource, expires_at)
-      VALUES (${codeHash}, ${client.client_id},
-              ${pgArray(grantedScopes)},
-              ${params.codeChallenge}, ${'S256'},
-              ${params.redirectUri}, ${params.state || null},
-              ${params.resource?.toString() || null}, ${expiresAt})
-    `;
-
-    // Redirect back with the code
-    const redirectUrl = new URL(params.redirectUri);
-    redirectUrl.searchParams.set('code', code);
-    if (params.state) redirectUrl.searchParams.set('state', params.state);
-    res.redirect(redirectUrl.toString());
+    const id = await this.grants.begin(client.client_id, params);
+    res.redirect(`/admin/?oauth_request=${id}#oauth-consent`);
   }
 
   async challengeForAuthorizationCode(
@@ -670,60 +612,24 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // client_id at all.
     const rows = await this.sql`
       SELECT code_challenge FROM oauth_codes
-      WHERE code_hash = ${codeHash}
-        AND client_id = ${client.client_id}
-        AND expires_at > ${Math.floor(Date.now() / 1000)}
+      JOIN oauth_clients ON oauth_clients.client_id = oauth_codes.client_id
+      WHERE (to_jsonb(oauth_clients)->>'deleted_at') IS NULL
+        AND code_hash = ${codeHash}
+        AND oauth_codes.client_id = ${client.client_id}
+        AND oauth_codes.expires_at > ${Math.floor(Date.now() / 1000)}
     `;
-    if (rows.length === 0) throw new Error('Authorization code not found or expired');
+    if (rows.length === 0) throw new InvalidGrantError('Authorization code not found or expired');
     return rows[0].code_challenge as string;
   }
 
   async exchangeAuthorizationCode(
     client: OAuthClientInformationFull,
     authorizationCode: string,
-    _codeVerifier?: string,
+    codeVerifier?: string,
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
-    const codeHash = hashToken(authorizationCode);
-    const now = Math.floor(Date.now() / 1000);
-
-    // F1 + F7c hardening: bind client_id AND redirect_uri atomically into the
-    // DELETE WHERE clause. RFC 6749 §10.5 requires auth codes be single-use;
-    // RFC 6749 §4.1.3 requires the token endpoint validate redirect_uri
-    // matches the value sent at /authorize. The previous SELECT-then-compare
-    // pattern (a) burned the code on the wrong-client path so the legitimate
-    // client could not retry, and (b) ignored redirect_uri on exchange
-    // entirely. With RETURNING, the second request — or any wrong-client /
-    // wrong-redirect-uri attempt — gets zero rows back and fails cleanly.
-    // The legitimate client's code stays available for one valid redemption.
-    //
-    // Use `redirectUri !== undefined` rather than truthy — an attacker
-    // submitting `redirect_uri=""` (empty string) at /token would otherwise
-    // hit the falsy branch and bypass the binding entirely.
-    const rows = redirectUri !== undefined
-      ? await this.sql`
-          DELETE FROM oauth_codes
-          WHERE code_hash = ${codeHash}
-            AND client_id = ${client.client_id}
-            AND redirect_uri = ${redirectUri}
-            AND expires_at > ${now}
-          RETURNING client_id, scopes, resource
-        `
-      : await this.sql`
-          DELETE FROM oauth_codes
-          WHERE code_hash = ${codeHash}
-            AND client_id = ${client.client_id}
-            AND expires_at > ${now}
-          RETURNING client_id, scopes, resource
-        `;
-    if (rows.length === 0) throw new Error('Authorization code not found or expired');
-
-    const codeRow = rows[0];
-
-    // Issue tokens
-    const scopes = (codeRow.scopes as string[]) || [];
-    return this.issueTokens(client.client_id, scopes, resource, true);
+    return this.grants.exchangeCode(client.client_id, authorizationCode, codeVerifier, redirectUri, resource, client.client_secret);
   }
 
   // -------------------------------------------------------------------------
@@ -736,58 +642,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     scopes?: string[],
     resource?: URL,
   ): Promise<OAuthTokens> {
-    const tokenHash = hashToken(refreshToken);
-    const now = Math.floor(Date.now() / 1000);
-
-    // F2 hardening: bind client_id atomically into the DELETE WHERE clause.
-    // RFC 6749 §10.4 detection of stolen refresh tokens depends on second-use
-    // failure. The previous SELECT-then-DELETE pattern + post-hoc client
-    // compare let an attacker who guessed/stole a refresh token burn it on
-    // the wrong-client path, defeating the stolen-token signal for the
-    // legitimate client. With the predicate in the DELETE, wrong-client
-    // attempts get zero rows back; the legitimate client retains the row
-    // for one valid rotation.
-    const rows = await this.sql`
-      DELETE FROM oauth_tokens
-      WHERE token_hash = ${tokenHash}
-        AND token_type = 'refresh'
-        AND client_id = ${client.client_id}
-      RETURNING client_id, scopes, expires_at
-    `;
-    // #4532: InvalidGrantError (not bare Error) — the SDK's token handler maps
-    // OAuthError subclasses to their RFC 6749 wire shape (400 invalid_grant)
-    // and everything else to a 500 Internal Server Error. A refresh with a
-    // rotated/expired token is a routine client condition (RFC 6749 §5.2
-    // invalid_grant), and the 500 made well-behaved MCP clients treat it as a
-    // server outage instead of re-running the authorization flow.
-    if (rows.length === 0) throw new InvalidGrantError('Refresh token not found');
-
-    const row = rows[0];
-    // NULL expires_at is treated as expired (fail-closed). Schema permits NULL
-    // even though issueTokens always sets it, so a corrupt or hand-modified row
-    // can't ride past validation.
-    const expiresAt = coerceTimestamp(row.expires_at);
-    if (expiresAt === undefined || expiresAt < now) throw new InvalidGrantError('Refresh token expired');
-
-    // F3 hardening: requested scopes on refresh MUST be a subset of the
-    // original grant on this refresh token's row. RFC 6749 §6: "the scope of
-    // the access token … MUST NOT include any scope not originally granted by
-    // the resource owner." Scope is checked against the row's scopes (the
-    // grant), NOT against the client's currently-allowed scopes (which can
-    // expand later). Omitted scope (`undefined`) inherits the original grant
-    // verbatim and stays distinct from an explicit empty array.
-    //
-    // v0.28: hasScope replaces exact-string-match so an `admin` grant CAN
-    // refresh down to `sources_admin` (admin implies all). Without this,
-    // gstack /setup-gbrain Path 4 — which mints a sources_admin-scoped
-    // refresh — would fail when the brain admin's bootstrap token was
-    // issued at the `admin` tier.
-    const grantedScopes = (row.scopes as string[]) || [];
-    if (scopes && scopes.some(s => !hasScope(grantedScopes, s))) {
-      throw new Error('Requested scope exceeds refresh token grant');
-    }
-    const tokenScopes = scopes ?? grantedScopes;
-    return this.issueTokens(client.client_id, tokenScopes, resource, true);
+    return this.grants.refresh(client.client_id, refreshToken, scopes, resource, client.client_secret);
   }
 
   // -------------------------------------------------------------------------
@@ -812,12 +667,18 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let oauthRows: Record<string, unknown>[];
     try {
       oauthRows = await this.sql`
-        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+        SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
                c.source_id, c.federated_read, c.bound_slug_prefixes,
                c.surface, c.surface_set_by
         FROM oauth_tokens t
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
       `;
     } catch (err) {
       // Degrade ladder for brains that haven't run apply-migrations yet:
@@ -852,41 +713,65 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // request, so a missing per-client surface only means "server
         // surface applies", never a widened catalog.
         oauthRows = await this.sql`
-          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+          SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
                  c.source_id, c.federated_read, c.bound_slug_prefixes
           FROM oauth_tokens t
           LEFT JOIN oauth_clients c ON c.client_id = t.client_id
           WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
         `;
       } catch (errS) {
         if (!missingOAuthColumn(errS)) throw errS;
         try {
           // v85 missing: keep source_id + federated_read, drop the fence column.
           oauthRows = await this.sql`
-            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources,
                    c.source_id, c.federated_read
             FROM oauth_tokens t
             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
             WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
           `;
         } catch (err2) {
           if (!missingOAuthColumn(err2)) throw err2;
           try {
             // v61 missing: source_id only.
             oauthRows = await this.sql`
-              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources, c.source_id
               FROM oauth_tokens t
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
             `;
           } catch (err3) {
             if (!missingOAuthColumn(err3)) throw err3;
             // Truly pre-v60: pre-v0.34 projection.
             oauthRows = await this.sql`
-              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
+               (to_jsonb(c) - 'client_secret_hash') AS current_grant,
+               EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)) AS source_active,
+               ARRAY(SELECT s.id FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                 AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))) AS active_read_sources
               FROM oauth_tokens t
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+          AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
             `;
           }
         }
@@ -895,6 +780,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     if (oauthRows.length > 0) {
       const row = oauthRows[0];
+      const currentGrant = row.current_grant && typeof row.current_grant === 'object' ? row.current_grant as Record<string, unknown> : {};
+      for (const field of ['allowed_operations', 'grant_revision', 'grant_profile', 'grant_repair_reasons', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'delegated_slug_prefixes', 'delegated_namespace', 'bound_max_concurrent', 'budget_usd_per_day']) row[field] = currentGrant[field];
+      row.client_deleted_at = currentGrant.deleted_at;
+      row.grant_projection_present = 'allowed_operations' in currentGrant;
+      if (row.client_deleted_at != null || row.current_scopes == null) throw new InvalidTokenError('Client revoked or missing');
+      const issuedScopes = Array.isArray(row.scopes) ? row.scopes as string[] : [];
+      const effectiveScopes = intersectGrantedScopes(issuedScopes, parseScopeString(String(row.current_scopes)));
+      const grantProjectionDegraded = row.grant_profile != null && (row.grant_projection_present !== true || !Array.isArray(row.allowed_operations));
+      if (grantProjectionDegraded) throw new InvalidTokenError('Client grant schema incomplete; run gbrain apply-migrations --yes');
       // NULL expires_at is treated as expired (fail-closed). Schema permits NULL,
       // and the SDK's bearerAuth requires `typeof expiresAt === 'number'` — we
       // throw here rather than return an undefined-bearing AuthInfo.
@@ -924,6 +818,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       if (allowedSources === undefined && rowSourceId !== undefined) {
         allowedSources = [rowSourceId];
       }
+      // Grant membership is live: archiving a previously granted source must
+      // not leave its old snapshot readable. A wholly inactive grant exposes
+      // no operations; authenticated capability metadata can explain why.
+      if (rowSourceId !== undefined && row.source_active === false) effectiveScopes.length = 0;
+      if (allowedSources?.length && Array.isArray(row.active_read_sources)) {
+        allowedSources = allowedSources.filter(id => (row.active_read_sources as string[]).includes(id));
+        if (allowedSources.length === 0) effectiveScopes.length = 0;
+      }
       // v0.42.72.0: slug-prefix write binding. Array (even empty — the
       // fence treats [] as deny-all, matching submit_agent's fail-closed
       // posture) when the client carries a binding; undefined when the
@@ -952,8 +854,22 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       return {
         token,
         clientId: row.client_id as string,
+        principal: { kind: 'oauth_client', id: row.client_id as string },
         clientName: (row.client_name as string | null) ?? undefined,
-        scopes: (row.scopes as string[]) || [],
+        scopes: effectiveScopes,
+        issuedScopes,
+        sourceActive: rowSourceId === undefined ? undefined : row.source_active === true,
+        allowedOperations: Array.isArray(row.allowed_operations) ? row.allowed_operations as string[] : null,
+        grantRevision: Number(row.grant_revision ?? 0),
+        grantProfile: typeof row.grant_profile === 'string' ? row.grant_profile : null,
+        grantRepairReasons: Array.isArray(row.grant_repair_reasons) ? row.grant_repair_reasons as string[] : [],
+        boundTools: Array.isArray(row.bound_tools) ? row.bound_tools as string[] : null,
+        boundSourceId: typeof row.bound_source_id === 'string' ? row.bound_source_id : null,
+        boundBrainId: typeof row.bound_brain_id === 'string' ? row.bound_brain_id : null,
+        delegatedSlugPrefixes: Array.isArray(row.delegated_slug_prefixes) ? row.delegated_slug_prefixes as string[] : null,
+        delegatedNamespace: row.delegated_namespace === 'job' ? 'job' : 'prefixes',
+        boundMaxConcurrent: Number(row.bound_max_concurrent ?? 1),
+        budgetUsdPerDay: row.budget_usd_per_day == null ? null : String(row.budget_usd_per_day),
         expiresAt,
         resource: row.resource ? new URL(row.resource as string) : undefined,
         // v0.34.1 (#861, D2): source-isolation scope from oauth_clients.
@@ -981,7 +897,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let legacyRows: Record<string, unknown>[];
     try {
       legacyRows = await this.sql`
-        SELECT name, permissions, scopes FROM access_tokens
+        SELECT id, name, permissions, scopes FROM access_tokens
         WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
       `;
     } catch (err) {
@@ -995,13 +911,13 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // name-only — and that brain predates scoped minting entirely.
         try {
           legacyRows = await this.sql`
-            SELECT name, scopes FROM access_tokens
+            SELECT id, name, scopes FROM access_tokens
             WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
           `;
         } catch (err2) {
           if (!isUndefinedColumnError(err2, 'scopes')) throw err2;
           legacyRows = await this.sql`
-            SELECT name FROM access_tokens
+            SELECT id, name FROM access_tokens
             WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
           `;
         }
@@ -1041,6 +957,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       return {
         token,
         clientId: name,
+        principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
         clientName: name,
         scopes: grantedScopes ?? ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
@@ -1067,18 +984,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest,
   ): Promise<void> {
-    const tokenHash = hashToken(request.token);
-    // F4 hardening: bind client_id so a client can only revoke its own
-    // tokens. RFC 7009 §2.1: "The authorization server first validates the
-    // client credentials … and then verifies whether the token was issued
-    // to the client making the revocation request." Pre-fix, any
-    // authenticated client that knew (or guessed) another client's token
-    // hash could revoke it.
-    await this.sql`
-      DELETE FROM oauth_tokens
-      WHERE token_hash = ${tokenHash}
-        AND client_id = ${client.client_id}
-    `;
+    await this.grants.revokeToken(client.client_id, request.token, client.client_secret);
+  }
+
+  /** Owner-triggered revocation serializes with every grant path. */
+  async revokeClient(clientId: string): Promise<void> {
+    await this.grants.revokeClient(clientId);
   }
 
   // -------------------------------------------------------------------------
@@ -1103,25 +1014,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     presentedSecret: string,
   ): Promise<OAuthClientInformationFull> {
     const client = await this._clientsStore.getClient(clientId);
-    if (!client) throw new Error('Invalid client');
-    // Public client — refuse to use this hash-compare path.
-    if (client.client_secret === undefined) {
-      throw new Error('Invalid client');
-    }
-    const presentedHash = hashToken(presentedSecret);
-    // client.client_secret is the stored SHA-256 hash (getClient returns
-    // it as the `client_secret` field per the v0.34.1.0 normalization).
-    // Compare via SHA-256-then-equals; constant-time compare a follow-up.
-    if (client.client_secret !== presentedHash) {
-      throw new Error('Invalid client');
-    }
-    // Soft-delete probe — same shape as exchangeClientCredentials.
-    try {
-      const [revoked] = await this.sql`SELECT deleted_at FROM oauth_clients WHERE client_id = ${clientId} AND deleted_at IS NOT NULL`;
-      if (revoked) throw new Error('Client has been revoked');
-    } catch (e) {
-      if (e instanceof Error && e.message === 'Client has been revoked') throw e;
-      if (!isUndefinedColumnError(e, 'deleted_at')) throw e;
+    if (!client || typeof client.client_secret !== 'string' || !/^[a-f0-9]{64}$/i.test(client.client_secret) || !safeHexEqual(client.client_secret, hashToken(presentedSecret))) {
+      throw new InvalidClientError('Invalid client or client has been revoked');
     }
     return client;
   }
@@ -1131,47 +1025,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     clientSecret: string,
     requestedScope?: string,
   ): Promise<OAuthTokens> {
-    const client = await this._clientsStore.getClient(clientId);
-    if (!client) throw new Error('Client not found');
-
-    // Check if client has been revoked (soft-deleted). The deleted_at column
-    // is recent — pre-migration brains don't have it, so the probe must
-    // tolerate that one specific failure mode without swallowing real errors
-    // (lock timeouts, network blips, auth failures).
-    try {
-      const [revoked] = await this.sql`SELECT deleted_at FROM oauth_clients WHERE client_id = ${clientId} AND deleted_at IS NOT NULL`;
-      if (revoked) throw new Error('Client has been revoked');
-    } catch (e) {
-      // F5 hardening: surface anything that ISN'T a missing-column error.
-      // Bare `catch {}` masked DB outages as "client not revoked" — fail-open
-      // posture in a security-sensitive code path.
-      if (e instanceof Error && e.message === 'Client has been revoked') throw e;
-      if (!isUndefinedColumnError(e, 'deleted_at')) throw e;
-    }
-
-    // Check grant type first (before verifying secret)
-    const grants = (client.grant_types as string[]) || [];
-    if (!grants.includes('client_credentials')) {
-      throw new Error('Client credentials grant not authorized for this client');
-    }
-
-    // Verify secret
-    const secretHash = hashToken(clientSecret);
-    if (client.client_secret !== secretHash) throw new Error('Invalid client secret');
-
-    // Determine scopes. v0.28 swaps exact-string-match for hasScope so a
-    // client whose grant is `admin` can mint tokens that include implied
-    // scopes like `sources_admin` (admin implies all). Tokens are still
-    // capped by what the client was registered for — this only changes how
-    // the cap is computed.
-    const allowedScopes = parseScopeString(client.scope);
-    const requestedScopes = requestedScope ? parseScopeString(requestedScope) : allowedScopes;
-    const grantedScopes = requestedScopes.filter(s => hasScope(allowedScopes, s));
-
-    // Client credentials: access token only, NO refresh token (RFC 6749 4.4.3)
-    // Per-client TTL (oauth_clients.token_ttl) is applied inside issueTokens
-    // so all three grant paths honor it (#2179).
-    return this.issueTokens(clientId, grantedScopes, undefined, false);
+    return this.grants.clientCredentials(clientId, clientSecret, requestedScope);
   }
 
   // -------------------------------------------------------------------------
@@ -1206,6 +1060,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     federatedRead?: string[],
     tokenEndpointAuthMethod?: string,
     agentBindings?: AgentClientBindings,
+    grantPatch?: GrantPatch,
   ): Promise<{ clientId: string; clientSecret?: string }> {
     // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
     // at registration so meaningless scope strings can't pile up in the DB.
@@ -1217,6 +1072,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // `startsWith` true for every slug — a binding that looks set in
     // `auth list` and the admin UI while fencing nothing. Reject at
     // registration, the same way source ids are validated.
+    if (agentBindings?.boundTools && (agentBindings.boundTools.length === 0 || agentBindings.boundTools.some(tool => typeof tool !== 'string' || !tool.trim()))) {
+      throw new Error('--bound-tools requires at least one non-empty tool name');
+    }
     if (agentBindings?.boundSlugPrefixes) {
       // Same rule as rescopeClient: an empty list is ambiguous. It registers
       // as deny-all for every direct write while printing an empty binding
@@ -1251,6 +1109,32 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     //   federated_read = [source_id] when omitted (a non-federated client
     //                    has read scope == write scope, the v0.33 default)
     const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+    const schema = await this.sql`SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
+        AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`;
+    if (schema.length === 17) {
+      const initial = grantFromRow({
+        client_id: clientId, client_name: name, scope: scopes, source_id: sourceId,
+        federated_read: federated, bound_slug_prefixes: agentBindings?.boundSlugPrefixes ?? null,
+        allowed_operations: agentBindings?.allowedOperations ?? null,
+        bound_tools: agentBindings?.boundTools ?? null,
+        bound_source_id: agentBindings?.boundSourceId ?? null, bound_brain_id: agentBindings?.boundBrainId ?? null,
+        delegated_slug_prefixes: agentBindings?.delegatedSlugPrefixes ?? agentBindings?.boundSlugPrefixes ?? null,
+        delegated_namespace: agentBindings?.delegatedNamespace ?? (agentBindings?.boundSlugPrefixes || agentBindings?.delegatedSlugPrefixes ? 'prefixes' : 'job'),
+        bound_max_concurrent: agentBindings?.boundMaxConcurrent ?? 1,
+        budget_usd_per_day: agentBindings?.budgetUsdPerDay ?? null,
+      });
+      if (grantPatch) assertGrantPatch(grantPatch);
+      const changes = Object.fromEntries(Object.entries(grantPatch ?? {}).filter(([, value]) => value !== undefined)) as GrantPatch;
+      const grant = { ...initial, ...changes, revision: 1 };
+      grant.boundBrainId = normalizeGrantBrain(grant.boundBrainId);
+      validateClientGrant(grant, await grantValidationContext(this.sql));
+      await insertClientGrant(this.sql, grant, { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now });
+      return { clientId, clientSecret };
+    }
+    if (grantPatch || hasScope(parseScopeString(scopes), 'agent')) {
+      throw new Error('Client grants require an up-to-date OAuth schema; run gbrain apply-migrations --yes');
+    }
     try {
       if (agentBindings) {
         await this.sql`
@@ -1344,209 +1228,8 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
    * client's NEXT request even for already-issued tokens, because
    * verifyAccessToken re-reads oauth_clients on every verification.
    */
-  async rescopeClient(
-    clientId: string,
-    opts: {
-      sourceId?: string;
-      federatedRead?: string[];
-      boundSlugPrefixes?: string[] | null;
-      /**
-       * WP4 (D2/amendment 19): per-client tool surface. Tri-state —
-       * undefined = untouched, null = clear (both surface AND
-       * surface_set_by go NULL), value = set + surface_set_by='operator'
-       * (the operator lock: request_tools persist cannot override it).
-       */
-      surface?: 'verbs' | 'starter' | 'full' | null;
-    },
-  ): Promise<{ clientId: string; clientName: string; sourceId: string; federatedRead: string[]; boundSlugPrefixes?: string[] | null; surface?: string | null; surfaceOld?: string | null }> {
-    const { sourceId, federatedRead, boundSlugPrefixes, surface } = opts;
-    if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined) {
-      throw new Error('rescope-client requires --source, --federated-read, --bound-slug-prefixes, and/or --surface');
-    }
-    if (sourceId !== undefined) assertValidSourceId(sourceId);
-    if (federatedRead !== undefined) {
-      if (federatedRead.length === 0) {
-        throw new Error('--federated-read cannot be empty (pass at least one source id)');
-      }
-      for (const s of federatedRead) assertValidSourceId(s);
-    }
-    // WP4: only the three known surfaces are OPERATOR-writable here; the
-    // column value space stays open (amendment 18) for future tier writers,
-    // but this surface validates so a typo'd rescope fails loud, not silent.
-    if (surface !== undefined && surface !== null
-        && surface !== 'verbs' && surface !== 'starter' && surface !== 'full') {
-      throw new Error(`--surface must be verbs | starter | full | clear (got "${String(surface)}")`);
-    }
-    // v0.42.72.0: bound_slug_prefixes rescope, so channel-membership churn
-    // (the qm-harness roster case) updates the write fence in place instead
-    // of forcing a register+rotate cycle. Tri-state: undefined = untouched,
-    // null = clear the binding (client returns to unbound full-source write
-    // authority), non-empty array = replace. Empty array is rejected here —
-    // it means deny-all at the fence, which an operator should express by
-    // revoking write scope, not by an ambiguous empty list.
-    if (Array.isArray(boundSlugPrefixes)) {
-      if (boundSlugPrefixes.length === 0) {
-        throw new Error('--bound-slug-prefixes cannot be an empty list (pass prefixes, or "none" to clear the binding)');
-      }
-      assertValidSlugPrefixes(boundSlugPrefixes);
-    }
-    let rows: Record<string, unknown>[];
-    // WP4: when the surface axis is being touched, capture the OLD value
-    // first so callers can write the amendment-32 audit row ({old, new}).
-    let surfaceOld: string | null | undefined;
-    try {
-      if (surface !== undefined) {
-        const prior = await this.sql`
-          SELECT surface FROM oauth_clients WHERE client_id = ${clientId}
-        `;
-        surfaceOld = prior.length > 0 ? ((prior[0].surface as string | null) ?? null) : null;
-      }
-      // Only touch bound_slug_prefixes / surface when the caller actually
-      // passed them. Naming a column unconditionally would make a plain
-      // `rescope-client --source wiki` fail on a brain that has the v60/v61
-      // OAuth columns but not v85's bound_* set (or v127's surface set) — a
-      // regression on an axis the caller never asked about.
-      const surfaceSetBy = surface === null ? null : 'operator';
-      if (boundSlugPrefixes === undefined && surface === undefined) {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read)
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read
-          `;
-      } else if (boundSlugPrefixes === undefined) {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
-                   surface = ${surface ?? null}::text,
-                   surface_set_by = ${surfaceSetBy}::text
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read, surface, surface_set_by
-          `;
-      } else if (surface === undefined) {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
-                   bound_slug_prefixes = ${boundSlugPrefixes ? pgArray(boundSlugPrefixes) : null}::text[]
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read, bound_slug_prefixes
-          `;
-      } else {
-        rows = await this.sql`
-            UPDATE oauth_clients
-               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
-                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
-                   bound_slug_prefixes = ${boundSlugPrefixes ? pgArray(boundSlugPrefixes) : null}::text[],
-                   surface = ${surface ?? null}::text,
-                   surface_set_by = ${surfaceSetBy}::text
-             WHERE client_id = ${clientId}
-             RETURNING client_id, client_name, source_id, federated_read, bound_slug_prefixes, surface, surface_set_by
-          `;
-      }
-    } catch (err) {
-      if (
-        isUndefinedColumnError(err, 'source_id') ||
-        isUndefinedColumnError(err, 'federated_read') ||
-        isUndefinedColumnError(err, 'bound_slug_prefixes') ||
-        isUndefinedColumnError(err, 'surface') ||
-        isUndefinedColumnError(err, 'surface_set_by')
-      ) {
-        throw new Error('rescope-client requires an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
-      }
-      // FK oauth_clients.source_id → sources(id): translate the raw 23503
-      // into an actionable message.
-      if ((err as { code?: string })?.code === '23503') {
-        throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
-      }
-      throw err;
-    }
-    if (rows.length === 0) {
-      throw new Error(`No OAuth client found with id "${clientId}"`);
-    }
-    const row = rows[0];
-    return {
-      clientId: row.client_id as string,
-      clientName: (row.client_name as string | null) ?? '',
-      sourceId: (row.source_id as string | null) ?? 'default',
-      federatedRead: Array.isArray(row.federated_read) ? (row.federated_read as string[]) : [],
-      // undefined = the column wasn't read this call (caller left the
-      // binding untouched), which is distinct from null = no binding set.
-      boundSlugPrefixes: 'bound_slug_prefixes' in row
-        ? (Array.isArray(row.bound_slug_prefixes) ? (row.bound_slug_prefixes as string[]) : null)
-        : undefined,
-      // WP4: undefined = surface untouched this call; null = cleared.
-      ...(surface !== undefined
-        ? { surface: (row.surface as string | null) ?? null, surfaceOld: surfaceOld ?? null }
-        : {}),
-    };
+  async rescopeClient(clientId: string, opts: RescopeClientOptions): Promise<RescopeClientResult> {
+    return rescopeOAuthClient(this.sql, clientId, opts);
   }
 
-  // -------------------------------------------------------------------------
-  // Internal: Issue access + optional refresh tokens
-  // -------------------------------------------------------------------------
-
-  /**
-   * Per-client TTL override lookup (oauth_clients.token_ttl). Set by the
-   * admin API, the CLI, or a DCR `token_ttl_seconds` request (#2179).
-   * Column may not exist on older schemas — graceful fallback to undefined.
-   */
-  private async lookupClientTokenTtl(clientId: string): Promise<number | undefined> {
-    try {
-      const ttlRows = await this.sql`SELECT token_ttl FROM oauth_clients WHERE client_id = ${clientId}`;
-      if (ttlRows.length > 0 && ttlRows[0].token_ttl) return Number(ttlRows[0].token_ttl);
-    } catch (e) {
-      // F5 hardening posture: only the "column doesn't exist" path is a
-      // non-fatal fall-through.
-      if (!isUndefinedColumnError(e, 'token_ttl')) throw e;
-    }
-    return undefined;
-  }
-
-  private async issueTokens(
-    clientId: string,
-    scopes: string[],
-    resource: URL | undefined,
-    includeRefresh: boolean,
-  ): Promise<OAuthTokens> {
-    const accessToken = generateToken('gbrain_at_');
-    const accessHash = hashToken(accessToken);
-    const now = Math.floor(Date.now() / 1000);
-    // #2179: the per-client override lives here (not in individual grant
-    // handlers) so client_credentials, authorization_code AND refresh
-    // issuance all honor oauth_clients.token_ttl consistently.
-    const effectiveTtl = (await this.lookupClientTokenTtl(clientId)) || this.tokenTtl;
-    const accessExpiry = now + effectiveTtl;
-
-    await this.sql`
-      INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
-      VALUES (${accessHash}, ${'access'}, ${clientId},
-              ${pgArray(scopes)}, ${accessExpiry}, ${resource?.toString() || null})
-    `;
-
-    const result: OAuthTokens = {
-      access_token: accessToken,
-      token_type: 'bearer',
-      expires_in: effectiveTtl,
-      scope: scopes.join(' '),
-    };
-
-    if (includeRefresh) {
-      const refreshToken = generateToken('gbrain_rt_');
-      const refreshHash = hashToken(refreshToken);
-      const refreshExpiry = now + this.refreshTtl;
-
-      await this.sql`
-        INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at, resource)
-        VALUES (${refreshHash}, ${'refresh'}, ${clientId},
-                ${pgArray(scopes)}, ${refreshExpiry}, ${resource?.toString() || null})
-      `;
-
-      result.refresh_token = refreshToken;
-    }
-
-    return result;
-  }
 }

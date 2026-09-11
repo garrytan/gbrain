@@ -78,8 +78,8 @@ interface FakeJobOpts {
 async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: MinionJobContext; tokenSink: any[] }> {
   // Insert a minion_jobs row so foreign keys validate (subagent_tool_executions.job_id FK).
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-     VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())
+    `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', $1::jsonb, 'default', 0, now())
      RETURNING id`,
     [JSON.stringify({ prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools, mode: opts.mode })],
   );

@@ -51,8 +51,8 @@ async function seedJob(opts: {
   lockUntilSql?: string;
 } = {}): Promise<void> {
   await engine.executeRaw(
-    `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at, lock_until)
-     VALUES ($1, $2, '{}'::jsonb, $3, 0, ${opts.createdAtSql ?? 'now()'}, ${opts.lockUntilSql ?? 'NULL'})`,
+    `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at, lock_until, submission_authority)
+     VALUES ($1, $2, '{}'::jsonb, $3, 0, ${opts.createdAtSql ?? 'now()'}, ${opts.lockUntilSql ?? 'NULL'}, '{"version":1,"kind":"application"}'::jsonb)`,
     [opts.name ?? 'embed', opts.status ?? 'waiting', opts.queue ?? 'default'],
   );
 }
@@ -144,7 +144,7 @@ describe('submit_job wiring — probe never blocks a successful enqueue', () => 
       config: {},
       logger: console,
       dryRun: false,
-      remote: true,
+      remote: false,
     };
   }
 

@@ -2,6 +2,159 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.50.0.0] - 2026-09-10
+
+**Approve client connection requests and keep background work within the access you granted.**
+
+New authorization-code connections now bring you to the existing admin login to review the client, destination, permissions and source before approving. Existing active sessions stay signed in. Background work keeps the authority it was accepted with and checks current permissions before starting, so a later permission change takes effect on pending work.
+
+This release also tightens document handling and outbound requests. Your notes retain their existing metadata types and formatting behavior. Imports report rejected documents as errors and keep useful retry checkpoints. There is no bulk rewrite, reindex or content migration.
+
+### What to expect
+
+| When you… | What happens |
+|---|---|
+| Start an authorization-code connection | Review its requested access in the admin page, then approve or deny. |
+| Upgrade an existing installation | Keep active sessions; stop services and explicitly review pending work before restarting. |
+| Submit background filesystem work remotely | Use the registered source with the supported sync, import and lint parameters. |
+| Check URLs or load remote images | Use bounded direct requests; remove ambient proxy settings for these operations. |
+
+### Things to watch
+
+The minimum Bun version is **1.3.11**. Builds use **1.3.13**, and CI tests both versions. This release requires a coordinated queue cutover: pause ingress, producers and automatic upgraders; drain active work; stop the remaining services and back up; then install matching versions and review or cancel nonterminal legacy jobs. Do not run old and new workers together. Read the [authorization upgrade guide](docs/guides/authorization-upgrade.md) before upgrading an existing installation.
+
+## To take advantage of v0.50.0.0
+
+**Say to your agent:** *“Help me upgrade GBrain and review pending jobs before restarting services.”* Your agent follows `skills/migrations/v0.50.0.0.md` and the authorization upgrade guide.
+
+With the backup verified and all services stopped, install the chosen release
+without starting its setup phases. Published binary installations use
+`gbrain upgrade --swap-only`; Bun installations must follow the guide's
+`--ignore-scripts` path. Then apply only schema migrations:
+
+```bash
+gbrain --version
+gbrain apply-migrations --force-schema --yes
+gbrain jobs list --json
+```
+
+Preview only selected legacy job IDs with `gbrain jobs authorize-legacy --ids <ids> --json`. Apply the reviewed snapshot only with its digest and `--yes`, or cancel unwanted jobs. Resolve all nonterminal legacy work before restarting the new services. If migration or review fails, keep services stopped and follow the guide's recovery steps. Verify with `gbrain doctor` and the existing admin agent-management page; report upgrade problems without posting credentials or private content.
+
+### Itemized changes
+
+- New authorization-code connections use owner consent through the existing admin authentication flow. Grant issuance, replacement and client revocation share transactional enforcement while preserving active sessions.
+- Background jobs retain immutable submission authority through queue lifecycle operations. Migration 149 and the explicit legacy-review command support coordinated upgrades.
+- Generic remote filesystem jobs use registered roots and constrained parameters. Delegated tools and source grants follow the same authorization boundaries as direct operations.
+- Shared data-only frontmatter handling preserves ordinary YAML/JSON behavior. CLI and queued imports report parse failures accurately.
+- Outbound status checks and image requests share destination validation, bounded decoding and a single deadline. Error diagnostics omit caller credentials and content.
+
+### For contributors
+
+Dependency patches cover the root application and admin audit gates. CI checks supported Bun versions, trust-boundary regressions and narrowly documented secret-scanner fixtures.
+
+## [0.49.0.0] - 2026-09-10
+
+**Add GBrain memory to the agent you already use, or connect that agent to
+an existing hosted brain.** The setup guides now start with these two choices.
+Grok Bot and Muse each have a dedicated walkthrough with a pasteable prompt,
+a first memory round trip, recovery steps, and a clear record of what still
+needs to be verified inside the actual harness.
+
+Local setup preserves your agent's identity and starts with keyless memory.
+It installs its own runtime and an absolute launcher tied to the selected
+brain, so changing folders or inheriting another project's database settings
+does not redirect your memory. Repeated setup repairs the recorded software
+without resetting the database. A private receipt records ownership, pending
+steps, and the recovery command. Generated skills and maintenance instructions
+remain pending until you enable and verify them in the harness.
+
+Hosted access now separates granting permissions on the brain host from
+installing credentials in the intended agent. Six named profiles make the
+choice explicit, with memory-writer as the default. Existing clients can be
+repaired without replacing their ID or secret. Permission previews show the
+change before it is applied, and interrupted credential delivery can recover
+the original handoff. Delegation requires explicit tools and a write policy;
+new delegation defaults to unlimited spending and one concurrent job. Existing
+finite spending caps remain in place.
+
+| Your task | New path |
+| --- | --- |
+| Add memory inside Grok Bot or Muse | Isolated setup with a retained repair helper |
+| Connect to an existing brain | Host grant, private handoff, harness installation |
+| Recover local memory | Full private PGLite archive restored into a new root |
+| Check an integration | Separate transport, permissions, memory, worker, and harness evidence |
+
+Backups now include database-only memory and managed files. Restore preserves
+the original installation and leaves restored jobs and connectors inactive.
+Withdrawing a fact keeps it out of active memory after source synchronization;
+history, source material, and backups can remain. Actual Grok Bot and Muse
+activation, persistence, and cross-conversation recall are still release checks,
+not claims established by repository tests.
+
+## To take advantage of v0.49.0.0
+
+1. **Hosted operators:** pause old servers, workers, and their restart loops;
+   take a protected backup, then install the new runtime and run
+   `gbrain apply-migrations --yes`. Follow
+   [the upgrade playbook](skills/migrations/v0.49.0.0.md) before restarting.
+   Do not run mixed authorization implementations against the migrated database.
+2. **Inspect affected clients:** unusable legacy delegation is disabled with a
+   persisted repair reason while other access remains. Preview the explicit
+   repair with `gbrain auth rescope-client CLIENT_ID --dry-run` and the binding
+   flags from the playbook. Existing tokens gain no newly added scopes through
+   refresh; issue a new token when the scope grant grows.
+3. **Choose your setup path:** start with the [README](README.md#choose-your-setup),
+   [Grok Bot guide](docs/guides/grok-bot.md), or [Muse guide](docs/guides/muse.md).
+   Existing local installs use their recorded absolute `bin/gbrain-setup` for
+   repair and `--upgrade` for an explicit software upgrade. Confirm the required
+   search-mode choice before enabling paid capabilities.
+4. **Verify:** run `gbrain doctor`, then the memory round trip in your guide.
+   For hosted connections, `gbrain mcp verify ... --json` reports server checks
+   separately; exit 2 means actual-harness evidence remains incomplete. Read
+   [the acceptance checklist](docs/guides/harness-validation.md) before promoting
+   native support. If a step fails, preserve the installation and share redacted
+   diagnostics in a [GitHub issue](https://github.com/garrytan/gbrain/issues).
+
+### Itemized changes
+
+#### Added
+
+- Isolated Grok Bot and Muse setup, absolute launchers, versioned runtime repair,
+  ownership receipts, bounded busy errors, and pending native instructions.
+- `backup create` and `backup restore` for private full PGLite archives, including
+  managed files, sanitized configuration, exclusion inventories, checksums,
+  relocation, and quarantine of unfinished work. Existing backup status/check
+  commands retain their behavior.
+- Shared access profiles, grant revisions and audit records, secure host/client
+  handoff, credential recovery, adapter-driven configuration, and permission
+  previews in the CLI and admin UI. Addresses #5006.
+- Authenticated `gbrain://capabilities`, public discovery metadata, and a verifier
+  that separates read/write checks, delegation configuration, worker completion,
+  cleanup, and actual-harness evidence. The seven-tool surface remains intact.
+
+#### Changed
+
+- New grants snapshot eligible operations and source access. Archived sources
+  are excluded. Renewable connections default to one-hour access tokens; static
+  adapters keep 30 days. Legacy `NULL` operation snapshots retain compatibility.
+- Delegated work retains its submitted restrictions and the current client grant
+  at execution boundaries. Finite budgets reserve bounded calls and keep unknown
+  liabilities until reconciliation; unlimited usage remains attributed.
+- New onboarding preserves identity and starts keyless. Automatic capture and
+  paid enrichment are opt-in. Dedicated guides distinguish Grok Bot from Grok
+  Build, Muse from Muse Code, and native memory from GBrain's explicit records.
+
+#### Fixed
+
+- Scope-only delegation without usable bindings is rejected or marked for repair
+  without broadening other permissions. Ordinary grant patches preserve omitted
+  restrictions, and stale edits fail before changing the client.
+- Interrupted local initialization and upgrades resume schema work without
+  resetting memory or starting host automation. Local/thin conversion requires
+  explicit intent and does not copy ambient credentials into configuration.
+- Fact withdrawals survive stale source reimport. Verification reconciles
+  uncertain mutations and confirms cleanup through readback.
+
 ## [0.48.5.0] - 2026-09-07
 
 **The community fix wave: 57 contributor pull requests adopted or reworked

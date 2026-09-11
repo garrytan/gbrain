@@ -88,7 +88,7 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     await queryEngine.initSchema();
     await queryEngine.executeRaw(
       `INSERT INTO sources (id, name, archived)
-       VALUES ($1, $1, false), ($2, $2, true), ($3, $3, false)
+       VALUES ($1, $1, false), ($2, $2, false), ($3, $3, false)
        ON CONFLICT (id) DO UPDATE
        SET name = EXCLUDED.name, archived = EXCLUDED.archived`,
       [liveSourceId, archivedSourceId, rescopeTargetSourceId],
@@ -96,7 +96,8 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
 
     const registerClient = registerClientForRescope;
 
-    // Register unscoped, live-source-scoped, and archived-source-scoped clients.
+    // All clients are granted while their source is active. The archive test
+    // archives its source after minting a token to exercise live revocation.
     // The write scope is what POST /ingest gates on.
     const suffix = Date.now();
     const defaultClient = registerClient(`e2e-webhook-default-${suffix}`);
@@ -512,8 +513,9 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     expect((await waitForPage(slug)).source_id).toBe('default');
   });
 
-  test('archived-source client falls back to default', async () => {
+  test('archiving a granted source rejects ingest without falling back to default', async () => {
     const token = await mintToken('read write', archivedClient);
+    await queryEngine!.executeRaw('UPDATE sources SET archived = true WHERE id = $1', [archivedSourceId]);
     const slug = `webhook/test/archived-${Date.now()}`;
     const res = await postIngest(
       token,
@@ -521,12 +523,10 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
       '# archived OAuth source',
       { 'X-Gbrain-Slug': slug },
     );
-    expect([200, 202]).toContain(res.status);
-    // Enqueue-time intent is the client's scoped source; the archived-source
-    // redirect happens later, in the job. The 202 therefore still names the
-    // requested source while the page lands under default.
-    expect(((await res.json()) as { write_source_id: string }).write_source_id).toBe(archivedSourceId);
-    expect((await waitForPage(slug)).source_id).toBe('default');
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { job_id?: unknown }).job_id).toBeUndefined();
+    expect(await queryEngine!.executeRaw('SELECT id FROM minion_jobs WHERE data->>\'slug\' = $1', [slug])).toHaveLength(0);
+    expect(await queryEngine!.executeRaw('SELECT source_id FROM pages WHERE slug = $1', [slug])).toHaveLength(0);
   });
 
   test('an unscoped client cannot opt into a real source via X-Gbrain-Source-Id', async () => {

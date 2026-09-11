@@ -125,6 +125,21 @@ function makeThrowingTool(name = 'broken'): ToolDef {
 // ── Tests ───────────────────────────────────────────────────
 
 describe('subagent handler happy path', () => {
+  test('an explicit empty binding exposes no tools to the agent loop', async () => {
+    const client = new FakeMessagesClient([{ content: [{ type: 'text', text: 'done' }] as any }]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeEchoTool('echo')] });
+    await handler(await makeCtx({ prompt: 'finish', allowed_tools: [] }));
+    expect(client.calls[0]!.tools ?? []).toEqual([]);
+  });
+
+  test('malformed bindings fail before a model request', async () => {
+    for (const allowed_tools of [null, 'echo', [42], ['']]) {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeEchoTool('echo')] });
+      await expect(handler(await makeCtx({ prompt: 'finish', allowed_tools }))).rejects.toThrow(/allowed_tools/);
+      expect(client.calls).toHaveLength(0);
+    }
+  });
   test('no-tool end_turn: returns text response + persists user + assistant rows', async () => {
     const client = new FakeMessagesClient([
       { content: [{ type: 'text', text: 'hello world' }] as any, stop_reason: 'end_turn' },
@@ -1034,7 +1049,7 @@ describe('oneshot mode dispatch (#4216)', () => {
     expect(oneshotCalls).toBe(0);
   });
 
-  test('read-only allowed_tools + mode oneshot → no write escalation (falls back tool-less)', async () => {
+  test.each([['echo'], []])('oneshot tool ceiling %j prevents programmatic write escalation', async (...allowedTools) => {
     // A submitter that scoped its job to read-only tools must not gain
     // brain_put_page by flipping mode: oneshot — the oneshot registry runs
     // through the SAME filterAllowedTools as the loop registry.
@@ -1048,7 +1063,7 @@ describe('oneshot mode dispatch (#4216)', () => {
     });
     const ctx = await makeCtx({
       prompt: 'synthesize', mode: 'oneshot',
-      allowed_tools: ['echo'],
+      allowed_tools: allowedTools,
       allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
     });
     const result = await handler(ctx);
@@ -1060,6 +1075,7 @@ describe('oneshot mode dispatch (#4216)', () => {
       [ctx.id],
     );
     expect(rows[0]!.n).toBe(0);
+    if (allowedTools.length === 0) expect(client.calls[0]!.tools ?? []).toEqual([]);
   });
 
   test('crash-replayed TRUNCATED terminal turn recovers max_tokens, not end_turn (F1)', async () => {

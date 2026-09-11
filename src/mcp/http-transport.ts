@@ -26,11 +26,12 @@
  */
 
 import { createHash } from 'crypto';
+import { hasScope } from '../core/scope.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { resolveMcpInstructions } from './instructions.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
-import { operations } from '../core/operations.ts';
+import { operations, operationsByName } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall, requestLogStatusForResult } from './dispatch.ts';
@@ -44,7 +45,7 @@ import { degradedLastError, isEngineDegraded } from '../core/degraded-marker.ts'
 import { classifyPgAccessError } from '../core/pg-access-classify.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
-import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
+import { normalizeTokenScopes, parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
 export { parseLegacyTokenScope };
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
@@ -249,7 +250,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     const hash = hashToken(token);
     try {
       const [row] = await sql`
-        SELECT id, name, permissions FROM access_tokens
+        SELECT id, name, permissions, scopes FROM access_tokens
         WHERE token_hash = ${hash} AND revoked_at IS NULL
       `;
       if (!row) return { ok: false };
@@ -276,8 +277,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const auth: AuthInfo = {
         token,
         clientId: rowId,
+        principal: { kind: 'legacy_token', id: rowId },
         clientName: rowName,
-        scopes: [],
+        scopes: normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'],
         sourceId,
         ...(allowedSources ? { allowedSources } : {}),
       };
@@ -422,8 +424,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // Ambient writeback (opt-in, default off): resolved per initialize —
         // fail-closed with a per-engine last-known-good bundle, so a config
         // read failure serves the previous bundle (or the base string), never
-        // a wrong posture. This transport carries no per-token scopes
-        // (OV-A5 is the OAuth lane's concern) but it DOES clamp surfaces —
+        // a wrong posture. The advertised writeback also respects token scopes —
         // extract_facts is advertised only when the resolved surface can
         // actually call it (OV2-14; a verbs/starter-pinned serve must not
         // order agents to call a tool dispatch will deny).
@@ -437,8 +438,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
               // #4748: contract (+ opt-in writeback section) + deployment identity.
               instructions: resolveMcpInstructions(fileConfig, process.env, {
                 writeback: ambientOptsFrom(writeback, {
-                  remember: surfaceAllowedOps ? surfaceAllowedOps.has('remember') : true,
-                  extractFacts: surfaceAllowedOps ? surfaceAllowedOps.has('extract_facts') : true,
+                  remember: hasScope(auth.auth!.scopes, 'write') && (!surfaceAllowedOps || surfaceAllowedOps.has('remember')),
+                  extractFacts: hasScope(auth.auth!.scopes, 'write') && (!surfaceAllowedOps || surfaceAllowedOps.has('extract_facts')),
                 }),
               }),
             },
@@ -467,9 +468,11 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // unconditionally, so gates-off served the exact listed-but-denied
         // catalog lie E5 (test/truthful-catalog.e2e-lite.test.ts) pins out.
         const gateDisabled = await disabledOpsForPublishGates(engine, fileConfig);
-        const visibleTools = gateDisabled.size === 0
-          ? tools
-          : tools.filter(t => !gateDisabled.has(t.name));
+        const visibleTools = tools.filter(t => {
+          const op = operationsByName[t.name];
+          return op && !gateDisabled.has(t.name) && (hasScope(auth.auth!.scopes, op.scope ?? 'read')
+            || (op.agentCallable === true && hasScope(auth.auth!.scopes, 'agent')));
+        });
         logRequest(auth.tokenName!, 'tools/list', 'success', Date.now() - startedMs);
         return Response.json(
           { result: { tools: visibleTools }, jsonrpc: '2.0', id },
@@ -481,6 +484,14 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       if (method === 'tools/call') {
         const toolName: string = params?.name ?? 'unknown';
         const args: Record<string, unknown> = params?.arguments ?? {};
+        const op = operationsByName[toolName];
+        if (op && !op.localOnly && !hasScope(auth.auth!.scopes, op.scope ?? 'read') &&
+            !(op.agentCallable === true && hasScope(auth.auth!.scopes, 'agent'))) {
+          logRequest(auth.tokenName!, `tools/call:${toolName}`, 'denied_after_list', Date.now() - startedMs);
+          return Response.json({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text',
+            text: JSON.stringify({ error: 'permission_denied', message: `Tool requires ${op.scope ?? 'read'} scope` }) }] } },
+            { headers: corsHeaders(origin) });
+        }
         // v0.28: thread per-token takes-holder allow-list so takes_list /
         // takes_search / query (when it returns takes) can server-side filter.
         // v0.34.1 (#861): thread source-isolation scope. Legacy access_tokens

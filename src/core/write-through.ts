@@ -1,3 +1,4 @@
+import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesystemActive } from './minions/source-filesystem.ts';
 /**
  * Shared disk write-through for the canonical ingestion path.
  *
@@ -374,6 +375,9 @@ export async function writePageThrough(
       return { written: false, skipped: target.skipped };
     }
     const { filePath, writeRoot, sourcePathToBind } = target;
+    if (!hasSourceFilesystemLock(writeRoot)) {
+      return await withSourceFilesystemLock(engine, writeRoot, () => writePageThrough(engine, slug, opts));
+    }
 
     const writtenPage = await engine.getPage(slug, { sourceId });
     if (!writtenPage) {
@@ -413,6 +417,7 @@ export async function writePageThrough(
     // EEXIST when the directory already exists (POSIX no-ops it). That aborts
     // the put_page / enrich / capture write-through whenever the prefix dir
     // already exists, silently leaving the DB and the .md file plane out of sync.
+    assertSourceFilesystemActive();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     // Atomic write: unique temp sibling + rename. Unique name (pid + random)
@@ -462,6 +467,7 @@ export async function writePageThrough(
     let pushed: 'pending' | undefined;
     let lastPushStatus: PushLogOutcome | undefined;
     try {
+      assertSourceFilesystemActive();
       if (isDurabilityHardened(writeRoot)) {
         committed = commitWriteThroughFile(writeRoot, filePath, slug);
         if (committed) {
@@ -539,11 +545,15 @@ export async function deletePageThrough(
     const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);
     if (!target.ok) return { removed: false, skipped: target.skipped };
     const { filePath } = target;
+    if (!hasSourceFilesystemLock(target.writeRoot)) {
+      return await withSourceFilesystemLock(engine, target.writeRoot, () => deletePageThrough(engine, slug, opts));
+    }
 
     if (!existsSync(filePath)) {
       return { removed: false, path: filePath, skipped: 'file_not_present' };
     }
 
+    assertSourceFilesystemActive();
     unlinkSync(filePath);
     return { removed: true, path: filePath };
   } catch (e) {

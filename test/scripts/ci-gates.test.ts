@@ -40,7 +40,7 @@ describe('CI execution evidence', () => {
   test('unit aggregate rejects failed, cancelled or skipped required jobs', () => {
     expect(unit.jobs['test-status'].if).toBe('always()');
     expect(unit.jobs['test-status'].needs).toEqual([
-      'gitleaks', 'verify', 'serial-tests', 'slow-eval-longmemeval',
+      'gitleaks', 'security-regressions', 'dependency-audit', 'verify', 'serial-tests', 'slow-eval-longmemeval',
       'slow-entity-resolve-perf', 'slow-brainbench-e2e', 'brainbench', 'test',
     ]);
     expect(aggregate(unit, 'test-status', 'pull_request', {})).toBe(0);

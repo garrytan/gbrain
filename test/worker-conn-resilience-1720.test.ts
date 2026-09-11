@@ -36,6 +36,13 @@ function makeEngine(counter: { reconnects: number }): BrainEngine {
   return {
     kind: 'postgres',
     reconnect: async () => { counter.reconnects += 1; },
+    executeRaw: async (sql: string) => {
+      // These reconnect fixtures contain no unresolved legacy work. Keep the
+      // real startup authority check, and reject unrelated unexpected queries.
+      if (sql.includes('SELECT id, submission_authority FROM minion_jobs') &&
+          sql.includes('submission_authority IS DISTINCT FROM')) return [];
+      throw new Error('Unexpected SQL in worker reconnect fixture');
+    },
   } as unknown as BrainEngine;
 }
 
@@ -121,6 +128,7 @@ describe('failJob failure-recording resilience (#1720 gap 2)', () => {
       name: 'explode',
       queue: 'default',
       data: {},
+      submission_authority: { version: 1, kind: 'application' },
       status: 'active',
       attempts_made: 2,
       attempts_started: 3,

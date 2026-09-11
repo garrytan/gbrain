@@ -38,6 +38,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await engine.executeRaw('DELETE FROM fact_withdrawals');
   brainDir = mkdtempSync(join(tmpdir(), 'privacy-test-'));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (engine as any).db.query('DELETE FROM facts');

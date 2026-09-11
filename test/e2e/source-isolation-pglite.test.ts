@@ -281,5 +281,7 @@ describe('v0.34.1 source-isolation regression (#861)', () => {
     for (const r of rows) {
       expect(r.source_id).toBe('default');
     }
+    await expect(searchOp!.handler(ctx as any, { query: 'Important context', source_id: 'src-b' }))
+      .rejects.toMatchObject({ code: 'permission_denied' });
   });
 });

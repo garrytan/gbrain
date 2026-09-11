@@ -71,7 +71,7 @@ describe('forget_fact dispatch', () => {
 
   test('forget_fact succeeds on valid id, then becomes idempotent-as-error', async () => {
     const inserted = await engine.insertFact(
-      { fact: 'will be forgotten', kind: 'fact', source: 'test' },
+      { fact: 'will be forgotten', kind: 'fact', source: 'test', visibility: 'world' },
       { source_id: 'default' },
     );
     const r1 = await dispatchToolCall(engine, 'forget_fact', { id: inserted.id }, {

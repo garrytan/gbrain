@@ -21,6 +21,8 @@
  * test/edge-bundle.test.ts has a drift detection test.
  */
 
+import { GRANT_AUDIT_SCHEMA_SQL } from './grants/schema.ts';
+import { FACT_WITHDRAWAL_SCHEMA_STATEMENTS } from './facts/withdrawal-schema.ts';
 import { applyChunkEmbeddingIndexPolicy } from './vector-index.ts';
 import { applyFtsLanguagePolicy } from './fts-language.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
@@ -446,6 +448,8 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   queue            TEXT        NOT NULL DEFAULT 'default',
   status           TEXT        NOT NULL DEFAULT 'waiting',
   priority         INTEGER     NOT NULL DEFAULT 0,
+  submission_authority JSONB, -- Unreviewed legacy provenance stays NULL.
+  claim_generation BIGINT NOT NULL DEFAULT 0,
   data             JSONB       NOT NULL DEFAULT '{}',
   max_attempts     INTEGER     NOT NULL DEFAULT 3,
   attempts_made    INTEGER     NOT NULL DEFAULT 0,
@@ -493,6 +497,26 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   CONSTRAINT chk_timeout_positive CHECK (timeout_ms IS NULL OR timeout_ms > 0),
   CONSTRAINT chk_lock_duration_positive CHECK (lock_duration_ms IS NULL OR (lock_duration_ms >= 5000 AND lock_duration_ms <= 3600000))
 );
+
+CREATE OR REPLACE FUNCTION enforce_minion_queue_protocol() RETURNS trigger SET search_path = pg_catalog, public AS $protocol$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.submission_authority IS NULL OR NEW.claim_generation <> 0 THEN
+      RAISE EXCEPTION 'Minion queue protocol 1 required: upgrade every producer and worker before restart';
+    END IF;
+  ELSIF NEW.status = 'active' AND (OLD.status <> 'active' OR NEW.lock_token IS DISTINCT FROM OLD.lock_token) THEN
+    IF NEW.submission_authority IS NULL OR NEW.claim_generation IS DISTINCT FROM OLD.claim_generation + 1 THEN
+      RAISE EXCEPTION 'Minion queue protocol 1 required: old workers cannot claim upgraded queue jobs';
+    END IF;
+  ELSIF NEW.claim_generation IS DISTINCT FROM OLD.claim_generation THEN
+    RAISE EXCEPTION 'Minion queue claim generation may advance only with a claim';
+  END IF;
+  RETURN NEW;
+END;
+$protocol$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS minion_queue_protocol ON minion_jobs;
+CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
+  FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
 
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_claim ON minion_jobs (queue, priority ASC, created_at ASC) WHERE status = 'waiting';
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_status ON minion_jobs(status);
@@ -927,6 +951,12 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   -- tier names into surface); NULL = server/config surface resolution.
   surface                 TEXT NULL,
   surface_set_by          TEXT NULL,
+  allowed_operations      TEXT[] NULL,
+  delegated_slug_prefixes TEXT[] NULL,
+  delegated_namespace    TEXT NOT NULL DEFAULT 'prefixes',
+  grant_profile           TEXT NULL,
+  grant_revision          INTEGER NOT NULL DEFAULT 0,
+  grant_repair_reasons    TEXT[] NOT NULL DEFAULT '{}',
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the OAuth client's write-source
@@ -938,6 +968,9 @@ CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
   ON oauth_clients(source_id) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_federated_read
   ON oauth_clients USING GIN (federated_read);
+
+${GRANT_AUDIT_SCHEMA_SQL}
+${FACT_WITHDRAWAL_SCHEMA_STATEMENTS[0]};
 
 CREATE TABLE IF NOT EXISTS oauth_tokens (
   token_hash   TEXT PRIMARY KEY,

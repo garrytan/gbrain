@@ -20,6 +20,7 @@
 // convergence cases).
 
 import type postgres from 'postgres';
+import { GRANT_COLUMNS_SQL } from '../grants/schema.ts';
 
 /**
  * Probe + patch every forward-reference target the embedded schema blob
@@ -64,6 +65,7 @@ const probeRows = await conn<{
   oauth_clients_federated_read_exists: boolean;
   oauth_clients_surface_exists: boolean;
   oauth_clients_surface_set_by_exists: boolean;
+  oauth_client_grants_exist: boolean;
   sources_exists: boolean;
   sources_archived_exists: boolean;
   sources_archived_at_exists: boolean;
@@ -124,6 +126,9 @@ const probeRows = await conn<{
             WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'surface') AS oauth_clients_surface_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
             WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'surface_set_by') AS oauth_clients_surface_set_by_exists,
+    (SELECT COUNT(*) = 6 FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
+        AND column_name IN ('allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_revision', 'grant_repair_reasons')) AS oauth_client_grants_exist,
     EXISTS (SELECT 1 FROM information_schema.tables
             WHERE table_schema = current_schema() AND table_name = 'sources') AS sources_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
@@ -172,6 +177,10 @@ const probeRows = await conn<{
             WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_owner_token') AS minion_jobs_pq_token_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
             WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_lease_until') AS minion_jobs_pq_lease_exists,
+    EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'submission_authority') AS minion_jobs_submission_authority_exists,
+    EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'claim_generation') AS minion_jobs_claim_generation_exists,
     EXISTS (SELECT 1 FROM information_schema.tables
             WHERE table_schema = current_schema() AND table_name = 'dream_verdicts') AS dream_verdicts_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
@@ -225,6 +234,7 @@ const probeSurface = probe as {
 };
 const needsOauthClientsSurface = probe.oauth_clients_exists
   && (!probeSurface.oauth_clients_surface_exists || !probeSurface.oauth_clients_surface_set_by_exists);
+const needsOauthClientGrants = probe.oauth_clients_exists && !probe.oauth_client_grants_exist;
 // v0.26.5 (v34): sources.archived + archived_at + archive_expires_at added
 // for soft-delete lifecycle. SCHEMA_SQL's `CREATE TABLE IF NOT EXISTS sources`
 // is a no-op on pre-existing sources tables (won't add columns), so the
@@ -271,6 +281,8 @@ const probeCr = probe as {
   minion_jobs_pq_owner_exists?: boolean;
   minion_jobs_pq_token_exists?: boolean;
   minion_jobs_pq_lease_exists?: boolean;
+  minion_jobs_submission_authority_exists?: boolean;
+  minion_jobs_claim_generation_exists?: boolean;
 };
 const needsContextualRetrievalColumns = (probe.pages_exists
     && (!probeCr.pages_cr_mode_exists || !probeCr.pages_corpus_generation_exists))
@@ -306,6 +318,10 @@ const needsMinionJobsIdempotencyKey = probeCr.minion_jobs_exists === true
 const needsMinionJobsPrivateQueue = probeCr.minion_jobs_exists === true
   && (!probeCr.minion_jobs_pq_owner_exists || !probeCr.minion_jobs_pq_token_exists
       || !probeCr.minion_jobs_pq_lease_exists);
+// v149: the schema-blob queue protocol references both fields. Repair either
+// missing field without assigning authority to historical work.
+const needsMinionJobsAuthority = probeCr.minion_jobs_exists === true
+  && (!probeCr.minion_jobs_submission_authority_exists || !probeCr.minion_jobs_claim_generation_exists);
 // v143 (dream_verdicts_ttl, #4657): blob index dream_verdicts_expires_idx
 // references expires_at, but the column only lands via migration v143 — a
 // Postgres brain at schema v30-v142 (dream_verdicts exists since v30)
@@ -318,7 +334,7 @@ if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
     && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
     && !needsChunksEmbeddingImage && !needsPagesRecency
     && !needsIngestLogSourceId && !needsFilesBootstrap
-    && !needsOauthClientsBootstrap && !needsOauthClientsSurface
+    && !needsOauthClientsBootstrap && !needsOauthClientsSurface && !needsOauthClientGrants
     && !needsSourcesArchive
     && !needsPagesLastRetrievedAt
     && !needsPagesProvenance
@@ -327,7 +343,7 @@ if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
     && !needsPagesLinksExtractedAt
     && !needsTimelineEventPageId
     && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey
-    && !needsMinionJobsPrivateQueue
+    && !needsMinionJobsPrivateQueue && !needsMinionJobsAuthority
     && !needsDreamVerdictsExpiresAt) return;
 
 process.stderr.write('  Schema forward-reference gap detected, applying bootstrap\n');
@@ -492,6 +508,10 @@ if (needsOauthClientsBootstrap) {
   `);
 }
 
+// Mirror the PGLite bootstrap, including partially installed grant columns.
+// Numbered migration 147 owns policy repair and its constraints.
+if (needsOauthClientGrants) await conn.unsafe(GRANT_COLUMNS_SQL);
+
 if (needsOauthClientsSurface) {
   // WP4 (v127): per-client MCP tool surface + operator-lock marker.
   // Nullable TEXT, no index — bootstrap mirrors the v127 column shape so
@@ -637,6 +657,14 @@ if (needsMinionJobsPrivateQueue) {
     ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL;
     ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_token TEXT;
     ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_lease_until TIMESTAMPTZ;
+  `);
+}
+if (needsMinionJobsAuthority) {
+  // Metadata only. Migration v149 owns the cutover guard; local explicit
+  // review is the only path that may assign authority to historical rows.
+  await conn.unsafe(`
+    ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS submission_authority JSONB;
+    ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
   `);
 }
 }
