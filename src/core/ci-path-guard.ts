@@ -24,7 +24,10 @@
  *   2. `ci_workspace_env` — the path is inside the workspace directory the
  *      CI provider advertises via env (GITHUB_WORKSPACE, CI_PROJECT_DIR, …).
  *      This catches self-hosted runners with nonstandard roots, where no
- *      static prefix can.
+ *      static prefix can. Requires `isCiEnv` corroboration (every real
+ *      provider sets its presence var alongside the workspace var — zero
+ *      recall cost) so a stale workspace var leaked into a developer shell
+ *      cannot block durable-path persistence on a normal machine.
  *
  * Deliberately NOT a rule: bare `CI=true` with an arbitrary path. A brain
  * legitimately hosted on a durable disk of a self-hosted runner (stable path,
@@ -164,9 +167,14 @@ export function allowEphemeralPersist(env: NodeJS.ProcessEnv = process.env): boo
  * realpath (and `comparisonForms` for the realpath assist).
  */
 function normalizePathForCompare(path: string): string {
-  const winAbs = /^[A-Za-z]:[\\/]/.test(path);
-  if (!winAbs) return resolve(path).replace(/\\/g, '/');
-  const slashed = path.replace(/\\/g, '/');
+  const isWinAbs = (p: string) => /^[A-Za-z]:[\\/]/.test(p);
+  // Resolve relative spellings first — then re-check the RESULT for a drive
+  // letter, so a relative path resolved ON a Windows host (which comes back
+  // as `D:\a\...`, uppercase drive) takes the win32 normalize + casefold
+  // route instead of slipping past the lowercased prefixes.
+  const abs = isWinAbs(path) ? path : resolve(path);
+  if (!isWinAbs(abs)) return abs.replace(/\\/g, '/');
+  const slashed = abs.replace(/\\/g, '/');
   const segments = slashed.slice(3).split('/').filter((seg) => seg !== '' && seg !== '.');
   const out: string[] = [];
   for (const seg of segments) {
@@ -246,6 +254,13 @@ export function classifyEphemeralCiPath(
     }
   }
 
+  // Workspace-env containment requires CI-env corroboration: every real CI
+  // provider that sets a workspace var also sets its presence var, so this
+  // costs zero recall — and it stops a STALE workspace var leaked into a
+  // developer shell (act, direnv, a sourced .env) from silently blocking
+  // durable-path persistence on a normal machine, the guard's own failure
+  // mode self-inflicted.
+  if (!isCiEnv(env)) return { ephemeral: false, rule: null, detail: null };
   for (const [envVar, label] of WORKSPACE_ENV_VARS) {
     const raw = env[envVar]?.trim();
     if (!raw) continue;

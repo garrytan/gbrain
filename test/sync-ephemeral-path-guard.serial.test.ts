@@ -238,7 +238,7 @@ describe('addSource ephemeral-CI-path guard', () => {
     );
     const { addSource, SourceOpError } = await import('../src/core/sources-ops.ts');
     const err = await withEnv(
-      guardEnv({ GITHUB_WORKSPACE: '/srv/agent/_work/brain/brain' }),
+      guardEnv({ GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: '/srv/agent/_work/brain/brain' }),
       () => addSource(engine, { id: 'wiki', localPath: '/srv/agent/_work/brain/brain' })
         .then(() => null)
         .catch((e: unknown) => e),

@@ -47,7 +47,10 @@ found this fourth writer). Escape hatches: `--force` /
   guard.** `addSource` Path C/D (`--kind github|google`) bind `opts.*.dir` as
   `local_path` without the ephemeral check (deliberately scoped out of the
   incident fix: API-kind sources rematerialize from the API, so a stale dir
-  self-heals unlike a git working tree). If a CI-registered mirror with a
+  self-heals unlike a git working tree). Adversarial-review nuance
+  strengthening the case to guard later: the rematerialize self-heal fails on
+  macOS for `/home/runner/...` dirs (`/home` is a read-only synthetic mount),
+  so the broken-pointer symptom partially survives through this lane there. If a CI-registered mirror with a
   runner dir turns out to break other machines' materializer in practice,
   wire `classifyEphemeralCiPath` into those branches too — the classifier
   already covers it.

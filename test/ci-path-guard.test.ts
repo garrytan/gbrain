@@ -90,7 +90,7 @@ describe('classifyEphemeralCiPath — unconditional runner prefixes', () => {
     expect(classifyEphemeralCiPath('/home/runner/work/brain/brain/', NO_ENV).ephemeral).toBe(true);
     // And a workspace env var with a trailing slash still contains its tree.
     expect(
-      classifyEphemeralCiPath('/srv/agent/_work/repo', { GITHUB_WORKSPACE: '/srv/agent/_work/' }).ephemeral,
+      classifyEphemeralCiPath('/srv/agent/_work/repo', { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: '/srv/agent/_work/' }).ephemeral,
     ).toBe(true);
   });
 });
@@ -110,7 +110,7 @@ describe('classifyEphemeralCiPath — CI-corroborated prefixes', () => {
 
 describe('classifyEphemeralCiPath — workspace-env containment (self-hosted runners)', () => {
   test('path inside $GITHUB_WORKSPACE is ephemeral regardless of shape', () => {
-    const env = { GITHUB_WORKSPACE: '/srv/agent/_work/brain/brain' };
+    const env = { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: '/srv/agent/_work/brain/brain' };
     const v = classifyEphemeralCiPath('/srv/agent/_work/brain/brain', env);
     expect(v.ephemeral).toBe(true);
     expect(v.rule).toBe('ci_workspace_env');
@@ -125,24 +125,24 @@ describe('classifyEphemeralCiPath — workspace-env containment (self-hosted run
   });
 
   test('sibling-prefix paths are not contained (/srv/app vs /srv/app2)', () => {
-    const env = { GITHUB_WORKSPACE: '/srv/app' };
+    const env = { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: '/srv/app' };
     expect(classifyEphemeralCiPath('/srv/app2', env).ephemeral).toBe(false);
   });
 
   test('CI_PROJECT_DIR (GitLab), BUILDKITE_BUILD_CHECKOUT_PATH, CIRCLE_WORKING_DIRECTORY', () => {
     expect(
-      classifyEphemeralCiPath('/data/ci/proj/x', { CI_PROJECT_DIR: '/data/ci/proj' }).ephemeral,
+      classifyEphemeralCiPath('/data/ci/proj/x', { GITLAB_CI: 'true', CI_PROJECT_DIR: '/data/ci/proj' }).ephemeral,
     ).toBe(true);
     expect(
-      classifyEphemeralCiPath('/bk/checkout', { BUILDKITE_BUILD_CHECKOUT_PATH: '/bk/checkout' }).ephemeral,
+      classifyEphemeralCiPath('/bk/checkout', { BUILDKITE: 'true', BUILDKITE_BUILD_CHECKOUT_PATH: '/bk/checkout' }).ephemeral,
     ).toBe(true);
     expect(
-      classifyEphemeralCiPath('/cci/wd/repo', { CIRCLE_WORKING_DIRECTORY: '/cci/wd' }).ephemeral,
+      classifyEphemeralCiPath('/cci/wd/repo', { CIRCLECI: 'true', CIRCLE_WORKING_DIRECTORY: '/cci/wd' }).ephemeral,
     ).toBe(true);
   });
 
   test('win32-shaped workspace var contains its backslash-spelled checkout', () => {
-    const env = { GITHUB_WORKSPACE: 'D:\\w\\brain\\brain' };
+    const env = { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: 'D:\\w\\brain\\brain' };
     expect(classifyEphemeralCiPath('D:\\w\\brain\\brain\\notes', env).ephemeral).toBe(true);
     expect(classifyEphemeralCiPath('D:/w/brain/brain', env).ephemeral).toBe(true);
     expect(classifyEphemeralCiPath('D:/w/brain2', env).ephemeral).toBe(false);
@@ -150,11 +150,11 @@ describe('classifyEphemeralCiPath — workspace-env containment (self-hosted run
 
   test('literal ~ workspace value is expanded (CircleCI CIRCLE_WORKING_DIRECTORY convention)', async () => {
     const { homedir } = await import('os');
-    const env = { CIRCLE_WORKING_DIRECTORY: '~/project' };
+    const env = { CIRCLECI: 'true', CIRCLE_WORKING_DIRECTORY: '~/project' };
     expect(classifyEphemeralCiPath(`${homedir()}/project/repo`, env).ephemeral).toBe(true);
     expect(classifyEphemeralCiPath(`${homedir()}/elsewhere`, env).ephemeral).toBe(false);
     // Bare '~' expands to the home dir itself.
-    expect(classifyEphemeralCiPath(`${homedir()}/x`, { CIRCLE_WORKING_DIRECTORY: '~' }).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath(`${homedir()}/x`, { CIRCLECI: 'true', CIRCLE_WORKING_DIRECTORY: '~' }).ephemeral).toBe(true);
   });
 
   test('symlink aliases of a live workspace cannot slip containment (realpath assist)', async () => {
@@ -173,27 +173,37 @@ describe('classifyEphemeralCiPath — workspace-env containment (self-hosted run
       const realCanonical = realpathSync(real);
       // Candidate under the REAL spelling; workspace env carries the ALIAS.
       expect(
-        classifyEphemeralCiPath(`${realCanonical}/repo`, { GITHUB_WORKSPACE: alias }).ephemeral,
+        classifyEphemeralCiPath(`${realCanonical}/repo`, { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: alias }).ephemeral,
       ).toBe(true);
       // Mirror direction: candidate spelled through the alias, env real.
       expect(
-        classifyEphemeralCiPath(`${alias}/repo`, { GITHUB_WORKSPACE: realCanonical }).ephemeral,
+        classifyEphemeralCiPath(`${alias}/repo`, { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: realCanonical }).ephemeral,
       ).toBe(true);
     } finally {
       rmSync(outer, { recursive: true, force: true });
     }
   });
 
+  test('a STALE workspace var with NO CI-presence env does not fire (dev-shell leak)', () => {
+    // A leaked GITHUB_WORKSPACE (act, direnv, a sourced .env) on a normal
+    // machine must not block durable-path persistence — every real CI
+    // provider also sets its presence var, so requiring corroboration
+    // costs zero recall.
+    expect(
+      classifyEphemeralCiPath('/srv/agent/_work/brain', { GITHUB_WORKSPACE: '/srv/agent/_work' }).ephemeral,
+    ).toBe(false);
+  });
+
   test('degenerate workspace "/" never swallows every path', () => {
-    expect(classifyEphemeralCiPath('/Users/alice/brain', { GITHUB_WORKSPACE: '/' }).ephemeral).toBe(false);
+    expect(classifyEphemeralCiPath('/Users/alice/brain', { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: '/' }).ephemeral).toBe(false);
   });
 
   test('degenerate drive-root workspace (D:/) never swallows a drive', () => {
-    expect(classifyEphemeralCiPath('D:/some/brain', { GITHUB_WORKSPACE: 'D:/' }).ephemeral).toBe(false);
+    expect(classifyEphemeralCiPath('D:/some/brain', { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: 'D:/' }).ephemeral).toBe(false);
   });
 
   test('empty workspace var is ignored', () => {
-    expect(classifyEphemeralCiPath('/Users/alice/brain', { GITHUB_WORKSPACE: '' }).ephemeral).toBe(false);
+    expect(classifyEphemeralCiPath('/Users/alice/brain', { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: '' }).ephemeral).toBe(false);
   });
 });
 
