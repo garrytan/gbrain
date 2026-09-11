@@ -132,6 +132,18 @@ describe('validatePageSlug', () => {
     expect(() => validatePageSlug('people/my_file_name')).not.toThrow();
   });
 
+  it('accepts colon-separated namespace parts (#5032)', () => {
+    expect(() => validatePageSlug('calendar:abc123def456')).not.toThrow();
+    expect(() => validatePageSlug('integrations/calendar:event-123')).not.toThrow();
+  });
+
+  it('rejects empty or dot-led colon namespace parts (#5032)', () => {
+    expect(() => validatePageSlug('calendar:')).toThrow(OperationError);
+    expect(() => validatePageSlug(':event')).toThrow(OperationError);
+    expect(() => validatePageSlug('calendar::event')).toThrow(OperationError);
+    expect(() => validatePageSlug('calendar:../event')).toThrow(OperationError);
+  });
+
   it('accepts underscore-LED segments the slugifier produces (Hugo _index shape, #4665)', () => {
     // slugifySegment('_index') === '_index' — leading underscores survive
     // sync, so the op boundary must round-trip them too. Dots stay
