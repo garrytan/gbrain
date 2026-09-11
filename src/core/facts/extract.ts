@@ -21,7 +21,7 @@
  * gateway-down errors are absorbed into NULL-embedding rows.
  */
 
-import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
+import { chat, embedOne, generateObjectStructured, isAvailable } from '../ai/gateway.ts';
 import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { ChatResult } from '../ai/gateway.ts';
@@ -330,6 +330,37 @@ export function buildExtractorSystem(admitsLow: boolean): string {
 
 const MAX_TURN_TEXT_CHARS = 8000;
 
+/**
+ * JSON Schema for the structured-output fast path in facts extraction.
+ * Mirrors RawExtracted (fact+kind required; the rest optional/nullable).
+ * With Ollama’s constrained decoding this guarantees the extractor can
+ * never emit malformed JSON or a missing `facts` array.
+ */
+const FACTS_EXTRACTION_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    facts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          fact: { type: 'string' },
+          kind: { type: 'string' },
+          entity: { type: ['string', 'null'] },
+          confidence: { type: ['number', 'null'] },
+          notability: { type: 'string' },
+          metric: { type: ['string', 'null'] },
+          value: { type: ['number', 'null'] },
+          unit: { type: ['string', 'null'] },
+          period: { type: ['string', 'null'] },
+        },
+        required: ['fact', 'kind'],
+      },
+    },
+  },
+  required: ['facts'],
+};
+
 export type ExtractFailureReason =
   | 'chat_unavailable'
   | 'provider_error'
@@ -464,6 +495,29 @@ export async function extractFactsFromTurnWithOutcome(
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, ENTITY_HINTS_CAP).join(', ')}.`
       : ''
   }`;
+  // Structured-output fast path: schema-constrained decoding (generateObject)
+  // so a small local model cannot emit malformed JSON. On ANY failure
+  // (unsupported provider / provider error / abort) we fall through to the
+  // prompt+parse path below, which stays intact.
+  try {
+    const so = await generateObjectStructured({
+      model,
+      system: extractorSystem,
+      prompt: userContent,
+      schema: FACTS_EXTRACTION_SCHEMA,
+      schemaName: 'facts_extraction',
+      maxOutputTokens: maxTokens,
+      abortSignal: input.abortSignal,
+    });
+    const rawFacts = (so.object as any)?.facts;
+    if (Array.isArray(rawFacts)) {
+      return { ok: true, facts: await buildFactsFromRaw(rawFacts as RawExtracted[], input, cap, junkFilterOn) };
+    }
+  } catch (err) {
+    if (isAbort(err)) throw err;
+    // fall through to the prompt+parse path below
+  }
+
   let result: ChatResult;
   // The cap the last call was actually sent at. When the truncation retry
   // escalates to maxTokens*2, the malformed-output retry below must re-send
@@ -564,6 +618,21 @@ export async function extractFactsFromTurnWithOutcome(
   }
   const parsedRaw = parsedShape.facts;
 
+  return { ok: true, facts: await buildFactsFromRaw(parsedRaw, input, cap, junkFilterOn) };
+}
+
+/**
+ * Shared mapping from raw extracted candidates to persisted ExtractedFact rows.
+ * Used by BOTH the structured-output fast path and the prompt+parse fallback,
+ * so sanitization / junk filter / embedding / typed-claim threading stay
+ * identical across both lanes.
+ */
+async function buildFactsFromRaw(
+  parsedRaw: RawExtracted[],
+  input: ExtractInput,
+  cap: number,
+  junkFilterOn: boolean,
+): Promise<ExtractedFact[]> {
   const facts: ExtractedFact[] = [];
   let junkSkipped = 0;
   for (const candidate of parsedRaw.slice(0, cap)) {
@@ -649,7 +718,7 @@ export async function extractFactsFromTurnWithOutcome(
     );
   }
 
-  return { ok: true, facts };
+  return facts;
 }
 
 // Once-per-(reason, process) memo for the best-effort wrapper below — its
