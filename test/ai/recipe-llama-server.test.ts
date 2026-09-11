@@ -38,6 +38,14 @@ describe('recipe: llama-server', () => {
     expect(r.touchpoints.embedding!.default_dims).toBe(0);
   });
 
+  test('embedding touchpoint declares max_batch_tokens + CJK-conservative chars_per_token', () => {
+    const r = getRecipe('llama-server')!;
+    const e = r.touchpoints.embedding!;
+    expect(e.max_batch_tokens).toBe(4096);
+    expect(e.chars_per_token).toBe(1);
+    expect(e.max_batch_items).toBe(32);
+  });
+
   test('chat touchpoint declares tool calling and native prefix caching', () => {
     const r = getRecipe('llama-server')!;
     const chat = r.touchpoints.chat;
