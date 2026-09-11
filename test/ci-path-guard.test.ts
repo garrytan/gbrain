@@ -67,11 +67,19 @@ describe('classifyEphemeralCiPath — unconditional runner prefixes', () => {
 
   test('GitHub Actions hosted Windows runner workspace (D:\\a\\...)', () => {
     // Win32-absolute spellings are recognized on any host: backslashes
-    // normalize to forward slashes and the drive letter is uppercased, so
-    // a Windows-origin path in a shared brain classifies from a Mac too.
+    // normalize to forward slashes and the whole path is lowercased (NTFS
+    // is case-insensitive), so a Windows-origin path in a shared brain
+    // classifies from a Mac too.
     expect(classifyEphemeralCiPath('D:\\a\\repo\\repo', NO_ENV).ephemeral).toBe(true);
     expect(classifyEphemeralCiPath('d:/a/repo/repo/sub', NO_ENV).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('D:/A/repo', NO_ENV).ephemeral).toBe(true);
     expect(classifyEphemeralCiPath('D:/awork/repo', NO_ENV).ephemeral).toBe(false);
+  });
+
+  test('win32 spellings cannot dodge the prefix with dot segments or doubled separators', () => {
+    expect(classifyEphemeralCiPath('D:/foo/../a/repo/repo', NO_ENV).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('D://a//repo', NO_ENV).ephemeral).toBe(true);
+    expect(classifyEphemeralCiPath('D:/./a/repo', NO_ENV).ephemeral).toBe(true);
   });
 
   test('non-canonical spellings are resolved before matching (.., trailing slash)', () => {
@@ -145,6 +153,35 @@ describe('classifyEphemeralCiPath — workspace-env containment (self-hosted run
     const env = { CIRCLE_WORKING_DIRECTORY: '~/project' };
     expect(classifyEphemeralCiPath(`${homedir()}/project/repo`, env).ephemeral).toBe(true);
     expect(classifyEphemeralCiPath(`${homedir()}/elsewhere`, env).ephemeral).toBe(false);
+    // Bare '~' expands to the home dir itself.
+    expect(classifyEphemeralCiPath(`${homedir()}/x`, { CIRCLE_WORKING_DIRECTORY: '~' }).ephemeral).toBe(true);
+  });
+
+  test('symlink aliases of a live workspace cannot slip containment (realpath assist)', async () => {
+    // macOS /var → /private/var is the everyday shape: the provider env
+    // carries one spelling while a caller realpaths to the other. Build the
+    // alias deterministically so the pin holds on every platform.
+    const { mkdtempSync, symlinkSync, rmSync, realpathSync, mkdirSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const outer = mkdtempSync(join(tmpdir(), 'gbrain-alias-'));
+    try {
+      const real = join(outer, 'real-ws');
+      mkdirSync(join(real, 'repo'), { recursive: true });
+      const alias = join(outer, 'alias-ws');
+      symlinkSync(real, alias);
+      const realCanonical = realpathSync(real);
+      // Candidate under the REAL spelling; workspace env carries the ALIAS.
+      expect(
+        classifyEphemeralCiPath(`${realCanonical}/repo`, { GITHUB_WORKSPACE: alias }).ephemeral,
+      ).toBe(true);
+      // Mirror direction: candidate spelled through the alias, env real.
+      expect(
+        classifyEphemeralCiPath(`${alias}/repo`, { GITHUB_WORKSPACE: realCanonical }).ephemeral,
+      ).toBe(true);
+    } finally {
+      rmSync(outer, { recursive: true, force: true });
+    }
   });
 
   test('degenerate workspace "/" never swallows every path', () => {

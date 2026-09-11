@@ -960,10 +960,18 @@ export async function runImport(
         await engine.setConfig('sync.repo_path', dir);
       }
     } else if ((sourceId ?? 'default') === 'default') {
+      // Ephemeral-aware hint: never print the config-set command for a CI
+      // checkout — that is the exact agent-follows-hint chain the guard
+      // exists to break (config set refuses it now anyway).
+      const { classifyEphemeralCiPath } = await import('../core/ci-path-guard.ts');
+      const repointHint = classifyEphemeralCiPath(dir).ephemeral
+        ? `This directory looks like an ephemeral CI checkout — import/sync it ` +
+          `session-scoped (as you just did) rather than repointing the brain at it.`
+        : `If this directory IS your brain repo, run: ` +
+          `gbrain config set sync.repo_path "${dir}"`;
       console.error(
         `\n[import] sync.repo_path stays at ${configured ?? '(unset)'} — NOT repointing to "${dir}". ` +
-        `Sync bookmarks were not advanced. If this directory IS your brain repo, run: ` +
-        `gbrain config set sync.repo_path "${dir}"`,
+        `Sync bookmarks were not advanced. ${repointHint}`,
       );
     }
     // Non-default sources: deliberately silent no-op — the globals are not

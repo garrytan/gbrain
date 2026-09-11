@@ -23,6 +23,26 @@ found this fourth writer). Escape hatches: `--force` /
   with the `gbrain sources set-path` repair hint. Natural home: next to
   `default_source_local_path` in `src/commands/doctor.ts`.
 
+- [ ] **P3 — machine-readable skip signal in the sync/import `--json` envelopes.**
+  The guard's persist-skip is stderr-only; a CI wrapper parsing the JSON
+  envelope sees a fully green result and hits the missing-binding consequence
+  later with no programmatic breadcrumb. Add an additive per-source field
+  (e.g. `path_binding: 'persisted' | 'skipped_ephemeral_ci'`) or a top-level
+  `warnings: []` to the sync/import envelopes when the guard skips.
+  Red-team finding from the guard's ship review; additive-only per the
+  envelope schema rules.
+
+- [ ] **P3 — consider a dedicated hatch flag (`--allow-ephemeral-path`).**
+  `--force` now waives two unrelated validations on `sources add`
+  (#2707 git-repo check + the ephemeral refusal); prose that recommends
+  `--force` for the git-init case implicitly waives the ephemeral guard too.
+  Bootstrap's printed hint is already ephemeral-aware, but a dedicated flag
+  would decouple the escapes cleanly. Also note the residual unguarded lane:
+  a bare `sources add --url` in CI clones under the runner's
+  `$GBRAIN_HOME/clones/` (runner $HOME is deliberately out of classifier
+  scope) — self-heals via reclone on other machines, documented here rather
+  than guarded.
+
 - [ ] **P3 — decide whether the github/google `--dir` kinds need the same
   guard.** `addSource` Path C/D (`--kind github|google`) bind `opts.*.dir` as
   `local_path` without the ephemeral check (deliberately scoped out of the

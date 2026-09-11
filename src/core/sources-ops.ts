@@ -550,6 +550,24 @@ export async function addSource(
   let finalPath = opts.localPath ?? null;
   if (parsedUrl) {
     finalPath = opts.cloneDir ?? defaultCloneDir(opts.id);
+    // Ephemeral-CI-path guard, Path A lane: a clone destination inside a CI
+    // workspace (`--clone-dir "$GITHUB_WORKSPACE/mirror"`) binds an
+    // ephemeral path as local_path just like `--path` does — and unlike the
+    // API-backed github/google kinds, a git clone does NOT self-heal:
+    // recloneIfMissing on other machines would have to recreate the runner
+    // path. The DEFAULT clone dir ($GBRAIN_HOME/clones/<id>) is deliberately
+    // not flagged by the classifier (runner $HOME is out of scope), so this
+    // only bites explicit ephemeral destinations.
+    if (opts.force !== true && !allowEphemeralPersist()) {
+      const verdict = classifyEphemeralCiPath(finalPath);
+      if (verdict.ephemeral) {
+        throw new SourceOpError(
+          'ephemeral_ci_path',
+          `Refusing to clone source "${opts.id}" into ${finalPath}: ` +
+            ephemeralCiPathAdvice(verdict.detail!),
+        );
+      }
+    }
   }
   if (finalPath) await assertNoOverlappingPath(engine, opts.id, finalPath);
 

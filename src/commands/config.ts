@@ -999,6 +999,24 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
+    // Ephemeral-CI-path guard (2026-09-08 shared-brain incident): config set
+    // is the lower-level door to the sync.repo_path anchor (same rationale as
+    // the sources.default validation above) and must not be a way around the
+    // classifier — especially since older refusal hints printed this exact
+    // command. Env hatch only (config set has no --force).
+    if (key === 'sync.repo_path') {
+      const { classifyEphemeralCiPath, allowEphemeralPersist, ephemeralCiPathAdvice } =
+        await import('../core/ci-path-guard.ts');
+      const verdict = classifyEphemeralCiPath(value);
+      if (verdict.ephemeral && !allowEphemeralPersist()) {
+        console.error(
+          `[config] refusing to set sync.repo_path to "${value}": ` +
+          ephemeralCiPathAdvice(verdict.detail!),
+        );
+        process.exit(1);
+      }
+    }
+
     // v0.40.3.0 (D3 + Phase 2B): capture the OLD search.mode BEFORE the
     // setConfig so summarizeTransition() can classify the kind correctly.
     // Read fails silently → oldMode null → treated as broadening.

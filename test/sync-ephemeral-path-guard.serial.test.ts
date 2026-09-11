@@ -311,3 +311,100 @@ describe('addSource ephemeral-CI-path guard', () => {
     }
   });
 });
+
+describe('addSource Path A (--url) clone-destination guard', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  test('refuses --clone-dir inside a runner workspace BEFORE any clone work', async () => {
+    const { addSource, SourceOpError } = await import('../src/core/sources-ops.ts');
+    // The guard fires at finalPath computation — before parseRemoteUrl's
+    // network-adjacent work runs, so no real clone target is needed.
+    const err = await withEnv(guardEnv(), () =>
+      addSource(engine, {
+        id: 'mirror',
+        remoteUrl: 'https://github.com/acme-example/widget-co.git',
+        cloneDir: '/home/runner/work/brain/clone',
+      })
+        .then(() => null)
+        .catch((e: unknown) => e),
+    );
+    expect(err).toBeInstanceOf(SourceOpError);
+    expect((err as InstanceType<typeof SourceOpError>).code).toBe('ephemeral_ci_path');
+  });
+});
+
+describe('config set sync.repo_path guard (the lower-level door)', () => {
+  let engine: PGLiteEngine;
+  let origExit: typeof process.exit;
+  let exitCode: number | null;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+    exitCode = null;
+    origExit = process.exit;
+    (process as unknown as { exit: (n: number) => never }).exit = ((n: number) => {
+      exitCode = n;
+      throw new Error(`__test_exit_${n}__`);
+    }) as never;
+  });
+
+  afterEach(() => {
+    process.exit = origExit;
+  });
+
+  test('refuses an ephemeral path (older refusal hints printed this exact command)', async () => {
+    const { runConfig } = await import('../src/commands/config.ts');
+    await withEnv(guardEnv(), async () => {
+      try {
+        await runConfig(engine, ['set', 'sync.repo_path', '/home/runner/work/brain/brain']);
+      } catch (err) {
+        expect((err as Error).message).toContain('__test_exit_1__');
+      }
+    });
+    expect(exitCode).toBe(1);
+    expect(await engine.getConfig('sync.repo_path')).toBeNull();
+  });
+
+  test('GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 lets config set persist it', async () => {
+    const { runConfig } = await import('../src/commands/config.ts');
+    await withEnv(
+      guardEnv({ GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: '1' }),
+      () => runConfig(engine, ['set', 'sync.repo_path', '/home/runner/work/brain/brain']),
+    );
+    expect(exitCode).toBeNull();
+    expect(await engine.getConfig('sync.repo_path')).toBe('/home/runner/work/brain/brain');
+  });
+
+  test('a durable path is unaffected', async () => {
+    const { runConfig } = await import('../src/commands/config.ts');
+    await withEnv(guardEnv(), () =>
+      runConfig(engine, ['set', 'sync.repo_path', '/Users/alice-example/brain']),
+    );
+    expect(exitCode).toBeNull();
+    expect(await engine.getConfig('sync.repo_path')).toBe('/Users/alice-example/brain');
+  });
+});

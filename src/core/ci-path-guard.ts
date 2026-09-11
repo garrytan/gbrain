@@ -71,13 +71,13 @@ export interface EphemeralPathVerdict {
  * Workspace prefixes that only exist inside hosted CI runners. Fire without
  * env corroboration. Matched segment-exact: the prefix directory itself and
  * anything nested inside it. Windows prefixes are spelled in the normalized
- * comparison form (forward slashes, uppercase drive).
+ * comparison form (forward slashes, lowercased — NTFS is case-insensitive).
  */
 const EPHEMERAL_RUNNER_PREFIXES: ReadonlyArray<readonly [prefix: string, label: string]> = [
   ['/home/runner/work/', 'GitHub Actions hosted Linux runner workspace'],
   ['/Users/runner/work/', 'GitHub Actions hosted macOS runner workspace'],
   ['/__w/', 'GitHub Actions container-job workspace mount'],
-  ['D:/a/', 'GitHub Actions hosted Windows runner workspace'],
+  ['d:/a/', 'GitHub Actions hosted Windows runner workspace'],
   ['/home/circleci/project', 'CircleCI convenience-image checkout'],
   ['/home/vsts/work/', 'Azure Pipelines hosted-agent workspace'],
   ['/buildkite/builds/', 'Buildkite agent build directory'],
@@ -152,17 +152,28 @@ export function allowEphemeralPersist(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 /**
- * Normalize a path into the guard's comparison form: absolute, forward
- * slashes, uppercased Windows drive letter. A win32-absolute spelling
- * (`D:\a\r`, `D:/a/r`) is recognized on ANY host so a Windows-origin path in
- * a shared brain classifies correctly from a Mac too (POSIX `resolve` would
- * treat it as relative and mangle it); everything else resolves against cwd
- * as before. Lexical only — see the module header for why not realpath.
+ * Normalize a path into the guard's comparison form. POSIX spellings resolve
+ * against cwd (case-sensitive — Linux runners are). A win32-absolute
+ * spelling (`D:\a\r`, `D:/a/r`) is recognized on ANY host so a
+ * Windows-origin path in a shared brain classifies correctly from a Mac too
+ * (POSIX `resolve` would treat it as relative and mangle it); it gets a pure,
+ * host-independent win32 lexical normalize — forward slashes, doubled
+ * separators and dot segments collapsed (so `D://a/x` and `D:/foo/../a/x`
+ * cannot dodge the prefix) — and is lowercased whole, because NTFS is
+ * case-insensitive. Lexical only — see the module header for why not
+ * realpath (and `comparisonForms` for the realpath assist).
  */
 function normalizePathForCompare(path: string): string {
   const winAbs = /^[A-Za-z]:[\\/]/.test(path);
-  const abs = winAbs ? path[0]!.toUpperCase() + path.slice(1) : resolve(path);
-  return abs.replace(/\\/g, '/');
+  if (!winAbs) return resolve(path).replace(/\\/g, '/');
+  const slashed = path.replace(/\\/g, '/');
+  const segments = slashed.slice(3).split('/').filter((seg) => seg !== '' && seg !== '.');
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  return `${slashed[0]!.toLowerCase()}:/${out.join('/')}`.toLowerCase();
 }
 
 /** Leading-tilde expansion for env-supplied workspace values: CircleCI
@@ -208,7 +219,7 @@ function isAtOrUnder(normalizedPath: string, root: string): boolean {
 /** A workspace root that would contain every path on the filesystem/drive
  * (`/`, `D:/`) must never be used for containment. */
 function isDegenerateRoot(normalized: string): boolean {
-  return normalized === '/' || /^[A-Z]:\/?$/.test(normalized);
+  return normalized === '/' || /^[a-z]:\/?$/.test(normalized);
 }
 
 /**
@@ -261,9 +272,10 @@ export function ephemeralCiPathAdvice(detail: string): string {
   return (
     `it looks like an ephemeral CI checkout (${detail}). On a shared brain ` +
     `this path would break capture and sync on every other machine once the ` +
-    `runner is gone. To sync CI content without binding the path, run ` +
-    `'gbrain sync --repo <path> --source <id>' (the path stays ` +
-    `session-scoped). If this path really is durable, pass --force or set ` +
-    `GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1.`
+    `runner is gone. To sync CI content without binding the path: register ` +
+    `the source path-less if it doesn't exist yet ('gbrain sources add <id>' ` +
+    `with no --path), then run 'gbrain sync --repo <path> --source <id>' ` +
+    `(the path stays session-scoped). If this path really is durable, pass ` +
+    `--force or set GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1.`
   );
 }

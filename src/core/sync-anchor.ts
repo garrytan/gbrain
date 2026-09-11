@@ -327,10 +327,18 @@ export async function writeSyncAnchor(
   if (anchorDir !== undefined) {
     const { owns, configured } = await ownsGlobalSyncAnchor(engine, undefined, anchorDir);
     if (!owns) {
+      // Don't hand a CI job (or an agent following this hint) the exact
+      // command that would poison the shared anchor — config set now
+      // refuses ephemeral paths too, so point at the session-scoped flow
+      // instead when the dir classifies ephemeral.
+      const hint = classifyEphemeralCiPath(anchorDir).ephemeral
+        ? `That directory looks like an ephemeral CI checkout — sync it ` +
+          `session-scoped instead: gbrain sync --repo "${anchorDir}"`
+        : `To make that directory the brain repo: ` +
+          `gbrain config set sync.repo_path "${anchorDir}"`;
       serr(
         `[sync] sync.${which} stays at ${configured ?? '(unset)'} — not moving the ` +
-        `global anchor for "${anchorDir}". To make that directory the brain repo: ` +
-        `gbrain config set sync.repo_path "${anchorDir}"`,
+        `global anchor for "${anchorDir}". ${hint}`,
       );
       return;
     }

@@ -1213,14 +1213,23 @@ async function runHooks(
     // created. Without --force, the printed command below would itself throw
     // not_a_git_repo the instant it's pasted.
     const quoted = shellQuoteForDisplay(brainDir);
-    console.log(
-      `brain source: register this workspace's brain/ now if you haven't — ` +
+    // Ephemeral-CI-path guard: never print a --force-baked registration for
+    // a CI checkout — --force also waives the ephemeral refusal, so the
+    // pasted command would bind the runner path into a shared brain with the
+    // guard pre-bypassed. Point CI runs at the session-scoped flow instead.
+    const { classifyEphemeralCiPath } = await import('../core/ci-path-guard.ts');
+    console.log(classifyEphemeralCiPath(brainDir).ephemeral
+      ? `brain source: this workspace looks like an ephemeral CI checkout, so don't bind its ` +
+        `path into the brain — register the source path-less (\`gbrain sources add ${sourceId}\`) ` +
+        `and sync session-scoped (\`gbrain sync --repo ${quoted} --source ${sourceId}\`). If this ` +
+        `machine really is durable, set GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 and use ` +
+        `\`gbrain sources add ${sourceId} --path ${quoted} --force\`.`
+      : `brain source: register this workspace's brain/ now if you haven't — ` +
         `\`gbrain sources add ${sourceId} --path ${quoted} --force\` (brain/ is freshly created and empty; ` +
         `--force is the documented opt-in for registering before git-init exists). If '${sourceId}' is ` +
         `already claimed by a different checkout on this brain, \`gbrain bootstrap verify\` will detect the ` +
         `collision and switch this workspace to '${deriveWorkspaceSourceId(ws)}' — re-run the same command ` +
-        `with that id instead.`,
-    );
+        `with that id instead.`);
 
     // 1. MCP registration — argv built by the host-format module, executed
     // through the runner seam, recorded on the receipt.
