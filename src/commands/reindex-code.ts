@@ -82,7 +82,7 @@ export interface ReindexCodeResult {
  * Voyage publishes voyage-code-3, a code-specialized embedding model that
  * outperforms their general flagships on code retrieval. Per-worktree code
  * brains (Topology 3) are pure source-code, so the recommendation is clean.
- * The nudge surfaces this from `gbrain reindex --code` on dry-run AND
+ * The nudge surfaces this from `gbrain reindex-code` on dry-run AND
  * execute paths so an agent sees it before spending Anthropic/OpenAI tokens.
  *
  * Allowlist matches against the BARE model name (what getEmbeddingModelName()
@@ -481,7 +481,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
       }
       const n = v ? parseFloat(v) : NaN;
       if (!Number.isFinite(n) || n <= 0) {
-        console.error(`gbrain reindex --code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
+        console.error(`gbrain reindex-code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
         process.exit(2);
       }
       maxCostUsd = n;

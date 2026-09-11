@@ -281,6 +281,66 @@ describe('block-level module scan — only ./commands/*.ts handlers are command 
     expect(validateCommandFlags('agent', ['register', '--harness', 'claude-code', '--preset', 'coding'])).toBeNull();
   });
 
+  test('comments in imported MODULE files register no flags (module-depth strip)', () => {
+    // The case-block strip alone left module files raw, so any prose --flag
+    // in a command module or its one-level deps minted a phantom the
+    // validator then accepted (~1,500 entries, a third of the registry).
+    // Original repro: bootstrap.ts's "never print a --force-baked
+    // registration" comment put --force-baked on the bootstrap row. Durable
+    // pins from the same class, each still a comment-only mention today:
+    // pglite-repair.ts:'a typo like `--dry-rnu` would run a real WAL reset'
+    // — the generator allowlisted the very typo the comment warns about —
+    // and friction.ts:'--redact is the default' (code consumes --no-redact).
+    expect(CLI_FLAG_REGISTRY['pglite-repair']).not.toContain('--dry-rnu');
+    expect(CLI_FLAG_REGISTRY['pglite-repair']).toContain('--dry-run');
+    expect(CLI_FLAG_REGISTRY.friction).not.toContain('--redact');
+    expect(CLI_FLAG_REGISTRY.friction).toContain('--no-redact');
+    // Same on a fresh generator run (pins the generator, not just the file).
+    const fresh = buildFlagRegistry();
+    expect(fresh['pglite-repair']).not.toContain('--dry-rnu');
+    expect(fresh.friction).not.toContain('--redact');
+    // The validator agrees: the guarded-against typo now fails loud.
+    expect(validateCommandFlags('pglite-repair', ['--dry-rnu'])).toBe('--dry-rnu');
+    expect(validateCommandFlags('pglite-repair', ['--dry-run'])).toBeNull();
+  });
+
+  test('comments in one-level DEP files register no flags either (dep-scan strip)', () => {
+    // The dep scan is a SEPARATE stripComments call site in buildFlagRegistry
+    // (module surface and its ./relative imports are stripped independently).
+    // Reverting only the dep-site strip re-mints ~1,548 of the ~1,567 swept
+    // phantoms while the module-depth pins above still pass — so pin
+    // dep-borne phantoms in their own right. reindex's --code and embed's
+    // --break-lock both rode in exclusively through comments in one-level
+    // deps (mutation-verified: raw-dep regeneration restores exactly these).
+    expect(CLI_FLAG_REGISTRY.reindex).not.toContain('--code');
+    expect(CLI_FLAG_REGISTRY.embed).not.toContain('--break-lock');
+    // Same on a fresh generator run (pins the generator, not just the file).
+    const fresh = buildFlagRegistry();
+    expect(fresh.reindex).not.toContain('--code');
+    expect(fresh.embed).not.toContain('--break-lock');
+    expect(validateCommandFlags('reindex', ['--code'])).toBe('--code');
+  });
+
+  test('EXTRA_FLAGS: the documented jobs --allow-protected opt-in survives regeneration', () => {
+    // `jobs submit` is validator-exempt today, but the registry row is the
+    // contract for every other jobs subcommand and for any future exemption
+    // narrowing — the documented `gbrain jobs submit unify-types
+    // --allow-protected` invocation must never regress to unknown-flag.
+    expect(CLI_FLAG_REGISTRY.jobs).toContain('--allow-protected');
+    expect(buildFlagRegistry().jobs).toContain('--allow-protected');
+  });
+
+  test('reindex-code carries no string-borne --code phantom (error prefix names reindex-code)', () => {
+    // The generator keeps string literals by design (help text is
+    // consumption), so the old `gbrain reindex --code:` error prefix in
+    // reindex-code.ts minted a --code phantom the comment strip cannot
+    // remove — the prefix now names the command that actually runs.
+    expect(CLI_FLAG_REGISTRY['reindex-code']).not.toContain('--code');
+    expect(buildFlagRegistry()['reindex-code']).not.toContain('--code');
+    expect(validateCommandFlags('reindex-code', ['--code'])).toBe('--code');
+    expect(validateCommandFlags('reindex-code', ['--max-cost-usd', '5'])).toBeNull();
+  });
+
   test('./core/* helper imports inside a dispatch block are not scanned as command modules', () => {
     // think's `if` block reaches ./core/brain-registry.ts (--db-url, --path);
     // doctor's reaches ./core/doctor-remote.ts (whose deps carry OAuth flags);
