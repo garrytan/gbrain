@@ -63,8 +63,8 @@ export function openrouterThinkingByDefault(modelId: string): boolean {
  * Which proxied families may drive the subagent loop. The gateway loop keys
  * replay on gbrain_tool_use_id, not the raw provider id, so a family only
  * needs a live abort/retry pin proving its tool-call envelope survives a
- * resume. Anthropic and DeepSeek have one (test/e2e/openrouter-*-subagent-
- * replay.live.test.ts); other families stay refused until they do
+ * resume. Anthropic, DeepSeek and xAI have one (test/e2e/openrouter-*-
+ * subagent-replay.live.test.ts); other families stay refused until they do
  * (TODOS.md OpenRouter follow-up). List lives in ../openrouter-families.ts.
  */
 export function openrouterSupportsSubagentLoop(modelId: string): boolean {
@@ -177,9 +177,9 @@ export const openrouterCompatFetch = (async (
  * downstream agent stacks (OpenClaw deployments, etc.) get their own
  * attribution on OR's leaderboard instead of polluting gbrain's.
  *
- * Subagent loops: Anthropic (`anthropic/…`) and DeepSeek (`deepseek/…`)
- * routes declare `supports_subagent_loop` so classifyCapabilities() allows
- * them, and the handler auto-routes those jobs through `gateway.toolLoop()`
+ * Subagent loops: Anthropic (`anthropic/…`), DeepSeek (`deepseek/…`) and
+ * xAI (`x-ai/…`) routes declare `supports_subagent_loop` so
+ * classifyCapabilities() allows them, and the handler auto-routes those jobs through `gateway.toolLoop()`
  * (OR is not a native Anthropic provider, so the Messages SDK path is never
  * used for `openrouter:*`). Other OR families stay refused until they get a
  * live abort/retry pin (TODOS.md).
