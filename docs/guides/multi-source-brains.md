@@ -190,6 +190,22 @@ Two details that are easy to miss:
   boundary as sync-time self-heal, which also never mutates a `--path`
   source without an explicit ask).
 
+## Ephemeral CI checkout paths are refused
+
+Registering a git source from a throwaway CI checkout (a GitHub Actions,
+GitLab, CircleCI, Buildkite, or Azure runner workspace) is refused:
+`sources add --path`, `sources add --clone-dir`, `sources set-path`
+(exit 7), and `config set sync.repo_path` all decline to bind a runner
+directory as a durable `local_path`, because every other machine sharing
+the brain would then look for the repo at a path that no longer exists.
+Sync and import from a CI checkout still work — content lands and the
+sync bookmark advances; only the path binding is skipped, with a stderr
+notice. If a runner-like path really is a durable machine, pass `--force`
+(add / set-path) or set `GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1`.
+
+**Say to your agent:** *"Sync this CI checkout into the brain without
+changing my brain's paths"*
+
 **If sync ever reports a problem with the sync anchor** (`last_commit`) —
 after a force-push, a history rewrite, or a from-scratch `git init` on a
 directory that was synced before — you do not need to reset anything by

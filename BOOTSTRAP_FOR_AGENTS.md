@@ -145,7 +145,11 @@ registration only with `--mcp-even-if-plugin`.
    `gbrain sources add <source_id> --path <brain> --force` command for THIS
    workspace — run it verbatim (don't guess a different id; a guessed id
    only surfaces as an FK error at `verify` time, by which point a wrong
-   guess also blocks the correct id with an `overlapping_path` error). It
+   guess also blocks the correct id with an `overlapping_path` error). On an
+   ephemeral CI checkout (a hosted-runner workspace) the printed hint
+   switches to session-scoped advice instead — register the source
+   path-less and sync with `--repo` — so a throwaway runner path is never
+   bound into a shared brain; follow whichever hint it prints. It
    also:
    - Claude Code: installs per-turn hooks ON by default — do NOT ask; loading the
      brain every turn is the whole point of installing gbrain for your agent. Tell
