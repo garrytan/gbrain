@@ -1498,6 +1498,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // equals gbrain's persisted anchor) via `isAnchorOwnedSyncPath`, not by
   // the mere absence of `opts.sourceId`/`opts.repoPath` — see that
   // function's docstring. `!opts.dryRun`: a preview must never write.
+  // Carried patch 2026-08-11: hosts that do not own the vault (the Fly
+  // worker) must never sync. Observed 8/10: a sync job claimed in the
+  // container found a bare recreated vault path and reached auto-recovery
+  // git-init; only the image's missing git binary prevented an empty-corpus
+  // sync. Set GBRAIN_SYNC_DISABLED=1 on any non-vault host.
+  if (process.env.GBRAIN_SYNC_DISABLED === '1') {
+    throw new Error(
+      'sync disabled on this host (GBRAIN_SYNC_DISABLED=1): the vault lives elsewhere',
+    );
+  }
   let gitContextRoot: string;
   try {
     gitContextRoot = realpathSync(discoverGitRoot(repoPath));

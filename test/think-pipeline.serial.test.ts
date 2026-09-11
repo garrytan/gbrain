@@ -5,7 +5,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
-import { runGather, renderPagesBlock } from '../src/core/think/gather.ts';
+import { extractEntitySearchTerms, runGather, renderPagesBlock } from '../src/core/think/gather.ts';
 import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 
 let engine: PGLiteEngine;
@@ -128,6 +128,12 @@ describe('cite-render', () => {
 });
 
 describe('runGather', () => {
+  test('extracts proper names for the exact lexical recall arm', () => {
+    expect(extractEntitySearchTerms(
+      'What is the current Acme and WidgetCloud compliance decision and what changed?',
+    )).toEqual(expect.arrayContaining(['Acme', 'WidgetCloud']));
+  });
+
   test('gathers pages + takes (no anchor)', async () => {
     const r = await runGather(engine, { question: 'technical founder' });
     expect(r.takes.length).toBeGreaterThan(0);

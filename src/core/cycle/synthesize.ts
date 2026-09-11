@@ -97,8 +97,13 @@ const SUMMARY_SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, '
 export const CHARS_PER_TOKEN = 3.5;
 /** Reserve 10% of context window for system prompt + tool defs + output. */
 const HEADROOM_RATIO = 0.9;
-/** Floor on user-overridable max_prompt_tokens (matches PR #748 minimum). */
-const MIN_PROMPT_TOKENS = 100_000;
+/**
+ * Floor on user-overridable max_prompt_tokens. The former 100K floor made a
+ * configured 30K ceiling a silent no-op and routinely shipped whole meeting
+ * transcripts to the model. Eight thousand still leaves room for a useful
+ * evidence packet while allowing operators to bound background work.
+ */
+const MIN_PROMPT_TOKENS = 8_000;
 /** Default chunk-count cap; operator-configurable via dream.synthesize.max_chunks_per_transcript. */
 const DEFAULT_MAX_CHUNKS = 24;
 /** Conservative default budget when model is unknown (200K × HEADROOM_RATIO). */
@@ -142,6 +147,26 @@ const DEFAULT_TRIAGE_CONCURRENCY = 4;
  * page counts drop; `details.synthesis.avg_turns` telemetry shows cap pressure.
  */
 const DEFAULT_MAX_TURNS = 16;
+
+// ── Depth-tiered synthesis (token-churn controls) ─────────────────────
+
+/** Per-transcript synthesis depth: compact background update vs full analysis. */
+type SynthesisDepth = 'standard' | 'deep';
+
+/**
+ * Child tool surface. The prompt only ever asks for search/query (existing
+ * pages), get_page (load-bearing evidence) and put_page (the write); the rest
+ * of the subagent registry is dead weight in every turn's tool block. Short
+ * names resolve against the `brain_*` registry (filterAllowedTools). Oneshot
+ * children need only put_page and ignore the rest.
+ */
+const DREAM_ALLOWED_TOOLS = ['search', 'query', 'get_page', 'put_page'] as const;
+
+/** Agentic-loop system preamble (oneshot children use their own static contract). */
+const DREAM_SYSTEM_PROMPT =
+  'You are gBrain\'s Dream synthesis editor. Preserve durable insight, not transcript volume. ' +
+  'Use the smallest sufficient evidence set, write useful pages through put_page, and never ' +
+  'substitute a long prose answer for the requested database write.';
 
 /**
  * Compute per-chunk character budget for the resolved model + config override.
@@ -511,6 +536,17 @@ async function runPhaseSynthesizeInner(
     // ONE decision for the fan-out, telemetry, dry-run, and retriage).
     const reportByPath = new Map(pass.reports.map(r => [r.filePath, r]));
     const worthProcessing = transcripts.filter(t => reportByPath.get(t.filePath)?.worth === true);
+    // Depth tier per passing transcript: a HIGH-band reflection/idea/strategy
+    // verdict hints 'deep'; otherwise basename + judge reasons decide
+    // (inferSynthesisDepth). Drives the per-child turn/token/page budgets.
+    const depthByPath = new Map<string, SynthesisDepth>();
+    for (const t of worthProcessing) {
+      depthByPath.set(t.filePath, inferSynthesisDepth(
+        t,
+        reportByPath.get(t.filePath)?.reasons ?? [],
+        triageDepthHint(pass.byPath.get(t.filePath)),
+      ));
+    }
 
     // Count semantics (outside-voice CX7): below_threshold counts ONLY files
     // with a real score under the gate; degraded = no usable score and not
@@ -632,6 +668,10 @@ async function runPhaseSynthesizeInner(
     const jobRawSource = new Map<number, string>();
     /** Skip reasons for the cycle report (D5 cap hits, D8 legacy-key skips). */
     const skipReports: Array<{ filePath: string; reason: string }> = [];
+    // Prompt-volume telemetry. Character counts are provider-neutral and stay
+    // trustworthy even when a CLI adapter reports placeholder token usage.
+    let sourceCharsSubmitted = 0;
+    let preparedCharsSubmitted = 0;
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
     const successfulLegacyKeys = await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth:');
@@ -720,7 +760,16 @@ async function runPhaseSynthesizeInner(
         continue;
       }
 
-      const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
+      // Granola-style meeting files carry a curated summary + commitments
+      // before the verbatim `## Transcript` appendix; synthesize reasons over
+      // that packet (prepareTranscriptForSynthesis) instead of paying for the
+      // raw appendix. The RAW contentHash stays the idempotency identity.
+      const preparedContent = prepareTranscriptForSynthesis(t);
+      const chunks = splitTranscriptByBudget(preparedContent, t.contentHash, maxCharsPerChunk);
+      const depth = depthByPath.get(t.filePath) ?? inferSynthesisDepth(t, []);
+      const maxTurns = depth === 'deep' ? config.deepMaxTurns : config.standardMaxTurns;
+      const maxTokens = depth === 'deep' ? config.deepMaxTokens : config.standardMaxTokens;
+      const maxPages = depth === 'deep' ? config.deepMaxPages : config.standardMaxPages;
 
       // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
       // poison-pill class — next cycle re-attempts under whatever budget
@@ -774,6 +823,9 @@ async function runPhaseSynthesizeInner(
         }
       }
 
+      sourceCharsSubmitted += t.content.length;
+      preparedCharsSubmitted += preparedContent.length;
+
       const isChunked = chunks.length > 1;
       // queue.add subagent validator (classifyCapabilities → resolveRecipe)
       // requires `provider:model`. resolveModel can return a bare id when
@@ -813,9 +865,18 @@ async function runPhaseSynthesizeInner(
             config.reflectionsPrefix,
             config.originalsPrefix,
             config.mode,
+            // Depth tier + page cap (see inferSynthesisDepth / SynthConfig).
+            depth,
+            maxPages,
           ),
           model: subagentModel,
-          max_turns: config.maxTurns,
+          max_turns: maxTurns,
+          // Opt-in per-depth output cap (dream.synthesize.{standard,deep}_max_tokens).
+          // Unset → the handler's model-aware default (#2778/#4087), which the
+          // oneshot JSON response needs in full.
+          ...(maxTokens !== null ? { max_tokens: maxTokens } : {}),
+          allowed_tools: [...DREAM_ALLOWED_TOOLS],
+          system: DREAM_SYSTEM_PROMPT,
           allowed_slug_prefixes: allowedSlugPrefixes,
           // #4216: execution mode + the structural slug-suffix contract
           // (CDX-9) + #4217 write requirement — a synthesis child whose every
@@ -1250,6 +1311,13 @@ async function runPhaseSynthesizeInner(
     const turnsSamples = childOutcomes.filter(
       (o): o is { jobId: number; status: string; turns: number } => typeof o.turns === 'number',
     );
+    // Depth-tier telemetry: deep transcripts actually submitted this run.
+    const deferredBasenames = new Set(budgetExhaustedDeferrals);
+    const deepTranscripts = worthProcessing.filter(
+      t => depthByPath.get(t.filePath) === 'deep'
+        && !skipReports.some(s => s.filePath === t.filePath)
+        && !deferredBasenames.has(basename(t.filePath)),
+    ).length;
     return ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s${deferralSuffix}`, {
       transcripts_discovered: transcripts.length,
       transcripts_processed: submittedTranscripts,
@@ -1259,6 +1327,15 @@ async function runPhaseSynthesizeInner(
       // synthesize wrote in this cycle.
       written_slugs: writtenSlugs,
       reverse_write_count: reverseWriteCount,
+      synthesis_depth: {
+        standard_transcripts: Math.max(0, submittedTranscripts - deepTranscripts),
+        deep_transcripts: deepTranscripts,
+      },
+      prompt_volume: {
+        source_chars: sourceCharsSubmitted,
+        prepared_chars: preparedCharsSubmitted,
+        compaction_saved_chars: Math.max(0, sourceCharsSubmitted - preparedCharsSubmitted),
+      },
       child_outcomes: childOutcomes,
       // Children submitted (one per chunk for chunked transcripts; one per
       // transcript for single-chunk). Differs from transcripts_processed
@@ -1436,6 +1513,23 @@ export interface SynthConfig {
    * Revert dial: `gbrain config set dream.synthesize.mode agentic`.
    */
   mode: 'agentic' | 'oneshot';
+  /**
+   * Depth-tiered child budgets. `inferSynthesisDepth` classifies each passing
+   * transcript as 'standard' (compact background synthesis) or 'deep'
+   * (strategic/reflective material; also hinted by a HIGH-band triage score
+   * on reflection/idea/strategy content). Turn budgets default to `maxTurns`
+   * so the split is OPT-IN via dream.synthesize.standard_max_turns /
+   * deep_max_turns; output caps are null unless
+   * dream.synthesize.{standard,deep}_max_tokens is set (the handler's
+   * model-aware default applies otherwise); page caps default 2 / 6 and ride
+   * into the prompt as an OUTPUT POLICY rule.
+   */
+  standardMaxTurns: number;
+  standardMaxTokens: number | null;
+  standardMaxPages: number;
+  deepMaxTurns: number;
+  deepMaxTokens: number | null;
+  deepMaxPages: number;
 }
 
 /** Keep orchestrator summaries inside a configured non-default namespace. */
@@ -1589,6 +1683,27 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
   else if (modeRaw && modeRaw !== 'oneshot') {
     process.stderr.write(`[dream] dream.synthesize.mode "${modeRaw}" is not 'oneshot' | 'agentic'; using 'oneshot'.\n`);
   }
+  // Depth-tiered budgets (see SynthConfig). Turn defaults inherit maxTurns so
+  // an unset install behaves exactly like dream.synthesize.max_turns (pinned
+  // by test/e2e/dream-synthesize-chunking); deep >= standard, floor 1.
+  const standardMaxTurns = Math.max(1,
+    Math.floor(await getNumberConfig(engine, 'dream.synthesize.standard_max_turns', maxTurns)) || 1);
+  const deepMaxTurns = Math.max(standardMaxTurns,
+    Math.floor(await getNumberConfig(engine, 'dream.synthesize.deep_max_turns', maxTurns)) || 1);
+  // Output caps are opt-in: null keeps the handler's model-aware default.
+  const readOptionalCap = async (key: string, floor: number): Promise<number | null> => {
+    const raw = await engine.getConfig(key);
+    if (raw == null || String(raw).trim() === '') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.max(floor, Math.floor(n)) : null;
+  };
+  const standardMaxTokens = await readOptionalCap('dream.synthesize.standard_max_tokens', 1024);
+  const deepMaxTokensRaw = await readOptionalCap('dream.synthesize.deep_max_tokens', 1024);
+  const deepMaxTokens = deepMaxTokensRaw === null ? null : Math.max(standardMaxTokens ?? 0, deepMaxTokensRaw);
+  const standardMaxPages = Math.max(1,
+    Math.floor(await getNumberConfig(engine, 'dream.synthesize.standard_max_pages', 2)) || 1);
+  const deepMaxPages = Math.max(standardMaxPages,
+    Math.floor(await getNumberConfig(engine, 'dream.synthesize.deep_max_pages', 6)) || 1);
 
   let excludePatterns: string[] = [...DEFAULT_EXCLUDE_PATTERNS];
   if (excludeStr) {
@@ -1651,6 +1766,12 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     quoteVerify,
     linkManifest,
     mode: synthMode,
+    standardMaxTurns,
+    standardMaxTokens,
+    standardMaxPages,
+    deepMaxTurns,
+    deepMaxTokens,
+    deepMaxPages,
   };
 }
 
@@ -2509,6 +2630,56 @@ export async function runTriagePass(
 // ── Subagent prompt ──────────────────────────────────────────────────
 
 /**
+ * Granola files already contain a curated summary and commitments before the
+ * verbatim `## Transcript` appendix. Dream should reason over that high-signal
+ * packet instead of paying to reread the raw transcript. The raw-content hash
+ * remains the idempotency identity, so an edited source still gets reconsidered.
+ */
+export function prepareTranscriptForSynthesis(t: DiscoveredTranscript): string {
+  const isMeeting = /(?:^|[/\\])raw[/\\]meetings(?:[/\\]|$)/i.test(t.filePath) ||
+    /(?:^|-)granola(?:-|$)/i.test(t.basename);
+  if (!isMeeting) return t.content;
+  const marker = /\n## Transcript\s*\r?\n/i.exec(t.content);
+  // A small but real curated packet is still enough. Ten of the current
+  // Granola files have useful summaries under the former 800-char guard,
+  // including several multi-thousand-character raw appendices.
+  if (!marker || marker.index < 200) return t.content;
+  return t.content.slice(0, marker.index).trimEnd() +
+    '\n\n[Verbatim transcript omitted: Dream used the source commitments and curated meeting summary.]\n';
+}
+
+/** Cached pre-depth verdicts still escalate when their reasons or filename are clearly strategic. */
+export function inferSynthesisDepth(
+  t: DiscoveredTranscript,
+  reasons: string[],
+  judgedDepth?: SynthesisDepth,
+): SynthesisDepth {
+  if (judgedDepth === 'deep') return 'deep';
+  const signal = `${t.basename} ${reasons.join(' ')}`.toLowerCase();
+  return /(strateg|decision|thesis|mental model|original idea|reflection|personal pattern|emotion|brain session|quarterly|business review|acquisition)/i.test(signal)
+    ? 'deep'
+    : 'standard';
+}
+
+/** Triage content types whose HIGH-band verdicts are deep-tier material. */
+const DEEP_CONTENT_TYPES = new Set(['reflection', 'idea', 'strategy']);
+
+/**
+ * Depth hint from a scored triage verdict (#4152 shape): a HIGH-band score
+ * (>= 0.7) on reflection/idea/strategy content is the "consequential
+ * decision, original thesis, rich self-reflection" case the deep tier exists
+ * for. Anything else returns undefined so inferSynthesisDepth's
+ * basename/reason heuristics decide. Legacy boolean-era rows (score null)
+ * carry no hint.
+ */
+export function triageDepthHint(
+  v: Pick<DreamVerdict, 'score' | 'content_type'> | undefined,
+): SynthesisDepth | undefined {
+  if (!v || v.score === null || v.score < 0.7) return undefined;
+  return v.content_type !== null && DEEP_CONTENT_TYPES.has(v.content_type) ? 'deep' : undefined;
+}
+
+/**
  * Build the prompt for one subagent. When `chunkTotal > 1`, the slug seed
  * gains a `-c<idx>` suffix and the prompt names which chunk this is.
  *
@@ -2632,6 +2803,9 @@ function buildSynthesisPrompt(
   reflectionsPrefix = `${outputRoot}/personal/reflections`,
   originalsPrefix = `${outputRoot}/originals/ideas`,
   mode: 'agentic' | 'oneshot' = 'agentic',
+  // Depth tier + page cap (trailing so existing positional callers are byte-identical).
+  depth: SynthesisDepth = 'standard',
+  maxPages = 2,
 ): string {
   // #4348: UTC projection retained here on purpose — this is a slug-name
   // hint for undated sources, not calendar provenance.
@@ -2672,6 +2846,11 @@ CONTEXT
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
 - Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}${linkManifestBlock}${allowedPathsBlock}
 
+SYNTHESIS DEPTH: ${depth.toUpperCase()}
+- ${depth === 'deep'
+    ? 'Develop the implications, tensions, counterarguments, and decisions this material supports. Depth is welcome when it produces durable judgment.'
+    : 'Capture the durable update or lesson compactly. Do not inflate routine material into a thesis.'}
+
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible EXACTLY from the transcript below — if you cannot reproduce a span exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase memorable phrasings you can quote exactly.
 2. ${crossRefRule}
@@ -2680,6 +2859,9 @@ OUTPUT POLICY (ALL of these are required)
 5. Self-contained opening: begin every new page's body with a 2-3 sentence summary that a reader unfamiliar with this transcript could understand on its own, before any quotes or detail. Do not assume the reader has the source conversation for context.
 6. Preserve concrete facts: carry the specific numbers, dates, dollar amounts, names, and who-decided-what OF the salient content you write about, exactly as the transcript states them. Do not add routine logistics for their own sake.
 7. Ground every claim in the transcript. Attribute speculation as speculation ("the user wondered whether..."), and never state a completion state or outcome the transcript does not show.
+8. Write at most ${maxPages} page${maxPages === 1 ? '' : 's'}. Quality and durability beat coverage; do not inflate routine material into a thesis.${mode === 'agentic' ? `
+9. Retrieval budget: prefer ONE \`query\` call (detail=low, limit=3) over broad searching; call \`get_page\` only when a result's full text is load-bearing for what you write.
+10. Every page is created through \`put_page\`. Never draft an unwritten page in the final message.` : ''}
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
@@ -2692,13 +2874,13 @@ C. People mentions: ${mode === 'agentic'
     ? (linkManifestBlock ? 'check LINK CANDIDATES (and the search tool, when available) first' : 'search first, when a search tool is available')
     : (linkManifestBlock ? 'check LINK CANDIDATES first' : 'do not create or modify person pages')}; never write over an existing person page (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 
-D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), return without writing anything.
+D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), ${mode === 'agentic' ? 'call no write tool and return exactly `NO_WRITE`' : 'return without writing anything'}.
 
 TRANSCRIPT (${transcriptHeader})
 ---
 ${chunkText}
 ---${mode === 'agentic'
-    ? '\n\nWhen done, briefly list the slugs you wrote in your final message so the orchestrator can audit.'
+    ? '\n\nWhen done, list only the slugs you wrote in your final message (at most 100 tokens) so the orchestrator can audit; do not repeat page content.'
     : ''}`;
 }
 

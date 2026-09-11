@@ -137,6 +137,27 @@ The fix is budget-normalized weighted RRF, composed in `src/core/search/fusion-l
 
 Expansion is opt-in per mode bundle (`tokenmax` on by default; `balanced` + `conservative` off). Default off in the cheap tiers because the LLM call adds ~$0.001/query and ~200ms — real money at scale. The `query` op is the exception: it defaults `expand: true` per call (pass `expand: false` to opt out) — expansion-by-default is what makes it the concept/landscape verb.
 
+## Think evidence gathering
+
+`gbrain think` gathers broadly, then spends synthesis tokens once. Its page arm
+(`src/core/think/gather.ts`) calls bare `hybridSearch` with expansion, adaptive
+return-sizing, and autocut all disabled, so display-oriented trimming cannot
+discard evidence before the reasoning pass; `gatherLimit` and the mode token
+budget remain the hard bounds. A dated question (`--since`/`--until`) widens
+the hybrid net, adds an effective-date floor from `listPages`, and filters the
+union to the parsed window (undated pages are kept and counted).
+
+A bounded, zero-LLM exact-name arm (`extractEntitySearchTerms`: up to four
+capitalized, multi-word, or acronym terms) runs `searchKeyword` per term and is
+RRF-fused into the hybrid list before the window filter, so a named company or
+product cannot be diluted inside a long decision question. It is skipped when an
+anchor is set, and reported as `diagnostics.pagesFromEntity`.
+
+An explicit `--anchor` is a hard evidence request: the page is fetched directly
+and pinned at the top of the page list when hybrid missed it, in addition to
+seeding graph traversal. Graph neighbors are context for an anchor, not a
+substitute for the anchor's own compiled truth.
+
 ## Putting it together
 
 The full pipeline for a trusted local `query` op follows. Remote retrieval

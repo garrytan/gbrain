@@ -1,11 +1,13 @@
 /**
  * v0.28: GATHER phase for `gbrain think`.
  *
- * Runs four retrievers in parallel:
+ * Runs the retrievers in parallel:
  *   1. hybrid    — page-grain hybrid search (vector + keyword + RRF)
+ *   1b. entity   — exact named-term keyword recall (skipped when --anchor is set)
  *   2. takes_kw  — keyword search across active takes
  *   3. takes_vec — vector search across active takes (skipped when no embedder)
  *   4. graph     — anchor-entity subgraph traversal (skipped when no --anchor)
+ *   5. anchor    — direct hydration of the anchor page (skipped when no --anchor)
  *
  * Each retriever returns a ranked list with normalized scores. We fuse them
  * via RRF (k=60, same constant as src/core/search/hybrid.ts). The final
@@ -34,6 +36,14 @@ export interface ThinkGatherOpts {
   takesLimit?: number;
   /** Graph traversal depth when anchor is set. Default 2. */
   graphDepth?: number;
+  /**
+   * Optional effective-date window (raw `since`/`until` strings). The parsed
+   * `window` below is the authoritative page-arm filter (it keeps undated
+   * pages); these raw bounds are forwarded to the entity keyword arm as a
+   * cheap DB-level pre-filter.
+   */
+  since?: string;
+  until?: string;
   /** Optional pre-computed embedding for the question. Lets the caller share embedding cost. */
   questionEmbedding?: Float32Array;
   window?: TemporalWindow;
@@ -63,6 +73,8 @@ export interface ThinkGatherResult {
   /** Diagnostics for telemetry / `--explain` path (Lane D follow-up). */
   diagnostics: {
     pagesFromHybrid: number;
+    /** Hits from the exact named-term keyword arm (0 when anchored or no terms). */
+    pagesFromEntity: number;
     takesFromKeyword: number;
     takesFromVector: number;
     graphHits: number;
@@ -107,6 +119,76 @@ function fuseRanked<T>(
     .map(s => s.item);
 }
 
+const ENTITY_TERM_STOP_WORDS = new Set([
+  'A', 'An', 'And', 'Are', 'As', 'At', 'Before', 'By', 'Can', 'Could',
+  'Did', 'Do', 'Does', 'For', 'From', 'Give', 'Has', 'Have', 'How', 'I',
+  'If', 'In', 'Is', 'It', 'May', 'Might', 'Must', 'Of', 'On', 'Or', 'Our',
+  'Please', 'Should', 'The', 'Their', 'Then', 'This', 'Those', 'To', 'Was',
+  'We', 'Were', 'What', 'When', 'Where', 'Which', 'Who', 'Why', 'Will',
+  'With', 'Would', 'You', 'Your',
+  'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+  'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December',
+]);
+
+interface EntityTermMatch {
+  value: string;
+  index: number;
+  end: number;
+}
+
+/**
+ * Extract a tiny, high-precision set of named terms for the lexical recall arm.
+ * This is deliberately conservative: the normal hybrid question still runs,
+ * while proper names and mixed-case product/company names get an exact keyword
+ * vote that cannot be diluted by the rest of a long decision question.
+ */
+export function extractEntitySearchTerms(question: string, maxTerms = 4): string[] {
+  if (!question || maxTerms <= 0) return [];
+  const matches: EntityTermMatch[] = [];
+  const rx = /[\p{Lu}][\p{L}\p{N}'’.-]*/gu;
+  for (const match of question.matchAll(rx)) {
+    const value = match[0];
+    if (ENTITY_TERM_STOP_WORDS.has(value)) continue;
+    const index = match.index;
+    matches.push({ value, index, end: index + value.length });
+  }
+
+  const candidates: Array<{ value: string; index: number; priority: number }> = [];
+  for (let i = 0; i < matches.length; i++) {
+    const current = matches[i];
+    let value = current.value;
+    let end = current.end;
+    let j = i + 1;
+    while (j < matches.length && /^[\s&]+$/.test(question.slice(end, matches[j].index))) {
+      value += ` ${matches[j].value}`;
+      end = matches[j].end;
+      j++;
+    }
+    const isMultiWord = j > i + 1;
+    const isAcronym = /^[\p{Lu}\d]{2,}$/u.test(value);
+    const hasInternalCapital = /^\p{Lu}[\p{Ll}\d]+\p{Lu}/u.test(value);
+    candidates.push({
+      value,
+      index: current.index,
+      priority: isMultiWord || isAcronym || hasInternalCapital ? 2 : 1,
+    });
+    i = j - 1;
+  }
+
+  const seen = new Set<string>();
+  return candidates
+    .sort((a, b) => b.priority - a.priority || a.index - b.index)
+    .filter(({ value }) => {
+      const key = value.normalize('NFKC').toLocaleLowerCase('en');
+      if (key.length < 3 || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, maxTerms)
+    .map(({ value }) => value);
+}
+
 /**
  * Run the four-stream gather. Each stream is wrapped in a try/catch so a
  * single retriever failure doesn't crash the whole pipeline — synthesis
@@ -144,6 +226,44 @@ export async function runGather(
   });
 
   let windowDiagnostic: ThinkGatherResult['diagnostics']['window'];
+  const pageKey = (p: SearchResult) => `${p.source_id ?? 'default'}:${p.slug}`;
+
+  // Stream 1b: exact named-term recall. A long decision question can swamp
+  // the lexical signal for the entity it is about; a few zero-LLM keyword
+  // searches run in parallel and get an independent RRF vote fused into the
+  // hybrid arm BEFORE the window filter (so the window stays authoritative).
+  // An explicit anchor already supplies the exact page, so the arm is
+  // skipped in that case. Fail-open per term (D6: code-only warning).
+  const entityTerms = opts.anchor ? [] : extractEntitySearchTerms(opts.question);
+  let pagesFromEntity = 0;
+  const entityPagesPromise: Promise<SearchResult[]> = Promise.all(entityTerms.map(term =>
+    engine.searchKeyword(term, {
+      limit: Math.min(gatherLimit, 12),
+      detail: 'high',
+      ...(opts.since !== undefined ? { since: opts.since } : {}),
+      ...(opts.until !== undefined ? { until: opts.until } : {}),
+      ...pageScope,
+    }).catch((e) => {
+      if (!warnings.includes('GATHER_ENTITY_KEYWORD_FAILED')) warnings.push('GATHER_ENTITY_KEYWORD_FAILED');
+      process.stderr.write(`[think.gather] entity-keyword stream failed for "${term}": ${(e as Error).message}\n`);
+      return [] as SearchResult[];
+    }),
+  )).then(lists => {
+    const fused = lists.reduce(
+      (merged, list) => fuseRanked(merged, list, pageKey),
+      [] as SearchResult[],
+    );
+    pagesFromEntity = fused.length;
+    return fused;
+  });
+
+  // Entity hits lead the fusion so an exact-name page wins RRF ties against
+  // a question-wide hybrid hit of equal rank.
+  let pagesFromHybrid = 0;
+  const fuseEntity = (hybrid: SearchResult[], entity: SearchResult[]): SearchResult[] => {
+    pagesFromHybrid = hybrid.length;
+    return entity.length > 0 ? fuseRanked(entity, hybrid, pageKey) : hybrid;
+  };
 
   // Stream 1: hybrid page search (existing primitive).
   // autocut: false on both legs (#4561) — autocut is default-ON in
@@ -151,11 +271,17 @@ export async function runGather(
   // gather sized for breadth (default 40) could collapse to minKeep=1 and
   // starve synthesis. Same breadth reason as the CRAG escalation re-run in
   // ops/search.ts; precision trimming is the synth prompt's job here.
+  // adaptiveReturn: false for the same reason — think gathers evidence, not
+  // a display-sized answer, so a config-enabled intent cap must not trim it.
   const pagesPromise = (window ? Promise.all([
     hybridSearch(engine, opts.question, {
       limit: Math.min(gatherLimit * 4, 200),
       expansion: false,
       autocut: false,
+      adaptiveReturn: false,
+      // A dated question wants the fuller evidence payload, not the
+      // compiled-truth-leaning default.
+      detail: 'high',
       ...pageScope,
     }),
     engine.listPages({
@@ -167,18 +293,23 @@ export async function runGather(
       process.stderr.write(`[think.gather] window floor failed: ${(e as Error).message}\n`);
       return [] as SearchResult[];
     }),
-  ]).then(([hybrid, floor]) => {
+    entityPagesPromise,
+  ]).then(([hybrid, floor, entity]) => {
     const seen = new Set<string>();
-    const combined = [...hybrid, ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
+    const combined = [...fuseEntity(hybrid, entity), ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
     const filtered = filterPagesToWindow(combined, window);
     windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
     return filtered.kept.slice(0, gatherLimit);
-  }) : hybridSearch(engine, opts.question, {
-    limit: gatherLimit,
-    expansion: false,
-    autocut: false,
-    ...pageScope,
-  })).catch((e) => {
+  }) : Promise.all([
+    hybridSearch(engine, opts.question, {
+      limit: gatherLimit,
+      expansion: false,
+      autocut: false,
+      adaptiveReturn: false,
+      ...pageScope,
+    }),
+    entityPagesPromise,
+  ]).then(([hybrid, entity]) => fuseEntity(hybrid, entity))).catch((e) => {
     warnings.push('GATHER_HYBRID_FAILED');
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
     return [] as SearchResult[];
@@ -243,9 +374,9 @@ export async function runGather(
     pagesPromise, takesKwPromise, takesVecPromise, graphPromise, anchorPagePromise,
   ]);
 
-  // Diagnostics honesty: count hybrid's own hits BEFORE the synthetic
-  // anchor row is (possibly) unshifted below.
-  const pagesFromHybrid = pages.length;
+  // Diagnostics honesty: pagesFromHybrid was captured inside fuseEntity from
+  // the hybrid arm alone — BEFORE entity fusion, the window filter, and the
+  // synthetic anchor row (possibly) unshifted below.
 
   if (opts.anchor && !anchorPage && !anchorHydrateFailed) {
     // The anchor slug resolves to no page (typo, wrong source scope, or
@@ -284,6 +415,7 @@ export async function runGather(
     warnings,
     diagnostics: {
       pagesFromHybrid,
+      pagesFromEntity,
       takesFromKeyword: takesKw.length,
       takesFromVector: takesVec.length,
       graphHits: graphSlugs.length,
