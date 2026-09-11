@@ -1213,8 +1213,8 @@ async function runHooks(
     // created. Without --force, the printed command below would itself throw
     // not_a_git_repo the instant it's pasted.
     const quoted = shellQuoteForDisplay(brainDir);
-    // Ephemeral-CI-path guard: never print a --force-baked registration for
-    // a CI checkout — --force also waives the ephemeral refusal, so the
+    // Ephemeral-CI-path guard: never print a registration with force
+    // pre-applied for a CI checkout — force also waives the ephemeral refusal, so the
     // pasted command would bind the runner path into a shared brain with the
     // guard pre-bypassed. Point CI runs at the session-scoped flow instead.
     const { classifyEphemeralCiPath } = await import('../core/ci-path-guard.ts');
