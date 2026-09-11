@@ -145,6 +145,8 @@ export interface AssembleTurnContextOpts {
   maxBytes?: number;
   /** v0.46.15: lexical-arms kill switch — see ResolvePointersOpts.lexicalArms. */
   lexicalArms?: boolean;
+  /** Slug prefixes the volunteer stage never surfaces — see GateOpts. */
+  excludeSlugPrefixes?: readonly string[];
   // ── v0.45.7 ambient recall ──────────────────────────────────────────────
   /** Assembly mode. Default 'turn' (existing behavior). */
   mode?: ContextMode;
@@ -249,6 +251,7 @@ export async function assembleTurnContext(
           // v0.46.15+ lexical-arms kill switch rides the same threading as the
           // pointer arm above (ResolvePointersOpts.lexicalArms).
           lexicalArms: opts.lexicalArms,
+          excludeSlugPrefixes: opts.excludeSlugPrefixes,
         });
       }
     } catch {
