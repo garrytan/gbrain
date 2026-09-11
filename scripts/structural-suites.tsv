@@ -56,7 +56,7 @@ test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killC
 test/chronicle-extract.test.ts	runChronicleExtract	9	readFileSync
 test/ci-local-empty-mounts.test.ts	(file-level)	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
-test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	3	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
@@ -132,7 +132,7 @@ test/e2e/migration-flow.test.ts	(file-level)	4	readFileSync
 test/e2e/openclaw-reference-compat.test.ts	OpenClaw reference workspace compat (W1 + W2 + W3)	8	readFileSync
 test/e2e/skillpack-flow.test.ts	skillpack flow (E2E)	17	readFileSync
 test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTALL_FOR_AGENTS.md flow)	6	readFileSync
-test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
+test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	5	doctor-source-helper
 test/eval-brainbench-e2e.slow.test.ts	--llm availability gate	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	privacy guard violation branches (negative path)	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan
