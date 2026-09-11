@@ -13,6 +13,28 @@ primitive (finds thin pages and enriches at scale), and the `enrich` skill
 (`skills/enrich/`) is the agent-driven page-at-a-time workflow. The pipeline
 below is the pattern they implement — use it to customize or extend.
 
+### Targeting specific pages, and grounding across sources (`gbrain enrich --thin`)
+
+`--thin` only ever selected pages below the thin-body-length threshold, and
+scoped its evidence retrieval (facts, backlinks, hybrid search) to the
+candidate's own source. That misses two real cases: a curated page you want
+re-grounded even though it isn't short, and — more commonly — a page that
+lives in a small, hand-curated source (e.g. `workspace`) while the entity it
+describes is thoroughly covered elsewhere (mail, calendar, meeting notes).
+Without cross-source evidence such a page can look "already enriched enough"
+or get skipped for lack of context, even when the brain knows plenty about it.
+
+- `--slugs <a,b,c>` / `--slug-file <path>` enriches exactly the named pages,
+  regardless of the thin threshold. Still subject to the grounding gate (no
+  fabrication if there truly isn't enough context) and the resume checkpoint.
+- `--evidence-scope <own|federated|all>` (default `own`, unchanged) widens
+  where evidence is retrieved from: `federated` adds every other source
+  marked `config.federated = true` (the same set unqualified `gbrain search`
+  widens into); `all` reads every known source. `own` stays the default so
+  existing runs are unaffected.
+
+See `gbrain enrich --help`.
+
 ```
 on enrich(entity, trigger):
     # trigger: meeting mention, email thread, social interaction, user request
