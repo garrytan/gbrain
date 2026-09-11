@@ -125,6 +125,7 @@ import {
   resolveSlugRootMode,
   type SlugRootMode,
 } from '../core/sync-anchor.ts';
+import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import {
   SyncLockBusyError,
   formatLockBusyMessage,
@@ -4946,10 +4947,7 @@ See also:
     //     performSync get the [<source-id>] prefix under parallel mode (D6)
     //   - stable JSON envelope {schema_version:1, sources, ...} when --json
     // v0.41.31: v2Enabled resolved once above (cost gate). Reused here.
-    const activeSources = sources.filter((s) => {
-      const cfg = (s.config || {}) as { syncEnabled?: boolean };
-      return cfg.syncEnabled !== false;
-    });
+    const activeSources = sources.filter((s) => !isSyncDisabledConfig(s.config));
     const disabledCount = sources.length - activeSources.length;
     const humanSink: NodeJS.WriteStream = jsonOut ? process.stderr : process.stdout;
     const writeHuman = (line: string) => humanSink.write(line + '\n');
