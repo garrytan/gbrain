@@ -354,7 +354,17 @@ export class MinionQueue {
         );
         if (existing.length > 0) {
           const existingJob = rowToMinionJob(existing[0]);
-          assertSameAuthority(existingJob.submission_authority, authority);
+          // Legacy rows (queued before the submission_authority column
+          // existed) carry NULL authority. A TERMINAL legacy row is finished
+          // work, not a foreign principal: a completed one coalesces exactly
+          // as it did pre-protocol-1, and dead/cancelled ones free their key
+          // below. Only a NON-terminal legacy row keeps the cross-authority
+          // denial: unresolved legacy work is the `jobs authorize-legacy`
+          // lane, never a silent coalesce. Without this, every re-submitted
+          // dream:synth-v2:* key on an upgraded brain aborted the phase.
+          const legacyTerminal = existingJob.submission_authority == null
+            && (existingJob.status === 'completed' || existingJob.status === 'dead' || existingJob.status === 'cancelled');
+          if (!legacyTerminal) assertSameAuthority(existingJob.submission_authority, authority);
           if (existingJob.status === 'dead' || existingJob.status === 'cancelled') {
             await tx.executeRaw(
               `UPDATE minion_jobs SET idempotency_key = NULL WHERE id = $1`,
