@@ -78,6 +78,36 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const SAMPLE_LIMIT = 5;
 
 /**
+ * The walk budget as the environment overrides it.
+ *
+ * `multi_source_drift`'s truncation message tells the operator to re-run "via
+ * GBRAIN_DRIFT_LIMIT/GBRAIN_DRIFT_TIMEOUT_MS", and the sync_freshness tests
+ * describe those names as this module's "existing guard infrastructure" -- but
+ * nothing read them. `findMisroutedPages` was called from doctor.ts with no
+ * opts, so the two constants above were the only budget there was, and a brain
+ * whose non-default source holds more than 10,000 files truncated on every run
+ * with no way out.
+ *
+ * A non-numeric or non-positive value falls back to the default rather than
+ * propagating NaN -- which for the deadline would mean a walk that is already
+ * expired, i.e. a worse version of the bug being fixed. Same shape as
+ * GBRAIN_DOCTOR_FM_TIMEOUT_MS in doctor.ts.
+ */
+export function driftBudgetFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): { limit?: number; timeoutMs?: number } {
+  const positiveInt = (name: string): number | undefined => {
+    const raw = env[name];
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  return {
+    limit: positiveInt('GBRAIN_DRIFT_LIMIT'),
+    timeoutMs: positiveInt('GBRAIN_DRIFT_TIMEOUT_MS'),
+  };
+}
+
+/**
  * Walk a directory tree for `.md` + `.mdx` files. Skips dotfiles (`.git`),
  * `_*.md` files (the existing extract.ts convention), and silently swallows
  * read errors on individual entries. Returns relative paths from `root`.

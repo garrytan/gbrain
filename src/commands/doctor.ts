@@ -1679,7 +1679,9 @@ export async function buildChecks(
   // Engine is nullable in runDoctor (--fast / DB-down skip the DB phase);
   // bail silently here when engine is null since the check needs DB access.
   if (engine !== null) try {
-    const { findMisroutedPages } = await import('../core/multi-source-drift.ts');
+    const { findMisroutedPages, driftBudgetFromEnv } = await import(
+      '../core/multi-source-drift.ts'
+    );
     const sources = await engine!.executeRaw<{ id: string; local_path: string | null }>(
       `SELECT id, local_path FROM sources`,
     );
@@ -1688,6 +1690,7 @@ export async function buildChecks(
       const result = await findMisroutedPages(
         engine!,
         nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
+        driftBudgetFromEnv(),
       );
       if (result.walk_truncated) {
         checks.push({
