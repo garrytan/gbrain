@@ -2,6 +2,37 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.50.1.0] - 2026-09-11
+
+**A CI job can no longer break your brain's paths for every other machine.**
+
+Running gbrain from a CI pipeline (GitHub Actions, GitLab, CircleCI, Buildkite, Azure) against a shared brain is fine — content syncs and imports as always. What changed: the job's throwaway checkout directory is no longer saved as the brain's durable path. Previously, a CI run could overwrite the on-disk location your other machines use for capture and sync, and everything downstream failed with "repo not found" until someone repaired the pointer by hand.
+
+### Fixed
+
+- Every surface that binds a directory to the brain — `sync`, `import`, `sources add` (including `--clone-dir`), `sources set-path`, and `config set sync.repo_path` — now recognizes ephemeral CI checkout paths and declines to save them. The run itself completes normally: content lands and sync bookmarks advance; only the path binding is skipped, with a clear notice.
+- Detection covers hosted runners on Linux, macOS, and Windows, plus self-hosted runners via the provider's own workspace environment variables. Symlinked spellings of the same directory and non-canonical path spellings are recognized too. A leftover CI variable in a normal developer shell does not trigger it.
+- Help text and error hints no longer suggest commands that would bind a CI path; they point at the session-scoped flow instead.
+
+### What to expect
+
+| When you… | What happens |
+|---|---|
+| Sync or import from a CI checkout | Content lands as before; the durable path binding is skipped with a stderr notice. |
+| Register a source from a CI checkout | `sources add --path`/`--clone-dir` refuses with the session-scoped alternative spelled out. |
+| Genuinely host a durable brain on a runner-like path | Pass `--force` (add/set-path) or set `GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1`. |
+| Work on a normal machine | Nothing changes — the guard only recognizes CI checkout shapes. |
+
+## To take advantage of v0.50.1.0
+
+**Say to your agent:** *"Sync this CI checkout into the brain without changing my brain's paths"* — *"Check that my brain's source paths are still correct."*
+
+No migration needed. If a CI job already overwrote a path before this release, repair it once:
+
+```bash
+gbrain sources set-path <id> /path/on/this/machine
+```
+
 ## [0.50.0.0] - 2026-09-10
 
 **Approve client connection requests and keep background work within the access you granted.**
