@@ -95,6 +95,11 @@ const remember: Operation = {
       description:
         'world (default): readable by every agent connected to this brain — required for the remote remember→recall round-trip. private: local CLI reads only.',
     },
+    session_id: {
+      type: 'string',
+      description:
+        'Opaque id of the session that captured this fact. Later, recall{session_id} returns only facts captured in that session. Omit = null.',
+    },
   },
   mutating: true,
   scope: 'write',
@@ -158,6 +163,7 @@ const remember: Operation = {
     // subjectless statements, and resolving them would file the fact under
     // a non-existent entity_slug no lookup can reach.
     const entityParam = typeof p.entity === 'string' ? p.entity.trim() : null;
+    const sessionId = typeof p.session_id === 'string' ? p.session_id.trim() || null : null;
     const result = await writeSingleFact(ctx.engine, ctx.sourceId ?? 'default', {
       fact,
       provenance,
@@ -165,6 +171,7 @@ const remember: Operation = {
       entity: entityParam && !isNullLikeEntity(entityParam) ? entityParam : null,
       visibility,
       validUntil,
+      sessionId,
     });
 
     const statusText =
