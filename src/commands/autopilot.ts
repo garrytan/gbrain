@@ -1232,7 +1232,11 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                           // all-provider-failed batch, so give the queue's
                           // backoff a chance (was 1 — dead-lettered instantly).
                           max_attempts: 3,
-                          timeout_ms: timeoutMs,
+                          timeout_ms: resolveAutopilotDispatchTimeoutMs(
+                            baseInterval,
+                            false,
+                            'extract-atoms-drain',
+                          ),
                         },
                         { allowProtectedSubmit: true },
                       );

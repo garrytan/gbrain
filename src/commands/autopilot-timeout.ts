@@ -34,9 +34,11 @@ const FULL_CYCLE_TIMEOUT_FLOOR_MS = Math.max(
 export function resolveAutopilotDispatchTimeoutMs(
   baseIntervalSeconds: number,
   fullCycle: boolean,
+  jobName?: string,
 ): number {
   const intervalDerivedTimeoutMs = Math.max(baseIntervalSeconds * 2 * 1000, 300_000);
+  const handlerAnchorMs = jobName === undefined ? null : defaultTimeoutMsFor(jobName);
   return fullCycle
     ? Math.max(intervalDerivedTimeoutMs, FULL_CYCLE_TIMEOUT_FLOOR_MS)
-    : intervalDerivedTimeoutMs;
+    : Math.max(intervalDerivedTimeoutMs, handlerAnchorMs ?? 0);
 }

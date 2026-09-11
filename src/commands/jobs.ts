@@ -2966,6 +2966,8 @@ export async function registerBuiltinHandlers(
         sourceId,
         windowSeconds,
         brainDir: repoPath,
+        signal: job.signal,
+        deadlineAtMs: job.deadlineAtMs,
       });
       // issue #3218: every item the drain attempted failed (0 succeeded, >=1
       // provider error) — completing this job normally would mark the
