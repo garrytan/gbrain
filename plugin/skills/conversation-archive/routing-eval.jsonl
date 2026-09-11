@@ -1,0 +1,11 @@
+// Routing eval fixtures for skills/conversation-archive. Each positive intent
+// includes at least one trigger string as substring (structural matcher
+// requirement) while paraphrasing real user phrasing.
+{"intent":"I downloaded my chatgpt export — import my conversations into the brain as pages","expected_skill":"conversation-archive"}
+{"intent":"when did I first discuss seed-stage pricing with any AI assistant?","expected_skill":"conversation-archive"}
+{"intent":"search my conversations with Claude and Perplexity about agent memory and build me a timeline","expected_skill":"conversation-archive"}
+{"intent":"archive my session transcripts from this agent and backfill missing conversations from last month","expected_skill":"conversation-archive"}
+// Ambiguous vs bulk-ingestion: a multi-thousand-thread export is also a large-corpus lifecycle; both may fire.
+{"intent":"I have a claude export with 4000 threads — import my conversations and keep the archive gap-free","expected_skill":"conversation-archive","ambiguous_with":["bulk-ingestion"]}
+// Negative: live-chat status question, not an archive import or trace — nothing should match.
+{"intent":"did my colleague answer in the group channel last night?","expected_skill":null,"ambiguous_with":[]}

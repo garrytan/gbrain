@@ -1,0 +1,10 @@
+// Routing eval fixtures for skills/two-tier-extraction. Each positive
+// intent includes at least one trigger string as substring.
+{"intent":"Set up two-tier extraction for this document dump — cheap model on the noise, best model on what matters","expected_skill":"two-tier-extraction"}
+{"intent":"Use triage then deep read on these 5,000 old email threads so we don't burn the deep tier on noise","expected_skill":"two-tier-extraction"}
+{"intent":"What's the model escalation pattern for bulk-processing my transcript library?","expected_skill":"two-tier-extraction"}
+{"intent":"Give me smart model routing for this archive run — route models by content value","expected_skill":"two-tier-extraction"}
+{"intent":"Cheap triage expensive analysis: only the significant items should get the expensive model","expected_skill":"two-tier-extraction"}
+{"intent":"Which model tier for bulk extraction of this chat export?","expected_skill":"two-tier-extraction","ambiguous_with":["archive-crawler"]}
+{"intent":"Crawl my archive and surface the writing worth keeping","expected_skill":"archive-crawler"}
+{"intent":"Which model should I set as my default for gbrain chat?","expected_skill":null}

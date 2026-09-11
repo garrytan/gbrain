@@ -1,0 +1,18 @@
+// Routing eval fixtures for skills/concept-synthesis. Each intent
+// includes at least one trigger string as substring.
+{"intent":"Run concept synthesis on my brain — dedupe stubs and tier them","expected_skill":"concept-synthesis"}
+{"intent":"Synthesize my concepts into a tiered intellectual map","expected_skill":"concept-synthesis"}
+{"intent":"Find patterns across my notes and group them into clusters","expected_skill":"concept-synthesis"}
+{"intent":"Build my intellectual map — what's canon vs riff","expected_skill":"concept-synthesis"}
+{"intent":"Trace idea evolution across years of my reflections","expected_skill":"concept-synthesis"}
+{"intent":"Trace idea evolution across years of my reflections and cluster the themes","expected_skill":"concept-synthesis"}
+// Staged routing-eval additions for skills/concept-synthesis (v0.2.0 Phase 5
+// curation cull). Each positive intent paraphrases around an existing
+// RESOLVER.md trigger phrase as substring (structural matcher requirement in
+// src/core/routing-eval.ts) while exercising the new cull semantics: hard
+// keep/delete verdicts, cluster budgets, merge-with-backlinks.
+{"intent":"Run concept synthesis with the cull pass — hard keep or delete verdicts on my hollow concept stubs","expected_skill":"concept-synthesis"}
+{"intent":"Synthesize my concepts and fold the redundant stubs into canonical heads under a cluster budget","expected_skill":"concept-synthesis"}
+// Negative: a one-off page deletion is not a corpus curation cull — nothing
+// should route here (or anywhere) on cull-adjacent vocabulary alone.
+{"intent":"Delete the stale stub page about acme-example, it is outdated and no longer accurate","expected_skill":null}

@@ -1,0 +1,11 @@
+// Routing eval fixtures for skills/data-loss-gate. Each positive intent
+// includes at least one trigger string as substring.
+{"intent": "rm -rf the old imports directory to free up space", "expected_skill": "data-loss-gate"}
+{"intent": "bulk delete every page in the sources/acme-example folder, all 400 of them", "expected_skill": "data-loss-gate"}
+{"intent": "run a bulk forget over the stale facts from last quarter", "expected_skill": "data-loss-gate"}
+{"intent": "truncate the content_chunks table and re-embed from scratch", "expected_skill": "data-loss-gate"}
+{"intent": "cleanup: purge the soft-deleted pages and remove the source widget-co", "expected_skill": "data-loss-gate"}
+// Negative case: single considered forget of one fact — per-fact, idempotent, not bulk.
+{"intent": "forget fact 1234, it's outdated — I corrected it on the page already", "expected_skill": null, "ambiguous_with": []}
+// Ambiguous vs maintain: health/cleanup framing routes to maintain until a bulk delete is actually proposed.
+{"intent": "clean up the brain — find orphan pages and stale info", "expected_skill": "maintain", "ambiguous_with": ["data-loss-gate"]}

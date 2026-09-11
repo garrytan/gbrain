@@ -1,0 +1,13 @@
+// Routing eval fixtures for skills/fact-check. Each positive intent
+// includes at least one trigger string as substring.
+{"intent": "fact check this draft before I post it", "expected_skill": "fact-check"}
+{"intent": "verify the facts in this essay against live sources", "expected_skill": "fact-check"}
+{"intent": "is this accurate? check the claims one by one", "expected_skill": "fact-check"}
+{"intent": "this briefing came straight out of the brain — is this output hallucinating? re-derive every claim", "expected_skill": "fact-check"}
+{"intent": "run a source check on the numbers in this post", "expected_skill": "fact-check"}
+// Negative: citation FORMAT compliance, not claim truth.
+{"intent": "fix citations across these brain pages", "expected_skill": "citation-fixer"}
+// Negative: nothing verifiable to check.
+{"intent": "what's for breakfast", "expected_skill": null, "ambiguous_with": []}
+// Ambiguous vs academic-verify: a single research-claim depth trace.
+{"intent": "check this study — is the 40% reduction number real, did it ever replicate", "expected_skill": "academic-verify", "ambiguous_with": ["fact-check"]}

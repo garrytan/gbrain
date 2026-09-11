@@ -1,0 +1,13 @@
+// Routing eval fixtures for skills/correction-pipeline. Each positive intent
+// includes at least one trigger string as substring.
+{"intent": "That's wrong — alice-example never worked at widget-co. Find out where you got that and fix it", "expected_skill": "correction-pipeline"}
+{"intent": "I never said that about the acme-example deal. Where did you get that?", "expected_skill": "correction-pipeline"}
+{"intent": "You got that wrong: charlie-example is the CTO, not the CEO. Root-cause this error, don't just note it", "expected_skill": "correction-pipeline"}
+{"intent": "That's not true — correct that fact and check everywhere else it spread", "expected_skill": "correction-pipeline"}
+// Ambiguous vs maintain: a user-supplied correction about staleness routes here;
+// undirected "find stale pages" routes to maintain.
+{"intent": "That's wrong — alice-example left widget-co last year but you keep saying she works there. Fix it everywhere", "expected_skill": "correction-pipeline", "ambiguous_with": ["maintain"]}
+// Negative: citation FORMAT compliance, not claim truth.
+{"intent": "fix broken citations on the acme-example page", "expected_skill": "citation-fixer", "ambiguous_with": []}
+// Negative: code bug, not a brain factual error.
+{"intent": "the unit test is wrong, fix the assertion", "expected_skill": null, "ambiguous_with": []}
