@@ -18,6 +18,9 @@
  * refused; per-subcommand rows are a filed TODO, not this lane.
  */
 import { describe, test, expect } from 'bun:test';
+import ts from 'typescript';
+import { readFileSync, readdirSync, statSync } from 'fs';
+import { join } from 'path';
 import { segmentDispatchBlocks, buildFlagRegistry, isValueOnlyImport, stripComments } from '../scripts/generate-flag-registry.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { validateCommandFlags } from '../src/cli.ts';
@@ -176,6 +179,49 @@ describe('segmentDispatchBlocks — every if/case shape is a marker for its comm
     expect(out.split('\n').length).toBe(src.split('\n').length);
     // An unterminated block comment strips to the end without throwing.
     expect(stripComments('x /* never closed --c7')).toBe('x ');
+  });
+
+  test('stripComments never deletes a real flag from any scanned source file (TS-AST ground truth)', () => {
+    // stripComments does not model regex literals: a `//` at a code-classified
+    // position (`split(/\//)`, a `[//]` char class) deletes the rest of that
+    // line. Today no src file trips it, but a future one would regenerate
+    // IDENTICALLY on both sides of the freshness gate — the registry would
+    // silently lose a real flag and the validator would reject a working
+    // invocation. Ground truth here is the real TypeScript parser: every
+    // --flag inside a string/template literal must survive stripComments.
+    const FLAG_RE = /--[a-z0-9][a-z0-9-]*/g;
+    const flagsIn = (t: string) => new Set([...t.matchAll(FLAG_RE)].map(m => m[0]).filter(f => !f.endsWith('-')));
+    const astFlags = (src: string): Set<string> => {
+      const out = new Set<string>();
+      const sf = ts.createSourceFile('f.ts', src, ts.ScriptTarget.Latest, false);
+      const walk = (n: ts.Node) => {
+        if (ts.isStringLiteralLike(n) || ts.isTemplateLiteralToken(n)) {
+          for (const f of flagsIn(n.text)) out.add(f);
+        }
+        n.forEachChild(walk);
+      };
+      sf.forEachChild(walk);
+      return out;
+    };
+    const files: string[] = [];
+    const collect = (dir: string) => {
+      for (const e of readdirSync(dir)) {
+        const full = join(dir, e);
+        if (statSync(full).isDirectory()) collect(full);
+        else if (e.endsWith('.ts')) files.push(full);
+      }
+    };
+    collect(join(import.meta.dir, '../src'));
+    const losses: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, 'utf-8').replace(/\r\n/g, '\n');
+      if (!src.includes('--')) continue;
+      const kept = flagsIn(stripComments(src));
+      for (const flag of astFlags(src)) {
+        if (!kept.has(flag)) losses.push(`${f}: ${flag}`);
+      }
+    }
+    expect(losses).toEqual([]);
   });
 
   test('committed registry: storage does not carry the phantom --multimodal (reindex still does)', () => {

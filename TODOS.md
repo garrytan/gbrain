@@ -155,6 +155,18 @@
   at its module-size ratchet — pair the hook with a peel or a
   reviewer-visible `scripts/module-size-limits.tsv` edit in the same commit.
   **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `markdown-greenfield` ingestion source is unwired and its migration doc now fails pre-dispatch.**
+  **What:** `docs/migrations/v0.41.2-markdown-greenfield.md` documents
+  `gbrain capture --source markdown-greenfield --repo <dir>`, but
+  `MarkdownGreenfieldSource` (`src/core/ingestion/sources/markdown-greenfield.ts`)
+  is constructed nowhere in the tree, `capture.ts` parses neither `--repo`
+  nor `--dry-run`, and since the v0.50.1.0 comment-strip fix the `--repo`
+  flag (previously legal via comment bleed) fails validation with exit 1.
+  **How:** either wire the source into capture's dispatch (parsing `--repo`
+  /`--dry-run` for that lane) or retire the doc; do NOT re-allowlist the
+  flag via EXTRA_FLAGS — accept-and-ignore on a dead lane hides the
+  breakage (deliberate call, v0.50.1.0 adversarial review F2).
+  **Effort:** M. **Priority:** P3.
 - [ ] **P3 — per-subcommand flag-registry rows for `eval`.**
   **What:** split the generated `eval` row (a union of every eval
   subcommand's flags) into per-subcommand rows (`eval longmemeval`,

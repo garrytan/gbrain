@@ -50,8 +50,11 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   // (skills/schema-unify, docs/architecture/pack-upgrade-mechanism.md, the
   // onboard remediation string). jobs submit's parseFlag loop ignores it and
   // ops/jobs.ts auto-allows protected names for trusted local callers, so it
-  // only ever existed in prose — but rejecting it would break every
-  // documented invocation. Accepted-and-ignored is the sanctioned status quo.
+  // only ever existed in prose. Today `jobs submit` is validator-exempt
+  // (flagValidationExempt in src/cli.ts), so this entry is a forward-guard:
+  // it keeps the documented invocation legal if that exemption ever narrows,
+  // and keeps non-submit jobs subcommands at the accepted-and-ignored status
+  // quo instead of newly rejecting the flag the docs teach.
   jobs: ['--allow-protected'],
 };
 
