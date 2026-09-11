@@ -8,7 +8,7 @@
  *  - a busy lock (withLock throws) propagates so the caller reports skipped
  */
 
-import { describe, it, expect } from 'bun:test';
+import { afterAll, beforeAll, describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -16,6 +16,22 @@ import {
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
 import { isProtectedJobName, PROTECTED_JOB_NAMES } from '../src/core/minions/protected-names.ts';
+import { defaultTimeoutMsFor } from '../src/core/minions/handler-timeouts.ts';
+import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
+
+let engine: PGLiteEngine;
+
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+});
+
+afterAll(async () => {
+  await engine.disconnect();
+});
 
 function seq(values: Array<number | null>): () => Promise<number | null> {
   let i = 0;
@@ -226,6 +242,73 @@ describe('extract-atoms-drain Minion handler retries on provider_failure (issue 
     expect(handlerBlock).toContain(
       "{ phase: 'extract_atoms', status: 'skipped', deferred: true, reason: 'cycle_already_running' }",
     );
+  });
+
+  it('forwards the worker cancellation signal and absolute deadline', () => {
+    expect(handlerBlock).toContain('signal: job.signal');
+    expect(handlerBlock).toContain('deadlineAtMs: job.deadlineAtMs');
+  });
+});
+
+describe('extract-atoms-drain cancellation and timeout policy', () => {
+  const drainSrc = readFileSync(
+    join(import.meta.dir, '../src/core/cycle/extract-atoms-drain.ts'),
+    'utf8',
+  );
+  it('forwards drain cancellation into the extraction phase', () => {
+    expect(drainSrc).toContain('signal: opts.signal');
+    expect(drainSrc).toContain('deadlineAtMs: opts.deadlineAtMs');
+  });
+
+  it('passes the owning signal to gateway chat as abortSignal', async () => {
+    const { runPhaseExtractAtoms } = await import('../src/core/cycle/extract-atoms.ts');
+    const signal = new AbortController().signal;
+    let receivedSignal: AbortSignal | undefined;
+    const chatResult: ChatResult = {
+      text: '[]',
+      blocks: [{ type: 'text', text: '[]' }],
+      stopReason: 'end',
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:model',
+      providerId: 'test',
+    };
+    await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      signal,
+      _transcripts: [{ filePath: '/signal.txt', content: 'content', contentHash: 'signal1234567890' }],
+      _pages: [],
+      _chat: async (opts: ChatOpts) => {
+        receivedSignal = opts.abortSignal;
+        return chatResult;
+      },
+    });
+    expect(receivedSignal).toBe(signal);
+  });
+
+  it('a pre-aborted signal stops before any chat call', async () => {
+    const { runPhaseExtractAtoms } = await import('../src/core/cycle/extract-atoms.ts');
+    let chatCalls = 0;
+    const controller = new AbortController();
+    controller.abort(new Error('worker timeout'));
+    await expect(runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      signal: controller.signal,
+      deadlineAtMs: Date.now() - 1,
+      _transcripts: [{ filePath: '/timeout.txt', content: 'content', contentHash: 'timeout1234567890' }],
+      _pages: [],
+      _chat: async () => {
+        chatCalls++;
+        throw new Error('chat must not run');
+      },
+    })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(chatCalls).toBe(0);
+  });
+
+  it('uses a drain handler anchor longer than the 600s dispatch conflict', () => {
+    const drainTimeout = defaultTimeoutMsFor('extract-atoms-drain');
+    expect(drainTimeout).not.toBeNull();
+    expect(drainTimeout!).toBeGreaterThan(600_000);
+    expect(resolveAutopilotDispatchTimeoutMs(600, false, 'extract-atoms-drain')).toBe(drainTimeout!);
   });
 });
 

@@ -322,6 +322,10 @@ export interface DrainForSourceOpts {
   windowSeconds: number;
   /** Brain checkout dir, threaded to `runPhaseExtractAtoms` (optional — DB-only ok). */
   brainDir?: string;
+  /** Cooperative cancellation from the owning Minion job. */
+  signal?: AbortSignal;
+  /** Absolute owning-job deadline. */
+  deadlineAtMs?: number | null;
   /** Hard batch cap (belt-and-suspenders). */
   maxBatches?: number;
   /** Optional per-batch progress sink (stderr line in dream; job progress in the handler). */
@@ -347,6 +351,8 @@ export async function runExtractAtomsDrainForSource(
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
+          signal: opts.signal,
+          deadlineAtMs: opts.deadlineAtMs,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
