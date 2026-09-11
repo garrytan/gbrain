@@ -639,6 +639,97 @@ export async function checkFactsEmbeddingWidthConsistency(engine: BrainEngine): 
   }
 }
 
+/**
+ * query_cache.embedding column drift check — same drift class as
+ * `facts_embedding_width_consistency`, different symptom. The semantic
+ * query cache swallows write failures on the hot path by design, so a
+ * width mismatch between `query_cache.embedding` and the gateway's
+ * embedding_dimensions never throws: it presents as a permanent 0% cache
+ * hit rate. Surfaces the paste-ready TRUNCATE + ALTER recipe from
+ * `buildQueryCacheAlterRecipe` (the cache is disposable, so the repair
+ * clears incompatible vectors rather than migrating them).
+ */
+export async function checkQueryCacheEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
+  if (engine.kind !== 'postgres') {
+    return {
+      name: 'query_cache_embedding_width_consistency',
+      status: 'ok',
+      message: 'Skipped on PGLite (schema and gateway dimensions initialize together).',
+    };
+  }
+
+  try {
+    const {
+      readQueryCacheEmbeddingDim,
+      buildQueryCacheAlterRecipe,
+    } = await import('../../../core/embedding-dim-check.ts');
+
+    const col = await readQueryCacheEmbeddingDim(engine);
+    if (!col.exists) {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'ok',
+        message: 'query_cache.embedding column not present (migration pending).',
+      };
+    }
+    if (col.dims === null || col.columnType === null) {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'warn',
+        message: 'query_cache.embedding column type is unrecognized (not vector or halfvec). Schema may be corrupt.',
+      };
+    }
+
+    let configDim: number;
+    let resolvedModel = 'unknown';
+    try {
+      const { getEmbeddingDimensions, getEmbeddingModel } = await import('../../../core/ai/gateway.ts');
+      configDim = getEmbeddingDimensions();
+      resolvedModel = getEmbeddingModel();
+    } catch {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'ok',
+        message: 'gateway not configured — query_cache.embedding width check skipped.',
+      };
+    }
+    if (!Number.isFinite(configDim) || configDim <= 0) {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'warn',
+        message: `gateway returned non-positive embedding dimension "${configDim}".`,
+      };
+    }
+
+    if (col.dims === configDim) {
+      return {
+        name: 'query_cache_embedding_width_consistency',
+        status: 'ok',
+        message:
+          `query_cache.embedding is ${col.columnType}(${col.dims}) — matches gateway embedding_dimensions ` +
+          `(${resolvedModel}).`,
+      };
+    }
+
+    return {
+      name: 'query_cache_embedding_width_consistency',
+      status: 'warn',
+      message:
+        `query_cache.embedding is ${col.columnType}(${col.dims}) but gateway resolved ` +
+        `embedding_dimensions = ${configDim} (${resolvedModel}). Cache writes fail silently, ` +
+        `so the semantic query cache reports a permanent 0% hit rate.\n\n` +
+        buildQueryCacheAlterRecipe(configDim, col.columnType),
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'query_cache_embedding_width_consistency',
+      status: 'warn',
+      message: `Could not check query_cache.embedding width: ${msg}`,
+    };
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // #4222 junk_entity_hubs — near-empty entity pages with huge edge counts

@@ -99,6 +99,7 @@ export {
   checkProviderSunset,
   checkEmbeddingWidthConsistency,
   checkFactsEmbeddingWidthConsistency,
+  checkQueryCacheEmbeddingWidthConsistency,
   checkJunkEntityHubs,
   JUNK_HUB_EDGE_THRESHOLD,
   JUNK_HUB_MAX_CHUNKS,
@@ -190,6 +191,7 @@ import {
   checkProviderSunset,
   checkEmbeddingWidthConsistency,
   checkFactsEmbeddingWidthConsistency,
+  checkQueryCacheEmbeddingWidthConsistency,
   checkJunkEntityHubs,
 } from './doctor/checks/graph-embedding.ts';
 import {
@@ -4069,6 +4071,10 @@ export async function buildChecks(
     // parity check. Same drift class as content_chunks, separate column.
     progress.heartbeat('facts_embedding_width_consistency');
     checks.push(await checkFactsEmbeddingWidthConsistency(engine));
+    // query_cache.embedding drift — the cache swallows write failures, so a
+    // width mismatch reads as a permanent 0% hit rate instead of an error.
+    progress.heartbeat('query_cache_embedding_width_consistency');
+    checks.push(await checkQueryCacheEmbeddingWidthConsistency(engine));
 
     // v0.37.7.0 doctor checks (#1167, #1166, #1226) — fast-mode skipped
     // since these touch DB queries with cost on large brains.

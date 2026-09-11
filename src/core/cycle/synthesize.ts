@@ -52,8 +52,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
-import { resolveChatContextTokens } from '../ai/model-resolver.ts';
-import { normalizeModelId, splitProviderModelId } from '../model-id.ts';
+import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import { parseLlmJson } from '../llm-json.ts';
@@ -85,6 +84,17 @@ import { PAGE_SLUG_SEG } from '../cjk.ts';
 import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
 import { passesTriageGate, rescueConfigOf, DEFAULT_RESCUE_FLOOR, DEFAULT_RESCUE_MIN_SEGMENTS, DEFAULT_RESCUE_CONTENT_TYPES, DEFAULT_RESCUE_CONFIG, type RescueConfig, type RescueVerdictLike } from './triage-rescue.ts';
+import {
+  MIN_PROMPT_TOKENS, computeChunkCharBudget, getNumberConfig,
+  DREAM_ALLOWED_TOOLS, DREAM_SYSTEM_PROMPT, prepareTranscriptForSynthesis, inferSynthesisDepth,
+  classifySynthesisDepths, loadSynthesisDepthBudgets, resolveDepthBudget,
+  synthesisDepthPromptBlock, pageCapPolicyRules, countDeepTranscripts,
+  buildSynthesisDepthTelemetry, buildPromptVolumeTelemetry,
+  type SynthesisDepth, type SynthesisDepthBudgets,
+} from './synthesize-budget.ts';
+// Re-exports: the chunk/depth budget helpers were peeled to synthesize-budget.ts;
+// dream-retriage.ts and the tests keep importing them from here.
+export { CHARS_PER_TOKEN, computeChunkCharBudget, prepareTranscriptForSynthesis, inferSynthesisDepth, triageDepthHint, type SynthesisDepth } from './synthesize-budget.ts';
 
 // Slug grammar from validatePageSlug — shared via PAGE_SLUG_SEG (#738).
 // Used for the orchestrator-written summary index slug. `u` flag required
@@ -93,16 +103,9 @@ const SUMMARY_SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, '
 
 // ── Model context budget (D1, D5, D7, D9) ─────────────────────────────
 
-/** Token-to-char ratio. 3.5 matches PR #748; conservative for English text. */
-export const CHARS_PER_TOKEN = 3.5;
-/** Reserve 10% of context window for system prompt + tool defs + output. */
-const HEADROOM_RATIO = 0.9;
-/** Floor on user-overridable max_prompt_tokens (matches PR #748 minimum). */
-const MIN_PROMPT_TOKENS = 100_000;
+// CHARS_PER_TOKEN / MIN_PROMPT_TOKENS / computeChunkCharBudget live in synthesize-budget.ts.
 /** Default chunk-count cap; operator-configurable via dream.synthesize.max_chunks_per_transcript. */
 const DEFAULT_MAX_CHUNKS = 24;
-/** Conservative default budget when model is unknown (200K × HEADROOM_RATIO). */
-const UNKNOWN_MODEL_BUDGET_TOKENS = 180_000;
 const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS = 35 * 60 * 1000;
 
@@ -142,60 +145,6 @@ const DEFAULT_TRIAGE_CONCURRENCY = 4;
  * page counts drop; `details.synthesis.avg_turns` telemetry shows cap pressure.
  */
 const DEFAULT_MAX_TURNS = 16;
-
-/**
- * Compute per-chunk character budget for the resolved model + config override.
- *
- * Resolution:
- *   - configMaxPromptTokens (already floored at MIN_PROMPT_TOKENS) wins when set.
- *   - Else the official recipe/model resolver's context declaration × HEADROOM_RATIO.
- *   - Else (unqualified custom id / unknown provider / undeclared recipe) UNKNOWN_MODEL_BUDGET_TOKENS, with
- *     a once-per-process stderr warning.
- *
- * D7 scope: this bounds the INITIAL prompt size only. Tool-loop turn-N
- * accumulation is out of scope for v0.30.2 (terminal-error classification
- * catches turn-N blowups; per-turn budget guard is a v0.31+ follow-up).
- */
-export function computeChunkCharBudget(
-  model: string,
-  configMaxPromptTokens: number | null,
-): number {
-  if (configMaxPromptTokens !== null) {
-    return Math.floor(configMaxPromptTokens * CHARS_PER_TOKEN);
-  }
-  // Bare Claude ids are the one legacy shape resolveModel may still return;
-  // all other bare/custom ids remain unknown rather than guessing a provider.
-  const split = splitProviderModelId(model);
-  const qualified = split.provider
-    ? model
-    : model.startsWith('claude-')
-      ? normalizeModelId(model)
-      : null;
-  let ctx: number | undefined;
-  if (qualified) {
-    try {
-      ctx = resolveChatContextTokens(qualified);
-    } catch (err) {
-      if (!(err instanceof AIConfigError)) throw err;
-    }
-  }
-  if (ctx === undefined) {
-    warnUnknownModelOnce(model);
-    return Math.floor(UNKNOWN_MODEL_BUDGET_TOKENS * CHARS_PER_TOKEN);
-  }
-  return Math.floor(ctx * HEADROOM_RATIO * CHARS_PER_TOKEN);
-}
-
-const _unknownModelWarned = new Set<string>();
-function warnUnknownModelOnce(model: string): void {
-  if (_unknownModelWarned.has(model)) return;
-  _unknownModelWarned.add(model);
-  process.stderr.write(
-    `[dream] model "${model}" has no declared chat context window; ` +
-    `using ${UNKNOWN_MODEL_BUDGET_TOKENS}-token fallback budget. ` +
-    `Set dream.synthesize.max_prompt_tokens to override.\n`,
-  );
-}
 
 // ── Hash-deterministic transcript chunker (D9) ────────────────────────
 
@@ -511,6 +460,8 @@ async function runPhaseSynthesizeInner(
     // ONE decision for the fan-out, telemetry, dry-run, and retriage).
     const reportByPath = new Map(pass.reports.map(r => [r.filePath, r]));
     const worthProcessing = transcripts.filter(t => reportByPath.get(t.filePath)?.worth === true);
+    // Depth tier per passing transcript (drives the per-child turn/token/page budgets).
+    const depthByPath = classifySynthesisDepths(worthProcessing, reportByPath, pass.byPath);
 
     // Count semantics (outside-voice CX7): below_threshold counts ONLY files
     // with a real score under the gate; degraded = no usable score and not
@@ -632,6 +583,10 @@ async function runPhaseSynthesizeInner(
     const jobRawSource = new Map<number, string>();
     /** Skip reasons for the cycle report (D5 cap hits, D8 legacy-key skips). */
     const skipReports: Array<{ filePath: string; reason: string }> = [];
+    // Prompt-volume telemetry. Character counts are provider-neutral and stay
+    // trustworthy even when a CLI adapter reports placeholder token usage.
+    let sourceCharsSubmitted = 0;
+    let preparedCharsSubmitted = 0;
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
     const successfulLegacyKeys = await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth:');
@@ -720,7 +675,14 @@ async function runPhaseSynthesizeInner(
         continue;
       }
 
-      const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
+      // Granola-style meeting files carry a curated summary + commitments
+      // before the verbatim `## Transcript` appendix; synthesize reasons over
+      // that packet (prepareTranscriptForSynthesis) instead of paying for the
+      // raw appendix. The RAW contentHash stays the idempotency identity.
+      const preparedContent = prepareTranscriptForSynthesis(t);
+      const chunks = splitTranscriptByBudget(preparedContent, t.contentHash, maxCharsPerChunk);
+      const depth = depthByPath.get(t.filePath) ?? inferSynthesisDepth(t, []);
+      const { maxTurns, maxTokens, maxPages } = resolveDepthBudget(config, depth);
 
       // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
       // poison-pill class — next cycle re-attempts under whatever budget
@@ -774,6 +736,9 @@ async function runPhaseSynthesizeInner(
         }
       }
 
+      sourceCharsSubmitted += t.content.length;
+      preparedCharsSubmitted += preparedContent.length;
+
       const isChunked = chunks.length > 1;
       // queue.add subagent validator (classifyCapabilities → resolveRecipe)
       // requires `provider:model`. resolveModel can return a bare id when
@@ -813,9 +778,18 @@ async function runPhaseSynthesizeInner(
             config.reflectionsPrefix,
             config.originalsPrefix,
             config.mode,
+            // Depth tier + page cap (see inferSynthesisDepth / SynthConfig).
+            depth,
+            maxPages,
           ),
           model: subagentModel,
-          max_turns: config.maxTurns,
+          max_turns: maxTurns,
+          // Opt-in per-depth output cap (dream.synthesize.{standard,deep}_max_tokens).
+          // Unset → the handler's model-aware default (#2778/#4087), which the
+          // oneshot JSON response needs in full.
+          ...(maxTokens !== null ? { max_tokens: maxTokens } : {}),
+          allowed_tools: [...DREAM_ALLOWED_TOOLS],
+          system: DREAM_SYSTEM_PROMPT,
           allowed_slug_prefixes: allowedSlugPrefixes,
           // #4216: execution mode + the structural slug-suffix contract
           // (CDX-9) + #4217 write requirement — a synthesis child whose every
@@ -1250,6 +1224,9 @@ async function runPhaseSynthesizeInner(
     const turnsSamples = childOutcomes.filter(
       (o): o is { jobId: number; status: string; turns: number } => typeof o.turns === 'number',
     );
+    const deepTranscripts = countDeepTranscripts(
+      worthProcessing, depthByPath, new Set(skipReports.map(s => s.filePath)), new Set(budgetExhaustedDeferrals), basename,
+    );
     return ok(`${submittedTranscripts} transcript(s) synthesized in ${(ms / 1000).toFixed(1)}s${deferralSuffix}`, {
       transcripts_discovered: transcripts.length,
       transcripts_processed: submittedTranscripts,
@@ -1259,6 +1236,8 @@ async function runPhaseSynthesizeInner(
       // synthesize wrote in this cycle.
       written_slugs: writtenSlugs,
       reverse_write_count: reverseWriteCount,
+      synthesis_depth: buildSynthesisDepthTelemetry(submittedTranscripts, deepTranscripts),
+      prompt_volume: buildPromptVolumeTelemetry(sourceCharsSubmitted, preparedCharsSubmitted),
       child_outcomes: childOutcomes,
       // Children submitted (one per chunk for chunked transcripts; one per
       // transcript for single-chunk). Differs from transcripts_processed
@@ -1364,7 +1343,8 @@ export interface SynthTriageConfig {
   rescueContentTypes: readonly string[];
 }
 
-export interface SynthConfig {
+/** Depth-tiered child budgets ride in via `SynthesisDepthBudgets` (synthesize-budget.ts). */
+export interface SynthConfig extends SynthesisDepthBudgets {
   enabled: boolean;
   corpusDir: string | null;
   meetingTranscriptsDir: string | null;
@@ -1589,6 +1569,8 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
   else if (modeRaw && modeRaw !== 'oneshot') {
     process.stderr.write(`[dream] dream.synthesize.mode "${modeRaw}" is not 'oneshot' | 'agentic'; using 'oneshot'.\n`);
   }
+  // Depth-tiered budgets (see SynthesisDepthBudgets): turn defaults inherit maxTurns.
+  const depthBudgets = await loadSynthesisDepthBudgets(engine, maxTurns);
 
   let excludePatterns: string[] = [...DEFAULT_EXCLUDE_PATTERNS];
   if (excludeStr) {
@@ -1651,6 +1633,7 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     quoteVerify,
     linkManifest,
     mode: synthMode,
+    ...depthBudgets,
   };
 }
 
@@ -1672,17 +1655,6 @@ async function countRecentSynthSubmissions(engine: BrainEngine, sourceId: string
     [sourceId],
   );
   return rows[0]?.n ?? 0;
-}
-
-async function getNumberConfig(
-  engine: BrainEngine,
-  key: string,
-  fallback: number,
-): Promise<number> {
-  const raw = await engine.getConfig(key);
-  if (raw === undefined || raw === null) return fallback;
-  const value = Number(raw);
-  return Number.isNaN(value) ? fallback : value;
 }
 
 async function checkCooldown(
@@ -2632,6 +2604,9 @@ function buildSynthesisPrompt(
   reflectionsPrefix = `${outputRoot}/personal/reflections`,
   originalsPrefix = `${outputRoot}/originals/ideas`,
   mode: 'agentic' | 'oneshot' = 'agentic',
+  // Depth tier + page cap (trailing so existing positional callers are byte-identical).
+  depth: SynthesisDepth = 'standard',
+  maxPages = 2,
 ): string {
   // #4348: UTC projection retained here on purpose — this is a slug-name
   // hint for undated sources, not calendar provenance.
@@ -2672,6 +2647,8 @@ CONTEXT
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
 - Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}${linkManifestBlock}${allowedPathsBlock}
 
+${synthesisDepthPromptBlock(depth)}
+
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible EXACTLY from the transcript below — if you cannot reproduce a span exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase memorable phrasings you can quote exactly.
 2. ${crossRefRule}
@@ -2680,6 +2657,7 @@ OUTPUT POLICY (ALL of these are required)
 5. Self-contained opening: begin every new page's body with a 2-3 sentence summary that a reader unfamiliar with this transcript could understand on its own, before any quotes or detail. Do not assume the reader has the source conversation for context.
 6. Preserve concrete facts: carry the specific numbers, dates, dollar amounts, names, and who-decided-what OF the salient content you write about, exactly as the transcript states them. Do not add routine logistics for their own sake.
 7. Ground every claim in the transcript. Attribute speculation as speculation ("the user wondered whether..."), and never state a completion state or outcome the transcript does not show.
+${pageCapPolicyRules(maxPages, mode)}
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
@@ -2692,13 +2670,13 @@ C. People mentions: ${mode === 'agentic'
     ? (linkManifestBlock ? 'check LINK CANDIDATES (and the search tool, when available) first' : 'search first, when a search tool is available')
     : (linkManifestBlock ? 'check LINK CANDIDATES first' : 'do not create or modify person pages')}; never write over an existing person page (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 
-D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), return without writing anything.
+D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), ${mode === 'agentic' ? 'call no write tool and return exactly `NO_WRITE`' : 'return without writing anything'}.
 
 TRANSCRIPT (${transcriptHeader})
 ---
 ${chunkText}
 ---${mode === 'agentic'
-    ? '\n\nWhen done, briefly list the slugs you wrote in your final message so the orchestrator can audit.'
+    ? '\n\nWhen done, list only the slugs you wrote in your final message (at most 100 tokens) so the orchestrator can audit; do not repeat page content.'
     : ''}`;
 }
 

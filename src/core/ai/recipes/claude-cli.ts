@@ -72,6 +72,10 @@ export const claudeCli: Recipe = {
     },
     chat: {
       models: [
+        // Virtual id: omit --model and let Claude Code use the model selected
+        // in the user's own settings. This keeps gbrain on the subscription
+        // route without pinning a separate API model.
+        'default',
         'claude-fable-5',
         'claude-fable-5-1',
         'claude-opus-5',
@@ -110,6 +114,7 @@ export const claudeCli: Recipe = {
   // portable: switching `anthropic:claude-sonnet-4-6` to `claude-cli:claude-sonnet-4-6`
   // is a one-token edit. Reverse aliases rewrite legacy IDs back to canonical.
   aliases: {
+    selected: 'default',
     'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
     'claude-sonnet-4-6-20250929': 'claude-sonnet-4-6',
     'sonnet': 'claude-sonnet-4-6',

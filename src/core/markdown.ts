@@ -277,6 +277,33 @@ export function parseMarkdown(
     }
   }
 
+  // Durable repair: when a frontmatter block is present but gray-matter produced
+  // no data (e.g. an LLM-written `title:` with unescaped quotes or a bare colon),
+  // re-quote the offending free-text scalar(s) and re-parse, instead of silently
+  // dropping ALL frontmatter (which degrades type->concept, titlecases the slug,
+  // and strands the raw frontmatter in the body). Only fires on the already-
+  // broken path, so well-formed pages are untouched.
+  // gray-matter fails two ways on an under-quoted scalar: it either returns no
+  // data (whole block stranded in body) or silently mis-parses into garbage keys
+  // (a key like `nested") title`). Detect both, then repair.
+  const needsRepair =
+    !parsed ||
+    Object.keys(parsed.data ?? {}).length === 0 ||
+    hasMalformedKeys(parsed.data ?? {});
+  if (needsRepair && hasFrontmatterBlock(content)) {
+    const repaired = repairFrontmatterScalars(content);
+    if (repaired && repaired !== content) {
+      try {
+        const reparsed = matter(repaired);
+        const data = reparsed?.data ?? {};
+        if (Object.keys(data).length > 0 && !hasMalformedKeys(data)) {
+          parsed = reparsed;
+          yamlParseError = null;
+        }
+      } catch { /* repair didn't help; keep the original fallback below */ }
+    }
+  }
+
   // When YAML parsing failed (rare; gray-matter is forgiving), fall back to
   // empty frontmatter + raw content as the body so non-validate callers still
   // get a usable shape.
@@ -331,6 +358,89 @@ export function parseMarkdown(
   };
   if (opts?.validate) result.errors = errors;
   return result;
+}
+
+/** Matches a leading delimited YAML frontmatter block; capture group 1 is its body. */
+const FRONTMATTER_BLOCK_RE = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+
+/** Matches any top-level `key: value` line carrying a non-empty scalar value. */
+const FM_KEY_LINE_RE = /^([A-Za-z0-9_.-]+):[ \t]+(.*\S)[ \t]*$/;
+
+/**
+ * A scalar needs re-quoting only when it would actually break YAML: it carries
+ * an unescaped double-quote, or a colon-space that reads as mapping ambiguity.
+ *
+ * This gate is what makes it safe to consider EVERY key rather than a fixed
+ * title/name/description/summary list. Without it, matching any key would
+ * rewrite well-formed values into strings (`federated: true` becoming
+ * `federated: "true"`). Already-clean quoted scalars, block scalars (`|`/`>`)
+ * and flow collections (`[`/`{`) are left alone for the same reason.
+ */
+function scalarNeedsRepair(val: string): boolean {
+  if (val.startsWith('|') || val.startsWith('>') || val.startsWith('[') || val.startsWith('{')) return false;
+  if (val.startsWith("'") && val.endsWith("'") && val.length >= 2 && !val.slice(1, -1).includes("'")) return false;
+  if (val.startsWith('"') && val.endsWith('"') && val.length >= 2 && !val.slice(1, -1).includes('"')) return false;
+  return val.includes('"') || /:\s/.test(val);
+}
+
+/** True when content opens with a delimited YAML frontmatter block. */
+function hasFrontmatterBlock(content: string): boolean {
+  return FRONTMATTER_BLOCK_RE.test(content);
+}
+
+/**
+ * A real frontmatter key is a simple identifier. A key carrying quotes, parens,
+ * or spaces is the signature of gray-matter mis-parsing an under-quoted scalar
+ * (e.g. `title: "a ("b") c"` splits into a bogus `b") c` key). Used to detect
+ * the "parsed but garbage" failure mode that empty-data checks miss.
+ */
+function hasMalformedKeys(data: Record<string, unknown>): boolean {
+  return Object.keys(data).some((k) => !/^[A-Za-z0-9_.-]+$/.test(k));
+}
+
+/**
+ * Best-effort repair of a frontmatter block whose YAML failed to parse because
+ * some scalar value contains characters that need quoting: unescaped
+ * double-quotes (e.g. `title: "a ("b") c"`, `context: "x" (y)`) or a bare colon
+ * (`title: a: b`). Re-emits the offending values as properly escaped
+ * double-quoted YAML scalars and leaves every other line untouched. Returns the
+ * full repaired content, or null if there's nothing to repair.
+ *
+ * Applies to any top-level key, not just title/name/description/summary, because
+ * LLM-written pages break on other keys just as often. Safety comes from
+ * scalarNeedsRepair() rather than from a key allow-list: block scalars, flow
+ * collections and already-clean quoted values are skipped, and the caller only
+ * invokes this after the normal parse already failed, so a no-op repair cannot
+ * regress a good page.
+ */
+function repairFrontmatterScalars(content: string): string | null {
+  const m = FRONTMATTER_BLOCK_RE.exec(content);
+  if (!m) return null;
+  const rest = content.slice(m[0].length);
+  let changed = false;
+  const lines = m[1].split(/\r?\n/).map((line) => {
+    const mm = FM_KEY_LINE_RE.exec(line);
+    if (!mm) return line;
+    const key = mm[1];
+    let val = mm[2];
+    if (!scalarNeedsRepair(val)) return line;
+    // Strip one surrounding matching quote pair, then treat the inner text as
+    // the literal intended value (this rescues `"... ("x") ..."`).
+    if (val.length >= 2) {
+      const first = val[0];
+      const last = val[val.length - 1];
+      if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+        val = val.slice(1, -1);
+        if (first === "'") val = val.replace(/''/g, "'"); // YAML single-quote unescape
+      }
+    }
+    const escaped = val.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const rebuilt = `${key}: "${escaped}"`;
+    if (rebuilt !== line) changed = true;
+    return rebuilt;
+  });
+  if (!changed) return null;
+  return `---\n${lines.join('\n')}\n---\n${rest}`;
 }
 
 /**
