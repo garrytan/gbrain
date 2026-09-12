@@ -207,10 +207,12 @@ function expandTilde(p: string): string {
 function comparisonForms(p: string): string[] {
   const lexical = normalizePathForCompare(p);
   const forms = [lexical];
-  // Win32-absolute spellings are foreign-host paths on a POSIX evaluator (and
-  // vice versa): the ancestor walk would degrade to cwd and fabricate a bogus
-  // second form. Lexical only for those.
-  if (/^[A-Za-z]:[\\/]/.test(p)) return forms;
+  // Win32-absolute spellings are foreign-host paths ONLY on a POSIX
+  // evaluator, where the ancestor walk would degrade to cwd and fabricate a
+  // bogus second form — lexical only there. On a native Windows host a
+  // drive-qualified path IS the local path and must keep the realpath assist
+  // (junction aliases of the workspace would otherwise escape containment).
+  if (process.platform !== 'win32' && /^[A-Za-z]:[\\/]/.test(p)) return forms;
   const real = realpathNearest(resolve(p));
   if (real !== null) {
     const realForm = normalizePathForCompare(real);
