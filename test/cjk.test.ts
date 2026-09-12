@@ -9,6 +9,7 @@ import {
   CJK_CLAUSE_DELIMITERS,
   escapeLikePattern,
   splitCJKQueryTerms,
+  koreanTermVariants,
 } from '../src/core/cjk.ts';
 
 describe('hasCJK', () => {
@@ -169,3 +170,40 @@ describe('splitCJKQueryTerms', () => {
   });
 });
 
+
+describe('koreanTermVariants', () => {
+  test('strips a particle and offers the stem alongside the original', () => {
+    expect(koreanTermVariants('혈당에서')).toEqual(['혈당에서', '혈당']);
+    expect(koreanTermVariants('검진을')).toEqual(['검진을', '검진']);
+    expect(koreanTermVariants('수치는')).toEqual(['수치는', '수치']);
+    expect(koreanTermVariants('병원으로')).toEqual(['병원으로', '병원']);
+  });
+
+  test('prefers the LONGEST particle — a shorter one would over-strip', () => {
+    // '에서' must win over '서'/'에'; '으로서' over '로서'/'로'.
+    expect(koreanTermVariants('진료실에서')).toEqual(['진료실에서', '진료실']);
+    expect(koreanTermVariants('결과에서는')).toEqual(['결과에서는', '결과']);
+  });
+
+  test('refuses a 1-syllable stem: real words that merely END in a particle', () => {
+    // Stripping would leave 회/결/도 — near-universal substrings.
+    expect(koreanTermVariants('회의')).toEqual(['회의']);
+    expect(koreanTermVariants('결과')).toEqual(['결과']);
+    expect(koreanTermVariants('도로')).toEqual(['도로']);
+  });
+
+  test('leaves non-Korean terms untouched', () => {
+    expect(koreanTermVariants('LDL')).toEqual(['LDL']);
+    expect(koreanTermVariants('mg/dL')).toEqual(['mg/dL']);
+    expect(koreanTermVariants('2019-11-20')).toEqual(['2019-11-20']);
+  });
+
+  test('handles mixed ASCII+Hangul tokens (the acronym+particle case)', () => {
+    expect(koreanTermVariants('LDL수치가')).toEqual(['LDL수치가', 'LDL수치']);
+  });
+
+  test('a bare particle is never stripped to nothing', () => {
+    expect(koreanTermVariants('는')).toEqual(['는']);
+    expect(koreanTermVariants('에서')).toEqual(['에서']);
+  });
+});

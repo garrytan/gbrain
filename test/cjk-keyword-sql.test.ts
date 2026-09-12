@@ -4,7 +4,7 @@
  * DATABASE_URL-gated block in test/e2e/engine-parity.test.ts.
  */
 import { describe, test, expect } from 'bun:test';
-import { buildCJKKeywordSql, type CjkKeywordCtx } from '../src/core/search/cjk-keyword-sql.ts';
+import { buildCJKKeywordSql, buildCJKCandidateSql, type CjkKeywordCtx } from '../src/core/search/cjk-keyword-sql.ts';
 import { searchKeywordCJK, type ScopedReadRunner } from '../src/core/engine-sql/cjk-search.ts';
 import { scopedRead } from '../src/core/engine-sql/brands.ts';
 import type { SqlExecutor } from '../src/core/engine-sql/executor.ts';
@@ -164,5 +164,57 @@ describe('engine-sql searchKeywordCJK executor (#3986)', () => {
     const results = await searchKeywordCJK(runnerScope(async () => { called = true; return []; }), '', ctx());
     expect(results).toEqual([]);
     expect(called).toBe(false);
+  });
+});
+
+describe('buildCJKKeywordSql — Korean particle variants', () => {
+  // These assert on the BUILDER's output, not on a new export, so they still
+  // EXECUTE (and fail) against the pre-fix source — the discrimination-test
+  // contract in CONTRIBUTING.md. A test that only imported the new helper
+  // would crash on import instead, which is the vacuous-failure class.
+
+  test('an inflected term binds its stem as an additional LIKE param', () => {
+    const { params } = buildCJKKeywordSql('혈당에서', ctx())!;
+    expect(params).toContain('%혈당에서%'); // original is never dropped
+    expect(params).toContain('%혈당%');     // stem is offered alongside it
+  });
+
+  test('variants are ORed within a term, ANDed across terms', () => {
+    const { sql } = buildCJKKeywordSql('혈당이 검진을', ctx())!;
+    const where = sql.match(/\(cc\.chunk_text (?:I?LIKE)[^\n]*/)![0];
+    // Two parenthesised groups joined by AND, each holding an OR pair. Hangul
+    // is caseless, so the builder emits LIKE rather than ILIKE.
+    expect(where).toMatch(/\(cc\.chunk_text I?LIKE \$\d+ ESCAPE '\\' OR cc\.chunk_text I?LIKE \$\d+ ESCAPE '\\'\) AND \(/);
+  });
+
+  test('term-frequency scoring binds ONE representative per term, not both variants', () => {
+    // Counting the inflected form AND its stem would double-count the same
+    // occurrence and inflate inflected queries against uninflected ones. The
+    // non-LIKE string params are exactly [<term-frequency term>, <raw query>];
+    // the stem takes the scoring slot, and the inflected form appears only as
+    // the pre-existing raw-query param (contiguous-match bonus + tiebreaker).
+    const { params } = buildCJKKeywordSql('혈당에서', ctx())!;
+    const raw = params.filter(p => typeof p === 'string' && !p.startsWith('%'));
+    expect(raw).toEqual(['혈당', '혈당에서']);
+  });
+
+  test('a term with no strippable particle binds exactly one LIKE param', () => {
+    const like = (q: string) =>
+      buildCJKKeywordSql(q, ctx())!.params.filter(p => typeof p === 'string' && p.startsWith('%'));
+    expect(like('회의')).toEqual(['%회의%']);   // 1-syllable stem refused
+    expect(like('LDL')).toEqual(['%LDL%']);    // non-Korean untouched
+  });
+
+  test("the 'any' fallback counts an inflected term once, as one OR group", () => {
+    const { sql } = buildCJKKeywordSql('혈당에서 검진을', ctx(), { match: 'any' })!;
+    // Each term's variants are grouped, so a chunk matching both the original
+    // and the stem still contributes a single matched-term point.
+    expect(sql).toMatch(/\(\(cc\.chunk_text I?LIKE \$\d+ ESCAPE '\\' OR cc\.chunk_text I?LIKE \$\d+ ESCAPE '\\'\)\)::int/);
+  });
+
+  test('the capped candidate stage expands particles too', () => {
+    const { params } = buildCJKCandidateSql('혈당에서', ctx(), { match: 'all', cap: 50 })!;
+    expect(params).toContain('%혈당에서%');
+    expect(params).toContain('%혈당%');
   });
 });

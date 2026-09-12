@@ -22,7 +22,7 @@
  */
 import type { SearchOpts } from '../types.ts';
 import { buildBestPerPagePoolCte } from './sql-ranking.ts';
-import { escapeLikePattern, splitCJKQueryTerms } from '../cjk.ts';
+import { escapeLikePattern, koreanTermVariants, splitCJKQueryTerms } from '../cjk.ts';
 
 /** Query-shape context shared by both engines' CJK fallback call sites. */
 export interface CjkKeywordCtx {
@@ -67,19 +67,22 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
   if (terms.length === 0) return null;
   const any = variant.match === 'any' && terms.length > 1;
 
+  // Korean-particle expansion: each term becomes [original] or
+  // [original, stem]. Variants are ORed within a term and ANDed across
+  // terms (see likeClauses), so a stem can only widen recall.
+  const variantGroups = terms.map(t => koreanTermVariants(t));
+
   const params: unknown[] = [];
 
-  // LIKE parameters: $1 .. $N (each escaped and wrapped with %)
-  const likeParamIndices: number[] = [];
-  for (const term of terms) {
-    params.push(`%${escapeLikePattern(term)}%`);
-    likeParamIndices.push(params.length);
-  }
+  // LIKE parameters, grouped per term (each escaped and wrapped with %).
+  const likeGroups = bindLikeGroups(variantGroups, params);
 
-  // Raw term parameters for term-frequency scoring: $N+1 .. $2N
+  // Raw term parameters for term-frequency scoring: ONE representative per
+  // group, the stem when the term was expanded. The stem is a substring of
+  // the inflected form, so scoring both would count the same occurrence twice.
   const rawTermIndices: number[] = [];
-  for (const term of terms) {
-    params.push(term);
+  for (const group of variantGroups) {
+    params.push(group[group.length - 1]!);
     rawTermIndices.push(params.length);
   }
 
@@ -112,7 +115,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
     params.push(variant.candidateIds);
     fromClause = `unnest($${params.length}::bigint[]) AS cand(id) JOIN content_chunks cc ON cc.id = cand.id`;
   }
-  const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any);
+  const { whereLikeClause, matchedExpr } = likeClauses(variantGroups, likeGroups, any);
 
   const termFreqExpr = rawTermIndices
     .map(idx => `((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $${idx}, ''))) / NULLIF(LENGTH($${idx}), 0)::real)`)
@@ -155,7 +158,8 @@ export function buildCJKCandidateSql(
   const terms = splitCJKQueryTerms(query);
   if (query.length === 0 || terms.length === 0) return null;
   const params: unknown[] = [];
-  const likeParamIndices = terms.map(term => { params.push(`%${escapeLikePattern(term)}%`); return params.length; });
+  const variantGroups = terms.map(t => koreanTermVariants(t));
+  const likeGroups = bindLikeGroups(variantGroups, params);
   let extraFilter = shapeFilters(ctx.opts, params);
   if (stage.excludeIds?.length) {
     params.push(stage.excludeIds);
@@ -163,7 +167,7 @@ export function buildCJKCandidateSql(
   }
   params.push(stage.cap);
   const capIndex = params.length;
-  const { whereLikeClause } = likeClauses(terms, likeParamIndices, stage.match === 'any' && terms.length > 1);
+  const { whereLikeClause } = likeClauses(variantGroups, likeGroups, stage.match === 'any' && terms.length > 1);
   return {
     sql: `SELECT cc.id AS chunk_id
           FROM content_chunks cc
@@ -176,11 +180,24 @@ export function buildCJKCandidateSql(
   };
 }
 
-function likeClauses(terms: string[], likeParamIndices: number[], any: boolean): { whereLikeClause: string; matchedExpr: string } {
-  const likes = likeParamIndices.map((idx, termIndex) => {
-    const term = terms[termIndex];
-    const operator = term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE';
-    return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
+/** Binds each variant as an escaped `%…%` LIKE param; returns the param indices per term. */
+function bindLikeGroups(variantGroups: string[][], params: unknown[]): number[][] {
+  return variantGroups.map(group => group.map(variant => {
+    params.push(`%${escapeLikePattern(variant)}%`);
+    return params.length;
+  }));
+}
+
+function likeClauses(variantGroups: string[][], likeGroups: number[][], any: boolean): { whereLikeClause: string; matchedExpr: string } {
+  // One clause per term: its variants ORed, so the inflected original stays a
+  // valid way to match. Terms are then ANDed (or ORed in the 'any' fallback).
+  const likes = likeGroups.map((indices, termIndex) => {
+    const clauses = indices.map((idx, v) => {
+      const variant = variantGroups[termIndex]![v]!;
+      const operator = variant.toLowerCase() === variant.toUpperCase() ? 'LIKE' : 'ILIKE';
+      return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
+    });
+    return clauses.length > 1 ? `(${clauses.join(' OR ')})` : clauses[0]!;
   });
   return {
     whereLikeClause: any ? `(${likes.join(' OR ')})` : likes.join(' AND '),
