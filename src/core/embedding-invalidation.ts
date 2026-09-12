@@ -3,18 +3,13 @@
  * #4306). Engine-pure: both engines share these shapes via executeRaw
  * (PGLite and Postgres accept the SQL identically).
  *
- * #4306 — embed_skip-aware stale-signature invalidation.
- * `engine.invalidateStaleSignatureEmbeddings` NULLs mismatched-signature
- * vectors on EVERY page, but every stale/backfill selector
- * (buildStaleChunkWhere / listStaleChunks, both engines) excludes pages whose
- * frontmatter carries `embed_skip`. Invalidate-then-hide: vectors retained on
- * an embed_skip page (embedded BEFORE the marker appeared, e.g. the
- * content-sanity oversize stamp) were destroyed by the next migration and
- * could never be re-embedded — permanent, silent loss.
+ * Stale-signature invalidation preserves chunks whose model, text hash,
+ * and active-column vector width already match the target space. Partial
+ * runs keep their progress until the whole page is ready to stamp.
  * `invalidateStaleSignatureEmbeddingsGuarded` is the ONE invalidation entry
- * point for the migration and embed paths: identical semantics to the engine
- * method PLUS the same NOT-embed_skip predicate the selectors use, so the two
- * halves can never disagree again. Never NULL what nothing will re-embed.
+ * point for the migration and embed paths: it also excludes embed_skip
+ * pages, matching the stale selectors, and restamps fully-current active
+ * pages so they converge even when no chunks need re-embedding.
  *
  * #4305 — chunk-model truth cross-check. `pages.embedding_signature` is
  * separate state that can disagree with the vectors it describes: a page
@@ -30,6 +25,30 @@ import {
   resolveActiveEmbeddingColumnFromEngine,
   quoteIdentifier,
 } from './search/embedding-column.ts';
+
+/**
+ * Split `<provider:model>:<dims>` without dropping colons inside the model.
+ * A signature with no numeric `:<dims>` suffix (legacy or test-shaped) keeps
+ * the whole string as the model and reports `dims: null`, which relaxes the
+ * width check in `currentSpaceChunkPredicate` instead of binding NaN.
+ */
+export function splitEmbeddingSignature(signature: string): { model: string; dims: number | null } {
+  const separator = signature.lastIndexOf(':');
+  const dims = separator === -1 ? NaN : Number(signature.slice(separator + 1));
+  if (!Number.isInteger(dims) || dims <= 0) return { model: signature, dims: null };
+  return { model: signature.slice(0, separator), dims };
+}
+
+/**
+ * `colId` is quoted; parameter positions are supplied by the SQL composer.
+ * `$dimsParam` binds `dims | null`; NULL skips the width check.
+ */
+export function currentSpaceChunkPredicate(colId: string, modelParam: number, dimsParam: number): string {
+  return `COALESCE(cc.${colId} IS NOT NULL
+              AND cc.model = $${modelParam}
+              AND cc.embedded_text_hash = md5(cc.chunk_text)
+              AND ($${dimsParam}::int IS NULL OR vector_dims(cc.${colId}) = $${dimsParam}::int), false)`;
+}
 
 /**
  * `<provider:model>:<dims>` — the one-line shape of
@@ -131,7 +150,9 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
   opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
 ): Promise<number> {
   const colId = await activeColId(engine);
-  const params: unknown[] = [opts.signature];
+  const { model, dims } = splitEmbeddingSignature(opts.signature);
+  const params: unknown[] = [opts.signature, model, dims];
+  const currentChunk = currentSpaceChunkPredicate(colId, 2, 3);
   let srcClause = '';
   if (opts.sourceId !== undefined) {
     params.push(opts.sourceId);
@@ -149,9 +170,23 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
        FROM pages p
       WHERE cc.page_id = p.id
         AND cc.${colId} IS NOT NULL
+        AND NOT ${currentChunk}
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
         AND ${sigClause}${srcClause}
       RETURNING cc.page_id`,
+    params,
+  );
+  await engine.executeRaw(
+    `UPDATE pages p SET embedding_signature = $1
+      WHERE ${sigClause}${srcClause}
+        AND p.deleted_at IS NULL
+        AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM content_chunks cc
+           WHERE cc.page_id = p.id AND NOT ${currentChunk}
+        )
+      RETURNING p.id`,
     params,
   );
   return (rows as unknown[]).length;

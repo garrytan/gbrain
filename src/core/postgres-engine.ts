@@ -58,6 +58,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { getFtsLanguage, applyFtsLanguagePolicy } from './fts-language.ts';
+import { splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkWriteInvalidation, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
@@ -2629,14 +2630,12 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number> {
-    // NULL embeddings whose page signature is set AND differs from current.
-    // GRANDFATHER: NULL signature untouched — UNLESS includeNullSignature
-    // (#3391): provider migrations must not leave pre-stamp pages in the old
-    // embedding space. Feeds the NULL-embedding cursor so listStaleChunks
-    // stays unchanged. RETURNING → row count. S2: keyed on the registry-
-    // ACTIVE column (loud resolver failure — destructive writes never guess).
+    // NULL non-current chunks on drifted pages; includeNullSignature lifts
+    // the NULL-signature grandfather clause. Feeds the unchanged NULL cursor.
+    // Registry-ACTIVE column, loud resolver failure; RETURNING counts chunks.
     const colId = await this.activeEmbeddingColId();
-    const params: unknown[] = [opts.signature];
+    const { model, dims } = splitEmbeddingSignature(opts.signature);
+    const params: unknown[] = [opts.signature, model, dims];
     let srcClause = '';
     if (opts.sourceId !== undefined) {
       params.push(opts.sourceId);
@@ -2652,6 +2651,7 @@ export class PostgresEngine implements BrainEngine {
          FROM pages p
         WHERE cc.page_id = p.id
           AND cc.${colId} IS NOT NULL
+          AND NOT ${currentSpaceChunkPredicate(colId, 2, 3)}
           AND ${sigClause}${srcClause}
         RETURNING cc.page_id`,
       params as Parameters<typeof this.sql.unsafe>[1],

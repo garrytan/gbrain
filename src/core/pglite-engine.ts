@@ -70,6 +70,7 @@ import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 // connect() catch. No cycle: pglite-repair.ts imports nothing from this file.
 import { attemptWalRepairAndRetry, closeRepairEpisodeIfOpen, type WalRepairReceipt } from './pglite-repair.ts';
 import { getFtsLanguage } from './fts-language.ts';
+import { splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
@@ -3415,15 +3416,13 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number> {
-    // NULL out embeddings whose page signature is set AND differs from the
-    // current model signature. GRANDFATHER: NULL signature untouched —
-    // UNLESS includeNullSignature (#3391): provider migrations must not
-    // leave pre-stamp pages in the old embedding space. Feeds the existing
-    // NULL-embedding cursor so listStaleChunks stays unchanged. S2: keyed on
-    // the registry-ACTIVE column (loud resolver failure — destructive writes
-    // never guess).
+    // NULL non-current chunks on drifted pages; includeNullSignature lifts
+    // the NULL-signature grandfather clause. Feeds the unchanged NULL cursor.
+    // Registry-ACTIVE column, loud resolver failure — destructive writes
+    // never guess. Mirrors the Postgres predicate.
     const colId = await this.activeEmbeddingColId();
-    const params: unknown[] = [opts.signature];
+    const { model, dims } = splitEmbeddingSignature(opts.signature);
+    const params: unknown[] = [opts.signature, model, dims];
     let srcClause = '';
     if (opts.sourceId !== undefined) {
       params.push(opts.sourceId);
@@ -3439,6 +3438,7 @@ export class PGLiteEngine implements BrainEngine {
          FROM pages p
         WHERE cc.page_id = p.id
           AND cc.${colId} IS NOT NULL
+          AND NOT ${currentSpaceChunkPredicate(colId, 2, 3)}
           AND ${sigClause}${srcClause}
         RETURNING cc.page_id`,
       params,
