@@ -140,6 +140,34 @@ d('embedding migration (live Postgres + pgvector)', () => {
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'parity/%'`);
   }, 30000);
 
+  test('signature invalidation preserves current chunks on real Postgres', async () => {
+    const model = 'openai:current';
+    const signature = `${model}:${originalDims}`;
+    for (const includeNullSignature of [false, true]) {
+      await engine.putPage('parity/mixed', { type: 'note', title: 'mixed', compiled_truth: '# mixed' });
+      await engine.upsertChunks('parity/mixed', [
+        { chunk_index: 0, chunk_text: 'old chunk', chunk_source: 'compiled_truth',
+          embedding: new Float32Array(originalDims).fill(0.001), model: 'openai:old' },
+        { chunk_index: 1, chunk_text: 'current chunk', chunk_source: 'compiled_truth',
+          embedding: new Float32Array(originalDims).fill(0.002), model },
+      ]);
+      if (!includeNullSignature) {
+        await engine.setPageEmbeddingSignature('parity/mixed', { signature: `openai:old:${originalDims}` });
+      }
+
+      expect(await engine.invalidateStaleSignatureEmbeddings({
+        signature, includeNullSignature, sourceId: 'default',
+      })).toBe(1);
+      const rows = await engine.executeRaw<{ embedded: boolean }>(
+        `SELECT cc.embedding IS NOT NULL AS embedded
+           FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = 'parity/mixed' AND p.source_id = 'default' ORDER BY cc.chunk_index`,
+      );
+      expect(rows.map((row) => row.embedded)).toEqual([false, true]);
+      await engine.deletePage('parity/mixed');
+    }
+  }, 30000);
+
   test('full migration with a dimension change on real pgvector', async () => {
     const targetDims = originalDims === 1536 ? 1024 : 1536;
     const toModel = targetDims === 1536 ? 'openai:text-embedding-3-small' : 'voyage:voyage-3-large';

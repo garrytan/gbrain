@@ -2,6 +2,44 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.50.0.1] - 2026-09-12
+
+**`gbrain embed --stale` now finishes what it started instead of undoing it.** After you switch embedding models, `embed --stale` is supposed to re-embed every page in the new space over as many runs as it takes. Before this fix, any page that did not get fully re-embedded inside a single run (a wall-clock budget, one bad chunk, a stopped job) had its freshly written vectors thrown away at the start of the next run, so the next run redid the same work and threw it away again. Coverage sat flat and the log kept showing the same "invalidated N" and "embedded N" pair every time.
+
+Now the run keeps every chunk that is already embedded with the current model, the current text, and the current vector width, and only re-embeds what is actually missing or stale. A page whose chunks are all current but whose signature was never recorded is simply marked current, with no re-embedding. Old-model vectors, changed text, and chunks with unknown provenance are still invalidated exactly as before.
+
+**Say to your agent:** *"Re-run the stale embedding sweep and confirm coverage goes up"* — your agent runs `gbrain embed --stale`.
+
+### What to expect
+
+| When you… | What happens |
+|---|---|
+| Run `gbrain embed --stale` on a source with a stale embedding signature | Each run adds to the previous run's progress; `invalidated` no longer equals the previous run's `embedded`. |
+| Have pages whose chunks are already in the current space but carry an old signature | They are stamped current in place, with zero re-embedding. |
+| Rely on the `embed-backfill` job or `gbrain migrate embeddings` | Same rule applies; both share the one invalidation entry point. |
+
+### Things to watch
+
+The stamp is written when a page's last missing chunk lands, as before, and the drift count reported before invalidation still counts every chunk on a drifted page, so that number can be larger than the `invalidated` line that follows it. That is expected.
+
+## To take advantage of v0.50.0.1
+
+Upgrade, then run one more `gbrain embed --stale` on the affected source and check that the embedded percentage in `gbrain sources status` rises between runs:
+
+```bash
+gbrain --version
+gbrain embed --stale --source <id>
+gbrain sources status
+```
+
+### Itemized changes
+
+- `src/core/embedding-invalidation.ts`: `invalidateStaleSignatureEmbeddingsGuarded` skips chunks already in the current embedding space (`currentSpaceChunkPredicate`: active-column vector present, exact `model`, `embedded_text_hash = md5(chunk_text)`, `vector_dims` equal to the signature width; NULL provenance counts as not current) and restamps drifted pages whose every chunk is current. New helpers `splitEmbeddingSignature` and `currentSpaceChunkPredicate`.
+- `src/core/postgres-engine.ts`, `src/core/pglite-engine.ts`: `invalidateStaleSignatureEmbeddings` carries the same preservation predicate (engine parity).
+- `src/core/embed-stale.ts`: `stampIfPageProvenanceComplete` uses the shared predicate so the stamp and the invalidation can never disagree.
+- Tests: two-run convergence, fully-current restamp, old-model-still-invalidated and NULL-hash guards in `test/embed-stale-signature-pagination.serial.test.ts`; engine-method cases in `test/embedding-signature-stale.test.ts`; real-Postgres case in `test/e2e/migrate-embeddings-postgres.test.ts`.
+- Closes #5051.
+
 ## [0.50.0.0] - 2026-09-10
 
 **Approve client connection requests and keep background work within the access you granted.**
