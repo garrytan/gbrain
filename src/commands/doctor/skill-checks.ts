@@ -13,6 +13,7 @@ import {
   type SkillsManifest,
 } from '../../core/skills-integrity.ts';
 import { loadOrDeriveManifest } from '../../core/skill-manifest.ts';
+import { createSkillPaths, type SkillPathOptions } from '../../core/skill-paths.ts';
 import { computeSkillCurrency } from '../../core/skillpack/skill-currency.ts';
 import { findGbrainRoot } from '../../core/skillpack/bundle.ts';
 import { checkPreconditions, type PreconditionContext } from '../../core/skillpack/preconditions.ts';
@@ -29,30 +30,39 @@ import {
   appendAuditEventsForTransitions,
 } from '../../core/audit-skill-brain-first.ts';
 import type { Check } from '../doctor.ts';
+import { safeLoad, FAILSAFE_SCHEMA } from 'js-yaml';
 
 /** Quick skill conformance check — frontmatter + required sections */
-export function skillConformanceCheck(skillsDir: string): Check {
+export function skillConformanceCheck(skillsDir: string, opts: SkillPathOptions = {}): Check {
   try {
     // Host workspaces are allowed to omit a gbrain-specific manifest. Keep
     // conformance aligned with resolver_health and skill_brain_first by using
     // the canonical fallback that derives entries from direct SKILL.md files.
-    const manifest = loadOrDeriveManifest(skillsDir);
+    const paths = createSkillPaths(skillsDir, opts);
+    const manifest = paths.manifest();
     const skills = manifest.skills;
     let passing = 0;
-    const failing: string[] = [];
+    const failing: string[] = [...paths.errors];
 
     for (const skill of skills) {
-      const skillPath = join(skillsDir, skill.path);
-      if (!existsSync(skillPath)) {
-        failing.push(`${skill.name}: file missing`);
+      const location = paths.locate(skill.path);
+      const skillPath = location.path;
+      if (!skillPath) {
+        failing.push(`${skill.name}: ${location.error}`);
         continue;
       }
-      const content = readFileSync(skillPath, 'utf-8');
-      // Check frontmatter exists
-      if (!content.startsWith('---')) {
+      const content = paths.read(skill.path);
+      if (content === null) { failing.push(`${skill.name}: unreadable file`); continue; }
+      // Require a complete frontmatter fence, not merely a leading marker.
+      const frontmatter = parseSkillFrontmatter(content);
+      if (!frontmatter) {
         failing.push(`${skill.name}: no frontmatter`);
         continue;
       }
+      try {
+        const parsed = safeLoad(frontmatter.raw, { schema: FAILSAFE_SCHEMA });
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not a mapping');
+      } catch { failing.push(`${skill.name}: invalid frontmatter`); continue; }
       passing++;
     }
 
@@ -141,7 +151,7 @@ export function skillsManifestIntegrityCheck(skillsDir: string): Check {
  * gbrain repo itself (bundle == install, always current) or when the bundle
  * can't be located.
  */
-export function skillCurrencyCheck(skillsDir: string): Check {
+export function skillCurrencyCheck(skillsDir: string, opts: SkillPathOptions = {}): Check {
   const name = 'skill_currency';
   const targetWorkspace = resolvePath(skillsDir, '..');
   const gbrainRoot = findGbrainRoot();
@@ -153,10 +163,10 @@ export function skillCurrencyCheck(skillsDir: string): Check {
   }
   let report: ReturnType<typeof computeSkillCurrency>;
   try {
-    report = computeSkillCurrency({ gbrainRoot, targetWorkspace });
+    report = computeSkillCurrency({ gbrainRoot, targetWorkspace, ...opts, skillsDir });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { name, status: 'ok', message: `skill currency check skipped (${msg})` };
+    return { name, status: 'warn', message: `skill currency check incomplete (${msg})` };
   }
   const { counts, skills } = report;
   const sample = (status: 'new' | 'drifted'): string => {
@@ -302,10 +312,11 @@ export async function skillPreconditionsCheck(
   };
 }
 
-export function skillBrainFirstCheck(skillsDir: string): Check {
+export function skillBrainFirstCheck(skillsDir: string, opts: SkillPathOptions & { audit?: boolean } = {}): Check {
+  const paths = createSkillPaths(skillsDir, opts);
   let manifest: ReturnType<typeof loadOrDeriveManifest>;
   try {
-    manifest = loadOrDeriveManifest(skillsDir);
+    manifest = paths.manifest();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
@@ -314,7 +325,7 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
       message: `Could not load skills manifest from ${skillsDir} (${msg})`,
     };
   }
-  if (manifest.skills.length === 0) {
+  if (manifest.skills.length === 0 && paths.errors.length === 0) {
     return {
       name: 'skill_brain_first',
       status: 'ok',
@@ -324,16 +335,16 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
 
   const violators: BrainFirstAnalysis[] = [];
   const typoSkills: BrainFirstAnalysis[] = [];
+  const unreadable: string[] = [...paths.errors];
+  let scanned = 0;
 
   for (const entry of manifest.skills) {
-    const skillPath = join(skillsDir, entry.path);
-    if (!existsSync(skillPath)) continue; // resolver_health already reports
-    let content: string;
-    try {
-      content = readFileSync(skillPath, 'utf-8');
-    } catch {
-      continue; // best-effort; permissions etc.
+    const content = paths.read(entry.path);
+    if (content === null) {
+      unreadable.push(`${entry.name}: ${paths.locate(entry.path).error ?? 'unreadable file'}`);
+      continue;
     }
+    scanned++;
     const fm = parseSkillFrontmatter(content);
     const result = analyzeSkillBrainFirst(content, entry.name, fm);
     if (result.typo_hint) typoSkills.push(result);
@@ -347,38 +358,39 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
   for (const v of violators) {
     patternsBySlug.set(v.skill, v.external_patterns_matched);
   }
-  let priorSnapshotPresent = true;
   try {
-    const snapshot = loadSnapshot();
-    priorSnapshotPresent = snapshot.present;
-    const diff = diffAgainstSnapshot(violatorSlugs, snapshot.violators);
-    const doctorRunId = `${process.pid}-${Date.now()}`;
-    if (snapshot.present) {
-      // Steady-state path: write events only for transitions.
-      appendAuditEventsForTransitions(diff, patternsBySlug, doctorRunId);
-    } else {
-      // First run / corrupt snapshot: bootstrap by writing one
-      // `detected` line per current violator. This is the only path
-      // that writes more than `diff.added.length` lines in a single
-      // doctor invocation.
-      const bootstrapDiff = { added: Array.from(violatorSlugs).sort(), removed: [], unchanged: [] };
-      appendAuditEventsForTransitions(bootstrapDiff, patternsBySlug, doctorRunId);
+    // An incomplete scan cannot certify previous violations as resolved.
+    if (opts.audit !== false && unreadable.length === 0) {
+      const snapshot = loadSnapshot();
+      const diff = diffAgainstSnapshot(violatorSlugs, snapshot.violators);
+      const doctorRunId = `${process.pid}-${Date.now()}`;
+      if (snapshot.present) {
+        // Steady-state path: write events only for transitions.
+        appendAuditEventsForTransitions(diff, patternsBySlug, doctorRunId);
+      } else {
+        // First run / corrupt snapshot: bootstrap by writing one
+        // `detected` line per current violator. This is the only path
+        // that writes more than `diff.added.length` lines in a single
+        // doctor invocation.
+        const bootstrapDiff = { added: Array.from(violatorSlugs).sort(), removed: [], unchanged: [] };
+        appendAuditEventsForTransitions(bootstrapDiff, patternsBySlug, doctorRunId);
+      }
+      writeSnapshotAtomically(violatorSlugs);
     }
-    writeSnapshotAtomically(violatorSlugs);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[gbrain] skill_brain_first audit step failed (${msg}); check continues\n`);
   }
 
   // --- Build the check result ---------------------------------------------
-  if (violators.length === 0) {
+  if (violators.length === 0 && unreadable.length === 0) {
     const typoNote = typoSkills.length > 0
       ? ` (note: ${typoSkills.length} skill(s) have brain_first typo hints: ${typoSkills.map(t => t.skill).join(', ')})`
       : '';
     return {
       name: 'skill_brain_first',
       status: 'ok',
-      message: `${manifest.skills.length} skill(s) compliant or exempt${typoNote}`,
+      message: `${scanned} skill(s) compliant or exempt${typoNote}`,
     };
   }
 
@@ -387,6 +399,8 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
 
   const formerlyExempt = violators.filter(v => v.formerly_hardcoded_exempt);
   const summary: string[] = [];
+  if (unreadable.length) summary.push(`Incomplete scan: ${scanned}/${manifest.skills.length} skills read; ${unreadable.join('; ')}.`);
+  if (paths.roots.length > 1) summary.push('Approved external-root skills must be edited through their owning tools; workspace repair does not edit them.');
   summary.push(
     `${violators.length} skill(s) do external lookups without a brain-first compliance signal. ` +
     `Fix via 'gbrain doctor --fix' (adds canonical Convention callout) ` +
@@ -411,6 +425,7 @@ export function skillBrainFirstCheck(skillsDir: string): Check {
     name: 'skill_brain_first',
     status: 'warn',
     message: summary.join(' '),
+    details: { scanned, total: manifest.skills.length, unreadable },
     issues: violators.map(v => ({
       type: 'skill_missing_brain_first',
       skill: v.skill,

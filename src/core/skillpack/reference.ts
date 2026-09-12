@@ -75,7 +75,7 @@ const FRAMING_TEMPLATE = (refPath: string): string =>
  * Run reference against a single skill. Returns per-file status +
  * unified diffs.
  */
-export function runReference(opts: ReferenceOptions): ReferenceResult {
+export function runReference(opts: ReferenceOptions, resolveTarget?: (entry: ScaffoldEntry) => string | null | undefined): ReferenceResult {
   if (opts.skillSlug === null) {
     throw new Error('runReference requires a slug; use runReferenceAll() for --all');
   }
@@ -86,7 +86,7 @@ export function runReference(opts: ReferenceOptions): ReferenceResult {
     manifest,
   });
 
-  const files = entries.map(e => diffOne(opts.targetWorkspace, e));
+  const files = entries.map(e => diffOne(opts.targetWorkspace, e, resolveTarget?.(e)));
   const framing = FRAMING_TEMPLATE(`${opts.gbrainRoot}/skills/${opts.skillSlug}/`);
   return {
     framing,
@@ -281,14 +281,14 @@ function applyOne(
   return { ...base, status };
 }
 
-function diffOne(targetWorkspace: string, entry: ScaffoldEntry): ReferenceFileResult {
-  const target = join(targetWorkspace, entry.relWorkspaceTarget);
+function diffOne(targetWorkspace: string, entry: ScaffoldEntry, resolvedTarget?: string | null): ReferenceFileResult {
+  const target = resolvedTarget ?? join(targetWorkspace, entry.relWorkspaceTarget);
   const sourceBytes = statSync(entry.source).size;
   let targetBytes = 0;
   let status: ReferenceStatus;
   let diffText = '';
 
-  if (!existsSync(target)) {
+  if (resolvedTarget === null || !existsSync(target)) {
     status = 'missing';
   } else {
     const aBuf = readFileSync(entry.source);
