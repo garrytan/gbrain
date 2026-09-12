@@ -57,7 +57,7 @@
  *     hatch for `gbrain sync` / `gbrain import`, which have no force flag)
  */
 
-import { resolve } from 'path';
+import { resolve, dirname, basename } from 'path';
 import { realpathSync } from 'fs';
 import { homedir } from 'os';
 
@@ -105,6 +105,8 @@ const WORKSPACE_ENV_VARS: ReadonlyArray<readonly [envVar: string, label: string]
   ['CI_PROJECT_DIR', 'GitLab CI $CI_PROJECT_DIR'],
   ['BUILDKITE_BUILD_CHECKOUT_PATH', 'Buildkite $BUILDKITE_BUILD_CHECKOUT_PATH'],
   ['CIRCLE_WORKING_DIRECTORY', 'CircleCI $CIRCLE_WORKING_DIRECTORY'],
+  ['BUILD_SOURCESDIRECTORY', 'Azure Pipelines $BUILD_SOURCESDIRECTORY'],
+  ['PIPELINE_WORKSPACE', 'Azure Pipelines $PIPELINE_WORKSPACE'],
 ];
 
 /** CI-presence env vars read by `isCiEnv`. */
@@ -205,13 +207,43 @@ function expandTilde(p: string): string {
 function comparisonForms(p: string): string[] {
   const lexical = normalizePathForCompare(p);
   const forms = [lexical];
-  try {
-    const real = normalizePathForCompare(realpathSync(p));
-    if (real !== lexical) forms.push(real);
-  } catch {
-    // Path doesn't exist here — lexical form is all we have, by design.
+  // Win32-absolute spellings are foreign-host paths on a POSIX evaluator (and
+  // vice versa): the ancestor walk would degrade to cwd and fabricate a bogus
+  // second form. Lexical only for those.
+  if (/^[A-Za-z]:[\\/]/.test(p)) return forms;
+  const real = realpathNearest(resolve(p));
+  if (real !== null) {
+    const realForm = normalizePathForCompare(real);
+    if (realForm !== lexical) forms.push(realForm);
   }
   return forms;
+}
+
+/**
+ * Realpath `p`, tolerating a nonexistent tail: walk up to the nearest
+ * EXISTING ancestor, realpath that, and re-append the missing suffix — so a
+ * not-yet-created destination (`/tmp/new-dir` while the workspace var says
+ * `/private/tmp`) still carries its symlinked parent's identity into the
+ * containment check instead of silently losing the realpath form. Returns
+ * null when nothing on the path exists on this machine (the replayed-path
+ * case — lexical comparison is all we have there, by design).
+ */
+function realpathNearest(p: string): string | null {
+  let base = p;
+  const suffix: string[] = [];
+  // Bounded: each iteration strips one path segment; dirname eventually
+  // reaches a fixed point ('/' or '.') and the loop exits.
+  for (;;) {
+    try {
+      const real = realpathSync(base);
+      return suffix.length ? `${real}/${suffix.reverse().join('/')}` : real;
+    } catch {
+      const parent = dirname(base);
+      if (parent === base) return null;
+      suffix.push(basename(base));
+      base = parent;
+    }
+  }
 }
 
 /**

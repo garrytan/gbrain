@@ -129,6 +129,22 @@ describe('classifyEphemeralCiPath — workspace-env containment (self-hosted run
     expect(classifyEphemeralCiPath('/srv/app2', env).ephemeral).toBe(false);
   });
 
+  test('Azure self-hosted agent via BUILD_SOURCESDIRECTORY / PIPELINE_WORKSPACE (codex P2 repro)', () => {
+    // TF_BUILD corroborates but the containment must come from Azure's own
+    // workspace vars — /agent/_work/1/s matches no static prefix.
+    expect(
+      classifyEphemeralCiPath('/agent/_work/1/s', {
+        TF_BUILD: 'True', BUILD_SOURCESDIRECTORY: '/agent/_work/1/s', PIPELINE_WORKSPACE: '/agent/_work/1',
+      }).ephemeral,
+    ).toBe(true);
+    expect(
+      classifyEphemeralCiPath('/agent/_work/1/a/artifact', { TF_BUILD: 'True', PIPELINE_WORKSPACE: '/agent/_work/1' }).ephemeral,
+    ).toBe(true);
+    expect(
+      classifyEphemeralCiPath('/srv/durable', { TF_BUILD: 'True', BUILD_SOURCESDIRECTORY: '/agent/_work/1/s' }).ephemeral,
+    ).toBe(false);
+  });
+
   test('CI_PROJECT_DIR (GitLab), BUILDKITE_BUILD_CHECKOUT_PATH, CIRCLE_WORKING_DIRECTORY', () => {
     expect(
       classifyEphemeralCiPath('/data/ci/proj/x', { GITLAB_CI: 'true', CI_PROJECT_DIR: '/data/ci/proj' }).ephemeral,
@@ -178,6 +194,15 @@ describe('classifyEphemeralCiPath — workspace-env containment (self-hosted run
       // Mirror direction: candidate spelled through the alias, env real.
       expect(
         classifyEphemeralCiPath(`${alias}/repo`, { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: realCanonical }).ephemeral,
+      ).toBe(true);
+      // Codex P2 repro: a NONEXISTENT child under the aliased workspace must
+      // still classify — the realpath assist walks to the nearest existing
+      // ancestor instead of discarding the symlinked parent's identity.
+      expect(
+        classifyEphemeralCiPath(`${alias}/does-not-exist-yet`, { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: realCanonical }).ephemeral,
+      ).toBe(true);
+      expect(
+        classifyEphemeralCiPath(`${realCanonical}/also-missing/child`, { GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: alias }).ephemeral,
       ).toBe(true);
     } finally {
       rmSync(outer, { recursive: true, force: true });
@@ -258,7 +283,8 @@ describe('isCiEnv / allowEphemeralPersist', () => {
     const { GUARD_ENV_VARS } = await import('../src/core/ci-path-guard.ts');
     for (const name of [
       'GITHUB_WORKSPACE', 'CI_PROJECT_DIR', 'BUILDKITE_BUILD_CHECKOUT_PATH',
-      'CIRCLE_WORKING_DIRECTORY', 'CI', 'GITHUB_ACTIONS', 'GITLAB_CI',
+      'CIRCLE_WORKING_DIRECTORY', 'BUILD_SOURCESDIRECTORY', 'PIPELINE_WORKSPACE',
+      'CI', 'GITHUB_ACTIONS', 'GITLAB_CI',
       'BUILDKITE', 'CIRCLECI', 'TF_BUILD', 'GBRAIN_ALLOW_EPHEMERAL_REPO_PATH',
     ]) {
       expect(GUARD_ENV_VARS).toContain(name);
