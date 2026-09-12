@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { doctorFileSource } from './helpers/doctor-source.ts';
 
 let engine: PGLiteEngine;
 
@@ -185,9 +186,87 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).toContain('below warn threshold');
   }, 120_000);
 
+  it('uses one materialized same-source lookup set per key and a transaction-local timeout', () => {
+    const src = doctorFileSource('doctor/checks/extraction-sync.ts');
+    const start = src.indexOf('WITH atom AS (');
+    expect(start).toBeGreaterThan(0);
+    const end = src.indexOf('SELECT count(*) AS total', start);
+    expect(end).toBeGreaterThan(start);
+    const slice = src.slice(start, end);
+    expect(slice).not.toMatch(/\b(?:NOT )?EXISTS\s*\(\s*SELECT 1 FROM pages/);
+    expect(slice).toMatch(/live_hashes AS MATERIALIZED/);
+    expect(slice).toMatch(/SELECT DISTINCT source_id, substring\(content_hash from 1 for 16\)/);
+    expect(slice).toMatch(/live_slugs AS MATERIALIZED/);
+    expect(slice).toMatch(/LEFT JOIN live_hashes/);
+    expect(slice).toMatch(/LEFT JOIN live_slugs/);
+    expect(src).toContain("set_config('statement_timeout', $1, true)");
+    expect(src).toMatch(/engine\.transaction\([\s\S]*tx\.executeRaw/);
+  });
+
+  it('does not fan out an atom whose source hash is carried by two live pages', async () => {
+    const page = { type: 'article', title: 'dup', compiled_truth: 'identical body' };
+    await engine.putPage('dup/a', page);
+    await engine.putPage('dup/b', page);
+    const [ha, hb] = [await hashOf('dup/a'), await hashOf('dup/b')];
+    expect(ha).toBe(hb);
+    await seedAtom('atoms/2026-01-01/dup-000000', 'dup/a', ha);
+    const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d.total_atoms).toBe(1);
+    expect(d.drifted).toBe(0);
+  });
+
+  it('does not resolve a hash carried only by another source or a deleted page', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $2)`, ['other-source', 'Other']);
+    await engine.putPage('foreign-live', {
+      type: 'article', title: 'foreign', compiled_truth: 'foreign-only body',
+    }, { sourceId: 'other-source' });
+    const foreignHashRows = await engine.executeRaw<{ h: string }>(
+      `SELECT substring(content_hash from 1 for 16) AS h FROM pages WHERE source_id = $1 AND slug = $2`,
+      ['other-source', 'foreign-live'],
+    );
+    const foreignHash = foreignHashRows[0].h;
+    await engine.putPage('deleted-match', { type: 'article', title: 'deleted', compiled_truth: 'deleted body' });
+    const deletedHash = await hashOf('deleted-match');
+    await engine.executeRaw(`UPDATE pages SET deleted_at = now() WHERE slug = $1`, ['deleted-match']);
+    await seedAtom('atoms/2026-01-01/foreign-000000', 'missing-foreign', foreignHash);
+    await seedAtom('atoms/2026-01-01/deleted-000000', 'deleted-match', deletedHash);
+    const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d.total_atoms).toBe(2);
+    expect(d.drifted).toBe(2);
+    expect(d.source_changed).toBe(0);
+    expect(d.source_gone).toBe(2);
+  });
+
+  it('runs timeout setup and aggregate on the transaction-scoped engine', async () => {
+    const calls: string[] = [];
+    const fake = {
+      transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn({
+        executeRaw: async (sql: string, params?: unknown[]) => {
+          calls.push(sql);
+          if (calls.length === 1) {
+            expect(params).toEqual(['5000ms']);
+            return [{ set_config: '5000ms' }];
+          }
+          return [{ total: 0, drifted: 0, source_changed: 0, source_gone: 0, oldest_ext: null }];
+        },
+      } as unknown as BrainEngine),
+      executeRaw: async () => { throw new Error('outer engine must not execute the bounded query'); },
+    } as unknown as BrainEngine;
+    const c = await computeAtomProvenanceDriftCheck(fake);
+    expect(c.status).toBe('ok');
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("set_config('statement_timeout'");
+    expect(calls[1]).toContain('WITH atom AS');
+  });
+
   it('a throwing executeRaw degrades to a warn that names the check — never throws, never fails doctor', async () => {
     const broken = {
-      executeRaw: async () => { throw new Error('relation "pages" does not exist'); },
+      transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn({
+        executeRaw: async (sql: string) => {
+          if (sql.includes("set_config('statement_timeout'")) return [];
+          throw new Error('relation "pages" does not exist');
+        },
+      } as unknown as BrainEngine),
     } as unknown as BrainEngine;
     const c = await computeAtomProvenanceDriftCheck(broken);
     expect(c.name).toBe('atom_provenance_drift');

@@ -771,54 +771,66 @@ export async function computeAtomProvenanceDriftCheck(
   const MIN_DRIFTED = 25;
   const WARN_RATIO = 0.1;
   try {
-    const rows = await engine.executeRaw<{
-      total: string | number; drifted: string | number;
-      source_changed: string | number; source_gone: string | number;
-      oldest_ext: string | null;
-    }>(
-      // extracted_at stays TEXT end to end (review fix): an unguarded
-      // ::timestamptz cast let ONE malformed frontmatter value (hand edit,
-      // truncation) abort the whole aggregate and permanently degrade this
-      // check to a spurious "check failed" warn. The ISO-shape regex drops
-      // garbage from the min(); the age math happens in TS where Date
-      // parsing can never throw (semantically-invalid dates become NaN →
-      // metric omitted, verdict untouched).
-      `WITH atom AS (
-         SELECT a.source_id,
-                a.frontmatter->>'source_hash' AS sh,
-                a.frontmatter->>'source_slug' AS ss,
-                CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-                     THEN a.frontmatter->>'extracted_at' END AS ext
-           FROM pages a
-          WHERE a.type = 'atom'
-            AND a.deleted_at IS NULL
-            AND a.frontmatter->>'source_hash' IS NOT NULL
-            -- in-flight marker written before the extraction commits
-            AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
-       ), drift AS (
-         SELECT atom.*,
-                NOT EXISTS (
-                  SELECT 1 FROM pages p
-                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
-                     AND substring(p.content_hash from 1 for 16) = atom.sh
-                ) AS drifted,
-                EXISTS (
-                  SELECT 1 FROM pages p
-                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
-                     AND p.slug = atom.ss
-                ) AS src_alive
-           FROM atom
-       )
-       SELECT count(*) AS total,
-              count(*) FILTER (WHERE drifted) AS drifted,
-              count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
-              count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
-              -- lexicographic min of ISO-shaped strings ≈ chronological min
-              -- (oldest); informational only, never verdict-bearing
-              min(ext) FILTER (WHERE drifted) AS oldest_ext
-         FROM drift`,
-      [],
-    );
+    const rows = await engine.transaction(async (tx) => {
+      // Bound the dispatched aggregate SQL to 5s at the database, not with
+      // Promise.race. This does not bound pool acquisition or the whole Doctor
+      // run. SET LOCAL and the aggregate execute on the transaction's same
+      // backend, so Postgres cancels server work and rolls the setting back
+      // before the pooled connection is reused. PGLite supports the same
+      // transaction-local GUC shape, keeping one cross-engine implementation.
+      await tx.executeRaw(`SELECT set_config('statement_timeout', $1, true)`, ['5000ms']);
+      return tx.executeRaw<{
+        total: string | number; drifted: string | number;
+        source_changed: string | number; source_gone: string | number;
+        oldest_ext: string | null;
+      }>(
+        // extracted_at stays TEXT end to end (review fix): an unguarded
+        // ::timestamptz cast let ONE malformed frontmatter value (hand edit,
+        // truncation) abort the whole aggregate and permanently degrade this
+        // check to a spurious "check failed" warn. The ISO-shape regex drops
+        // garbage from the min(); the age math happens in TS where Date
+        // parsing can never throw (semantically-invalid dates become NaN →
+        // metric omitted, verdict untouched).
+        `WITH atom AS (
+           SELECT a.source_id,
+                  a.frontmatter->>'source_hash' AS sh,
+                  a.frontmatter->>'source_slug' AS ss,
+                  CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                       THEN a.frontmatter->>'extracted_at' END AS ext
+             FROM pages a
+            WHERE a.type = 'atom'
+              AND a.deleted_at IS NULL
+              AND a.frontmatter->>'source_hash' IS NOT NULL
+              -- in-flight marker written before the extraction commits
+              AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
+         -- Build each source-scoped lookup set once. SELECT-list correlated
+         -- EXISTS stays a per-atom SubPlan over an unindexed hash expression
+         -- on Postgres. DISTINCT is load-bearing because duplicate live hashes
+         -- must not fan one atom out and inflate the aggregates.
+         ), live_hashes AS MATERIALIZED (
+           SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh
+             FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+         ), live_slugs AS MATERIALIZED (
+           SELECT DISTINCT source_id, slug FROM pages WHERE deleted_at IS NULL
+         ), drift AS (
+           SELECT atom.*,
+                  (h.sh IS NULL) AS drifted,
+                  (s.slug IS NOT NULL) AS src_alive
+             FROM atom
+             LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
+             LEFT JOIN live_slugs  s ON s.source_id = atom.source_id AND s.slug = atom.ss
+         )
+         SELECT count(*) AS total,
+                count(*) FILTER (WHERE drifted) AS drifted,
+                count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
+                count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
+                -- lexicographic min of ISO-shaped strings ≈ chronological min
+                -- (oldest); informational only, never verdict-bearing
+                min(ext) FILTER (WHERE drifted) AS oldest_ext
+           FROM drift`,
+        [],
+      );
+    });
     const r = rows?.[0];
     if (!r) return { name, status: 'warn', message: 'atom provenance query returned no rows' };
 

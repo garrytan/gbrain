@@ -232,6 +232,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // systemctl; the ubuntu CI runner's only behavioral pin on those arms).
   "src/commands/autopilot.ts": ["test/e2e/autopilot-linux-lifecycle.serial.test.ts"],
   "src/commands/doctor.ts": ["test/e2e/doctor-progress.test.ts"],
+  // The provenance aggregate has real-Postgres scale + containment coverage.
+  "src/commands/doctor/checks/extraction-sync.ts": [
+    "test/e2e/doctor-atom-provenance-timeout.test.ts",
+  ],
   // Doctor check modules peeled from doctor.ts feed the same e2e surface.
   "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts"],
   // Knowledge graph layer feeds graph-quality.
