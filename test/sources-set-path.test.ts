@@ -10,6 +10,9 @@
  *   - Path that exists but is a FILE → exit 5, no mutation.
  *   - Path overlapping another source's tree → exit 6 (`overlapping_path`,
  *     the same guard addSource enforces), no mutation; --force bypasses.
+ *   - Path classifying as an ephemeral CI checkout → exit 7
+ *     (`ephemeral_ci_path`), no mutation; --force and
+ *     GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 bypass.
  *
  * Modeled on test/sources-set-cr-mode.test.ts (same runSources dispatch,
  * same process.exit stub).
@@ -21,6 +24,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { GUARD_ENV_VARS } from '../src/core/ci-path-guard.ts';
 import { runSources } from '../src/commands/sources.ts';
 
 describe('gbrain sources set-path', () => {
@@ -272,5 +277,62 @@ describe('gbrain sources set-path', () => {
     await runSources(engine, ['set-path', 'default', link]);
     expect(exitCode).toBeNull();
     expect(await readLocalPath('default')).toBe(link);
+  });
+
+  // ── Ephemeral-CI-path guard (2026-09-08 shared-brain incident) ──────────
+  //
+  // set-path is the one writer that repoints a NON-NULL local_path in one
+  // line — exactly what a CI job (or an agent following a sync refusal hint
+  // inside CI) reaches for. A runner checkout passes the existsSync check ON
+  // the runner, then poisons the shared row for every other machine. The
+  // guard classifies via src/core/ci-path-guard.ts; env-based cases go
+  // through withEnv (this file also runs FOR REAL under GitHub Actions, so
+  // each case neutralizes the ambient CI env it doesn't set).
+
+  // Built from the guard's canonical env-var list (see guardEnv in
+  // test/sync-ephemeral-path-guard.serial.test.ts for the rationale).
+  const guardEnvOff = Object.fromEntries(
+    GUARD_ENV_VARS.map((k) => [k, undefined]),
+  ) as Record<string, string | undefined>;
+
+  test('rejection: path inside $GITHUB_WORKSPACE → exit 7, no mutation (incident shape)', async () => {
+    const durable = makeDir();
+    await runSources(engine, ['set-path', 'default', durable]);
+    const ciCheckout = makeDir(); // exists on "the runner" — passes the exit-5 check
+    await withEnv({ ...guardEnvOff, GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: ciCheckout }, async () => {
+      try {
+        await runSources(engine, ['set-path', 'default', ciCheckout]);
+      } catch (err) {
+        expect((err as Error).message).toContain('__test_exit_7__');
+      }
+    });
+    expect(exitCode).toBe(7);
+    expect(await readLocalPath('default')).toBe(durable); // shared row survives
+  });
+
+  test('--force bypasses the ephemeral-CI-path guard', async () => {
+    const ciCheckout = makeDir();
+    await withEnv({ ...guardEnvOff, GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: ciCheckout }, async () => {
+      await runSources(engine, ['set-path', 'default', ciCheckout, '--force']);
+    });
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(ciCheckout);
+  });
+
+  test('GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 bypasses the ephemeral-CI-path guard', async () => {
+    const ciCheckout = makeDir();
+    await withEnv(
+      {
+        ...guardEnvOff,
+        GITHUB_ACTIONS: 'true',
+        GITHUB_WORKSPACE: ciCheckout,
+        GBRAIN_ALLOW_EPHEMERAL_REPO_PATH: '1',
+      },
+      async () => {
+        await runSources(engine, ['set-path', 'default', ciCheckout]);
+      },
+    );
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(ciCheckout);
   });
 });

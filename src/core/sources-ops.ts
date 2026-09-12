@@ -55,6 +55,7 @@ import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
+import { classifyEphemeralCiPath, allowEphemeralPersist, ephemeralCiPathAdvice } from './ci-path-guard.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -71,7 +72,8 @@ export type SourceOpErrorCode =
   | 'clone_dir_outside_gbrain'
   | 'symlink_escape'
   | 'unmanaged_path'
-  | 'not_a_git_repo';
+  | 'not_a_git_repo'
+  | 'ephemeral_ci_path';
 
 export class SourceOpError extends Error {
   constructor(
@@ -150,10 +152,12 @@ export interface AddSourceOpts {
    */
   cloneDir?: string;
   /**
-   * Skip the #2707 git-repo validation on `localPath`. Opt-in escape hatch
-   * for registering a path before it's git-initialized (e.g. an automated
-   * pipeline that populates + `git init`s the directory after `sources add`
-   * runs). Does NOT auto-`git init` anything — see `addSource` docstring.
+   * Skip the path validations on `localPath`: the #2707 git-repo check and
+   * the ephemeral-CI-path refusal. Opt-in escape hatch for registering a
+   * path before it's git-initialized (e.g. an automated pipeline that
+   * populates + `git init`s the directory after `sources add` runs), or a
+   * genuinely durable brain living at a runner-shaped path. Does NOT
+   * auto-`git init` anything — see `addSource` docstring.
    */
   force?: boolean;
   /**
@@ -476,6 +480,28 @@ export async function addSource(
     opts = { ...opts, google: { ...opts.google, dir: resolvePath(msysToNativePath(opts.google.dir)) } };
   }
 
+  // Ephemeral-CI-path guard (2026-09-08 shared-brain incident): refuse to
+  // bind a source row — a fresh INSERT or the #3903 path-less attach below —
+  // to a path that only exists inside a CI runner (/home/runner/work/*,
+  // $GITHUB_WORKSPACE, ...). On a shared brain such a binding breaks capture
+  // and sync on every other machine the moment the runner is recycled.
+  // Unlike the #2707 git-repo check this does NOT gate on existsSync: the
+  // dangerous case includes a runner path replayed on a machine where it
+  // doesn't exist. `--force` (the existing path-validation escape hatch) and
+  // GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1 both bypass. Checked before the
+  // collision SELECT so a CI bootstrap re-running `sources add` sees the
+  // real problem, not "id taken".
+  if (opts.localPath && opts.force !== true && !allowEphemeralPersist()) {
+    const verdict = classifyEphemeralCiPath(opts.localPath);
+    if (verdict.ephemeral) {
+      throw new SourceOpError(
+        'ephemeral_ci_path',
+        `Refusing to register source "${opts.id}" with local_path ` +
+          `${opts.localPath}: ${ephemeralCiPathAdvice(verdict.detail!)}`,
+      );
+    }
+  }
+
   // Q4: pre-flight collision check before any clone work.
   const existing = await engine.executeRaw<{ id: string; local_path: string | null }>(
     `SELECT id, local_path FROM sources WHERE id = $1`,
@@ -524,6 +550,24 @@ export async function addSource(
   let finalPath = opts.localPath ?? null;
   if (parsedUrl) {
     finalPath = opts.cloneDir ?? defaultCloneDir(opts.id);
+    // Ephemeral-CI-path guard, Path A lane: a clone destination inside a CI
+    // workspace (`--clone-dir "$GITHUB_WORKSPACE/mirror"`) binds an
+    // ephemeral path as local_path just like `--path` does — and unlike the
+    // API-backed github/google kinds, a git clone does NOT self-heal:
+    // recloneIfMissing on other machines would have to recreate the runner
+    // path. The DEFAULT clone dir ($GBRAIN_HOME/clones/<id>) is deliberately
+    // not flagged by the classifier (runner $HOME is out of scope), so this
+    // only bites explicit ephemeral destinations.
+    if (opts.force !== true && !allowEphemeralPersist()) {
+      const verdict = classifyEphemeralCiPath(finalPath);
+      if (verdict.ephemeral) {
+        throw new SourceOpError(
+          'ephemeral_ci_path',
+          `Refusing to clone source "${opts.id}" into ${finalPath}: ` +
+            ephemeralCiPathAdvice(verdict.detail!),
+        );
+      }
+    }
   }
   if (finalPath) await assertNoOverlappingPath(engine, opts.id, finalPath);
 

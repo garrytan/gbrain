@@ -1,5 +1,60 @@
 # TODOS
 
+## Ephemeral-CI-path guard follow-ups (filed 2026-09-10)
+
+Filed from the 2026-09-08 shared-brain incident: a CI job with brain
+credentials ran gbrain from its GitHub Actions runner checkout and the runner
+path was persisted into the shared `sources.local_path` row, breaking
+`gbrain capture` (repo_not_found) on every other machine until repaired via
+`gbrain sources set-path`. The prevention shipped: `src/core/ci-path-guard.ts`
+classifier wired into `sync-anchor.ts:writeSyncAnchor` (skip persist,
+session-scoped sync), `sources-ops.ts:addSource` (`ephemeral_ci_path`),
+`sources-set-path.ts` (exit 7), and `import.ts:runImport` (skip the
+`sync.repo_path` bookmark persist — the ship review's testing specialist
+found this fourth writer). Escape hatches: `--force` /
+`GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1` (affirmative allowlist).
+
+- [ ] **P2 — `gbrain doctor` check for already-contaminated path bindings.**
+  The guard prevents NEW ephemeral persists but does not clean rows poisoned
+  before it landed (or written under the escape hatch and then orphaned). Add
+  a doctor check that runs `classifyEphemeralCiPath` (path-prefix rules only —
+  ambient env on the doctor host is meaningless for a stored path) over every
+  `sources.local_path` + the `sync.repo_path` config key and flags matches
+  with the `gbrain sources set-path` repair hint. Natural home: next to
+  `default_source_local_path` in `src/commands/doctor.ts`.
+
+- [ ] **P3 — machine-readable skip signal in the sync/import `--json` envelopes.**
+  The guard's persist-skip is stderr-only; a CI wrapper parsing the JSON
+  envelope sees a fully green result and hits the missing-binding consequence
+  later with no programmatic breadcrumb. Add an additive per-source field
+  (e.g. `path_binding: 'persisted' | 'skipped_ephemeral_ci'`) or a top-level
+  `warnings: []` to the sync/import envelopes when the guard skips.
+  Red-team finding from the guard's ship review; additive-only per the
+  envelope schema rules.
+
+- [ ] **P3 — consider a dedicated hatch flag (`--allow-ephemeral-path`).**
+  `--force` now waives two unrelated validations on `sources add`
+  (#2707 git-repo check + the ephemeral refusal); prose that recommends
+  `--force` for the git-init case implicitly waives the ephemeral guard too.
+  Bootstrap's printed hint is already ephemeral-aware, but a dedicated flag
+  would decouple the escapes cleanly. Also note the residual unguarded lane:
+  a bare `sources add --url` in CI clones under the runner's
+  `$GBRAIN_HOME/clones/` (runner $HOME is deliberately out of classifier
+  scope) — self-heals via reclone on other machines, documented here rather
+  than guarded.
+
+- [ ] **P3 — decide whether the github/google `--dir` kinds need the same
+  guard.** `addSource` Path C/D (`--kind github|google`) bind `opts.*.dir` as
+  `local_path` without the ephemeral check (deliberately scoped out of the
+  incident fix: API-kind sources rematerialize from the API, so a stale dir
+  self-heals unlike a git working tree). Adversarial-review nuance
+  strengthening the case to guard later: the rematerialize self-heal fails on
+  macOS for `/home/runner/...` dirs (`/home` is a read-only synthetic mount),
+  so the broken-pointer symptom partially survives through this lane there. If a CI-registered mirror with a
+  runner dir turns out to break other machines' materializer in practice,
+  wire `classifyEphemeralCiPath` into those branches too — the classifier
+  already covers it.
+
 ## Community fix wave follow-ups (filed 2026-09-07, search-eval train)
 
 - [ ] **P2 — bump MARKDOWN_CHUNKER_VERSION to 5 so already-indexed CJK-dominant pages pick up the CJK overlap fix.**

@@ -76,6 +76,24 @@ RUN gbrain init --pglite --no-embedding   # keyless install — done; no runtime
 
 Since every embedding cost gate is structurally moot with no key, none of `docs/operations/spend-controls.md` applies until you add one.
 
+## Syncing from a CI checkout against a shared brain
+
+A CI job that syncs or imports its checkout into a shared brain works
+normally — content lands and the sync bookmark advances — but the job's
+throwaway checkout directory is never saved as the brain's durable path.
+Paths that classify as ephemeral CI checkouts (hosted-runner workspaces,
+or any directory inside the provider's advertised workspace when a CI
+environment is detected) are skipped at persist time with a stderr
+notice, and `sources add --path`/`--clone-dir`, `sources set-path`, and
+`config set sync.repo_path` refuse them outright. This protects every
+other machine sharing the brain from a "repo not found" breakage after a
+CI run. If a runner-like path really is a durable host, set
+`GBRAIN_ALLOW_EPHEMERAL_REPO_PATH=1` (or pass `--force` on
+add/set-path).
+
+**Say to your agent:** *"Sync this CI checkout into the brain without
+changing my brain's paths"*
+
 ## Repairing a provider/column mismatch
 
 ```dockerfile
