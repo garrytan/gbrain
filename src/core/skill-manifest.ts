@@ -64,7 +64,7 @@ function parseSkillName(skillMdPath: string): string | null {
  * Walk skillsDir, return every `<skillsDir>/<dir>/SKILL.md` as a
  * ManifestEntry. Dotfile and underscore-prefixed dirs are skipped.
  */
-function deriveManifest(skillsDir: string): ManifestEntry[] {
+function deriveManifest(skillsDir: string, resolveReadPath?: (reference: string) => string | null): ManifestEntry[] {
   const out: ManifestEntry[] = [];
   if (!existsSync(skillsDir)) return out;
 
@@ -93,7 +93,8 @@ function deriveManifest(skillsDir: string): ManifestEntry[] {
     const skillMd = join(subdirAbs, 'SKILL.md');
     if (!existsSync(skillMd)) continue;
 
-    const frontmatterName = parseSkillName(skillMd);
+    const readablePath = resolveReadPath ? resolveReadPath(`${entry}/SKILL.md`) : skillMd;
+    const frontmatterName = readablePath ? parseSkillName(readablePath) : null;
     const name = frontmatterName && frontmatterName !== '' ? frontmatterName : entry;
     out.push({ name, path: `${entry}/SKILL.md` });
   }
@@ -109,10 +110,13 @@ function deriveManifest(skillsDir: string): ManifestEntry[] {
  * Canonical entry point. New code should call THIS, not reach into
  * manifest.json directly.
  */
-export function loadOrDeriveManifest(skillsDir: string): ManifestLoadResult {
-  const manifestPath = join(skillsDir, 'manifest.json');
+export function loadOrDeriveManifest(
+  skillsDir: string,
+  resolveReadPath?: (reference: string) => string | null,
+): ManifestLoadResult {
+  const manifestPath = resolveReadPath ? resolveReadPath('manifest.json') : join(skillsDir, 'manifest.json');
 
-  if (existsSync(manifestPath)) {
+  if (manifestPath && existsSync(manifestPath)) {
     try {
       const content = JSON.parse(readFileSync(manifestPath, 'utf-8'));
       // Strict shape gate: `skills` MUST be an array of `{name, path}`.
@@ -142,5 +146,5 @@ export function loadOrDeriveManifest(skillsDir: string): ManifestLoadResult {
     }
   }
 
-  return { skills: deriveManifest(skillsDir), derived: true };
+  return { skills: deriveManifest(skillsDir, resolveReadPath), derived: true };
 }

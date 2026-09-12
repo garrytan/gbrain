@@ -30,12 +30,17 @@ import { join } from 'path';
 import { parseResolverEntries, type ResolverEntry } from './check-resolvable.ts';
 import { findAllResolverFiles } from './resolver-filenames.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+import { isPathContained } from './path-confine.ts';
+import type { SkillPaths } from './skill-paths.ts';
 
 export type TriggerSource = 'frontmatter' | 'resolver_md';
 
 export interface SkillTriggerEntry extends ResolverEntry {
   /** Which surface produced this entry. Drives action-text generation. */
   source: TriggerSource;
+  /** Actual file provenance when using approved multi-root diagnostics. */
+  resolvedPath?: string;
+  skillRoot?: string;
 }
 
 /** Section label stamped on every frontmatter-derived entry. */
@@ -72,7 +77,20 @@ export function _resetWarnedSkillsForTests(): void {
  *   - SKILL.md files with no frontmatter or empty `triggers:` array.
  *   - SKILL.md files that fail to read — warn-once + skip.
  */
-function loadFrontmatterEntries(skillsDir: string): SkillTriggerEntry[] {
+function loadFrontmatterEntries(skillsDir: string, paths?: SkillPaths): SkillTriggerEntry[] {
+  if (paths) {
+    return paths.references().flatMap(reference => {
+      const location = paths.locate(reference);
+      const content = paths.read(reference);
+      if (content === null) return [];
+      const parsed = parseSkillFrontmatter(content);
+      return (parsed?.triggers ?? []).filter(t => t.trim()).map(trigger => ({
+        trigger: trigger.trim(), skillPath: `skills/${reference}`, isGStack: false,
+        section: FRONTMATTER_SECTION, source: 'frontmatter' as const,
+        resolvedPath: location.path!, skillRoot: location.root!,
+      }));
+    });
+  }
   const out: SkillTriggerEntry[] = [];
   if (!existsSync(skillsDir)) return out;
 
@@ -155,13 +173,17 @@ function loadFrontmatterEntries(skillsDir: string): SkillTriggerEntry[] {
  * directory (the OpenClaw workspace-root layout from v0.31.7). For each
  * file: parse via `parseResolverEntries` and stamp `source: 'resolver_md'`.
  */
-function loadResolverMdEntries(skillsDir: string): SkillTriggerEntry[] {
+function loadResolverMdEntries(skillsDir: string, skillPaths?: SkillPaths): SkillTriggerEntry[] {
   const paths = [
     ...findAllResolverFiles(skillsDir),
     ...findAllResolverFiles(join(skillsDir, '..')),
   ];
   const out: SkillTriggerEntry[] = [];
   for (const p of paths) {
+    if (skillPaths && !isPathContained(p, join(skillsDir, '..'))) {
+      skillPaths.errors.push(`Resolver file escapes workspace: ${p}`);
+      continue;
+    }
     let content: string;
     try {
       content = readFileSync(p, 'utf-8');
@@ -208,9 +230,9 @@ function mergeEntries(
  * The shared primitive. Returns the unified entry list for a given
  * skills directory. Idempotent. Pure modulo filesystem state.
  */
-export function loadSkillTriggerIndex(skillsDir: string): SkillTriggerEntry[] {
-  const fmEntries = loadFrontmatterEntries(skillsDir);
-  const resolverEntries = loadResolverMdEntries(skillsDir);
+export function loadSkillTriggerIndex(skillsDir: string, paths?: SkillPaths): SkillTriggerEntry[] {
+  const fmEntries = loadFrontmatterEntries(skillsDir, paths);
+  const resolverEntries = loadResolverMdEntries(skillsDir, paths);
   return mergeEntries(fmEntries, resolverEntries);
 }
 

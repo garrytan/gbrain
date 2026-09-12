@@ -1,6 +1,6 @@
-import { describe, it, expect, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { spawnSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import {
@@ -8,15 +8,25 @@ import {
   resolveSkillsDir,
   DEFERRED,
 } from '../src/commands/check-resolvable.ts';
+import { createSkillTestSandbox } from './helpers/isolated-skill-env.ts';
+import { autoDetectSkillsDirReadOnly } from '../src/core/repo-root.ts';
 import { checkResolvable } from '../src/core/check-resolvable.ts';
 
-// Path to the CLI entry point. Runs through bun directly so tests don't
-// require a pre-built binary. Always invoked from the repo root so bun can
-// resolve transitive node_modules (the top-level cli.ts imports pull in
-// @anthropic-ai/sdk which walks from the file path, but some internal
-// shim resolution requires node_modules to be reachable from cwd too).
+// Resolve the executable from this clone, but never discover a host workspace.
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
-const REPO_ROOT = resolve(import.meta.dir, '..');
+let sandbox: ReturnType<typeof createSkillTestSandbox>;
+let restoreEnvironment: () => void;
+let fixtureSkills: string;
+beforeEach(() => {
+  sandbox = createSkillTestSandbox();
+  restoreEnvironment = sandbox.enter();
+  fixtureSkills = makeFixture([{ name: 'baseline', triggers: ['baseline'] }], []);
+  process.chdir(resolve(fixtureSkills, '..'));
+});
+afterEach(() => {
+  restoreEnvironment();
+  sandbox.dispose();
+});
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -81,10 +91,12 @@ interface RunResult {
   json: any;
 }
 
-function run(args: string[]): RunResult {
-  const res = spawnSync('bun', [CLI, 'check-resolvable', ...args], {
+function run(args: string[], cwd = resolve(fixtureSkills, '..')): RunResult {
+  const res = spawnSync(process.execPath, ['--no-env-file', CLI, 'check-resolvable', ...args], {
     encoding: 'utf-8',
-    cwd: REPO_ROOT,
+    cwd,
+    env: sandbox.env,
+    timeout: 30_000,
     maxBuffer: 10 * 1024 * 1024,
   });
   let json: any = null;
@@ -118,7 +130,7 @@ describe('check-resolvable — unit: orphan_trigger is one warning per skill, wo
       ],
       created,
     );
-    const report = checkResolvable(skillsDir);
+    const report = checkResolvable(skillsDir, { skillRoots: [] });
     const orphans = report.warnings.filter(w => w.type === 'orphan_trigger' && w.skill === 'beta');
     expect(orphans.length).toBe(1);
     expect(orphans[0].message).toContain('manifest.json');
@@ -137,7 +149,7 @@ describe('check-resolvable — unit: orphan_trigger is one warning per skill, wo
       ],
       created,
     );
-    const report = checkResolvable(skillsDir);
+    const report = checkResolvable(skillsDir, { skillRoots: [] });
     const orphans = report.warnings.filter(w => w.type === 'orphan_trigger' && w.skill === 'gamma');
     expect(orphans.length).toBe(1);
     expect(orphans[0].message).toContain('RESOLVER.md');
@@ -150,7 +162,7 @@ describe('check-resolvable — unit: orphan_trigger is one warning per skill, wo
       [{ name: 'alpha', triggers: ['alpha'], inManifest: false }],
       created,
     );
-    const report = checkResolvable(skillsDir);
+    const report = checkResolvable(skillsDir, { skillRoots: [] });
     const orphans = report.warnings.filter(w => w.type === 'orphan_trigger');
     expect(orphans.length).toBe(1);
     expect(orphans[0].skill).toBe('alpha');
@@ -222,7 +234,7 @@ describe('check-resolvable — unit: resolveSkillsDir', () => {
   });
 
   it('finds skills via cwd_walk_up when cwd is inside a repo (no --skills-dir)', () => {
-    // Running from this test file — we're inside the real gbrain repo.
+    // The per-test cwd is a synthetic workspace with an explicit skills root.
     // v0.33 added the cwd_walk_up tier ahead of repo_root, so the same
     // skills/ dir is matched via the broader (no gbrain-shape gate)
     // path. Behavior unchanged — source label updated. The repo_root
@@ -445,11 +457,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
     const empty = mkdtempSync(join(tmpdir(), 'cr-fix-installpath-'));
     try {
       // Pass --fix; expect refusal exit + clear error message.
-      const r = spawnSync('bun', ['run', CLI, 'check-resolvable', '--fix'], {
-        cwd: empty,
-        env: { ...process.env, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
-        encoding: 'utf-8',
-      });
+      const r = run(['--fix'], empty);
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('install-path fallback');
       expect(r.stderr).toContain('refused');
@@ -457,5 +465,32 @@ describe('gbrain check-resolvable CLI — integration', () => {
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
+  });
+
+  it('synthetic inherited HOME canary remains untouched by the install-fallback --fix case', () => {
+    const inherited = join(sandbox.root, 'synthetic-inherited-home');
+    const workspace = join(inherited, '.openclaw', 'workspace');
+    const skills = join(workspace, 'skills');
+    mkdirSync(join(skills, 'canary'), { recursive: true });
+    const canary = join(skills, 'canary', 'SKILL.md');
+    const content = '---\nname: canary\ntriggers: [canary]\n---\nUse web_search to search the web.\n';
+    writeFileSync(canary, content);
+    writeFileSync(join(skills, 'manifest.json'), JSON.stringify({ skills: [{ name: 'canary', path: 'canary/SKILL.md' }] }));
+    writeFileSync(join(skills, 'RESOLVER.md'), '| canary | `skills/canary/SKILL.md` |\n');
+    const empty = join(sandbox.root, 'empty-cwd');
+    mkdirSync(empty);
+    // Positive control: this is a discoverable synthetic inherited deployment.
+    expect(autoDetectSkillsDirReadOnly(empty, { HOME: inherited }).dir).toBe(skills);
+    process.env.HOME = inherited;
+    process.env.USERPROFILE = inherited;
+    process.env.XDG_CONFIG_HOME = join(inherited, '.config');
+    process.env.OPENCLAW_WORKSPACE = workspace;
+    process.env.GBRAIN_SKILLS_DIR = skills;
+    // run() must construct its own allowlisted env, never spread the above.
+    const r = run(['--fix'], empty);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('install-path fallback');
+    expect(r.stderr).toContain('refused');
+    expect(readFileSync(canary, 'utf8')).toBe(content);
   });
 });

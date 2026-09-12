@@ -1,3 +1,4 @@
+import type { SkillPaths } from './skill-paths.ts';
 /**
  * filing-audit.ts — Check 6 of the skillify checklist (W3).
  *
@@ -76,8 +77,13 @@ export interface FilingReport {
  * surfaces a loud "rules doc is broken" signal instead of silently
  * degrading.
  */
-export function loadFilingRules(skillsDir: string): FilingRulesDoc | null {
-  const path = join(skillsDir, '_brain-filing-rules.json');
+export function loadFilingRules(skillsDir: string, paths?: SkillPaths): FilingRulesDoc | null {
+  const location = paths?.locate('_brain-filing-rules.json', paths.roots[0]);
+  if (location && !location.path) {
+    if (location.error === 'file missing') return null;
+    throw new Error(`_brain-filing-rules.json: ${location.error}`);
+  }
+  const path = location?.path ?? join(skillsDir, '_brain-filing-rules.json');
   if (!existsSync(path)) return null;
   const content = readFileSync(path, 'utf-8');
   const parsed = JSON.parse(content);
@@ -170,9 +176,9 @@ function parseFrontmatter(skillMdPath: string): SkillFrontmatter | null {
  * (D-CX-7): filing-audit targets brain-page writers, not arbitrary
  * side effects.
  */
-export function runFilingAudit(skillsDir: string): FilingReport {
+export function runFilingAudit(skillsDir: string, paths?: SkillPaths): FilingReport {
   const issues: FilingIssue[] = [];
-  const rules = loadFilingRules(skillsDir);
+  const rules = loadFilingRules(skillsDir, paths);
   if (!rules) {
     return { totalScanned: 0, writesPagesSkills: 0, issues };
   }
@@ -181,12 +187,12 @@ export function runFilingAudit(skillsDir: string): FilingReport {
   let totalScanned = 0;
   let writesPagesSkills = 0;
 
-  if (!existsSync(skillsDir)) {
+  if (!paths && !existsSync(skillsDir)) {
     return { totalScanned, writesPagesSkills, issues };
   }
   let entries: string[];
   try {
-    entries = readdirSync(skillsDir);
+    entries = paths ? paths.references().map(p => p.replace(/\/SKILL\.md$/, '')) : readdirSync(skillsDir);
   } catch {
     return { totalScanned, writesPagesSkills, issues };
   }
@@ -194,12 +200,11 @@ export function runFilingAudit(skillsDir: string): FilingReport {
   for (const entry of entries) {
     if (entry.startsWith('.') || entry.startsWith('_')) continue;
     const dir = join(skillsDir, entry);
-    try {
-      if (!statSync(dir).isDirectory()) continue;
-    } catch {
-      continue;
+    if (!paths) {
+      try { if (!statSync(dir).isDirectory()) continue; } catch { continue; }
     }
-    const skillMd = join(dir, 'SKILL.md');
+    const skillMd = paths ? paths.locate(`${entry}/SKILL.md`).path : join(dir, 'SKILL.md');
+    if (!skillMd) continue;
     if (!existsSync(skillMd)) continue;
     totalScanned++;
 
