@@ -120,3 +120,55 @@ export function splitCJKQueryTerms(query: string): string[] {
   return Array.from(new Set(terms));
 }
 
+
+/**
+ * Korean postpositions (조사), longest-first.
+ *
+ * Korean is agglutinative: a particle attaches directly to the noun, so the
+ * ILIKE substring fallback sees "혈당에서" as one token and never matches a
+ * document that says "혈당 수치". Stripping the particle yields a stem that
+ * DOES match as a substring.
+ *
+ * Order matters — the scan takes the FIRST `endsWith` hit, so a longer
+ * particle must be tested before any shorter one it contains ("에서" before
+ * "에"/"서", "으로" before "로").
+ */
+export const KO_PARTICLES: readonly string[] = [
+  '에서는', '에게서', '으로는', '으로서',
+  '에서', '에게', '한테', '까지', '부터', '보다', '처럼', '마다',
+  '조차', '라도', '이나', '으로', '로서',
+  '은', '는', '이', '가', '을', '를', '에', '의', '로', '와', '과', '도', '만',
+];
+
+/**
+ * Minimum stem length kept after stripping a particle.
+ *
+ * One-syllable stems are indistinguishable from over-stripped fragments:
+ * "회의" ends in "의", "결과" ends in "과", "도로" ends in "로" — all would
+ * collapse to a single meaningless syllable that matches almost everything.
+ * Requiring 2+ characters rejects those while keeping the real cases
+ * ("혈당에서" → "혈당", "검진을" → "검진").
+ */
+export const KO_MIN_STEM_LENGTH = 2;
+
+/**
+ * Expand one query term into its match variants: `[original]`, or
+ * `[original, stem]` when a Korean particle was stripped.
+ *
+ * The caller ORs the variants within a term and ANDs across terms, so an
+ * added stem can only WIDEN recall — the original match is never lost. That
+ * makes over-stripping fail safe (extra results, never missing ones); the
+ * KO_MIN_STEM_LENGTH guard keeps the extras rare.
+ */
+export function koreanTermVariants(term: string): string[] {
+  if (!CJK_RANGES_REGEX.test(term)) return [term];
+  for (const p of KO_PARTICLES) {
+    if (term.length > p.length && term.endsWith(p)) {
+      const stem = term.slice(0, -p.length);
+      // Longest-first: this IS the longest matching particle, so a shorter
+      // one would only strip more. Stop either way.
+      return stem.length >= KO_MIN_STEM_LENGTH ? [term, stem] : [term];
+    }
+  }
+  return [term];
+}
