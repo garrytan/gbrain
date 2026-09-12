@@ -10,9 +10,13 @@ import {
 } from '../src/core/ai/gateway.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
+const queries: Array<{ sql: string; params: unknown[] }> = [];
 const engine = {
   getConfig: async (key: string) => key === 'takes.bootstrap_enabled' ? 'true' : null,
-  executeRaw: async () => [],
+  executeRaw: async (sql: string, params: unknown[] = []) => {
+    queries.push({ sql, params });
+    return [];
+  },
 } as unknown as BrainEngine;
 
 async function captureStdout(fn: () => Promise<void>): Promise<string> {
@@ -49,6 +53,7 @@ describe('gbrain takes extract --from-pages --json (#3962)', () => {
     expect(JSON.parse(stdout)).toEqual({
       pages_scanned: 0,
       claims_extracted: 0,
+      next_before: null,
       consent_gate_blocked: false,
       llm_unavailable: false,
       // #4473: md-first skip accounting.
@@ -56,5 +61,19 @@ describe('gbrain takes extract --from-pages --json (#3962)', () => {
       skipped: [],
       mirror_warnings: 0,
     });
+  });
+
+  test('passes an opaque next_before cursor after the source parameter', async () => {
+    queries.length = 0;
+    await captureStdout(() =>
+      runTakes(engine, [
+        'extract', '--from-pages', '--dry-run', '--json',
+        '--source-id', 'default',
+        '--before', '2030-01-02 03:04:05.123456+00,42',
+      ]));
+
+    const lastQuery = queries.at(-1);
+    expect(lastQuery?.sql).toContain('(updated_at, id) < ($2::timestamptz, $3)');
+    expect(lastQuery?.params).toEqual(['default', '2030-01-02 03:04:05.123456+00', 42]);
   });
 });
