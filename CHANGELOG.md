@@ -2,6 +2,26 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.50.1.0] - 2026-09-11
+
+**Flag typos on every CLI command now fail loud instead of silently validating.**
+
+The known-flags registry that powers strict pre-dispatch flag validation was accepting roughly a third of its entries from prose in code comments rather than from flags the commands actually read. A typo that happened to match one of those phantom entries (for example, a misspelling a comment itself warned about) sailed through validation and the command ran as if the flag had worked. The registry generator now ignores comments at every scan depth, so the validator's allowlists reflect real command surfaces only.
+
+### Fixed
+
+- The flag-registry generator strips `//` and `/* */` comments from imported command modules and their one-level dependencies before scanning for `--flag` literals — previously only the dispatcher's own case blocks were stripped, so a comment mentioning a flag registered it as legal for that command. The regenerated registry drops ~1,500 comment-derived entries; a cross-check against the TypeScript parser confirmed no real flag was lost.
+- `gbrain reindex-code`'s cost-flag error message named the wrong command form in its prefix.
+- Documentation and code comments that referred to the code reindex command by an invocation the CLI never routed now name `gbrain reindex-code`.
+
+### Changed
+
+- `gbrain jobs submit unify-types --allow-protected` remains accepted: the documented opt-in flag is carried by the generator's hand-tuned lane now that prose no longer registers it implicitly.
+
+## To take advantage of v0.50.1.0
+
+Nothing to do — upgrade and the stricter validation applies immediately. If a script of yours starts failing with an unknown-flag error, the flag it passes was never read by that command; check `gbrain <command> --help` for the real spelling.
+
 ## [0.50.0.0] - 2026-09-10
 
 **Approve client connection requests and keep background work within the access you granted.**

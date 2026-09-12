@@ -10,14 +10,14 @@
  * How: segment handleCliOnly (src/cli.ts) into per-command blocks on its
  * dispatch markers — `case 'X':` labels AND every `if (command === 'X' …)`
  * head, plain or compound (see segmentDispatchBlocks) — collect every
- * `import('./commands/Y.ts')` inside each block, then scan the
- * case-block text (with `//` and `/* *\/` comments stripped — prose next to a
- * marker is not consumption; see stripComments) plus each imported module
- * (plus one level of that module's ./relative same-directory imports) for
- * `--flag` string literals — including
- * help text, which deliberately over-includes: accepting a flag the handler
- * ignores is the pre-#2185 status quo for that flag, while missing a real
- * flag would break working invocations on upgrade.
+ * `import('./commands/Y.ts')` inside each block, then scan the case-block
+ * text plus each imported module (plus one level of that module's ./relative
+ * same-directory imports) for `--flag` string literals. Every scanned surface
+ * has its `//` and `/* *\/` comments stripped first — prose next to a marker
+ * or inside a module is not consumption; see stripComments. The literals that
+ * survive include help text, which deliberately over-includes: accepting a
+ * flag the handler ignores is the pre-#2185 status quo for that flag, while
+ * missing a real flag would break working invocations on upgrade.
  *
  * Output: src/core/cli-flag-registry.generated.ts (committed; freshness is
  * pinned by test/cli-flag-validation.test.ts the same way build:llms pins the
@@ -46,6 +46,16 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   embed: ['--pace', '--pace-max-concurrency'],
   // sync shares the same pace surface via env/config plus CLI passthrough.
   sync: ['--pace', '--pace-max-concurrency'],
+  // The documented `gbrain jobs submit unify-types --allow-protected` opt-in
+  // (skills/schema-unify, docs/architecture/pack-upgrade-mechanism.md, the
+  // onboard remediation string). jobs submit's parseFlag loop ignores it and
+  // ops/jobs.ts auto-allows protected names for trusted local callers, so it
+  // only ever existed in prose. Today `jobs submit` is validator-exempt
+  // (flagValidationExempt in src/cli.ts), so this entry is a forward-guard:
+  // it keeps the documented invocation legal if that exemption ever narrows,
+  // and keeps non-submit jobs subcommands at the accepted-and-ignored status
+  // quo instead of newly rejecting the flag the docs teach.
+  jobs: ['--allow-protected'],
 };
 
 /**
@@ -202,7 +212,9 @@ export function isValueOnlyImport(block: string, importIndex: number): boolean {
  * --multimodal flags the dispatcher parses") handed the PRECEDING marker
  * (storage) a phantom --multimodal because the comment sat between the two
  * markers. Regex literals are not modelled — `//` inside one would truncate
- * that line — which is acceptable for dispatch-block text (none there today).
+ * that line — which is acceptable for dispatch-block text (none there today);
+ * the same caveat rides along on the command-module surfaces this strip also
+ * covers (see buildFlagRegistry).
  */
 export function stripComments(src: string): string {
   let out = '';
@@ -334,11 +346,15 @@ export function buildFlagRegistry(): Record<string, string[]> {
       // imports scan at dep depth — exactly the pre-peel walk.
       const surface = [modPath, ...facadeExpansion(modPath)];
       for (const sfPath of surface) {
-        const sfSrc = readSrc(sfPath);
+        // Comments are prose, not consumption, at EVERY scan depth — the
+        // case-block strip alone left module files raw, so a prose mention in
+        // a command module ("never print a --force-baked registration" in
+        // bootstrap.ts) minted a phantom flag the validator then accepted.
+        const sfSrc = stripComments(readSrc(sfPath));
         depthZeroText += sfSrc;
         for (const f of flagsInText(sfSrc)) { flags.add(f); depthZero.add(f); }
         for (const dep of relativeImports(sfSrc, dirname(sfPath))) {
-          for (const f of flagsInText(readSrc(dep))) flags.add(f);
+          for (const f of flagsInText(stripComments(readSrc(dep)))) flags.add(f);
         }
       }
     }

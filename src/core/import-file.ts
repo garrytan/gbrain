@@ -1584,7 +1584,7 @@ export async function importCodeFile(
       // v0.41.31: stamp embedding provenance ONLY when every chunk was
       // freshly embedded with the current model this call (no reuse-by-hash
       // carrying old-model vectors). Mixed pages stay unstamped rather than
-      // falsely marked current; `reindex --code --force` / `embed --stale`
+      // falsely marked current; `reindex-code --force` / `embed --stale`
       // handle the swap for those.
       if (!opts.noEmbed && needsEmbedIndexes.length === chunks.length) {
         // D9: no stamp without a gateway (wrong signature is worse than none).
