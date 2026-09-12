@@ -711,8 +711,8 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const sub = rest[0];
   if (sub !== '--from-pages') {
     process.stderr.write(
-      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--include-covered] [--holder <name>]\n' +
-      'Runs progress: pages that already hold takes are skipped, so repeat runs sweep a large corpus in slices. --include-covered rescans everything (refresh).\n',
+      'Usage: gbrain takes extract --from-pages [--yes] [--dry-run] [--json] [--source-id <id>] [--max-pages N (clamped to 1000)] [--before <updated_at>,<id>] [--include-covered] [--holder <name>]\n' +
+      'Use the returned next_before cursor to advance past zero-claim pages. --include-covered rescans covered pages (refresh).\n',
     );
     process.exit(1);
   }
@@ -724,6 +724,23 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   const maxIdx = rest.indexOf('--max-pages');
   const maxPagesRaw = maxIdx >= 0 ? rest[maxIdx + 1] : undefined;
   const maxPages = maxPagesRaw ? Math.max(1, Math.min(1000, parseInt(maxPagesRaw, 10) || 50)) : 50;
+  const beforeIdx = rest.indexOf('--before');
+  const beforeRaw = beforeIdx >= 0 ? rest[beforeIdx + 1] : undefined;
+  let before: { updatedAt: string; id: number } | undefined;
+  if (beforeRaw) {
+    const separator = beforeRaw.lastIndexOf(',');
+    const updatedAt = separator > 0 ? beforeRaw.slice(0, separator) : '';
+    const idRaw = separator > 0 ? beforeRaw.slice(separator + 1) : '';
+    const id = Number(idRaw);
+    if (!updatedAt || !Number.isFinite(Date.parse(updatedAt)) || !Number.isSafeInteger(id) || id <= 0) {
+      process.stderr.write('Invalid --before cursor; expected <updated_at>,<positive-page-id>.\n');
+      process.exit(1);
+    }
+    before = { updatedAt, id };
+  } else if (beforeIdx >= 0) {
+    process.stderr.write('Missing value for --before; expected <updated_at>,<positive-page-id>.\n');
+    process.exit(1);
+  }
   const holderIdx = rest.indexOf('--holder');
   const holder = holderIdx >= 0 ? rest[holderIdx + 1] : 'system';
   const includeCovered = rest.includes('--include-covered');
@@ -761,6 +778,7 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     dryRun,
     sourceIdFilter,
     maxPages,
+    before,
     includeCovered,
     holder,
   });
@@ -788,7 +806,8 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   }
   process.stdout.write(
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
-    (dryRun ? ' (dry-run)' : '') + '\n',
+    (dryRun ? ' (dry-run)' : '') + '\n' +
+    (result.next_before ? `next: --before '${result.next_before}'\n` : ''),
   );
 }
 

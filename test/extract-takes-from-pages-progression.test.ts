@@ -101,4 +101,65 @@ describe('extractTakesFromPages — bootstrap progression', () => {
     });
     expect(r4.pages_scanned).toBe(3);
   });
+
+  test('a cursor advances past a newest page that yields no claims', async () => {
+    const body = 'A narrative-only body long enough to clear the 200-char eligibility floor. '.repeat(5);
+    const newestSlug = 'concepts/zero-claim-newest';
+    const olderSlug = 'concepts/claim-bearing-older';
+    await engine.putPage(olderSlug, {
+      type: 'concept', title: 'Older', compiled_truth: body, frontmatter: {},
+    });
+    await engine.putPage(newestSlug, {
+      type: 'concept', title: 'Newest', compiled_truth: body, frontmatter: {},
+    });
+    seedMd(newestSlug, body);
+    seedMd(olderSlug, body);
+    await engine.executeRaw(
+      `UPDATE pages
+          SET updated_at = CASE slug
+            WHEN $1 THEN '2030-01-02T03:04:05.123456Z'::timestamptz
+            WHEN $2 THEN '2030-01-02T03:04:05.123456Z'::timestamptz
+          END
+        WHERE slug IN ($1, $2)`,
+      [newestSlug, olderSlug],
+    );
+    const [newest] = await engine.executeRaw<{ id: number }>(
+      'SELECT id FROM pages WHERE slug = $1',
+      [newestSlug],
+    );
+    __setChatTransportForTests(async (opts) => {
+      const content = String(opts.messages[0]?.content ?? '');
+      const text = content.includes(newestSlug)
+        ? '[]'
+        : '[{"claim":"an older claim","kind":"take","weight":0.7}]';
+      return {
+        text,
+        blocks: [{ type: 'text' as const, text }],
+        stopReason: 'end' as const,
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-haiku-4-5-20251001',
+        providerId: 'anthropic',
+      };
+    });
+
+    const first = await extractTakesFromPages(engine, {
+      bootstrapEnabled: true, maxPages: 1, sourceIdFilter: 'default',
+    });
+    expect(first.pages_scanned).toBe(1);
+    expect(first.claims_extracted).toBe(0);
+    expect(first.next_before).toEndWith(`,${newest.id}`);
+    const separator = first.next_before!.lastIndexOf(',');
+
+    const second = await extractTakesFromPages(engine, {
+      bootstrapEnabled: true,
+      maxPages: 1,
+      sourceIdFilter: 'default',
+      before: {
+        updatedAt: first.next_before!.slice(0, separator),
+        id: Number(first.next_before!.slice(separator + 1)),
+      },
+    });
+    expect(second.pages_scanned).toBe(1);
+    expect(second.claims_extracted).toBe(1);
+  });
 });
