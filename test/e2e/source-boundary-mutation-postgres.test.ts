@@ -17,6 +17,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import postgres, { type Sql } from 'postgres';
+import { PageMissingError } from '../../src/core/engine-errors.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const describePg = hasDatabase() ? describe : describe.skip;
@@ -71,13 +72,17 @@ describePg('#4109 source-boundary mutation deletion races — Postgres', () => {
     const mutation = getEngine().addLink(from, to).finally(() => {
       settled = true;
     });
+    // Observe the rejection before COMMIT releases the racing mutation.
+    const outcome = mutation.catch((error: unknown) => error);
     // The FOR KEY SHARE endpoint lookup must block on the open delete.
     await Bun.sleep(50);
     expect(settled).toBeFalse();
 
     releaseDelete.resolve();
     await deletion;
-    await expect(mutation).rejects.toThrow(
+    const error = await outcome;
+    expect(error).toBeInstanceOf(PageMissingError);
+    expect((error as Error).message).toBe(
       `addLink failed: to page "${to}" (source=default) not found`,
     );
   }, 15_000);
@@ -105,12 +110,15 @@ describePg('#4109 source-boundary mutation deletion races — Postgres', () => {
       .finally(() => {
         settled = true;
       });
+    const outcome = mutation.catch((error: unknown) => error);
     await Bun.sleep(50);
     expect(settled).toBeFalse();
 
     releaseDelete.resolve();
     await deletion;
-    await expect(mutation).rejects.toThrow(
+    const error = await outcome;
+    expect(error).toBeInstanceOf(PageMissingError);
+    expect((error as Error).message).toBe(
       `addTimelineEntry failed: page "${slug}" (source=default) not found`,
     );
   }, 15_000);
