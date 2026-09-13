@@ -90,8 +90,7 @@ const add_timeline_entry: Operation = {
         { logger: ctx.logger },
       );
       if (writeThrough.handled) {
-        return {
-          status: 'ok',
+        const result = {
           write_through: {
             written: writeThrough.file?.written ?? false,
             ...(writeThrough.file?.path ? { path: writeThrough.file.path } : {}),
@@ -100,6 +99,10 @@ const add_timeline_entry: Operation = {
           },
           ...(writeThrough.entry ? { entry: writeThrough.entry } : {}),
         };
+        if (writeThrough.duplicate) {
+          return { status: 'skipped', reason: 'duplicate', ...result };
+        }
+        return { status: 'ok', ...result };
       }
     }
 

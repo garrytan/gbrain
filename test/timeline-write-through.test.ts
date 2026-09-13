@@ -128,6 +128,70 @@ describe('add_timeline_entry on an FS-canonical brain (#1856)', () => {
     expect(page?.timeline ?? '').toContain('Manual milestone added via timeline-add');
   });
 
+  test('exact replay is a no-op across the file and structured timeline', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = 'notes/replay-example';
+    const filePath = await seedPage(slug);
+    const input = {
+      slug,
+      date: '2026-01-04',
+      summary: 'Replay-safe milestone',
+      source: 'fixture',
+      detail: 'Synthetic evidence only.',
+    };
+
+    const first = await addTimelineEntryOp.handler(makeCtx(), input) as {
+      status: string;
+      write_through?: { written?: boolean };
+    };
+    expect(first.status).toBe('ok');
+    expect(first.write_through?.written).toBe(true);
+    const afterFirst = fs.readFileSync(filePath, 'utf8');
+
+    const replay = await addTimelineEntryOp.handler(makeCtx(), input) as {
+      status: string;
+      reason?: string;
+      write_through?: { written?: boolean };
+    };
+    expect(replay.status).toBe('skipped');
+    expect(replay.reason).toBe('duplicate');
+    expect(replay.write_through?.written).toBe(false);
+    expect(fs.readFileSync(filePath, 'utf8')).toBe(afterFirst);
+    expect(afterFirst.match(/Replay-safe milestone/g)).toHaveLength(1);
+    expect(await timelineRowCount(slug)).toBe(1);
+    expect((await engine.getTimeline(slug, { sourceId: 'default' }))).toHaveLength(1);
+  });
+
+  test('replay repairs a missing structured projection without duplicating the file', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = 'notes/replay-repair-example';
+    const filePath = await seedPage(slug);
+    const input = {
+      slug,
+      date: '2026-01-04',
+      summary: 'Recoverable milestone',
+      source: 'fixture',
+    };
+    await addTimelineEntryOp.handler(makeCtx(), input);
+    const canonicalFile = fs.readFileSync(filePath, 'utf8');
+    await engine.executeRaw(
+      `DELETE FROM timeline_entries WHERE page_id IN
+         (SELECT id FROM pages WHERE slug = $1 AND source_id = 'default')`,
+      [slug],
+    );
+
+    const replay = await addTimelineEntryOp.handler(makeCtx(), input) as {
+      status: string;
+      reason?: string;
+      write_through?: { written?: boolean };
+    };
+    expect(replay.status).toBe('skipped');
+    expect(replay.reason).toBe('duplicate');
+    expect(replay.write_through?.written).toBe(false);
+    expect(fs.readFileSync(filePath, 'utf8')).toBe(canonicalFile);
+    expect(await timelineRowCount(slug)).toBe(1);
+  });
+
   test('FS→DB rebuild recovers the entry from the file (the P0 loss mode)', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'notes/rebuild-example';
