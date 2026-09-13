@@ -154,7 +154,14 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       continue;
     }
     if (inFence) continue;
-    if (lines[i].match(/\bYYYY-MM-DD\b/) || lines[i].match(/\bXX-XX\b/) || lines[i].match(/\b\d{4}-XX-XX\b/)) {
+    // YYYY-MM-DD is also how a vault documents a path or field FORMAT
+    // (`daily/<YYYY-MM-DD>.md` in a write-authority table, a folder README, an
+    // output spec). Inline code spans and <angle-bracket> placeholders are
+    // deliberate notation, not an unfilled date, so strip them before testing;
+    // otherwise the rule is permanently non-zero on files nobody should edit
+    // and keeps every nightly cycle in 'warn'.
+    const probe = lines[i].replace(/`[^`]*`/g, '').replace(/<[^>]*>/g, '');
+    if (probe.match(/\bYYYY-MM-DD\b/) || probe.match(/\bXX-XX\b/) || probe.match(/\b\d{4}-XX-XX\b/)) {
       issues.push({
         file: filePath, line: i + 1, rule: 'placeholder-date',
         message: `Placeholder date found: ${lines[i].trim().slice(0, 60)}`,

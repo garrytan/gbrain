@@ -184,3 +184,21 @@ describe('runLintCore exclude (takeover of #2649)', () => {
     }
   });
 });
+
+describe('placeholder-date: documented date FORMATS are not placeholders', () => {
+  test('inline code spans and <angle-bracket> notation are ignored', () => {
+    const content = [
+      '---', 'type: note', 'title: Conventions', 'created: 2026-09-13', '---', '',
+      '| `/today` | `daily/<YYYY-MM-DD>.md`, plan section only |',
+      'Write output to <YYYY-MM-DD>-brief.md under agent-output.',
+      '',
+    ].join('\n');
+    const issues = lintContent(content, 'concepts/conventions.md', {});
+    expect(issues.filter(i => i.rule === 'placeholder-date')).toHaveLength(0);
+  });
+  test('a bare unfilled placeholder is still flagged', () => {
+    const content = ['---', 'type: note', 'title: Draft', 'created: 2026-09-13', '---', '', 'Meeting on YYYY-MM-DD with the vendor.', ''].join('\n');
+    const issues = lintContent(content, 'notes/draft.md', {});
+    expect(issues.filter(i => i.rule === 'placeholder-date')).toHaveLength(1);
+  });
+});
