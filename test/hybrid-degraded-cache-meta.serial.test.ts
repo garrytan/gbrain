@@ -1,22 +1,8 @@
 /**
- * WP2/T3 — cached-wrapper meta correctness (ENG-5 + D14.2 + cache_prestamp).
- *
- * Drives real store→hit roundtrips (mocked `embedQuery` for a deterministic
- * vector, real PGLite SemanticQueryCache) and pins:
- *
- *   - meta-key-parity: bare hybridSearch's meta keys ⊆ cached wrapper's,
- *     on BOTH the miss and the hit path (the spread-carry rebuild can
- *     never silently drop a key again — the adaptive_return drop class)
- *   - cache-hit stamping: `cache.status === 'hit'`, degraded carried from
- *     the stored row; hit-with-offset stays labeled 'hit'
- *   - cache_prestamp: a row whose stored meta lacks the degradation stamp
- *     surfaces degraded:[{stage:'cache_prestamp'}], never a clean claim
- *   - D14.2 short TTL: a degraded (but embeddable) result set is written
- *     with ttl_seconds=60; a clean set keeps the resolved TTL (3600)
- *   - null-embedding store is a silent no-op (ENG-6 — total embed outage
- *     is uncacheable by construction)
- *
- * Serial: mock.module + gateway/global-env mutation (isolation guard R2).
+ * Production-wrapper regression coverage with semantic response caching disabled.
+ * Fresh reads must retain filtering, metadata and telemetry guarantees; legacy
+ * cache implementation behavior is covered by the direct cache-class suites.
+ * Serial because embedding and gateway configuration are process-global.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -55,7 +41,6 @@ const {
   hybridSearch,
   hybridSearchCached,
   awaitPendingSearchCacheWrites,
-  DEGRADED_CACHE_TTL_SECONDS,
 } = await import('../src/core/search/hybrid.ts');
 const { SemanticQueryCache } = await import('../src/core/search/query-cache.ts');
 const { configureGateway, resetGateway } = await import('../src/core/ai/gateway.ts');
@@ -79,9 +64,6 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  // v0.48.2: the balanced bundle now reranks with a keyed default; without the
-  // key the search stamps `reranker_skipped` (by design). This suite is about
-  // EMBED degradation, so hold the reranker off to keep `degraded` clean.
   await engine.setConfig('search.reranker.enabled', 'false');
 
   const fixtures: Array<[string, string, string]> = [
@@ -107,8 +89,6 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  // Every query shares the same mocked vector, so rows from one test would
-  // HIT for another test's different query text. Isolate per test.
   await engine.executeRaw('DELETE FROM query_cache');
 });
 
@@ -125,46 +105,43 @@ async function cachedRun(
   return { results, meta };
 }
 
-describe('meta-key-parity (ENG-5) — bare keys ⊆ cached keys, hit and miss', () => {
-  test('miss and hit both carry every key bare hybridSearch emits', async () => {
+describe('meta-key parity between bare and repeated wrapper reads', () => {
+  test('repeated wrapper reads carry every key bare hybridSearch emits', async () => {
     let bareMeta: HybridSearchMeta | undefined;
     await hybridSearch(engine, 'builder', { limit: 5, onMeta: (m) => { bareMeta = m; } });
     const bareKeys = Object.keys(bareMeta!);
     expect(bareKeys).toContain('degraded');
     expect(bareKeys).toContain('retrieved_count');
 
-    const { meta: missMeta } = await cachedRun('builder', { limit: 5 });
-    expect(missMeta.cache?.status).toBe('miss');
+    const { meta: firstMeta } = await cachedRun('builder', { limit: 5 });
+    expect(firstMeta.cache?.status).toBe('disabled');
     for (const k of bareKeys) {
-      expect(Object.keys(missMeta)).toContain(k);
+      expect(Object.keys(firstMeta)).toContain(k);
     }
 
     await awaitPendingSearchCacheWrites();
 
-    const { meta: hitMeta } = await cachedRun('builder', { limit: 5 });
-    expect(hitMeta.cache?.status).toBe('hit');
+    const { meta: repeatMeta } = await cachedRun('builder', { limit: 5 });
+    expect(repeatMeta.cache?.status).toBe('disabled');
     for (const k of bareKeys) {
-      expect(Object.keys(hitMeta)).toContain(k);
+      expect(Object.keys(repeatMeta)).toContain(k);
     }
   });
 });
 
-describe('cache-hit stamping', () => {
-  test('hit carries cache.status=hit + the stored (clean) degradation stamp', async () => {
-    const { meta: missMeta } = await cachedRun('builder', { limit: 5 });
-    expect(missMeta.degraded).toEqual([]);
+describe('fresh wrapper metadata', () => {
+  test('repeated fresh reads report disabled caching and clean degradation metadata', async () => {
+    const { meta: firstMeta } = await cachedRun('builder', { limit: 5 });
+    expect(firstMeta.degraded).toEqual([]);
     await awaitPendingSearchCacheWrites();
 
-    const { meta: hitMeta } = await cachedRun('builder', { limit: 5 });
-    expect(hitMeta.cache?.status).toBe('hit');
-    expect(hitMeta.degraded).toEqual([]); // stored stamp, not cache_prestamp
-    expect(typeof hitMeta.retrieved_count).toBe('number');
+    const { meta: repeatMeta } = await cachedRun('builder', { limit: 5 });
+    expect(repeatMeta.cache?.status).toBe('disabled');
+    expect(repeatMeta.degraded).toEqual([]); // stored stamp, not cache_prestamp
+    expect(typeof repeatMeta.retrieved_count).toBe('number');
   });
 
-  test('offset>0 bypasses the cache entirely (pages are cache-hostile until the pre-slice pool is stored)', async () => {
-    // Post-#3002/#3871 hardening: the cache stores the already-sliced page,
-    // so serving ANY offset against it returns wrong/empty rows. Paged
-    // requests skip both lookup and store — status 'disabled', engine-served.
+  test('positive offsets remain uncached with retrieval metadata', async () => {
     const { results: missResults } = await cachedRun('builder', { limit: 5 });
     expect(missResults.length).toBeGreaterThan(0);
     await awaitPendingSearchCacheWrites();
@@ -174,7 +151,7 @@ describe('cache-hit stamping', () => {
     expect(typeof meta.retrieved_count).toBe('number');
   });
 
-  test('offset<0 also bypasses the cache entirely (#4358 residual — negative offsets re-slice a stored page just as badly as positive ones)', async () => {
+  test('negative offsets remain uncached with retrieval metadata', async () => {
     const { results: missResults } = await cachedRun('builder', { limit: 5 });
     expect(missResults.length).toBeGreaterThan(0);
     await awaitPendingSearchCacheWrites();
@@ -185,47 +162,45 @@ describe('cache-hit stamping', () => {
   });
 });
 
-describe('cache_prestamp — pre-upgrade rows cannot claim clean', () => {
-  test('stored meta lacking the degraded key surfaces cache_prestamp on hit', async () => {
-    await cachedRun('builder', { limit: 5 });
-    await awaitPendingSearchCacheWrites();
-    // Simulate a pre-stamp row: strip the degraded key from the stored meta.
-    await engine.executeRaw(`UPDATE query_cache SET meta = meta - 'degraded'`);
+describe('legacy metadata is never restored into a fresh response', () => {
+  test('legacy metadata lacking the degradation stamp cannot affect a fresh response', async () => {
+    const first = await cachedRun('builder', { limit: 5 });
+    expect(first.results.length).toBeGreaterThan(0);
+    const { degraded: _degraded, ...legacyMeta } = first.meta;
+    await new SemanticQueryCache(engine).store('builder', fixedEmbedding(), first.results, legacyMeta);
+    expect(await engine.executeRaw('SELECT id FROM query_cache')).toHaveLength(1);
 
     const { meta } = await cachedRun('builder', { limit: 5 });
-    expect(meta.cache?.status).toBe('hit');
-    expect(meta.degraded).toEqual([{ stage: 'cache_prestamp' }]);
+    expect(meta.cache?.status).toBe('disabled');
+    expect(meta.degraded).toEqual([]);
+    expect(meta.retrieved_count).toBe(first.meta.retrieved_count);
   });
 });
 
-describe('D14.2 — degraded result sets get a short-TTL cache entry', () => {
-  test('embeddable degradation (expansion_partial) writes ttl_seconds=60, stamped', async () => {
+describe('clean and degraded result sets both bypass cache writes', () => {
+  test('expansion degradation is reported without writing a cache row', async () => {
     const { meta } = await cachedRun('builder', {
       limit: 5,
       expansion: true,
       expandFn: async () => ['builder', 'EMBEDFAIL variant'],
     });
-    expect(meta.cache?.status).toBe('miss');
+    expect(meta.cache?.status).toBe('disabled');
     expect((meta.degraded ?? []).map((d) => d.stage)).toContain('expansion_partial');
     await awaitPendingSearchCacheWrites();
 
     const rows = await engine.executeRaw<{ ttl_seconds: number; meta: unknown }>(
       'SELECT ttl_seconds, meta FROM query_cache',
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].ttl_seconds).toBe(DEGRADED_CACHE_TTL_SECONDS);
-    const storedMeta = rows[0].meta as HybridSearchMeta;
-    expect((storedMeta.degraded ?? []).map((d) => d.stage)).toContain('expansion_partial');
+    expect(rows).toHaveLength(0);
   });
 
-  test('clean run keeps the resolved TTL (3600 default)', async () => {
+  test('clean runs also leave the cache empty', async () => {
     await cachedRun('builder', { limit: 5 });
     await awaitPendingSearchCacheWrites();
     const rows = await engine.executeRaw<{ ttl_seconds: number }>(
       'SELECT ttl_seconds FROM query_cache',
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].ttl_seconds).toBe(3600);
+    expect(rows).toHaveLength(0);
   });
 });
 

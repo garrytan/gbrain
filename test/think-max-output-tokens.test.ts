@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, test, expect } from 'bun:test';
 import { maxOutputTokensFor, runThink, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 
 describe('maxOutputTokensFor — thinking-default headroom', () => {
   test('Claude 5 family gets 16000', () => {
@@ -115,11 +116,13 @@ describe('runThink — max_tokens truncation labeling (gbrain#4375)', () => {
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
-    await engine.putPage('notes/quokka-payments', {
-      title: 'Quokka Payments',
-      type: 'note',
-      compiled_truth: 'The quokka payments migration finished in March with zero downtime.',
-    });
+    const imported = await importFromContent(
+      engine,
+      'notes/quokka-payments',
+      '---\ntitle: Quokka Payments\ntype: note\n---\n\nThe quokka payments migration finished in March with zero downtime.',
+      { noEmbed: true, sourceId: 'default' },
+    );
+    expect(imported.status).toBe('imported');
   });
 
   afterAll(async () => {

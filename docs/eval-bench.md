@@ -365,86 +365,113 @@ benchmark directly against gbrain's hybrid retrieval. Different evaluation
 axis from `eval replay`: public dataset with ground-truth labels, end-to-end
 question-answer pipeline, hermetic per-question brains.
 
-**Say to your agent:** *"Run the public LongMemEval benchmark against my
-gbrain retrieval"* (no skill backs this; your agent runs
-`gbrain eval longmemeval <dataset> --retrieval-only --top-k 5 --by-type --no-trajectory`,
-a self-check at the default settings. The receipted strict number below comes
-from the gbrain-evals runner, which pins reranker and autocut off; see
-"Download and run").
+The in-repo command is the reproduction path for the numbers below: it scores
+the official strict metric (`recall_all@k` — every gold session among the top-k
+distinct retrieved sessions), joins on the dataset's raw session ids, drops the
+30 abstention questions from the denominator as the official scorer does, and
+pins the reranker and autocut per run (see "Download and run" and "Flags").
+
+**Say to your agent:** *"Run the public LongMemEval benchmark like-for-like
+against my gbrain retrieval"* (no skill backs this; your agent runs
+`gbrain eval longmemeval <dataset> --retrieval-only --top-k 5 --by-type --no-trajectory --mode balanced --reranker off --autocut off`)
+— *"Run LongMemEval at my brain's shipped default search path"* (your agent runs
+the same command with `--reranker on --autocut off`, the release default; add
+`--autocut on --capture-pool` to reproduce the autocut floor replay).
 
 ### Current measured result
 
-**93.19% session-level `recall_all@5` (438/470), reranker off**: the
-like-for-like row for comparison against other systems, on LongMemEval's
-official retrieval metric. A question counts only when EVERY gold session
-appears among the top-5 distinct retrieved sessions. Retrieval only, no
-reader model. Any-hit `recall_any@5` (at least one gold session in the top 5)
-is 98.72% and is a diagnostic, not the headline; nDCG_any@5 is 93.32%.
+**95.53% session-level `recall_all@5` (449/470) on the release default path**
+(`balanced`: `voyage:rerank-2.5` on, autocut off, relational pin 3, metadata
+gate lexical) and **93.40% (439/470) with the reranker off**, the like-for-like
+row against systems that run no reranker. LongMemEval's official retrieval
+metric: a question counts only when EVERY gold session appears among the top-5
+distinct retrieved sessions; retrieval only, no reader model. Any-hit
+`recall_any@5` is 99.79% / 98.72% and is a diagnostic, not the headline.
 
-With the default reranker `voyage:rerank-2.5` on (the default path, what
-`balanced` and `tokenmax` run), **95.32% `recall_all@5` (448/470)**; any-hit
-99.79%, diagnostic. Same run, same 470 scored questions.
+- **Dataset:** `longmemeval_s_cleaned.json`, the cleaned September 2025
+  revision of the S split (`xiaowu0162/longmemeval-cleaned`, sha256
+  `d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442`). 500
+  questions; the 30 abstention (`_abs`) questions are excluded from the
+  recall denominator, as the official `print_retrieval_metrics.py` does, so
+  470 are scored. The ceiling at k=5 is 99.4%: 3 questions carry 6 gold
+  sessions and cannot fit in a top-5 list.
+- **Measured:** 2026-09-06 at gbrain v0.48.4.0 with `gbrain eval longmemeval`
+  (this repo; the sibling runner's 2026-09-02 receipt is reproduced by the A1
+  parity row: 439 vs 438 of 470, 469 of 470 rows agree per question, any-hit
+  identical), k=5, embedder `openai:text-embedding-3-large` at 1536 dims
+  through one content-addressed embedding cache (every arm after A1 ran with
+  0 misses, so all arms fused byte-identical vectors), single run, 0 errors
+  in every arm. Knob decisions were made on the 430 questions outside the
+  committed seed-42 dev slice (`evals/longmemeval/dev-slice-seed42.txt`); the
+  470 column is the comparable one.
 
-- **Dataset:** `longmemeval_s`, the cleaned September 2025 revision of the S
-  split (`xiaowu0162/longmemeval-cleaned`). 500 questions; the 30 abstention
-  (`_abs`) questions are excluded from the recall denominator, as the
-  official `print_retrieval_metrics.py` does, so 470 are scored. The ceiling
-  at k=5 is 99.4%: 3 questions carry 6 gold sessions and cannot fit in a
-  top-5 list.
-- **Measured:** 2026-09-02 at gbrain v0.48.2.0 (commit `172df271`), single
-  run, k=5, search mode `balanced`, autocut off, reranker off except the two
-  rerank arms (`voyage:rerank-2.5`), embedder
-  `openai:text-embedding-3-large` at 1536 dimensions. Harness: the
-  gbrain-evals runner (`main` at `29e9ac9`, pinned to that gbrain commit);
-  the official metric is recomputed from the per-question rows by
-  `eval/runner/longmemeval-aggregate.ts`. p50 3.7 s / p99 6.3 s per question,
-  0 errors. Distinct sessions in the top 5: 5 on 422 questions, 4 on 47, 3 on
-  1 (mean 4.90).
+"Paired" is per question against A1 (reranker off): questions this arm gets
+right that A1 missed / questions it loses that A1 had.
 
-All five arms come from that same run (470 scored, k=5, 0 errors in every
-arm). "Paired vs hybrid" is per-question against the hybrid
-row: questions this arm gets right that hybrid missed / questions it loses
-that hybrid had. Latency is per question.
+| Arm | `recall_all@5` (470) | `recall_any@5` | Mean distinct sessions in top 5 | Paired vs A1 | On the 430 |
+|---|---|---|---|---|---|
+| A1 hybrid, reranker off, autocut off (like-for-like row) | **93.40%** (439/470) | 98.72% | 4.90 | +0 / −0 | 403/430 |
+| A2 hybrid + reranker (`voyage:rerank-2.5`), autocut off | **95.53%** (449/470) | 99.79% | 4.89 | +18 / −8 | 412/430 |
+| A3 hybrid + LLM multi-query expansion, legacy weighting (`--expansion`) | **54.26%** (255/470) | 84.89% | 5.00 | +3 / −187 | 231/430 |
+| A4 the default that shipped before v0.48.4.0 (reranker on, autocut 0.35) | **80.64%** (379/470) | 99.36% | 2.36 | +16 / −76 | 344/430 |
+| A3′ hybrid + expansion at `expansion_variant_budget` 0.25, reranker off | **83.83%** (394/470) | 97.45% | 5.00 | +3 / −48 | 360/430 |
+| A3′R `tokenmax` + expansion at 0.25, reranker on, autocut 0.35 | **81.06%** (381/470) | 99.15% | 2.30 | +12 / −10 vs A4 | 347/430 |
+| `tokenmax` as released (legacy expansion, reranker on, autocut off) | **92.77%** (436/470) | 99.57% | 4.19 | +2 / −15 vs A2 | 400/430 |
+| **release default** (`balanced`: reranker on, autocut off, pin 3, gate lexical) | **95.53%** (449/470) | 99.79% | 4.89 | +18 / −8 | 412/430 |
 
-| Arm | `recall_all@5` | `recall_any@5` | nDCG_any@5 | Mean distinct sessions in top 5 | Paired vs hybrid | p50 / p99 |
-|---|---|---|---|---|---|---|
-| hybrid (reranker off; like-for-like row) | **93.19%** (438/470) | 98.72% | 93.32% | 4.90 | +0 / -0 | 3.7 s / 6.3 s |
-| hybrid + LLM multi-query expansion (`--expansion`, what `tokenmax` runs) | **54.89%** (258/470) | 86.60% | 71.68% | 5.00 | +3 / -183 | 5.1 s / 8.0 s |
-| hybrid-sessdiv (over-fetch 3x, keep top-5 distinct sessions) | **93.40%** (439/470) | 98.72% | 93.38% | 5.00 | +1 / -0 | 3.7 s / 6.4 s |
-| hybrid + rerank (`voyage:rerank-2.5`, the default path) | **95.32%** (448/470) | 99.79% | 95.77% | 4.89 | +18 / -8 | 3.8 s / 6.3 s |
-| hybrid-sessdiv + rerank | **95.53%** (449/470) | 99.79% | 95.82% | 5.00 | +19 / -8 | 3.8 s / 6.3 s |
+`recall_all@5` by question type, same run:
 
-`recall_all@5` by question type, same run, same five arms:
-
-| Question type | n | hybrid | hybrid + expansion | hybrid-sessdiv | hybrid + rerank | hybrid-sessdiv + rerank |
-|---|---|---|---|---|---|---|
-| knowledge-update | 72 | 98.6% (71) | 62.5% (45) | 98.6% (71) | 100.0% (72) | 100.0% (72) |
-| multi-session | 121 | 92.6% (112) | 34.7% (42) | 92.6% (112) | 92.6% (112) | 92.6% (112) |
-| single-session-assistant | 56 | 100.0% (56) | 82.1% (46) | 100.0% (56) | 100.0% (56) | 100.0% (56) |
-| single-session-preference | 30 | 96.7% (29) | 80.0% (24) | 96.7% (29) | 100.0% (30) | 100.0% (30) |
-| single-session-user | 64 | 98.4% (63) | 78.1% (50) | 98.4% (63) | 100.0% (64) | 100.0% (64) |
-| temporal-reasoning | 127 | 84.3% (107) | 40.2% (51) | 85.0% (108) | 89.8% (114) | 90.6% (115) |
-| **all scored** | **470** | **93.19% (438)** | **54.89% (258)** | **93.40% (439)** | **95.32% (448)** | **95.53% (449)** |
+| Question type | n | A1 | A2 / release default | A3 | A4 | A3′ | `tokenmax` as released |
+|---|---|---|---|---|---|---|---|
+| knowledge-update | 72 | 98.6% (71) | 100.0% (72) | 61.1% (44) | 73.6% (53) | 90.3% (65) | 100.0% (72) |
+| multi-session | 121 | 92.6% (112) | 92.6% (112) | 38.0% (46) | 73.6% (89) | 75.2% (91) | 86.8% (105) |
+| single-session-assistant | 56 | 100.0% (56) | 100.0% (56) | 82.1% (46) | 100.0% (56) | 100.0% (56) | 100.0% (56) |
+| single-session-preference | 30 | 96.7% (29) | 100.0% (30) | 66.7% (20) | 100.0% (30) | 100.0% (30) | 96.7% (29) |
+| single-session-user | 64 | 98.4% (63) | 100.0% (64) | 76.6% (49) | 100.0% (64) | 96.9% (62) | 100.0% (64) |
+| temporal-reasoning | 127 | 85.0% (108) | 90.6% (115) | 39.4% (50) | 68.5% (87) | 70.9% (90) | 86.6% (110) |
+| **all scored** | **470** | **93.40% (439)** | **95.53% (449)** | **54.26% (255)** | **80.64% (379)** | **83.83% (394)** | **92.77% (436)** |
 
 What the arms say:
 
-- **The reranker is worth +2.13 points on the default path** (93.19%
-  to 95.32%, +18 / -8 paired). Every gain is outside multi-session, which the
-  reranker leaves at 112/121 both ways; the largest is temporal-reasoning
-  (107 to 114 of 127). Any-hit climbs to 99.79%, so the reranker is promoting
-  sessions already in the candidate pool rather than recalling new ones.
-- **LLM multi-query expansion is harmful at k=5.** 54.89% against 93.19%,
-  +3 / -183 paired, worse in every question type, zero expansion errors.
-  `tokenmax` users get this path; the fix (weight variant lists below the
-  original in RRF, cap their contribution, or expand only when the original's
-  evidence is weak) is the TODOS.md entry "multi-query expansion dilutes
-  small-k retrieval now that fusion is clean". `tokenmax` was not measured
-  with the reranker in this run.
-- **Slot starvation is not the miss class.** Session-diverse over-fetch
-  fills every top-5 to 5.00 distinct sessions (plain hybrid returned fewer
-  than 5 on 48 of 470 questions) and adds exactly one question, with or
-  without the reranker (+1 / -0 and 95.32% to 95.53%). The remaining misses
-  are ranking misses, not duplicate sessions eating top-5 slots.
+- **The release default IS the reranker row.** 449/470 is byte-identical per
+  question to A2: on this corpus the relational pin never fires (no relational
+  intent) and the metadata gate changes no top-5 (chat sessions carry no
+  backlinks or graph edges). The reranker is worth +2.13 points over A1
+  (+18 / −8 paired), every gain outside multi-session (112/121 both ways),
+  the largest in temporal-reasoning (108 → 115 of 127). Any-hit rises to
+  99.79%: the reranker promotes sessions already in the pool.
+- **Autocut, not the reranker, was the regression in the old default.** A4
+  vs A2 is +0 / −68 on the 430, the losses entirely in the three types whose
+  questions need more than one session (multi-session −22, temporal −27,
+  knowledge-update −19); any-hit is unchanged. Replaying every floor from A4's
+  captured post-rerank pool found no floor within two questions of "off" on
+  either seeded half, so autocut is off in `balanced` and `tokenmax`
+  (`docs/architecture/RETRIEVAL.md`, "Autocut"). The mean returned window
+  shrank from 3256 to 1633 estimated tokens under the cut — that saving was
+  paid for with the second gold session.
+- **LLM multi-query expansion is still harmful at k=5, and the budget knob is
+  real but not enough.** Legacy weighting (one full RRF vote per variant):
+  255/470, +3 / −187. `search.expansion_variant_budget` shares one total
+  weight across the variants; replaying the SAME recorded variants, the
+  dev-slice sweep climbs monotonically as the budget shrinks (24 → 26 → 30 →
+  34 of 40 at 2.0 → 1.0 → 0.5 → 0.25; plain hybrid 36) and A3′ at 0.25
+  recovers 139 questions over A3 — yet still trails A1 by 43 on the 430, so
+  every bundle keeps `null` and the knob is an operator lever. A3′R (tokenmax
+  under the old autocut) equals A4 only because the cut pins both near 80%.
+  Conditional expansion (expand only when the original query's evidence is
+  weak) is the filed next mechanism.
+- **`tokenmax` as released scores 436/470 (92.77%).** With the reranker on
+  and autocut off, expansion costs thirteen questions against `balanced`
+  (+2 / −15: multi-session −7, temporal −5) plus the Haiku call per query.
+  `gbrain config set search.mode balanced` keeps the reranker and drops
+  expansion; `gbrain config set search.expansion_variant_budget 0.25`
+  recovers most of the loss if you keep it on.
+- **Slot starvation is not the miss class** (from the 2026-09-02 sibling run;
+  no in-repo arm yet): session-diverse over-fetch fills every top-5 to 5.00
+  distinct sessions and adds exactly one question (+1 / −0, with or without
+  the reranker). The remaining misses are ranking misses among sessions that
+  are all in the pool — the diagnosis that decided Phase B of the ranker
+  wave (`docs/eval/FIX_WAVE_BASELINES.md`).
 
 How to read other systems' numbers. On the strict metric on this dataset we
 found no published score above 93.19%. The closest strict comparisons are
@@ -453,8 +480,12 @@ our own recomputations from MemPalace's committed rankings (85.7% raw,
 98.4%) and ContextFit's self-reported 87.45% All@5 (its rerank layer reads
 gold labels, so loosely comparable). The 90-96% figures from Mem0, Mastra,
 MemCog, Zep, Hindsight, ByteRover and Supermemory are LLM-judged answer
-accuracy, a different quantity that moves with the reader and judge model;
-gbrain has published no answer-accuracy run on LongMemEval. Full report,
+accuracy, a different quantity that moves with the reader and judge model.
+gbrain's own judged answer-accuracy lane (`--judge`, "Judged answer accuracy"
+below) uses the official prompts and judge model with full protocol
+disclosure; its first number is 86.6% (433/500, v0.48.4.0, default Sonnet
+reader, gpt-4o judge — see "Judged answer accuracy" below), and it carries no
+SOTA claim because those competitor numbers are protocol-unmatched. Full report,
 comparison table, and receipts:
 [gbrain-evals `docs/benchmarks/2026-05-07-longmemeval-s.md`](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-07-longmemeval-s.md).
 
@@ -475,30 +506,215 @@ curl -Lo ~/datasets/longmemeval/longmemeval_s_cleaned.json \
 export GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large
 export GBRAIN_EMBEDDING_DIMENSIONS=1536
 
-# Self-check, retrieval-only at the published cutoff (no LLM answer-gen;
-# --no-trajectory skips the per-session Haiku claim-extractor call, so no
-# chat key is needed):
+# Like-for-like reproduction of the 93.40% A1 row (the sibling runner's 93.19% receipt
+# reproduces here too): retrieval-only at the published
+# cutoff, reranker and autocut pinned off, --no-trajectory (skips the per-session
+# Haiku claim-extractor call, so no chat key is needed). --by-type appends the
+# schema-v2 summary: strict recall_all@5 per type + aggregate, any-hit as the
+# diagnostic, the 30 _abs questions excluded from the denominator, and run_config
+# (pins, embedder, dataset sha256, knobs hash, embed-cache receipt).
 gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
   --retrieval-only --top-k 5 --by-type --no-trajectory \
-  --output /tmp/lme-hybrid.jsonl
-# Two caveats make this a self-check, not a like-for-like reproduction. The
-# in-repo `--by-type` summary reports ANY-HIT recall only, and the command
-# runs the defaults: the `balanced` bundle turns the reranker and
-# autocut on whenever VOYAGE_API_KEY is set, and the CLI has no switch to pin
-# them off (the benchmark brain is isolated, so `gbrain config set` does not
-# reach it). The receipted 93.19% recall_all@5 comes from the gbrain-evals
-# runner, which pins reranker and autocut off and emits scorable per-question
-# rows (470 scored, the 30 `_abs` questions dropped):
-#   bash eval/runner/longmemeval-batch.sh --adapters hybrid --embedding-model openai:text-embedding-3-large --embedding-dims 1536
+  --mode balanced --reranker off --autocut off \
+  --output ~/lme-receipts/hybrid.ndjson
 
-# Full pipeline (Anthropic key required for answer-gen):
-gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json --limit 50 \
-  > /tmp/hypothesis.jsonl
+# The shipped default path (what balanced/tokenmax run: reranker on, autocut off since v0.48.4.0).
+# The reranker gate keys on the RESOLVED pin (flag, --search-pin, snapshot or
+# bundle): a run that resolves to reranker on preflights readiness (exit 2 with
+# the fix if it cannot run) and fails the run (exit 1) if any row fell through
+# un-reranked — so a balanced run with no VOYAGE_API_KEY refuses to start (exit 2,
+# naming the fix) rather than scoring un-reranked rows, and a resume of a file that
+# already holds un-reranked rows exits 1; pass --reranker off for a reranker-free run. A run
+# where every question errored also exits 1. Note the 95.53% row above was
+# reranker on with autocut OFF (`--reranker on --autocut off`).
+gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+  --retrieval-only --top-k 5 --by-type --no-trajectory \
+  --mode balanced --reranker on --autocut off \
+  --output ~/lme-receipts/default.ndjson
 
-# Score with LongMemEval's published evaluate_qa.py (not bundled; needs
-# OpenAI gpt-4o per their spec):
-python evaluate_qa.py /tmp/hypothesis.jsonl
+# Embeddings are cached content-addressed at ~/.cache/gbrain-eval/longmemeval-embed.sqlite
+# (--embed-cache FILE to relocate, --no-embed-cache to disable), so every arm after
+# the first sees byte-identical vectors; run_config.cache.misses must be 0 for a
+# like-for-like arm. --record appends the run to .gbrain-evals/eval-results.jsonl;
+# --question-ids evals/longmemeval/dev-slice-seed42.txt runs the committed
+# 40-question dev slice.
+
+# Judged answer accuracy (see "Judged answer accuracy" below): the reader answers
+# each question from the retrieved sessions (a chat key for the reader model) and
+# the in-repo judge grades every answer with LongMemEval's official evaluate_qa.py
+# prompts (OPENAI_API_KEY for the gpt-4o judge). --max-usd caps JUDGE spend only.
+gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+  --top-k 5 --no-trajectory --mode balanced --reranker on \
+  --judge --judge-model openai:gpt-4o --max-usd 5 --yes \
+  --output ~/lme-receipts/judged.ndjson
+
+# Re-judge until judge_errors and skipped_budget are both 0: a judge-only backfill
+# (no reader calls) under the same retrieval pins; FILE is rewritten in place.
+gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+  --top-k 5 --no-trajectory --mode balanced --reranker on \
+  --judge --resume-from ~/lme-receipts/judged.ndjson --output ~/lme-receipts/judged.ndjson
+
+# The hypotheses in that file also score under LongMemEval's own evaluate_qa.py
+# (not bundled): python evaluate_qa.py ~/lme-receipts/judged.ndjson
 ```
+
+### Judged answer accuracy (`--judge`)
+
+**Protocol (v0.48.4.0).** Retrieval = the release default (`balanced`,
+reranker on, autocut off, k=5). Reader context = the FULL text of every
+distinct session among the top-5 retrieved chunk rows, wrapped in
+`<chat_session>` blocks (the sanitizer's 4000-char cap is an extractor-era
+default and does not apply to the reader; each row records
+`reader_context_chars`, `reader_context_sessions`, `reader_sessions_truncated`).
+Reader `max_tokens` 512 with an abstention instruction (disclosed deviation
+from the official reading prompt). Judge `openai:gpt-4o`, official
+`evaluate_qa.py` prompt per question type, temperature 0, `max_tokens` 16 —
+the OpenAI API's minimum; the official 10 is rejected, and a one-token yes/no
+verdict is unaffected. Gold and hypothesis sit inside a data-boundary wrapper
+(disclosed deviation). Every row carries the provider-reported reader and
+judge snapshot ids and the reader prompt sha.
+
+**Result (2026-09-06, v0.48.4.0, 500/500 judged, 0 judge errors, `complete: true`):**
+
+| Slice | Correct | Accuracy |
+|---|---|---|
+| **All 500 (headline)** | **433/500** | **86.6%** (95% CI 83.6–89.6, question-sampling only) |
+| Non-abstention 470 | 404/470 | 86.0% |
+| Abstention 30 | 29/30 | 96.7% |
+| single-session-assistant | 56/56 | 100.0% |
+| single-session-user | 69/70 | 98.6% |
+| knowledge-update | 70/78 | 89.7% |
+| multi-session | 111/133 | 83.5% |
+| temporal-reasoning | 107/133 | 80.5% |
+| single-session-preference | 20/30 | 66.7% |
+
+Evidence versus verdict on the 470 non-abstention questions: every gold
+session retrieved AND correct 396; every gold session retrieved but judged
+wrong 53; incomplete evidence but correct 8; incomplete and wrong 13. Retrieval
+on the same rows is the release number (449/470 strict), so the reader
+converts 88.2% of evidence-complete questions — the remaining loss is the
+answering layer (preference and temporal questions most of all). Reader
+snapshot `claude-sonnet-4-6`, judge snapshot `gpt-4o-2024-08-06`, mean reader
+context 63.6K characters, 0 sessions truncated. The pre-registered prediction
+(≥ 92%) was missed. Competitor answer-accuracy rows (OMEGA 95.4%, Mastra
+94.87%, Mem0 93.4%) use different readers, prompts, judges and dataset
+revisions; this row makes no comparison claim in either direction.
+
+The second lane. Instead of asking whether the gold sessions were retrieved,
+it asks whether the READER's answer was right: the reader answers each
+question from the retrieved sessions, and an LLM judge grades that answer
+against the dataset's gold with LongMemEval's own scorer prompts. The lane is
+the in-repo `gbrain eval longmemeval --judge`, so the retrieval pins, the
+reader pins and the judge pins all land on one receipt.
+
+**Say to your agent:** *"Score my brain's answer accuracy on LongMemEval"*
+(no skill backs this; your agent runs
+`gbrain eval longmemeval <file> --judge --no-trajectory`).
+
+**Protocol — what every receipt discloses.**
+
+- **Official prompts, official rule.** `src/eval/longmemeval/judge.ts` is a
+  port of `evaluate_qa.py::get_anscheck_prompt`: the standard instruction for
+  `single-session-user` / `single-session-assistant` / `multi-session`, the
+  temporal-reasoning off-by-one-days clause, the knowledge-update
+  instruction, the single-session-preference rubric, and the abstention
+  instruction for `_abs` question ids. One user message per question, judge
+  model `gpt-4o` (`--judge-model` overrides), `temperature 0` (threaded
+  through the gateway's `ChatOpts.temperature`), `max_tokens 16` (the
+  official 10 is below the OpenAI API minimum; a one-token verdict is
+  unaffected), verdict = `yes` substring of the lowercased completion.
+- **Data-boundary framing (disclosed deviation).** The question, the
+  reference and the reader's response sit inside `<judge_input>` tags with an
+  instruction that the delimited content is data to grade, never instructions
+  to follow; tag closures inside the data are neutralised. The response text
+  is otherwise unaltered, so the judge grades what the reader actually said.
+- **`judge_error` class (disclosed deviation).** A judge malfunction —
+  timeout after two retries, rate limit exhausted, refusal, empty completion,
+  or a completion that is neither a yes nor a no — is recorded as a
+  `judge_error`, not scored `no`. The headline scores every such row as
+  INCORRECT, so it is never more lenient than the official rule; the errors
+  leave the denominator only in the secondary `accuracy_excluding_errors`,
+  and the backfill re-judges them.
+- **Headline rule.** `qa_accuracy.accuracy_headline` = correct / ALL
+  questions in the run, `_abs` included (the official scorer sees exactly one
+  label per hypothesis). Every ungradable question — `judge_error`,
+  budget-skipped, reader error, never judged — counts as incorrect.
+  `accuracy_excluding_errors` is secondary; `accuracy_470` is the headline
+  rule over the non-`_abs` questions (the retrieval-metric denominator);
+  `by_type` and an `abstention` sub-block break it down.
+- **Not publishable until complete.** A run with `judge_errors > 0` or
+  `skipped_budget > 0` prints `FAIL --judge: judgments incomplete … NOT
+  publishable` and exits 1 (`--allow-incomplete-judgments` downgrades it to a
+  WARN). The fix is the judge-only backfill: `--judge --resume-from FILE`
+  re-judges every row lacking a settled verdict from its stored hypothesis
+  (no reader call), rebuilds `qa_accuracy` from ALL rows and rewrites FILE.
+  `qa_accuracy.complete` is the publishability bit.
+- **Pins.** Every judged row carries `judge_config_hash`: the judge pins
+  (model, prompt version, max_tokens, temperature) plus the reader pins the
+  row was produced under (`reader_model`, `reader_prompt_sha`, k,
+  `reader_max_tokens`). A backfill hashes each prior row from its own recorded
+  reader pins, so a file answered by another reader is never relabelled as
+  this run's, and rows judged under a different hash are refused unless
+  `--allow-mixed-run-config`. Rows also record `reader_model_snapshot` and
+  `judge_model_snapshot` — the provider-reported model ids (a dated API
+  snapshot) when they differ from the requested ids.
+- **Reader prompt (disclosed deviation).** The official generation prompt
+  carries no abstention instruction; ours tells the reader to say the
+  information is not available when the retrieved sessions lack it
+  (pre-registered — without it the 30 `_abs` questions are answered and
+  judged wrong by construction). The retrieved sessions are wrapped in the
+  same `<chat_session>` UNTRUSTED framing as the rest of the harness; max
+  output tokens 512 (official 500). `reader_prompt_sha` pins the system text
+  on every row.
+- **Confidence intervals are question-sampling only.** `ci95_bootstrap` is a
+  seeded percentile bootstrap over the headline 0/1 vector (10,000 resamples,
+  seed 42), labelled `question-sampling only`: it says how much the number
+  would move under a different draw of questions, and nothing about reader /
+  judge nondeterminism, dataset revision or prompt drift.
+- **No SOTA claim.** The 90-96% judged-accuracy figures other systems publish
+  differ in context construction, reader prompt, judge, aggregation and
+  dataset revision, so they are protocol-unmatched. gbrain's number is
+  published as its first judged result with the disclosure line above and a
+  "not directly comparable" label; the only path to a comparative claim is a
+  protocol-matched replication of one competitor's setup.
+- **Spend.** `--max-usd N` (default 5) caps JUDGE spend only. The preflight
+  estimates the run (`READER_MAX_TOKENS` per live hypothesis, the stored
+  hypothesis for backfill rows) and refuses an estimate over the cap without
+  `--yes` (exit 2); at run time the lane soft-stops at the cap and stamps the
+  remaining rows `judge_skipped: "budget"`. An unpriced judge model requires
+  `--max-usd off`. Reader spend is not metered here — wrap a paid receipt in
+  `scripts/eval-spend-guard.sh`.
+
+Row fields with `--judge`: exactly one of `judge_correct` / `judge_error`
+(+ `judge_error_detail`) / `judge_skipped`, plus `judge_model`,
+`judge_model_snapshot`, `judge_raw` (first 200 chars), `judge_cost_usd`,
+`judge_attempts`, `judge_prompt_kind`, `judge_prompt_version`,
+`judge_config_hash`. The summary's `qa_accuracy` block adds
+`total_questions`, `judged`, `correct`, `judge_errors`, `skipped_budget`,
+`reader_errors`, `unjudged`, `judge_error_classes`, `est_cost_usd` /
+`actual_cost_usd` / `run_cost_usd`, `mixed_judge_config`, and
+`methodology_note` (the disclosure text, verbatim, on every receipt).
+`qa_accuracy` is in the metric glossary (`docs/eval/METRIC_GLOSSARY.md`).
+
+**Diagnosing misses.** When a strict-recall row is a miss, find out WHERE the
+gold was lost before choosing a fix:
+`bun run scripts/lme-miss-diagnostics.ts <receipt.ndjson> --dataset FILE
+[--splits evals/longmemeval/splits-seed42.json]` re-creates each missed
+question's brain exactly as the harness built it (same pins — defaulting to
+the receipt's flat `run_config` on the summary line — every embed a cache hit) and locates every
+missing gold session per arm (vector / keyword / title to depth 200, fused
+and post-rerank order from one `hybridSearch` call at limit 50, the final
+returned rows). It classifies the miss — (i) absent from every arm, (ii) in
+an arm pool but outside the fused top-k, (iii) in the fused top-k but
+reranked out, (iv) ceiling (more gold sessions than k), plus `rerun_hit` when
+the miss does not reproduce and `autocut_dropped` / `post_fusion_dropped`
+when a later trim removed a survivor — and probes the frozen hypotheses
+(second-event starvation signature, counterfactual clause sub-queries,
+candidate-generation vs reranker-depth). The clause sub-query embeds bypass
+the shared embed cache, so a diagnostics run never changes the like-for-like
+cache's canonical hash. `--out-md` renders a markdown report, `--out-ndjson`
+the per-miss rows, `--all` diagnoses every scored question. It is not a
+`gbrain` subcommand; exit 2 when the gateway or reranker is not ready.
 
 ### Architecture (read this if you're touching the harness)
 
@@ -514,31 +730,71 @@ python evaluate_qa.py /tmp/hypothesis.jsonl
 - Retrieved chat content is wrapped in `<chat_session id="..." date="...">`
   framing; the answer-gen system prompt declares the content UNTRUSTED.
   Same posture as `<take>` framing.
+- The reader prompt is a module constant in `src/eval/longmemeval/reader.ts`
+  (`READER_SYSTEM_TEXT`; its sha is the row's `reader_prompt_sha`, so two
+  rows with equal shas saw the identical instruction). The judge lives in
+  `src/eval/longmemeval/judge.ts` (official prompt port) over the
+  dataset-agnostic `src/eval/shared/judge-runner.ts` (retries, `judge_error`
+  classes, canonical-price cost, budget ledger); `qa-accuracy.ts` builds the
+  summary block, `src/eval/shared/bootstrap.ts` its interval.
 - LLM injection seam: `runEvalLongMemEval(args, {client?: ThinkLLMClient})`.
   Tests stub the client so the full pipeline runs hermetically without any
   API key.
 
 ### Flags
 
+Every flag lives in one table in `src/commands/eval-longmemeval.ts`
+(`LME_FLAGS`) that drives both the parser and `--help`, so `--help` is the
+authoritative list. The table below is maintained by hand and can lag it.
+Unknown flags exit 1 before any work starts.
+
 | Flag | Default | Purpose |
 |---|---|---|
-| `--limit N` | run all | Cap question count (iterate fast) |
-| `--retrieval-only` | off | Emit retrieved chunks; no LLM answer-gen |
-| `--keyword-only` | off | Disable vector path (debug retrieval issues) |
-| `--expansion` | **off** | Multi-query expansion. Off by default for determinism (no per-query Haiku call). Pass to opt in. |
-| `--top-k K` | 8 | Retrieval depth (the published result uses `--top-k 5`) |
-| `--mode M` | config | Search mode `conservative`, `balanced`, or `tokenmax`, resolved through `src/core/search/mode.ts`; `tokenmax` implies `--expansion` |
-| `--model M` | resolved | Default resolves through `resolveModel()` 6-tier chain (`models.eval.longmemeval` config key) |
-| `--output FILE` | stdout | Write hypothesis JSONL to file instead of stdout |
-| `--resume-from FILE` | off | Skip `question_id`s already present in FILE (usually the same path as `--output`, which then appends) |
-| `--no-trajectory` | off | Skip the trajectory claim extractor and per-question intent routing (A/B baseline) |
-| `--by-type` | off | Append a `by_type_summary` JSON line with per-question-type any-hit R@k |
-| `--by-type-floor F` | off | Exit non-zero if any question type's rate is below F in [0, 1]; implies `--by-type` |
+| `--limit N` | run all | Run only the first N questions (after `--question-ids` filtering) |
+| `--model M` | resolved | Answer-generation model; default resolves through `resolveModel()` (`models.eval.longmemeval` config key) |
+| `--retrieval-only` | off | Skip LLM answer generation; emit the retrieved sessions as the hypothesis |
+| `--keyword-only` | off | Skip vector embedding: pure keyword retrieval (no reranker, no embed cache) |
+| `--expansion` | **off** | LLM multi-query expansion. Off for EVERY mode — the per-call setting beats the bundle, so `--mode tokenmax` alone does not expand. One Haiku call per question, non-deterministic; each row records `expansion_variants` |
+| `--expansion-replay FILE` | off | Serve the `expansion_variants` recorded in FILE (a prior `--expansion` run) instead of calling the LLM, so cells differ only in their knobs; implies `--expansion`. A question missing from FILE is an `expansion_replay_miss` error row and the run exits 1 |
+| `--expansion-variant-budget B` | not pinned | Pin `search.expansion_variant_budget`: `legacy` (every RRF list weight 1) or a number in (0, 4] — the total RRF weight shared by the expansion variant lists (the original list always keeps weight 1) |
+| `--top-k K` | 8 | Retrieve K chunk rows per question; `recall_*@k` is scored over the distinct sessions among those K rows (the published rows use `--top-k 5`) |
+| `--mode M` | `balanced` (or an injected config snapshot) | Search mode `conservative` / `balanced` / `tokenmax`, resolved through `src/core/search/mode.ts` so retrieval matches production under that mode. No mode implies `--expansion` |
+| `--reranker on\|off` | not pinned (bundle decides) | Pin `search.reranker.enabled` for the run (beats any injected snapshot and any `--search-pin` on the key). The reranker gate keys on the RESOLVED pin — flag, `--search-pin`, snapshot or bundle: whenever the run resolves to reranker on, readiness is preflighted (exit 2 with the fix if it cannot run) and the run exits non-zero if any row fell through un-reranked (`reranker_skipped_rows`). A `balanced`/`tokenmax` run with no `VOYAGE_API_KEY` therefore refuses to start (exit 2 with the fix text; a resume holding un-reranked rows exits 1) — pass `--reranker off` or set the key. A run in which every question errored also exits 1 |
+| `--autocut on\|off` | not pinned (bundle decides) | Pin `search.autocut` for the run (beats any injected snapshot) |
+| `--search-pin KEY=VALUE` | none | Pin any `search.*` config key for the run (repeatable, e.g. `--search-pin search.metadata_boost_gate=always`). The raw pin map folds into `retrieval_config_hash` (so a resumed file cannot mix pin sets); the knobs hash covers only the mode knobs the pins resolve into. Explicit flags (`--mode`, `--reranker`, `--autocut`, `--expansion-variant-budget`) win over a `--search-pin` on the same key. Unknown keys are set verbatim — check `gbrain search modes` to confirm a key exists |
+| `--output FILE` | stdout | Write JSONL to FILE |
+| `--resume-from FILE` | off | Skip `question_id`s already present in FILE (usually the `--output` path, which then appends). Prior rows are re-scored from their `retrieved[]` + the dataset gold; a file written under different retrieval pins is refused |
+| `--allow-mixed-run-config` | off | Resume even when FILE rows carry a different `retrieval_config_hash` |
+| `--question-ids FILE` | all | Run only the listed `question_id`s (one per line, `#` comments); unknown ids or an empty file exit 1. Dev-slice / held-out discipline (`evals/longmemeval/`) |
+| `--no-trajectory` | off | Skip the Haiku claim extractor AND the per-question intent routing (like-for-like retrieval receipts) |
+| `--by-type` | off | Append the `schema_version: 2` `by_type_summary` line: per type `{total, all_hit, all_rate, any_hit, any_rate}` + aggregate, `excluded_abstention`, `mean_distinct_sessions`, `run_config` |
+| `--by-type-floor F` | off | Exit non-zero if any question type's rate is below F in [0, 1]; gates on `recall_all` by default; implies `--by-type` |
+| `--by-type-floor-metric M` | `recall_all` | Which rate `--by-type-floor` gates on: `recall_all` or `recall_any` |
+| `--include-abstention` | off | Count `_abs` (abstention) questions in the recall denominators (default: emitted with `abstention: true`, excluded; the count lands in `excluded_abstention`) |
+| `--embed-cache FILE` | `~/.cache/gbrain-eval/longmemeval-embed.sqlite` | Content-addressed embedding cache (bun:sqlite); hits/misses land in `run_config.cache`, and misses must be 0 for a like-for-like arm |
+| `--no-embed-cache` | — | Disable the embedding cache for this run |
+| `--capture-pool` | off | Record `rerank_pool` per row: the post-rerank candidate pool BEFORE autocut / the limit slice (`slug`, `chunk_id`, `session_id`, `rrf_rank`, `rerank_score`, `alias_hit`, `est_tokens`) for `scripts/replay-autocut-floor.ts` |
+| `--record` | off | Append an `EvalRunRecord` (suite `longmemeval`, params = `run_config`, error text secret-redacted) to `.gbrain-evals/eval-results.jsonl` |
+| `--judge` | off | LLM-judge each reader answer against the gold with the official LongMemEval `evaluate_qa.py` prompts (temperature 0, max_tokens 16 — the official 10 is below the OpenAI API minimum; a one-token verdict is unaffected). Implies `--by-type` (the summary gains `qa_accuracy`, whose headline scores judge errors as incorrect); incompatible with `--retrieval-only`. With `--resume-from FILE`: judge-only backfill of rows lacking a settled verdict (no reader call; `judge_error` rows are re-judged), then `qa_accuracy` is rebuilt from ALL rows and FILE is rewritten with the judged rows |
+| `--judge-model M` | `openai:gpt-4o` | Judge model (the official scorer's model); a bare id is read as an `openai` model |
+| `--max-usd N\|off` | 5 | Cap on JUDGE spend only (the reader / extractor lanes are not metered here). Preflight refuses an estimate over the cap without `--yes` (exit 2); at run time the lane soft-stops at the cap and stamps the remaining rows `judge_skipped: "budget"` (not publishable). An unpriced judge model requires `off` |
+| `--yes` | off | Proceed when the judge estimate exceeds `--max-usd` (the cap still soft-stops the run) |
+| `--judge-concurrency N` | 1 | Parallel judge calls during a `--resume-from` backfill (live rows are judged inline after each reader call) |
+| `--allow-incomplete-judgments` | off | Exit 0 even when `judge_errors > 0`, `skipped_budget > 0` or `unjudged > 0`. Default: such a run is NOT publishable (stderr `FAIL` line, exit 1) — re-run with `--judge --resume-from FILE` until all three are 0 |
+
+Row fields: `recall_all_hit`, `recall_any_hit`, `recall_hit` (a DEPRECATED alias
+of `recall_any_hit`, kept for v1 readers), `abstention`,
+`distinct_sessions_in_top_k`, `retrieved[]`, `retrieved_session_ids`,
+`search_meta`, `retrieval_config_hash`; on answered rows the reader pins
+`reader_model`, `reader_model_snapshot`, `reader_prompt_sha`,
+`reader_max_tokens` (`--retrieval-only` rows carry `retrieval_only: true`
+instead); with `--judge`, the `judge_*` fields listed under "Judged answer
+accuracy".
 
 ### Numbers
 
 p50 25.9ms / p99 30.3ms warm reset+import+search on Apple Silicon (per the
-`test/eval-longmemeval.test.ts` perf gate). Per-question cost well under the
+`test/eval-longmemeval.slow.test.ts` perf gate). Per-question cost well under the
 500ms speed gate. 500 questions = ~13s of overhead plus your retrieval and
 LLM latency.
 
@@ -582,31 +838,70 @@ commands per high-severity finding.
 
 Three further eval surfaces, and the dev loop that uses them.
 
-### `gbrain eval longmemeval --by-type` — per-question-type R@k breakdown
+### `gbrain eval longmemeval --by-type` — per-question-type `recall_all@k` / `recall_any@k` breakdown
 
 LongMemEval computes per-question-type recall internally, and surfaces it in
 machine-readable form:
 
-1. Every per-question JSONL row includes a `question: string` field so the
-   `gbrain eval cross-modal --batch` consumer (below) can read it without
-   joining back against the source dataset.
-2. The `--by-type` flag emits a final aggregate line keyed by `question_type`:
+1. Every per-question JSONL row includes `question: string` (so the
+   `gbrain eval cross-modal --batch` consumer below can read it without joining
+   back against the dataset), `question_type`, `abstention`, `recall_all_hit`
+   (every gold session among the top-k distinct sessions), `recall_any_hit`
+   (at least one), `recall_hit` — a DEPRECATED alias of `recall_any_hit` kept
+   for v1 readers — `gold_total` / `gold_found`, `distinct_sessions_in_top_k`,
+   `retrieved[]` (every returned chunk row with its raw `session_id`, rank,
+   score and `rerank_score`), `retrieved_session_ids`, `search_meta`
+   (`vector_enabled`, `expansion_applied`, `degraded`, `reranked`, `autocut`)
+   and `retrieval_config_hash`.
+2. The `--by-type` flag emits a final `schema_version: 2` aggregate line keyed
+   by `question_type` (values illustrative):
 
 ```json
-{"schema_version": 1, "kind": "by_type_summary",
- "recall_by_type": {"single-session-user": {"hit": 18, "total": 19, "rate": 0.947}},
- "aggregate": {"hit": 110, "total": 120, "rate": 0.917}}
+{"schema_version": 2, "kind": "by_type_summary", "metric": "recall_all@k", "k": 5,
+ "excluded_abstention": 3,
+ "recall_by_type": {"single-session-user": {"total": 19, "all_hit": 17, "all_rate": 0.895, "any_hit": 18, "any_rate": 0.947}},
+ "aggregate": {"total": 120, "all_hit": 104, "all_rate": 0.867, "any_hit": 112, "any_rate": 0.933},
+ "legacy_rows": 0, "gold_missing_from_haystack": 0, "slug_collisions": 0,
+ "mean_distinct_sessions": 4.9,
+ "run_config": {"mode": "balanced", "keyword_only": false,
+   "reranker": {"enabled": false, "model": "voyage:rerank-2.5"}, "autocut": false,
+   "expansion": false, "expansion_variant_budget": null, "expansion_replay": null,
+   "embedder": "openai:text-embedding-3-large@1536", "topK": 5, "trajectory": false,
+   "dataset_sha256": "<sha256>", "dataset_questions": 500, "question_ids_file": null,
+   "retrieval_config_hash": "<sha256>", "knobs_hash": "<hash>", "knobs_hash_version": 29,
+   "cache": {"path": "~/.cache/gbrain-eval/longmemeval-embed.sqlite", "hits": 4210,
+     "misses": 0, "bypassed": 0, "infra_faults": 0, "canonical_sha256": "<sha256>", "sha256": "<sha256>"},
+   "reranker_skipped_rows": 0, "vector_degraded_rows": 0, "expansion_failed_rows": 0,
+   "expansion_replay_miss": 0, "gold_missing_from_haystack": 0, "slug_collisions": 0,
+   "excluded_abstention": 3, "errors": 0}}
 ```
 
-**Resume-safe.** When `--resume-from` is the same path as `--output`, the
-summary is rebuilt from the file (each per-row includes `question_type` and
-`recall_hit`) so the final aggregate covers all resumed questions, not just
-this run's slice. The prior summary at the file tail is replaced, not
-appended — a brain that resumes 5 times across a 500-question run ends with
+`metric` names the headline: `all_rate` is strict `recall_all@k`, `any_rate`
+the lenient `recall_any@k` (rates are `null` on an empty bucket, never NaN).
+`excluded_abstention` counts the `_abs` questions kept out of the denominators
+(`--include-abstention` folds them in). `legacy_rows` counts rows folded via
+`addRowToBucket` with only a `recall_hit` (when non-zero the `all_rate` is a
+lower bound). It is 0 on a fresh run AND on a resume: `--resume-from` re-scores
+every prior row (pre-v2 rows included) from its retrieved ids against the
+dataset's gold, so it only moves if a caller folds rows through
+`addRowToBucket` directly. `run_config.cache` is `null` with a
+`cache_skipped` reason when the embed cache was disabled, the run was
+`--keyword-only`, or no embedding gateway was configured.
+
+**Resume-safe.** When `--resume-from` is the same path as `--output`, prior
+rows are re-scored from their `retrieved[]` (or `retrieved_session_ids`)
+against the dataset's gold — stored booleans are never trusted — so the final
+aggregate covers every resumed question, not just this run's slice. A file
+whose rows carry a different `retrieval_config_hash` (other pins, or a config
+snapshot that differs in any result-shaping knob) is refused unless
+`--allow-mixed-run-config`. The prior summary at the file tail is replaced,
+not appended — a run that resumes 5 times across 500 questions ends with
 exactly ONE summary at the tail.
 
 **Optional gate.** `--by-type-floor 0.85` exits non-zero when any
-`question_type`'s rate falls below 0.85. Default: informational only.
+`question_type`'s `all_rate` (strict `recall_all@k`) falls below 0.85;
+`--by-type-floor-metric recall_any` gates on the lenient rate instead.
+Default: informational only.
 
 ```bash
 # Diagnose per-type ranking quality after a search-touching change.

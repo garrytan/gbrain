@@ -84,8 +84,8 @@ describe('v0.41 lease-cap controller E2E (Eng D6 corrected sign)', () => {
     // Insert dead jobs whose error_text matches the 429 classifier path.
     for (let i = 0; i < 10; i++) {
       await engine.executeRaw(
-        `INSERT INTO minion_jobs (name, queue, status, attempts_made, attempts_started, max_attempts, error_text, finished_at)
-         VALUES ('subagent-test', 'default', 'failed', 1, 1, 1, '429 Too Many Requests', now())`,
+        `INSERT INTO minion_jobs (submission_authority, name, queue, status, attempts_made, attempts_started, max_attempts, error_text, finished_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent-test', 'default', 'failed', 1, 1, 1, '429 Too Many Requests', now())`,
       );
     }
 

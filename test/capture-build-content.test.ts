@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../src/core/data-frontmatter.ts';
 import { __testing as captureTesting } from '../src/commands/capture.ts';
 
 const { mergeCaptureFrontmatter, deriveTitle } = captureTesting;

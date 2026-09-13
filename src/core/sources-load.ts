@@ -16,6 +16,8 @@
  * implementations even though both run identical SQL through `executeRaw`.
  * A shared helper hits the bar at lower cost.
  */
+import { existsSync } from 'fs';
+import { isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
 
 export interface SourceRow {
@@ -152,6 +154,45 @@ export function parseSourceConfig(config: unknown): Record<string, unknown> {
 export function sourceConfigHasRemoteUrl(config: unknown): boolean {
   const remoteUrl = parseSourceConfig(config).remote_url;
   return typeof remoteUrl === 'string' && remoteUrl.trim().length > 0;
+}
+
+function sourceHasRecoverableManagedClone(config: unknown): boolean {
+  const cfg = parseSourceConfig(config);
+  const remoteUrl = cfg.remote_url;
+  if (typeof remoteUrl !== 'string' || remoteUrl.trim().length === 0) return false;
+  return cfg.managed_clone === true;
+}
+
+/**
+ * Warning for a legacy source path that cannot be interpreted safely from a
+ * daemon context. Relative paths are ambiguous; absent absolute paths belong to
+ * another machine or an unmounted checkout unless the row is an owned remote
+ * clone that sync can safely recover by re-cloning.
+ */
+export function sourceLocalPathSkipWarning(
+  sourceId: string,
+  localPath: string,
+  pathExists: (path: string) => boolean = existsSync,
+  config: unknown = {},
+): string | null {
+  const relative = relativeSourceLocalPathSkipWarning(sourceId, localPath);
+  if (relative) return relative;
+  if (pathExists(localPath)) return null;
+  if (sourceHasRecoverableManagedClone(config)) return null;
+  return (
+    `[autopilot] skipping source '${sourceId}': local_path ` +
+    `'${localPath}' does not exist on this machine. Clone/register this ` +
+    `source locally, or let the machine that owns that checkout sync it.`
+  );
+}
+
+export function relativeSourceLocalPathSkipWarning(sourceId: string, localPath: string): string | null {
+  if (isAbsolute(localPath)) return null;
+  return (
+    `[autopilot] skipping source '${sourceId}': relative local_path ` +
+    `'${localPath}' cannot be resolved from a daemon. Re-register with an ` +
+    `absolute --path or run 'gbrain sync --source ${sourceId}' once to self-heal.`
+  );
 }
 
 /** True iff the source's config.federated field is the literal boolean true. */

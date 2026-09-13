@@ -84,6 +84,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
     expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
     expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
+    expect(KNOWN_CONFIG_KEYS).toContain('deepseek_api_key');
   });
 
   test('registers the provider_sunset suppression key (v0.46.3 documented command)', () => {

@@ -88,6 +88,9 @@ function basisEmbedding(slug: string, dim: number): Float32Array {
   e[h % dim] = 1.0;
   return e;
 }
+/** The seeder's per-slug basis vector, exported so hermetic tests can aim a
+ *  query vector at chosen pages (e.g. every company) with no embed provider. */
+export const relationalBasisEmbedding = basisEmbedding;
 
 /**
  * Probe the actual `content_chunks.embedding` column width. pgvector stores

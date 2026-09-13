@@ -146,15 +146,20 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
   });
 
   it('returns unusable:no_subagent_loop when tools work but the recipe declares the loop unsupported', () => {
-    // moonshot + mistral declare supports_tools: true, supports_subagent_loop: false.
+    // moonshot + mistral + minimax declare supports_tools: true, supports_subagent_loop: false.
     expect(classifyCapabilities('moonshot:kimi-k2.5')).toBe('unusable:no_subagent_loop');
     expect(classifyCapabilities('mistral:mistral-large-latest')).toBe('unusable:no_subagent_loop');
+    // #4782: MiniMax M2+/M3 tool calling is live-verified; the loop is not.
+    expect(classifyCapabilities('minimax:MiniMax-M3')).toBe('unusable:no_subagent_loop');
+    const minimax = getProviderCapabilities('minimax:MiniMax-M3');
+    expect(minimax.supportsToolCalling).toBe(true);
+    expect(minimax.supportsParallelTools).toBe(true);
+    expect(minimax.supportsSubagentLoop).toBe(false);
   });
 
   it('keeps unusable:no_tools precedence when tool calling is missing too', () => {
-    // minimax + nvidia declare BOTH supports_tools: false and
-    // supports_subagent_loop: false — the stronger no_tools verdict wins.
-    expect(classifyCapabilities('minimax:MiniMax-M2.5')).toBe('unusable:no_tools');
+    // nvidia declares BOTH supports_tools: false and supports_subagent_loop:
+    // false — the stronger no_tools verdict wins.
     expect(classifyCapabilities('nvidia:nvidia/nemotron-3-super-120b-a12b')).toBe('unusable:no_tools');
   });
 

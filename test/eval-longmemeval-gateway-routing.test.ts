@@ -81,7 +81,7 @@ describe('runEvalLongMemEval — gateway-routed chat lanes (#4636)', () => {
     }
   }, 60_000);
 
-  test('a gateway throw lands as a per-question {hypothesis: "", error} row and never aborts the run', async () => {
+  test('a gateway throw lands as a per-question {hypothesis: "", error} row and never aborts the loop; with EVERY question errored the run exits 1', async () => {
     configureGateway({ env: {} });
     let calls = 0;
     __setChatTransportForTests(async () => {
@@ -92,19 +92,38 @@ describe('runEvalLongMemEval — gateway-routed chat lanes (#4636)', () => {
     const engine = await createBenchmarkBrain();
     const tmp = mkdtempSync(join(tmpdir(), 'lme-gateway-throw-'));
     const outPath = join(tmp, 'out.jsonl');
+    // Capture process.exit: an all-errored run is a FAIL (exit 1), not a completed run.
+    let code: number | null = null;
+    let stderr = '';
+    const originalExit = process.exit;
+    const originalWrite = process.stderr.write;
+    // @ts-ignore runtime override for the test
+    process.exit = ((c: number) => { code = c; throw new Error('__exit__'); }) as any;
+    // @ts-ignore runtime override for the test
+    process.stderr.write = ((chunk: any) => { stderr += String(chunk); return true; }) as any;
     try {
-      // Must resolve (no rejection) even though EVERY answer call throws.
-      await runEvalLongMemEval(
-        [
-          FIXTURE_PATH,
-          '--keyword-only',
-          '--no-trajectory',
-          '--limit', '2',
-          '--model', 'openai:gpt-5.2',
-          '--output', outPath,
-        ],
-        { engine },
-      );
+      // The per-question loop must run to completion even though EVERY answer call throws.
+      try {
+        await runEvalLongMemEval(
+          [
+            FIXTURE_PATH,
+            '--keyword-only',
+            '--no-trajectory',
+            '--limit', '2',
+            '--model', 'openai:gpt-5.2',
+            '--output', outPath,
+          ],
+          { engine },
+        );
+      } catch (e) {
+        if (!String(e).includes('__exit__')) throw e;
+      } finally {
+        // @ts-ignore runtime restore
+        process.exit = originalExit;
+        process.stderr.write = originalWrite;
+      }
+      expect(code as number | null).toBe(1); // (assigned inside the process.exit stub — TS cannot see it)
+      expect(stderr).toContain('FAIL every question errored (2/2)');
       const rows = readFileSync(outPath, 'utf-8').trim().split('\n').map(l => JSON.parse(l));
       // One row PER question — the first failure did not short-circuit the second.
       expect(rows).toHaveLength(2);

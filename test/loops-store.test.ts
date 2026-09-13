@@ -77,19 +77,27 @@ describe('upsertOpenLoop', () => {
   });
 
   test('reopen: a closed loop flips back to open (closed_at/closed_by cleared) on conflict', async () => {
-    const { id } = await upsertOpenLoop(engine, loop());
-    const closed = await closeOpenLoop(engine, 'g1', id, 'done', 'manual');
-    expect(closed?.status).toBe('done');
+    // SQL now() is constant within a transaction: the fixture must supply
+    // genuinely newer activity, not depend on the database clock advancing.
+    await engine.transaction(async (tx) => {
+      const { id } = await upsertOpenLoop(tx, loop({ lastActivityAt: '2026-08-20T00:00:00.000Z' }));
+      const closed = await closeOpenLoop(tx, 'g1', id, 'done', 'manual');
+      expect(closed?.status).toBe('done');
 
-    const again = await upsertOpenLoop(engine, loop({ summary: 'they pinged again' }));
-    expect(again.created).toBe(false);
-    expect(again.id).toBe(id);
+      const again = await upsertOpenLoop(tx, loop({
+        summary: 'they pinged again',
+        lastActivityAt: '2026-08-24T00:00:00.000Z',
+      }));
+      expect(again.applied).toBe(true);
+      expect(again.created).toBe(false);
+      expect(again.id).toBe(id);
 
-    const rows = await listOpenLoops(engine, { sourceIds: ['g1'] });
-    expect(rows[0].status).toBe('open');
-    expect(rows[0].closed_at).toBeNull();
-    expect(rows[0].closed_by).toBeNull();
-    expect(rows[0].summary).toBe('they pinged again');
+      const rows = await listOpenLoops(tx, { sourceIds: ['g1'] });
+      expect(rows[0].status).toBe('open');
+      expect(rows[0].closed_at).toBeNull();
+      expect(rows[0].closed_by).toBeNull();
+      expect(rows[0].summary).toBe('they pinged again');
+    });
   });
 
   test('evidence is REPLACED on upsert, not merged', async () => {

@@ -7,7 +7,7 @@
  * cycle E2E lives in test/e2e/.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, spyOn } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +31,20 @@ function makeTranscript(name: string, body: string): string {
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'gbrain-synth-test-'));
 });
+
+/** Run `fn` with process.stderr.write captured; returns every chunk written. */
+function captureStderr<T>(fn: () => T): { value: T; writes: string[] } {
+  const writes: string[] = [];
+  const spy = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+    writes.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write);
+  try {
+    return { value: fn(), writes };
+  } finally {
+    spy.mockRestore();
+  }
+}
 
 describe('compileExcludePatterns', () => {
   test('auto-wraps bare words in word-boundary regex (Q-3)', () => {
@@ -113,6 +127,70 @@ describe('discoverTranscripts', () => {
     expect(out[0].basename).toBe('2026-04-25-comedy');
   });
 
+  test('exclusions are reported ONCE on stderr with the count and the patterns that fired, never the files', () => {
+    makeTranscript('2026-04-25-alpha.txt', 'discussing medical advice ' + 'x'.repeat(3000));
+    makeTranscript('2026-04-25-beta.txt', 'medical notes and a therapy referral ' + 'x'.repeat(3000));
+    makeTranscript('2026-04-25-gamma.txt', 'therapy session ' + 'x'.repeat(3000));
+    makeTranscript('2026-04-25-clean.txt', 'nothing sensitive here ' + 'x'.repeat(3000));
+    const { value: out, writes } = captureStderr(() => discoverTranscripts({
+      corpusDir: tmpDir,
+      minChars: 1000,
+      excludePatterns: ['medical', 'therapy'],
+    }));
+    expect(out.map(t => t.basename)).toEqual(['2026-04-25-clean']);
+
+    const lines = writes.filter(w => w.includes('exclude_patterns'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[dream\] excluded 3 transcript\(s\) matching exclude_patterns \(/);
+    expect(lines[0]).toContain('medical: 2');
+    expect(lines[0]).toContain('therapy: 2'); // beta matches both patterns
+    expect(lines[0]).toContain('dream.synthesize.exclude_patterns');
+    // Never the files: no basename, no path, no transcript content.
+    for (const w of writes) {
+      expect(w).not.toContain('alpha');
+      expect(w).not.toContain('beta');
+      expect(w).not.toContain('gamma');
+      expect(w).not.toContain(tmpDir);
+      expect(w).not.toContain('xxxx');
+    }
+  });
+
+  test('exclusions across BOTH the corpus and meeting-transcript dirs roll up into ONE stderr line', () => {
+    // The tally is per RUN, not per directory: one line, one total, one
+    // pattern count — an operator reading the log must not have to add up
+    // a line per source dir.
+    makeTranscript('2026-04-25-alpha.txt', 'discussing medical advice ' + 'x'.repeat(3000));
+    const meetDir = mkdtempSync(join(tmpdir(), 'gbrain-meet-'));
+    try {
+      writeFileSync(join(meetDir, '2026-04-25-beta.txt'), 'medical notes from the call ' + 'x'.repeat(3000));
+      writeFileSync(join(meetDir, '2026-04-25-clean.txt'), 'nothing sensitive here ' + 'x'.repeat(3000));
+      const { value: out, writes } = captureStderr(() => discoverTranscripts({
+        corpusDir: tmpDir,
+        meetingTranscriptsDir: meetDir,
+        minChars: 1000,
+        excludePatterns: ['medical'],
+      }));
+      expect(out.map(t => t.basename)).toEqual(['2026-04-25-clean']);
+      const lines = writes.filter(w => w.includes('exclude_patterns'));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('excluded 2 transcript(s)');
+      expect(lines[0]).toContain('medical: 2');
+    } finally {
+      rmSync(meetDir, { recursive: true, force: true });
+    }
+  });
+
+  test('no exclusion, no exclude_patterns line on stderr', () => {
+    makeTranscript('2026-04-25-clean.txt', 'nothing sensitive here ' + 'x'.repeat(3000));
+    const { value: out, writes } = captureStderr(() => discoverTranscripts({
+      corpusDir: tmpDir,
+      minChars: 1000,
+      excludePatterns: ['medical', 'therapy'],
+    }));
+    expect(out).toHaveLength(1);
+    expect(writes.filter(w => w.includes('exclude_patterns'))).toHaveLength(0);
+  });
+
   test('--date filter restricts to one specific YYYY-MM-DD basename', () => {
     makeTranscript('2026-04-25-foo.txt', 'a'.repeat(3000));
     makeTranscript('2026-04-26-bar.txt', 'b'.repeat(3000));
@@ -183,6 +261,20 @@ describe('readSingleTranscript', () => {
     const path = makeTranscript('hello.txt', 'medical content ' + 'x'.repeat(3000));
     const t = readSingleTranscript(path, { minChars: 1000, excludePatterns: ['medical'] });
     expect(t).toBeNull();
+  });
+
+  test('an exclude_patterns hit is reported on stderr without naming the file', () => {
+    const path = makeTranscript('secret-visit.txt', 'medical history ' + 'x'.repeat(3000));
+    const { value: t, writes } = captureStderr(() =>
+      readSingleTranscript(path, { minChars: 1000, excludePatterns: ['medical'] }),
+    );
+    expect(t).toBeNull();
+    const lines = writes.filter(w => w.includes('exclude_patterns'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('excluded 1 transcript(s)');
+    expect(lines[0]).toContain('medical: 1');
+    expect(lines[0]).not.toContain('secret');
+    expect(lines[0]).not.toContain(path);
   });
 
   test('throws on missing file', () => {

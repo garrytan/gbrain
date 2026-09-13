@@ -36,6 +36,11 @@ GBRAIN_HOME_DIR="$BUILD_DIR/home"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts" "$GBRAIN_HOME_DIR"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+# Shared operation/queue boundaries can reach embedded bootstrap assets even
+# from an engine-only import. Keep the compiled graph's file imports available.
+cp -R "$REPO_ROOT/templates" "$BUILD_DIR/templates"
+cp -R "$REPO_ROOT/skills" "$BUILD_DIR/skills"
+cp "$REPO_ROOT/package.json" "$BUILD_DIR/package.json"
 cp "$REPO_ROOT/scripts/pglite-embedded-smoketest.ts" "$BUILD_DIR/scripts/pglite-embedded-smoketest.ts"
 ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 

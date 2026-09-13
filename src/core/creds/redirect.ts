@@ -62,7 +62,21 @@ export interface ParsedRedirect {
 export function parsePastedRedirect(pasted: string, expectedState?: string): ParsedRedirect {
   const raw = pasted.trim().replace(/\s+/g, '');
   if (raw.length === 0) throw new CredentialError('pasted_wrong_url');
-  if (/accounts\.google\.com/i.test(raw)) throw new CredentialError('pasted_wrong_url');
+
+  // The #1 mistake — pasting the CONSENT PAGE url (still on
+  // accounts.google.com) instead of the failed-to-load redirect. Runs on every
+  // paste shape, scheme or not (browsers hide `https://` in the address bar),
+  // so a scheme-less consent URL can't fall through to the bare-code branch.
+  // Decide by HOST, not by substring: since RFC 9207 / OpenID Connect issuer
+  // identification, Google appends `iss=https://accounts.google.com` to every
+  // legitimate loopback redirect's query string, so a substring test over the
+  // whole raw paste flags every real redirect too.
+  const host = raw
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+    .split(/[/?#]/)[0]
+    .replace(/^[^@]*@/, '')
+    .replace(/:\d*$/, '');
+  if (/(?:^|\.)accounts\.google\.com$/i.test(host)) throw new CredentialError('pasted_wrong_url');
 
   let code: string | null = null;
   let state: string | null = null;

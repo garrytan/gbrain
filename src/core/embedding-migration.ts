@@ -50,6 +50,7 @@ import {
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { hnswIndexExpected } from './vector-index.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
+import { AUDIT_ROW_SOURCES } from './facts/audit-sources.ts';
 
 // ============================================================================
 // Env-override safety gate (moved from retrieval-upgrade-planner.ts — this
@@ -777,7 +778,9 @@ export interface MigrationStatusReport {
   missing_embeddings: number | null;
   chunkless_pages: number | null;
   signature_census: Array<{ signature: string | null; pages: number }>;
-  /** facts rows whose text-space vector is NULL (regenerate on next extract/write). */
+  /** facts rows whose text-space vector is NULL (regenerate on next extract/write),
+   *  excluding the audit checkpoint rows extract-conversation-facts writes into
+   *  `facts` — those are never embedded and never recalled (#4875). */
   facts_pending: number | null;
   synopsis_tier_pages: number | null;
   /** Stale count vs the live marker's target (else null — no target known);
@@ -847,7 +850,10 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
   let factsPending: number | null = null;
   try {
     const rows = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM facts WHERE embedding IS NULL AND expired_at IS NULL`,
+      `SELECT count(*)::int AS n FROM facts
+        WHERE embedding IS NULL AND expired_at IS NULL
+          AND NOT (source = ANY($1::text[]))`,
+      [[...AUDIT_ROW_SOURCES]],
     );
     factsPending = Number(rows[0]?.n ?? 0);
   } catch { /* facts table absent — report null */ }

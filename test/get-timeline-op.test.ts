@@ -1,18 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
-import type { TimelineOpts } from '../src/core/types.ts';
+import type { TimelineOpts, PageReadPolicy } from '../src/core/types.ts';
 
 const getTimeline = operationsByName['get_timeline'];
 
 function makeCtx(): OperationContext {
-  const calls: Array<{ slug: string; opts?: TimelineOpts }> = [];
+  const calls: Array<{ slug: string; opts?: TimelineOpts & PageReadPolicy }> = [];
   const engine = {
-    getTimeline: async (slug: string, opts?: TimelineOpts) => {
+    getTimeline: async (slug: string, opts?: TimelineOpts & PageReadPolicy) => {
       calls.push({ slug, opts });
       return [];
     },
-    // #4352 gate surface: remote callers resolve the private-pages config
-    // (no opt-out here) and probe for private-only slugs (none here).
+    // Remote callers resolve the private-pages config (no opt-out here).
     getConfig: async () => null,
     executeRaw: async () => [],
   };
@@ -32,7 +31,7 @@ function makeCtx(): OperationContext {
       allowedSources: ['alpha', 'beta'],
     },
     __calls: calls,
-  } as unknown as OperationContext & { __calls: Array<{ slug: string; opts?: TimelineOpts }> };
+  } as unknown as OperationContext & { __calls: Array<{ slug: string; opts?: TimelineOpts & PageReadPolicy }> };
 }
 
 describe('get_timeline op', () => {
@@ -53,10 +52,13 @@ describe('get_timeline op', () => {
       limit: 7,
     });
 
-    expect((ctx as typeof ctx & { __calls: Array<{ slug: string; opts?: TimelineOpts }> }).__calls).toEqual([{
+    expect((ctx as typeof ctx & { __calls: Array<{ slug: string; opts?: TimelineOpts & PageReadPolicy }> }).__calls).toEqual([{
       slug: 'people/alice-example',
       opts: {
         sourceIds: ['alpha', 'beta'],
+        excludePrivate: true,
+        requireSafeChunks: true,
+        takesHoldersAllowList: ['world'],
         after: '2026-01-01',
         before: '2026-03-31',
         limit: 7,
@@ -72,8 +74,11 @@ describe('get_timeline op', () => {
       until: '2026-04-30',
     });
 
-    expect((ctx as typeof ctx & { __calls: Array<{ slug: string; opts?: TimelineOpts }> }).__calls[0]?.opts).toMatchObject({
+    expect((ctx as typeof ctx & { __calls: Array<{ slug: string; opts?: TimelineOpts & PageReadPolicy }> }).__calls[0]?.opts).toMatchObject({
       sourceIds: ['alpha', 'beta'],
+      excludePrivate: true,
+      requireSafeChunks: true,
+      takesHoldersAllowList: ['world'],
       after: '2026-04-01',
       before: '2026-04-30',
     });

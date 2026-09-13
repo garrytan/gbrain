@@ -103,6 +103,22 @@ describe('loadSinglePlugin', () => {
     expect(res.subagents[0]!.body.trim()).toBe('You are a meeting ingester.');
   });
 
+  test('rejects executable selectors and malformed metadata without returning a partial plugin', () => {
+    for (const [name, content, reason] of [
+      ['selector', '---javascript\n({name: "private-content"})\n---\nbody', 'Unsupported frontmatter language'],
+      ['malformed', '---\nname: [private-content\n---\nbody', 'Malformed YAML frontmatter'],
+    ]) {
+      const dir = writePlugin(name, { subagents: { 'a-good.md': '---\nname: valid\n---\nbody', 'b-rejected.md': content } });
+      const result = loadSinglePlugin(dir);
+      expect('error' in result).toBe(true);
+      expect('subagents' in result).toBe(false);
+      if ('error' in result) {
+        expect(result.error).toContain(reason);
+        expect(result.error).not.toContain('private-content');
+      }
+    }
+  });
+
   test('missing manifest returns error', () => {
     const dir = writePlugin('empty', { omit_manifest: true });
     const res = loadSinglePlugin(dir);

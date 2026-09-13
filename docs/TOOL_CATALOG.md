@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **Starter** marks membership in the ~27-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **Starter** marks membership in the ~26-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -79,18 +79,18 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `find_anomalies` | Returns statistical anomalies in recent page activity, grouped by cohort (tag or type). | read | yes |  |
-| `find_contradictions` | v0.32.6 — return suspected-contradiction findings from the most recent `gbrain eval suspected-contradictions` probe run, optionally filtered by slug and/or severity. | read |  |  |
+| `find_contradictions` | Stored contradiction reports are temporarily available only to trusted local callers without a source filter. | read |  |  |
 | `find_experts` | Answers 'who in my brain knows about <topic>'. | read |  |  |
 | `find_trajectory` | v0.35.4 — return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). | read |  |  |
 | `get_calibration_profile` | Read the active calibration profile for a holder. | read |  |  |
-| `get_recent_salience` | Returns pages recently touched and ranked by emotional + activity salience (deterministic 0..1 emotional_weight + take density + recency decay). | read | yes |  |
+| `get_recent_salience` | Returns readable pages recently touched and ranked by activity salience and recency. | read | yes |  |
 | `volunteer_context` | Push-based context: volunteer brain pages relevant to a rolling conversation window WITHOUT being asked. | read |  |  |
 
 ## jobs
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `cancel_job` | Cancel a waiting, active, or delayed job. | admin |  |  |
+| `cancel_job` | Cancel a waiting, active, or delayed job. | admin | yes |  |
 | `get_agent_job` | Poll an agent job submitted via submit_agent. | agent | yes |  |
 | `get_job` | Get job status and details by ID. | admin |  |  |
 | `get_job_progress` | Get structured progress for a running job. | admin |  |  |
@@ -102,7 +102,7 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 | `retry_job` | Re-queue a failed or dead job for retry | admin |  |  |
 | `send_job_message` | Send a sidechannel message to a running job's inbox | admin |  |  |
 | `submit_agent` | Submit an LLM agent job that the worker dispatches via the gateway-native tool loop. | agent | yes |  |
-| `submit_job` | Submit a background job to the Minions queue. | admin |  |  |
+| `submit_job` | Submit a background job. | admin |  |  |
 
 ## links
 
@@ -130,7 +130,7 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `extract_facts` | v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. | write |  |  |
-| `forget_fact` | v0.32.2: forget a fact. | write |  |  |
+| `forget_fact` | Forget a fact by recording a durable withdrawal in its source and visibility. | write |  |  |
 
 ## memory-verbs
 

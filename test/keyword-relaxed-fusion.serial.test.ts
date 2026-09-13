@@ -39,6 +39,7 @@ mock.module('../src/core/embedding.ts', () => ({
 }));
 
 const { hybridSearch, textVectorArmNonEmpty } = await import('../src/core/search/hybrid.ts');
+const { composeFusionLists } = await import('../src/core/search/fusion-lists.ts');
 const { configureGateway, resetGateway } = await import('../src/core/ai/gateway.ts');
 const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
 const { mkdtempSync, rmSync } = await import('node:fs');
@@ -162,19 +163,141 @@ describe('hybrid fusion demotion', () => {
   });
 });
 
-describe('textVectorArmNonEmpty (pure demotion gate — red-team both-mode finding)', () => {
+describe('hybrid fusion demotion — cross-modal both mode (CRITICAL regression, ranker wave)', () => {
+  // The image-side embed is unconfigured in this hermetic setup (no
+  // multimodal provider), so a `crossModal: 'both'` query FALLS OPEN to the
+  // text path. Pre-roles, `isBothMode = modality==='both' && lists.length>=2`
+  // then mis-tagged the LAST text list as the image branch whenever expansion
+  // produced ≥ 2 text lists — the demotion gate sliced a real text list off
+  // and the fusion mapping handed it imageRrfK. Roles make both read the tag.
+  //
+  // DISCRIMINATING SHAPE (adversarial finding: the earlier version had a
+  // non-empty original list, so the old positional gate still read "healthy"
+  // after slicing the last list off and the test could not fail): the
+  // ORIGINAL and the FIRST variant vector lists are EMPTY; only the LAST
+  // variant returns rows. Old gate: slice(0, -1) → [[], []] → "text arm
+  // dead" → relaxed rows carried (relaxed_dropped 0, keyword_relaxed rows in
+  // the response). Role gate: any non-empty non-image arm → healthy → muted.
+  //
+  // Why a searchVector wrapper: engine.searchVector has NO similarity floor
+  // (pure distance ORDER BY + LIMIT), so an orthogonal query vector still
+  // returns every chunk at cosine 0 — a hermetic "no chunk nearby" list can't
+  // be produced by the vector alone. queryEmbedFn maps the original and the
+  // first variant to orthogonal basis vectors and the wrapper returns [] for
+  // exactly those (the floor a real corpus would impose); the last variant
+  // embeds to the fixture vector and hits the engine for real.
+  const ORIGINAL = 'zephyr walrus';
+  const VARIANT_EMPTY = `${ORIGINAL} survey`;
+  const VARIANT_HIT = `${ORIGINAL} census`;
+  const twoVariants = async (q: string) => [q, VARIANT_EMPTY, VARIANT_HIT];
+  const basis = (dim: number) => { const e = new Float32Array(1536); e[dim] = 1; return e; };
+  const ORIG_DIM = 7;
+  const EMPTY_VARIANT_DIM = 11;
+  const queryEmbedFn = (q: string) =>
+    q === ORIGINAL ? basis(ORIG_DIM) : q === VARIANT_EMPTY ? basis(EMPTY_VARIANT_DIM) : fixedEmbedding();
+  const isEmptyArmVector = (emb: Float32Array) => emb[ORIG_DIM] === 1 || emb[EMPTY_VARIANT_DIM] === 1;
+
+  async function withEmptyOrthogonalArms<T>(fn: (calls: Float32Array[]) => Promise<T>): Promise<T> {
+    const real = engine.searchVector.bind(engine);
+    const calls: Float32Array[] = [];
+    (engine as unknown as { searchVector: typeof engine.searchVector }).searchVector = async (emb, opts) => {
+      calls.push(emb);
+      if (isEmptyArmVector(emb)) return [];
+      return real(emb, opts);
+    };
+    try { return await fn(calls); } finally {
+      (engine as unknown as { searchVector: typeof engine.searchVector }).searchVector = real;
+    }
+  }
+
+  test('both mode, fell-open image branch, ONLY the last text list non-empty: the role gate still mutes relaxed rows', async () => {
+    let meta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const res = await withEmptyOrthogonalArms(async (calls) => {
+      const r = await hybridSearch(engine, ORIGINAL, {
+        limit: 10,
+        crossModal: 'both',
+        expansion: true,
+        expandFn: twoVariants,
+        queryEmbedFn,
+        onMeta: (m) => { meta = m; },
+      });
+      // Fixture sanity: three text arms ran, in order original → variants,
+      // and exactly the first two were the empty (orthogonal) ones.
+      expect(calls.length).toBe(3);
+      expect(calls.map(isEmptyArmVector)).toEqual([true, true, false]);
+      return r;
+    });
+    expect(meta?.expansion_applied).toBe(true);
+    expect(meta?.vector_enabled).toBe(true);
+    expect(res.length).toBeGreaterThan(0);
+    // The surviving LAST variant list is real semantic evidence → relaxed
+    // rows muted, never carried. (Old positional gate: sliced it off → 0.)
+    expect(meta?.relaxed_dropped ?? 0).toBeGreaterThan(0);
+    for (const r of res) expect(r.keyword_relaxed).toBeUndefined();
+    expect((meta?.degraded ?? []).some((d) => d.stage === 'keyword_relaxed_carried')).toBe(false);
+  });
+
+  test('same shape, fusion side (pure composeFusionLists): no text list fuses at imageRrfK when the image branch fell open', () => {
+    // Exactly the arm shape the live test above produces: original EMPTY,
+    // first variant EMPTY, last variant non-empty, NO image arm. The old
+    // mapping handed the last list imageRrfK; roles give every text arm vectorK.
+    const row = (slug: string) => ({ slug, chunk_text: slug, score: 1 }) as never;
+    const ks = { vectorK: 60, textRrfK: 50, imageRrfK: 75, keywordK: 66, baseRrfK: 60 };
+    const lists = composeFusionLists({
+      arms: [
+        { list: [], role: 'original' },
+        { list: [], role: 'variant' },
+        { list: [row('notes/zephyr-report'), row('notes/walrus-log')], role: 'variant' },
+      ],
+      keywordFusionList: [], titleFusionList: [], relationalList: [],
+      includeRelational: true, ks, knobs: { expansionVariantBudget: null },
+    });
+    expect(lists.some((l) => l.k === ks.imageRrfK)).toBe(false);
+    expect(lists.some((l) => l.k === ks.textRrfK)).toBe(false); // not both-mode either: no image arm
+    expect(lists.slice(0, 3).map((l) => l.k)).toEqual([ks.vectorK, ks.vectorK, ks.vectorK]);
+  });
+
+  test('both mode, vector arm down: relaxed rows still rescue (fallback path unchanged under roles)', async () => {
+    const res = await hybridSearch(engine, 'EMBEDFAIL zephyr walrus', {
+      limit: 10,
+      crossModal: 'both',
+      expansion: false,
+    });
+    expect(res.length).toBeGreaterThan(0);
+    expect(res.some((r) => r.keyword_relaxed === true)).toBe(true);
+  });
+});
+
+describe('textVectorArmNonEmpty (pure, ROLE-based demotion gate — red-team both-mode finding)', () => {
   const row = (slug: string) => ({ slug, chunk_text: slug, score: 1 }) as never;
-  test('both mode: a nonempty IMAGE branch alone must NOT mute the lexical rescue (text lists all empty)', () => {
-    // vectorLists = [textList(empty), imageList(nonempty)] — pre-fix this
-    // read as "vector arm healthy" and dropped the only text-side recall arm.
-    expect(textVectorArmNonEmpty([[], [row('img/photo')]], true)).toBe(false);
+  const arm = (role: 'original' | 'variant' | 'clause' | 'image', ...rows: never[]) => ({ list: rows, role });
+  test('both mode: a nonempty IMAGE arm alone must NOT mute the lexical rescue (text arms all empty)', () => {
+    // arms = [original(empty), image(nonempty)] — pre-fix this read as
+    // "vector arm healthy" and dropped the only text-side recall arm.
+    expect(textVectorArmNonEmpty([arm('original'), arm('image', row('img/photo'))])).toBe(false);
   });
-  test('both mode: any nonempty TEXT list counts as healthy (image branch irrelevant)', () => {
-    expect(textVectorArmNonEmpty([[row('notes/a')], []], true)).toBe(true);
-    expect(textVectorArmNonEmpty([[], [row('notes/b')], []], true)).toBe(true); // expansion variant hit
+  test('both mode: any nonempty TEXT arm counts as healthy (image arm irrelevant)', () => {
+    expect(textVectorArmNonEmpty([arm('original', row('notes/a')), arm('image')])).toBe(true);
+    expect(textVectorArmNonEmpty([arm('original'), arm('variant', row('notes/b')), arm('image')])).toBe(true); // expansion variant hit
+    expect(textVectorArmNonEmpty([arm('original'), arm('clause', row('notes/c')), arm('image')])).toBe(true);
   });
-  test('text mode: gate reads every list (no image branch to exclude)', () => {
-    expect(textVectorArmNonEmpty([[]], false)).toBe(false);
-    expect(textVectorArmNonEmpty([[], [row('notes/a')]], false)).toBe(true);
+  test('text mode: gate reads every arm (no image arm to exclude)', () => {
+    expect(textVectorArmNonEmpty([arm('original')])).toBe(false);
+    expect(textVectorArmNonEmpty([arm('original'), arm('variant', row('notes/a'))])).toBe(true);
+  });
+  test('CRITICAL regression: fell-open image branch + two text lists — the last TEXT list is no longer mis-tagged as the image', () => {
+    // Pre-roles: isBothMode=true (modality both, 2 lists) sliced the LAST
+    // list off as "the image" — here it is the only nonempty TEXT list, so the
+    // gate wrongly read the text arm as dead and carried the relaxed rows.
+    expect(textVectorArmNonEmpty([arm('original'), arm('variant', row('notes/variant-hit'))])).toBe(true);
+    // Fusion side of the same corner: with no image arm, nothing gets imageRrfK.
+    const ks = { vectorK: 60, textRrfK: 50, imageRrfK: 75, keywordK: 66, baseRrfK: 60 };
+    const lists = composeFusionLists({
+      arms: [arm('original'), arm('variant', row('notes/variant-hit'))],
+      keywordFusionList: [], titleFusionList: [], relationalList: [],
+      includeRelational: true, ks, knobs: { expansionVariantBudget: null },
+    });
+    expect(lists.some((l) => l.k === ks.imageRrfK)).toBe(false);
+    expect(lists.slice(0, 2).map((l) => l.k)).toEqual([ks.vectorK, ks.vectorK]);
   });
 });

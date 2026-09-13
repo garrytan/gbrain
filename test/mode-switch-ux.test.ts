@@ -102,8 +102,8 @@ describe('probeWorkerAvailable (DI for active/stale/never_seen)', () => {
   test('active when minion_jobs activity is fresh (<2 min)', async () => {
     // Seed a recently-started job.
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (queue, name, data, status, started_at)
-       VALUES ('default', 'test-job', '{}'::jsonb, 'active', now())`,
+      `INSERT INTO minion_jobs (submission_authority, queue, name, data, status, started_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', 'test-job', '{}'::jsonb, 'active', now())`,
     );
     const result = await probeWorkerAvailable(engine);
     expect(result.status).toBe('active');
@@ -113,8 +113,8 @@ describe('probeWorkerAvailable (DI for active/stale/never_seen)', () => {
   test('stale when activity is older than 2 min but within 10-min window', async () => {
     // Seed a 5-minute-old started_at (within 10-min query window, > 2-min stale).
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (queue, name, data, status, started_at)
-       VALUES ('default', 'test-stale-job', '{}'::jsonb, 'completed',
+      `INSERT INTO minion_jobs (submission_authority, queue, name, data, status, started_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', 'test-stale-job', '{}'::jsonb, 'completed',
                now() - INTERVAL '5 minutes')`,
     );
     const result = await probeWorkerAvailable(engine);

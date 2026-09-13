@@ -48,6 +48,7 @@ import {
 import {
   parseFactsFence,
   renderFactsTable,
+  replaceOrInsertFactsFence,
   FACTS_FENCE_BEGIN,
   FACTS_FENCE_END,
   type ParsedFact,
@@ -239,16 +240,9 @@ function appendPhantomFenceRowsToCanonical(
 
   if (appended === 0) return 0;
 
-  const newFence = renderFactsTable(merged);
-  const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
-  const endIdx = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
-  let newBody: string;
-  if (beginIdx !== -1 && endIdx !== -1) {
-    newBody = body.slice(0, beginIdx) + newFence + body.slice(endIdx + FACTS_FENCE_END.length);
-  } else {
-    const sep = body.endsWith('\n') ? '\n' : '\n\n';
-    newBody = `${body}${sep}## Facts\n\n${newFence}\n`;
-  }
+  // Shared placement rule (#4756): replace in place, else insert ABOVE the
+  // timeline sentinel — never a blind EOF append below `## Timeline`.
+  const newBody = replaceOrInsertFactsFence(body, renderFactsTable(merged));
 
   // Atomic write: .tmp first, parse-validate, rename.
   const tmpPath = `${canonicalPath}.tmp`;

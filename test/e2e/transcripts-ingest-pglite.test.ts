@@ -240,6 +240,22 @@ describe('dry-run', () => {
     const pages = await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 10 });
     expect(pages).toHaveLength(0);
   });
+
+  test('--limit truncates the dry-run preview the same way it truncates the real run (#4762)', async () => {
+    // Two single-part fixtures, limit 1: the preview must cover ONE session,
+    // not the whole backlog. The second session is reached (sessionsSeen 2)
+    // and then cut by the same gate the write path uses.
+    const r = await runTranscriptsIngest(
+      engine,
+      baseOpts([CODEX_FIXTURE, AGENT_FIXTURE], { dryRun: true, limit: 1 }),
+    );
+    expect(r.sessionsSeen).toBe(2);
+    expect(r.pages.planned).toBe(1);
+    expect(r.pages.imported).toBe(0);
+    expect(r.cleanScan).toBe(false);
+    const pages = await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 10 });
+    expect(pages).toHaveLength(0);
+  });
 });
 
 describe('idempotency', () => {

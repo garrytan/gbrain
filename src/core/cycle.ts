@@ -1386,6 +1386,8 @@ async function runPhaseExtract(
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
     const result = await runExtractCore(engine, {
       mode: 'all',
+      jsonMode: false, // batch errors stay human-readable on stderr, as in a plain `gbrain extract`
+      quiet: true, // the cycle owns the report — no helper summary on stdout (keeps dream --json pure)
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
       signal,
@@ -1414,6 +1416,7 @@ async function runPhaseExtract(
       const drained = await extractStaleFromDB(engine, {
         dryRun: false,
         jsonMode: false,
+        quiet: true, // the cycle owns the report — no helper summary on stdout
         includeFrontmatter,
         sourceIdFilter: sourceId,
         catchUp: false,
@@ -3112,7 +3115,8 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
     } else if (p.phase === 'sync' && p.details) {
       t.pages_synced = Number(p.details.added ?? 0) + Number(p.details.modified ?? 0);
     } else if (p.phase === 'extract' && p.details) {
-      t.pages_extracted = Number(p.details.linksCreated ?? 0);
+      // Pages, not links: the targeted/fs pass plus the bounded stale drain.
+      t.pages_extracted = Number(p.details.pages_processed ?? 0) + Number(p.details.stale_pages_drained ?? 0);
     } else if (p.phase === 'embed' && p.details) {
       // In dry-run, use would_embed as the "activity" measure; else embedded.
       const dryRun = p.details.dryRun === true;

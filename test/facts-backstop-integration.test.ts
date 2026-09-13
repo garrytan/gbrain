@@ -101,6 +101,31 @@ describe('runFactsPipeline (extract_facts MCP op path) — response shape stabil
     expect(r.entity_slugs).toEqual([]);
   });
 
+  test('#4755: a null-like entity STRING from the extractor lands unparented, never under entity_slug=\'null\'', async () => {
+    // The extractor prompt asks for JSON null on subjectless statements; LLMs
+    // routinely emit the string "null" / "None" instead. Pre-fix that token
+    // reached the resolver, fell back to itself as the slug, and the facts
+    // were filed under a page that cannot exist.
+    chatStub([
+      { fact: 'a gap statement with no subject', kind: 'fact', notability: 'medium', entity: 'null' },
+      { fact: 'a second subjectless statement', kind: 'fact', notability: 'medium', entity: 'None' },
+    ]);
+    const r = await runFactsPipeline('turn with no subject', {
+      engine,
+      sourceId: 'default',
+      sessionId: 'null-entity-test',
+      source: 'mcp:extract_facts',
+    });
+    expect(r.inserted).toBe(2);
+    for (const id of r.fact_ids) {
+      const rows = await engine.executeRaw<{ entity_slug: string | null }>(
+        'SELECT entity_slug FROM facts WHERE id = $1', [id],
+      );
+      expect(rows[0].entity_slug).toBeNull();
+    }
+    expect(r.entity_slugs).toEqual([]);
+  });
+
   test('empty extraction → zero counts (no NaN, no undefined)', async () => {
     chatStub([]);
     const r = await runFactsPipeline('nothing claim-worthy here', {

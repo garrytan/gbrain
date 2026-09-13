@@ -143,16 +143,12 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
     };
 
     // Register a sources_admin-scoped client (the "gstack token").
-    // #4433: sources_list row-filters to the caller's federated read grant,
-    // and registration defaults federated_read=[source_id]=['default'] — a
-    // default-grant client would no longer see the sources it adds in the
-    // listing. Grant the ids this suite creates so the remote_url-surfacing
-    // assertions stay about sources_list's projection, not the row filter
-    // (the read-only client keeps the default grant and pins the filter).
+    // New grants can reference only active sources. sources_admin permits
+    // creating a source, but read access is granted explicitly afterward.
     const reg1 = execSync(
       'bun run src/cli.ts auth register-client e2e-sources-admin ' +
         '--grant-types client_credentials --scopes "read sources_admin" ' +
-        '--federated-read default,e2e-yc-artifacts,e2e-removable',
+        '--federated-read default',
       { cwd: process.cwd(), encoding: 'utf8', env: subprocessEnv },
     );
     clientId = reg1.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
@@ -274,6 +270,26 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
     expect(cfg.federated).toBe(true);
     // Clone exists with a .git dir (fake-git wrote one).
     expect(existsSync(join(GBRAIN_HOME, '.gbrain', 'clones', 'e2e-yc-artifacts', '.git'))).toBe(true);
+  });
+
+  test('a newly created source stays hidden until rescope; the existing token sees the live grant', async () => {
+    const issuedToken = token!;
+    const before = await callMcp(issuedToken, 'sources_list', {});
+    expect(before.sources.find((s: any) => s.id === 'e2e-yc-artifacts')).toBeUndefined();
+    const denied = await callMcp(issuedToken, 'sources_status', { id: 'e2e-yc-artifacts' });
+    expect(denied.__isError).toBe(true);
+    expect(JSON.stringify(denied.parsed)).toMatch(/not_found/);
+
+    const { execFileSync } = await import('child_process');
+    execFileSync('bun', ['run', 'src/cli.ts', 'auth', 'rescope-client', clientId!,
+      '--federated-read', 'default,e2e-yc-artifacts'], {
+      cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, GBRAIN_HOME },
+    });
+
+    const identity = await callMcp(issuedToken, 'whoami', {});
+    expect(identity.federated_read).toEqual(['default', 'e2e-yc-artifacts']);
+    const after = await callMcp(issuedToken, 'sources_list', {});
+    expect(after.sources.find((s: any) => s.id === 'e2e-yc-artifacts')).toBeDefined();
   });
 
   test('sources_status reports clone_state=healthy', async () => {

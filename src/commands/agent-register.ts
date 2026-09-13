@@ -1,3 +1,4 @@
+import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 /**
  * gbrain agent register — mint a scoped OAuth client + access token and print
  * the exact MCP wiring for a harness (cathedral-6, spec PR-6 "shared brain").
@@ -62,7 +63,7 @@ import {
 
 // ── constants ─────────────────────────────────────────────────────────────
 
-export const REGISTER_HARNESSES = ['claude-code', 'codex', 'opencode', 'openclaw'] as const;
+export const REGISTER_HARNESSES = HARNESS_ADAPTERS.filter(a => a.legacyRegister).map(a => a.id) as readonly ['claude-code', 'codex', 'opencode', 'openclaw'][number][];
 export type RegisterHarness = (typeof REGISTER_HARNESSES)[number];
 export const REGISTER_PRESETS = ['daily-driver', 'coding-agent'] as const;
 export type RegisterPreset = (typeof REGISTER_PRESETS)[number];
@@ -660,7 +661,10 @@ async function mintAndProbe(
 ): Promise<RegisterOutput> {
   const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
   // The tx-scoped sql is dead after COMMIT — the exchange runs on the OUTER engine.
-  const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) });
+  const provider = new GBrainOAuthProvider({
+    sql: sqlQueryForEngine(engine),
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
+  });
 
   let accessToken: string | undefined;
   let tokenExpiresAt: string | undefined;

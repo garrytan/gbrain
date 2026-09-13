@@ -125,6 +125,7 @@ describe('runThink — resolved citations close against the gather set', () => {
   test('a structured citation outside the gathered evidence warns CITATION_NOT_IN_GATHER', async () => {
     const result = await runThink(engine, {
       question: 'technical founder',
+      remote: false, // trusted-local citation closure includes every holder
       withTrajectory: false,
       client: stubClientFromResponse({
         answer: 'The answer cites [records/example-a] visibly.',
@@ -142,6 +143,7 @@ describe('runThink — resolved citations close against the gather set', () => {
   test('citations covered by the gathered evidence emit no closure warnings', async () => {
     const result = await runThink(engine, {
       question: 'technical founder',
+      remote: false, // trusted-local citation closure includes every holder
       withTrajectory: false,
       client: stubClientFromResponse({
         answer: 'Strong founder [people/alice-example#2].',

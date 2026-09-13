@@ -779,3 +779,40 @@ describe('phantom-audit module', () => {
     });
   });
 });
+
+// ─── wave review: #4756 placement rule holds for the phantom-redirect writer ──
+describe('tryRedirectPhantom — fence placement above the timeline sentinel (#4756)', () => {
+  test('a canonical with a `---` + `## Timeline` sentinel and no fence gets `## Facts` ABOVE it, not at EOF', async () => {
+    await withTempDirs(async ({ brainDir }) => {
+      // The recommended page template: prose, then the legacy bare `---`
+      // sentinel followed by `## Timeline`. splitBody() files everything
+      // below the sentinel into page.timeline, where extract_facts refuses
+      // to reconcile a fence (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF
+      // append froze the redirected rows permanently.
+      const canonicalBody = `# alice-example\n\nAlice runs acme-example.\n\n---\n\n## Timeline\n\n- 2026-01-01: Founded Acme\n`;
+      await putPage('people/alice-example', canonicalBody, { type: 'person' });
+      writeMd(brainDir, 'people/alice-example', canonicalBody);
+
+      const phantomBody = FACT_FENCE(
+        `| 1 | Founded Acme | fact | 1.0 | world | high | 2017-01-01 |  | linkedin |  |`,
+      );
+      await putPage('alice', phantomBody);
+      writeMd(brainDir, 'alice', phantomBody);
+
+      const phantom = await engine.getPage('alice', { sourceId: 'default' });
+      const result = await tryRedirectPhantom(engine, phantom!, 'default', brainDir, false);
+      expect(result.outcome).toBe('redirected');
+
+      const canonicalMd = readMd(brainDir, 'people/alice-example');
+      expect(canonicalMd).toContain('Founded Acme');
+      const factsAt = canonicalMd.indexOf('## Facts');
+      const sentinelAt = canonicalMd.indexOf('\n---\n');
+      expect(factsAt).toBeGreaterThan(-1);
+      expect(sentinelAt).toBeGreaterThan(-1);
+      expect(factsAt).toBeLessThan(sentinelAt);
+      // Prose above the fence survives; the timeline section is still last.
+      expect(canonicalMd.indexOf('Alice runs acme-example.')).toBeLessThan(factsAt);
+      expect(canonicalMd.indexOf('## Timeline')).toBeGreaterThan(canonicalMd.indexOf('gbrain:facts:end'));
+    });
+  });
+});

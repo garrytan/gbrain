@@ -47,8 +47,8 @@ async function seed(
   extra: { createdAtSql?: string; finishedAtSql?: string; errorText?: string } = {},
 ): Promise<void> {
   await base.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, error_text, created_at, updated_at, finished_at)
-     VALUES ($1, $2, $3, $4, ${extra.createdAtSql ?? 'now()'}, now(), ${extra.finishedAtSql ?? 'NULL'})`,
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, error_text, created_at, updated_at, finished_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, $1, $2, $3, $4, ${extra.createdAtSql ?? 'now()'}, now(), ${extra.finishedAtSql ?? 'NULL'})`,
     [name, queue, status, extra.errorText ?? null],
   );
 }

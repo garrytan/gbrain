@@ -201,8 +201,8 @@ describe('loadPriorToolsV2 (D5 — synthesizes stable keys for v1 rows)', () => 
   it('uses gbrain_tool_use_id as stable key for v2 rows', async () => {
     // Seed a minion_jobs row + v2 tool execution.
     const job = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-       VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', '{}'::jsonb, 'default', 0, now())
        RETURNING id`,
     );
     const jobId = job[0].id;
@@ -224,8 +224,8 @@ describe('loadPriorToolsV2 (D5 — synthesizes stable keys for v1 rows)', () => 
 
   it('synthesizes a legacy-prefixed stable key for v1 rows (ordinal NULL, gbrain_tool_use_id NULL)', async () => {
     const job = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-       VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', '{}'::jsonb, 'default', 0, now())
        RETURNING id`,
     );
     const jobId = job[0].id;
@@ -243,8 +243,8 @@ describe('loadPriorToolsV2 (D5 — synthesizes stable keys for v1 rows)', () => 
 
   it('preserves status + error text for failed legacy rows', async () => {
     const job = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-       VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', '{}'::jsonb, 'default', 0, now())
        RETURNING id`,
     );
     const jobId = job[0].id;
@@ -265,8 +265,8 @@ describe('loadPriorToolsV2 (D5 — synthesizes stable keys for v1 rows)', () => 
     // gateway path). loadPriorToolsV2 must surface both keyed correctly
     // so the reconciler's Map<stableKey, outcome> sees both.
     const job = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-       VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', '{}'::jsonb, 'default', 0, now())
        RETURNING id`,
     );
     const jobId = job[0].id;
@@ -296,8 +296,8 @@ describe('loadPriorToolsV2 (D5 — synthesizes stable keys for v1 rows)', () => 
 
   it('ordering: rows return ORDER BY message_idx, ordinal, id (stable for replay)', async () => {
     const job = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-       VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', '{}'::jsonb, 'default', 0, now())
        RETURNING id`,
     );
     const jobId = job[0].id;

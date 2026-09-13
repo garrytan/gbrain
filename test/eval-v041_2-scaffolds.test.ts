@@ -1,39 +1,26 @@
-// v0.41 T11 — minimal scaffold tests for the 3 new eval commands.
+// v0.41 T11 → E4: envelope contract for the one surviving eval scaffold,
+// `gbrain eval synthesize-concepts`.
 //
-// Pins the command-surface contract: every command returns a stable
-// {schema_version: 1, ok, status, details} envelope that downstream
-// tooling can rely on while the real parity-baseline implementations
-// land in v0.41.1.
+// The v0.41 T11 wave shipped three undispatched eval scaffolds. Two of them
+// (extract-atoms, markdown-greenfield) returned ok:true for work they never
+// ran and were deleted by E4 — an eval surface that reads "pass" without
+// evaluating anything corrodes every other receipt. synthesize-concepts is
+// the one that stayed: dispatched (#4198) with an honest
+// {ok:false, status:'not_implemented'} envelope, pinned here. The
+// eval-schema-authoring runner's matching envelope is pinned next to its real
+// aggregator in test/eval-schema-authoring.test.ts.
 
 import { describe, test, expect } from 'bun:test';
-import { runEvalExtractAtoms } from '../src/commands/eval-extract-atoms.ts';
 import { runEvalSynthesizeConcepts } from '../src/commands/eval-synthesize-concepts.ts';
-import { runEvalMarkdownGreenfield } from '../src/commands/eval-markdown-greenfield.ts';
 
-describe('v0.41 T11: eval command surfaces', () => {
-  test('runEvalExtractAtoms returns stable schema_version=1 envelope', async () => {
-    const result = await runEvalExtractAtoms({});
-    expect(result.schema_version).toBe(1);
-    expect(result.ok).toBe(true);
-    expect(result.status).toBe('not_yet_implemented');
-    expect(result.details).toBeDefined();
-  });
-
-  test('runEvalExtractAtoms preserves --parity-baseline + --sample in details', async () => {
-    const result = await runEvalExtractAtoms({
-      parityBaseline: '~/git/brain/atoms',
-      sample: 500,
-    });
-    expect(result.details.parity_baseline_path).toBe('~/git/brain/atoms');
-    expect(result.details.sample_size).toBe(500);
-  });
-
-  test('runEvalSynthesizeConcepts returns an HONEST not_implemented envelope (#4198)', async () => {
+describe('eval synthesize-concepts scaffold envelope (#4198)', () => {
+  test('runEvalSynthesizeConcepts returns an HONEST not_implemented envelope', async () => {
     const result = await runEvalSynthesizeConcepts({});
     expect(result.schema_version).toBe(1);
     // #4198: an eval that ran nothing must not read as a pass.
     expect(result.ok).toBe(false);
     expect(result.status).toBe('not_implemented');
+    expect(result.details).toBeDefined();
   });
 
   test('runEvalSynthesizeConcepts preserves --parity-baseline + --sample', async () => {
@@ -45,29 +32,10 @@ describe('v0.41 T11: eval command surfaces', () => {
     expect(result.details.sample_size).toBe(500);
   });
 
-  test('runEvalMarkdownGreenfield returns stable schema_version=1 envelope', async () => {
-    const result = await runEvalMarkdownGreenfield({});
-    expect(result.schema_version).toBe(1);
-    expect(result.status).toBe('not_yet_implemented');
-  });
-
-  test('runEvalMarkdownGreenfield preserves --pass-rate-floor', async () => {
-    const result = await runEvalMarkdownGreenfield({
-      passRateFloor: 0.95,
-      repoPath: '~/git/brain',
-    });
-    expect(result.details.pass_rate_floor).toBe(0.95);
-    expect(result.details.repo_path).toBe('~/git/brain');
-  });
-
-  test('all 3 commands include a follow-up pointer in details', async () => {
-    const r1 = await runEvalExtractAtoms({});
-    const r2 = await runEvalSynthesizeConcepts({});
-    const r3 = await runEvalMarkdownGreenfield({});
-    expect(r1.details.v0_41_1_followup).toBeDefined();
+  test('details carry the planned-evaluator pointer', async () => {
+    const result = await runEvalSynthesizeConcepts({});
     // #4198: synthesize-concepts renamed its pointer when the envelope
     // flipped to the honest not_implemented shape.
-    expect(r2.details.planned).toBeDefined();
-    expect(r3.details.v0_41_1_followup).toBeDefined();
+    expect(result.details.planned).toBeDefined();
   });
 });

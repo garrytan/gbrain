@@ -1,21 +1,10 @@
 /**
- * #4352 follow-up — excludePrivate searches CACHE (posture folded into
- * knobsHash), they no longer skip the semantic query cache.
- *
- * #4352 originally shipped a wholesale `privateFiltered || ` skipCache term —
- * but excludePrivate=true is the DEFAULT for every remote MCP caller, so the
- * skip disabled the cache for exactly the highest-volume beneficiaries
- * (~50% cost savings lost). The v=23 fold (xp=) restores caching while
- * keeping the postures contamination-proof. Pins:
- *   1. a remote-default (excludePrivate=true) run reports 'miss' then 'hit'
- *      on repeat — never 'disabled' — and never surfaces a private page,
- *   2. a trusted (private-included) write is never served to a
- *      private-excluding read (distinct knobs_hash rows),
- *   3. a private-excluding write is never served to a trusted read.
- *
- * Serial: mock.module + gateway/global-env mutation (same harness shape as
- * test/hybrid-types-cache-skip.serial.test.ts).
+ * Production-wrapper regression coverage with semantic response caching disabled.
+ * Fresh reads must retain filtering, metadata and telemetry guarantees; legacy
+ * cache implementation behavior is covered by the direct cache-class suites.
+ * Serial because embedding and gateway configuration are process-global.
  */
+
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -44,6 +33,8 @@ const { hybridSearchCached, awaitPendingSearchCacheWrites } =
   await import('../src/core/search/hybrid.ts');
 const { configureGateway, resetGateway } = await import('../src/core/ai/gateway.ts');
 const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+const { importFromContent } = await import('../src/core/import-file.ts');
+const { serializeMarkdown } = await import('../src/core/markdown.ts');
 
 setDefaultTimeout(30_000);
 
@@ -72,10 +63,10 @@ beforeAll(async () => {
   ];
   for (const [slug, title, frontmatter] of fixtures) {
     const truth = `${title} is a builder.`;
-    await engine.putPage(slug, { type: 'concept', title, frontmatter, compiled_truth: truth });
-    await engine.upsertChunks(slug, [
-      { chunk_index: 0, chunk_text: truth, chunk_source: 'compiled_truth' },
-    ]);
+    const result = await importFromContent(engine, slug,
+      serializeMarkdown(frontmatter, truth, '', { type: 'concept', title, tags: [] }),
+      { noEmbed: true, forceRechunk: true });
+    expect(result.status).toBe('imported');
   }
 });
 
@@ -91,80 +82,70 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM query_cache');
 });
 
-describe('#4352 follow-up — excludePrivate folds into the cache key instead of skipping', () => {
-  test('a remote-default run gets miss then hit (never disabled) and never a private page', async () => {
-    // 1. First excludePrivate run: cache MISS (not 'disabled' — the pre-fix
-    //    wholesale skip is the regression this pins), filtered results.
+describe('private visibility applies on every fresh wrapper read', () => {
+  test('repeated remote-default reads stay uncached and never expose private pages', async () => {
     let firstMeta: HybridSearchMeta | undefined;
     const first = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       excludePrivate: true,
       onMeta: (m) => { firstMeta = m; },
     });
-    expect(firstMeta?.cache?.status).toBe('miss');
+    expect(firstMeta?.cache?.status).toBe('disabled');
     expect(first.map((r) => r.slug)).toEqual(['notes/world-widget']);
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
 
-    // 2. Repeat run under the SAME posture: HIT, still filtered.
     let repeatMeta: HybridSearchMeta | undefined;
     const repeat = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       excludePrivate: true,
       onMeta: (m) => { repeatMeta = m; },
     });
-    expect(repeatMeta?.cache?.status).toBe('hit');
+    expect(repeatMeta?.cache?.status).toBe('disabled');
     expect(repeat.map((r) => r.slug)).toEqual(['notes/world-widget']);
   });
 
-  test('a trusted (private-included) write is never served to an excludePrivate read', async () => {
-    // 1. Trusted miss-run stores a row containing BOTH pages.
+  test('a private-excluding read stays filtered after a trusted read', async () => {
     let trustedMeta: HybridSearchMeta | undefined;
     const trusted = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       onMeta: (m) => { trustedMeta = m; },
     });
-    expect(trustedMeta?.cache?.status).toBe('miss');
+    expect(trustedMeta?.cache?.status).toBe('disabled');
     expect(trusted.map((r) => r.slug).sort()).toEqual(['notes/private-widget', 'notes/world-widget']);
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
 
-    // 2. Same query, remote posture: identical embedding — pre-fold this
-    //    would have HIT the trusted row and leaked the private page. Must
-    //    MISS onto its own key instead (fresh, filtered query).
     let remoteMeta: HybridSearchMeta | undefined;
     const remote = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       excludePrivate: true,
       onMeta: (m) => { remoteMeta = m; },
     });
-    expect(remoteMeta?.cache?.status).toBe('miss');
+    expect(remoteMeta?.cache?.status).toBe('disabled');
     expect(remote.map((r) => r.slug)).toEqual(['notes/world-widget']);
 
-    // 3. The remote run stores its OWN row — two distinct knobs_hash rows.
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(2);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
   });
 
-  test('an excludePrivate write is never served to a trusted read (no hidden pages)', async () => {
+  test('a trusted read still includes private pages after a filtered read', async () => {
     let remoteMeta: HybridSearchMeta | undefined;
     await hybridSearchCached(engine, 'builder', {
       limit: 10,
       excludePrivate: true,
       onMeta: (m) => { remoteMeta = m; },
     });
-    expect(remoteMeta?.cache?.status).toBe('miss');
+    expect(remoteMeta?.cache?.status).toBe('disabled');
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
 
-    // A trusted read of the same query must NOT be served the filtered row —
-    // it is entitled to the private page.
     let trustedMeta: HybridSearchMeta | undefined;
     const trusted = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       onMeta: (m) => { trustedMeta = m; },
     });
-    expect(trustedMeta?.cache?.status).toBe('miss');
+    expect(trustedMeta?.cache?.status).toBe('disabled');
     expect(trusted.map((r) => r.slug).sort()).toEqual(['notes/private-widget', 'notes/world-widget']);
   });
 });

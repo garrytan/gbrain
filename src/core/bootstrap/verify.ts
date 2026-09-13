@@ -54,6 +54,7 @@ import { auditWritebackContract } from './contract.ts';
 import {
   ensureIpcSecret,
   resolveSocketPath,
+  socketHasLiveListener,
   startResolveIpcServer,
 } from '../context/resolve-ipc.ts';
 import { assembleTurnContext } from '../context/turn-context.ts';
@@ -905,10 +906,12 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   // in-process IPC server, so it manufactured the exact condition it was
   // testing — a serve posture that never binds IPC (the old `serve --http`)
   // still passed verify while every production hook degraded to no_serve.
-  // A present socket now means "a live serve is the provider; exercise IT";
-  // only when NO socket exists do we self-provide (plumbing-only smoke) and
-  // say so honestly in the result.
-  const liveSocket = existsSync(socketPath);
+  // A LIVE socket now means "a live serve is the provider; exercise IT";
+  // only when nothing listens do we self-provide (plumbing-only smoke) and
+  // say so honestly in the result. Probed, not existsSync'd: a socket file a
+  // dead serve left behind must not read as a live provider (the smoke would
+  // "exercise" a listener that isn't there and fail as no_serve).
+  const liveSocket = await socketHasLiveListener(socketPath);
   try {
     if (!liveSocket) {
       const secret = ensureIpcSecret(dataDir);
@@ -1216,9 +1219,10 @@ export async function verifyWorkspace(
 /**
  * The post-tour hand-off block [OOBE]: the two things a fresh user must walk
  * away UNDERSTANDING, in priority order —
- *   1. OWNERSHIP: the brain is markdown in a repo THEY own (or local-only,
- *      with the one command that gives it a durable home). Ownership is the
- *      trust story; say the URL, say what owning it means.
+ *   1. OWNERSHIP: identity files and committed Markdown pages are in a repo
+ *      THEY own (or remain local-only). Database-only memory needs a separate
+ *      complete backup; deleting the repo does not erase every memory copy.
+ *      Say the URL and explain both the ownership and backup boundaries.
  *   2. THE ONE NEXT ACTION: run the cold-start skill. An empty brain is a
  *      database; every flagship skill (book-mirror, briefings, meeting prep)
  *      only becomes magical once the brain holds the user's real life —
@@ -1231,15 +1235,17 @@ export function buildHandoff(ws: string): string[] {
   const origin = gitOriginUrl(ws);
   const ownership = origin
     ? [
-        `What you own: every memory your agent keeps is a markdown file in YOUR private repo — ${origin}.`,
-        'Read it any time, take it to a second machine (`gbrain bootstrap attach`), or delete it and the brain is gone. It is yours.',
+        `What you own: your agent's identity files and committed Markdown pages are in YOUR private repo — ${origin}.`,
+        'Read those files any time, or clone the workspace on another machine and run `gbrain bootstrap attach`.',
       ]
     : [
-        'What you own: your agent\'s memory is markdown on this machine only (no remote yet).',
-        'Run `gbrain bootstrap repo` any time to give it a private GitHub home you own — readable, portable, deletable.',
+        'What you own: your agent\'s files and database remain on this machine (no remote yet).',
+        'Run `gbrain bootstrap repo` any time to keep the workspace files in your own private GitHub repo.',
       ];
   return [
     ...ownership,
+    'Facts, corrections, jobs, and accounting can exist only in the database; a Git clone is not a complete memory backup.',
+    'Back up and restore the full database separately. Deleting the repository does not erase database records, history, source material, or backups.',
     '',
     'Fill it next: an empty brain is a database; a filled one is a memory.',
     'Ask your agent to run the cold-start skill — it imports your real life',

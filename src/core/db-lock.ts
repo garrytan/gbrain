@@ -951,6 +951,8 @@ export interface WithRefreshingLockOpts {
   ttlMinutes?: number;
   /** Heartbeat-fail threshold in ms — abort if SELECT 1 takes longer. Default 30000. */
   heartbeatTimeoutMs?: number;
+  /** Opt-in cooperative cancellation when ownership is lost or renewal misses the TTL. */
+  onLockLost?: (reason: Error) => void;
 }
 
 /**
@@ -973,6 +975,20 @@ export async function withRefreshingLock<T>(
   const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes);
   if (!handle) throw new LockUnavailableError(lockId);
 
+  let lost = false;
+  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+  const notifyLoss = () => {
+    if (lost) return;
+    lost = true;
+    opts.onLockLost?.(new LockStolenError(lockId));
+  };
+  const renewDeadline = () => {
+    if (!opts.onLockLost || lost) return;
+    clearTimeout(expiryTimer);
+    expiryTimer = setTimeout(notifyLoss, ttlMinutes * 60_000);
+    expiryTimer.unref?.();
+  };
+  renewDeadline();
   let healthOk = true;
   // Re-entrancy guard: with a 15s minimum cadence and a 30s default timeout,
   // two ticks can overlap on a slow pool — one refresh in flight at a time.
@@ -1019,10 +1035,12 @@ export async function withRefreshingLock<T>(
           // but mutual exclusion is GONE and the degraded-heartbeat exit
           // message names it.
           clearInterval(interval);
+          notifyLoss();
           healthOk = false;
           process.stderr.write(`[lock-refresh] ${lockId}: ${new LockStolenError(lockId).message} — heartbeat stopped, mutual exclusion lost\n`);
           return;
         }
+        renewDeadline();
         healthOk = true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1042,6 +1060,7 @@ export async function withRefreshingLock<T>(
     return await work();
   } finally {
     clearInterval(interval);
+    clearTimeout(expiryTimer);
     try { await handle.release(); } catch { /* idempotent */ }
     if (!healthOk) {
       // Surface that the heartbeat detected backend trouble — caller can

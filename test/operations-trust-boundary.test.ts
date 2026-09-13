@@ -304,19 +304,12 @@ describe('handler invocation — historically-broken trust-boundary classes', ()
     expect(submitJob).toBeDefined();
     const ctx = makeContext({ remote: true });
 
-    let threw = false;
-    let message = '';
-    try {
-      await submitJob!.handler(ctx, { name: 'shell', data: { cmd: 'echo hi' } });
-    } catch (e) {
-      threw = true;
-      message = e instanceof Error ? e.message : String(e);
-    }
-    expect(threw, 'submit_job(shell) with remote=true MUST reject').toBe(true);
-    // Should mention the protected status — "permission_denied" is the
-    // canonical OperationError code, plus the user-facing string names
-    // the rejected name.
-    expect(message.toLowerCase()).toContain('shell');
+    await expect(submitJob!.handler(ctx, { name: 'shell', data: { cmd: 'echo hi' } })).rejects.toMatchObject({
+      code: 'permission_denied',
+      // Bounded diagnostics identify the supported alternatives, without
+      // echoing caller-controlled job names or payloads.
+      message: expect.stringContaining('only sync, import, lint and lint-fix'),
+    });
   });
 
   test('submit_job allows shell when ctx.remote=false (local CLI is trusted)', async () => {

@@ -1,3 +1,4 @@
+import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
 /**
  * gbrain lint — Deterministic brain page quality checker.
  *
@@ -16,8 +17,8 @@
  *   gbrain lint <file.md>          # lint single file
  */
 
-import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
-import { join, relative } from 'path';
+import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
+import { join, relative, dirname } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import {
@@ -27,6 +28,7 @@ import {
 } from '../core/content-sanity.ts';
 import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
 import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
+import { isDurabilityHardened, commitWriteThroughFile } from '../core/brain-repo-durability.ts';
 import type { BrainEngine } from '../core/engine.ts';
 
 export interface LintIssue {
@@ -534,6 +536,10 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     throw new Error(`Not found: ${opts.target}`);
   }
 
+  if (opts.engine && !hasSourceFilesystemLock(opts.target)) {
+    return withSourceFilesystemLock(opts.engine, opts.target, () => runLintCore(opts), { signal: opts.signal });
+  }
+
   const isSingleFile = statSync(opts.target).isFile();
   const pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
   opts.onPagesCollected?.(pages.length);
@@ -544,12 +550,26 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   const contentSanity = opts.contentSanity ?? await resolveLintContentSanity(opts.engine);
   const lintOpts: LintContentOpts = { contentSanity };
 
+  // Durability-hardened brains (`gbrain sources harden`) promise every write
+  // is committed AND pushed. An uncommitted lint repair would otherwise sit
+  // as drift the cycle's sync phase flags and the post-commit hook never
+  // pushes. Same gate + path-limited helper as put_page write-through
+  // (#2426); covers the cycle, the lint/lint-fix minion handlers and the CLI
+  // alike. Known ceiling: one commit + one backgrounded hook spawn per
+  // repaired page on a large first run (the hook's flock coalesces pushes on
+  // Linux; on macOS a losing concurrent push can log a spurious LOCAL-ONLY
+  // line even though the later push landed) — a single end-of-run
+  // multi-path commit would need a new helper.
+  const repoProbe = isSingleFile ? dirname(opts.target) : opts.target;
+  const commitFixes = !!opts.fix && !opts.dryRun && isDurabilityHardened(repoProbe);
+
   let totalIssues = 0;
   let totalFixable = 0;
   let totalFixed = 0;
   let pagesWithIssues = 0;
 
   for (let idx = 0; idx < pages.length; idx++) {
+    assertSourceFilesystemActive();
     const page = pages[idx];
     // #1972: every 200 pages, yield to the event loop and honor abort. The
     // yield is what lets the abort signal actually fire (the rest of the loop
@@ -559,7 +579,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
       if (isAborted(opts.signal)) break;
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
-    const content = readFileSync(page, 'utf-8');
+    const content = readSourceFileSync(page, 'utf-8');
     const relPath = isSingleFile ? page : relative(opts.target, page);
     const issues = lintContent(content, relPath, lintOpts);
     opts.onPageScanned?.();
@@ -575,7 +595,11 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
         fixCount = issues.filter(i => i.fixable).length;
         totalFixed += fixCount;
         if (!opts.dryRun) {
-          writeFileSync(page, fixed);
+          assertSourceFilesystemActive();
+          writeSourceFileSync(page, fixed);
+          if (commitFixes) {
+            commitWriteThroughFile(repoProbe, page, relative(repoProbe, page).replace(/\.md$/u, ''));
+          }
         }
       }
     }

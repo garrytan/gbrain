@@ -17,9 +17,8 @@ import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBas
 // #3190: pack-aware link typing on the put_page auto-link path.
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { isFactsBackstopEligible } from '../facts/eligibility.ts';
-import { stripTakesFence } from '../takes-fence.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { WriterLintPayload } from '../output/post-write.ts';
-import { stripFactsFence } from '../facts-fence.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
@@ -27,12 +26,14 @@ import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descr
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
+  assertExplicitSourceLive,
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
   enforceClientSlugFence,
   federatedSearchScope,
   normalizeSlugPrefix,
   parseSourceIdParam,
+  requireWritablePage,
   validatePageSlug,
 } from './context.ts';
 
@@ -96,17 +97,7 @@ async function dropPrivateSlugs(
  * entirely, facts fence keeps only `world`-visibility rows.
  */
 function stripPrivacyFencesForRemoteReader(page: Page): Page {
-  return {
-    ...page,
-    compiled_truth: stripFactsFence(
-      stripTakesFence(page.compiled_truth),
-      { keepVisibility: ['world'] },
-    ),
-    timeline: stripFactsFence(
-      stripTakesFence(page.timeline ?? ''),
-      { keepVisibility: ['world'] },
-    ),
-  };
+  return { ...page, compiled_truth: sanitizeRemoteBody(page.compiled_truth), timeline: sanitizeRemoteBody(page.timeline ?? '') };
 }
 
 const get_page: Operation = {
@@ -137,6 +128,8 @@ const get_page: Operation = {
     // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
     // read sees pages in `federated: true` sources, matching search/query.
     const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     const fuzzyScope = sourceOpts;
 
     // #4352 remediation: untrusted callers never read `visibility: private`
@@ -146,7 +139,7 @@ const get_page: Operation = {
     // oracle), composing with — not replacing — the source-grant scope above.
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
-    let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
+    let page = await ctx.engine.getPage(slug, { includeDeleted, excludePrivate, ...sourceOpts });
     if (page && excludePrivate && isPrivatePage(page.frontmatter)) page = null;
     let resolved_slug: string | undefined;
 
@@ -176,9 +169,9 @@ const get_page: Operation = {
         : sourceOpts.sourceId !== undefined
           ? sourceOpts.sourceId
           : (await ctx.engine.listAllSources({ includeArchived: includeDeleted })).map(s => s.id);
-      const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, aliasScope);
+      const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, aliasScope, { excludePrivate });
       if (hit) {
-        const aliasPage = await ctx.engine.getPage(hit.canonical_slug, { includeDeleted, sourceId: hit.source_id });
+        const aliasPage = await ctx.engine.getPage(hit.canonical_slug, { includeDeleted, excludePrivate, sourceId: hit.source_id });
         if (aliasPage && !(excludePrivate && isPrivatePage(aliasPage.frontmatter))) {
           page = aliasPage;
           resolved_slug = hit.canonical_slug;
@@ -187,13 +180,13 @@ const get_page: Operation = {
     }
 
     if (!page && fuzzy) {
-      let candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
+      let candidates = await ctx.engine.resolveSlugs(slug, { ...fuzzyScope, excludePrivate });
       // #4352: the ambiguous_slug candidate list must not enumerate private slugs.
       if (excludePrivate && candidates.length > 0) {
         candidates = await dropPrivateSlugs(ctx.engine, candidates, fuzzyScope, includeDeleted);
       }
       if (candidates.length === 1) {
-        const fuzzyPage = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
+        const fuzzyPage = await ctx.engine.getPage(candidates[0], { includeDeleted, excludePrivate, ...sourceOpts });
         // Multi-source backstop: the slug may still resolve to a private
         // variant (same slug private in one source, world in another —
         // getPage returns the first in-scope match).
@@ -241,30 +234,9 @@ const get_page: Operation = {
     // non-default page. We already hold the resolved page, so its source is
     // unambiguous.
     const tags = await ctx.engine.getTags(page.slug, { sourceId: page.source_id });
-    // Privacy boundary for the per-token allow-list (v0.28.6 for takes,
-    // v0.32.2 for facts).
-    //
-    // takes_list / takes_search / think.gather filter rows by holder at
-    // the SQL layer, but takes AND facts are also rendered as markdown
-    // tables inside the page body between fence markers. A read-only
-    // remote MCP caller could otherwise call `get_page <slug>` and
-    // recover every fence row verbatim.
-    //
-    // v0.32.2 (Codex R2-#5): the strip trigger is now `ctx.remote === true`
-    // rather than the takes-holders-allow-list flag (which subagent paths
-    // didn't set, leaving a pre-existing privacy hole). Subagent + remote
-    // MCP + scope-restricted-token callers all get the strip; local CLI
-    // (`ctx.remote === false`) sees the full fence. Closes the
-    // pre-existing takes hole as a bonus.
-    //
-    // Both fences are stripped:
-    //  - stripTakesFence: drops the entire takes table for untrusted
-    //    readers (per-token holder allow-list is the row-level surface
-    //    for trusted callers).
-    //  - stripFactsFence({keepVisibility: ['world']}): keeps world rows,
-    //    drops private. World facts are public knowledge by definition;
-    //    untrusted readers see them. Private facts never cross the boundary.
-    const isUntrustedReader = ctx.remote === true;
+    // Only explicitly trusted local reads retain protected body sections.
+    // Holder grants and page-visibility opt-outs do not bypass this boundary.
+    const isUntrustedReader = ctx.remote !== false;
     const visibleBody = isUntrustedReader
       ? stripPrivacyFencesForRemoteReader(page)
       : page;
@@ -414,6 +386,7 @@ const put_page: Operation = {
     // enforceSubagentSlugFence for the fail-closed policy.
     enforceSubagentSlugFence(ctx, slug, 'put_page');
     enforceClientSlugFence(ctx, slug, 'put_page');
+    if (ctx.viaSubagent === true && ctx.auth) await requireWritablePage(ctx, slug.toLowerCase(), 'put_page', 'page', true);
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
 
@@ -516,6 +489,7 @@ const put_page: Operation = {
           'Remove the `id:` frontmatter field (or change the content) to write a new page under your own prefix.',
         );
       }
+      if (ctx.viaSubagent === true && ctx.auth) await requireWritablePage(ctx, result.slug, 'put_page', 'page');
     }
 
     // v0.39 T13 — auto-prompt on first unknown-type write.
@@ -650,6 +624,7 @@ const put_page: Operation = {
     // patterns (which runs after extract) would still see the right graph
     // but auto_timeline would never fire on synth output.
     const trustedWorkspace = ctx.viaSubagent === true
+      && ctx.auth === undefined
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
     if (ctx.remote !== false && !trustedWorkspace) {
@@ -1307,9 +1282,14 @@ const list_pages: Operation = {
     // #3242 / #4400: federatedSearchScope so unqualified listing spans
     // federated sources (same visibility set as search / get_page); an
     // explicit per-call source_id (including '__all__') wins, same contract
-    // as search/query's sourceIdParam.
-    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    // as search/query's sourceIdParam. parseSourceIdParam (same as get_page)
+    // rejects whitespace/malformed/non-string ids loudly instead of letting
+    // them silently return [] or, for the CLI's `--source-id ""`, widen to
+    // every source.
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'list_pages', { allowAll: true });
     const scope = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     // #4352 remediation: untrusted listing never enumerates
     // `visibility: private` pages (slugs + titles are the leak surface here).
     // Composes with the #4400 per-call source_id and the v0.34.1 grant scope

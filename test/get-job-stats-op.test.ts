@@ -81,12 +81,12 @@ describe('get_job_stats — private dream-inline queues', () => {
     // ONLY the private-queue classification keeps wedged false here — if it
     // regressed, this fixture would trip the wedge derivation.
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at)
-       VALUES ('subagent', '${PRIVATE_QUEUE}', 'waiting', now() - interval '2 hours', now() - interval '2 hours')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, created_at, updated_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', '${PRIVATE_QUEUE}', 'waiting', now() - interval '2 hours', now() - interval '2 hours')`,
     );
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, updated_at)
-       VALUES ('subagent', '${PRIVATE_QUEUE}', 'completed', now() - interval '90 minutes')`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, updated_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', '${PRIVATE_QUEUE}', 'completed', now() - interval '90 minutes')`,
     );
     await withEnv({ GBRAIN_WEDGED_QUEUE_WARN_MINUTES: undefined }, async () => {
       const res = await dispatchToolCall(engine, 'get_job_stats', { queue: PRIVATE_QUEUE }, { ...STDIO });

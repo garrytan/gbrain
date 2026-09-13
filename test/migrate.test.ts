@@ -802,7 +802,7 @@ describe('migrate — runner behavioral (v14 handler + v15 backfill)', () => {
 
   test('v15 backfilled any max_stalled=1 rows (smoke: schema default is 5)', async () => {
     await (engine as any).db.exec(
-      `INSERT INTO minion_jobs (name, queue, status, max_stalled) VALUES ('test', 'default', 'waiting', 1)`
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, max_stalled) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'test', 'default', 'waiting', 1)`
     );
     await (engine as any).db.exec(
       `UPDATE minion_jobs SET max_stalled = 5

@@ -46,7 +46,7 @@
 import { readFileSync, readdirSync, existsSync, statSync, appendFileSync, mkdirSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../../data-frontmatter.ts';
 import { computeContentHash } from '../types.ts';
 import type {
   IngestionSource,

@@ -13,6 +13,8 @@
 
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
 /**
  * Glob-ish patterns watched for retrieval drift. Each pattern is matched
@@ -49,16 +51,42 @@ export function matchesWatchPattern(path: string, patterns: ReadonlyArray<string
   return false;
 }
 
+/** Files that mark a gbrain source checkout (vs an installed package or compiled binary). */
+const CHECKOUT_MARKERS = ['src/cli.ts', 'skills/RESOLVER.md', '.git'] as const;
+
+/**
+ * Locate the gbrain SOURCE CHECKOUT this module was loaded from, or null
+ * when gbrain is running as an installed package (no `.git`) or a compiled
+ * binary (virtual `/$bunfs/` URL). The drift check only means something
+ * against a checkout: an installed CLI has no git diff to inspect.
+ */
+export function resolveGbrainSourceRoot(moduleUrl: string = import.meta.url): string | null {
+  try {
+    let dir = dirname(fileURLToPath(moduleUrl));
+    for (let i = 0; i < 10; i++) {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir walks up from this module's own file URL (import.meta.url), never from user input; the markers are literals
+      if (CHECKOUT_MARKERS.every((marker) => existsSync(join(dir, marker)))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Non-file: module URL (bundler / compiled binary) — not a checkout.
+  }
+  return null;
+}
+
 /**
  * Return repo-relative paths that have changed in the working tree since
- * the given commit (or HEAD if no commit). Best-effort: returns [] when
- * git is unavailable, the repo lacks the commit, or any other failure.
+ * the given commit (or HEAD if no commit). Returns `null` when the probe
+ * itself failed (repo root missing, git unavailable, not a work tree,
+ * timeout) so callers never mistake "could not check" for "clean".
  *
  * `commitSha` is a full or short SHA. When omitted, compares HEAD against
  * working tree (uncommitted changes only).
  */
-export function filesDriftedSince(repoRoot: string, commitSha?: string): string[] {
-  if (!existsSync(repoRoot)) return [];
+export function filesDriftedSince(repoRoot: string, commitSha?: string): string[] | null {
+  if (!existsSync(repoRoot)) return null;
   try {
     const range = commitSha ? `${commitSha}..HEAD` : 'HEAD';
     const args = commitSha
@@ -75,7 +103,7 @@ export function filesDriftedSince(repoRoot: string, commitSha?: string): string[
       .map(s => s.trim())
       .filter((s): s is string => s.length > 0);
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -87,6 +115,7 @@ export function watchedFilesDrifted(
   repoRoot: string,
   commitSha?: string,
   patterns: ReadonlyArray<string> = RETRIEVAL_WATCH_PATTERNS,
-): string[] {
-  return filesDriftedSince(repoRoot, commitSha).filter((p) => matchesWatchPattern(p, patterns));
+): string[] | null {
+  const files = filesDriftedSince(repoRoot, commitSha);
+  return files === null ? null : files.filter((p) => matchesWatchPattern(p, patterns));
 }

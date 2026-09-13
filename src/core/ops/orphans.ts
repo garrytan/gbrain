@@ -6,8 +6,7 @@
  */
 
 import type { Operation } from './contract.ts';
-import { sourceScopeOpts } from './context.ts';
-import { dropPrivateOnlyRows } from '../search/private-visibility.ts';
+import { readPolicyOpts } from './context.ts';
 
 // --- Orphans ---
 
@@ -39,32 +38,13 @@ const find_orphans: Operation = {
     // source-bound OAuth client's scope — a read leak in the v0.34.1
     // source-isolation class. Local CLI callers route through `gbrain
     // orphans --source` instead (ctx.remote === false → empty scope here).
-    const scope = sourceScopeOpts(ctx);
+    const scope = await readPolicyOpts(ctx);
     const result = await findOrphans(ctx.engine, {
       includePseudo: (p.include_pseudo as boolean) || false,
       ...(mode ? { mode } : {}),
       ...scope,
     });
-    // An orphaned `visibility: private` page's slug + title must not reach
-    // remote readers (same read-leak class as the delta page arm; same
-    // helper family as the get_page/resolve_slugs gates). Hidden orphans
-    // VANISH from every published counter — total_pages and total_linkable
-    // shrink with them and `excluded` is left alone. Folding them into
-    // `excluded` instead would relocate the count, not hide it: with
-    // include_pseudo:true the unfiltered op guarantees excluded === 0, so a
-    // non-zero value would be an exact one-call private-orphan-count oracle.
-    // Subtracting from both denominators keeps doctor-remote's
-    // total_orphans/total_linkable ratio and the excluded ===
-    // total_pages - total_linkable invariant coherent over the
-    // world-visible universe.
-    const kept = await dropPrivateOnlyRows(ctx.engine, ctx.remote, result.orphans, o => o.slug, scope);
-    const hiddenCount = result.orphans.length - kept.length;
-    if (hiddenCount > 0) {
-      result.orphans = kept;
-      result.total_orphans = kept.length;
-      result.total_pages -= hiddenCount;
-      result.total_linkable -= hiddenCount;
-    }
+
     return result;
   },
   cliHints: { name: 'orphans', hidden: true },

@@ -8,6 +8,7 @@ import {
   resolveSkillsDir,
   DEFERRED,
 } from '../src/commands/check-resolvable.ts';
+import { checkResolvable } from '../src/core/check-resolvable.ts';
 
 // Path to the CLI entry point. Runs through bun directly so tests don't
 // require a pre-built binary. Always invoked from the repo root so bun can
@@ -101,6 +102,61 @@ function run(args: string[]): RunResult {
 // ---------------------------------------------------------------------------
 // Unit tests: direct helpers (fast, no subprocess)
 // ---------------------------------------------------------------------------
+
+describe('check-resolvable — unit: orphan_trigger is one warning per skill, worded by source (#4831)', () => {
+  const created: string[] = [];
+  afterEach(() => {
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+    created.length = 0;
+  });
+
+  it('frontmatter-only orphan: one warning naming SKILL.md + manifest.json, no RESOLVER.md fix', () => {
+    const skillsDir = makeFixture(
+      [
+        { name: 'alpha', triggers: ['alpha'] },
+        { name: 'beta', triggers: ['b1', 'b2', 'b3'], inManifest: false, inResolver: false },
+      ],
+      created,
+    );
+    const report = checkResolvable(skillsDir);
+    const orphans = report.warnings.filter(w => w.type === 'orphan_trigger' && w.skill === 'beta');
+    expect(orphans.length).toBe(1);
+    expect(orphans[0].message).toContain('manifest.json');
+    expect(orphans[0].message).toContain('SKILL.md');
+    expect(orphans[0].message).not.toContain('RESOLVER.md has a trigger');
+    expect(orphans[0].action).toContain('manifest.json');
+    expect(orphans[0].action).not.toContain('RESOLVER.md');
+    expect(orphans[0].fix).toBeUndefined();
+  });
+
+  it('RESOLVER.md-only orphan: one warning with the remove_trigger fix', () => {
+    const skillsDir = makeFixture(
+      [
+        { name: 'alpha', triggers: ['alpha'] },
+        { name: 'gamma', triggers: [], inManifest: false },
+      ],
+      created,
+    );
+    const report = checkResolvable(skillsDir);
+    const orphans = report.warnings.filter(w => w.type === 'orphan_trigger' && w.skill === 'gamma');
+    expect(orphans.length).toBe(1);
+    expect(orphans[0].message).toContain('RESOLVER.md');
+    expect(orphans[0].fix?.type).toBe('remove_trigger');
+    expect(orphans[0].fix?.file).toBe(join(skillsDir, 'RESOLVER.md'));
+  });
+
+  it('frontmatter + RESOLVER.md row for the same skill: one warning, keeps the remove_trigger fix', () => {
+    const skillsDir = makeFixture(
+      [{ name: 'alpha', triggers: ['alpha'], inManifest: false }],
+      created,
+    );
+    const report = checkResolvable(skillsDir);
+    const orphans = report.warnings.filter(w => w.type === 'orphan_trigger');
+    expect(orphans.length).toBe(1);
+    expect(orphans[0].skill).toBe('alpha');
+    expect(orphans[0].fix?.type).toBe('remove_trigger');
+  });
+});
 
 describe('check-resolvable — unit: parseFlags', () => {
   it('parses all known flags', () => {

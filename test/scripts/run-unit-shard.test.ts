@@ -15,6 +15,7 @@
 
 import { describe, it, expect } from 'bun:test';
 import { execFileSync } from 'child_process';
+import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
@@ -52,5 +53,31 @@ describe('run-unit-shard.sh exclusion symmetry', () => {
     const files = dryRunList();
     const leaks = files.filter(f => f.startsWith('test/e2e/'));
     expect(leaks).toEqual([]);
+  });
+});
+
+describe('run-unit-shard.sh timeout multiplier reach', () => {
+  // GBRAIN_TEST_TIMEOUT_MULTIPLIER scales bun's `--timeout`, which only sets
+  // the DEFAULT per-test ceiling — an explicit `test(name, fn, N)` third
+  // argument overrides it and stays fixed under 4-way container contention.
+  // Files that spawn the CLI through test/helpers/cli-spawn.ts are the ones
+  // the multiplier exists for (a full `bun src/cli.ts` boot, often a PGLite
+  // cold start), and cli-spawn's own kill timer already reaps a hung child,
+  // so a hand-pinned ceiling below the runner default only hides the file
+  // from the multiplier (#4659). Pins at/above the default are left alone.
+  it('cli-spawn consumers pin no per-test timeout below the bunfig default', () => {
+    const bunfig = readFileSync(resolve(REPO_ROOT, 'bunfig.toml'), 'utf-8');
+    const defaultMs = Number(/^timeout\s*=\s*([\d_]+)/m.exec(bunfig)![1].replace(/_/g, ''));
+    const offenders: string[] = [];
+    for (const file of dryRunList()) {
+      const src = readFileSync(resolve(REPO_ROOT, file), 'utf-8');
+      if (!src.includes('helpers/cli-spawn')) continue;
+      // Trailing numeric literal (>= 4 digits) as a call's last argument.
+      for (const m of src.matchAll(/,\s*(\d[\d_]{3,})\s*\)\s*;/g)) {
+        const ms = Number(m[1].replace(/_/g, ''));
+        if (ms < defaultMs) offenders.push(`${file}: ${m[0].trim()} (< ${defaultMs})`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

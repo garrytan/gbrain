@@ -1,12 +1,12 @@
 # GBrain Installation Guide for AI Agents
 
-Read this entire file, then follow the steps. Ask the user for API keys when needed.
-Target: ~30 minutes to a fully working brain.
+Read this file, then follow the path appropriate to the user’s request. Default to adding keyless memory to their existing agent, preserving identity and unrelated configuration. API keys, enrichment, automatic capture, and a new personal-agent identity are separate choices.
 
-> **Scope note:** this guide installs the BRAIN (for agent platforms like OpenClaw
-> and Hermes, or a standalone brain). If you are Claude Code or Codex and the human
-> asked you to become their persistent personal agent — identity + memory + private
-> repo — follow `BOOTSTRAP_FOR_AGENTS.md` instead.
+> **Choose the installation path first.** Inside **[Grok Bot](docs/guides/grok-bot.md)** or **[Muse](docs/guides/muse.md)**, use their dedicated guide and `scripts/setup-in-agent.sh`; its receipt tracks repair and native enablement. For an **[existing hosted brain](docs/guides/hosted-harness-access.md)**, provision on the host and install the private handoff inside the harness. This guide covers a local brain for other existing agents.
+>
+> **Memory-only path:** install → initialize → relay and confirm the Step 3.5 search-mode choice → connect the harness → verify memory. Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The required search-mode choice still applies; published API cost examples are not prices for the user’s harness subscription.
+>
+> Only if the user asks for a **new persistent personal agent** with identity and a private repo, follow `BOOTSTRAP_FOR_AGENTS.md`.
 
 ## Step 0: If you are not Claude Code
 
@@ -62,7 +62,7 @@ restart the shell or add the PATH export to the shell profile.
 
 ## Step 2: API Keys
 
-Ask the user for these. gbrain defaults to the Voyage embedding + reranker stack
+Skip API-key setup for the initial keyless memory path. If the user enables semantic retrieval or paid enrichment, configure the selected provider explicitly. GBrain defaults to the Voyage embedding + reranker stack
 (`voyage:voyage-4` @ 1024d + `voyage:rerank-2.5` — one key covers both); OpenAI is the
 main alternative, chosen at init via `--embedding-model <provider:model>`. ZeroEntropy
 is deprecated (its hosted API shuts down 2026-09-04): init auto-pick and the picker
@@ -99,11 +99,7 @@ gbrain doctor --json                  # verify all checks pass
 ```
 
 The user's markdown files (notes, docs, brain repo) are SEPARATE from this tool repo.
-Ask the user where their files are, or create a new brain repo:
-
-```bash
-mkdir -p ~/brain && cd ~/brain && git init
-```
+Use the user's chosen notes directory, or a separate managed memory directory. A Git repository is optional; do not create a private personal-agent repo for a memory-only install.
 
 Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
 structure (people/, companies/, concepts/, etc.) inside the user's brain repo,

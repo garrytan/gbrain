@@ -14,7 +14,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../../src/core/data-frontmatter.ts';
 import { runCapture, __testing } from '../../src/commands/capture.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 

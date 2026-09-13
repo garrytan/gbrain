@@ -15,6 +15,11 @@
 // No brace expansion, no ?, no [ ].
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
+  "src/core/harness/**": ["test/e2e/harness-access.test.ts"],
+  "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
+  "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts"],
+  "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the
   // key-gated live DeepSeek replay (self-skips without OPENROUTER_API_KEY).
   "src/core/ai/openrouter-families.ts": ["test/e2e/openrouter-deepseek-subagent-replay.live.test.ts"],
@@ -36,14 +41,23 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/bootstrap-hook-under-serve.serial.test.ts",
     "test/e2e/bootstrap-real-codex.serial.test.ts",
   ],
+  // Concrete content and derived-information read policy parity.
+  "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
+  "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
+  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
+  "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
+  "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
   "src/core/search/**": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/search-quality.test.ts",
     "test/e2e/search-exclude.test.ts",
     "test/e2e/search-swamp.test.ts",
   ],
   // Tree-sitter chunkers feed code-indexing E2E.
-  "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts"],
+  "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   // OpenClaw context-engine plugin: engine + entry feed the plugin-shape E2E
   // (mocked SDK) AND the real-loader Tier 2 E2E that spawns openclaw and
   // actually installs the plugin into an isolated --profile.
@@ -91,6 +105,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // reduce coverage vs the fail-closed run-everything default for unmapped paths.
   "src/core/cycle/inline-drain.ts": [
     "test/e2e/dream-synthesize-pglite.test.ts",
+    "test/e2e/minions-authority-parity.test.ts",
     "test/e2e/minions-concurrency.test.ts",
     "test/e2e/minions-resilience.test.ts",
     "test/e2e/minions-shell.test.ts",
@@ -113,6 +128,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
+    "test/e2e/delegated-grants-withdrawal.test.ts",
+    "test/e2e/delegated-http-worker.test.ts",
     "test/e2e/minions-concurrency.test.ts",
     "test/e2e/minions-resilience.test.ts",
     "test/e2e/minions-shell.test.ts",
@@ -128,9 +145,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/doctor-connectors-pglite.test.ts",
   ],
   // Agent-job scope fences over real Postgres.
-  "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts"],
+  "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
   "src/core/postgres-engine.ts": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/postgres-jsonb.test.ts",
     "test/e2e/jsonb-roundtrip.test.ts",
@@ -145,6 +165,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",
@@ -153,6 +176,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Engine method modules peeled from the façades carry the same blast
   // radius as the façades themselves.
   "src/core/postgres-engine/**": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/postgres-jsonb.test.ts",
     "test/e2e/jsonb-roundtrip.test.ts",
@@ -163,6 +189,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/source-boundary-mutation-postgres.test.ts",
   ],
   "src/core/pglite-engine/**": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",
@@ -244,9 +273,14 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // (per the plan-eng-review E1 decision); the daemon + built-in sources
   // + ingest_capture Minion handler all feed the in-process roundtrip
   // E2E AND the HTTP contract E2E for the webhook route.
+  "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts"],
+  "src/core/oauth-grants.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-oauth.ts": ["test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http.ts": [
+    "test/e2e/serve-http-consent.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
     "test/e2e/serve-http-oauth.test.ts",
+    "test/e2e/harness-access.test.ts",
     // #3242 wiring: legacy no-grant federated widening vs granted confinement
     // over the SDK /mcp transport (verifyAccessToken → noGrantFederatedScope
     // → OperationContext.localFederatedSourceIds).

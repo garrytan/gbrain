@@ -968,11 +968,13 @@ describe('#3583 review: orphan-sentinel self-heal probe/clear race', () => {
     // after the first orphan probe returned "no active row". The second
     // probe must see it and keep the sentinel open — a single-probe sweep
     // cleared it while the duplicate existed.
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    // Preserve the dynamic receiver: import transaction clones inherit this
+    // interceptor and must query their own transaction, including after restore.
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
-        const res = await origExecuteRaw(sql, params);
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
+        const res = await origExecuteRaw.call(this, sql, params);
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 1) {
@@ -980,7 +982,7 @@ describe('#3583 review: orphan-sentinel self-heal probe/clear race', () => {
               type: 'person', title: 'Dana (revenant)',
               compiled_truth: 'materialized between probe and clear',
             }, { sourceId: 'default' });
-            await origExecuteRaw(
+            await origExecuteRaw.call(this,
               `UPDATE pages SET source_path = 'people/dana-old.md'
                WHERE source_id = 'default' AND slug = 'people/dana-old-revenant'`,
             );
@@ -1298,11 +1300,11 @@ describe('#3583 review: a writer landing AFTER the second probe gets its sentine
     // the second probe returned, i.e. after the double-probe verdict is
     // final and the clear is committed. The post-clear verify probe must
     // detect the row and RESTORE the sentinel.
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
-        const res = await origExecuteRaw(sql, params);
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
+        const res = await origExecuteRaw.call(this, sql, params);
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 2) {
@@ -1310,7 +1312,7 @@ describe('#3583 review: a writer landing AFTER the second probe gets its sentine
               type: 'person', title: 'Dana (late writer)',
               compiled_truth: 'materialized after the second probe',
             }, { sourceId: 'default' });
-            await origExecuteRaw(
+            await origExecuteRaw.call(this,
               `UPDATE pages SET source_path = 'people/dana-old.md'
                WHERE source_id = 'default' AND slug = 'people/dana-old-late-writer'`,
             );
@@ -1370,11 +1372,11 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
     writeFileSync(join(repo, 'people/newfile.md'), personMd('New', 'New person.'));
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
-        const res = await origExecuteRaw(sql, params);
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
+        const res = await origExecuteRaw.call(this, sql, params);
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 2) {
@@ -1383,7 +1385,7 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
               type: 'person', title: 'Dana (gate writer)',
               compiled_truth: 'materialized between the gate verdict and the clear',
             }, { sourceId: 'default' });
-            await origExecuteRaw(
+            await origExecuteRaw.call(this,
               `UPDATE pages SET source_path = 'people/dana-old.md'
                WHERE source_id = 'default' AND slug = 'people/dana-old-gate-writer'`,
             );
@@ -1425,15 +1427,15 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
     // Both orphan probes succeed (empty) → clear commits; the post-clear
     // VERIFY probe (third matching SELECT) throws. Fail-closed means every
     // cleared sentinel comes back.
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 3) throw new Error('injected verify-probe outage');
         }
-        return origExecuteRaw(sql, params);
+        return origExecuteRaw.call(this, sql, params);
       }) as typeof engine.executeRaw;
     try {
       const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
@@ -1515,13 +1517,13 @@ describe('#3583 review: a throwing bookmark advance can no longer lose a sentine
     writeFileSync(join(repo, 'people/newfile.md'), personMd('New', 'New person.'));
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
         if (sql.includes('UPDATE sources SET last_commit')) {
           throw new Error('injected advance outage');
         }
-        return origExecuteRaw(sql, params);
+        return origExecuteRaw.call(this, sql, params);
       }) as typeof engine.executeRaw;
     let threw = false;
     try {
@@ -2691,5 +2693,49 @@ describe('#3942: the rename lane must not repoint a foreign-origin page', () => 
     expect(cleanPage?.compiled_truth).toBe('clean body');
     expect((await engine.getPage('notes/renamed', { sourceId: 'default' }))?.compiled_truth)
       .toBe('legacy body');
+  });
+});
+
+describe('#4597: a fallback rename\'s own stale duplicate converges under incremental sync', () => {
+  // Negative control lives above: "the anchor tree is enumerated on its own
+  // paths" (from=people/alpha.md, anchor proof at the emoji path) pins that
+  // anchor proof from a DIFFERENT path than the reconciled rename's from
+  // still spares the row. This case is the self-referential sub-case only.
+  test('the anchor blob at the rename\'s own from-path is not liveness proof: the pre-rename row is removed and the next run is quiet', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      '\u{1F389}.md': exoticMd,
+      'people/alpha.md': personMd('Alpha', 'Alpha is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('party-notes')).not.toBeNull();
+
+    // Occupied destination forces the fallback lane (updateSlug throws).
+    await engine.putPage('notes/party', {
+      type: 'person', title: 'Occupant', compiled_truth: 'occupies the destination slug',
+    }, { sourceId: 'default' });
+
+    // The exotic file moves to an ORDINARY path and drops its slug: line
+    // (identical body, so `diff -M` reports a rename, not delete + add).
+    // The destination derives its slug from the path now; the only state
+    // still naming `party-notes` is the anchor blob at the rename's own
+    // from-path — the pre-rename content of the file just re-imported.
+    mkdirSync(join(repo, 'notes'), { recursive: true });
+    execSync('git mv "\u{1F389}.md" notes/party.md', { cwd: repo, stdio: 'pipe' });
+    writeFileSync(join(repo, 'notes/party.md'), exoticMd.replace('slug: Party-Notes\n', ''));
+    execSync('git add -A && git commit -m "move party notes to an ordinary path"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+    const dest = await engine.getPage('notes/party');
+    expect(dest).not.toBeNull();
+    expect(dest!.compiled_truth).toContain('Party notes live here.');
+    // The stale half of the rename is gone (soft-deleted, 72h recoverable)...
+    expect(await engine.getPage('party-notes')).toBeNull();
+
+    // ...and the incremental path is converged: no sentinel, no wedge.
+    const quiet = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(quiet.status).toBe('up_to_date');
+    expect(await engine.getPage('party-notes')).toBeNull();
   });
 });

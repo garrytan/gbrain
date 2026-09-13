@@ -13,7 +13,7 @@
  * mutation, no PGLite engine (checks accept `engine: null`; the one
  * engine-shaped check gets a stub with just `getConfig`).
  */
-import { describe, test, expect, afterAll } from 'bun:test';
+import { describe, test, expect, afterAll, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -712,14 +712,21 @@ describe('bootstrap_durability_job [B7/D7]', () => {
     // the verdict). Fresh empty HOME → durabilityJobStatus kind 'none'.
     const fakeHome = mkdtempSync(join(tmpdir(), 'gb-bdc-fakehome-'));
     tmpDirs.push(fakeHome);
-    const checks = await withEnv(
-      { ...NEUTRAL_ENV, GBRAIN_HOME: parent, HOME: fakeHome },
-      () => bootstrapDoctorChecks(null),
-    );
-    const c = byName(checks, 'bootstrap_durability_job');
-    expect(c?.status).toBe('warn');
-    expect(c?.message).toContain('PERSIST_CRON=yes');
-    expect(c?.message).toContain('gbrain sources harden workspace');
+    // Clearing env cannot erase Docker's /.dockerenv. Pin the branch this
+    // fixture exercises; execution-env.test.ts independently covers detection.
+    const environment = spyOn(await import('../src/core/execution-env.ts'), 'detectExecutionEnvironment').mockReturnValue('local');
+    try {
+      const checks = await withEnv(
+        { ...NEUTRAL_ENV, GBRAIN_HOME: parent, HOME: fakeHome },
+        () => bootstrapDoctorChecks(null),
+      );
+      const c = byName(checks, 'bootstrap_durability_job');
+      expect(c?.status).toBe('warn');
+      expect(c?.message).toContain('PERSIST_CRON=yes');
+      expect(c?.message).toContain('gbrain sources harden workspace');
+    } finally {
+      environment.mockRestore();
+    }
   }, T);
 });
 

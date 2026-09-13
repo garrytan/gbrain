@@ -200,6 +200,22 @@ export function escapeAnchorLines(text: string): string {
     .join('\n');
 }
 
+/**
+ * Neutralize QUOTED facts/takes fence markers in a message body:
+ * `gbrain:facts:begin` → `gbrain\:facts:begin`. A session that read another
+ * page (context pack, get_page) quotes that page's `<!--- gbrain:facts:begin -->`
+ * verbatim, and the per-message char cap routinely keeps the begin marker
+ * while dropping the end — a live, unbalanced fence on a transcript page that
+ * has no fence (FACTS_FENCE_UNBALANCED on every dream cycle), or a quoted
+ * fence indexed as the transcript's own facts. Every fence consumer is an
+ * exact-substring matcher on the marker token, so the backslash lands INSIDE
+ * the token (a leading space would not break them); the text stays readable
+ * and greppable, matching the backslash idiom of escapeAnchorLines (#4821).
+ */
+export function escapeFenceMarkers(text: string): string {
+  return text.replace(/gbrain:(facts|takes):(begin|end)/g, 'gbrain\\:$1:$2');
+}
+
 export interface RenderedPart {
   slug: string;
   /** Full page content: YAML frontmatter + body. */
@@ -266,7 +282,7 @@ export function renderSessionParts(
   const blocks: string[] = messages.map((m) => {
     const ts = m.timestamp || lastTs;
     lastTs = ts;
-    const text = escapeAnchorLines(truncateUtf8(m.text, MESSAGE_CHAR_CAP));
+    const text = escapeFenceMarkers(escapeAnchorLines(truncateUtf8(m.text, MESSAGE_CHAR_CAP)));
     const [head, ...rest] = text.split('\n');
     const anchor = `**${speakerLabel(m)}** (${anchorTimestamp(ts)}): ${head}`;
     return rest.length ? `${anchor}\n${rest.join('\n')}` : anchor;

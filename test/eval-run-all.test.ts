@@ -195,6 +195,45 @@ describe('persistRunRecord audit trail', () => {
     expect(lines.length).toBe(3);
   });
 
+  test('secrets in error text AND params string leaves are redacted on the write path (DB URL password, provider keys)', () => {
+    const record: EvalRunRecord = {
+      schema_version: 3,
+      run_id: 'abc123-longmemeval-balanced-zz',
+      ran_at: '2026-09-06T12:00:00Z',
+      suite: 'longmemeval',
+      mode: 'balanced',
+      commit: 'abc123',
+      seed: 0,
+      params: {
+        topK: 5,
+        output: 'postgres://brain_user:s3cr3t-pw@db.example.internal:5432/brain?sslmode=require',
+        nested: { note: 'anthropic sk-ant-api03-ABCDEFGHIJKLMNOP failed', n: 3 },
+        list: ['Authorization: Bearer abcdefghijklmnop.qrstuv', 'plain text'],
+      },
+      status: 'failed',
+      duration_ms: 1,
+      error: 'exit 1 | q1: connect failed: postgres://brain_user:s3cr3t-pw@db.example.internal:5432/brain; openai key sk-proj-abcdefghijklmnopqrstuvwxyz0123',
+    };
+    // No caller-side redaction here — the write path alone must scrub.
+    persistRunRecord(tmp, record, tmp);
+    const line = readFileSync(join(tmp, 'eval-results.jsonl'), 'utf-8').trim();
+    expect(line).not.toContain('s3cr3t-pw');
+    expect(line).not.toContain('brain_user:');
+    expect(line).not.toContain('sk-proj-abcdefghijklmnopqrstuvwxyz0123');
+    expect(line).not.toContain('ABCDEFGHIJKLMNOP');
+    expect(line).not.toContain('abcdefghijklmnop.qrstuv');
+    // The line is still valid JSON with the diagnostic shape + non-string leaves intact.
+    const parsed = JSON.parse(line);
+    expect(parsed.error).toContain('exit 1 | q1: connect failed: postgres://<redacted>@db.example.internal:5432/brain');
+    expect(parsed.error).toContain('sk-<redacted>');
+    expect(parsed.params.output).toBe('postgres://<redacted>@db.example.internal:5432/brain?sslmode=require');
+    expect(parsed.params.nested.note).toBe('anthropic sk-ant-<redacted> failed');
+    expect(parsed.params.nested.n).toBe(3);
+    expect(parsed.params.topK).toBe(5);
+    expect(parsed.params.list).toEqual(['Authorization: Bearer <redacted>', 'plain text']);
+    expect(parsed.status).toBe('failed');
+  });
+
   test("v3: brainbench records carry mode 'n/a' (decision 16 — no params.mode_independent hack)", () => {
     const record: EvalRunRecord = {
       schema_version: 3,

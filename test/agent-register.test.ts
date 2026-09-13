@@ -326,7 +326,7 @@ describe('PGLite integration (pre-flight → tx → audit → exchange)', () => 
 
     // Exchange on the OUTER engine (tx sql is dead after commit) — the
     // 3600s-default regression pin: expires_in must reflect the 30d column.
-    const provider = new GBrainOAuthProvider({ sql });
+    const provider = new GBrainOAuthProvider({ sql, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     const tokens = await provider.exchangeClientCredentials(registered.clientId, registered.clientSecret!);
     expect(tokens.expires_in).toBe(REGISTER_DEFAULT_TOKEN_TTL_SECONDS);
 
@@ -365,7 +365,7 @@ describe('PGLite integration (pre-flight → tx → audit → exchange)', () => 
       registered = await registerScopedClient(sqlQueryForEngine(tx), 'itest-rotate', baseRegisterArgs(), {});
     });
     const oldSecret = registered.clientSecret!;
-    const provider = new GBrainOAuthProvider({ sql });
+    const provider = new GBrainOAuthProvider({ sql, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     await provider.exchangeClientCredentials(registered.clientId, oldSecret); // sanity: works pre-rotation
 
     const newSecret = await rotateClientSecret(engine, registered.clientId, 'itest-rotate');

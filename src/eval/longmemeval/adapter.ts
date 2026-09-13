@@ -83,7 +83,7 @@ function renderSession(session: LongMemEvalSession, date?: string): string {
  * normalizer accepts both. Mirrors the proven `normalizeSessions` helper
  * in gbrain-evals/eval/runner/longmemeval.ts.
  */
-function normalizeSessions(question: LongMemEvalQuestion): LongMemEvalSession[] {
+export function normalizeSessions(question: LongMemEvalQuestion): LongMemEvalSession[] {
   const sessions: LongMemEvalSession[] = [];
   const ids = question.haystack_session_ids ?? [];
   const raw = question.haystack_sessions;
@@ -119,7 +119,7 @@ function normalizeSessions(question: LongMemEvalQuestion): LongMemEvalSession[] 
  * (each question's slug-space is reset per benchmark question by the
  * harness's resetTables).
  */
-function sanitizeSessionIdForSlug(sessionId: string): string {
+export function sanitizeSessionIdForSlug(sessionId: string): string {
   return sessionId.toLowerCase().replace(/[_.]/g, '-').replace(/[^a-z0-9-]/g, '-');
 }
 

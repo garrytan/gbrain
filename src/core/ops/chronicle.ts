@@ -8,7 +8,7 @@
  */
 
 import type { Operation, OperationContext } from './contract.ts';
-import { sourceScopeOpts } from './context.ts';
+import { readPolicyOpts, sourceScopeOpts } from './context.ts';
 
 // ── Remote diary redaction (fail-closed) ─────────────────────────────────
 // The exact mechanism the ontology siblings use (`ctx.remote !== false` →
@@ -48,7 +48,7 @@ const chronicle_day: Operation = {
     const rows = redactDiaryTimeline(ctx, await ctx.engine.getTimelineForDate(String(p.date), {
       week: p.week === true,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     }));
     if (p.narrative === true) {
       const { renderTimelineNarrative } = await import('../chronicle/narrative.ts');
@@ -72,7 +72,7 @@ const chronicle_on_this_day: Operation = {
   handler: async (ctx, p) => redactDiaryTimeline(ctx, await ctx.engine.getOnThisDay({
     date: typeof p.date === 'string' ? p.date : undefined,
     limit: typeof p.limit === 'number' ? p.limit : undefined,
-    ...sourceScopeOpts(ctx),
+    ...await readPolicyOpts(ctx),
   })),
   cliHints: { name: 'on-this-day' },
 };
@@ -92,7 +92,7 @@ const chronicle_since: Operation = {
     return redactDiaryTimeline(ctx, await ctx.engine.getSince(String(p.date), {
       kind: typeof p.kind === 'string' ? p.kind : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     }));
   },
   cliHints: { name: 'since', positional: ['date'] },
@@ -111,7 +111,7 @@ const chronicle_last_seen: Operation = {
   handler: async (ctx, p) => {
     const res = await ctx.engine.getLastSeen(String(p.entity), {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     });
     // Fail-closed diary redaction: when the evidence is a life/diary event
     // (or a life/diary page is queried AS the entity), remote callers get
@@ -142,7 +142,7 @@ const ontology_get: Operation = {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     });
     // Remote redaction: never surface diary-sourced ontology to untrusted callers.
     return ctx.remote !== false ? rows.filter((r) => !(r.source ?? '').startsWith('life/diary/')) : rows;
@@ -210,7 +210,7 @@ const ontology_conflicts: Operation = {
   handler: async (ctx, p) => {
     const conflicts = await ctx.engine.findOntologyConflicts({
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     });
     if (ctx.remote === false) return conflicts;
     // Remote: redact diary-sourced values; drop conflicts that no longer have
@@ -245,7 +245,7 @@ const volunteer_chronicle: Operation = {
       entities,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       remote: ctx.remote !== false,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     });
     // Same fail-closed diary redaction as the timeline reads: the loader
     // redacts diary-sourced ONTOLOGY; the recent timeline is redacted here.

@@ -10,6 +10,9 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
+import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
+import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL } from './facts/withdrawal-schema.ts';
+import { repairLegacyClientGrants } from './grants/migration.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -6438,6 +6441,114 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE facts ADD CONSTRAINT facts_kind_check
           CHECK (kind IN ('event','preference','commitment','belief','fact','idea'));
       END $$;
+    `,
+  },
+  {
+    version: 146,
+    name: 'extract_atoms_transcript_state_table',
+    // #4148 follow-on: extend the failure-count / tombstone machinery to
+    // TRANSCRIPT items. Pre-fix `recordPageFailureCount` returned null for
+    // `kind !== 'page'`, so a transcript that deterministically produced
+    // malformed output — or that honestly yielded zero atoms — re-entered
+    // discovery and re-spent LLM budget on EVERY cycle, forever. Pages avoid
+    // this via frontmatter (`atoms_fail_count` / `atoms_fail_hash` /
+    // `atoms_scan_hash`); transcripts are files, not pages, so they have no
+    // frontmatter to carry it and need their own store.
+    //
+    // Precedent: dream_verdicts (v30), the other transcript-keyed cache, whose
+    // comment already establishes why this cannot live in raw_data — "Distinct
+    // from raw_data (page-scoped); transcripts aren't pages" (raw_data.page_id
+    // is NOT NULL REFERENCES pages(id)). It also must NOT be columns on
+    // dream_verdicts itself: that table is documented as rebuildable via
+    // `gbrain dream retriage --force`, which clears it wholesale, and atom
+    // extraction state would be swept away as collateral.
+    //
+    // KEYED (source_id, file_path, content_hash), which adds source_id to the
+    // dream_verdicts shape. dream_verdicts can be source-free because it caches
+    // a content-level judgment ("is this transcript worth processing"), which is
+    // genuinely source-independent. A failure streak and a tombstone GATE
+    // EXTRACTION, and extraction is source-scoped throughout this phase — the
+    // discovery SQL, the NOT EXISTS idempotency subquery, and every putPage all
+    // take sourceId. This file's own header records what happens when that is
+    // forgotten here: "Pre-fix the putPage call was missing the sourceId arg —
+    // atoms always wrote to 'default' regardless of source, which made the NOT
+    // EXISTS guard ineffective on federated brains." An unscoped tombstone would
+    // let one source permanently suppress another source's extraction of the
+    // same file.
+    //
+    // content_hash holds the 16-char prefix, matching `atoms.frontmatter
+    // ->>'source_hash'` and the page-side `atoms_fail_hash`, so every hash
+    // comparison in this phase is on the same unit. Including it in the PK is
+    // what makes "a content edit resets the streak" fall out for free: an edited
+    // transcript is simply a different row, mirroring the page-side hash-keyed
+    // reset.
+    //
+    // RLS: covered by the v35 auto_rls_on_create_table event trigger on
+    // Postgres, same as v126's session_context_state — no explicit ALTER here.
+    // Keep in sync with src/schema.sql and src/core/pglite-schema.ts
+    // (test/schema-bootstrap-coverage.test.ts enforces the PGLite parity).
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS extract_atoms_transcript_state (
+        source_id    TEXT        NOT NULL DEFAULT 'default',
+        file_path    TEXT        NOT NULL,
+        content_hash TEXT        NOT NULL,
+        fail_count   INTEGER     NOT NULL DEFAULT 0,
+        tombstoned   BOOLEAN     NOT NULL DEFAULT FALSE,
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_id, file_path, content_hash)
+      );
+      DROP INDEX IF EXISTS extract_atoms_transcript_state_live_idx;
+      CREATE INDEX IF NOT EXISTS extract_atoms_transcript_state_tombstoned_idx
+        ON extract_atoms_transcript_state (source_id, content_hash)
+        WHERE tombstoned;
+    `,
+  },
+  {
+    version: 147,
+    name: 'oauth_client_capability_grants',
+    sql: GRANT_COLUMNS_SQL + GRANT_AUDIT_SCHEMA_SQL + GRANT_SPEND_COLUMNS_SQL,
+    handler: repairLegacyClientGrants,
+  },
+  {
+    version: 148,
+    name: 'durable_fact_withdrawals',
+    idempotent: true,
+    sql: FACT_WITHDRAWAL_SCHEMA_SQL + FACT_WITHDRAWAL_BACKFILL_SQL,
+  },
+  {
+    version: 149,
+    name: 'minion_submission_authority',
+    // NULL preserves unknown legacy provenance; only reviewed local work may backfill it.
+    sql: `
+      LOCK TABLE minion_jobs IN ACCESS EXCLUSIVE MODE;
+      DO $cutover$ BEGIN
+        IF EXISTS (SELECT 1 FROM minion_jobs WHERE status = 'active') THEN
+          RAISE EXCEPTION 'Drain or cancel active minion jobs and stop all producers/workers before the authority cutover';
+        END IF;
+      END $cutover$;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS submission_authority JSONB;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
+
+CREATE OR REPLACE FUNCTION enforce_minion_queue_protocol() RETURNS trigger SET search_path = pg_catalog, public AS $protocol$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.submission_authority IS NULL OR NEW.claim_generation <> 0 THEN
+      RAISE EXCEPTION 'Minion queue protocol 1 required: upgrade every producer and worker before restart';
+    END IF;
+  ELSIF NEW.status = 'active' AND (OLD.status <> 'active' OR NEW.lock_token IS DISTINCT FROM OLD.lock_token) THEN
+    IF NEW.submission_authority IS NULL OR NEW.claim_generation IS DISTINCT FROM OLD.claim_generation + 1 THEN
+      RAISE EXCEPTION 'Minion queue protocol 1 required: old workers cannot claim upgraded queue jobs';
+    END IF;
+  ELSIF NEW.claim_generation IS DISTINCT FROM OLD.claim_generation THEN
+    RAISE EXCEPTION 'Minion queue claim generation may advance only with a claim';
+  END IF;
+  RETURN NEW;
+END;
+$protocol$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS minion_queue_protocol ON minion_jobs;
+CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
+  FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
     `,
   },
 ];

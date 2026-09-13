@@ -153,6 +153,18 @@ grant is allowed. Pre-registering clients via the CLI / admin API is unchanged.
 
 ### Token Management
 
+New authorization-code connections require owner approval in the admin UI and
+S256 PKCE for public and confidential clients. Consent requests expire after
+ten minutes; restart the client connection after expiry or a server restart.
+Existing active-client sessions remain valid. Review and revoke unwanted
+clients in the existing Agents page.
+
+Queued work also retains its submitting authority and is revalidated before
+execution. Worker upgrades require a stopped-service cutover; see the
+[authorization and worker upgrade guide](docs/guides/authorization-upgrade.md)
+before migrating an existing queue. That guide also covers the Bun 1.3.11
+minimum and guarded outbound connections.
+
 ```bash
 gbrain auth create "claude-desktop"   # Create a new token
 gbrain auth list                       # List all tokens

@@ -96,6 +96,14 @@ export interface Page {
   created_at: Date;
   updated_at: Date;
   /**
+   * `updated_at` at the column's microsecond precision, as an ISO string
+   * (`2026-08-10T12:00:00.000123Z`). Projected by `listPages` so keyset
+   * callers can resume from the exact row (`updatedAfterKeyset.updatedAt`);
+   * a JS Date holds milliseconds only and would re-select every row in the
+   * last row's millisecond. Absent on paths that do not project it.
+   */
+  updated_at_iso?: string;
+  /**
    * v0.26.5: when present, the page is soft-deleted. Hidden from search and
    * from `getPage` / `listPages` by default; surface via `include_deleted: true`.
    * The autopilot purge phase hard-deletes rows where `deleted_at < now() - 72h`.
@@ -305,9 +313,12 @@ export interface PageFilters {
    * v0.45.7 — keyset cursor for deterministic pagination through pages sharing
    * one `updated_at`. `WHERE p.updated_at > ts OR (p.updated_at = ts AND
    * p.slug > slug)`. Supersedes `updated_after` when set; pair with
-   * `sort: 'updated_asc'` (total order). Used by the `delta` verb's session
+   * `sort: 'updated_asc'` (a total order: updated_at, slug, source_id, id —
+   * slug alone is unique only per source). Used by the `delta` verb's session
    * cursor so a >limit same-timestamp cluster pages cleanly instead of
-   * livelocking. `slug` empty ⇒ start of the `ts` bucket.
+   * livelocking. `slug` empty ⇒ start of the `ts` bucket. `updatedAt` should
+   * be the row's `updated_at_iso` (column precision); a millisecond-rounded
+   * value re-selects same-millisecond rows.
    */
   updatedAfterKeyset?: { updatedAt: string; slug: string };
   /**
@@ -361,7 +372,21 @@ export interface PageFilters {
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
-export interface GetPageOpts {
+export interface PageReadScope {
+  sourceId?: string;
+  sourceIds?: string[];
+  /** Resolved by the trusted operation layer, never from MCP parameters. */
+  excludePrivate?: boolean;
+  /** Untrusted chunk reads require a verified protected-body index, even with visibility opt-outs. */
+  requireSafeChunks?: boolean;
+}
+
+export interface PageReadPolicy extends PageReadScope {
+  /** Undefined is unrestricted; an empty list permits no holders. */
+  takesHoldersAllowList?: string[];
+}
+
+export interface GetPageOpts extends PageReadScope {
   /** Filter to a specific source. When omitted, getPage returns the first slug match across sources (pre-existing semantics). */
   sourceId?: string;
   /**
@@ -382,9 +407,16 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // cluster of pages sharing one updated_at (bulk syncs stamp identical
   // now() across a transaction). Without the tiebreaker, rows at the same
   // timestamp order arbitrarily and a >limit tie cluster is unpageable.
-  updated_asc:  'p.updated_at ASC, p.slug ASC',
+  // The cursor must carry the column's microsecond precision to be exact:
+  // resume from `Page.updated_at_iso`, never from a JS Date. Slug is unique
+  // only per source, so a federated listing needs source_id + id behind it to
+  // stay a total order (same tiebreakers as `slug` below).
+  updated_asc:  'p.updated_at ASC, p.slug ASC, p.source_id ASC, p.id ASC',
   created_desc: 'p.created_at DESC',
-  slug:         'p.slug ASC',
+  // Slug uniqueness is per (source_id, slug), so a federated listing can hold
+  // the same slug from several sources; source_id + id make slug+offset paging
+  // a TOTAL order (same class as the updated_asc tiebreaker above).
+  slug:         'p.slug ASC, p.source_id ASC, p.id ASC',
 };
 
 /**
@@ -446,7 +478,7 @@ export interface DomainBankRow {
   representative_chunk_id: number | null;
 }
 
-export interface SalienceOpts {
+export interface SalienceOpts extends PageReadPolicy {
   /** Scalar source scope. Ignored when `sourceIds` is set (array wins). */
   sourceId?: string;
   /** Federated source scope — the op layer passes `ctx.auth.allowedSources`. */
@@ -550,7 +582,7 @@ export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
  * the number of distinct pages touched on `since`. A cohort is anomalous when its
  * current count exceeds `mean + sigma * stddev`. Year cohort deferred to v0.30.
  */
-export interface AnomaliesOpts {
+export interface AnomaliesOpts extends PageReadScope {
   /** Scalar source scope. Ignored when `sourceIds` is set (array wins). */
   sourceId?: string;
   /** Federated source scope — the op layer passes `ctx.auth.allowedSources`. */
@@ -870,6 +902,13 @@ export interface SearchResult {
   /** Shortest connecting slug path seed→…→result (for "how I know this"). */
   relational_path?: string[];
   /**
+   * Ranker wave — set when `pinRelationalRows` (relational-rerank-pin.ts)
+   * re-pinned this relational-arm row above the reranked text rows. Autocut
+   * preserves stamped rows and excludes them from its cliff computation (they
+   * carry low cross-encoder scores by construction). Absent otherwise.
+   */
+  relational_pinned?: boolean;
+  /**
    * v0.40.4 full attribution (D12=A) — per-stage score deltas for the
    * `gbrain search --explain` formatter. Every boost stage stamps its
    * contribution so the formatter can reconstruct the score derivation.
@@ -1055,7 +1094,7 @@ export interface ResolvedColumn {
   embeddingModel: string;
 }
 
-export interface SearchOpts {
+export interface SearchOpts extends PageReadPolicy {
   limit?: number;
   offset?: number;
   /**
@@ -1326,6 +1365,16 @@ export interface SearchOpts {
    */
   relationalRetrieval?: boolean;
   relationalRetrievalDepth?: number;
+  /**
+   * Ranker wave — per-call override for `search.relational_rerank_pin`
+   * (relational-arm rows re-pinned above reranked text rows; `0` disables).
+   * Per-call wins over config wins over the mode bundle; out-of-range values
+   * (negative, > 10, fractional, NaN) are treated as unset through the ONE
+   * range contract `normalizeRelationalRerankPin` (relational-rerank-pin.ts),
+   * in BOTH the inner search and the cache resolver (knobs hash reflects it).
+   * Eval A/B gates drive it here.
+   */
+  relationalRerankPin?: number;
 }
 
 /**
@@ -1440,7 +1489,9 @@ export interface RelationalFanoutRow {
 }
 
 /** Options for BrainEngine.relationalFanout. */
-export interface RelationalFanoutOpts {
+export interface RelationalFanoutOpts extends PageReadPolicy {
+  /** Resolved seed identities; separate from the read grant for edge origins. */
+  seedRefs?: Array<{ source_id: string; slug: string }>;
   /** Edge types to traverse; null/empty = type-agnostic. */
   linkTypes?: string[] | null;
   /** Direction from each seed. Default 'both'. */
@@ -1475,7 +1526,7 @@ export interface TimelineInput {
   detail?: string;
 }
 
-export interface TimelineOpts {
+export interface TimelineOpts extends PageReadScope {
   limit?: number;
   after?: string;
   before?: string;
@@ -1511,7 +1562,7 @@ export interface ChronicleTimelineRow {
   kind: string | null;        // event.kind from the event page frontmatter
 }
 
-export interface ChronicleTimelineOpts {
+export interface ChronicleTimelineOpts extends PageReadScope {
   /** getTimelineForDate: expand to the ISO week (Mon–Sun) containing `date`. */
   week?: boolean;
   /** getSince: filter event projections by `event.kind`. */
@@ -1572,7 +1623,12 @@ export interface OntologyConflict {
   dimension: string;
   values: { value: string; source: string | null; confidence: number; fact_id: number }[];
 }
-export interface OntologyReadOpts {
+// excludePrivate (from PageReadScope) drops observations whose provenance page
+// is `visibility: private` BEFORE per-dimension resolution, so an untrusted
+// caller resolves the newest value they may see — never a private one, never
+// a hole where one was. Set by the op layer (readPolicyOpts); engines never
+// decide trust.
+export interface OntologyReadOpts extends PageReadScope {
   asof?: string;
   minConfidence?: number;
   includeQuarantined?: boolean;
@@ -1937,6 +1993,37 @@ export interface HybridSearchMeta {
    * didn't fire. Surfaced for `gbrain search --explain`.
    */
   relational_evidence_slot?: import('./search/relational-recall.ts').RelationalEvidenceSlotDecision;
+  /**
+   * Ranker wave — relational rerank pin decision (knob, relational pages in
+   * the pool, the pinned rows with from/to/fused ranks, how many moved).
+   * Present only when the reranker reordered the pool AND at least one
+   * relational-arm row was pinned; omitted for non-relational queries, pin 0,
+   * and every reranker fail-open path. Surfaced for `gbrain search --explain`.
+   */
+  relational_rerank_pin?: import('./search/relational-rerank-pin.ts').RelationalRerankPinDecision;
+  /**
+   * Ranker wave (Phase E2, Cat 13) — keyword-arm confidence decision:
+   * `margin_ratio` (scale-free `top / (top + second)` over the keyword arm's
+   * fused rows; 1 single row; 0 empty), the raw `top_score` (diagnostics),
+   * and `downweighted` (did the keyword + title lists fuse at weight 0.5).
+   * Present on every main RRF-path result — INCLUDING with the floor off
+   * (`downweighted: false`) — so an operator can calibrate
+   * `search.keyword_arm_confidence_floor` from per-probe margins. Omitted on
+   * the keyword-only fallback paths (no vector arm → no decision).
+   */
+  keyword_arm_confidence?: import('./search/arm-confidence.ts').KeywordArmConfidenceDecision;
+  /**
+   * Ranker wave (Phase E3, Cat 13) — metadata boost gate decision: the
+   * resolved `gate` (`always` | `lexical`), `lexical_voted` (did a strict
+   * keyword, title-arm or relational row reach fusion), `boosts_applied` (did
+   * the backlink / salience / recency / graph-signal / alias-resolved stages
+   * run) and the `reason`. Present on every main RRF-path result — INCLUDING
+   * under `always` (`boosts_applied: true`) — so an operator can count
+   * vector-only-voter queries before flipping `search.metadata_boost_gate`.
+   * Omitted on the keyword-only fallback paths (the lexical arms are the
+   * recall there; the gate is never consulted).
+   */
+  metadata_boost_gate?: import('./search/metadata-boost-gate.ts').MetadataBoostGateDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

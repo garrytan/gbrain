@@ -21,6 +21,7 @@ import {
   runSubagentOneshot,
   parseOneshotResponse,
   extractWikilinkTargets,
+  ONESHOT_SYSTEM,
   type OneshotArgs,
 } from '../../src/core/minions/handlers/subagent-oneshot.ts';
 import type { ChatResult } from '../../src/core/ai/gateway.ts';
@@ -51,12 +52,16 @@ const SUFFIX = 'abc123';
 const GOOD_SLUG_A = `wiki/personal/reflections/2026-08-16-topic-${SUFFIX}`;
 const GOOD_SLUG_B = `wiki/originals/ideas/2026-08-16-idea-${SUFFIX}`;
 
-function chatStub(text: string, stopReason: ChatResult['stopReason'] = 'end'): OneshotArgs['_chat'] {
+function chatStub(
+  text: string,
+  stopReason: ChatResult['stopReason'] = 'end',
+  outputTokens = 50,
+): OneshotArgs['_chat'] {
   return (async () => ({
     text,
     blocks: [{ type: 'text', text }],
     stopReason,
-    usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    usage: { input_tokens: 100, output_tokens: outputTokens, cache_read_tokens: 0, cache_creation_tokens: 0 },
     model: 'anthropic:claude-sonnet-4-6',
     providerId: 'anthropic',
   })) as OneshotArgs['_chat'];
@@ -82,7 +87,13 @@ async function makeCtx(data: SubagentHandlerData): Promise<MinionJobContext> {
   };
 }
 
-function makeArgs(ctx: MinionJobContext, data: SubagentHandlerData, chatText: string, stop: ChatResult['stopReason'] = 'end'): OneshotArgs {
+function makeArgs(
+  ctx: MinionJobContext,
+  data: SubagentHandlerData,
+  chatText: string,
+  stop: ChatResult['stopReason'] = 'end',
+  outputTokens = 50,
+): OneshotArgs {
   const tools = buildBrainTools({
     subagentId: ctx.id,
     engine,
@@ -101,7 +112,7 @@ function makeArgs(ctx: MinionJobContext, data: SubagentHandlerData, chatText: st
     leaseKey: 'anthropic:messages',
     maxConcurrent: 32,
     leaseTtlMs: 120_000,
-    _chat: chatStub(chatText, stop),
+    _chat: chatStub(chatText, stop, outputTokens),
   };
 }
 
@@ -126,6 +137,12 @@ const VALID_RESPONSE = JSON.stringify({
 });
 
 describe('parseOneshotResponse', () => {
+  test('system contract requires JSON string escaping', () => {
+    expect(ONESHOT_SYSTEM).toContain('valid JSON string');
+    expect(ONESHOT_SYSTEM).toContain('unescaped quotes');
+    expect(ONESHOT_SYSTEM).toContain('literal newlines');
+  });
+
   test('parses the contract, applies title/type defaults', () => {
     const p = parseOneshotResponse('```json\n{"pages":[{"slug":"a/b","body":"text"}],"skipped":false}\n```');
     expect(p).not.toBeNull();
@@ -323,6 +340,40 @@ describe('runSubagentOneshot', () => {
     const ctx = await makeCtx(DATA);
     const outcome = await runSubagentOneshot(makeArgs(ctx, DATA, VALID_RESPONSE.slice(0, 50), 'length'));
     expect(outcome).toEqual({ kind: 'fallback', reason: 'length', tokens: FB_TOKENS });
+  });
+
+  test("malformed output at the cap → length fallback for ambiguous 'end'/'other' reasons", async () => {
+    for (const stop of ['end', 'other'] as const) {
+      const ctx = await makeCtx(DATA);
+      const outcome = await runSubagentOneshot(
+        makeArgs(ctx, DATA, VALID_RESPONSE.slice(0, 50), stop, 8192),
+      );
+      expect(outcome).toEqual({
+        kind: 'fallback',
+        reason: 'length',
+        tokens: { ...FB_TOKENS, out: 8192 },
+      });
+    }
+  });
+
+  test('malformed output below the cap remains unparseable', async () => {
+    const ctx = await makeCtx(DATA);
+    const outcome = await runSubagentOneshot(
+      makeArgs(ctx, DATA, VALID_RESPONSE.slice(0, 50), 'end', 8191),
+    );
+    expect(outcome).toEqual({
+      kind: 'fallback',
+      reason: 'unparseable',
+      tokens: { ...FB_TOKENS, out: 8191 },
+    });
+  });
+
+  test('valid JSON at the cap is accepted', async () => {
+    const ctx = await makeCtx(DATA);
+    const outcome = await runSubagentOneshot(
+      makeArgs(ctx, DATA, '{"pages":[],"skipped":true,"skip_reason":"routine"}', 'end', 8192),
+    );
+    expect(outcome.kind).toBe('done');
   });
 
   test('duplicate slugs within one batch → bad_slug (second write would silently overwrite the first)', async () => {

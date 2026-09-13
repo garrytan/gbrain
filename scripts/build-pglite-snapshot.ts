@@ -14,7 +14,7 @@ process.env.TZ = 'UTC';
 // 1-3 seconds of cold init and load the post-schema state directly.
 //
 // Output: test/fixtures/pglite-snapshot.tar (binary, gitignored)
-//         test/fixtures/pglite-snapshot.version (hex SHA256 of the migrate.ts + pglite-schema.ts FILE BYTES)
+//         test/fixtures/pglite-snapshot.version (SHA256 of schema/migration source FILE BYTES, including imported helpers)
 //
 // The version file lets the engine detect snapshot staleness — if the tar's
 // recorded version doesn't match the current schema-file hash, the engine
@@ -23,7 +23,7 @@ process.env.TZ = 'UTC';
 // Run: bun run scripts/build-pglite-snapshot.ts
 //      (or: bun run build:pglite-snapshot)
 //
-// Re-run whenever you touch src/core/migrate.ts or src/schema.sql.
+// Re-run whenever schema SQL or a migration helper changes.
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync, rmdirSync, rmSync, mkdtempSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -40,7 +40,7 @@ function computeSchemaHash(): string {
   // File-bytes hash (see computeSnapshotSchemaHash) — identical between this
   // plain-`bun run` builder and a coverage-instrumented test process.
   const h = computeSnapshotSchemaHash(crypto, fsModule);
-  if (!h) throw new Error('build-pglite-snapshot: cannot read src/core/migrate.ts + pglite-schema.ts — run from a source checkout');
+  if (!h) throw new Error('build-pglite-snapshot: cannot read schema/migration source dependencies — run from a source checkout');
   return h;
 }
 

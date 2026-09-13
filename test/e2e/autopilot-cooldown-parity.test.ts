@@ -27,7 +27,7 @@ async function seed(engine: BrainEngine): Promise<void> {
   ];
   for (const [status, data, minAgo] of rows) {
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data, finished_at) VALUES ('autopilot-cycle', $1, $2, $3)`,
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, finished_at) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'autopilot-cycle', $1, $2, $3)`,
       [status, data, new Date(Date.now() - minAgo * 60_000).toISOString()],
     );
   }

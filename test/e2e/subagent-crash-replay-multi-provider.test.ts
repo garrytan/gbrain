@@ -201,8 +201,8 @@ async function seedCrashedState(
   shape: 'v1' | 'v2',
 ): Promise<{ jobId: number; toolUseId: string; gbrainId: string | null }> {
   const jobRows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-     VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())
+    `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', $1::jsonb, 'default', 0, now())
      RETURNING id`,
     [JSON.stringify({ prompt })],
   );
@@ -408,8 +408,8 @@ describe('SIGKILL crash-replay reconciliation across provider matrix (v0.38 LOAD
       // (which is the NEW assistant turn the resume will generate),
       // ordinal=0. priorTools must surface this as status='pending'.
       const jobRows = await engine.executeRaw<{ id: number }>(
-        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-         VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+        `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', '{}'::jsonb, 'default', 0, now())
          RETURNING id`,
       );
       const jobId = jobRows[0].id;
@@ -449,8 +449,8 @@ describe('SIGKILL crash-replay reconciliation across provider matrix (v0.38 LOAD
       const handler = buildHandler(tools);
 
       const jobRows = await engine.executeRaw<{ id: number }>(
-        `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
-         VALUES ('subagent', 'active', '{}'::jsonb, 'default', 0, now())
+        `INSERT INTO minion_jobs (submission_authority, name, status, data, queue, priority, created_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'active', '{}'::jsonb, 'default', 0, now())
          RETURNING id`,
       );
       const jobId = jobRows[0].id;

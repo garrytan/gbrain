@@ -19,7 +19,8 @@ import { ALL_SOURCES, isValidSourceId } from '../source-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
-import type { SearchResult, HybridSearchMeta } from '../types.ts';
+import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
+import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
 
 // --- Upload validators (Fix 1 / B5 / H5 / M4) ---
 
@@ -187,8 +188,9 @@ export function slugUnderSubagentFence(ctx: OperationContext, slug: string): boo
  * A caller can be confined by EITHER mechanism, and the two arrive on
  * different context fields: an OAuth binding lands on `ctx.auth
  * .boundSlugPrefixes` (plain-prefix grammar), while a delegated subagent
- * lands on `ctx.viaSubagent` + `ctx.allowedSlugPrefixes` (glob grammar) and
- * carries NO `ctx.auth` at all. Testing only the OAuth field therefore lets
+ * lands on `ctx.viaSubagent` + `ctx.allowedSlugPrefixes` (glob grammar).
+ * Its auth carries read scope, not the parent's direct-write fence. Testing
+ * only the OAuth field therefore lets
  * a bound client that also holds `agent` scope re-open the path it is fenced
  * out of simply by delegating the write through submit_agent — the same
  * bypass shape the facts-backstop gate below is keyed against.
@@ -349,9 +351,11 @@ export const BOUND_CLIENT_META_OPS: ReadonlySet<string> = new Set(['request_tool
  * rather than running unguarded).
  */
 export function opAllowedForBoundClient(
-  auth: Pick<AuthInfo, 'boundSlugPrefixes' | 'fenceProjectionDegraded'> | undefined,
+  auth: Pick<AuthInfo, 'boundSlugPrefixes' | 'fenceProjectionDegraded' | 'allowedOperations' | 'grantProjectionDegraded'> | undefined,
   op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
 ): boolean {
+  if (auth?.grantProjectionDegraded) return false;
+  if (Array.isArray(auth?.allowedOperations) && !auth.allowedOperations.includes(op.name)) return false;
   const degraded = auth?.fenceProjectionDegraded === true;
   if (!degraded && !auth?.boundSlugPrefixes) return true;
   const isRead = op.scope === 'read' && op.mutating !== true;
@@ -373,6 +377,12 @@ export function enforceBoundClientOpAllowList(
   op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
 ): void {
   if (opAllowedForBoundClient(auth, op)) return;
+  if (auth?.grantProjectionDegraded || (Array.isArray(auth?.allowedOperations) && !auth.allowedOperations.includes(op.name))) {
+    const err = new OperationError('permission_denied', `${op.name} is outside this client's approved operation snapshot.`,
+      'Ask the operator to explicitly regrant the required operation; upgrading the server does not expand client grants.');
+    err.detail = 'fence=operation_grant';
+    throw err;
+  }
   const degraded = auth?.fenceProjectionDegraded === true;
   if (degraded) {
     const err = new OperationError(
@@ -457,7 +467,28 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
     return ctx.remote === false ? {} : { sourceId: ctx.sourceId };
   }
   if (ctx.sourceId) return { sourceId: ctx.sourceId };
+  if (ctx.remote !== false && allowed !== undefined) {
+    throw new OperationError('permission_denied', 'No readable source is granted for this request.');
+  }
   return {};
+}
+
+/** Holder permissions are independent of the operator's page-visibility opt-out. */
+export function readHolders(ctx: OperationContext): string[] | undefined {
+  return ctx.remote === false ? ctx.takesHoldersAllowList : ctx.takesHoldersAllowList ?? ['world'];
+}
+
+/** Resolve policy once at the operation boundary; callers may supply a canonical per-call scope. */
+export async function readPolicyOpts(
+  ctx: OperationContext,
+  scope: PageReadScope = sourceScopeOpts(ctx),
+): Promise<PageReadPolicy> {
+  return {
+    ...scope,
+    excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+    requireSafeChunks: ctx.remote !== false,
+    takesHoldersAllowList: readHolders(ctx),
+  };
 }
 
 /** Map the operation-layer scope names onto runThink's public options. */
@@ -528,11 +559,14 @@ export function resolveRequestedScope(
     return ctx.remote === false ? {} : sourceScopeOpts(ctx);
   }
   if (sourceIdParam !== undefined) {
-    const allowed = ctx.auth?.allowedSources;
-    if (ctx.remote !== false && allowed && allowed.length > 0 && !allowed.includes(sourceIdParam)) {
+    const scope = sourceScopeOpts(ctx);
+    const granted = scope.sourceIds !== undefined
+      ? scope.sourceIds.includes(sourceIdParam)
+      : scope.sourceId === sourceIdParam;
+    if (ctx.remote !== false && !granted) {
       throw new OperationError(
         'permission_denied',
-        `source '${sourceIdParam}' is outside your granted sources`,
+        'Requested source is outside your granted sources',
         'Request access to this source, or omit source_id to search within your grant.',
       );
     }
@@ -620,6 +654,41 @@ export function federatedSearchScope(
 }
 
 /**
+ * #4620 — the #1712 rule on the op path: an EXPLICIT per-call `source_id`
+ * that names no live (unarchived) source fails loudly instead of silently
+ * scoping the read to a source with no rows (page_not_found with a
+ * soft-delete hint, or an empty list). Reachable because a federated_read
+ * grant / `.gbrain-source` dotfile has no FK and outlives `sources remove`.
+ * Call it AFTER `federatedSearchScope` so the grant check has already run —
+ * it can only name a source the caller was granted, never a cross-grant
+ * existence oracle. `__all__` and an omitted param skip it (nothing explicit
+ * to verify). Async on purpose: `resolveRequestedScope` stays sync for its
+ * ~10 engine-free call sites.
+ */
+export async function assertExplicitSourceLive(
+  ctx: OperationContext,
+  sourceIdParam: string | undefined,
+): Promise<void> {
+  if (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) return;
+  // Point lookup, not listAllSources (wave review): this runs on every
+  // search/query/get_page/list_pages call that names a source, and the full
+  // enumeration hauled every row's config JSONB across the wire each time.
+  // Same liveness predicate as listAllSources' default filter.
+  const live = await ctx.engine.executeRaw<{ ok: number }>(
+    `SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1`,
+    [sourceIdParam],
+  );
+  if (live.length > 0) return;
+  throw new OperationError(
+    'unknown_source',
+    `source '${sourceIdParam}' does not exist (removed or archived)`,
+    'Omit source_id to read within your grant, or pick an id from sources_list. ' +
+      'If a .gbrain-source dotfile or a federated_read grant still names it, update them ' +
+      '(gbrain auth rescope-client <client_id>; gbrain doctor lists dangling grants).',
+  );
+}
+
+/**
  * #4109 — preflight a page endpoint for a same-source graph mutation
  * (add_link / add_timeline_entry).
  *
@@ -633,12 +702,15 @@ export function federatedSearchScope(
  * from absence: the diagnostic lookup uses `federatedSearchScope`, the SAME
  * visibility ladder as `get_page`, so this preflight can never become a
  * cross-source existence oracle.
+ * Remote-owned subagents also require visibility of existing write targets;
+ * put_page allows creation only when no row exists, including soft-deleted rows.
  */
 export async function requireWritablePage(
   ctx: OperationContext,
   slug: string,
   operation: string,
   endpoint: 'from' | 'to' | 'page',
+  allowCreate = false,
 ): Promise<void> {
   const writeSource = ctx.sourceId || 'default';
   // Graph rows may reference soft-deleted pages — includeDeleted preserves
@@ -649,7 +721,14 @@ export async function requireWritablePage(
     sourceId: writeSource,
     includeDeleted: true,
   });
-  if (writable) return;
+  if (writable) {
+    if (ctx.viaSubagent === true && ctx.auth && isPrivatePage(writable.frontmatter)
+      && await resolveExcludePrivatePages(ctx.engine, ctx.remote)) {
+      throw new OperationError('permission_denied', `${operation}: this page is outside your write visibility.`);
+    }
+    return;
+  }
+  if (allowCreate) return;
 
   const visibleScope = federatedSearchScope(ctx);
   const spansAnotherSource =

@@ -65,7 +65,10 @@ describe('recipe: minimax', () => {
     const r = getRecipe('minimax')!;
     expect(r.touchpoints.chat).toBeDefined();
     expect(r.touchpoints.chat!.models).toContain('MiniMax-M3');
-    expect(r.touchpoints.chat!.supports_tools).toBe(false);
+    // #4782: M2+/M3 chat returns OpenAI-compatible tool_calls (live two-turn
+    // tools -> role:tool continuation verified), so tools are declared. The
+    // subagent loop stays refused until a live abort/retry replay pin lands.
+    expect(r.touchpoints.chat!.supports_tools).toBe(true);
     expect(r.touchpoints.chat!.supports_subagent_loop).toBe(false);
   });
 

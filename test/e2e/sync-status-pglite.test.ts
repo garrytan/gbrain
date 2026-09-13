@@ -201,14 +201,14 @@ describe('buildSyncStatusReport against real PGLite (IRON RULE regression for Bl
     // Seed embed-backfill minion jobs for source-a: 2 queued + 1 active +
     // 1 completed. source-b has none → idle.
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data) VALUES
-         ('embed-backfill', 'waiting',  '{"sourceId":"source-a"}'::jsonb),
-         ('embed-backfill', 'waiting',  '{"sourceId":"source-a"}'::jsonb),
-         ('embed-backfill', 'active',   '{"sourceId":"source-a"}'::jsonb)`,
+      `INSERT INTO minion_jobs (submission_authority, name, status, data) VALUES
+         ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'waiting',  '{"sourceId":"source-a"}'::jsonb),
+         ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'waiting',  '{"sourceId":"source-a"}'::jsonb),
+         ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'active',   '{"sourceId":"source-a"}'::jsonb)`,
     );
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, status, data, finished_at)
-         VALUES ('embed-backfill', 'completed', '{"sourceId":"source-a"}'::jsonb, now())`,
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, finished_at)
+         VALUES ('{"version":1,"kind":"application"}'::jsonb, 'embed-backfill', 'completed', '{"sourceId":"source-a"}'::jsonb, now())`,
     );
 
     const sources = await engine.executeRaw<{

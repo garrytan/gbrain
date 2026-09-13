@@ -17,7 +17,7 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+    throw new Error(body.message || body.error || `HTTP ${res.status}`);
   }
   return res.json();
 }
@@ -34,12 +34,21 @@ async function apiFetchText(path: string) {
 }
 
 export const api = {
+  oauthRequest: (id: string) => apiFetch(`/admin/api/oauth-requests/${encodeURIComponent(id)}`),
+  decideOAuthRequest: (id: string, decision: 'approve' | 'deny', csrf: string) =>
+    apiFetch(`/admin/api/oauth-requests/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify({ decision, csrf }) }),
   login: (token: string) => apiFetch('/admin/login', { method: 'POST', body: JSON.stringify({ token }) }),
   signOutEverywhere: () => apiFetch('/admin/api/sign-out-everywhere', { method: 'POST' }),
   stats: () => apiFetch('/admin/api/stats'),
   health: () => apiFetch('/admin/api/health-indicators'),
   agents: () => apiFetch('/admin/api/agents'),
+  agentsSpend: () => apiFetch('/admin/api/agents/spend'),
   sources: () => apiFetch('/admin/api/sources'),
+  grantCatalog: () => apiFetch('/admin/api/grant-catalog'),
+  clientGrant: (clientId: string) => apiFetch(`/admin/api/grants/${encodeURIComponent(clientId)}`),
+  registerClient: (body: Record<string, unknown>) => apiFetch('/admin/api/register-client', { method: 'POST', body: JSON.stringify(body) }),
+  recoverClient: (clientId: string) => apiFetch('/admin/api/recover-client', { method: 'POST', body: JSON.stringify({ clientId }) }),
+  updateClientGrant: (clientId: string, body: Record<string, unknown>) => apiFetch('/admin/api/rescope-client', { method: 'POST', body: JSON.stringify({ ...body, clientId }) }),
   requests: (page = 1, qs = '') => apiFetch(`/admin/api/requests?page=${page}${qs}`),
   apiKeys: () => apiFetch('/admin/api/api-keys'),
   createApiKey(keyName: string) {

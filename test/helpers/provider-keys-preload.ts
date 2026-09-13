@@ -23,27 +23,10 @@
  * today's behavior — same pattern as GBRAIN_TEST_ALLOW_DATABASE_URL.
  */
 
-// Every provider credential/endpoint the canonical fold recognizes
-// (src/core/ai/provider-env.ts mergedProviderEnv) — an ambient GEMINI,
-// VOYAGE, ZEROENTROPY, or Azure endpoint flips capability/embedding
-// assertions the same way a chat key flips model routing. Keep this list in
-// sync with mergedProviderEnv's output names.
-const STRIPPED_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
-  'GEMINI_API_KEY',
-  'GOOGLE_GENERATIVE_AI_API_KEY',
-  'VOYAGE_API_KEY',
-  'OPENROUTER_API_KEY',
-  'ZEROENTROPY_API_KEY',
-  'DASHSCOPE_API_KEY',
-  'AZURE_OPENAI_ENDPOINT',
-  'AZURE_OPENAI_DEPLOYMENT',
-  'AZURE_OPENAI_USE_ENTRA',
-] as const;
+import { PROVIDER_ENV_KEYS } from './provider-env.ts';
 
 if (process.env.GBRAIN_TEST_KEEP_PROVIDER_KEYS !== '1') {
-  for (const key of STRIPPED_KEYS) {
+  for (const key of PROVIDER_ENV_KEYS) {
     if (process.env[key] !== undefined) {
       delete process.env[key];
     }

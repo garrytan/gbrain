@@ -7,10 +7,14 @@
  * flags; this script derives them from the source instead of a hand-typed
  * list that would rot.
  *
- * How: parse handleCliOnly's top-level `case 'X': {` blocks out of src/cli.ts,
- * collect every `import('./commands/Y.ts')` inside each block, then scan the
- * case-block text plus each imported module (plus one level of that module's
- * ./relative same-directory imports) for `--flag` string literals — including
+ * How: segment handleCliOnly (src/cli.ts) into per-command blocks on its
+ * dispatch markers — `case 'X':` labels AND every `if (command === 'X' …)`
+ * head, plain or compound (see segmentDispatchBlocks) — collect every
+ * `import('./commands/Y.ts')` inside each block, then scan the
+ * case-block text (with `//` and `/* *\/` comments stripped — prose next to a
+ * marker is not consumption; see stripComments) plus each imported module
+ * (plus one level of that module's ./relative same-directory imports) for
+ * `--flag` string literals — including
  * help text, which deliberately over-includes: accepting a flag the handler
  * ignores is the pre-#2185 status quo for that flag, while missing a real
  * flag would break working invocations on upgrade.
@@ -139,6 +143,123 @@ function facadeExpansion(p: string): string[] {
   return [];
 }
 
+/**
+ * A block-level `import('./commands/X.ts')` whose destructured bindings are
+ * ALL SCREAMING_CASE constants borrows a value (a message string), not a
+ * handler — `const { THIN_CLIENT_REGISTER_MESSAGE } = await import(
+ * './commands/agent-register.ts')` in the agent-register pre-connect guard.
+ * Promoting such a module to depth zero scans its one-level deps
+ * (sources-ops / config / auth / oauth-provider …) as if the command owned
+ * them: that handed the agent row 38 phantom flags (--confirm-destructive,
+ * --force, --remove, …). The handler proper (`const { runX } = …`) still
+ * reaches the module through its own import walk, so no real flag is lost.
+ */
+export function isValueOnlyImport(block: string, importIndex: number): boolean {
+  const lineStart = block.lastIndexOf('\n', importIndex) + 1;
+  const head = block.slice(lineStart, importIndex);
+  const m = head.match(/const\s*\{([^}]*)\}\s*=\s*await\s*$/);
+  if (!m) return false;
+  const bindings = m[1].split(',').map(b => b.trim()).filter(b => b.length > 0);
+  return bindings.length > 0 && bindings.every(b => /^[A-Z][A-Z0-9_]*$/.test(b));
+}
+
+/**
+ * Segment handleCliOnly's body into per-command text blocks.
+ *
+ * handleCliOnly dispatches through TWO styles: an `if (command === 'X')`
+ * chain (DB-free commands like init/auth/schema) and a switch with
+ * `case 'X':` labels. Segment on BOTH marker kinds; the text between a
+ * marker and the next marker belongs to that label. Repeated labels
+ * (fall-through cases, a command with several `if` branches) union their
+ * blocks.
+ *
+ * The `if` chain has THREE shapes, and every one is a marker for X:
+ *   if (command === 'X') {                        plain
+ *   if (command === 'X' && args[0] === 'sub') {   compound — the sub-owned
+ *                                                 no-DB bypasses (eval
+ *                                                 longmemeval / brainbench /
+ *                                                 …), the `<cmd> --help`
+ *                                                 pre-engine branches, agent
+ *                                                 register
+ *   if (\n    command === 'X' &&\n    (...)       multi-line compound
+ * Invariant: ownership follows the `command === 'X'` head, never the
+ * condition's tail. Pre-fix only the plain shape matched, so a compound
+ * block's text was attributed to the PRECEDING marker: every `eval <sub>`
+ * bypass landed on `dream`, every `<cmd> --help` bypass on `status`, and the
+ * eval row lacked --retrieval-only/--by-type/--no-trajectory/--keyword-only —
+ * the documented `gbrain eval longmemeval` invocation exited 1 as an unknown
+ * flag. `[ \t]*` (not `\s*`) keeps the marker anchored to its own line; `\(\s*`
+ * lets the multi-line shape's newline through. A bare `command === 'X'` inside
+ * a non-`if` expression (the serve `degradable` const) is deliberately NOT a
+ * marker.
+ */
+/**
+ * Strip `//` line comments and `/* … *\/` block comments from a block's
+ * text, preserving newlines (so line-anchored scans such as isValueOnlyImport
+ * still see the same line structure) and leaving string / template literals
+ * intact (a `'https://…'` literal is not a comment). Prose in a comment is not
+ * evidence a command reads a flag: cli.ts's `reindex --help` comment ("…the
+ * --multimodal flags the dispatcher parses") handed the PRECEDING marker
+ * (storage) a phantom --multimodal because the comment sat between the two
+ * markers. Regex literals are not modelled — `//` inside one would truncate
+ * that line — which is acceptable for dispatch-block text (none there today).
+ */
+export function stripComments(src: string): string {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (c === '/' && next === '/') {
+      while (i < n && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end < 0 ? n : end + 2;
+      // Keep the newlines the comment spanned so line structure survives.
+      out += src.slice(i, stop).replace(/[^\n]/g, '');
+      i = stop;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      const quote = c;
+      let j = i + 1;
+      while (j < n && src[j] !== quote) {
+        if (src[j] === '\\') j++;
+        else if (quote !== '`' && src[j] === '\n') break; // unterminated: stop at EOL
+        j++;
+      }
+      out += src.slice(i, Math.min(n, j + 1));
+      i = j + 1;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+export function segmentDispatchBlocks(fnSrc: string): Map<string, string> {
+  const markRe = /(?:^[ \t]*if \(\s*command === '([a-z0-9-]+)'|^      case '([a-z0-9-]+)':)/gm;
+  const marks: Array<{ label: string; start: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = markRe.exec(fnSrc)) !== null) {
+    marks.push({ label: (m[1] ?? m[2])!, start: m.index });
+  }
+
+  const blocks = new Map<string, string>();
+  for (let i = 0; i < marks.length; i++) {
+    const end = i + 1 < marks.length ? marks[i + 1].start : fnSrc.length;
+    // Comments are prose, not consumption: strip them before any flag scan.
+    const body = stripComments(fnSrc.slice(marks[i].start, end));
+    // Fall-through labels share the following block.
+    blocks.set(marks[i].label, (blocks.get(marks[i].label) ?? '') + body);
+  }
+  return blocks;
+}
+
 export function buildFlagRegistry(): Record<string, string[]> {
   const cliSource = readSrc(join(ROOT, 'src/cli.ts'));
 
@@ -161,24 +282,7 @@ export function buildFlagRegistry(): Record<string, string[]> {
   const fnEndRel = fnTail.search(/\n\}\n/);
   const fnSrc = fnEndRel > 0 ? fnTail.slice(0, fnEndRel) : fnTail;
 
-  // handleCliOnly dispatches through TWO styles: an `if (command === 'X')`
-  // chain (DB-free commands like init/auth/schema) and a switch with
-  // `case 'X':` labels. Segment on BOTH marker kinds; the text between a
-  // marker and the next marker belongs to that label.
-  const markRe = /(?:^\s*if \(command === '([a-z0-9-]+)'\)|^      case '([a-z0-9-]+)':)/gm;
-  const marks: Array<{ label: string; start: number }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = markRe.exec(fnSrc)) !== null) {
-    marks.push({ label: (m[1] ?? m[2])!, start: m.index });
-  }
-
-  const blocks = new Map<string, string>();
-  for (let i = 0; i < marks.length; i++) {
-    const end = i + 1 < marks.length ? marks[i + 1].start : fnSrc.length;
-    const body = fnSrc.slice(marks[i].start, end);
-    // Fall-through labels share the following block.
-    blocks.set(marks[i].label, (blocks.get(marks[i].label) ?? '') + body);
-  }
+  const blocks = segmentDispatchBlocks(fnSrc);
 
   // Safety flags carry destructive-bypass semantics: allowlisting one that
   // the handler never reads recreates the #2185 repro (`post-upgrade
@@ -209,9 +313,19 @@ export function buildFlagRegistry(): Record<string, string[]> {
     let depthZeroText = block;
     for (const f of flagsInText(block)) { flags.add(f); depthZero.add(f); }
 
-    // Modules imported inside the case block, plus one level of each module's
-    // own ./relative imports.
-    const commandModules = [...block.matchAll(/import\('(\.\/[^']+\.ts)'\)/g)]
+    // COMMAND modules imported inside the case block (`./commands/*.ts`
+    // only), plus one level of each module's own ./relative imports. Core
+    // helpers a dispatch block reaches for directly (`./core/bootstrap/
+    // uninstall.ts` in the agent-register pre-connect guard, `./core/
+    // doctor-remote.ts`, `./core/ai/gateway.ts`, …) are NOT command modules:
+    // scanning them as one handed the agent row ~45 phantom flags from the
+    // uninstall command's surface (--delete-brain, --confirm-destructive,
+    // --break-lock, --force, --remove) the moment the compound
+    // `command === 'agent' && args[0] === 'register'` head became a marker.
+    // A flag a block consumes through a core helper is already a literal in
+    // the block's own text (depth zero); the helper's prose adds nothing.
+    const commandModules = [...block.matchAll(/import\('(\.\/commands\/[^']+\.ts)'\)/g)]
+      .filter(mm => !isValueOnlyImport(block, mm.index ?? 0))
       .map(mm => resolvePath(join(ROOT, 'src'), mm[1]))
       .filter(p => existsSync(p) && !isExcludedModule(p));
     for (const modPath of commandModules) {

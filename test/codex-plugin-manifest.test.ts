@@ -234,10 +234,21 @@ describe('launcher (static)', () => {
     expect(text).not.toMatch(/npm install -g gbrain(?!['\w-])(?![^\n]*unrelated)/);
   });
 
-  test('the two NEW manifests reference the same launcher path (openclaw intentionally differs)', () => {
+  test('all three manifests reference the shared launcher (#4841)', () => {
     expect(codexMcp.mcpServers.gbrain.command).toBe(LAUNCHER);
     expect(claudePlugin.mcpServers.gbrain.command).toBe('${CLAUDE_PLUGIN_ROOT}/.agents/gbrain-launcher');
-    expect(openclawPlugin.mcpServers.gbrain.command).toBe('./bin/gbrain');
+    expect(openclawPlugin.mcpServers.gbrain.command).toBe(LAUNCHER);
+    expect(openclawPlugin.mcpServers.gbrain.args).toEqual(['serve']);
+  });
+
+  test('the OpenClaw command is a TRACKED file, never a build artifact (#4841)', () => {
+    // OpenClaw resolves a `./`-prefixed command against the plugin root; a
+    // gitignored `bin/gbrain` is never in any install layout, so the server
+    // silently never spawns. existsSync would pass on any dev box that ran
+    // `bun run build` — only git's index tells the truth.
+    const rel = (openclawPlugin.mcpServers.gbrain.command as string).replace(/^\.\//, '');
+    const r = spawnSync('git', ['ls-files', '--error-unmatch', rel], { cwd: ROOT, encoding: 'utf8' });
+    expect(r.status, `${rel} is not tracked: ${r.stderr}`).toBe(0);
   });
 });
 

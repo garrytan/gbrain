@@ -8,8 +8,10 @@
  * (link_source='atom-provenance', both endpoints in the phase's source) and
  * flushes them BEFORE the completion-receipt flip (#4733: a failed provenance
  * write leaves the item discoverable for a normal retry instead of stranding
- * a completed page with no edges). Transcript items are skipped — a
- * transcript is a file, not a page, so there is no from-endpoint.
+ * a completed page with no edges). Transcript items resolve their from-endpoint
+ * through the conversation page the transcript was imported into (matched on
+ * the normalized session id); a transcript with no imported page still gets no
+ * edge, because there is genuinely nothing to link to.
  *
  * Also pins the #4733 atom-identity fix: page-derived atom slugs fold the
  * source-page slug into the identity hash so two same-date source pages
@@ -84,7 +86,7 @@ describe('atom provenance backlinks (#3961)', () => {
     expect(links.filter(l => l.link_source === 'atom-provenance')).toHaveLength(1);
   });
 
-  test('transcript items create NO provenance edges (files are not pages)', async () => {
+  test('an UNIMPORTED transcript creates no provenance edges (no page to link from)', async () => {
     const before = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM links WHERE link_source = 'atom-provenance'`,
     );
@@ -98,6 +100,83 @@ describe('atom provenance backlinks (#3961)', () => {
       `SELECT COUNT(*)::int AS n FROM links WHERE link_source = 'atom-provenance'`,
     );
     expect(after[0]!.n).toBe(before[0]!.n);
+  });
+
+  test('an IMPORTED transcript links its conversation page → atom', async () => {
+    // The conversation page the transcript was rendered into. The corpus file
+    // on disk names the same session with '-' separators; the page stamps it
+    // with '_' — the resolver normalizes both.
+    await engine.putPage('conversations/sessions/2026-07-20-hermes-e91dbe', {
+      type: 'conversation', title: 'Session', compiled_truth: 'turns', timeline: '',
+      frontmatter: { transcript_import: { harness: 'hermes', session_id: '20260720_071844_e91dbe', part: 1, of: 1 } },
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{
+        filePath: '/corpus/2026-07-20-071844-e91dbe.md',
+        content: 'a session worth distilling',
+        contentHash: 'bbbb111122223333',
+      }],
+      _pages: [],
+      _chat: stubChat('Session atom lands home'),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    const links = await engine.getLinks('conversations/sessions/2026-07-20-hermes-e91dbe');
+    const provenance = links.filter(l => l.link_source === 'atom-provenance');
+    expect(provenance).toHaveLength(1);
+    expect(provenance[0]!.to_slug).toContain('session-atom-lands-home');
+  });
+
+  test('a split session links EVERY part page to the atom', async () => {
+    for (const part of [1, 2]) {
+      await engine.putPage(`conversations/sessions/2026-07-22-hermes-split-p${part}`, {
+        type: 'conversation', title: `Split (part ${part} of 2)`, compiled_truth: 'turns', timeline: '',
+        frontmatter: { transcript_import: { harness: 'hermes', session_id: '20260722_090000_split', part, of: 2 } },
+      });
+    }
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{
+        filePath: '/corpus/2026-07-22-090000-split.md',
+        content: 'a long session split across two pages',
+        contentHash: 'cccc111122223333',
+      }],
+      _pages: [],
+      _chat: stubChat('Split session atom'),
+    });
+    expect(result.status).toBe('ok');
+
+    for (const part of [1, 2]) {
+      const links = await engine.getLinks(`conversations/sessions/2026-07-22-hermes-split-p${part}`);
+      expect(links.filter(l => l.link_source === 'atom-provenance')).toHaveLength(1);
+    }
+  });
+  test('a hook-captured <session_id>.txt corpus file links its conversation page → atom', async () => {
+    // gbrain's own Stop-hook capture writes the session corpus as
+    // `<session_id>.txt` (hook.ts) and the claude-code adapter stamps that
+    // same UUID into transcript_import.session_id — the stock capture + ingest
+    // flow, so the .txt stem must resolve like the .md/.jsonl ones.
+    await engine.putPage('conversations/sessions/2026-08-01-claude-code-0f1e2d3c', {
+      type: 'conversation', title: 'Hook session', compiled_truth: 'turns', timeline: '',
+      frontmatter: { transcript_import: { harness: 'claude-code', session_id: '0f1e2d3c-aaaa-bbbb-cccc-0123456789ab', part: 1, of: 1 } },
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{
+        filePath: '/corpus/0f1e2d3c-aaaa-bbbb-cccc-0123456789ab.txt',
+        content: 'a hook-captured session worth distilling',
+        contentHash: 'dddd111122223333',
+      }],
+      _pages: [],
+      _chat: stubChat('Hook session atom'),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    const links = await engine.getLinks('conversations/sessions/2026-08-01-claude-code-0f1e2d3c');
+    expect(links.filter(l => l.link_source === 'atom-provenance')).toHaveLength(1);
   });
 });
 

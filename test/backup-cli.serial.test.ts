@@ -193,7 +193,7 @@ describe('runBackupCli — usage', () => {
     const { connect, calls } = thunkFor(stubEngine({}));
     const r = await run(['--help'], connect);
     expect(r.exitCode).toBe(0);
-    expect(r.log).toContain('gbrain backup <status|check>');
+    expect(r.log).toContain('gbrain backup <status|check|create|restore>');
     expect(calls()).toBe(0);
   });
 
@@ -201,7 +201,7 @@ describe('runBackupCli — usage', () => {
     const { connect, calls } = thunkFor(stubEngine({}));
     const r = await run([], connect);
     expect(r.exitCode).toBe(0);
-    expect(r.log).toContain('gbrain backup <status|check>');
+    expect(r.log).toContain('gbrain backup <status|check|create|restore>');
     expect(calls()).toBe(0);
   });
 

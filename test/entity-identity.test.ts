@@ -297,15 +297,21 @@ describe('#4224 review — the identity key is (source_id, slug) in the union to
     // shares the slug but is a REAL co-member — pre-fix `m.slug !== slug`
     // dropped it and its edges never merged.
     const base = await engine.getLinks('people/alice', { sourceId: 'default' });
-    const out = await unionLinksAcrossIdentity(engine, 'people/alice', base, 'out', { sourceId: 'default' });
+    const out = await unionLinksAcrossIdentity(engine, 'people/alice', base, 'out', {
+      sourceId: 'default', allowedSources: ['default', 'team-brain'],
+    });
     expect(out.some(l => l.to_slug === 'companies/acme')).toBe(true);
     expect(out.some(l => l.to_slug === 'companies/widget-co')).toBe(true);
+    const scalar = await unionLinksAcrossIdentity(engine, 'people/alice', base, 'out', {
+      sourceId: 'default', allowedSources: [],
+    });
+    expect(scalar).toEqual(base);
 
-    // Op-level: the scalar ctx scope threads through as the base source.
+    // Op-level: a scalar ctx scope is also the member visibility floor.
     const links = await operationsByName.get_links!.handler(
       localCtx({ sourceId: 'default' }), { slug: 'people/alice' },
     ) as Array<{ to_slug: string }>;
-    expect(links.some(l => l.to_slug === 'companies/widget-co')).toBe(true);
+    expect(links.some(l => l.to_slug === 'companies/widget-co')).toBe(false);
   });
 
   test('NON-member base page with a same-slug member elsewhere is NOT unioned', async () => {

@@ -22,8 +22,10 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync 
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
-import { discoverTranscriptFiles } from '../src/core/transcripts/discover.ts';
+import { buildStatusRows, discoverTranscriptFiles } from '../src/core/transcripts/discover.ts';
 import type { HarnessRoot } from '../src/core/transcripts/detect.ts';
+import { isClaudeCodeSubagentFile } from '../src/core/transcripts/claude-code.ts';
+import { expandPaths } from '../src/commands/transcripts.ts';
 import {
   CLAUDE_CLI_CWD_PREFIX,
   claudeCliCwdDir,
@@ -46,6 +48,19 @@ beforeAll(() => {
   const selfProject = join(projectsRoot, `-private-tmp-${CLAUDE_CLI_CWD_PREFIX}12345`);
   mkdirSync(selfProject, { recursive: true });
   writeFileSync(join(selfProject, 'session-self.jsonl'), '{"type":"user"}\n', 'utf-8');
+  // #4796: a Claude Code SUBAGENT log — <project>/<session-uuid>/subagents/agent-<id>.jsonl.
+  // Every line is isSidechain and carries the PARENT session id; it is not a session.
+  const sess = join(userProject, '61c79e08-716f-44df-b962-05d702a4a739');
+  mkdirSync(join(sess, 'subagents'), { recursive: true });
+  writeFileSync(
+    join(sess, 'subagents', 'agent-a5364e53aee2dd757.jsonl'),
+    '{"type":"user","isSidechain":true,"sessionId":"61c79e08-716f-44df-b962-05d702a4a739","message":{"role":"user","content":"x"}}\n',
+    'utf-8',
+  );
+  // Strictness pin: a user project whose slug merely ENDS in "subagents" is a real project.
+  const subagentsProject = join(projectsRoot, '-Users-alice-subagents');
+  mkdirSync(subagentsProject, { recursive: true });
+  writeFileSync(join(subagentsProject, 'session-subproj.jsonl'), '{"type":"user"}\n', 'utf-8');
   roots = [{ format: 'claude-code', root: projectsRoot, extension: '.jsonl' }];
 });
 
@@ -76,6 +91,42 @@ describe('transcript discovery — claude-cli self-session exclusion (#4472)', (
     expect(
       isClaudeCliSelfTranscriptPath(`/Users/alice/.claude/projects/-private-tmp-${CLAUDE_CLI_CWD_PREFIX}999/s.jsonl`),
     ).toBe(true);
+  });
+});
+
+describe('transcript discovery — claude-code subagent log exclusion (#4796)', () => {
+  test('subagent logs are not sessions: discovery skips them, real projects still surface', () => {
+    const names = discoverTranscriptFiles(roots).map((f) => basename(f.path));
+    expect(names).not.toContain('agent-a5364e53aee2dd757.jsonl');
+    expect(names).toContain('session-user.jsonl');
+    expect(names).toContain('session-subproj.jsonl');
+  });
+
+  test('predicate is strict: parent dir literally `subagents` AND basename agent-*.jsonl', () => {
+    const proj = '/Users/alice/.claude/projects/-Users-alice-code-myapp';
+    const sess = `${proj}/61c79e08-716f-44df-b962-05d702a4a739`;
+    expect(isClaudeCodeSubagentFile(`${sess}/subagents/agent-a5364e53aee2dd757.jsonl`)).toBe(true);
+    expect(isClaudeCodeSubagentFile(`${proj}/s.jsonl`)).toBe(false);
+    expect(isClaudeCodeSubagentFile(`${proj}/subagents.jsonl`)).toBe(false);
+    expect(isClaudeCodeSubagentFile(`${proj}/agent-abc.jsonl`)).toBe(false);
+    expect(isClaudeCodeSubagentFile('/Users/alice/.claude/projects/-Users-alice-subagents/agent-abc.jsonl')).toBe(false);
+    expect(isClaudeCodeSubagentFile(`${sess}/subagents/61c79e08-716f-44df-b962-05d702a4a739.jsonl`)).toBe(false);
+  });
+
+  test('explicit-path lane (expandPaths over the projects root) drops them too', async () => {
+    const paths = await expandPaths([projectsRoot]);
+    expect(paths.some((p) => p.endsWith('agent-a5364e53aee2dd757.jsonl'))).toBe(false);
+    expect(paths.some((p) => p.endsWith('session-user.jsonl'))).toBe(true);
+  });
+
+  test('status gap table carries no phantom not-yet-imported backlog', () => {
+    const imported = {
+      byHarness: new Map([['claude-code', new Set(['session-user', 'session-subproj'])]]),
+      pagesScanned: 2,
+    };
+    const row = buildStatusRows(discoverTranscriptFiles(roots), imported, roots).find((r) => r.format === 'claude-code')!;
+    expect(row.found).toBe(2);
+    expect(row.gapFiles).toBe(0);
   });
 });
 

@@ -1,149 +1,83 @@
-# Give your coding agent a memory: GBrain + Claude Code / Codex
+# Add GBrain memory to Claude Code or Codex
 
-Coding agents got very good at code. They're still amnesiac about everything
-else. Claude Code and Codex forget your last conversation, can't tell you what
-you decided three meetings ago, and re-derive context you already have written
-down somewhere. GBrain is the retrieval layer that fixes that: search, synthesis,
-and a self-wiring knowledge graph, wired into your agent over MCP.
+Keep the coding agent and identity you already use. GBrain adds explicit memory
+with provenance, corrections, and access from other harnesses. Start with a
+local, keyless brain; connect a hosted brain if you already have one.
 
-> This tutorial is the **memory-only** tier. Want the whole agent — identity,
-> per-turn context, schedules, and a private GitHub repo as its durable body?
-> That's `gbrain bootstrap`: the "For Codex" / "For Claude Code" paste blocks in
-> the README, full contract in [docs/guides/bootstrap.md](../guides/bootstrap.md).
+1. **Add memory here — recommended:** [local setup](#path-b-start-from-nothing-local-brain-local-agent).
+2. **Connect memory hosted elsewhere:** [hosted setup](#path-a-connect-an-agent-to-a-brain-you-already-have).
 
-There are two ways to do this. Pick the one that matches where you are:
+Neither path requires a new personal-agent identity or a private repository.
+For that separately requested workflow, see [personal-agent bootstrap](../guides/bootstrap.md).
+For Grok Bot or Muse, use their [dedicated](../guides/grok-bot.md)
+[guides](../guides/muse.md), which install an isolated absolute launcher.
 
-- **Path A — I already run a brain** (OpenClaw, Hermes, or any `gbrain serve`
-  host) and I want my Claude Code / Codex to reach the same brain. → [jump to Path A](#path-a-connect-an-agent-to-a-brain-you-already-have)
-- **Path B — I have nothing yet.** Spin up a local brain in 2 seconds and wire it
-  into my coding agent. → [jump to Path B](#path-b-start-from-nothing-local-brain-local-agent)
+## One setup prompt
 
-Both end in the same place: an agent that searches your brain before it answers,
-and writes new knowledge back as you work. The last section,
-[Now make it actually useful](#now-make-it-actually-useful), is the same for both
-and is the part that changes how you work.
+Paste this into the coding agent you want to use:
 
-Prerequisite for either path: `bun install -g github:garrytan/gbrain`.
-
----
-
-## Path A: connect an agent to a brain you already have
-
-You already have a populated brain (the OpenClaw / Hermes case: it's on your
-agent host, full of meetings, people, and ideas). You want Claude Code on your
-laptop, and Codex too, to query it. This is the remote path: the host serves
-HTTP, your laptop agents connect with a token.
-
-### A1. On the host: serve over HTTP
-
-If your host isn't already serving HTTP MCP, start it:
-
-```bash
-gbrain serve --http --bind 0.0.0.0 --public-url https://your-host.example.com
+```text
+Add GBrain memory to this existing agent. Follow:
+https://raw.githubusercontent.com/garrytan/gbrain/master/docs/tutorials/connect-coding-agent.md
+Preserve my identity and unrelated configuration. Inspect any existing brain
+before initializing. Start keyless, relay the required search-mode matrix, and
+confirm my choice. Save only explicit requests to remember unless I opt into
+automatic capture. Do not add paid enrichment, connectors, or schedules implicitly.
+Verify a unique memory write/readback and report native activation and recall in
+a new conversation separately. If my brain is hosted, provision there and install
+the private handoff here using the actual harness adapter.
 ```
-
-Two flags matter and people skip them:
-
-- **`--bind 0.0.0.0`** — the default bind is `127.0.0.1` (loopback only), which
-  silently refuses every remote connection. If your agent "can't reach the
-  brain" and you didn't pass this, that's why. `gbrain serve --http` warns you at
-  startup when `--public-url` is set without `--bind`.
-- **`--public-url`** — the externally reachable HTTPS URL (your Render/Railway
-  URL, ngrok domain, Tailscale Funnel, etc.). It's the issuer the OAuth/MCP
-  layer advertises.
-
-Watch the startup banner. It now prints a `Skills:` line:
-
-```
-║  Skills:    published                                  ║
-```
-
-If it says `not published`, your connected agents will be able to search and
-write but won't see your skill catalog (the OpenClaw skills that make your setup
-special). Turn it on:
-
-```bash
-gbrain config set mcp.publish_skills true
-```
-
-(`gbrain init` writes `mcp.publish_skills: true`; a brain whose config lacks
-the key stays OFF until you set it, which is the common gotcha for OpenClaw
-users.)
-
-### A2. On the host: mint a token
-
-```bash
-gbrain auth create "laptop-agents"
-```
-
-Copy the `gbrain_…` token it prints. It's a long-lived, full-access secret. Treat
-it like a password; prefer a scoped OAuth client for anything cloud-hosted (see
-[DEPLOY.md](../mcp/DEPLOY.md)).
-
-### A3. On the laptop: one command per agent
-
-```bash
-# Claude Code
-gbrain connect https://your-host.example.com/mcp --token gbrain_xxx --install
-
-# Codex
-gbrain connect https://your-host.example.com/mcp --token gbrain_xxx --agent codex --install
-```
-
-`--install` runs the agent's `mcp add` for you AND smoke-tests the token: it
-actually calls `get_brain_identity` before handing off, so a wrong or expired
-token fails right now, not silently on the agent's first request. You'll see:
-
-```
-Added MCP server 'gbrain' -> https://your-host.example.com/mcp.
-Verified: {"version":"0.42.x","engine":"postgres","page_count":1204,...}
-```
-
-Drop `--install` to print a paste-ready block instead (useful when the host and
-the agent are different machines, or you want to read before you run). Codex
-reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands
-in Codex's config file. Keep that variable exported in your shell profile.
-
-### A4. Verify
-
-In the agent: *"Call get_brain_identity, then search my brain for [a topic you
-know is in there]."* You should get your own pages back. Done.
-
-Full per-client detail: [Claude Code](../mcp/CLAUDE_CODE.md),
-[Codex](../mcp/CODEX.md), [Perplexity](../mcp/PERPLEXITY.md).
-
----
 
 ## Path B: start from nothing (local brain, local agent)
 
-No OpenClaw, no server, no token. The lowest-friction path in the whole product:
-a local PGLite brain in the same process your agent spawns. Zero server, zero
-tunnel.
+### B1. Install and inspect
 
-### B1. Create a local brain
+Install Bun if needed, then the canonical GBrain distribution:
 
 ```bash
-gbrain init --pglite      # 2 seconds; embedded Postgres via WASM, no Docker
+bun install -g github:garrytan/gbrain#latest-stable
+gbrain engine status --json
 ```
 
-### B2. Put something in it
+Follow [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md) for prerequisites and
+installation recovery. Inspect existing database/MCP configuration, brain
+mounts, and source routing before initializing. A configured brain should be
+reused or explicitly converted; do not replace it because a probe failed.
 
-A brain with nothing in it answers nothing, so an empty brain on day one feels
-broken. Two ways to fill it:
+### B2. Initialize keyless memory
+
+For the intended unconfigured local brain:
 
 ```bash
-# Bulk-import a folder of markdown you already have:
-gbrain import ~/notes/
-
-# Or capture as you go (one thought at a time):
-gbrain capture "Decided to use PGLite as the default engine: zero-config beats Postgres for <1000 files."
+gbrain init --pglite --no-embedding
 ```
 
-You don't have to import everything up front. The capture-as-you-go habit (see
-the next section) means the brain fills with the decisions and context you
-generate while working, and is genuinely useful by day two.
+PGLite runs locally without a database server or Docker. **Relay the printed
+search-mode cost matrix and confirm the user's choice before continuing**, as
+required by [Step 3.5](../../INSTALL_FOR_AGENTS.md#step-35-confirm-search-mode-with-the-user-do-not-skip).
+The matrix illustrates model API costs, not the price of a Codex or Claude
+subscription. Choosing a mode does not enable paid APIs or automatic capture.
 
-### B3. Wire it into your coding agent
+### B3. Save and read back one memory
+
+Replace the suffix with a new random value and use the current date:
+
+```bash
+gbrain remember "Project-example's test phrase is amber-orbit-RANDOM-SUFFIX" \
+  --entity projects/gbrain-setup --provenance "explicit setup test, YYYY-MM-DD" --json
+gbrain recall projects/gbrain-setup --json
+```
+
+Keep the returned fact ID. The separate read must return the exact phrase with
+its provenance. No bulk import is needed to make the first memory useful.
+
+If you want to import an existing folder, select it explicitly and start with
+`gbrain import /absolute/chosen/notes --no-embed`. Do not scan and import
+unrelated files or start embedding work implicitly.
+
+### B4. Connect your coding agent
+
+Configure the agent you are using:
 
 ```bash
 # Claude Code
@@ -153,103 +87,161 @@ claude mcp add gbrain -- gbrain serve --surface verbs
 codex mcp add gbrain -- gbrain serve --surface verbs
 ```
 
-That's the whole wire-up. No token, no URL, no tunnel. The agent spawns
-`gbrain serve` as a stdio subprocess and talks to your local brain directly.
+These launch a local stdio MCP process. Use the same intended brain and source
+you inspected above; if an isolated installation already provided an absolute
+launcher, use that command in place of the bare `gbrain`.
 
-`--surface verbs` exposes exactly the seven-verb memory protocol
-(`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
-[MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md), frozen + additive-forever)
-instead of the full operation catalog, so the agent sees a tight, stable surface
-instead of a 110-tool wall. `--surface starter` sits between: the verbs plus the
-daily-driver set (core page/search/graph ops + capture). Drop the flag (or pass `--surface full`) for every
-operation. The default when the flag is omitted is `full`, so existing wire-ups
-are unchanged.
+The verbs surface exposes exactly `recall`, `remember`, `entity`,
+`synthesize`, `forget`, `context_pack`, and `delta`.
+Start with keyless recall and remembering. Server-side synthesis and semantic
+retrieval may require separately configured capabilities.
 
-### B4. Verify
+PGLite allows one process to own its database at a time. Do not launch two
+independent stdio servers against the same local brain. Let the owner close
+before another process opens it; do not remove a live lock. For concurrent
+harnesses, use a [shared hosted brain](../guides/hosted-harness-access.md).
 
-In the agent: *"search my brain for PGLite"* (or whatever you just captured). You
-get the page back. The same brain is now query-able from the CLI
-(`gbrain query "..."`) and from your agent.
+Follow the client guide's reload instructions:
+[Claude Code](../mcp/CLAUDE_CODE.md) or [Codex](../mcp/CODEX.md).
 
----
+### B5. Verify in the agent
+
+Attach the instruction below to your existing `CLAUDE.md` or `AGENTS.md`,
+preserving unrelated content. Ask the agent for the setup phrase, and observe
+its actual `recall` call. Then start a new conversation and ask again without
+repeating the phrase. An answer from the current conversation is not evidence
+of persistent recall.
+
+Ask for a correction and verify the stored replacement. Withdraw the test fact
+with `forget`, then confirm it is absent from active recall. History, source
+material, and backups may remain.
+
+## Path A: connect an agent to a brain you already have
+
+Use [hosted harness access](../guides/hosted-harness-access.md) for the full
+procedure. There are two environments: the owner grants access on the brain
+host, then you install the private handoff inside your coding agent's environment.
+
+### A1. On the host, grant memory access
+
+Start from the host's existing HTTPS MCP deployment. Preview or create a
+separate `memory-writer` client for each intended agent:
+
+```bash
+gbrain mcp grant coding-example --harness codex --profile memory-writer \
+  --source default --url https://brain.example.com/mcp \
+  --credentials-out /absolute/private/coding-example.json --json
+```
+
+Use `--harness claude-code` for Claude Code. Add `--dry-run` to preview.
+For a running PGLite host, supply the private `--admin-token-file` to use its
+authenticated admin API and existing engine. An ordinary OAuth token or a URL
+does not authorize provisioning.
+
+Do not grant full access or administration solely to connect memory. Delegation
+is a separate explicit capability with tool and path bindings.
+
+### A2. Inside the coding agent, install the handoff
+
+Transfer the credential file privately, then run:
+
+```bash
+gbrain connect https://brain.example.com/mcp --harness codex \
+  --credentials-file /absolute/private/coding-example.json --install
+```
+
+Use the same harness identifier as the grant. The installer preserves unrelated
+configuration and refuses ownership conflicts. Follow its reload instructions.
+Keep the credential file out of chat and Git.
+
+### A3. Verify the connection and the agent separately
+
+```bash
+gbrain mcp verify --client CLIENT_ID --harness codex \
+  --url https://brain.example.com/mcp \
+  --credentials-file /absolute/private/coding-example.json --json
+```
+
+The verifier checks actual server access, memory write/readback, and cleanup.
+A `partial` result with exit code 2 means native-harness evidence remains
+missing even when server checks passed. Repeat the new-conversation exercise
+from B5 in the actual agent.
+
+A profile grants authority; a surface selects visible tools. A full surface
+cannot bypass operation or source grants. For repair, resume lost credential
+delivery or update the existing grant as described in the hosted guide;
+ordinary permission repair does not rotate secrets or duplicate clients.
 
 ## Now make it actually useful
 
-Connecting is the easy part. The value comes from teaching your agent a few
-habits. These are the patterns that turn a coding agent into a knowledge-aware
-one. Paste the protocol below into your agent's instructions file
-(`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex / Cursor / others), then lean
-on the patterns.
+### A compact standing instruction
 
-### The brain-first protocol (paste this in)
+Add this section to the agent's existing instructions:
 
 ```markdown
-## Brain-first protocol
+## GBrain memory
 
-You have a knowledge brain connected over MCP. Before answering any question
-about people, companies, decisions, projects, or past context:
+Recall relevant saved context before answering questions about preferences,
+decisions, projects, or prior work. On the memory surface, use recall or entity;
+only use paid synthesis when that capability has been configured and authorized.
 
-1. **Brain first — route by the shape of the question.** Exact names or known
-   tokens → `search` (cheap hybrid, no expansion). Concept, landscape, or
-   "all the X that do Y" questions → `query` FIRST — it recovers synonym
-   phrasings `search` misses, and a populated `search` result set is not proof
-   of coverage. On the verbs surface the same split is `recall` (retrieve)
-   vs `synthesize` (reasoned answer). Check the brain BEFORE answering from
-   memory or asking me. Never ask "who is X?" or "what did we decide about Y?"
-   before checking — the brain probably already knows.
-2. **Write back.** When I make a decision, mention a new person/company, or land
-   on an idea worth keeping, write it to the brain: `remember` on the verbs
-   surface (one fact, with provenance), or `put_page` on the full surface
-   (entity pages under people/, companies/; decisions under decisions/ or
-   notes/). One insight, one page, linked.
-3. **Cite.** When you answer from the brain, name the page you used.
+Save explicit requests to remember with provenance and the intended brain/source.
+Do not automatically capture conversations unless I opt in. A request to save one
+fact does not enable ongoing capture. Chat-only instructions suppress persistence.
+
+Before correcting a fact, read the stored record, retire its old ID, save the
+replacement with provenance, and verify it. Forget means withdrawal from active
+memory; history, source material, and backups may remain.
+
+Use the installation's recorded absolute launcher when present. Verify mutations
+with actual readback, cite retrieved records, and say when a tool or native
+instruction is unavailable. Never claim cross-conversation recall from this chat
+alone. Preserve my native memory, identity, and unrelated instructions.
 ```
 
-### The four patterns worth stealing
+### Three useful workflows
 
-These come straight from a production OpenClaw setup. They translate directly to
-any coding agent with GBrain connected:
+1. **Decisions:** “Remember that project-example chose option B for offline
+   support, with today's design review as the source.” Later: “What did we
+   choose and why?” Observe the saved record being retrieved.
+2. **Preferences:** “Remember that I want review findings ordered by severity.”
+   Start a new conversation and request a review; check that the agent recalled
+   the preference.
+3. **Corrections:** “Our deployment target changed from staging-a to staging-b.
+   Correct the saved decision.” Read back the current record and its provenance,
+   then use it in the next planning session.
 
-**1. Brain-first lookup (never ask what you can retrieve).** The single highest-
-value habit. Before the agent asks you "which repo?" or "who owns this?", it
-searches. Try: *"What did we decide about the auth rewrite?"* and watch it pull
-the decision page instead of asking you to re-explain.
+Automatic capture is optional. If you want it, explicitly choose what the agent
+may save and follow [ambient writeback](../guides/ambient-writeback.md).
+Paid enrichment, background delegation, and account connectors remain separate.
 
-**2. Ambient capture (your brain as a side effect of working).** Don't make
-saving a separate chore. Tell the agent: *"As we work, capture any decision or
-new idea to the brain without interrupting."* After a month of this, you have
-hundreds of linked pages and patterns you didn't know were there.
+## Maintenance, removal, and troubleshooting
 
-**3. Briefing from your brain (not from the internet).** *"What do I need to know
-before my 2pm with the Acme team?"* pulls your meeting history, the people,
-what's still open, what the brain doesn't know yet. The agent does your prep
-because it read your context. (`query` — `synthesize` on the verbs surface —
-gives you the synthesized answer with citations; this is the example on the
-[README](../../README.md).)
+Run diagnostics with the intended launcher. Keyless brains do not need an
+embedding API key to remember and retrieve explicit facts. Add a schedule only
+when requested, and verify that the actual scheduler loaded it.
 
-**4. whoknows (expertise routing).** *"Who do I know who's shipped a rate
-limiter in Postgres?"* The `find_experts` tool (full surface) ranks people in
-your brain by relevance + recency. Useful the moment your brain has more than a
-handful of people in it.
+For a local PGLite brain, use [complete private backup and restore](../guides/in-agent-setup.md#6-back-up-the-complete-local-database);
+a Git clone omits database-only memory. Restore to a new root and explicitly
+reattach schedules and external sources. Hosted backups belong on the host.
 
-That's the spine of it. Two commands to connect, one protocol to paste, four
-habits to build. Your agent stops being amnesiac.
+Remove a manually added local MCP entry using the client's documented controls,
+and remove only the memory instruction section you added. For a managed hosted
+connection, repeat `gbrain connect` with its handoff and `--remove`.
+Revoke the client on the host when its authority should end. Removing a client
+configuration does not delete memory or revoke credentials.
 
----
+| Symptom | Next step |
+| --- | --- |
+| PGLite busy | Close the current owner before opening another process. Never delete a live lock. |
+| Wrong or empty brain | Inspect root, engine, brain, and source routing; do not initialize over existing memory. |
+| Only seven tools visible | Expected for the verbs surface; use `recall` and `remember` rather than classic tool names. |
+| Hosted read works but write fails | Inspect issued/current scopes, operation grants, source access, and write fences. |
+| Credential delivery interrupted | Resume delivery on the host with the existing client ID. |
+| Server checks pass, new conversation fails | Reload the client, confirm native instruction activation, and observe the actual GBrain call. |
+| Optional embeddings unavailable | Continue keyless or explicitly configure the capability; do not silently spend. |
 
-## Troubleshooting
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Agent "can't reach the brain" (Path A) | `gbrain serve --http` bound to loopback | Restart with `--bind 0.0.0.0` |
-| `list_skills` returns nothing / errors | Skill publishing OFF on the host | `gbrain config set mcp.publish_skills true` |
-| Token rejected on first call | Wrong/expired token | Re-mint with `gbrain auth create`; `--install` smoke-tests it for you |
-| `unknown tool: capture` | Your token's surface was narrowed, or the host is out of date | Upgrade the host (capture is on the starter and full surfaces); on narrowed tokens use `put_page`, or `remember` on the verbs surface |
-| Empty results (Path B) | Brain has nothing in it yet | `gbrain import ~/notes/` or `gbrain capture "..."` |
-
-## Next steps
-
-- Go full autonomous: the overnight enrichment daemon ([dream cycle](../guides/operational-disciplines.md)) fixes citations, dedupes people, builds scorecards while you sleep. See `gbrain autopilot --install`.
-- Run a real agent platform on top: [personal-brain tutorial](personal-brain.md).
-- Scale to a team: [company-brain tutorial](company-brain.md).
-- Every MCP client's exact setup: [`docs/mcp/`](../mcp/).
+As of **2026-09-10**, local CLI and HTTP tests establish the server behavior
+described in [validation evidence](../guides/harness-validation.md).
+They do not prove instruction activation or cross-conversation recall in your
+specific coding-agent session. Record those checks separately.

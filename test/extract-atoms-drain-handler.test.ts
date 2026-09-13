@@ -7,6 +7,10 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
+import {
+  formatDrainProviderFailure,
+  type ExtractAtomsDrainResult,
+} from '../src/core/cycle/extract-atoms-drain.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -48,5 +52,24 @@ describe('extract-atoms-drain handler', () => {
     );
     expect(job.id).toBeGreaterThan(0);
     expect(job.name).toBe('extract-atoms-drain');
+  });
+
+  // #3813: the provider_failure throw is the job's error_text once it
+  // dead-letters. It carried only batches/remaining, so a missing provider key
+  // was invisible from every supported surface even though the drain result
+  // has carried a sanitized representative `last_error`.
+  test('provider_failure error text carries the drain\'s last_error', () => {
+    const result = {
+      status: 'provider_failure',
+      batches: 1,
+      remaining: 151,
+      last_error: 'concepts/alice-example: Anthropic chat requires ANTHROPIC_API_KEY.',
+    } as ExtractAtomsDrainResult;
+    const msg = formatDrainProviderFailure(result);
+    expect(msg).toContain('batches=1');
+    expect(msg).toContain('remaining=151');
+    expect(msg).toContain('ANTHROPIC_API_KEY');
+    // A clean-run shape (no representative error) keeps the original message.
+    expect(formatDrainProviderFailure({ ...result, last_error: null })).not.toContain('last error');
   });
 });

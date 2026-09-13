@@ -270,3 +270,40 @@ describe('runExtractCore — incremental frontmatter gate (includeFrontmatter)',
     expect(result.links_created).toBeGreaterThan(0);
   });
 });
+
+// ─── wave review: `quiet` is its own knob, not a side effect of jsonMode ──
+describe('runExtractCore — quiet vs jsonMode on the incremental path', () => {
+  function captureStdout(): { lines: string[]; restore: () => void } {
+    const lines: string[] = [];
+    const saved = console.log;
+    console.log = (...a: unknown[]) => { lines.push(a.map(String).join(' ')); };
+    return { lines, restore: () => { console.log = saved; } };
+  }
+
+  test('quiet: true suppresses the human summary line while jsonMode stays false (human stderr channel)', async () => {
+    // The cycle used `jsonMode: true` as a stand-in for "quiet": it hid the
+    // summary, but it ALSO flipped batch errors to JSON events on stderr in a
+    // plain `gbrain dream`. Embedded callers own the report — they say so.
+    await seedPage('people/alice', 'Alice knows [[companies/acme]].');
+    await seedPage('companies/acme', 'Acme.');
+    const out = captureStdout();
+    try {
+      await runExtractCore(engine, { mode: 'all', dir: tempDir, slugs: ['people/alice'], jsonMode: false, quiet: true });
+    } finally {
+      out.restore();
+    }
+    expect(out.lines.filter((l) => l.includes('Incremental extract'))).toEqual([]);
+  });
+
+  test('without quiet the human summary line still prints (CLI behaviour unchanged)', async () => {
+    await seedPage('people/alice', 'Alice knows [[companies/acme]].');
+    await seedPage('companies/acme', 'Acme.');
+    const out = captureStdout();
+    try {
+      await runExtractCore(engine, { mode: 'all', dir: tempDir, slugs: ['people/alice'], jsonMode: false });
+    } finally {
+      out.restore();
+    }
+    expect(out.lines.some((l) => l.startsWith('Incremental extract: created'))).toBe(true);
+  });
+});

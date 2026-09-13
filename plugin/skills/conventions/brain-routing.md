@@ -84,7 +84,8 @@ wins over the auto-route. Archived sources are excluded from the count.
 CLI commands honoring this chain: `gbrain sync`, `gbrain import`,
 `gbrain search`, `gbrain extract` (via `--source-id <id>` since
 `--source` is the fs|db data-source axis), `gbrain graph-query`
-(via `--include-foreign` for cross-source traversal).
+(`--source` scopes the walk; `--include-foreign` widens it to every
+source).
 
 **Trust boundary (v0.34.1.0):** the resolver is CLI-layer only.
 Operations.ts handlers do NOT read `.gbrain-source` or

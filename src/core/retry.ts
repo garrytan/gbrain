@@ -93,6 +93,8 @@ export const BATCH_AUDIT_SITES = [
   'extract.stale',
   // #3961: atom-provenance edges banked after the completion-receipt flip.
   'cycle.extract_atoms.provenance',
+  // #4589: concept<->member-atom provenance edges banked after each concept write.
+  'cycle.synthesize_concepts.provenance',
   // operations.ts MCP put_page auto-link path.
   'mcp.put_page.autolink',
   // sync.ts/reindex.ts orchestrator labels.

@@ -4,7 +4,14 @@
  * Hand-rolled (no googleapis dep, house style — see github-source.ts):
  *  - auth via GoogleTokenProvider (vault-backed, auto-refreshing)
  *  - 401 → forceRefresh() + single retry
- *  - 403/429 → Retry-After honored (delta-seconds AND http-date)
+ *  - 403/429 → Retry-After honored (delta-seconds AND http-date). A
+ *    rate-limit-class response (403 rateLimitExceeded/userRateLimitExceeded,
+ *    403 quota, or 429) gets a MUCH more patient retry budget than other
+ *    retryable failures — DEFAULT_RATE_LIMIT_RETRIES, exponential backoff
+ *    with jitter capped at 60s — because Gmail's per-user rate limiting
+ *    under backfill burst load is common and self-clearing; giving up after
+ *    two tries used to poison threads that would have succeeded a few
+ *    seconds later.
  *  - 403 accessNotConfigured → CredentialError 'api_not_enabled' with the
  *    exact enable deep link (project number extracted from the client id)
  *  - uniform pageToken pagination with a safety cap
@@ -34,6 +41,34 @@ const PEOPLE_BASE = 'https://people.googleapis.com/v1';
 
 const PAGINATION_CAP = 500;
 
+/** Retry budget for a 401 needing a token refresh-and-retry. */
+const DEFAULT_RETRIES = 2;
+
+/**
+ * Retry budget for a rate-limit-class response (403 rateLimitExceeded /
+ * userRateLimitExceeded / quota, or 429) — deliberately much larger than
+ * DEFAULT_RETRIES. Gmail's per-user rate limiting under backfill burst load
+ * clears on its own within seconds to low minutes; two tries (~6s total)
+ * gave up before it cleared and poisoned threads that would otherwise have
+ * succeeded.
+ */
+const DEFAULT_RATE_LIMIT_RETRIES = 6;
+
+/** Backoff ceiling for a rate-limit retry with no Retry-After header. */
+const RATE_LIMIT_BACKOFF_CAP_MS = 60_000;
+
+/**
+ * Exponential backoff with EQUAL jitter (half fixed, half random), capped at
+ * RATE_LIMIT_BACKOFF_CAP_MS. Only used when Google didn't send Retry-After —
+ * jitter avoids many gbrain processes hitting the same per-user/per-project
+ * quota resynchronizing their retries in lockstep.
+ */
+export function rateLimitBackoffMs(attempt: number): number {
+  const base = Math.min(RATE_LIMIT_BACKOFF_CAP_MS, 2 ** attempt * 2_000);
+  const half = base / 2;
+  return Math.round(half + Math.random() * half);
+}
+
 interface GoogleErrorBody {
   error?: {
     code?: number;
@@ -58,10 +93,16 @@ export class GoogleApiClient {
   async fetchJSON<T>(
     url: string,
     apiHint: ApiHint,
-    opts: { signal?: AbortSignal; retries?: number } = {},
+    opts: { signal?: AbortSignal; retries?: number; rateLimitRetries?: number } = {},
   ): Promise<T> {
-    const retries = opts.retries ?? 2;
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    const retries = opts.retries ?? DEFAULT_RETRIES;
+    // Rate-limit-class failures get their OWN (larger) retry budget — see
+    // the class doc comment. The shared `attempt` counter is bounded by
+    // whichever budget is larger; each branch below still checks its own
+    // budget, so a plain 401 exhausts at `retries` exactly as before.
+    const rateLimitRetries = opts.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
+    const maxAttempt = Math.max(retries, rateLimitRetries);
+    for (let attempt = 0; attempt <= maxAttempt; attempt++) {
       const token = await this.tokens.getAccessToken();
       const res = await this.fetchImpl(url, {
         headers: { authorization: `Bearer ${token}` },
@@ -88,9 +129,12 @@ export class GoogleApiClient {
         }
       }
       if (res.status === 403 || res.status === 429) {
-        const waitMs = parseRetryAfterMs(res.headers.get('retry-after')) ?? Math.min(60_000, 2 ** attempt * 2_000);
-        if (attempt < retries) {
-          this.log(`[google] HTTP ${res.status}; retrying in ${Math.round(waitMs / 1000)}s`);
+        const waitMs = parseRetryAfterMs(res.headers.get('retry-after')) ?? rateLimitBackoffMs(attempt);
+        if (attempt < rateLimitRetries) {
+          this.log(
+            `[google] HTTP ${res.status}; retrying in ${Math.round(waitMs / 1000)}s ` +
+              `(rate limit, attempt ${attempt + 1}/${rateLimitRetries})`,
+          );
           await new Promise<void>((resolve) => {
             const t = setTimeout(resolve, waitMs);
             opts.signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });

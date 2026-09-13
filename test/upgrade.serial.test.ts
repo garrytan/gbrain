@@ -1,10 +1,11 @@
 import { describe, test, expect } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import * as upgradeModule from '../src/commands/upgrade.ts';
 import { resolveBunGlobalRoot } from '../src/commands/upgrade.ts';
 import { formatMarker } from '../src/core/self-upgrade.ts';
+import type { BinarySelfUpdateResult } from '../src/core/binary-self-update.ts';
 import { VERSION } from '../src/version.ts';
 
 // We can't easily mock process.execPath in bun, so we test the upgrade
@@ -256,11 +257,15 @@ describe('runUpgrade target verification (#4366)', () => {
    *     the same successful-no-op shape as `bun update` on an exact-tag Git
    *     pin (the issue's install);
    *   - a PATH-first `gbrain` shim that keeps reporting `observedVersion`;
-   *   - a pre-seeded upgrade-available marker so cache retention is observable.
+   *   - a pre-seeded upgrade-available marker so cache retention is observable;
+   *   - with `binaryResult`, the driver runs under a copy of bun named `gbrain`
+   *     (detectInstallMethod keys on execPath's basename) and the driver mocks
+   *     runBinarySelfUpdate to return that result, reaching the binary branch.
    */
   async function runUpgradeAgainstFakeInstall(opts: {
     observedVersion: string;
     targetVersion?: string;
+    binaryResult?: BinarySelfUpdateResult;
   }): Promise<{ home: string; exitCode: number; stderr: string }> {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-target-'));
     const bin = join(home, 'bin');
@@ -279,12 +284,26 @@ describe('runUpgrade target verification (#4366)', () => {
     // The driver lives OUTSIDE the repo so detectInstallMethod() cannot see a
     // node_modules/.git ancestor and falls through to the clawhub shim.
     const driverPath = join(home, 'driver.ts');
+    const mockPrelude = opts.binaryResult
+      ? `import { mock } from 'bun:test';\n` +
+        `mock.module('${repoRoot}src/core/binary-self-update.ts', () => ({\n` +
+        `  runBinarySelfUpdate: async () => (${JSON.stringify(opts.binaryResult)}),\n` +
+        `}));\n`
+      : '';
     writeFileSync(
       driverPath,
-      `import { runUpgrade } from '${repoRoot}src/commands/upgrade.ts';\n` +
+      mockPrelude +
+        `import { runUpgrade } from '${repoRoot}src/commands/upgrade.ts';\n` +
         `const t = process.env.TEST_TARGET_VERSION;\n` +
         `await runUpgrade(['--swap-only'], t ? { targetVersion: t } : {});\n`,
     );
+    let bunExec = 'bun';
+    if (opts.binaryResult) {
+      bunExec = join(home, 'exec', 'gbrain');
+      mkdirSync(dirname(bunExec));
+      copyFileSync(process.execPath, bunExec);
+      chmodSync(bunExec, 0o755);
+    }
 
     const env: Record<string, string | undefined> = {
       ...process.env,
@@ -295,7 +314,7 @@ describe('runUpgrade target verification (#4366)', () => {
     delete env.TEST_TARGET_VERSION;
     if (opts.targetVersion) env.TEST_TARGET_VERSION = opts.targetVersion;
 
-    const proc = Bun.spawn(['bun', 'run', driverPath], {
+    const proc = Bun.spawn([bunExec, 'run', driverPath], {
       cwd: repoRoot,
       env,
       stdout: 'pipe',
@@ -356,4 +375,30 @@ describe('runUpgrade target verification (#4366)', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  // A failed binary swap must still name the release it attempted. With no
+  // caller target (plain `gbrain upgrade`), to_version comes from the release
+  // tag runBinarySelfUpdate resolved — never '' — so doctor can say which
+  // version failed to install.
+  for (const [reason, error] of [
+    ['smoke_failed', undefined],
+    ['version_mismatch', undefined],
+    ['replace_failed', 'EACCES: permission denied'],
+  ] as const) {
+    test(`binary self-update ${reason} records to_version = attempted release`, async () => {
+      const { home } = await runUpgradeAgainstFakeInstall({
+        observedVersion: OLD,
+        binaryResult: { ok: false, reason, targetVersion: TARGET, error },
+      });
+      try {
+        const errPath = join(home, '.gbrain', 'upgrade-errors.jsonl');
+        const records = readFileSync(errPath, 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
+        const rec = records.find((r) => r.phase === 'binary-self-update');
+        expect(rec?.to_version).toBe(TARGET);
+        expect(rec?.error).toBe(error ? `${reason}: ${error}` : reason);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+  }
 });

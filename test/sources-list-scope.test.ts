@@ -129,3 +129,20 @@ describe('sources_list — caller source grant (#4433)', () => {
     expect(ids).not.toContain('restricted');
   });
 });
+
+describe('sources_list / sources_status — description discloses scope filtering (#4811)', () => {
+  // The op description is emitted verbatim into MCP tools/list, so it is the
+  // contract an agent reads. A scoped caller gets a row-filtered listing with
+  // no marker; the description must say so or the caller reads a partial
+  // listing as the full registry.
+  test('sources_list description names the caller source scope', () => {
+    expect(op.description).toMatch(/source scope/i);
+    expect(op.description).toMatch(/gbrain sources list/);
+  });
+
+  test('sources_status description names the scope + not_found posture', () => {
+    const status = operations.find((o) => o.name === 'sources_status')!;
+    expect(status.description).toMatch(/source scope/i);
+    expect(status.description).toMatch(/not_found/);
+  });
+});

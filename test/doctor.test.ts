@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -8,6 +9,10 @@ import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
 import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
+
+// Health fixtures configure fake provider keys. Clear the gateway snapshot as
+// well as each fixture's process env so later tests cannot send real requests.
+afterEach(() => resetGateway());
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -413,7 +418,7 @@ describe('doctor command', () => {
       // the pre-#2375 damage class) and one LEGITIMATE string scalar
       // (persistToolExec binds pre-serialized string payloads as-is).
       await engine.executeRaw(
-        `INSERT INTO minion_jobs (id, name, data, status) VALUES (990001, 'doctor-jsonb-test', '{}'::jsonb, 'completed')`,
+        `INSERT INTO minion_jobs (submission_authority, id, name, data, status) VALUES ('{"version":1,"kind":"application"}'::jsonb, 990001, 'doctor-jsonb-test', '{}'::jsonb, 'completed')`,
       );
       await engine.executeRaw(
         `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)

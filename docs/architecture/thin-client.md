@@ -10,15 +10,17 @@ empty local PGLite, so a populated remote brain can't silently return
 "No results." Local-only commands refuse with a pinpoint hint instead of
 falling through.
 
-**Surface posture:** thin clients stay FULL-surface. The thin-client CLI routes
-arbitrary `gbrain <op>` invocations over MCP, so a narrowed per-client surface
-(`oauth_clients.surface`) would break commands the install legitimately
-owns — bootstrap pins `--surface full` on its serve registrations and operators
-should keep thin-client OAuth rows at `full` (or NULL). The stdio transport has
-no client row at all: it serves the server-resolved surface directly, and the
-per-client ceiling machinery (`effectiveSurfaceForClient`) applies only to the
-OAuth HTTP transport. The starter/verbs narrowing is for agent-harness clients,
-not for thin-client installs.
+**Surface posture:** thin CLI clients use the full MCP surface for remote
+command compatibility. Bootstrap pins `--surface full`; managed thin CLI grants
+for OpenClaw, Grok Bot, and Muse also select `full`. Surface visibility does not
+grant authority: profiles, token scopes, operation snapshots, sources, and write
+fences still restrict requests. A `memory-writer` thin client gains neither
+administration nor delegation from its full surface.
+
+Keep general-purpose thin-client OAuth rows at `full` (or NULL). Native MCP
+configurations can deliberately use starter/verbs to expose fewer tools. Stdio
+serves the server-resolved surface directly, without a client row; per-client
+surface ceilings (`effectiveSurfaceForClient`) apply only to OAuth HTTP.
 
 Key files (per-file detail lives in each file's `KEY_FILES.md` entry; this doc
 carries the routing-seam picture):

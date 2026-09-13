@@ -59,9 +59,9 @@ describe('v0.41 jobs-watch readSnapshot E2E', () => {
     }
     // 2 dead jobs with classifiable errors.
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, attempts_made, attempts_started, max_attempts, error_text, finished_at, updated_at)
-       VALUES ('subagent', 'default', 'dead', 1, 1, 1, 'rate lease "anthropic:messages" full (8/8)', now(), now()),
-              ('subagent', 'default', 'dead', 1, 1, 1, 'prompt is too long: 2M tokens', now(), now())`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, attempts_made, attempts_started, max_attempts, error_text, finished_at, updated_at)
+       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'default', 'dead', 1, 1, 1, 'rate lease "anthropic:messages" full (8/8)', now(), now()),
+              ('{"version":1,"kind":"application"}'::jsonb, 'subagent', 'default', 'dead', 1, 1, 1, 'prompt is too long: 2M tokens', now(), now())`,
     );
     // One budget-bearing owner with cents.
     const budgetOwner = await queue.add('subagent', {}, {}, { allowProtectedSubmit: true });

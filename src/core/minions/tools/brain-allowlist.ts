@@ -25,8 +25,9 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
-import type { Operation, OperationContext } from '../../operations.ts';
+import type { AuthInfo, Operation, OperationContext } from '../../operations.ts';
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
+import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
@@ -36,7 +37,7 @@ import type { ToolCtx, ToolDef } from '../types.ts';
  * Knowledge Runtime).
  *
  * Read-only (all safe):
- *   query, search, get_page, list_pages, file_list, file_url,
+ *   query, search, get_page, list_pages,
  *   get_backlinks, traverse_graph, resolve_slugs, get_ingest_log
  *
  * Conditional write:
@@ -51,8 +52,6 @@ export const BRAIN_TOOL_ALLOWLIST: ReadonlySet<string> = new Set([
   'search',
   'get_page',
   'list_pages',
-  'file_list',
-  'file_url',
   'get_backlinks',
   'traverse_graph',
   // v114 (#1941): read-only provenance discovery. Edge-WRITE ops (add_link /
@@ -96,8 +95,6 @@ export const BRAIN_TOOL_USAGE_HINTS: Readonly<Record<string, string>> = {
   search: 'Use for hybrid keyword + vector search returning ranked page hits. Use over `query` when you want page-level not chunk-level results (e.g. "find pages about X").',
   get_page: 'Read a brain page by its slug. Returns the full markdown body + frontmatter + linked pages.',
   list_pages: 'List pages by type or slug-prefix filter. Use when you need to enumerate (e.g. "list all `people/` pages") instead of search.',
-  file_list: 'List uploaded files (attachments) by slug-prefix or content type. NOT the local filesystem — only files the brain has stored.',
-  file_url: 'Get a presigned URL for a brain-stored file. Read-only; expires.',
   get_backlinks: 'List every page that links TO the given slug. Use for "what references this".',
   traverse_graph: 'Walk the typed-edge graph starting from a slug (e.g. `works_at`, `founded`, `invested_in`). Use for relationship queries.',
   list_link_sources: 'List the distinct link provenances in the brain with edge counts (e.g. `citation-graph`, `manual`). Use to discover which edge-writers have populated the graph.',
@@ -202,18 +199,20 @@ export interface BuildBrainToolsOpts {
   /**
    * Trusted-workspace allow-list (v0.23). When set, put_page is bounded
    * to slugs matching these prefix globs instead of the legacy
-   * `wiki/agents/<id>/...` namespace. Trust comes from PROTECTED_JOB_NAMES
-   * (MCP can't submit subagent jobs) — this flows from
-   * SubagentHandlerData.allowed_slug_prefixes via the handler.
+   * `wiki/agents/<id>/...` namespace. Trusted local jobs get these from the
+   * submitter; remote-owned jobs get the validated grant intersection and
+   * delegatedAuth. Prefixes alone do not make a remote job trusted.
    */
   allowedSlugPrefixes?: readonly string[];
   /**
    * Brain source every tool-call OperationContext is scoped to (#1586).
-   * Trusted (flows from SubagentHandlerData.source_id, which only
-   * PROTECTED_JOB_NAMES-gated submitters can set); validated at build time.
+   * Remote-owned jobs also carry delegatedAuth.allowedSources so a per-call
+   * source_id cannot override this boundary. Validated at build time.
    * Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** Current remote owner grant; never populated from caller tool arguments. */
+  delegatedAuth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'sourceId' | 'allowedSources'>;
 }
 
 interface OpContextDeps {
@@ -226,6 +225,7 @@ interface OpContextDeps {
   allowedSlugPrefixes?: readonly string[];
   sourceId?: string;
   deferEmbeds?: boolean;
+  delegatedAuth?: BuildBrainToolsOpts['delegatedAuth'];
 }
 
 function buildOpContext(deps: OpContextDeps): OperationContext {
@@ -241,6 +241,9 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     remote: true,                // match MCP trust boundary for auto-link skip
     // #1586: cycle-resolved source when provided; legacy host default else.
     sourceId: deps.sourceId ?? 'default',
+    // Preserve explicit per-call source checks without importing direct-write
+    // fences or requiring direct read/write scopes for agent-only grants.
+    ...(deps.delegatedAuth ? { auth: { token: '', ...deps.delegatedAuth } } : {}),
     jobId: deps.jobId,
     subagentId: deps.subagentId,
     viaSubagent: true,           // FAIL-CLOSED: put_page etc. enforce namespace
@@ -264,7 +267,7 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
 export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
   const filter = opts.allowedNames ?? BRAIN_TOOL_ALLOWLIST;
   const picked: Operation[] = operations.filter(
-    op => BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
+    op => !op.localOnly && BRAIN_TOOL_ALLOWLIST.has(op.name) && filter.has(op.name),
   );
 
   // #1586: fail fast on a malformed source id before any tool executes
@@ -293,6 +296,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
       // Keyed by the unprefixed op name. Undefined when no hint is registered.
       usage_hint: BRAIN_TOOL_USAGE_HINTS[op.name],
       async execute(input: unknown, ctx: ToolCtx): Promise<unknown> {
+        if (op.localOnly) throw new Error(`${toolName}: local-only operations cannot be delegated`);
         const opCtx = buildOpContext({
           engine: ctx.engine,
           config: opts.config,
@@ -303,8 +307,18 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
           sourceId: opts.sourceId,
           deferEmbeds: opts.deferEmbeds,
+          delegatedAuth: opts.delegatedAuth,
         });
-        const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        const raw = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        // Same order the MCP dispatchers keep: normalize the optional-param
+        // absent idioms (`null`, `''` on a string) FIRST — the validator's
+        // header calls this load-bearing — then validate, so a missing
+        // required param (or wrong type / unknown enum) is named back to the
+        // model instead of crashing inside the handler, and `since: ""` never
+        // reaches a handler raw.
+        const params = normalizeOptionalParams(op, raw);
+        const validationError = validateParams(op, params);
+        if (validationError) throw new Error(`${toolName}: ${validationError}`);
         return op.handler(opCtx, params);
       },
     };
@@ -338,6 +352,15 @@ export function filterAllowedTools(registry: ToolDef[], allowedToolNames: string
     picked.push(match);
   }
   return picked;
+}
+
+/** An absent trusted binding uses the registry; an explicit empty binding grants nothing. */
+export function selectAllowedTools(registry: ToolDef[], allowed: unknown): ToolDef[] {
+  if (allowed === undefined) return registry;
+  if (!Array.isArray(allowed) || allowed.some(name => typeof name !== 'string' || name.trim() === '')) {
+    throw new Error('subagent allowed_tools must be an array of nonempty tool names');
+  }
+  return filterAllowedTools(registry, allowed);
 }
 
 /** Exported for unit tests (stable surface). */

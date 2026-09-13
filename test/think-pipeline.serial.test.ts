@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
@@ -308,6 +309,7 @@ describe('runThink (with stub client)', () => {
 
     const result = await runThink(engine, {
       question: 'technical founder',  // matches pg_trgm against 'Strong technical founder'
+      remote: false, // Trusted local synthesis intentionally includes the non-world take.
       client: stubClient,
     });
 
@@ -357,16 +359,16 @@ describe('runThink (with stub client)', () => {
     };
 
     try {
-      const page = await engine.putPage('companies/widget-co', {
-        title: 'Widget Co', type: 'company', compiled_truth: content,
-      });
-      pageId = page.id;
-      await engine.executeRaw('DELETE FROM content_chunks WHERE page_id = $1', [page.id]);
-      await engine.executeRaw(
-        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source)
-         VALUES ($1, 0, $2, 'compiled_truth')`,
-        [page.id, content],
+      // Build the completed index that the default remote gather requires.
+      const imported = await importFromContent(
+        engine,
+        'companies/widget-co',
+        `---\ntitle: Widget Co\ntype: company\n---\n\n${content}`,
+        { noEmbed: true, sourceId: 'default' },
       );
+      expect(imported.status).toBe('imported');
+      const page = await engine.getPage('companies/widget-co', { sourceId: 'default' });
+      pageId = page!.id;
 
       const result = await runThink(engine, {
         question: 'What is Widget Co enterprise pricing in credits per month?',

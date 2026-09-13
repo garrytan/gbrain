@@ -45,6 +45,7 @@ import {
 } from '../core/search/telemetry.ts';
 import {
   buildModesReport,
+  formatKnobValue,
   KNOB_DESCRIPTIONS,
   type SearchModesReport,
 } from '../core/search/modes-report.ts';
@@ -60,7 +61,9 @@ function formatModesText(report: SearchModesReport): string {
   lines.push('');
   lines.push('Resolved knobs:');
   for (const [knob, attr] of Object.entries(report.resolved)) {
-    const value = String(attr.value ?? '(undefined)');
+    // null is a legitimate value for some knobs (expansion_variant_budget =
+    // legacy weighting, reranker_top_n_out = no truncate) — never '(undefined)'.
+    const value = formatKnobValue(knob, attr.value);
     lines.push(`  ${knob.padEnd(28)} = ${value.padEnd(12)} [${attr.source_detail}]`);
   }
   // v0.48.2 — one runtime line answering "is my reranker actually running?"

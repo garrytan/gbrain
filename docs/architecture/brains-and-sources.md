@@ -209,6 +209,15 @@ ARRAY of readable sources that takes precedence over the scalar
 operations layer). Local CLI callers never set it; the scalar chain above
 is the whole story for them.
 
+One guard on tier 2 for the MCP stdio lane: a harness-launched `gbrain serve`
+checks a well-formed `GBRAIN_SOURCE` against the `sources` table at startup
+and exits with the offending value and the fix when it names no active
+(non-archived) source, instead of serving a scope that holds zero pages while
+every health check stays green. Unset, `__all__`, and malformed values keep
+their normal handling, and a transient database error never blocks startup.
+The CLI env tier fails the same way (`assertSourceExists` in
+`src/core/source-resolver.ts`).
+
 ---
 
 ## For agents reading this
@@ -266,6 +275,31 @@ write ops are local-only. Retrieval-side union — `get_links` /
 by the `entity_identity.union` config key (default off) and never widens a
 federated caller's source grant.
 
+## Cross-source link edges
+
+Wikilink and markdown-link edges stay inside one source by default. When a
+page in source A links a target that exists only in source B (typically via
+`link_resolution.global_basename`), the edge is NOT written; instead the drop
+is counted so graph sparsity is observable — `gbrain extract links --source db`
+and `gbrain extract --stale` print `Skipped N cross-source candidate(s)` (JSON:
+`skipped_cross_source`), and the serve sweep records it as `cross_source_link`
+in its skip ledger.
+
+To write those edges, opt in:
+
+```
+gbrain config set link_resolution.cross_source true   # or env GBRAIN_LINK_RESOLUTION_CROSS_SOURCE=1
+gbrain extract links --source db                      # re-extract once; --stale will not revisit stamped pages
+```
+
+Without the flag, an isolated (`federated=false`) source only writes edges
+whose both endpoints live in that source; a federated source may also link
+into the configured default source (`sources.default`). With the flag on, a
+target that exists only in other sources resolves to the lexicographically
+smallest source id, so repeated extracts converge on the same row. The read
+side is unchanged: a federated caller's source grant still scopes every link
+read.
+
 ## What confines remote callers (and what does not)
 
 When a brain is served to remote agents (HTTP MCP, stdio MCP treated as
@@ -285,20 +319,16 @@ fail-closed and tested:
   slug-bound clients; every other non-read operation is refused (fail-closed:
   a write op added later is denied until it is fenced and allow-listed).
 
-One known soft edge: the backlink-count ranking boost counts referrers
-without source filtering, so the *existence* of out-of-grant referrers can
-nudge result ordering (a count-only signal — no slug or content crosses the
-boundary; direct edge reads are fully scoped). Scoping that counter is a
-filed follow-up.
+Backlink-count ranking applies the caller's read policy to the result page,
+each contributing referrer, and any independent edge-origin page before
+counting. Graph enrichment uses the same source and page-visibility policy.
 
-**Not an enforcement surface: page-level `visibility:` frontmatter.** A
-`visibility: local` (or any other value) key in a page's frontmatter is inert
-metadata — no schema column stores it, no query filters on it, and a remote
-caller with a source grant retrieves the page like any other. If a page must
-not be readable by remote callers, put it in a source those callers have no
-grant for; that is the supported boundary. (A read-side per-page/per-prefix
-ACL is deliberately not offered: it is a new authorization surface that
-belongs to the mounts/brains access-policy design, not a bolt-on filter.)
+**Page-level `visibility: private` is enforced for remote callers by default.**
+The exact frontmatter value `private` hides that concrete page row;
+`visibility: local`, absent visibility, and other values do not. Trusted local
+CLI callers retain access. Operator settings can opt out of private-page
+filtering, so source grants remain an independent boundary: keep content in an
+ungranted source when remote callers must have no access to that source.
 
 ## Further reading
 

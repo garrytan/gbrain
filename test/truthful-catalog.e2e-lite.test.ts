@@ -87,6 +87,9 @@ const WALL_CLOCK_BUDGET_MS = 3 * 60 * 1000;
 const SKILL_FIXTURE = join(import.meta.dir, 'fixtures', 'skill-catalog', 'skills');
 const BOUND_PREFIX = 'e2e-bound/';
 const LEGACY_TOKEN = 'e5-truthful-catalog-legacy-token';
+// Legacy tokens with no explicit scope column retain read/write/admin. The
+// paid agent lane is a separate grant; admin does not imply agent.
+const LEGACY_DEFAULT_SCOPES = ['read', 'write', 'admin'];
 
 /**
  * Hermetic env pins, applied via withEnv (the repo's R1-compliant pattern):
@@ -173,7 +176,7 @@ async function setGates(on: boolean): Promise<void> {
 
 interface Cell {
   label: string;
-  /** OAuth token scopes; null = legacy bearer semantics (no scope checks). */
+  /** Explicit token scopes; null = the legacy read/write/admin defaults. */
   scopes: string[] | null;
   surface: McpSurface;
   gatesOn: boolean;
@@ -181,10 +184,12 @@ interface Cell {
 }
 
 function cellAuth(cell: Cell): AuthInfo {
+  const clientId = `e5-${cell.label}`;
   return {
     token: 'e5-token',
-    clientId: `e5-${cell.label}`,
-    scopes: cell.scopes ?? [],
+    clientId,
+    principal: { kind: 'oauth_client', id: clientId },
+    scopes: cell.scopes ?? LEGACY_DEFAULT_SCOPES,
     ...(cell.bound ? { boundSlugPrefixes: [BOUND_PREFIX] } : {}),
   };
 }
@@ -198,15 +203,14 @@ function cellAuth(cell: Cell): AuthInfo {
  */
 function expectedVisibleSet(cell: Cell): Set<string> {
   const out = new Set<string>();
+  const scopes = cell.scopes ?? LEGACY_DEFAULT_SCOPES;
   for (const op of operations) {
     if (op.localOnly) continue;                                  // D7: network transport
     if (cell.surface === 'verbs' && op.verb !== true) continue;  // frozen verb surface
     if (cell.surface === 'starter' && !STARTER_OPS.has(op.name)) continue;
-    if (cell.scopes !== null) {
-      const scopeOk = hasScope(cell.scopes, op.scope ?? 'read')
-        || (op.agentCallable === true && hasScope(cell.scopes, 'agent')); // FOV-4
-      if (!scopeOk) continue;
-    }
+    const scopeOk = hasScope(scopes, op.scope ?? 'read')
+      || (op.agentCallable === true && hasScope(scopes, 'agent')); // FOV-4
+    if (!scopeOk) continue;
     if (cell.bound && !opAllowedForBoundClient({ boundSlugPrefixes: [BOUND_PREFIX] }, op)) continue;
     if (op.publishGateKey && !cell.gatesOn) continue;            // WP1 honest catalog
     out.add(op.name);
@@ -376,6 +380,15 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
     }
     for (const localOnly of ['file_list', 'file_upload', 'file_url', 'sync_brain']) {
       expect(listed.has(localOnly)).toBe(false);
+    }
+    for (const [name, args] of [
+      ['submit_agent', { prompt: 'Synthetic scope probe' }],
+      ['get_agent_job', { id: 1 }],
+    ] as const) {
+      expect(listed.has(name)).toBe(false);
+      const denied = await legacyToolCall(name, args);
+      expect(denied.envelope?.error).toBe('permission_denied');
+      expect(denied.envelope?.message).toBe('Tool requires agent scope');
     }
   });
 

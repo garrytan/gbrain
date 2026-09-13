@@ -25,7 +25,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
-import { IngestionDaemon } from '../../src/core/ingestion/daemon.ts';
+import { IngestionDaemon, type IngestionDispatcher } from '../../src/core/ingestion/daemon.ts';
 import { createInboxFolderSource } from '../../src/core/ingestion/sources/inbox-folder.ts';
 import { watch, type ChokidarOptions, type FSWatcher } from 'chokidar';
 
@@ -63,6 +63,24 @@ let engine: PGLiteEngine;
 let tmpRoot: string;
 let inboxDir: string;
 let brainDir: string;
+const daemons: IngestionDaemon[] = [];
+const pendingDispatches: Promise<unknown>[] = [];
+const releaseDispatchGates: Array<() => void> = [];
+
+/** The production dispatcher only enqueues. This fixture executes the entire
+ * handler, so its completion signal must follow the DB write, not precede it. */
+function captureDispatcher(handler: ReturnType<typeof makeIngestCaptureHandler>, completed: IngestionEvent[], beforeIngest?: (event: IngestionEvent) => Promise<void>): IngestionDispatcher {
+  return event => {
+    const pending = (async () => {
+      await beforeIngest?.(event);
+      await handler(makeFakeJobCtx({ event }));
+      completed.push(event);
+      return { kind: 'queued' as const };
+    })();
+    pendingDispatches.push(pending);
+    return pending;
+  };
+}
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -89,8 +107,17 @@ beforeEach(async () => {
   await engine.setConfig('sync.repo_path', brainDir);
 });
 
-afterEach(() => {
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+afterEach(async () => {
+  // Assertions may throw before a test's explicit stop. Stop producers and
+  // drain the fixture's inline handlers BEFORE the next test truncates sources.
+  for (const release of releaseDispatchGates.splice(0)) release();
+  try {
+    const stops = await Promise.allSettled(daemons.splice(0).map(daemon => daemon.stop()));
+    const writes = await Promise.allSettled(pendingDispatches.splice(0));
+    for (const result of [...stops, ...writes]) if (result.status === 'rejected') throw result.reason;
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 });
 
 const captureLogger = () => {
@@ -119,6 +146,10 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     const { logger } = captureLogger();
     const handler = makeIngestCaptureHandler(engine);
     const dispatchedEvents: IngestionEvent[] = [];
+    const startedEvents: IngestionEvent[] = [];
+    let releaseHandler!: () => void;
+    const handlerGate = new Promise<void>(resolve => { releaseHandler = resolve; });
+    releaseDispatchGates.push(releaseHandler);
     await engine.executeRaw(
       `INSERT INTO sources (id, name) VALUES ('inbox-folder', 'inbox-folder')`,
     );
@@ -126,15 +157,12 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     const daemon = new IngestionDaemon({
       engine,
       logger,
-      dispatch: async (event) => {
-        dispatchedEvents.push(event);
-        // Route the event into the handler directly. In production the
-        // daemon would submit a Minion job and the worker would invoke
-        // the handler; here we collapse that for test-loop efficiency.
-        await handler(makeFakeJobCtx({ event }));
-        return { kind: 'queued' };
-      },
+      dispatch: captureDispatcher(handler, dispatchedEvents, async event => {
+        startedEvents.push(event);
+        await handlerGate;
+      }),
     });
+    daemons.push(daemon);
 
     // Create the inbox dir BEFORE starting the watcher to eliminate a race
     // where chokidar hasn't attached yet when the first write fires (the
@@ -159,23 +187,27 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     fs.writeFileSync(captured, '---\ntitle: Roundtrip\n---\n\nfull e2e flow');
 
     await daemon.start();
-    // Wait for the daemon to pick it up + dispatch + handler to write.
+    // Hold the handler to make the former race deterministic: seeing a
+    // dispatched event is insufficient evidence that its page exists.
+    await waitFor(() => startedEvents.length === 1, 15000);
+    const expectedSlug = `inbox/${new Date().toISOString().slice(0, 10)}-${startedEvents[0]!.content_hash.slice(0, 6)}`;
+    expect(dispatchedEvents).toHaveLength(0);
+    expect(await engine.getPage(expectedSlug, { sourceId: 'inbox-folder' })).toBeNull();
+    releaseHandler();
+    // Wait for the actual handler to finish before reading or resetting DB state.
     await waitFor(() => dispatchedEvents.length === 1, 15000);
 
-    // Page is in the DB.
-    const page = await engine.getPage(dispatchedEvents[0]!.metadata!.slug as string ??
-      `inbox/${new Date().toISOString().slice(0, 10)}-${dispatchedEvents[0]!.content_hash.slice(0, 6)}`);
     // The handler defaults to inbox/<date>-<hash6> if no slug provided by
     // the source. inbox-folder source doesn't set metadata.slug so the
     // handler computes the default.
-    const expectedSlug = `inbox/${new Date().toISOString().slice(0, 10)}-${dispatchedEvents[0]!.content_hash.slice(0, 6)}`;
-    const fetched = await engine.getPage(expectedSlug);
+    const fetched = await engine.getPage(expectedSlug, { sourceId: 'inbox-folder' });
     expect(fetched).not.toBeNull();
     expect(fetched?.compiled_truth).toContain('full e2e flow');
     expect(fetched?.source_id).toBe('inbox-folder');
     expect(fetched?.source_kind).toBe('inbox-folder');
     expect(fetched?.source_uri).toBe(captured);
     expect(fetched?.ingested_via).toBe('ingest_capture');
+    expect(await engine.getPage(expectedSlug, { sourceId: 'default' })).toBeNull();
 
     // File was archived after ingestion (the inbox-folder source's
     // post-emit archive step). The archive (mkdir+rename) runs ASYNC
@@ -196,12 +228,9 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     const daemon = new IngestionDaemon({
       engine,
       logger,
-      dispatch: async (event) => {
-        dispatchedEvents.push(event);
-        await handler(makeFakeJobCtx({ event }));
-        return { kind: 'queued' };
-      },
+      dispatch: captureDispatcher(handler, dispatchedEvents),
     });
+    daemons.push(daemon);
 
     // mkdirSync BEFORE daemon.start to eliminate chokidar attach race.
     fs.mkdirSync(inboxDir, { recursive: true });
@@ -254,12 +283,9 @@ describe('ingestion roundtrip — multi-source coordination', () => {
     const daemon = new IngestionDaemon({
       engine,
       logger,
-      dispatch: async (event) => {
-        dispatchedEvents.push(event);
-        await handler(makeFakeJobCtx({ event }));
-        return { kind: 'queued' };
-      },
+      dispatch: captureDispatcher(handler, dispatchedEvents),
     });
+    daemons.push(daemon);
 
     // Two distinct inbox dirs, two sources. Create the dirs BEFORE
     // daemon.start to eliminate the chokidar attach race (same fix as

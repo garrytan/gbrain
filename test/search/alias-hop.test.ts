@@ -26,6 +26,26 @@ function res(slug: string, score: number, title = slug): SearchResult {
 }
 
 describe('applyAliasHop', () => {
+  test('a page made private after retrieval cannot add alias metadata or boost', async () => {
+    const page = await engine.putPage('notes/revoked-example', { type: 'note', title: 'Revoked', compiled_truth: 'PUBLIC_BEFORE' });
+    await engine.setPageAliases(page.slug, 'default', ['revoked alias']);
+    const organic = { ...res(page.slug, 0.5), page_id: page.id };
+    await engine.putPage(page.slug, { type: 'note', title: 'Revoked', compiled_truth: 'SECRET_NOW', frontmatter: { visibility: 'private' } });
+    const hits = await applyAliasHop(engine, [organic], 'revoked alias', { sourceId: 'default', excludePrivate: true });
+    expect(hits).toEqual([organic]);
+    expect(hits[0].alias_hit).toBeUndefined();
+    expect((await engine.resolveAliases(['revoked alias'], { sourceId: 'default', excludePrivate: true })).size).toBe(0);
+    expect((await engine.resolveAliases(['revoked alias'], { sourceId: 'default' })).get('revoked alias')?.[0].slug).toBe(page.slug);
+  });
+
+  test('alias-injected excerpts strip every protected take fence', async () => {
+    await engine.putPage('notes/body-example', { type: 'note', title: 'Public', compiled_truth: '<!--- gbrain:takes:begin -->\nSECRET_ALIAS_TAKE\n<!--- gbrain:takes:end -->\nPUBLIC_ALIAS_EXCERPT' });
+    await engine.setPageAliases('notes/body-example', 'default', ['public alias']);
+    const hits = await applyAliasHop(engine, [], 'public alias', { sourceId: 'default', excludePrivate: true });
+    expect(hits[0].chunk_text).toContain('PUBLIC_ALIAS_EXCERPT');
+    expect(hits[0].chunk_text).not.toContain('SECRET_ALIAS_TAKE');
+  });
+
   test('injects an absent canonical when the query matches its alias', async () => {
     await engine.putPage('projects/mingtang', { type: 'note', title: 'The Mingtang', compiled_truth: 'Indoor Greek amphitheater.' });
     await engine.setPageAliases('projects/mingtang', 'default', ['hall of light', '明堂']);
@@ -61,10 +81,15 @@ describe('applyAliasHop', () => {
   test('P0 source-isolation: alias hop boosts only the aliased source, not the same slug in another source', async () => {
     // The alias belongs to the src-b page only. Two same-slug results, different
     // sources, both in the organic set. The hop must boost ONLY src-b's row.
+    const pages = [];
+    for (const sourceId of ['src-a', 'src-b']) {
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [sourceId]);
+      pages.push(await engine.putPage('shared/page', { type: 'note', title: 'Shared', compiled_truth: 'Synthetic source-scoped alias fixture' }, { sourceId }));
+    }
     await engine.setPageAliases('shared/page', 'src-b', ['only in b']);
     const organic = [
-      { slug: 'shared/page', source_id: 'src-a', score: 0.5 } as unknown as SearchResult,
-      { slug: 'shared/page', source_id: 'src-b', score: 0.5 } as unknown as SearchResult,
+      { ...res('shared/page', 0.5), page_id: pages[0].id, source_id: 'src-a' },
+      { ...res('shared/page', 0.5), page_id: pages[1].id, source_id: 'src-b' },
     ];
     const out = await applyAliasHop(engine, organic, 'only in b', { sourceIds: ['src-a', 'src-b'] });
     const a = out.find(r => r.source_id === 'src-a')!;

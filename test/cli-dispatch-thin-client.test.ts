@@ -31,15 +31,11 @@
  * to connectEngine normally.
  */
 
-import { describe, test as testRaw, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { runCli, runCliBatch, type CliResult } from './helpers/cli-spawn.ts';
-
-function test(name: string, fn: () => void | Promise<unknown>): void {
-  testRaw(name, fn, 30000);
-}
 
 // The original hand-rolled spawner stripped this alongside the database
 // URLs; cli-spawn.ts strips only the URLs, so keep stripping it here.

@@ -28,6 +28,7 @@ import {
   GoogleApiClient,
   GoogleCursorExpiredError,
   PeopleClient,
+  rateLimitBackoffMs,
   type FetchImpl,
 } from '../src/core/google/google-clients.ts';
 
@@ -231,6 +232,27 @@ function b64url(s: string): string {
   return Buffer.from(s, 'utf-8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// ── rateLimitBackoffMs (pure) ────────────────────────────────────────────────
+
+describe('rateLimitBackoffMs', () => {
+  test('stays within [half, base] of the exponential-backoff schedule and never exceeds the 60s cap', () => {
+    // attempt 0: base=2000, half=1000 → [1000, 2000]
+    // attempt 4: base=32000, half=16000 → [16000, 32000]
+    // attempt 10: base would exceed the cap, so base clamps to 60000 → [30000, 60000]
+    for (const [attempt, [lo, hi]] of [
+      [0, [1000, 2000]],
+      [4, [16000, 32000]],
+      [10, [30000, 60000]],
+    ] as const) {
+      for (let i = 0; i < 20; i++) {
+        const ms = rateLimitBackoffMs(attempt);
+        expect(ms).toBeGreaterThanOrEqual(lo);
+        expect(ms).toBeLessThanOrEqual(hi);
+      }
+    }
+  });
+});
+
 // ── GoogleApiClient core: auth, retry, error mapping ─────────────────────────
 
 describe('GoogleApiClient request core', () => {
@@ -267,6 +289,34 @@ describe('GoogleApiClient request core', () => {
     expect(profile.historyId).toBe('88');
     expect(apiCalls).toBe(2);
     expect(h.tokenPosts()).toBe(0); // no refresh on a rate limit
+  });
+
+  test('429 with NO Retry-After falls back to the jittered backoff: logs a delay inside the attempt-0 bounds, sleeps, retries once', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      if (apiCalls === 1) return json({ error: { message: 'rate limit' } }, 429); // no retry-after header
+      return json({ ok: true });
+    });
+    const logs: string[] = [];
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl, (m) => logs.push(m));
+    const t0 = Date.now();
+    const body = await client.fetchJSON<{ ok: boolean }>('https://gmail.googleapis.com/gmail/v1/fake', 'gmail', {
+      rateLimitRetries: 1,
+    });
+    const elapsedMs = Date.now() - t0;
+    expect(body.ok).toBe(true);
+    expect(apiCalls).toBe(2); // exactly one retry
+    expect(h.tokenPosts()).toBe(0);
+    // rateLimitBackoffMs(0) ∈ [1000, 2000] → the log's rounded delay is 1s or 2s, never 0s.
+    const line = logs.find((l) => l.startsWith('[google] HTTP 429; retrying in '));
+    expect(line).toBeDefined();
+    expect(line).toContain('(rate limit, attempt 1/1)');
+    const secs = Number(/retrying in (\d+)s/.exec(line ?? '')?.[1]);
+    expect(secs).toBeGreaterThanOrEqual(1);
+    expect(secs).toBeLessThanOrEqual(2);
+    // The jittered sleep really ran (not a fixed 0 delay): at least the lower bound, minus timer slack.
+    expect(elapsedMs).toBeGreaterThanOrEqual(950);
   });
 
   test('403 accessNotConfigured maps to api_not_enabled with the project deep link', async () => {
@@ -348,7 +398,7 @@ describe('GoogleApiClient request core', () => {
 });
 
 describe('GoogleApiClient retry exhaustion + 403 mapping', () => {
-  test("always-429 (Retry-After: 0) exhausts the retries and maps to 'rate_limited'", async () => {
+  test("always-429 (Retry-After: 0) exhausts the RATE-LIMIT retry budget (bigger than the plain retry budget) and maps to 'rate_limited'", async () => {
     let apiCalls = 0;
     const h = makeHarness(() => {
       apiCalls++;
@@ -363,9 +413,74 @@ describe('GoogleApiClient retry exhaustion + 403 mapping', () => {
     }
     expect(thrown).toBeInstanceOf(CredentialError);
     expect((thrown as CredentialError).code).toBe('rate_limited');
-    // Default retries=2: attempts 0 and 1 are retried, attempt 2 throws.
-    expect(apiCalls).toBe(3);
+    // Default rate-limit retries=6 (bigger than the plain retries=2 used for
+    // 401): attempts 0-5 are retried, attempt 6 throws. This is deliberately
+    // MORE patient than a plain retryable failure — the whole point of this
+    // fix (a 403/429 used to give up after 3 calls and poison the thread).
+    expect(apiCalls).toBe(7);
     expect(h.tokenPosts()).toBe(0); // a rate limit never triggers a token refresh
+  });
+
+  test('always-429 (Retry-After: 0) honors an explicit smaller rateLimitRetries override', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      return json({ error: { message: 'rate limit' } }, 429, { 'retry-after': '0' });
+    });
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+    let thrown: unknown;
+    try {
+      await client.fetchJSON('https://gmail.googleapis.com/gmail/v1/fake', 'gmail', {
+        rateLimitRetries: 1,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(CredentialError);
+    expect((thrown as CredentialError).code).toBe('rate_limited');
+    expect(apiCalls).toBe(2); // attempt 0 retried, attempt 1 throws
+  });
+
+  test('a 403 quota reason gets the same patient rate-limit retry budget as 429', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      return json(
+        { error: { code: 403, message: 'Quota exceeded', errors: [{ reason: 'quotaExceeded' }] } },
+        403,
+        { 'retry-after': '0' },
+      );
+    });
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl);
+    let thrown: unknown;
+    try {
+      await client.fetchJSON('https://gmail.googleapis.com/gmail/v1/fake', 'gmail');
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as CredentialError).code).toBe('rate_limited');
+    expect(apiCalls).toBe(7);
+  });
+
+  test('a 401 still exhausts at its OWN (unchanged, smaller) retry budget even though the rate-limit budget is larger', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      return json({ error: { code: 401, message: 'Invalid Credentials' } }, 401);
+    });
+    const gmail = new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    let thrown: unknown;
+    try {
+      await gmail.getProfile();
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(CredentialError);
+    expect((thrown as CredentialError).code).toBe('upstream');
+    // Default retries=2 for 401 (unaffected by the bigger rate-limit budget):
+    // attempts 0 and 1 retried (with a forceRefresh each), attempt 2 throws.
+    expect(apiCalls).toBe(3);
+    expect(h.tokenPosts()).toBe(2);
   });
 
   test("403 with a non-rate, non-quota reason maps to 'upstream' WITHOUT a retry", async () => {

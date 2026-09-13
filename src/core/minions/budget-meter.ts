@@ -10,8 +10,9 @@
  * check-and-reserve under pg_advisory_xact_lock.
  *
  * The lock key is hashed from client_id. Stale reservations (worker
- * crashed before settle) expire after `RESERVATION_TTL_MS` and the
- * sweeper reclaims them on the next reserve call.
+ * crashed before settle) become overdue after `RESERVATION_TTL_MS`.
+ * Their liability remains reserved until actual usage is reconciled: a
+ * timeout or UTC day change is not evidence that a provider did no work.
  *
  * Mirror of the rate-leases.ts pattern (the v0.15 rate-lease helper does
  * the same shape for outbound provider concurrency caps).
@@ -23,7 +24,7 @@ import { sqlQueryForEngine } from '../sql-query.ts';
 import { BudgetExceededError } from '../spend-log.ts';
 
 /** Reservation TTL — 10 minutes. Long enough for a normal provider call;
- *  short enough that crashed callers don't strand capacity for long. */
+ *  an overdue hold stays charged until its outcome is known. */
 export const RESERVATION_TTL_MS = 10 * 60 * 1000;
 
 /** Generate an int hash of client_id for pg_advisory_xact_lock. */
@@ -41,10 +42,13 @@ function clientLockKey(clientId: string): number {
 export interface ReserveOpts {
   clientId: string;
   estimatedCents: number;
-  capCents: number;
+  capCents: number | null;
+  estimateKnown?: boolean;
   model: string;
   provider: string;
   jobId?: number;
+  /** Trusted runtime recheck, run under the client lock before admitting IO. */
+  validateAdmission?: (tx: BrainEngine) => Promise<void>;
 }
 
 export interface Reservation {
@@ -57,8 +61,7 @@ export interface Reservation {
  * Atomic check-and-reserve. Under `pg_advisory_xact_lock(client_id_hash)`:
  *
  *   1. Sweep expired pending reservations for this client.
- *   2. SUM today's settled spend from mcp_spend_log + pending estimated
- *      from mcp_spend_reservations.
+ *   2. SUM today's settled spend + all unresolved reservations, across dates.
  *   3. If `committed + pending + estimated > cap`, throw `BudgetExceededError`.
  *   4. INSERT pending reservation row with TTL.
  *   5. Return reservation id.
@@ -72,7 +75,7 @@ export async function reserve(
 ): Promise<Reservation> {
   assertNonEmpty('clientId', opts.clientId);
   assertFiniteNonNegative('estimatedCents', opts.estimatedCents);
-  assertFiniteNonNegative('capCents', opts.capCents);
+  if (opts.capCents !== null) assertFiniteNonNegative('capCents', opts.capCents);
   assertNonEmpty('model', opts.model);
   assertNonEmpty('provider', opts.provider);
   if (opts.jobId !== undefined && (!Number.isSafeInteger(opts.jobId) || opts.jobId <= 0)) {
@@ -95,11 +98,18 @@ export async function reserve(
       // Lock-census (PR6 D5): INTENTIONALLY per-client, not per-source — the budget cap is an oauth_clients.budget_usd_per_day property; one client's concurrent requests must serialize regardless of which source each targets.
       await sql`SELECT pg_advisory_xact_lock(${BigInt(lockKey)})`;
     }
+    // A cap tightened after the caller's preflight applies to this attempt.
+    // The row lock also serializes this admission with in-place grant repair.
+    const clients = await sql`SELECT budget_usd_per_day::text AS cap FROM oauth_clients WHERE client_id = ${opts.clientId} FOR SHARE`;
+    await opts.validateAdmission?.(tx);
+    const configuredCap = clients[0]?.cap == null ? null : Math.round(Number(clients[0].cap) * 100);
+    const cap = opts.capCents === null ? configuredCap : configuredCap === null ? opts.capCents : Math.min(opts.capCents, configuredCap);
+    if (cap !== null) assertFiniteNonNegative('configured cap', cap);
 
     // Step 1: sweep expired reservations for this client.
     await sql`
       UPDATE mcp_spend_reservations
-         SET status = 'expired', actual_cents = 0
+         SET status = 'expired'
        WHERE client_id = ${opts.clientId}
          AND status = 'pending'
          AND expires_at < now()
@@ -118,30 +128,32 @@ export async function reserve(
           SELECT SUM(estimated_cents)::text
             FROM mcp_spend_reservations
            WHERE client_id = ${opts.clientId}
-             AND status = 'pending'
-             AND created_at >= ${todayStart}
-        ), '0') AS pending_text
+             AND status IN ('pending', 'expired')
+        ), '0') AS pending_text,
+        (SELECT count(*) FROM mcp_spend_reservations
+          WHERE client_id = ${opts.clientId} AND status IN ('pending','expired')
+            AND estimate_known = false) AS unknown_count
     `;
     const committedCents = requiredFiniteTotal(rows[0]?.committed_text, 'committed spend');
     const pendingCents = requiredFiniteTotal(rows[0]?.pending_text, 'pending spend');
     const totalProjected = committedCents + pendingCents + opts.estimatedCents;
-    if (totalProjected > opts.capCents) {
+    if (cap !== null && (opts.estimateKnown === false || Number(rows[0]?.unknown_count ?? 0) > 0 || totalProjected > cap)) {
       throw new BudgetExceededError(
         `budget exceeded for client ${opts.clientId}: ` +
         `committed=${committedCents.toFixed(2)}¢, pending=${pendingCents.toFixed(2)}¢, ` +
-        `estimated=${opts.estimatedCents.toFixed(2)}¢, cap=${opts.capCents.toFixed(2)}¢`,
+        `estimated=${opts.estimatedCents.toFixed(2)}¢, cap=${cap.toFixed(2)}¢; unresolved unknown usage remains reserved`,
         committedCents + pendingCents,
-        opts.capCents,
+        cap,
       );
     }
 
     // Step 4: INSERT reservation before releasing the client lock.
     await sql`
       INSERT INTO mcp_spend_reservations
-        (reservation_id, client_id, job_id, estimated_cents, model, provider, status, expires_at)
+        (reservation_id, client_id, job_id, estimated_cents, model, provider, status, expires_at, estimate_known, usage_unknown_reason)
       VALUES
         (${reservationId}, ${opts.clientId}, ${opts.jobId ?? null},
-         ${opts.estimatedCents}, ${opts.model}, ${opts.provider}, 'pending', ${expiresAt})
+         ${opts.estimatedCents}, ${opts.model}, ${opts.provider}, 'pending', ${expiresAt}, ${opts.estimateKnown !== false}, ${opts.estimateKnown === false ? 'pricing_or_bound_unknown' : null})
     `;
   });
 
@@ -179,6 +191,7 @@ export async function settle(
       UPDATE mcp_spend_reservations
          SET status = 'settled',
              actual_cents = ${actualCents},
+             usage_unknown_reason = NULL,
              settled_at = now()
        WHERE reservation_id = ${reservationId}
          AND status IN ('pending', 'expired')
@@ -207,7 +220,8 @@ export async function settle(
 
 /**
  * Sweeper called by tests + the worker startup hook. Marks any
- * pending reservation past its TTL as 'expired' with actual_cents=0.
+ * pending reservation past its TTL as 'expired'. This is an overdue marker,
+ * not a release: unknown usage stays NULL and counts against future admission.
  *
  * Returns the number of rows expired.
  */
@@ -215,7 +229,7 @@ export async function sweepExpiredReservations(engine: BrainEngine): Promise<num
   const sql = sqlQueryForEngine(engine);
   const rows = await sql`
     UPDATE mcp_spend_reservations
-       SET status = 'expired', actual_cents = 0
+       SET status = 'expired'
      WHERE status = 'pending'
        AND expires_at < now()
     RETURNING reservation_id

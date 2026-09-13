@@ -14,6 +14,25 @@
  * errors get their own `auth` reason for clean rendering.
  */
 
+import { anySignal } from './abort-check.ts';
+
+type ProbeFailure<Reason extends string> = {
+  ok: false;
+  reason: Reason;
+  status?: number;
+  kind?: 'timeout' | 'aborted';
+  message: string;
+};
+
+function networkFailure(label: string, error: unknown, signal: AbortSignal): ProbeFailure<'network'> {
+  if (signal.aborted) {
+    const kind = signal.reason instanceof Error && signal.reason.name === 'TimeoutError'
+      ? 'timeout' : 'aborted';
+    return { ok: false, reason: 'network', kind, message: `${label} ${kind === 'timeout' ? 'timed out' : 'was aborted'}` };
+  }
+  return { ok: false, reason: 'network', message: `${label} network error: ${error instanceof Error ? error.message : String(error)}` };
+}
+
 export type ProbeResult<T = void> =
   | { ok: true } & ({} extends T ? unknown : T extends void ? unknown : { value: T })
   | { ok: false; reason: 'network' | 'http' | 'auth' | 'parse' | 'config'; status?: number; message: string };
@@ -35,24 +54,27 @@ export interface OAuthMetadata {
 
 export async function discoverOAuth(
   issuerUrl: string,
-  opts: { timeoutMs?: number } = {},
-): Promise<{ ok: true; metadata: OAuthMetadata } | { ok: false; reason: 'network' | 'http' | 'parse' | 'config'; status?: number; message: string }> {
+  opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<{ ok: true; metadata: OAuthMetadata } | ProbeFailure<'network' | 'http' | 'parse' | 'config'>> {
   const trimmed = issuerUrl.replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(trimmed)) {
     return { ok: false, reason: 'config', message: `issuer_url must start with http:// or https:// — got: ${issuerUrl}` };
   }
   const url = `${trimmed}/.well-known/oauth-authorization-server`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
+  const timer = setTimeout(() => controller.abort(new DOMException('OAuth request timed out', 'TimeoutError')), opts.timeoutMs ?? 10_000);
+  const signal = anySignal(controller.signal, opts.signal);
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, { signal });
     if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
       return { ok: false, reason: 'http', status: res.status, message: `OAuth discovery returned ${res.status} for ${url}` };
     }
     let body: unknown;
     try {
       body = await res.json();
     } catch (e) {
+      if (signal.aborted) return networkFailure('OAuth discovery', e, signal);
       return { ok: false, reason: 'parse', message: `OAuth discovery returned non-JSON body: ${(e as Error).message}` };
     }
     if (!body || typeof body !== 'object' || typeof (body as OAuthMetadata).token_endpoint !== 'string') {
@@ -60,7 +82,7 @@ export async function discoverOAuth(
     }
     return { ok: true, metadata: body as OAuthMetadata };
   } catch (e) {
-    return { ok: false, reason: 'network', message: `OAuth discovery network error: ${(e as Error).message}` };
+    return networkFailure('OAuth discovery', e, signal);
   } finally {
     clearTimeout(timer);
   }
@@ -82,8 +104,8 @@ export async function mintClientCredentialsToken(
   tokenEndpoint: string,
   clientId: string,
   clientSecret: string,
-  opts: { scope?: string; timeoutMs?: number } = {},
-): Promise<{ ok: true; token: TokenResponse } | { ok: false; reason: 'network' | 'http' | 'auth' | 'parse' | 'config'; status?: number; message: string }> {
+  opts: { scope?: string; timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<{ ok: true; token: TokenResponse } | ProbeFailure<'network' | 'http' | 'auth' | 'parse' | 'config'>> {
   if (!clientId) return { ok: false, reason: 'config', message: 'client_id is required' };
   if (!clientSecret) return { ok: false, reason: 'config', message: 'client_secret is required' };
 
@@ -94,24 +116,28 @@ export async function mintClientCredentialsToken(
   if (opts.scope) body.set('scope', opts.scope);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10_000);
+  const timer = setTimeout(() => controller.abort(new DOMException('OAuth request timed out', 'TimeoutError')), opts.timeoutMs ?? 10_000);
+  const signal = anySignal(controller.signal, opts.signal);
   try {
     const res = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
-      signal: controller.signal,
+      signal,
     });
     if (res.status === 401 || res.status === 403) {
+      await res.body?.cancel().catch(() => {});
       return { ok: false, reason: 'auth', status: res.status, message: `OAuth /token returned ${res.status} — check client_id and client_secret` };
     }
     if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
       return { ok: false, reason: 'http', status: res.status, message: `OAuth /token returned ${res.status}` };
     }
     let json: unknown;
     try {
       json = await res.json();
     } catch (e) {
+      if (signal.aborted) return networkFailure('OAuth /token', e, signal);
       return { ok: false, reason: 'parse', message: `OAuth /token returned non-JSON: ${(e as Error).message}` };
     }
     if (!json || typeof json !== 'object' || typeof (json as TokenResponse).access_token !== 'string') {
@@ -119,7 +145,7 @@ export async function mintClientCredentialsToken(
     }
     return { ok: true, token: json as TokenResponse };
   } catch (e) {
-    return { ok: false, reason: 'network', message: `OAuth /token network error: ${(e as Error).message}` };
+    return networkFailure('OAuth /token', e, signal);
   } finally {
     clearTimeout(timer);
   }

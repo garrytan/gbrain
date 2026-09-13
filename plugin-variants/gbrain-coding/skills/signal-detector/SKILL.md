@@ -1,13 +1,13 @@
 ---
 name: signal-detector
-version: 1.0.0
+version: 1.1.0
 description: |
-  Always-on ambient signal capture. Applies on every substantive inbound
-  message to detect original thinking and entity mentions. Spawn as a cheap
-  sub-agent where the harness supports it; otherwise run detection inline.
+  Opt-in ambient signal capture. After explicit enablement, applies on
+  substantive inbound messages to detect original thinking and entity mentions.
+  Use an authorized sub-agent where supported; otherwise detect inline.
   Aim to never block the main response.
 triggers:
-  - every inbound message (always-on)
+  - every substantive inbound message after automatic-capture opt-in
 tools:
   - search
   - query
@@ -25,8 +25,8 @@ writes_to:
 
 # Signal Detector — Ambient Brain Capture
 
-Lightweight capture pass applied to every substantive inbound message. It
-watches for TWO things with EQUAL priority:
+After the user enables automatic capture, apply this lightweight pass to
+substantive inbound messages within their chosen scope. It watches for:
 
 1. **Original thinking** — the user's ideas, observations, theses, frameworks
 2. **Entity mentions** — people, companies, media references
@@ -37,19 +37,20 @@ intellectual capital. Entities are bookkeeping. Both compound over time.
 ## Contract
 
 This skill guarantees:
-- Applies on every substantive message where the harness supports ambient
-  routing (skips: purely operational messages, users who turned capture off)
+- Applies only after explicit automatic-capture opt-in (skips: no recorded
+  choice, capture off, chat-only requests, and purely operational messages)
 - Spawns as a sub-agent where the harness supports it; otherwise runs the
   detection inline before composing the reply. Never blocking the response
   is the intent, not a runtime contract
-- Announces itself on first fire and honors the per-user off switch
+- Checks the user's stored capture choice before writing and honors narrower
+  per-message instructions; a first-fire announcement is not consent
 - Captures ideas with the user's EXACT phrasing (no paraphrasing)
 - Detects entity mentions and creates/enriches brain pages
 - Logs a one-line summary of what was captured
 - Back-links all entity mentions (Iron Law)
 - Citations on every fact written
 
-Always-on is a harness-routing convention that a well-behaved agent
+Ambient routing is a harness convention that a well-behaved agent
 follows, not a mechanical guarantee; nothing in the gbrain runtime blocks
 a reply if the skill never loads. On harnesses without per-message ambient
 routing (Claude Code, Codex), apply this skill as an agent convention or
@@ -70,24 +71,30 @@ Every time this skill creates or updates a brain page that mentions a person or 
 3. Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 4. An unlinked mention is a broken brain.
 
-## First-Fire Consent
+## Enablement before capture
 
-Ambient capture persists the user's words into the brain, so the user must
-know it is on. The FIRST time this skill captures anything for a user,
-announce it in the visible reply: ambient signal capture is on, it stores
-ideas and entity mentions as brain pages, and saying "turn off signal
-capture" disables it. Record that the announcement happened (a preference
-note in the brain works) so it fires once, not every message. Asking once
-and recording the answer is equally valid; either way the preference is
-stored, never re-asked per message.
+Automatic capture is off by default. Before writing, establish an explicit
+user choice for this brain and capture scope. A stored opt-in or an explicitly
+enabled `memory.auto_writeback` mode can supply that choice; `off`, a missing or
+unreadable choice cannot. Reading this skill, installing GBrain, an available
+API key, silence, or an announcement that capture is on does not authorize it.
+
+If the user asks to enable capture, explain what will be retained and record
+the accepted choice. Honor an existing choice without asking again. A request
+to remember one fact authorizes that fact, not future ambient capture.
+Delegation and paid enrichment are separate capabilities: capture opt-in alone
+does not authorize spawning workers or making paid provider calls.
+
+After activation, confirm the chosen scope once and explain how to turn it off.
+Do not capture the current turn while awaiting a required answer.
 
 ## Per-User Storage Policy
 
-Ambient capture is a DEFAULT, not a mandate. If the user turns it off (or
-asks for chat-only handling of a specific message), record the preference
-and stop firing: no pages, no links, no timeline entries. Re-enable on
-request. Users who turned capture off sit on the skip list alongside
-purely operational messages.
+If the user turns capture off, record the requested setting and stop capture:
+no content pages, links, or timeline entries. A chat-only instruction suppresses
+capture for that message without changing the standing setting; do not save
+the chat-only content as a preference. Re-enable only on request. Explicit
+remembering and relevant recall remain available when capture is off.
 
 ## Phases
 
@@ -108,8 +115,8 @@ meetings, and concepts. An original without cross-links is a dead original.
 1. Extract entity mentions (people, companies, media titles)
 2. For each entity:
    - `gbrain search "name"` — does a page exist?
-   - If NO page → check notability. If notable, create page with enrichment.
-   - If page exists but THIN → trigger enrich
+   - If NO page → check notability. If notable, save the supplied information with provenance.
+   - If page exists but THIN → enrich only within separately authorized capabilities and spending
    - If page exists and RICH → no action
 3. For new FACTS with specific dates → call `gbrain timeline-add <slug> <date> "<summary>"`
 
@@ -129,11 +136,10 @@ This makes the ambient capture loop debuggable.
 
 ## Output Format
 
-Runs in the background, but not fully silent at first: until the user has
-seen the first-fire consent announcement, surface the one-line signal log
-in the visible reply so early captures are never invisible. After that the
-skill runs quietly; the output is brain pages created/updated and the
-signal log line.
+After opt-in, report observed writes and their provenance. Keep the signal log
+brief and verify captured content with an actual readback. Without opt-in,
+perform no capture writes; a skipped-capture diagnostic is not a reason to
+interrupt every response or ask for enablement repeatedly.
 
 ## Anti-Patterns
 
@@ -142,10 +148,9 @@ signal log line.
 - Creating pages for non-notable entities (one-off mentions)
 - Skipping back-links after creating/updating pages
 - Running on purely operational messages ("ok", "thanks", "do it")
-- Capturing after the user turned signal capture off (storage policy is a
-  default, not a mandate)
-- Staying fully silent on early captures (surface the signal log until the
-  first-fire consent announcement has happened)
+- Capturing without explicit opt-in, after capture was disabled, or on a chat-only turn
+- Treating a first-fire announcement, one explicit memory, or an API key as standing authorization
+- Starting paid enrichment or delegation just because capture is enabled
 
 ## Tools Used
 

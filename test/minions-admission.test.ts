@@ -106,7 +106,7 @@ describe('param-coalescing (subagent default-on)', () => {
   test('a RUNNING identical job does not suppress a re-run (waiting-only)', async () => {
     const first = await queue.add('subagent', { prompt: 'rerun me' }, {}, SUB);
     await engine.executeRaw(
-      `UPDATE minion_jobs SET status = 'active', lock_until = now() + interval '5 minutes' WHERE id = $1`,
+      `UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_until = now() + interval '5 minutes' WHERE id = $1`,
       [first.id],
     );
     const second = await queue.add('subagent', { prompt: 'rerun me' }, {}, SUB);
@@ -230,7 +230,7 @@ describe('waiting-TTL sweep (handleWaitingTTL via cancelJobs)', () => {
   test('active and delayed rows are never TTL-cancelled', async () => {
     const active = await queue.add('subagent', { prompt: 'running' }, {}, SUB);
     await engine.executeRaw(
-      `UPDATE minion_jobs SET status = 'active', lock_until = now() + interval '5 minutes',
+      `UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_until = now() + interval '5 minutes',
         created_at = now() - interval '100 hours' WHERE id = $1`,
       [active.id],
     );
@@ -370,7 +370,7 @@ describe('cancelJobs reason + rootStatuses (direct)', () => {
     const w = await queue.add('subagent', { prompt: 'still waiting' }, {}, SUB);
     const act = await queue.add('subagent', { prompt: 'claimed meanwhile' }, {}, SUB);
     await engine.executeRaw(
-      `UPDATE minion_jobs SET status = 'active', lock_until = now() + interval '5 minutes' WHERE id = $1`,
+      `UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_until = now() + interval '5 minutes' WHERE id = $1`,
       [act.id],
     );
     const swept = await queue.cancelJobs([w.id, act.id], { reason: 'sweep', rootStatuses: ['waiting'] });

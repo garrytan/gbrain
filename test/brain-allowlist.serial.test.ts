@@ -45,7 +45,7 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(missing).toEqual([]);
   });
 
-  test('contains the v0.15 read-only 10 + put_page + v0.29 salience pair + v114 list_link_sources', () => {
+  test('contains delegated page tools and excludes local-only attachments', () => {
     // v0.29 added get_recent_salience + find_anomalies (read-only).
     // get_recent_transcripts is deliberately excluded — subagent calls always
     // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
@@ -53,7 +53,9 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     // the edge-WRITE ops add_link/remove_link stay out (separate trust call).
     // #2778 added add_timeline_entry (write, fenced like put_page via
     // operations.ts:enforceSubagentSlugFence).
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(15);
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(13);
+    expect(BRAIN_TOOL_ALLOWLIST.has('file_list')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('file_url')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('add_timeline_entry')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);
@@ -123,6 +125,34 @@ describe('buildBrainTools', () => {
     const slug = ((getPage!.input_schema as any).properties as any).slug;
     expect(slug).toBeDefined();
     expect(slug.pattern).toBeUndefined();
+  });
+
+  test('execute() names a missing required parameter instead of crashing', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const search = tools.find(t => t.name === 'brain_search');
+    expect(search).toBeDefined();
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await expect(search!.execute({}, ctx)).rejects.toThrow(/brain_search: Missing required parameter: query/);
+    await expect(search!.execute(undefined, ctx)).rejects.toThrow(/Missing required parameter/);
+  });
+
+  test('execute() rejects a type mismatch and an unknown enum value by name (wave review)', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const search = tools.find(t => t.name === 'brain_search')!;
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await expect(search.execute({ query: 'x', limit: 'ten' }, ctx)).rejects.toThrow(/brain_search: Parameter "limit" must be a number/);
+    await expect(search.execute({ query: 'x', salience: 'loud' }, ctx)).rejects.toThrow(/brain_search: Parameter "salience" must be one of: off, on, strong/);
+  });
+
+  test('execute() normalizes optional absent idioms (null / "") before validation and the handler (wave review)', async () => {
+    // Same order the MCP dispatchers keep. `updated_after: ""` raw would reach
+    // list_pages' ::timestamptz filter; `type: null` is the JSON-client spelling
+    // of "omitted". Both must land as a plain empty listing, not a crash.
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const listPages = tools.find(t => t.name === 'brain_list_pages')!;
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    const res = await listPages.execute({ updated_after: '', type: null, limit: 5 }, ctx) as unknown;
+    expect(res).toBeDefined();
   });
 
   test('execute() on put_page with valid namespace slug succeeds', async () => {

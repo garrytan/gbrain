@@ -5,27 +5,22 @@
  * deterministic keyword + title-boost + alias-hop path (free, no network) — the
  * vector max-pool guarantee is pinned separately by searchvector-maxpool.test.ts.
  *
+ * The corpus itself lives in test/fixtures/retrieval-quality/namedthing/corpus.ts
+ * (shared with the paid R1 reranker A/B, scripts/r1-namedthing-rerank-ab.ts) so
+ * the gate and the receipt describe the same brain.
+ *
  * The gate MUST pass for the families that ARE the incident (title-substring,
  * alias-synonym, multi-chunk-dilution).
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
-import { parseQuestionsJsonl, runRetrievalQuality, evaluateGate, type SearchFn } from '../src/eval/retrieval-quality/harness.ts';
-import type { ChunkInput } from '../src/core/types.ts';
+import { runRetrievalQuality, evaluateGate, type SearchFn } from '../src/eval/retrieval-quality/harness.ts';
+import { loadNamedThingQuestions, seedNamedThingCorpus } from './fixtures/retrieval-quality/namedthing/corpus.ts';
 
 let engine: PGLiteEngine;
-
-async function seedPage(slug: string, title: string, type: string, chunks: string[], aliases: string[] = []) {
-  await engine.putPage(slug, { type: type as never, title, compiled_truth: chunks.join('\n') });
-  const ci: ChunkInput[] = chunks.map((text, i) => ({ chunk_index: i, chunk_text: text, chunk_source: 'compiled_truth', token_count: 10 }));
-  await engine.upsertChunks(slug, ci);
-  if (aliases.length) await engine.setPageAliases(slug, 'default', aliases.map(a => a.toLowerCase()));
-}
 
 beforeAll(async () => {
   // Force keyword + title + alias path: vector embed throws → hybrid falls open.
@@ -33,30 +28,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-
-  await seedPage(
-    'projects/example-amphitheater',
-    'The Example Hall — Indoor Greek Amphitheater for Adversarial Debate',
-    'note',
-    [
-      'Indoor greek amphitheater for adversarial debate in the city.',
-      'Ceiling treatment acoustics for the amphitheater dome and seating.',
-    ],
-    ['Hall of Light'],
-  );
-  await seedPage(
-    'projects/example-civic-platform',
-    'Example Civic Feedback Platform',
-    'note',
-    ['A civic feedback platform for the city to gather resident input.'],
-    ['the widget tracker'],
-  );
-  await seedPage(
-    'people/alice-example',
-    'Alice Example',
-    'person',
-    ['Alice works on the civic feedback platform and gathers resident input.'],
-  );
+  await seedNamedThingCorpus(engine);
 });
 
 afterAll(async () => {
@@ -66,9 +38,7 @@ afterAll(async () => {
 
 describe('NamedThingBench gate (hermetic)', () => {
   test('the bug families pass the gate (title-substring, alias-synonym, dilution)', async () => {
-    const questions = parseQuestionsJsonl(
-      readFileSync(join(import.meta.dir, 'fixtures/retrieval-quality/namedthing.jsonl'), 'utf8'),
-    );
+    const questions = loadNamedThingQuestions();
     const searchFn: SearchFn = async (q) => {
       const rs = await hybridSearch(engine, q, { limit: 10, sourceId: 'default' });
       return rs.map(r => r.slug);

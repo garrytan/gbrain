@@ -1,3 +1,4 @@
+import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
 import { basename, extname } from 'path';
 import { createHash } from 'crypto';
@@ -7,6 +8,9 @@ import { classifyStoredType } from './schema-pack/type-usage.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
+import { sanitizeRemoteBody } from './remote-body.ts';
+import { sanitizeText } from './batch-rows.ts';
+import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { planEmbeddingReuse } from './embed-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
@@ -48,7 +52,7 @@ import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning } from './facts-fence.ts';
+import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 
 /**
@@ -110,19 +114,6 @@ function fenceTagToPseudoPath(lang: string | undefined): string | null {
 // MAX_FENCES_PER_PAGE (fence-bomb DOS cap, GBRAIN_MAX_FENCES_PER_PAGE env
 // override) moved to fence-scan.ts with the #2862 linear scanner.
 
-function replaceOrAppendFactsFence(body: string, fenceBlock: string): string {
-  const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
-  if (beginIdx !== -1) {
-    const endIdx = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
-    if (endIdx !== -1) {
-      return body.slice(0, beginIdx) + fenceBlock + body.slice(endIdx + FACTS_FENCE_END.length);
-    }
-  }
-
-  const sep = body.endsWith('\n') ? '\n' : '\n\n';
-  return `${body}${sep}## Facts\n\n${fenceBlock}\n`;
-}
-
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
  * column on the remote write-back boundary. Restores non-'world' fence
@@ -156,7 +147,9 @@ function mergeHiddenFactRowsIntoBody(
         `the hidden row(s) keep their original numbers.`,
       );
     }
-    return replaceOrAppendFactsFence(incomingBody, renderFactsTable(merge.merged));
+    // Shared #4756 placement rule (the column is already split at the
+    // sentinel here, so this is dedup, not a behaviour change for the importer).
+    return replaceOrInsertFactsFence(incomingBody, renderFactsTable(merge.merged));
   }
   const gapWarning = factsGapWarning(slug, incomingFacts, existingFacts, false);
   if (gapWarning) console.warn(gapWarning);
@@ -171,10 +164,11 @@ function mergeHiddenFactRowsIntoBody(
  * empty fences are skipped. Per-fence try/catch: one malformed fence doesn't
  * abort the page import.
  */
-async function extractFencedChunks(
+export async function extractFencedChunks(
   markdown: string,
   startChunkIndex: number,
 ): Promise<ChunkInput[]> {
+  markdown = sanitizeRemoteBody(markdown);
   const out: ChunkInput[] = [];
   // Fast path: most pages (prose, tables, converted docs) contain no code
   // fence at all, so there is nothing for this function to extract — skip
@@ -404,6 +398,12 @@ export async function importFromContent(
   if (frontmatterError) {
     return { slug, status: 'error', chunks: 0, error: frontmatterError };
   }
+
+  // Canonicalize only free-prose fields before protected-fence parsing, hidden
+  // row merging, hashing and indexing. Frontmatter identities stay untouched.
+  parsed.title = sanitizeText(parsed.title);
+  parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
+  parsed.timeline = sanitizeText(parsed.timeline);
 
   // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
   // input. parseMarkdown preserves every frontmatter key except type/title/
@@ -671,6 +671,9 @@ export async function importFromContent(
     parsed.compiled_truth = mergeHiddenFactRowsIntoBody(slug, parsed.compiled_truth, existing.compiled_truth);
     parsed.timeline = mergeHiddenFactRowsIntoBody(slug, parsed.timeline, existing.timeline);
   }
+  const { preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
+  parsed.compiled_truth = await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.compiled_truth);
+  parsed.timeline = await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.timeline);
 
   // #1035: absence of an explicit frontmatter `type:` on an EXISTING page
   // means "preserve the stored type", not "re-infer". Pre-fix, a round-trip
@@ -981,11 +984,7 @@ export async function importFromContent(
       effective_date: effectiveDate,
       effective_date_source: effectiveDateSource,
       import_filename: filenameForChain,
-      // v0.32.7 CJK wave: stamp the chunker version so the post-upgrade
-      // reindex sweep can find pre-bump pages via `chunker_version < 2`.
-      // Also capture the repo-relative source path so sync's delete/rename
-      // code can resolve frontmatter-fallback slugs back to their files.
-      chunker_version: MARKDOWN_CHUNKER_VERSION,
+      // Preserve the repo-relative path for sync's delete/rename handling.
       source_path: opts.sourcePath ?? null,
       // v0.39.3.0 provenance write-through (WARN-8). Engine layer applies
       // COALESCE-preserve UPDATE so omitting these on a later put_page
@@ -1036,6 +1035,10 @@ export async function importFromContent(
       await tx.addTag(slug, tag, txOpts);
     }
 
+    // A new seal cannot inherit vectors or metadata from an older index, even
+    // when a public fragment is unchanged: its old contextual vector may have
+    // included a private sibling fragment. Replace every derived row atomically.
+    await tx.deleteChunks(slug, txOpts);
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
       // v0.41.31: stamp embedding provenance when this import actually
@@ -1054,6 +1057,10 @@ export async function importFromContent(
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug, txOpts);
     }
+    // Seal only the completed, full-body sanitized replacement. A body-only
+    // write or a failed transaction must never certify old stored fragments.
+    await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
+      [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
 
     // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
     // (e.g. 'src/core/sync.ts:42'), create bidirectional edges to the code
@@ -1061,7 +1068,7 @@ export async function importFromContent(
     // this in v0.18.x), so we wrap each pair in try/catch — guides imported
     // before their code repo syncs are common, and the missing edges land
     // later via `gbrain reconcile-links` (Layer 8 D3, v0.21.0).
-    const codeRefs = extractCodeRefs(parsed.compiled_truth + '\n' + (parsed.timeline || ''));
+    const codeRefs = extractCodeRefs(sanitizeRemoteBody(parsed.compiled_truth) + '\n' + sanitizeRemoteBody(parsed.timeline || ''));
     // For doc↔impl edges, both endpoints are within the same source as the
     // markdown page being imported. Cross-source edges (markdown in one
     // source, code in another) currently fail with "page not found" — a
@@ -1249,7 +1256,7 @@ export async function importFromFile(
     return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
   }
 
-  let content = readFileSync(filePath, 'utf-8');
+  let content = readSourceFileSync(filePath, 'utf-8').replace(/^\uFEFF/, ''); // #4798: a BOM is encoding noise, not content
 
   // Defense-in-depth for callers that bypass the sync/import classifiers
   // (direct importFromFile, reindex, capture paths): a malformed filename is
@@ -1442,7 +1449,7 @@ export async function importCodeFile(
   // PostgreSQL text columns reject U+0000 even though source files may
   // legitimately contain it inside string/regex fixtures. Preserve a visible,
   // searchable representation instead of dropping the entire code page.
-  const storageContent = content.replaceAll('\0', '\\0');
+  const storageContent = sanitizeText(content.replaceAll('\0', '\\0'));
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -1488,7 +1495,7 @@ export async function importCodeFile(
   // from the chunker (nested methods carry ['ClassName'] etc.) so the
   // chunk-grain FTS trigger picks up scope for ranking and downstream
   // Layer 5 edge resolution can use scope-qualified identity.
-  const { chunks: codeChunks, edges: extractedEdges } = await chunkCodeTextFull(storageContent, relativePath);
+  const { chunks: codeChunks, edges: extractedEdges } = await chunkCodeTextFull(sanitizeRemoteBody(storageContent), relativePath);
   const chunks: ChunkInput[] = codeChunks.map((c, i) => ({
     chunk_index: i,
     chunk_text: c.text,
@@ -1515,8 +1522,8 @@ export async function importCodeFile(
   // byte-identical bodies.
   // `includeEmbedding` is load-bearing: #2544 dropped the vector from the
   // default column list, which silently made this whole cache a no-op.
-  const existingChunks = existing
-    ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true })
+  const existingChunks = existing && !opts.noEmbed
+    ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true })
     : [];
   const { reuse, needsEmbedIndexes } = planEmbeddingReuse(existingChunks, chunks);
   for (const [i, matched] of reuse) {
@@ -1556,6 +1563,14 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
+      // A code page MUST carry its path. The full-sync reconcile finds a
+      // deleted file's page by matching `source_path` against the git tree;
+      // with the column NULL the page is invisible to it and is served
+      // forever. Markdown pages already set it, which is why only the code
+      // walk grew ghosts. Written on every import, not just the first:
+      // putPage COALESCEs, so a NULL here would never overwrite a good value
+      // but would also never backfill a row imported before this line existed.
+      source_path: relativePath,
       // `content` is authoritative source text (disk file, or the row's own
       // body via reindex-code): an emptied file is a deliberate clear.
     }, { ...txOpts, allowEmptyOverwrite: true });
@@ -1563,6 +1578,7 @@ export async function importCodeFile(
     await tx.addTag(slug, 'code', txOpts);
     await tx.addTag(slug, lang, txOpts);
 
+    await tx.deleteChunks(slug, txOpts);
     if (chunks.length > 0) {
       await tx.upsertChunks(slug, chunks, txOpts);
       // v0.41.31: stamp embedding provenance ONLY when every chunk was
@@ -1580,6 +1596,8 @@ export async function importCodeFile(
     } else {
       await tx.deleteChunks(slug, txOpts);
     }
+    await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
+      [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
   });
 
   // Post-write read-back verification.
@@ -1710,6 +1728,8 @@ export interface ImportTransactionSpec {
   page: PageInput;
   /** When undefined, no chunk write happens. When [], deletes any prior chunks. */
   chunks?: ChunkInput[];
+  /** Internal import assertion: all indexing inputs were checked as a full body. */
+  safeChunks?: boolean;
   /** Optional file-row insert (image ingest). Page link injected automatically. */
   file?: FileSpec;
   /**
@@ -1743,11 +1763,16 @@ export async function withImportTransaction(
       });
     }
     if (spec.chunks !== undefined) {
+      await tx.deleteChunks(spec.slug, txOpts);
       if (spec.chunks.length > 0) {
         await tx.upsertChunks(spec.slug, spec.chunks, txOpts);
       } else {
         await tx.deleteChunks(spec.slug, txOpts);
       }
+    }
+    if (spec.safeChunks && spec.chunks !== undefined) {
+      await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
+        [MARKDOWN_CHUNKER_VERSION, sourceId, spec.slug]);
     }
     if (spec.after) await spec.after(tx);
   });
@@ -1946,10 +1971,12 @@ async function maybeOcr(
   engine: BrainEngine,
   imgBuf: Buffer,
   mime: string,
-): Promise<string> {
+): Promise<{ text: string; successful: boolean }> {
   const opt = process.env.GBRAIN_EMBEDDING_IMAGE_OCR;
-  if (opt !== 'true') return '';
-  return maybeOcrGated(engine, imgBuf, mime);
+  if (opt !== 'true') return { text: '', successful: false };
+  let successful = false;
+  const text = await maybeOcrGated(engine, imgBuf, mime, () => { successful = true; });
+  return { text, successful };
 }
 
 /** #3973: body of maybeOcr past the opt-in check; exported for budget tests. */
@@ -1965,6 +1992,7 @@ async function maybeOcrGated(
   engine: BrainEngine,
   imgBuf: Buffer,
   mime: string,
+  onSuccess?: () => void,
 ): Promise<string> {
 
   // Counter helpers — quiet failure if config table is unavailable.
@@ -2006,6 +2034,7 @@ async function maybeOcrGated(
     }
     const text = await generateOcrText(imgBuf, mime);
     await bump('ocr_succeeded');
+    onSuccess?.();
     return text;
   } catch (err) {
     if (!_ocrWarnedThisSession) {
@@ -2074,12 +2103,22 @@ export async function importImageFile(
   const linkOpts = opts.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;
-  const buf = readFileSync(filePath);
+  const buf = readSourceFileSync(filePath);
   const hash = createHash('sha256').update(buf).digest('hex');
 
   const existing = await engine.getPage(imageSlug, sourceOpts);
+  const hadProtectedOcr = !!existing && hasProtectedBody(existing.compiled_truth + '\n' + (existing.timeline || ''));
   if (existing?.content_hash === hash) {
-    return { slug: imageSlug, status: 'skipped', chunks: 0 };
+    if (hadProtectedOcr) {
+      // OCR being disabled or failing on a later run cannot make the same
+      // protected pixels safe for visual ranking.
+      return { slug: imageSlug, status: 'skipped', chunks: 0,
+        error: 'Image OCR contains protected sections. Remove that content from the source image and reimport the changed image.' };
+    }
+    // An unchanged legacy image still needs its full OCR/visual index rebuilt.
+    const sealed = await engine.executeRaw(`SELECT id FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${safeChunksFilter('p')}`,
+      [sourceOpts.sourceId, imageSlug]);
+    if (sealed.length) return { slug: imageSlug, status: 'skipped', chunks: 0 };
   }
 
   // Decode HEIC/AVIF; pass-through for universal codecs.
@@ -2100,9 +2139,16 @@ export async function importImageFile(
 
   // OCR opt-in (cherry-1). Runs through the per-process limiter so 100
   // images first-import doesn't serialize into 200s of OCR latency.
-  const ocrText: string = opts.noEmbed
-    ? ''
+  const ocr = opts.noEmbed
+    ? { text: '', successful: false }
     : await _ocrLimiter(() => maybeOcr(engine, decoded.buf, decoded.mime));
+  if (hadProtectedOcr && !ocr.successful) {
+    return { slug: imageSlug, status: 'skipped', chunks: 0,
+      error: 'Replacing an image with protected OCR requires successful fresh OCR. Enable OCR and reimport the changed image.' };
+  }
+  // Protection checks, chunks and stored OCR must agree on canonical text,
+  // including markers made recognizable by NUL removal.
+  const ocrText = sanitizeText(ocr.text);
 
   // Multimodal embed.
   let embedding: Float32Array | null = null;
@@ -2136,7 +2182,7 @@ export async function importImageFile(
   // chunk_source='image_asset' joins the v0.20 chunk_source allowlist.
   const chunk: ChunkInput & { modality?: string; embedding_image?: Float32Array } = {
     chunk_index: 0,
-    chunk_text: ocrText || filename,
+    chunk_text: sanitizeRemoteBody(ocrText || filename),
     chunk_source: 'image_asset',
     modality: 'image',
     ...(embedding ? { embedding_image: embedding } : {}),
@@ -2167,6 +2213,9 @@ export async function importImageFile(
     // a changed image whose OCR yields nothing legitimately blanks the body.
     allowEmptyOverwrite: true,
     chunks: [chunk],
+    // The visual embedding still represents every pixel. An OCR fence means
+    // the image cannot be sealed merely by sanitizing its textual fragment.
+    safeChunks: !hasProtectedBody(ocrText || ''),
     file: fileSpec,
     after: async (tx) => {
       // Cherry-3: path-proximity auto-link to a sibling text page. The first

@@ -505,50 +505,64 @@ export function upsertFactRow(
     },
   ];
 
-  const newFence = renderFactsTable(allRows);
+  return { body: replaceOrInsertFactsFence(body, renderFactsTable(allRows)), rowNum: nextRowNum };
+}
 
+/**
+ * The ONE fence-placement rule, shared by every writer that materializes a
+ * fence into a page body (upsertFactRow, the phantom-redirect canonical
+ * append, the importer's hidden-row merge). Replaces an existing fence in
+ * place; otherwise inserts a fresh `## Facts` section carrying `fenceBlock`.
+ *
+ * #4756: the FIRST fence must land in compiled_truth — ABOVE the timeline
+ * sentinel. splitBody() files everything below the sentinel into
+ * page.timeline, where extract_facts refuses to reconcile it
+ * (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF append on any page that already
+ * had a timeline froze the fence permanently. No sentinel → EOF append.
+ */
+export function replaceOrInsertFactsFence(body: string, fenceBlock: string): string {
   const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
   const endIdx   = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
-  let out: string;
   if (beginIdx !== -1 && endIdx !== -1) {
-    out = body.slice(0, beginIdx) + newFence + body.slice(endIdx + FACTS_FENCE_END.length);
-  } else {
-    // #4756: the FIRST fence must land in compiled_truth — ABOVE the timeline
-    // sentinel. splitBody() files everything below the sentinel into
-    // page.timeline, where extract_facts refuses to reconcile it
-    // (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF append on any page that
-    // already had a timeline froze the fence permanently.
-    const section = `## Facts\n\n${newFence}\n`;
-    const sentinelAt = timelineSentinelOffset(body);
-    if (sentinelAt !== -1) {
-      const head = body.slice(0, sentinelAt);
-      const sep = head === '' ? '' : head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n';
-      out = `${head}${sep}${section}\n${body.slice(sentinelAt)}`;
-    } else {
-      const sep = body.endsWith('\n') ? '\n' : '\n\n';
-      out = `${body}${sep}${section}`;
-    }
+    return body.slice(0, beginIdx) + fenceBlock + body.slice(endIdx + FACTS_FENCE_END.length);
   }
-  return { body: out, rowNum: nextRowNum };
+  const section = `## Facts\n\n${fenceBlock}\n`;
+  const sentinelAt = timelineSentinelOffset(body);
+  if (sentinelAt !== -1) {
+    const head = body.slice(0, sentinelAt);
+    const sep = head === '' ? '' : head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n';
+    return `${head}${sep}${section}\n${body.slice(sentinelAt)}`;
+  }
+  const sep = body.endsWith('\n') ? '\n' : '\n\n';
+  return `${body}${sep}${section}`;
 }
 
 /**
  * Char offset of the line start of the first timeline sentinel in `body`,
- * or -1 when none is present. Mirrors the UNAMBIGUOUS sentinel forms of
- * `markdown.ts:findTimelineSplitIndex` (`<!-- timeline -->` /
- * `<!--timeline-->` — what serializeMarkdown emits — plus the decorated
- * `--- timeline ---`). The legacy bare `---` + `## Timeline` fallback is
- * deliberately NOT matched: upsertFactRow receives raw on-disk text that may
- * still carry YAML frontmatter, whose `---` delimiters would false-positive
- * that rule (findTimelineSplitIndex documents the same caveat — it expects
- * body lines). Local rather than imported because this module must stay free
- * of markdown.ts's transitive dependency graph (see the FactKind comment at
- * the top of the file).
+ * or -1 when none is present. Mirrors every sentinel form
+ * `markdown.ts:findTimelineSplitIndex` honours (#4756): `<!-- timeline -->` /
+ * `<!--timeline-->` (what serializeMarkdown emits), the decorated
+ * `--- timeline ---`, and the legacy bare `---` whose next non-empty line is
+ * `## Timeline` / `## History` — the shape the recommended page templates
+ * emit. upsertFactRow receives RAW on-disk text, so a leading YAML
+ * frontmatter block is skipped first (same skip as
+ * timeline-write-through.ts) and its `---` delimiters can't false-positive
+ * the bare-`---` rule. Local rather than imported because this module must
+ * stay free of markdown.ts's transitive dependency graph (see the FactKind
+ * comment at the top of the file).
  */
 function timelineSentinelOffset(body: string): number {
+  const lines = body.split('\n');
+  let start = 0;
+  if (lines[0]?.trim() === '---') {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '---') { start = i + 1; break; }
+    }
+  }
   let offset = 0;
-  for (const line of body.split('\n')) {
-    const trimmed = line.trim();
+  for (let i = 0; i < start; i++) offset += lines[i].length + 1;
+  for (let i = start; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
     if (
       trimmed === '<!-- timeline -->' ||
       trimmed === '<!--timeline-->' ||
@@ -556,7 +570,15 @@ function timelineSentinelOffset(body: string): number {
     ) {
       return offset;
     }
-    offset += line.length + 1;
+    if (trimmed === '---' && lines.slice(start, i).join('\n').trim().length > 0) {
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j].trim();
+        if (next.length === 0) continue;
+        if (/^##\s+(timeline|history)\s*$/i.test(next)) return offset;
+        break;
+      }
+    }
+    offset += lines[i].length + 1;
   }
   return -1;
 }

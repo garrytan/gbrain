@@ -29,7 +29,7 @@
 import type { BrainEngine } from './engine.ts';
 import { isUndefinedTableError } from './utils.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
-import { stripCodeBlocks } from './link-extraction.ts';
+import { stripCodeBlocks, isCrossSourceLinksEnabled } from './link-extraction.ts';
 // #4222: shared generic-token reject list — same list gates enrichEntity
 // minting and drives the junk_entity_hubs doctor check.
 import { isGenericEntityToken } from './entity-name-quality.ts';
@@ -105,6 +105,15 @@ export interface FindMentionsOpts {
   fromSlug: string;
   /** Source id of the page being scanned. Used for cross-source guard. */
   fromSourceId: string;
+  /**
+   * Lift the cross-source guard: a mention in source A of an entity that
+   * lives only in source B produces a mention with the entity's own
+   * `source_id`. Callers derive this from `link_resolution.cross_source`
+   * (via `isCrossSourceLinksEnabled`) so the mention scan follows the same
+   * operator opt-in as wikilink resolution. Default false — the historical
+   * same-source-only posture.
+   */
+  allowCrossSource?: boolean;
 }
 
 // ============================================================
@@ -501,9 +510,14 @@ export async function buildGazetteer(
     }
   }
 
-  // Sort each bucket by token-count DESC so maximal-munch walks longest-first.
+  // Sort each bucket by token-count DESC so maximal-munch walks longest-first;
+  // ties break on (source_id, slug) so the pick among same-name entries is
+  // deterministic instead of following DB row order.
   for (const bucket of gazetteer.values()) {
-    bucket.sort((a, b) => b.tokens.length - a.tokens.length);
+    bucket.sort((a, b) =>
+      (b.tokens.length - a.tokens.length)
+      || a.source_id.localeCompare(b.source_id)
+      || a.slug.localeCompare(b.slug));
   }
   return gazetteer;
 }
@@ -523,9 +537,12 @@ export async function buildGazetteer(
  *
  * Guards (deterministic):
  *  - D13 self-link: skip when `fromSlug === entry.slug`.
- *  - Cross-source: skip when `fromSourceId !== entry.source_id` (mention
- *    in source A of an entity in source B is suppressed; design doc
- *    treats this as deliberate isolation in v1, can relax in a follow-up).
+ *  - Cross-source: skip when `fromSourceId !== entry.source_id` UNLESS
+ *    `opts.allowCrossSource` (the `link_resolution.cross_source` opt-in —
+ *    the same switch wikilink resolution honours). A same-name entity in
+ *    the scanning page's OWN source always outranks a cross-source twin,
+ *    whichever way the switch is set (bucket order is length-only, so the
+ *    first maximal match may be the foreign twin).
  *  - First-mention-only cap: dedup by `entry.slug` (one link per
  *    target page regardless of how many body mentions there are).
  *
@@ -586,12 +603,25 @@ export function findMentionedEntities(
       continue;
     }
 
+    // Same-name twin in the scanning page's own source wins over a foreign
+    // one: bucket order is length-only, so `matched` may be the cross-source
+    // twin even when an own-source entry with identical tokens exists.
+    if (matched.source_id !== opts.fromSourceId) {
+      const want = matched.tokens;
+      const own = bucket.find(
+        e => e.source_id === opts.fromSourceId
+          && e.tokens.length === want.length
+          && e.tokens.every((t, k) => t === want[k]),
+      );
+      if (own) matched = own;
+    }
+
     // Guards.
     if (matched.slug === opts.fromSlug) {
       i += matchedTokens;
       continue;
     }
-    if (matched.source_id !== opts.fromSourceId) {
+    if (!opts.allowCrossSource && matched.source_id !== opts.fromSourceId) {
       i += matchedTokens;
       continue;
     }
@@ -697,6 +727,7 @@ export async function scanStaleMentions(
   if (totalPagesWithMentions === 0) return empty;
 
   const gazetteer = await buildGazetteer(engine);
+  const allowCrossSource = await isCrossSourceLinksEnabled(engine);
 
   // Same bounded page set for both queries so the link rows and the bodies
   // can never describe different pages.
@@ -761,6 +792,7 @@ export async function scanStaleMentions(
       findMentionedEntities(page.body, gazetteer, {
         fromSlug: page.slug,
         fromSourceId,
+        allowCrossSource,
       }).map(m => `${m.source_id}::${m.slug}`),
     );
 

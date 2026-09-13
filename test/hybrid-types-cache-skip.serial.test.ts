@@ -1,16 +1,10 @@
 /**
- * #3985 — `types`-filtered searches must bypass the semantic query cache.
- *
- * `types` is not part of knobsHash, so a type-filtered result set stored in
- * the cache could be served to an unfiltered lookup (and vice versa) — the
- * same contamination class as #3442's date filters. Pins:
- *   1. a types run reports cache 'disabled' (skip on lookup AND store),
- *   2. an unfiltered write is never served to a types read,
- *   3. a types run never stores a row for later unfiltered hits.
- *
- * Serial: mock.module + gateway/global-env mutation (same harness shape as
- * test/hybrid-cache-scope-poison.serial.test.ts).
+ * Production-wrapper regression coverage with semantic response caching disabled.
+ * Fresh reads must retain filtering, metadata and telemetry guarantees; legacy
+ * cache implementation behavior is covered by the direct cache-class suites.
+ * Serial because embedding and gateway configuration are process-global.
  */
+
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -87,20 +81,17 @@ beforeEach(async () => {
 });
 
 describe('#3985 — types-filtered requests skip the semantic cache', () => {
-  test('an unfiltered write is never served to a types read (and the types run stores nothing)', async () => {
-    // 1. Unfiltered miss-run stores a row containing BOTH pages.
-    let missMeta: HybridSearchMeta | undefined;
+  test('a types filter applies after an unfiltered read and both leave the cache empty', async () => {
+    let firstMeta: HybridSearchMeta | undefined;
     const unfiltered = await hybridSearchCached(engine, 'builder', {
       limit: 10,
-      onMeta: (m) => { missMeta = m; },
+      onMeta: (m) => { firstMeta = m; },
     });
-    expect(missMeta?.cache?.status).toBe('miss');
+    expect(firstMeta?.cache?.status).toBe('disabled');
     expect(unfiltered.map((r) => r.slug).sort()).toEqual(['alice-foo', 'bob-bar']);
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
 
-    // 2. Same query WITH a types filter: identical embedding + knobs would
-    //    have HIT the stored all-types row pre-fix. Must bypass instead.
     let typesMeta: HybridSearchMeta | undefined;
     const personsOnly = await hybridSearchCached(engine, 'builder', {
       limit: 10,
@@ -110,9 +101,8 @@ describe('#3985 — types-filtered requests skip the semantic cache', () => {
     expect(typesMeta?.cache?.status).toBe('disabled');
     expect(personsOnly.map((r) => r.slug)).toEqual(['alice-foo']);
 
-    // 3. The types run must not have stored anything either.
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
   });
 
   test('a types-first run leaves the cache empty, so a later unfiltered read gets full recall', async () => {

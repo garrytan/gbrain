@@ -713,6 +713,18 @@ describe('resolveSourceLocalFilePath — POSIX backslash-in-filename (undeclared
     expect(resolved).toBe(join(repoRoot, 'Archive', 'POL', '2019-10-03 \\never-written-.md'));
   });
 
+  test('basename-relative source_path can resolve under the page slug directory', () => {
+    repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-basename-source-path-'));
+    mkdirSync(join(repoRoot, '.git'));
+    mkdirSync(join(repoRoot, 'journal'), { recursive: true });
+    const filePath = join(repoRoot, 'journal', 'daily-note.md');
+    writeFileSync(filePath, '# Daily note');
+
+    const resolved = resolveSourceLocalFilePath(repoRoot, 'daily-note.md', 'journal/daily-note');
+
+    expect(resolved).toBe(filePath);
+  });
+
   test('path traversal via a real `/`-separated `..` segment is still rejected', () => {
     repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-backslash-traversal-'));
     mkdirSync(join(repoRoot, '.git'));

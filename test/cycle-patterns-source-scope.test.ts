@@ -46,8 +46,8 @@ beforeAll(async () => {
     ON CONFLICT (id) DO NOTHING;
   `);
   await db.exec(`
-    INSERT INTO minion_jobs (id, queue, name, data, status)
-    VALUES (2001, 'default', 'subagent', '{}'::jsonb, 'completed')
+    INSERT INTO minion_jobs (submission_authority, id, queue, name, data, status)
+    VALUES ('{"version":1,"kind":"application"}'::jsonb, 2001, 'default', 'subagent', '{}'::jsonb, 'completed')
     ON CONFLICT (id) DO NOTHING;
   `);
   await db.query(

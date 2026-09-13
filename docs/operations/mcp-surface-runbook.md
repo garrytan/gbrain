@@ -140,9 +140,8 @@ ops: `get_page` / `fetch` / `list_pages`, `get_chunks` / `get_versions` /
 `get_timeline` / `get_raw_data`, `resolve_slugs`,
 `get_links` / `get_backlinks` / `traverse_graph`, and the list-style
 analytics ops `find_orphans` / `get_recent_salience` / `find_anomalies` /
-`find_experts` (published counts and derived statistics are adjusted with
-the filtered rows, so remote responses stay self-consistent and reveal
-nothing about what was filtered). A gated page reads exactly
+`find_experts`. Concrete rows and contributing pages are authorized inside
+the database before limits and aggregate calculations. A gated page reads exactly
 like a missing one (no existence oracle), and link/graph output never
 enumerates private slugs.
 
@@ -159,6 +158,20 @@ Clearing the key (`gbrain config set search.remote_private_pages ''`)
 restores enforcement on the same schedule. Resolver:
 `src/core/search/private-visibility.ts`; a failed config read counts as
 "not opted out" (enforce).
+
+Page-visibility opt-outs do not change protected-body filtering: remote page
+and history bodies retain only world Facts and omit every Takes fence. History
+also checks snapshot visibility while page privacy is enforced. Malformed
+protected sections are omitted; unterminated or interleaved sections discard
+the remaining tail. Restricted salience counts only permitted active takes and
+ignores stored emotional weight; its recent window uses `updated_at` rather
+than take-driven salience touches.
+
+Semantic result caching is temporarily disabled even when configuration enables
+it. Searches run fresh, so repeated requests may cost more and take longer.
+Stored rows and cache maintenance remain available. Stored contradiction reports
+are temporarily available only to trusted local callers without a source filter;
+other callers receive an empty list and an availability note.
 
 ## Incident levers
 
@@ -177,14 +190,12 @@ restores enforcement on the same schedule. Resolver:
   retrieval (no allSettled salvage, strict budget, no minKeep failsafe)
   if the fail-loud retrieval behavior itself misbehaves.
 
-**Total embed outage, what to expect (ENG-6):** the query cache is
-uncacheable by construction during a full embedding outage — `query_cache`
-keys on embedding similarity, and both store and lookup no-op on a null
-embedding. Expect cache hit rate ~0 (`gbrain search stats`) and
-keyword-only degraded results carrying `_meta.retrieval.degraded` stages
-plus the model-visible block on empty results. This is the designed
-degradation, not a second incident; only PARTIAL degradations (expansion
-failed, vector arm failed) get short-TTL cache entries.
+**Total embed outage, what to expect (ENG-6):** semantic result caching
+remains disabled for both complete and partial degradations; neither reads
+nor writes a cached response. New searches report caching as disabled, while
+`gbrain search stats` can retain historical hits within its reporting window.
+Expect keyword-only degraded results carrying `_meta.retrieval.degraded`
+stages plus the model-visible block on empty results.
 
 ## The honest-catalog metric (trend to zero)
 
@@ -244,3 +255,14 @@ call '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","a
 # 3+4 need write/agent scopes — run only when the token has them:
 #   submit_agent → response contains "queue_state"; put_page → "writer_lint".
 ```
+
+
+## Temporary code-inspection availability
+
+`code_def`, `code_refs`, `code_callers`, `code_callees`, `code_blast`, and
+`code_flow` are temporarily restricted to explicitly trusted local callers.
+Remote and unset-trust calls receive an availability error before code storage
+or traversal caches are read. Remote search also omits optional code-graph
+expansion. Rebuilding search chunks restores ordinary chunk retrieval; it does
+not lift this separate code-tool restriction. No remote permission override is
+available. Trusted local code commands retain their existing behavior.

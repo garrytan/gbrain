@@ -78,6 +78,40 @@ describe('Voyage live — rerank wire contract', () => {
     const out = await rerank({ query: 'hello', documents: ['hello world', 'goodbye'] });
     expect(out.length).toBe(2);
   }, 30_000);
+
+  // #4938 — the newly allowlisted current generation. Same endpoint, same
+  // `{query, documents, model}` request and `data[{index, relevance_score}]`
+  // response as the 2.5 pair, which is why the recipe needed no path or
+  // top_param change. This is the live confirmation of that claim.
+  for (const model of ['voyage:rerank-3', 'voyage:rerank-3-lite'] as const) {
+    test(`${model} passes the wire with top_k honored (#4938)`, async () => {
+      if (skipAll) {
+        console.warn('[skip] VOYAGE_API_KEY not set');
+        return;
+      }
+      resetGateway();
+      configureGateway({
+        reranker_model: model,
+        env: { VOYAGE_API_KEY: API_KEY! },
+      });
+      const out = await rerank({
+        query: 'What is the capital of France?',
+        documents: [
+          'The Eiffel Tower is in Paris, the capital of France.',
+          'Bananas are a good source of potassium.',
+          'Paris is the capital and largest city of France.',
+        ],
+        topN: 2,
+      });
+      expect(out.length).toBe(2);
+      for (const r of out) {
+        expect(typeof r.index).toBe('number');
+        expect(typeof r.relevanceScore).toBe('number');
+      }
+      expect(out.map((r) => r.index).sort()).toEqual([0, 2]);
+      expect(out[0].relevanceScore).toBeGreaterThanOrEqual(out[1].relevanceScore);
+    }, 30_000);
+  }
 });
 
 describe('Voyage live — voyage-4 embed at the new-install width', () => {

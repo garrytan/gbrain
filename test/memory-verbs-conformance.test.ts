@@ -52,11 +52,13 @@ import {
 } from '../src/core/ai/gateway.ts';
 import { __setUsageLogPathForTests } from '../src/core/verbs/usage-log.ts';
 import { emptyHome, withEnv } from './helpers/with-env.ts';
+import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 
 let engine: PGLiteEngine;
 let home: string;
 
 beforeAll(async () => {
+  configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
   // Sidecar writes go to a temp file via the test seam — no global env mutation.
   home = mkdtempSync(join(tmpdir(), 'gbrain-verbs-test-'));
   __setUsageLogPathForTests(join(home, 'usage.jsonl'));
@@ -82,6 +84,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  // This suite's default contract is keyless. A previous file (or one of the
+  // deterministic-embedder cases below) must not leave fake credentials active
+  // after the transport seam is cleared. Individual cases opt in explicitly.
+  configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
   __setChatTransportForTests(null);
   __setEmbedTransportForTests(null);
 });

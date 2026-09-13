@@ -5,13 +5,16 @@ import { AgentsPage } from './pages/Agents';
 import { RequestLogPage } from './pages/RequestLog';
 import { CalibrationPage } from './pages/Calibration';
 import { JobsWatchPage } from './pages/JobsWatch';
+import { OAuthConsentPage } from './pages/OAuthConsent';
+import { pendingOAuthRequest } from './lib/oauth-request';
 import { api } from './api';
 
-type Page = 'login' | 'dashboard' | 'agents' | 'log' | 'calibration' | 'jobs';
+type Page = 'login' | 'dashboard' | 'agents' | 'log' | 'calibration' | 'jobs' | 'oauth-consent';
 
 function getPage(): Page {
   const hash = window.location.hash.replace('#', '') || 'dashboard';
-  if (['login', 'dashboard', 'agents', 'log', 'calibration', 'jobs'].includes(hash)) return hash as Page;
+  if (pendingOAuthRequest() && hash === 'dashboard') return 'oauth-consent';
+  if (['login', 'dashboard', 'agents', 'log', 'calibration', 'jobs', 'oauth-consent'].includes(hash)) return hash as Page;
   return 'dashboard';
 }
 
@@ -30,7 +33,7 @@ export function App() {
   };
 
   if (page === 'login') {
-    return <LoginPage onLogin={() => navigate('dashboard')} />;
+    return <LoginPage onLogin={() => navigate(pendingOAuthRequest() ? 'oauth-consent' : 'dashboard')} />;
   }
 
   const handleSignOutEverywhere = async () => {
@@ -86,6 +89,7 @@ export function App() {
         {page === 'log' && <RequestLogPage />}
         {page === 'calibration' && <CalibrationPage />}
         {page === 'jobs' && <JobsWatchPage />}
+        {page === 'oauth-consent' && <OAuthConsentPage />}
       </main>
     </div>
   );

@@ -93,6 +93,17 @@ describe('eval/longmemeval/sanitize: length cap', () => {
     expect(r.text.endsWith('...')).toBe(true);
   });
 
+  test('renderChatBlock honors maxSessionChars (the reader passes a full-session bound) and reports truncatedCount', () => {
+    const body = 'y'.repeat(9_000) + ' MARKER-AT-END';
+    const capped = renderChatBlock([{ session_id: 's1', body }]);
+    expect(capped.truncatedCount).toBe(1);
+    expect(capped.rendered).not.toContain('MARKER-AT-END');
+    const full = renderChatBlock([{ session_id: 's1', body }], { maxSessionChars: 60_000 });
+    expect(full.truncatedCount).toBe(0);
+    expect(full.sanitizedCount).toBe(0);
+    expect(full.rendered).toContain('MARKER-AT-END');
+  });
+
   test('content under cap is not flagged', () => {
     const content = 'x'.repeat(3500);
     const r = sanitizeChatContent(content);

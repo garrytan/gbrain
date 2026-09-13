@@ -31,7 +31,7 @@ async function seedClient(clientId: string, capUsd: number | null): Promise<void
   await engine.executeRaw(
     `INSERT INTO oauth_clients
        (client_id, client_name, client_secret_hash, scope, grant_types, redirect_uris, token_endpoint_auth_method, budget_usd_per_day, created_at, deleted_at)
-     VALUES ($1, $1, '', 'agent', ARRAY['client_credentials'], ARRAY[]::text[], 'client_secret_post', $2, now(), NULL)
+     VALUES ($1, $1, '', 'read', ARRAY['client_credentials'], ARRAY[]::text[], 'client_secret_post', $2, now(), NULL)
      ON CONFLICT (client_id) DO UPDATE SET budget_usd_per_day = EXCLUDED.budget_usd_per_day`,
     [clientId, capUsd],
   );
@@ -313,6 +313,33 @@ describe('minions/budget-meter (v0.38 Slice 2 — D3 reserve-then-settle)', () =
   });
 
   describe('committed spend feeds next reserve', () => {
+    it('TTL and a UTC day change never release unresolved liability', async () => {
+      await seedClient('client', 1);
+      const hold = await reserve(engine, { clientId: 'client', estimatedCents: 90, capCents: 100, model: 'm', provider: 'p' });
+      await engine.executeRaw("UPDATE mcp_spend_reservations SET created_at=now()-interval '2 days', expires_at=now()-interval '1 day' WHERE reservation_id=$1", [hold.reservationId]);
+      await sweepExpiredReservations(engine);
+      const rows = await engine.executeRaw<{ actual_cents: unknown; status: string }>('SELECT actual_cents,status FROM mcp_spend_reservations WHERE reservation_id=$1', [hold.reservationId]);
+      expect(rows[0]?.status).toBe('expired');
+      expect(rows[0]?.actual_cents).toBeNull();
+      await expect(reserve(engine, { clientId: 'client', estimatedCents: 11, capCents: 100, model: 'm', provider: 'p' })).rejects.toThrow(BudgetExceededError);
+      await settle(engine, hold.reservationId, 5);
+      await expect(reserve(engine, { clientId: 'client', estimatedCents: 90, capCents: 100, model: 'm', provider: 'p' })).resolves.toHaveProperty('reservationId');
+    });
+
+    it('unlimited unknown-price holds prevent later finite admission until reconciled', async () => {
+      await seedClient('client', null);
+      const hold = await reserve(engine, { clientId: 'client', estimatedCents: 0, estimateKnown: false, capCents: null, model: 'unknown', provider: 'p' });
+      await seedClient('client', 5);
+      await expect(reserve(engine, { clientId: 'client', estimatedCents: 1, capCents: null, model: 'm', provider: 'p' })).rejects.toThrow(BudgetExceededError);
+      await settle(engine, hold.reservationId, 20);
+      await expect(reserve(engine, { clientId: 'client', estimatedCents: 1, capCents: null, model: 'm', provider: 'p' })).resolves.toHaveProperty('reservationId');
+    });
+
+    it('a cap tightened after preflight wins inside the admission transaction', async () => {
+      await seedClient('client', 1);
+      await expect(reserve(engine, { clientId: 'client', estimatedCents: 101, capCents: 500, model: 'm', provider: 'p' })).rejects.toThrow(BudgetExceededError);
+    });
+
     it('settled spend pushes the next reserve over cap', async () => {
       await seedClient('alice', 1.00);
       const r1 = await reserve(engine, {

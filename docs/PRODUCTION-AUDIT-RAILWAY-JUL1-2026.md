@@ -70,7 +70,7 @@ bun run src/cli.ts serve --http --bind 0.0.0.0 --public-url https://gbrain-produ
 **Environment Variables Set:**
 - `GBRAIN_EMBEDDING_DIMENSIONS=1024` ✅
 - `GBRAIN_EMBEDDING_MODEL=voyage:voyage-4` ✅
-- `VOYAGE_API_KEY=pa-f9V8QpJe0ATicAiejYpr-...` ✅ (set, not truncated)
+- Voyage credentials are configured privately.
 - `DATABASE_URL=postgresql://...` ✅ (points to Supabase)
 
 ✅ **VERDICT:** All config is correct.

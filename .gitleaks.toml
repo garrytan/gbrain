@@ -1,11 +1,63 @@
 title = "GBrain gitleaks config"
 
-[allowlist]
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documented nonfunctional environment examples"
   paths = [
-    '''.env\.testing\.example''',
-    '''.env\.example''',
-    '''test/''',
-    '''skills/''',
-    '''.claude/skills/''',
-    '''GBRAIN_SKILLPACK\.md''',
+    # These tracked files contain documented, nonfunctional configuration examples.
+    '''^\.env\.testing\.example$''',
+    '''^\.env\.example$''',
+    # Public upstream localhost-only TLS fixture, never a deployed credential.
+    '''^test/fixtures/guarded-http-localhost\.key$''',
   ]
+
+[[allowlists]]
+description = "Exact nonfunctional credentials used by authentication and redaction tests"
+targetRules = ["generic-api-key", "aws-access-token", "github-pat", "jwt", "openai-api-key"]
+condition = "AND"
+paths = [
+  '''^test/(auth-register-client-output-pin|claw-test-cli|config|config-get-plane|google-access|google-auth|mcp-registration-blocks|secret-scan|session-receipts|tty-harness|transcript-render)\.test\.ts$''',
+  '''^test/creds-vault\.serial\.test\.ts$''',
+  '''^test/e2e/transcripts-ingest-pglite\.test\.ts$''',
+  '''^\.claude/skills/gstack/(browse/test/commands|test/skill-e2e-cso)\.test\.ts$''',
+]
+regexTarget = "secret"
+# The AWS fixture uses a character class so this exact match does not itself
+# resemble a credential to other scanners. The accepted fixture is unchanged.
+regexes = [
+  '''^(gbrain_cs_secret456|or-sentinel-91c4|eyJhbGciOiJIUzI1NiJ9|ghp-test3943-db-secret|GOCSPX-test1234567890|GOCSPX-abc123|tok-abcdef123|sekret_xyz789|aB3xK9mQ2pR7|K9fjq2LmX0pQ7rTz|Ab3xK9mQ2pR7sT1vW4yZ8bC5dE6f|straddling-secret-99|AKI[A]ABCDEFGHIJKLMNOP|ghp_abc123def456|sk-1234567890abcdef1234567890abcdef)$''',
+]
+
+[[allowlists]]
+description = "SQL column and prose identifiers misclassified as API keys"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^src/(schema\.sql|core/(pglite-schema|schema-embedded(?:\.generated)?|link-extraction)\.ts)$''']
+regexTarget = "secret"
+regexes = ['''^(receipt_sha8_corpus|raw/lower/slugified)$''']
+
+[[allowlists]]
+description = "Generated admin curl example reads the secret from an environment variable"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^admin/dist/assets/index-[A-Za-z0-9_-]+\.js$''']
+regexTarget = "match"
+regexes = ['''client_secret=\$GBRAIN_CS''']
+
+[[allowlists]]
+description = "Literal placeholders in generated admin curl instructions"
+targetRules = ["curl-auth-header"]
+condition = "AND"
+paths = ['''^admin/dist/assets/index-[A-Za-z0-9_-]+\.js$''']
+regexTarget = "secret"
+regexes = ['''^(PASTE_TOKEN_FROM_ABOVE|PASTE_YOUR_API_KEY_HERE)$''']
+
+[[allowlists]]
+description = "Upstream telemetry's explicitly public Supabase publishable key; never a service-role key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^\.claude/skills/gstack/supabase/config\.sh$''']
+regexTarget = "secret"
+regexes = ['''^sb_publishable_[A-Za-z0-9_-]+$''']

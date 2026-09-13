@@ -31,8 +31,10 @@
  * Fail-open everywhere: a probe error returns the organic results unchanged.
  */
 
+import { sanitizeRemoteBody } from '../remote-body.ts';
+import { hasReadPolicy } from './read-policy-sql.ts';
 import type { BrainEngine } from '../engine.ts';
-import type { SearchResult } from '../types.ts';
+import type { SearchResult, PageReadPolicy } from '../types.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { isLookupShapedQuery } from './query-intent.ts';
 import { applySupersedeDownrank } from './hybrid.ts';
@@ -48,7 +50,7 @@ export function isSlugShapedQuery(query: string): boolean {
   return q.length > 0 && !/\s/.test(q) && q.includes('/') && !q.startsWith('/') && !q.endsWith('/');
 }
 
-export interface ExactLookupOpts {
+export interface ExactLookupOpts extends PageReadPolicy {
   sourceId?: string;
   sourceIds?: string[];
   /**
@@ -116,8 +118,8 @@ export async function structuralExactLookup(
     for (const scope of scopes) {
       try {
         const page = scope != null
-          ? await engine.getPage(q, { sourceId: scope })
-          : await engine.getPage(q); // gbrain-allow-unscoped-getpage — read-only first-match; no paired write
+          ? await engine.getPage(q, { sourceId: scope, excludePrivate: opts.excludePrivate })
+          : await engine.getPage(q, { excludePrivate: opts.excludePrivate }); // gbrain-allow-unscoped-getpage — read-only first-match; no paired write
         if (!page) continue;
         push({
           page_id: page.id,
@@ -125,7 +127,7 @@ export async function structuralExactLookup(
           title: page.title,
           type: page.type,
           source_id: page.source_id ?? scope ?? 'default',
-          chunk_text: (page.compiled_truth ?? '').slice(0, 200),
+          chunk_text: sanitizeRemoteBody(page.compiled_truth ?? '').slice(0, 200),
           chunk_index: 0,
           chunk_id: 0,
           score: 0, // caller assigns the injection score
@@ -159,7 +161,7 @@ export async function structuralExactLookup(
   // `superseded`); tier scores are assigned by the caller afterwards, so the
   // stage's score mutation on dropped rows is irrelevant.
   try {
-    await applySupersedeDownrank(hits, engine);
+    await applySupersedeDownrank(hits, engine, hasReadPolicy(opts) ? opts : undefined);
   } catch {
     // fail-open: filter unavailable (pre-links schema) → keep hits
   }

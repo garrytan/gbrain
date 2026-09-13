@@ -37,7 +37,7 @@ import type {
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig, isConfigTruthy } from '../../config.ts';
-import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
+import { buildBrainTools, selectAllowedTools } from '../tools/brain-allowlist.ts';
 import {
   acquireLease,
   releaseLease,
@@ -52,7 +52,7 @@ import { resolveModel, isAnthropicProvider, isOpenRouterSubagentFamily, TIER_DEF
 import { splitProviderModelId, normalizeModelId } from '../../model-id.ts';
 import { resolveAnthropicKey } from '../../ai/anthropic-key.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
-import { toolLoop as gatewayToolLoop, isThinkingByDefaultModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../ai/gateway.ts';
+import { toolLoop as gatewayToolLoop, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
 import { runSubagentOneshot, ONESHOT_TOOL_USE_ID_PREFIX } from './subagent-oneshot.ts';
@@ -70,6 +70,11 @@ import {
   type PersistedToolExec,
 } from './subagent-persistence.ts';
 import { randomUUIDv7 } from 'bun';
+import { snapshotFromJob } from '../delegated-policy.ts';
+import { applyDelegatedData, guardDelegatedTools } from '../delegated-tools.ts';
+import { withDelegatedSpend } from '../delegated-spend.ts';
+import { invokeAI, sdkInvocationUsage, hasAIInvocationGuard } from '../../ai/invocation-guard.ts';
+import { chatInvocation } from '../../ai/guarded-generation.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
@@ -81,9 +86,9 @@ const DEFAULT_RATE_KEY = 'anthropic:messages';
 /**
  * Resolve the per-turn output-token cap (#2778). Per-job data wins, then the
  * `agent.max_output_tokens` config row, then a model-aware default: 32000 for
- * thinking-by-default Claude 5 models (#4087 — they burn most of the budget on
- * internal reasoning; the flat 8192 default produced zero-tool-call truncated
- * runs even after the gateway learned to detect them), 8192 for everything
+ * thinking-by-default models (#4087 Claude 5 by name, #4172 recipe-declared
+ * such as DeepSeek v4: they burn most of the budget on internal reasoning; the
+ * flat 8192 default produced zero-tool-call truncated runs), 8192 for everything
  * else (was a hardcoded 4096 that made pages >~12KB unwritable via put_page).
  * Invalid values (NaN / zero / negative) fall through to the next tier.
  */
@@ -99,7 +104,7 @@ export function resolveMaxOutputTokens(
     const n = Number(configRaw);
     if (Number.isFinite(n) && n > 0) return Math.floor(n);
   }
-  return isThinkingByDefaultModel(model) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
+  return isThinkingModel(model) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 /**
@@ -139,7 +144,7 @@ const DEFAULT_SYSTEM = DEFAULT_SUBAGENT_SYSTEM;
  * structurally; tests can substitute a mock without the SDK import.
  */
 export interface MessagesClient {
-  create(params: Anthropic.MessageCreateParamsNonStreaming, opts?: { signal?: AbortSignal }): Promise<Anthropic.Message>;
+  create(params: Anthropic.MessageCreateParamsNonStreaming, opts?: { signal?: AbortSignal; maxRetries?: number }): Promise<Anthropic.Message>;
 }
 
 export interface SubagentDeps {
@@ -272,7 +277,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       fallbackReason?: OneshotFallbackReason;
       oneshotTokens?: { in: number; out: number; cache_read: number; cache_create: number };
     } = {};
-    const inner = await subagentHandlerInner(ctx, modeState);
+    const submitted = snapshotFromJob(ctx.data);
+    const inner = await withDelegatedSpend(engine, submitted, ctx.id, () => subagentHandlerInner(ctx, modeState));
     // #4216: stamp which execution path produced the result. Jobs with no
     // `mode` field keep the legacy result shape (REGRESSION pin).
     // Honesty rule: 'agentic_fallback' is stamped ONLY when the oneshot
@@ -320,7 +326,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     oneshotTokens?: { in: number; out: number; cache_read: number; cache_create: number };
   } = {},
   ): Promise<SubagentResult> {
-    const data = (ctx.data ?? {}) as unknown as SubagentHandlerData;
+    const data = { ...(ctx.data ?? {}) } as unknown as SubagentHandlerData;
+    const submitted = snapshotFromJob(ctx.data);
+    await applyDelegatedData(engine, submitted, ctx.id, data);
     if (!data.prompt || typeof data.prompt !== 'string') {
       throw new Error('subagent job data.prompt is required (string)');
     }
@@ -466,9 +474,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // #1586: cycle-resolved source scope for tool-call OperationContexts.
       sourceId: data.source_id,
     });
-    const toolDefs = data.allowed_tools && data.allowed_tools.length > 0
-      ? filterAllowedTools(registry, data.allowed_tools)
-      : registry;
+    const selectedTools = selectAllowedTools(registry, data.allowed_tools);
+    const guardTools = (tools: ToolDef[], deferEmbeds = false) => guardDelegatedTools(engine, config, submitted, ctx.id, tools, deps.toolRegistry !== undefined, deferEmbeds);
+    const toolDefs = guardTools(selectedTools);
 
     // v0.41 Approach C: render the final system prompt now that toolDefs
     // is known. Splices a deterministic tool-usage preamble listing each
@@ -536,9 +544,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         // that scoped its job read-only must not gain write capability by
         // setting mode: oneshot (put_page filtered out → no_put_page_tool
         // fallback → the equally-filtered loop).
-        const oneshotTools = data.allowed_tools && data.allowed_tools.length > 0
-          ? filterAllowedTools(oneshotRegistry, data.allowed_tools)
-          : oneshotRegistry;
+        const oneshotSelectedTools = selectAllowedTools(oneshotRegistry, data.allowed_tools);
+        const oneshotTools = guardTools(oneshotSelectedTools, true);
         const outcome = await runSubagentOneshot({
           engine,
           ctx,
@@ -549,7 +556,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           leaseKey: gatewayLeaseKey,
           maxConcurrent,
           leaseTtlMs,
-          _chat: deps._chat,
+          _chat: deps._chat ? opts => invokeAI(chatInvocation('subagent_oneshot', normalizeModelId(model), maxOutputTokens),
+            () => deps._chat!(opts), sdkInvocationUsage) : undefined,
         });
         if (outcome.kind === 'done') return outcome.result;
         modeState.fallbackReason = outcome.reason;
@@ -885,7 +893,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         };
 
         const combinedSignal = mergeSignals(mergeSignals(ctx.signal, ctx.shutdownSignal), leaseLost.signal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        assistantMsg = await invokeAI({ ...chatInvocation('subagent_legacy', normalizeModelId(model), maxOutputTokens), cacheWriteTtl: '5m' },
+          () => client.create(params, { signal: combinedSignal, ...(hasAIInvocationGuard() ? { maxRetries: 0 } : {}) }), sdkInvocationUsage);
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         clearInterval(leaseRenewTimer);

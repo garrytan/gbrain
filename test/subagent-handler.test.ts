@@ -125,6 +125,21 @@ function makeThrowingTool(name = 'broken'): ToolDef {
 // ── Tests ───────────────────────────────────────────────────
 
 describe('subagent handler happy path', () => {
+  test('an explicit empty binding exposes no tools to the agent loop', async () => {
+    const client = new FakeMessagesClient([{ content: [{ type: 'text', text: 'done' }] as any }]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeEchoTool('echo')] });
+    await handler(await makeCtx({ prompt: 'finish', allowed_tools: [] }));
+    expect(client.calls[0]!.tools ?? []).toEqual([]);
+  });
+
+  test('malformed bindings fail before a model request', async () => {
+    for (const allowed_tools of [null, 'echo', [42], ['']]) {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeEchoTool('echo')] });
+      await expect(handler(await makeCtx({ prompt: 'finish', allowed_tools }))).rejects.toThrow(/allowed_tools/);
+      expect(client.calls).toHaveLength(0);
+    }
+  });
   test('no-tool end_turn: returns text response + persists user + assistant rows', async () => {
     const client = new FakeMessagesClient([
       { content: [{ type: 'text', text: 'hello world' }] as any, stop_reason: 'end_turn' },
@@ -715,8 +730,10 @@ describe('handler-entry capability gate on the config-resolved model', () => {
     // The queue submit gate only sees explicit data.model. A job that omits
     // data.model resolves `models.subagent` inside the handler — pre-fix that
     // path bypassed the capability check entirely and a tool-incapable model
-    // (declared supports_tools: false) ran the loop anyway.
-    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    // (declared supports_tools: false) ran the loop anyway. Fixture is the
+    // nvidia recipe: it still declares supports_tools: false (minimax flipped
+    // to true in #4782, so it no longer exercises the no_tools path).
+    await engine.setConfig('models.subagent', 'nvidia:nvidia/nemotron-3-super-120b-a12b');
     try {
       const client = new FakeMessagesClient([
         { content: [{ type: 'text', text: 'should never run' }] as any, stop_reason: 'end_turn' },
@@ -740,7 +757,7 @@ describe('handler-entry capability gate on the config-resolved model', () => {
     // non-Anthropic models regardless). The gateway path's terminal
     // early-return runs before any provider client is constructed, so no
     // API key is needed.
-    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    await engine.setConfig('models.subagent', 'nvidia:nvidia/nemotron-3-super-120b-a12b');
     await engine.setConfig('agent.use_gateway_loop', 'true');
     try {
       const client = new FakeMessagesClient([]);
@@ -776,7 +793,7 @@ describe('handler-entry capability gate on the config-resolved model', () => {
     // A gateway transcript persists pending dispatch as `tool-call` blocks.
     // A replay that still needs the loop to resume on the provider must NOT
     // slip past the capability gate via the terminal exception.
-    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    await engine.setConfig('models.subagent', 'nvidia:nvidia/nemotron-3-super-120b-a12b');
     await engine.setConfig('agent.use_gateway_loop', 'true');
     try {
       const client = new FakeMessagesClient([]);
@@ -938,6 +955,9 @@ describe('resolveMaxOutputTokens model-aware default', () => {
     expect(resolveMaxOutputTokens(undefined, null, 'openrouter:anthropic/claude-sonnet-5')).toBe(32000);
     expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-fable-5')).toBe(32000);
   });
+  test('recipe-declared thinking models (DeepSeek v4) get 32000 too (#4172)', () => {
+    expect(resolveMaxOutputTokens(undefined, null, 'deepseek:deepseek-v4-flash')).toBe(32000);
+  });
   test('non-thinking models keep 8192', () => {
     expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-sonnet-4-6')).toBe(8192);
     expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-3-5-sonnet-20241022')).toBe(8192);
@@ -1029,7 +1049,7 @@ describe('oneshot mode dispatch (#4216)', () => {
     expect(oneshotCalls).toBe(0);
   });
 
-  test('read-only allowed_tools + mode oneshot → no write escalation (falls back tool-less)', async () => {
+  test.each([['echo'], []])('oneshot tool ceiling %j prevents programmatic write escalation', async (...allowedTools) => {
     // A submitter that scoped its job to read-only tools must not gain
     // brain_put_page by flipping mode: oneshot — the oneshot registry runs
     // through the SAME filterAllowedTools as the loop registry.
@@ -1043,7 +1063,7 @@ describe('oneshot mode dispatch (#4216)', () => {
     });
     const ctx = await makeCtx({
       prompt: 'synthesize', mode: 'oneshot',
-      allowed_tools: ['echo'],
+      allowed_tools: allowedTools,
       allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
     });
     const result = await handler(ctx);
@@ -1055,6 +1075,7 @@ describe('oneshot mode dispatch (#4216)', () => {
       [ctx.id],
     );
     expect(rows[0]!.n).toBe(0);
+    if (allowedTools.length === 0) expect(client.calls[0]!.tools ?? []).toEqual([]);
   });
 
   test('crash-replayed TRUNCATED terminal turn recovers max_tokens, not end_turn (F1)', async () => {

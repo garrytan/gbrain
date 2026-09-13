@@ -25,6 +25,8 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { serializeMarkdown } from '../src/core/markdown.ts';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
@@ -48,6 +50,13 @@ function ctxOf(overrides: Partial<OperationContext> = {}): OperationContext {
   };
 }
 
+async function importPage(slug: string, sourceId: string, title: string, body: string, timeline = '') {
+  const result = await importFromContent(engine, slug,
+    serializeMarkdown({}, body, timeline, { type: 'note', title, tags: [] }),
+    { sourceId, noEmbed: true, forceRechunk: true });
+  expect(result.status).toBe('imported');
+}
+
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
@@ -63,9 +72,7 @@ beforeEach(async () => {
   await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('alpha', 'alpha', '/tmp/alpha') ON CONFLICT (id) DO NOTHING`);
   await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('beta', 'beta', '/tmp/beta') ON CONFLICT (id) DO NOTHING`);
   // Distinct slugs per source so an exact lookup can leak across the boundary.
-  await engine.putPage('secret/beta-doc', {
-    type: 'note', title: 'Beta secret', compiled_truth: 'beta-only content', frontmatter: {},
-  }, { sourceId: 'beta' });
+  await importPage('secret/beta-doc', 'beta', 'Beta secret', 'beta-only content');
   await engine.putPage('shared/alpha-doc', {
     type: 'note', title: 'Alpha doc', compiled_truth: 'alpha content', frontmatter: {},
   }, { sourceId: 'alpha' });
@@ -87,16 +94,8 @@ beforeEach(async () => {
   await engine.addTag('secret/beta-doc', 'beta-tag', { sourceId: 'beta' });
   // A same-slug page in 'default' with DIFFERENT tags — the cross-source bleed
   // guard. A federated read scoped to [alpha,beta] must NEVER surface these.
-  await engine.putPage('secret/beta-doc', {
-    type: 'note', title: 'Default decoy', compiled_truth: 'default content', frontmatter: {},
-  }, { sourceId: 'default' });
+  await importPage('secret/beta-doc', 'default', 'Default decoy', 'default content');
   await engine.addTag('secret/beta-doc', 'default-secret-tag', { sourceId: 'default' });
-  await engine.upsertChunks('secret/beta-doc', [{
-    chunk_index: 0, chunk_text: 'beta chunk', chunk_source: 'compiled_truth', token_count: 2,
-  }], { sourceId: 'beta' });
-  await engine.upsertChunks('secret/beta-doc', [{
-    chunk_index: 0, chunk_text: 'default chunk', chunk_source: 'compiled_truth', token_count: 2,
-  }], { sourceId: 'default' });
   await engine.putRawData('secret/beta-doc', 'crm', { owner: 'beta' }, { sourceId: 'beta' });
   await engine.putRawData('secret/beta-doc', 'crm', { owner: 'default' }, { sourceId: 'default' });
   await engine.createVersion('secret/beta-doc', { sourceId: 'beta' });
@@ -435,7 +434,7 @@ describe('#2200 get_timeline honors the federated grant', () => {
 describe('#2200 residual by-slug reads honor the federated grant', () => {
   test('get_chunks returns only in-grant chunks', async () => {
     const hit = await get_chunks.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' }) as any[];
-    expect(hit.map(c => c.chunk_text)).toEqual(['beta chunk']);
+    expect(hit.map(c => c.chunk_text)).toEqual(['beta-only content']);
     expect(await get_chunks.handler(remoteCtx(['alpha']), { slug: 'secret/beta-doc' })).toEqual([]);
   });
 
@@ -526,14 +525,10 @@ describe('#2555 get_chunks federated scope', () => {
   const get_chunks = operations.find(o => o.name === 'get_chunks')!;
 
   beforeEach(async () => {
-    await engine.upsertChunks('secret/beta-doc', [
-      { chunk_index: 0, chunk_text: 'beta chunk zero', chunk_source: 'compiled_truth' },
-      { chunk_index: 1, chunk_text: 'beta chunk one', chunk_source: 'compiled_truth' },
-    ], { sourceId: 'beta' });
+    // Separate body/timeline sections produce two real, safely indexed chunks.
+    await importPage('secret/beta-doc', 'beta', 'Beta secret', 'beta chunk zero', 'beta chunk one');
     // Same-slug decoy chunks in 'default' — the cross-source bleed guard.
-    await engine.upsertChunks('secret/beta-doc', [
-      { chunk_index: 0, chunk_text: 'default decoy chunk', chunk_source: 'compiled_truth' },
-    ], { sourceId: 'default' });
+    await importPage('secret/beta-doc', 'default', 'Default decoy', 'default decoy chunk');
   });
 
   test('op: federated grant including the page source returns its chunks (the #2555 repro)', async () => {

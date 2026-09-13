@@ -200,9 +200,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }
 
   async function registerThrowawayClient(name: string, scopes: string): Promise<{ id: string; secret: string }> {
-    const { execSync } = await import('child_process');
-    const reg = execSync(
-      `bun run src/cli.ts auth register-client ${name} --grant-types client_credentials --scopes "${scopes}"`,
+    const { execFileSync } = await import('child_process');
+    const reg = execFileSync('bun',
+      ['run', 'src/cli.ts', 'auth', 'register-client', name, '--grant-types', 'client_credentials', '--scopes', scopes,
+        ...(scopes.split(' ').includes('agent') ? ['--bound-tools', 'search', '--bound-source', 'default', '--delegated-namespace', 'job'] : [])],
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
     );
     const id = reg.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
@@ -256,6 +257,25 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   // =========================================================================
   // Fix 1: client_credentials tokens validate at /mcp
+  for (const [label, resource, expectedStatus] of [
+    ['matching', `${BASE}/mcp`, 200],
+    ['foreign', 'https://different.example/resource', 401],
+    ['legacy unbound', null, 200],
+  ] as const) {
+    test(`MCP enforces the ${label} persisted resource audience`, async () => {
+      const { access_token } = await mintToken('read');
+      const { default: postgres } = await import('postgres');
+      const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL!, { max: 1 });
+      try {
+        await sql`UPDATE oauth_tokens SET resource = ${resource}
+          WHERE token_hash = ${createHash('sha256').update(access_token).digest('hex')}`;
+      } finally { await sql.end(); }
+      const response = await mcpCall(access_token, 'tools/list');
+      expect(response.status).toBe(expectedStatus);
+      if (expectedStatus === 401) expect((await response.json() as any).error).toBe('invalid_token');
+      else await response.text();
+    });
+  }
   // =========================================================================
 
   test('mint token via client_credentials grant', async () => {
@@ -355,6 +375,73 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.scopes_supported).toEqual(
       expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
     );
+  });
+
+  // =========================================================================
+  // RFC 9728: protected-resource metadata describes /mcp, not the issuer root
+  // =========================================================================
+
+  // The MCP auth spec layers RFC 9728 on top of AS metadata: the *protected
+  // resource* is the streamable-HTTP endpoint the client actually POSTs to
+  // (/mcp), not the authorization-server root. Passing no resourceServerUrl
+  // made the SDK fall back to issuerUrl (AS == RS) and advertise
+  // `resource: "https://host/"`. A client that binds its grant to the
+  // canonical resource URI (RFC 8707) compares that against the
+  // "https://host/mcp" it was configured with, sees a mismatch, and refuses to
+  // treat the connection as authorized — re-running discovery and registering
+  // a fresh DCR client on every attempt, even though the issued bearer works
+  // fine on the wire.
+
+  test('protected-resource metadata advertises /mcp as the resource', async () => {
+    const res = await fetch(`${BASE}/.well-known/oauth-protected-resource/mcp`);
+    expect(res.ok).toBe(true);
+    const meta = await res.json() as any;
+    // The resource is the MCP endpoint, NOT the issuer root.
+    expect(meta.resource).toBe(`${BASE}/mcp`);
+    expect(meta.resource).not.toBe(`${BASE}/`);
+    expect(meta.authorization_servers).toContain(`${BASE}/`);
+    expect(meta.scopes_supported).toEqual(
+      expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
+    );
+  });
+
+  // Setting resourceServerUrl moves the SDK's document to the path-inserted
+  // location only. Clients that probe the bare root (the pre-RFC-9728
+  // convention, and what gbrain advertised before this fix) must keep
+  // discovering us instead of getting a 404 mid-flight.
+  test('legacy root protected-resource path serves the same resource value', async () => {
+    const res = await fetch(`${BASE}/.well-known/oauth-protected-resource`);
+    expect(res.ok).toBe(true);
+    // Served by the SDK's metadataHandler (URL rewrite, not a hand-built
+    // document), so the root keeps the cors() origin it always had.
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    const meta = await res.json() as any;
+    expect(meta.resource).toBe(`${BASE}/mcp`);
+  });
+
+  // The 401 challenge must name a metadata URL that actually resolves: with
+  // resourceServerUrl set, the SDK mounts the document at the path-inserted
+  // location and no longer at the bare root, so a hardcoded root URL in the
+  // challenge would send clients to a 404. Advertised URL and mounted
+  // document have to move together.
+  test('401 challenge advertises a resource_metadata URL that resolves', async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(res.status).toBe(401);
+
+    const challenge = res.headers.get('www-authenticate') ?? '';
+    const advertised = challenge.match(/resource_metadata="([^"]+)"/)?.[1];
+    expect(advertised).toBeTruthy();
+
+    const meta = await fetch(advertised!);
+    expect(meta.ok).toBe(true);
+    expect((await meta.json() as any).resource).toBe(`${BASE}/mcp`);
   });
 
   // =========================================================================
@@ -540,7 +627,8 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     });
     expect(res.ok).toBe(false);
     const data = await res.json() as any;
-    expect(data.error).toBe('invalid_grant');
+    expect(res.status).toBe(401);
+    expect(data.error).toBe('invalid_client');
   });
 
   test('confidential client can revoke its token only with its valid secret', async () => {

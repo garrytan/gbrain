@@ -347,7 +347,7 @@ export async function listFactsSince(
   deps: PgliteFactsDeps,
     source_id: string,
     since: Date,
-    opts?: FactListOpts & { entitySlug?: string },
+    opts?: FactListOpts & { entitySlug?: string; sessionId?: string },
   ): Promise<FactRow[]> {
     const tsExpr = opts?.eventTime === true ? 'COALESCE(valid_from, created_at)' : 'created_at';
     const where: string[] = [`${tsExpr} >= $since`];
@@ -355,6 +355,10 @@ export async function listFactsSince(
     if (opts?.entitySlug) {
       where.push(`entity_slug = $entitySlug`);
       params.entitySlug = opts.entitySlug;
+    }
+    if (opts?.sessionId) {
+      where.push(`source_session = $sessionId`);
+      params.sessionId = opts.sessionId;
     }
     if (opts?.excludeAuditRows === true) {
       where.push(`NOT (source = ANY($auditSources))`);

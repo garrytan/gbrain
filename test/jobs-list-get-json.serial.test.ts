@@ -45,8 +45,8 @@ beforeEach(async () => {
 
 async function seedJob(name: string): Promise<number> {
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, queue, status, data, started_at, finished_at)
-     VALUES ($1, 'default', 'completed', '{}'::jsonb,
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, started_at, finished_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, $1, 'default', 'completed', '{}'::jsonb,
              now() - interval '10 minutes', now() - interval '5 minutes')
      RETURNING id`,
     [name],
@@ -92,7 +92,7 @@ describe('jobs list/get --json (#3685)', () => {
     await seedJob('sync');
     await seedJob('sync');
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (name, queue, status, data) VALUES ('sync', 'default', 'waiting', '{}'::jsonb)`,
+      `INSERT INTO minion_jobs (submission_authority, name, queue, status, data) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'sync', 'default', 'waiting', '{}'::jsonb)`,
       [],
     );
     const out = await captureJobs(['list', '--json', '--status', 'completed', '--limit', '1']);

@@ -35,8 +35,8 @@ describeE2E('synthesis receipt job-id correlation on Postgres', () => {
     const engine = getEngine();
     const conn = getConn();
     const [job] = await conn`
-      INSERT INTO minion_jobs (queue, name, data, status)
-      VALUES ('default', 'subagent', ${conn.json({})}, 'completed')
+      INSERT INTO minion_jobs (submission_authority, queue, name, data, status)
+      VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', 'subagent', ${conn.json({})}, 'completed')
       RETURNING id
     `;
     const jobId = job.id as number;

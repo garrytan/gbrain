@@ -1993,7 +1993,7 @@ describe('gbrain-to-envelope exporter', () => {
     // corrupted with zero stderr. This drives gbrain's actual serializer
     // (gray-matter = js-yaml, the engine of serializeMarkdown) over a battery
     // of whitespace-hostile ids and requires every one back verbatim.
-    const matter = (await import('gray-matter')).default;
+    const matter = (await import('../src/core/data-frontmatter.ts')).dataFrontmatter;
     const HOSTILE = ['a\n \nb', ' \na', '\n', '\n\n', 'a\n', 'a\n\n', '\na', 'a \n', 'x'.repeat(90), 'm-plain'];
     const ts = (i: number) => `2026-02-01T09:${String(i).padStart(2, '0')}:00.000Z`;
     const front = {

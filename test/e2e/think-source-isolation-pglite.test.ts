@@ -1,10 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runGather } from '../../src/core/think/gather.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
+import { serializeMarkdown } from '../../src/core/markdown.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -23,12 +28,11 @@ beforeAll(async () => {
   ] as const;
   const takeVector = new Float32Array(1536).fill(0.01);
   for (const [sourceId, slug, body] of fixtures) {
-    const page = await engine.putPage(slug, {
-      type: 'person', title: slug, compiled_truth: body, timeline: '', frontmatter: {},
-    }, { sourceId });
-    await engine.upsertChunks(slug, [{
-      chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth', token_count: 4,
-    }], { sourceId });
+    const imported = await importFromContent(engine, slug,
+      serializeMarkdown({}, body, '', { type: 'person', title: slug, tags: [] }),
+      { sourceId, noEmbed: true });
+    expect(imported.status).toBe('imported');
+    const page = (await engine.getPage(slug, { sourceId }))!;
     await engine.addTakesBatch([{
       page_id: page.id, row_num: 1, claim: 'thinkscope evidence',
       kind: 'fact', holder: 'world', weight: 1,
@@ -50,7 +54,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await engine.disconnect();
+  try { await engine.disconnect(); } finally { resetGateway(); }
 });
 
 describe('think gather source isolation (#2200)', () => {
@@ -88,5 +92,50 @@ describe('think gather source isolation (#2200)', () => {
     expect(result.takes.every(row => row.page_slug === 'people/think-anchor')).toBe(true);
     expect(result.graphSlugs).not.toContain('people/think-allowed');
     expect(result.graphSlugs).not.toContain('people/think-denied');
+  }, 20_000);
+
+  test('unindexed anchor keeps its source identity and sanitizes remote body reads', async () => {
+    const slug = 'people/unindexed-anchor';
+    const question = 'zzunindexedidentityprobezz';
+    const publicBody = 'Public unindexed anchor control.';
+    const privateBody = 'PRIVATE_UNINDEXED_ANCHOR_CANARY';
+    const deniedBody = 'DENIED_UNINDEXED_ANCHOR_CANARY';
+    const anchor = await engine.putPage(slug, {
+      type: 'person', title: 'Unindexed anchor', timeline: '',
+      compiled_truth: `${publicBody}\n<!--- gbrain:takes:begin -->\n${privateBody}\n<!--- gbrain:takes:end -->`,
+    }, { sourceId: 'think-a' });
+    await engine.putPage(slug, {
+      type: 'person', title: 'Denied namesake', compiled_truth: deniedBody, timeline: '',
+    }, { sourceId: 'think-denied' });
+    expect(await engine.getChunks(slug, { sourceId: 'think-a' })).toEqual([]);
+
+    for (const remote of [undefined, true]) {
+      const result = await runGather(engine, {
+        question, anchor: slug, sourceId: 'think-a', remote,
+      });
+      expect(result.diagnostics.pagesFromHybrid).toBe(0);
+      expect(result.pages).toHaveLength(1);
+      const row = result.pages[0];
+      expect(row.page_id).toBe(anchor.id);
+      expect(row.source_id).toBe('think-a');
+      expect(row.chunk_id).toBe(0);
+      expect(row.score).toBe(1);
+      expect(row.chunk_text).toContain(publicBody);
+      expect(row.chunk_text).not.toContain(privateBody);
+      expect(row.chunk_text).not.toContain(deniedBody);
+      expect(result.warnings).not.toContain('ANCHOR_PAGE_NOT_FOUND');
+    }
+
+    const local = await runGather(engine, {
+      question, anchor: slug, sourceId: 'think-a', remote: false,
+    });
+    expect(local.pages[0].source_id).toBe('think-a');
+    expect(local.pages[0].chunk_text).toContain(privateBody);
+
+    const denied = await runGather(engine, {
+      question, anchor: slug, sourceId: 'think-b', remote: true,
+    });
+    expect(denied.pages).toEqual([]);
+    expect(denied.warnings).toContain('ANCHOR_PAGE_NOT_FOUND');
   }, 20_000);
 });

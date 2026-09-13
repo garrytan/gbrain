@@ -84,16 +84,12 @@ boundary, and it does not make every side effect prefix-clean:
   page content. Unreachable in the layout above (the `agents` source is
   path-less and holds no code pages); it applies only if you point employee
   writes at a code-synced source.
-- **Contradiction findings are matched by slug, not source.** The brain-wide
-  read ops (`get_recent_salience`, `find_anomalies`, `find_contradictions`,
-  and `sources_list`/`sources_status`) honor the federated grant (`sources_status` answers `not_found` for an out-of-grant
-  id, indistinguishable from a nonexistent source). The residual is
-  `find_contradictions`: findings carry no source attribution, so the scope
-  check is slug existence within the grant — a finding derived from an
-  ungranted source stays visible when a granted source holds a page with
-  the same slug. Per-endpoint source attribution is the filed follow-up
-  (TODOS.md); withhold `find_contradictions` at the harness layer if that
-  residual matters for your deployment.
+- **Stored contradiction reports are temporarily local-only.**
+  `find_contradictions` returns stored findings only to trusted local callers
+  without a source filter. Harness clients receive `{ contradictions: [], note }`
+  with an availability note. Other brain-wide read ops (`get_recent_salience`,
+  `find_anomalies`, and `sources_list`/`sources_status`) honor the federated
+  grant; `sources_status` answers `not_found` for an out-of-grant ID.
 - **Reads touch `last_retrieved_at`** on the pages they return, including
   pages in read-only sources. Freshness/usage signals are therefore
   writable-by-reading; nothing else about the page is.

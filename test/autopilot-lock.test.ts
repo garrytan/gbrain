@@ -171,6 +171,43 @@ describe('readProcessCommand', () => {
     expect(readProcessCommand(-5)).toBeNull();
     expect(readProcessCommand(Number.NaN)).toBeNull();
   });
+
+  test('uses Get-CimInstance on win32 and never touches /proc or ps (#4563)', () => {
+    const calls: Array<[string, string[]]> = [];
+    const cmd = readProcessCommand(1234, {
+      platform: 'win32',
+      readCmdlineFile: () => {
+        throw new Error('should not read /proc on win32');
+      },
+      execFile: (file, args) => {
+        calls.push([file, args]);
+        return 'C:\\Users\\u\\.bun\\bin\\gbrain.exe autopilot --repo C:\\brain\r\n';
+      },
+    });
+    expect(cmd).toBe('C:\\Users\\u\\.bun\\bin\\gbrain.exe autopilot --repo C:\\brain');
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe('powershell.exe');
+    expect(calls[0][1].join(' ')).toContain('Get-CimInstance Win32_Process');
+    expect(calls[0][1].join(' ')).toContain('ProcessId=1234');
+    expect(looksLikeGbrainAutopilotCommand(cmd!)).toBe(true);
+  });
+
+  test('win32: returns null when powershell fails or the process is gone (#4563)', () => {
+    expect(readProcessCommand(1234, {
+      platform: 'win32',
+      execFile: () => {
+        throw new Error('no powershell');
+      },
+    })).toBeNull();
+    // Empty CIM output = process exited between kill-0 and the CIM query.
+    expect(readProcessCommand(1234, {
+      platform: 'win32',
+      readCmdlineFile: () => {
+        throw new Error('should not read /proc on win32');
+      },
+      execFile: () => '',
+    })).toBeNull();
+  });
 });
 
 describe('looksLikeGbrainAutopilotCommand', () => {
@@ -178,6 +215,10 @@ describe('looksLikeGbrainAutopilotCommand', () => {
     expect(looksLikeGbrainAutopilotCommand('gbrain autopilot --repo repo')).toBe(true);
     expect(looksLikeGbrainAutopilotCommand('./gbrain/src/cli.ts autopilot')).toBe(true);
     expect(looksLikeGbrainAutopilotCommand('bun src/cli.ts autopilot --repo repo')).toBe(true);
+  });
+
+  test('matches a Windows command line with the executable quoted under a path with spaces', () => {
+    expect(looksLikeGbrainAutopilotCommand('"C:\\Program Files\\gbrain\\gbrain.exe" autopilot --repo "C:\\my brain"')).toBe(true);
   });
 
   test('rejects unrelated live processes', () => {

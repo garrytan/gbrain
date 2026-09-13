@@ -15,6 +15,11 @@ Access your brain from any device, any AI client. GBrain ships two transports:
 `gbrain serve` (stdio) for local agents, and `gbrain serve --http` for remote
 clients over OAuth 2.1.
 
+Authorization-code connections require owner approval in the admin dashboard.
+Existing sessions are preserved. Before upgrading an installation with queued
+work, follow the [authorization and worker upgrade guide](../guides/authorization-upgrade.md)
+for the coordinated cutover, consent recovery, and Bun requirements.
+
 ## Three Paths
 
 ### Local stdio (zero setup)
@@ -211,7 +216,14 @@ ngrok http 3131 --url your-brain.ngrok.app
 
 Your OAuth issuer URL becomes `https://your-brain.ngrok.app`. The MCP SDK's
 router exposes the spec-compliant discovery endpoint at
-`/.well-known/oauth-authorization-server`.
+`/.well-known/oauth-authorization-server`. The protected resource is the
+`/mcp` endpoint itself: its RFC 9728 metadata is served at
+`/.well-known/oauth-protected-resource/mcp` (the bare
+`/.well-known/oauth-protected-resource` root stays as an alias for older
+clients), and every 401 carries `WWW-Authenticate: Bearer
+resource_metadata="<that URL>"`, so an MCP client pointed at
+`https://your-brain.ngrok.app/mcp` finds the token endpoint from a fresh
+connection without any pasted URLs.
 
 ### 4. Scopes and localOnly
 
@@ -224,7 +236,7 @@ Remote agents cannot reach local filesystem surface area.
 |-------|---------------|
 | `read` | `search`, `query`, `get_page`, `list_pages`, graph traversal |
 | `write` | `put_page`, `delete_page`, `add_link`, `add_timeline_entry` |
-| `admin` | Client management, token revocation, sweep, local-only ops |
+| `admin` | Client management, token revocation, sweep; local-only restrictions still apply |
 
 Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 (see [Register OAuth clients](#2-register-oauth-clients) above).
@@ -283,11 +295,15 @@ gbrain auth test \
 
 ## Operations
 
-GBrain's full operation catalog (100+ operations in `src/core/operations.ts`)
-is available remotely, with no timeout limits on a self-hosted server. The
-only exceptions are the operations flagged `localOnly: true` — `sync_brain`
-and the `file_*` ops among them — which are rejected over HTTP regardless of
-scope (see [Scopes and localOnly](#4-scopes-and-localonly) above).
+GBrain's operation catalog (100+ operations in `src/core/operations.ts`) is
+available subject to the selected surface, scope and operation-specific limits.
+Operations flagged `localOnly: true` are rejected over HTTP regardless of scope
+(see [Scopes and localOnly](#4-scopes-and-localonly) above). Code-inspection
+operations and stored contradiction reports also have temporary local-only
+restrictions, even when listed in the catalog. The [MCP surface runbook](../operations/mcp-surface-runbook.md)
+explains these limits and the separate chunk-rebuild requirement. Rebuild
+indexes from a local installation on the brain host; a thin client cannot
+rebuild the host's indexes.
 
 **Several brains behind one tool catalog?** Give each server an identity so a
 connected agent can tell them apart: `gbrain config set mcp.instructions
@@ -311,30 +327,15 @@ unrestricted filesystem access since the user owns the machine.
 
 ## Doctor authority and deployment drift
 
-Remote MCP is a separate runtime surface from the local CLI. Do not assume a
-remote `run_doctor` result is equivalent to the operator's local Doctor unless
-the deployment version, database, schema pack, and source set are known to match.
+Record the runtime version, database identity, schema pack and effective source
+scope before comparing local CLI and remote MCP Doctor results. Authenticated
+remote reports are visibility-filtered and may legitimately contain fewer pages
+or checks than a trusted local brain-wide report, even on the same runtime.
 
-For Steve's production brain, the local CLI path is authoritative:
-
-```text
-/opt/homebrew/bin/gbrain
-  -> /Users/stevewandler/.hermes/scripts/gbrain_wrapper.sh
-  -> bun /Users/stevewandler/github-repos/gbrain/src/cli.ts
-```
-
-When Railway MCP Doctor disagrees with local CLI Doctor, classify it as
-surface drift first. Fix or redeploy the remote MCP surface before treating the
-remote warning as a brain-quality issue.
-
-Remote MCP health summaries should include:
-
-- MCP endpoint/deployment identity.
-- GBrain version or commit.
-- Database/project identity at a non-secret level.
-- Schema pack.
-- Source count.
-- Doctor status, health score, brain score, warning count, and warning names.
+Use the configured local wrapper for host diagnostics. Verify the actual HTTP,
+stdio, worker and scheduler processes separately; a tunnel endpoint does not
+prove where the application or database runs. Investigate version or routing
+drift independently from the knowledge-quality warnings each surface reports.
 
 See [Doctor Authority and Surface Routing](../operations/doctor-authority-and-surface-routing.md).
 

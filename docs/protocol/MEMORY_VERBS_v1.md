@@ -114,7 +114,10 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   pages; both present ⇒ both arms run.
 - `since`: ISO 8601 date/datetime — filters the FACTS arm only in v1. (The
   reference implementation also accepts relative phrases like `"8 hours ago"`
-  as a convenience; only ISO 8601 is part of the frozen contract.)
+  as a convenience; only ISO 8601 is part of the frozen contract.) The window
+  is measured on event time (`valid_from`, falling back to `created_at`) and
+  composes with `entity` and `session_id` in the same query, before the
+  per-arm limit. An unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
 - `budget_tokens`: SERVER-side packing — facts pack first (limit-capped
   one-liners, so search-arm starvation is bounded), search results take the

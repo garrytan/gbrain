@@ -283,7 +283,10 @@ export async function runReindexCode(
               reporter.tick();
               return;
             }
-            if (!row.compiled_truth) {
+            // `compiled_truth` is NOT NULL DEFAULT '': an empty file is legitimately '' (every
+            // `__init__.py`). Only a null row is missing; the falsy check counted every empty
+            // file as a failure (#4902).
+            if (row.compiled_truth == null) {
               failed++;
               failures.push({ slug: row.slug, error: 'missing compiled_truth' });
               reporter.tick();

@@ -465,10 +465,11 @@ describe('verify + workflow wiring', () => {
     expect(pkg.scripts['check:bootstrap-templates']).toContain('check-bootstrap-templates.sh');
   });
 
-  test('ci-cache-hash re-admits the bootstrap entry docs [C2]', () => {
-    const script = require('node:fs').readFileSync(join(ROOT, 'scripts/ci-cache-hash.sh'), 'utf8');
-    expect(script).toContain("'README\\.md$'");
-    expect(script).toContain("'BOOTSTRAP_FOR_AGENTS\\.md$'");
+  test('bootstrap guards run for documentation changes without a result-cache bypass [C2]', () => {
+    const workflow = require('node:fs').readFileSync(join(ROOT, '.github/workflows/test.yml'), 'utf8');
+    expect(workflow).toContain('bun run verify');
+    expect(workflow).not.toContain('paths-ignore:');
+    expect(workflow).not.toContain('cache-check');
   });
 
   test('release.yml advances latest-stable only as the final release step [C1]', () => {

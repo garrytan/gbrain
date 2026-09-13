@@ -482,3 +482,241 @@ function afterEachCleanup(fn: () => void) {
   const { afterEach } = require("bun:test");
   afterEach(fn);
 }
+
+// ---------------------------------------------------------------------------
+// Low-confidence foreign skills dir: cwd_walk_up (tier 1b) is ungated, so it
+// can land on a directory belonging to a different tool. One skill there
+// coincidentally shipping a `triggers:` field used to flip every OTHER
+// triggerless sibling from the soft "uninitialized" fallback into hard
+// `unreachable` errors. Severity is softened only when ALL hold: found via
+// cwd_walk_up, no resolver file contributes rows, unreachable outnumber
+// reachable, and no manifest.json on disk. Everything else stays strict.
+// ---------------------------------------------------------------------------
+
+function makeSkillWithoutTriggers(dir: string, name: string): void {
+  mkdirSync(join(dir, name), { recursive: true });
+  writeFileSync(
+    join(dir, name, "SKILL.md"),
+    "---\n" +
+    `name: ${name}\n` +
+    "description: belongs to a different tool, no triggers field\n" +
+    "---\n" +
+    "body\n"
+  );
+}
+
+function makeSkillWithTriggers(dir: string, name: string): void {
+  mkdirSync(join(dir, name), { recursive: true });
+  writeFileSync(
+    join(dir, name, "SKILL.md"),
+    "---\n" +
+    `name: ${name}\n` +
+    "description: also unrelated, but happens to declare triggers\n" +
+    "triggers:\n" +
+    "  - \"some phrase\"\n" +
+    "---\n" +
+    "body\n"
+  );
+}
+
+// Sparse trigger coverage (3 triggerless : 1 with triggers) -- matches the
+// real-world repro (1 of 26 skills coincidentally had triggers:). No
+// RESOLVER.md, no AGENTS.md, no manifest.json -- deriveManifest() walks
+// the directory listing instead, same as a real foreign tool's skills/
+// dir with no gbrain awareness whatsoever.
+function makeSparseForeignSkillsFixture(): string {
+  const dir = mkdtempSync(join(tmpdir(), "gbrain-foreign-skills-"));
+  makeSkillWithoutTriggers(dir, "some-unrelated-tool-skill");
+  makeSkillWithoutTriggers(dir, "another-unrelated-skill");
+  makeSkillWithoutTriggers(dir, "yet-another-unrelated-skill");
+  // The one coincidental trigger-bearing skill that defeats the
+  // triggerEntries.length===0 fallback in real-world repros.
+  makeSkillWithTriggers(dir, "coincidentally-has-triggers");
+  return dir;
+}
+
+// Dense trigger coverage (3 with triggers : 1 triggerless) -- a mostly-
+// migrated real skillpack whose RESOLVER.md/AGENTS.md was merely deleted
+// by accident. Must NOT be softened even via cwd_walk_up with no
+// resolver file present (resolver-absence alone isn't proof of "foreign").
+function makeDenseSkillpackFixture(): string {
+  const dir = mkdtempSync(join(tmpdir(), "gbrain-dense-skillpack-"));
+  makeSkillWithTriggers(dir, "migrated-skill-one");
+  makeSkillWithTriggers(dir, "migrated-skill-two");
+  makeSkillWithTriggers(dir, "migrated-skill-three");
+  makeSkillWithoutTriggers(dir, "not-yet-migrated-skill");
+  return dir;
+}
+
+describe("checkResolvable — low-confidence foreign skills dir", () => {
+  let dir: string;
+  afterEachCleanup(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("cwd_walk_up + no RESOLVER.md + sparse triggers: unreachable is downgraded to warning", () => {
+    dir = makeSparseForeignSkillsFixture();
+    const report = checkResolvable(dir, { skillsDirSource: "cwd_walk_up" });
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBe(3);
+    expect(unreachable.map(i => i.skill).sort()).toEqual([
+      "another-unrelated-skill",
+      "some-unrelated-tool-skill",
+      "yet-another-unrelated-skill",
+    ]);
+    for (const issue of unreachable) {
+      expect(issue.severity).toBe("warning");
+    }
+    // Downgraded severity must actually move the issues out of errors[]
+    // and into warnings[] (checkResolvable filters on .severity at the
+    // end) -- otherwise health_score still takes the -20 hit.
+    expect(report.errors.some(i => i.type === "unreachable")).toBe(false);
+    expect(report.warnings.some(i => i.type === "unreachable")).toBe(true);
+  });
+
+  test("no skillsDirSource (higher-confidence tiers): unreachable stays a hard error", () => {
+    dir = makeSparseForeignSkillsFixture();
+    const report = checkResolvable(dir);
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBe(3);
+    for (const issue of unreachable) {
+      expect(issue.severity).toBe("error");
+    }
+    expect(report.errors.some(i => i.type === "unreachable")).toBe(true);
+  });
+
+  test("cwd_walk_up but RESOLVER.md present: stays a hard error (real skillpack, not foreign)", () => {
+    dir = makeSparseForeignSkillsFixture();
+    writeFileSync(
+      join(dir, "RESOLVER.md"),
+      "## Brain operations\n| Trigger | Skill |\n|---------|-------|\n"
+    );
+    const report = checkResolvable(dir, { skillsDirSource: "cwd_walk_up" });
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBeGreaterThan(0);
+    for (const issue of unreachable) {
+      expect(issue.severity).toBe("error");
+    }
+  });
+
+  test("cwd_walk_up + no RESOLVER.md but DENSE trigger coverage: unreachable stays a hard error", () => {
+    // A mostly-migrated real skillpack whose RESOLVER.md/AGENTS.md was
+    // merely deleted by accident (majority already reachable via
+    // triggers:) must still fail loudly.
+    dir = makeDenseSkillpackFixture();
+    const report = checkResolvable(dir, { skillsDirSource: "cwd_walk_up" });
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBe(1);
+    expect(unreachable[0].skill).toBe("not-yet-migrated-skill");
+    expect(unreachable[0].severity).toBe("error");
+    expect(report.errors.some(i => i.type === "unreachable")).toBe(true);
+  });
+
+  test("cwd_walk_up + no RESOLVER.md + sparse triggers BUT explicit manifest.json: unreachable stays a hard error", () => {
+    // An explicit manifest.json is itself a deliberate "this is a gbrain
+    // skillpack" declaration -- a foreign tool's directory never ships
+    // one. Its presence keeps enforcement strict.
+    dir = makeSparseForeignSkillsFixture();
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        skills: [
+          { name: "some-unrelated-tool-skill", path: "some-unrelated-tool-skill/SKILL.md" },
+          { name: "another-unrelated-skill", path: "another-unrelated-skill/SKILL.md" },
+          { name: "yet-another-unrelated-skill", path: "yet-another-unrelated-skill/SKILL.md" },
+          { name: "coincidentally-has-triggers", path: "coincidentally-has-triggers/SKILL.md" },
+        ],
+      })
+    );
+    const report = checkResolvable(dir, { skillsDirSource: "cwd_walk_up" });
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBe(3);
+    for (const issue of unreachable) {
+      expect(issue.severity).toBe("error");
+    }
+    expect(report.errors.some(i => i.type === "unreachable")).toBe(true);
+  });
+
+  test("cwd_walk_up + no RESOLVER.md + sparse triggers BUT MALFORMED manifest.json: unreachable stays a hard error", () => {
+    // loadOrDeriveManifest's `derived` flag is true both when manifest.json
+    // is absent AND when it exists but fails to parse. A corrupted
+    // manifest.json on a real skillpack is exactly what doctor exists to
+    // catch, so the downgrade keys on on-disk absence, not `derived`.
+    dir = makeSparseForeignSkillsFixture();
+    writeFileSync(join(dir, "manifest.json"), "{ this is not valid json");
+    const report = checkResolvable(dir, { skillsDirSource: "cwd_walk_up" });
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBe(3);
+    for (const issue of unreachable) {
+      expect(issue.severity).toBe("error");
+    }
+    expect(report.errors.some(i => i.type === "unreachable")).toBe(true);
+  });
+
+  test("cwd_walk_up + generic AGENTS.md with no resolver rows + sparse triggers: unreachable is STILL downgraded to warning", () => {
+    // `resolverPathOrNull` is filename-only, not content-aware. A foreign
+    // tool's generic prose AGENTS.md contributes zero resolver rows, so it
+    // must not disable the downgrade; the check keys on a resolver_md-
+    // sourced entry, not `entries.length`.
+    dir = makeSparseForeignSkillsFixture();
+    writeFileSync(
+      join(dir, "AGENTS.md"),
+      "# Agent Instructions\n\nThis is a generic agent configuration file for an unrelated tool. " +
+        "It has no resolver routing table -- just prose.\n"
+    );
+    const report = checkResolvable(dir, { skillsDirSource: "cwd_walk_up" });
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBe(3);
+    expect(unreachable.map(i => i.skill).sort()).toEqual([
+      "another-unrelated-skill",
+      "some-unrelated-tool-skill",
+      "yet-another-unrelated-skill",
+    ]);
+    for (const issue of unreachable) {
+      expect(issue.severity).toBe("warning");
+    }
+    expect(report.errors.some(i => i.type === "unreachable")).toBe(false);
+    expect(report.warnings.some(i => i.type === "unreachable")).toBe(true);
+  });
+
+  test("cwd_walk_up + AGENTS.md WITH real resolver rows + sparse triggers elsewhere: unreachable stays a hard error", () => {
+    // Inverse of the above: when the found AGENTS.md actually carries a
+    // resolver table (source: 'resolver_md'), it's real routing intent,
+    // not a foreign convention collision -- must NOT be downgraded.
+    dir = makeSparseForeignSkillsFixture();
+    writeFileSync(
+      join(dir, "AGENTS.md"),
+      "## Routing\n\n| trigger | skill |\n| --- | --- |\n" +
+        "| some real trigger | `skills/some-unrelated-tool-skill/SKILL.md` |\n"
+    );
+    const report = checkResolvable(dir, { skillsDirSource: "cwd_walk_up" });
+    const unreachable = report.issues.filter(i => i.type === "unreachable");
+    expect(unreachable.length).toBeGreaterThan(0);
+    for (const issue of unreachable) {
+      expect(issue.severity).toBe("error");
+    }
+    expect(report.errors.some(i => i.type === "unreachable")).toBe(true);
+  });
+});
+
+describe("missing_file is reported once per skill path, not once per trigger row (wave review)", () => {
+  test("three trigger rows for one absent skill file → one missing_file issue", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gbrain-missing-file-"));
+    try {
+      writeFileSync(
+        join(dir, "RESOLVER.md"),
+        "## Test\n| Trigger | Skill |\n|-----|-----|\n" +
+          '| "first" | `skills/ghost-skill/SKILL.md` |\n' +
+          '| "second" | `skills/ghost-skill/SKILL.md` |\n' +
+          '| "third" | `skills/ghost-skill/SKILL.md` |\n',
+      );
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify({ skills: [] }));
+      const report = checkResolvable(dir);
+      const missing = report.issues.filter(i => i.type === "missing_file");
+      expect(missing).toHaveLength(1);
+      expect(missing[0].skill).toBe("skills/ghost-skill/SKILL.md");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

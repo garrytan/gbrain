@@ -20,9 +20,11 @@
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
-import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import { countCJKAwareWords, isCJKDominant, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
 import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
+import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 /**
  * Markdown chunker version. Folded into the per-page chunker_version column
@@ -30,6 +32,9 @@ import { safeSplitIndex } from '../text-safe.ts';
  * rebuild them on the new shape. Bump on any change that affects chunk
  * boundaries (delimiters, word counting, maxChars cap) OR the per-chunk
  * embedding shape (wrapper prefix added at embed time).
+ *
+ * v4: strict full-body Facts/Takes sanitation covers repeated, nested and
+ * unterminated protected fences before splitting or embedding.
  *
  * v3 (v0.40.3.0): chunks embed with optional contextual retrieval wrapper
  * per Anthropic's published methodology. Wrapper is built JUST IN TIME at
@@ -39,7 +44,7 @@ import { safeSplitIndex } from '../text-safe.ts';
  * post-upgrade reembed sweep. See
  * `src/core/contextual-retrieval-service.ts`.
  */
-export const MARKDOWN_CHUNKER_VERSION = 3;
+export const MARKDOWN_CHUNKER_VERSION = SAFE_FENCE_CHUNKER_VERSION;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
@@ -71,10 +76,9 @@ export interface TextChunk {
   index: number;
 }
 
-// v0.28: import takes-fence stripper as a pre-processing pass. Takes content
+// The strict full-body sanitizer removes all Takes and non-world Facts. Takes content
 // lives in the takes table only; duplicating it inside content_chunks would
 // bypass the per-token MCP allow-list (Codex P0 #3 privacy fix).
-import { stripTakesFence } from '../takes-fence.ts';
 
 // v0.32.2 (Codex R2-#1 P0): same posture for facts — private fact rows must
 // not reach content_chunks.chunk_text, embeddings, or search. Pass
@@ -83,7 +87,6 @@ import { stripTakesFence } from '../takes-fence.ts';
 // at the row level. The fence shell stays in the chunked body so callers
 // that re-import the chunk content can still parse it; only the private
 // rows go.
-import { stripFactsFence } from '../facts-fence.ts';
 
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
@@ -106,7 +109,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
   // search retains its public-knowledge surface; private rows are filtered
   // out at the fence-row level via stripFactsFence({keepVisibility:['world']}).
-  const stripped = stripFactsFence(stripTakesFence(text), { keepVisibility: ['world'] });
+  const stripped = sanitizeRemoteBody(text);
   if (!stripped || stripped.trim().length === 0) return [];
 
   const wordCount = countWords(stripped);
@@ -316,9 +319,16 @@ function splitOnWhitespace(text: string, target: number): string[] {
     if (text.trim().length === 0) return [];
     const pieces: string[] = [];
     const charsPerPiece = Math.max(1, target);
-    for (let i = 0; i < text.length; i += charsPerPiece) {
-      const slice = text.slice(i, i + charsPerPiece);
+    // Cursor advances to wherever safeSplitIndex actually cut, so no astral
+    // pair (emoji, non-BMP CJK) is halved and no code unit is skipped or
+    // repeated. A window too narrow to hold a pair takes the pair whole.
+    let i = 0;
+    while (i < text.length) {
+      let end = safeSplitIndex(text, Math.min(text.length, i + charsPerPiece));
+      if (end <= i) end = Math.min(text.length, i + 2);
+      const slice = text.slice(i, end);
       if (slice.trim().length > 0) pieces.push(slice);
+      i = end;
     }
     return pieces;
   }
@@ -382,6 +392,11 @@ function applyOverlap(chunks: string[], overlapWords: number): string[] {
  * If a sentence boundary exists within the last N words, start there.
  */
 function extractTrailingContext(text: string, targetWords: number): string {
+  // CJK-dominant chunks count chars, not whitespace tokens (see countWords);
+  // the whitespace path below would return '' (whole chunk = one token) or
+  // duplicate most of the chunk. English path is unchanged.
+  if (isCJKDominant(text)) return extractTrailingContextCJK(text, targetWords);
+
   const words = text.match(/\S+\s*/g) || [];
   if (words.length <= targetWords) return '';
 
@@ -395,6 +410,42 @@ function extractTrailingContext(text: string, targetWords: number): string {
     if (afterSentence.trim().length > 0) {
       return afterSentence;
     }
+  }
+
+  return trailing;
+}
+
+/**
+ * Sentence end for the CJK overlap aligner: a CJK delimiter needs no trailing
+ * whitespace; an ASCII one still does, so "3.5" inside CJK prose is not a
+ * boundary.
+ */
+const CJK_SENTENCE_END = new RegExp(`[${CJK_SENTENCE_DELIMITERS.join('')}]\\s*|[.!?]\\s+`);
+
+/**
+ * CJK-dominant twin of extractTrailingContext: walks back targetWords
+ * non-whitespace code units (the unit countCJKAwareWords counts), then
+ * aligns to a sentence end the same way. Changes chunk boundaries only for
+ * CJK-dominant pages chunked from now on; re-chunking existing pages needs a
+ * MARKDOWN_CHUNKER_VERSION bump (see TODOS.md).
+ */
+function extractTrailingContextCJK(text: string, targetWords: number): string {
+  if (countCJKAwareWords(text) <= targetWords) return '';
+
+  let count = 0;
+  let i = text.length;
+  while (i > 0 && count < targetWords) {
+    i--;
+    if (!/\s/.test(text[i])) count++;
+  }
+  // Code-unit walk can stop between an astral pair's halves; move the cut to
+  // the pair start (one extra overlap char beats a lone surrogate).
+  const trailing = text.slice(safeSplitIndex(text, i));
+
+  const sentenceEnd = CJK_SENTENCE_END.exec(trailing);
+  if (sentenceEnd && sentenceEnd.index < trailing.length / 2) {
+    const afterSentence = trailing.slice(sentenceEnd.index + sentenceEnd[0].length);
+    if (afterSentence.trim().length > 0) return afterSentence;
   }
 
   return trailing;

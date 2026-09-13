@@ -27,6 +27,9 @@ import { _resetStdoutRedirectForTests } from '../src/core/console-prefix.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { runExtract } from '../src/commands/extract.ts';
+import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 
 const KEYLESS: CapabilityReport = {
   embeddings: { available: false },
@@ -210,6 +213,57 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
       await engine.setConfig('auto_timeline', 'true');
     }
   });
+
+  // #3757: the sweep shares resolveCandidateSources with `extract links
+  // --source db` but never received the #2589 `link_resolution.cross_source`
+  // opt-in, so a page linking a target that exists only in another source
+  // was dropped silently — and the reconcile then deleted the very edge the
+  // CLI extract had created.
+  describe('cross-source opt-in (#3757)', () => {
+    const CROSS = { GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' };
+    const sweep = () => runMaintenanceSweep(engine, {
+      sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000,
+    });
+    const toSources = () => engine.executeRaw<{ source_id: string }>(
+      `SELECT pt.source_id FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+         JOIN pages pt ON pt.id = l.to_page_id
+        WHERE pf.slug = 'notes/n1'`,
+    );
+    beforeEach(async () => {
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name) VALUES ('vault-a', 'vault-a') ON CONFLICT (id) DO NOTHING`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+         VALUES ('people/alice-example', 'vault-a', 'person', 'Alice', 'A person page.', '')`,
+      );
+      await seedPage('notes/n1', 'note', 'Talked to [[people/alice-example]] today.');
+    });
+
+    test('flag ON: the edge into the other source is created', async () => {
+      const r = await withEnv(CROSS, sweep);
+      expect(r.linksExtracted).toBe(1);
+      expect(await toSources()).toEqual([{ source_id: 'vault-a' }]);
+    });
+
+    test('flag ON: an edge the CLI extract created survives the sweep reconcile', async () => {
+      await engine.addLinksBatch([{
+        from_slug: 'notes/n1', to_slug: 'people/alice-example', link_type: 'mentions',
+        context: 'ctx', link_source: 'markdown',
+        from_source_id: 'default', to_source_id: 'vault-a', origin_source_id: 'default',
+      }]);
+      const r = await withEnv(CROSS, sweep);
+      expect(r.linksRemoved).toBe(0);
+      expect(await toSources()).toEqual([{ source_id: 'vault-a' }]);
+    });
+
+    test('flag OFF: the drop is counted in the skip ledger, not silent', async () => {
+      const r = await withEnv({ GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: undefined }, sweep);
+      expect(await toSources()).toEqual([]);
+      expect(r.skipped).toContainEqual({ reason: 'cross_source_link', count: 1 });
+    });
+  });
 });
 
 describe('runMaintenanceSweep — watermark progress + link reconciliation (#4196)', () => {
@@ -278,6 +332,27 @@ describe('runMaintenanceSweep — watermark progress + link reconciliation (#419
 
     const after = await edges('concepts/writer-a');
     expect(after.map(e => e.link_source).sort()).toEqual(['manual', 'mentions']);
+  });
+
+  test('#4873: a ./-relative markdown edge from the FS extractor survives reconcile', async () => {
+    // The FS path (sync / `extract links`) resolves `[Beta](./beta.md)` via
+    // join(fileDir, target) and writes the edge with link_source NULL. The
+    // sweep's desired set must contain it or #4196 prunes a live edge on the
+    // first updated_at bump that doesn't re-run the FS extractor.
+    await seedPageAt('wiki/notes/beta', 'Beta page.', minsAgo(2));
+    await seedPageAt('wiki/notes/alpha', 'See [Beta](./beta.md).', minsAgo(1));
+    await engine.executeRaw(
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source)
+       SELECT f.id, t.id, 'mentions', 'markdown link: [Beta]', NULL
+         FROM pages f, pages t
+        WHERE f.slug = 'wiki/notes/alpha' AND t.slug = 'wiki/notes/beta'`,
+    );
+    const report = await runMaintenanceSweep(engine, {
+      sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000,
+    });
+    expect(report.linksRemoved).toBe(0);
+    const edges = await engine.getLinks('wiki/notes/alpha', { sourceId: 'default' });
+    expect(edges.map(e => e.to_slug)).toContain('wiki/notes/beta');
   });
 
   test('reconciliation never touches pages outside the sweep batch', async () => {
@@ -912,5 +987,119 @@ describe('runSweep CLI arg parsing [CX2-5]', () => {
     expect(out).toContain('Sweep complete');
     expect(out).toContain('source=my-src');
     expect(out).toContain('budget_exhausted:facts_fence');
+  });
+});
+
+/**
+ * #4611 residual — the sweep is the third caller of the shared
+ * resolveCandidateSources helper and must thread the same two knobs the
+ * extract paths do (`link_resolution.cross_source`, `sources.default`).
+ * Pre-fix it passed none, so on the sweep path the fallback compared against
+ * the LITERAL 'default' and the flag was ignored — and reconciliation then
+ * REMOVED the cross-source edge a flag-on `extract links` had just written.
+ */
+describe('#4611 sweep honors link_resolution.cross_source + sources.default', () => {
+  const sweep = () => runMaintenanceSweep(engine, {
+    sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000,
+  });
+  const edgesInto = async (toSource: string) => {
+    const rows = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+         JOIN pages pt ON pt.id = l.to_page_id
+        WHERE pf.slug = 'notes/writer-example' AND pf.source_id = 'default'
+          AND pt.slug = 'people/alice-example' AND pt.source_id = $1`,
+      [toSource],
+    );
+    return parseInt(rows[0].n, 10);
+  };
+  async function seedForeignTarget(source: string) {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, [source],
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('people/alice-example', $1, 'person', 'Alice', 'A person page.', '')`, [source],
+    );
+    await seedPage('notes/writer-example', 'note', 'See [Alice](people/alice-example).');
+  }
+
+  afterEach(async () => {
+    await engine.executeRaw(`DELETE FROM config WHERE key IN ('link_resolution.cross_source', 'sources.default')`);
+    await engine.executeRaw(`UPDATE sources SET config = config - 'federated' WHERE id = 'default'`);
+    await engine.executeRaw('DELETE FROM links');
+    await engine.executeRaw('DELETE FROM pages');
+    await engine.executeRaw(`DELETE FROM sources WHERE id <> 'default'`);
+  });
+
+  test('flag on: a link whose target lives only in another source produces the edge', async () => {
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    await seedForeignTarget('vault-a');
+    await sweep();
+    expect(await edgesInto('vault-a')).toBe(1);
+  });
+
+  test('flag on: the sweep keeps the cross-source edge a flag-on extract just wrote', async () => {
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    await seedForeignTarget('vault-a');
+    await runExtract(engine, ['links', '--source', 'db']);
+    expect(await edgesInto('vault-a')).toBe(1);
+    // extract stamped links_extracted_at; a later edit makes the page stale
+    // again so the sweep's batch actually re-selects (and reconciles) it.
+    await engine.executeRaw(`UPDATE pages SET updated_at = now() WHERE slug = 'notes/writer-example'`);
+    const r = await sweep();
+    expect(r.linksRemoved).toBe(0);
+    expect(await edgesInto('vault-a')).toBe(1);
+  });
+
+  test('flag off, federated origin: the fallback lane follows the configured sources.default', async () => {
+    await engine.setConfig('sources.default', 'main-vault');
+    await engine.executeRaw(
+      `UPDATE sources SET config = jsonb_set(config, '{federated}', 'true'::jsonb) WHERE id = 'default'`,
+    );
+    await seedForeignTarget('main-vault');
+    await sweep();
+    expect(await edgesInto('main-vault')).toBe(1);
+  });
+});
+
+// ─── wave review: the facts pass surfaces the reconcile's refusals ──
+describe('runMaintenanceSweep — facts reconcile warnings reach the sweep log', () => {
+  test('a stale pages cache (canonical file newer than the DB body) logs FACTS_PAGE_CACHE_STALE instead of vanishing', async () => {
+    // runExtractFacts REFUSES destructive reconcile when the canonical file
+    // disagrees with pages.compiled_truth and says so in r.warnings. The sweep
+    // dropped r.warnings on the floor, so an operator saw factsReconciled: 0
+    // and nothing else — indistinguishable from "nothing to do".
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-sweep-stale-cache-'));
+    tmpDirs.push(root);
+    _resetWriteThroughCacheForTest();
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [root]);
+    try {
+      await seedPage('people/alice-example', 'person', FENCE_BODY);
+      // A fence-owned DB row the fence no longer carries: the reconcile must
+      // take its destructive branch, which is where the stale-cache refusal lives.
+      await engine.insertFacts(
+        [{ fact: 'Stale indexed row', kind: 'fact', source: 'stale', row_num: 7, source_markdown_slug: 'people/alice-example' }],
+        { source_id: 'default' },
+      );
+      mkdirSync(join(root, 'people'), { recursive: true });
+      // The file carries a row the DB body does not: the cache is stale.
+      writeFileSync(join(root, 'people', 'alice-example.md'), FENCE_BODY.replace(
+        '<!--- gbrain:facts:end -->',
+        '| 3 | Joined the board of widget-co | fact | 1.0 | world | high | 2026-09-01 |  | test |  |\n<!--- gbrain:facts:end -->',
+      ), 'utf-8');
+
+      const lines: string[] = [];
+      const r = await runMaintenanceSweep(engine, {
+        sourceId: 'default',
+        capabilities: KEYLESS,
+        log: (msg: string) => { lines.push(msg); },
+      });
+      expect(r.factsReconciled).toBe(0);
+      expect(lines.some((l) => l.includes('FACTS_PAGE_CACHE_STALE'))).toBe(true);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      _resetWriteThroughCacheForTest();
+    }
   });
 });

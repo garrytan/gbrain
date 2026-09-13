@@ -25,6 +25,9 @@ function makeCtx(overrides: Partial<OperationContext> = {}): {
         calls.push(opts);
         return [];
       },
+      // #4620: an explicit source_id is checked against the live registry
+      // (a point lookup on `sources`; every id this file names is live).
+      executeRaw: async () => [{ ok: 1 }],
     } as any,
     config: {} as any,
     logger: console as any,
@@ -37,8 +40,11 @@ function makeCtx(overrides: Partial<OperationContext> = {}): {
 }
 
 describe('list_pages — explicit source_id param (#4400)', () => {
-  test('an explicit source_id scopes the engine call to that source', async () => {
-    const { ctx, calls } = makeCtx({ sourceId: 'default' });
+  test('an explicitly granted source_id scopes the engine call to that source', async () => {
+    const { ctx, calls } = makeCtx({
+      sourceId: 'default',
+      auth: { token: 't', clientId: 'c', scopes: ['read'], allowedSources: ['default', 'hermes-coding-agent'] },
+    });
     await list_pages.handler(ctx, { source_id: 'hermes-coding-agent' });
     expect(calls[0]).toMatchObject({ sourceId: 'hermes-coding-agent' });
   });
@@ -71,6 +77,15 @@ describe('list_pages — explicit source_id param (#4400)', () => {
     );
   });
 
+  test.each(['scalar', 'absent'] as const)('a remote caller with a %s grant cannot explicitly select a foreign source', async grant => {
+    const { ctx, calls } = makeCtx({
+      sourceId: grant === 'scalar' ? 'default' : undefined,
+      auth: grant === 'scalar' ? { token: 't', clientId: 'c', scopes: ['read'], sourceId: 'default' } : undefined,
+    });
+    await expect(list_pages.handler(ctx, { source_id: 'hermes-coding-agent' })).rejects.toMatchObject({ code: 'permission_denied' });
+    expect(calls).toHaveLength(0);
+  });
+
   test('no source_id param still falls back to federatedSearchScope(ctx) (back-compat)', async () => {
     const { ctx, calls } = makeCtx({
       remote: false,
@@ -79,5 +94,19 @@ describe('list_pages — explicit source_id param (#4400)', () => {
     });
     await list_pages.handler(ctx, {});
     expect(calls[0]).toMatchObject({ sourceIds: ['default', 'src-a', 'src-b'] });
+  });
+});
+
+describe('list_pages — source_id is parsed like get_page (#4857)', () => {
+  // Pre-fix the handler took any string through as-is: a whitespace or
+  // malformed id reached the engine and silently returned [], a non-string
+  // was dropped (unscoped listing), and the CLI's `--source-id ""` silently
+  // widened to every source. parseSourceIdParam rejects all of them loudly.
+  test('whitespace, malformed, non-string, and empty source_id are invalid_params before the engine is called', async () => {
+    for (const source_id of ['   ', 'not valid!', 42, '']) {
+      const { ctx, calls } = makeCtx({ remote: false });
+      await expect(list_pages.handler(ctx, { source_id })).rejects.toMatchObject({ code: 'invalid_params' });
+      expect(calls).toHaveLength(0);
+    }
   });
 });

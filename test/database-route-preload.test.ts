@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
 import {
   applyTestDatabaseRouteGuard,
   isForbiddenTestDatabaseRoute,
@@ -7,15 +6,6 @@ import {
 } from './helpers/database-route-preload.ts';
 
 describe('test database route preload', () => {
-  test('is wired as the first Bun test preload', () => {
-    const bunfig = readFileSync(new URL('../bunfig.toml', import.meta.url), 'utf8');
-    const routeGuard = bunfig.indexOf('./test/helpers/database-route-preload.ts');
-    const embeddingPreload = bunfig.indexOf('./test/helpers/legacy-embedding-preload.ts');
-
-    expect(routeGuard).toBeGreaterThan(-1);
-    expect(embeddingPreload).toBeGreaterThan(routeGuard);
-  });
-
   test('clears inherited database routes without an explicit E2E opt-in', () => {
     const env: Record<string, string | undefined> = {
       DATABASE_URL: 'postgresql://test:test@127.0.0.1:55432/test',

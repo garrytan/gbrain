@@ -478,7 +478,9 @@ async function runGenerate(args: string[]): Promise<void> {
     try { if (lstatSync(absPath).isSymbolicLink()) return; } catch { return; }
 
     let content: string;
-    try { content = readFileSync(absPath, 'utf-8'); } catch { return; }
+    // #4798: strip a UTF-8 BOM so heading-title inference (and --fix's
+    // written body) match what `gbrain sync` / `import` produce.
+    try { content = readFileSync(absPath, 'utf-8').replace(/^\uFEFF/, ''); } catch { return; }
 
     const inferred = inferFrontmatter(relPath, content);
     if (inferred.skipped) {

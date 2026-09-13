@@ -59,7 +59,7 @@ describe('jobs stats — Backpressure line + suppression hint wiring', () => {
     // shape that used to be invisible to the waiting>0 wedge detectors.
     const job = await queue.add('autopilot-cycle', {});
     await engine.executeRaw(
-      `UPDATE minion_jobs SET status = 'active', lock_token = 'live-worker',
+      `UPDATE minion_jobs SET status = 'active', claim_generation = claim_generation + 1, lock_token = 'live-worker',
               lock_until = now() + interval '5 minutes',
               started_at = now() - interval '30 minutes'
         WHERE id = $1`,

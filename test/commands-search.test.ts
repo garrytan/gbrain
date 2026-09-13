@@ -76,13 +76,22 @@ describe('gbrain search modes (read-only dashboard)', () => {
 
   test('per-key override shows up with source=override', async () => {
     await engine.setConfig('search.mode', 'conservative');
-    await engine.setConfig('search.cache.enabled', 'false');
+    await engine.setConfig('search.title_boost', '2');
     const out = await captureRun(() => runSearch(engine, ['modes', '--json']));
     const report = JSON.parse(out);
-    expect(report.resolved.cache_enabled.value).toBe(false);
-    expect(report.resolved.cache_enabled.source).toBe('override');
+    expect(report.resolved.title_boost.value).toBe(2);
+    expect(report.resolved.title_boost.source).toBe('override');
     // Other knobs still come from the mode bundle.
     expect(report.resolved.searchLimit.source).toBe('mode');
+  });
+
+  test.each(['false', 'true'])('cache availability overrides configured %s without erasing it', async (configured) => {
+    await engine.setConfig('search.cache.enabled', configured);
+    const report = JSON.parse(await captureRun(() => runSearch(engine, ['modes', '--json'])));
+    expect(report.resolved.cache_enabled.value).toBe(false);
+    expect(report.resolved.cache_enabled.source).toBe('availability');
+    expect(report.resolved.cache_enabled.source_detail).toContain('temporarily disabled');
+    expect(await engine.getConfig('search.cache.enabled')).toBe(configured);
   });
 
   test('default text output names the active mode', async () => {

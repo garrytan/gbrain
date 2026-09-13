@@ -130,8 +130,8 @@ tasks where no LLM reasoning loop is needed.
     The daemon mode is not available on PGLite (exclusive file lock). See
     `docs/guides/minions-shell-jobs.md`.
 - **MCP boundary:** shell-job submission is CLI-only. `submit_job name="shell"`
-  over MCP throws an `OperationError` with code `permission_denied` ("'shell'
-  jobs cannot be submitted over MCP") because `shell` is in `PROTECTED_JOB_NAMES`.
+  over MCP throws an `OperationError` with code `permission_denied`; generic
+  remote submission accepts only `sync`, `import`, `lint`, and `lint-fix`.
   Agents CAN observe shell jobs via `get_job` / `list_jobs` / `get_job_progress`
   (not protected), but cannot submit them. Operator or autopilot submits;
   agent observes.
@@ -195,9 +195,9 @@ Use for open-ended reasoning, tool-using research, and fan-out synthesis.
 
 **User-facing entrypoint:** `gbrain agent run <prompt>` is the canonical way
 to submit subagent work. It handles the elevated-trust plumbing — `subagent`
-and `subagent_aggregator` are both in `PROTECTED_JOB_NAMES`, so direct MCP
-submission requires `{allowProtectedSubmit: true}`, which `gbrain agent run`
-supplies.
+and `subagent_aggregator` are protected job names. Remote agents use the
+dedicated `submit_agent` operation with their configured source, tools, and
+slug binding; generic `submit_job` does not accept these job names.
 
 ## Phase 1: Submit
 
@@ -207,9 +207,12 @@ gbrain agent run "Research Acme Corp revenue" --tools "search,query"
 
 `--tools` accepts a comma-separated subset of `BRAIN_TOOL_ALLOWLIST` (see
 `src/core/minions/tools/brain-allowlist.ts`): `query`, `search`, `get_page`,
-`list_pages`, `file_list`, `file_url`, `get_backlinks`, `traverse_graph`,
-`resolve_slugs`, `get_ingest_log`, `put_page`. Anything outside the allow-list
-is rejected at submit time with `allowed_tools references unknown tool`.
+`list_pages`, `get_backlinks`, `traverse_graph`, `list_link_sources`,
+`resolve_slugs`, `get_ingest_log`, `put_page`, `add_timeline_entry`,
+`get_recent_salience`, `find_anomalies`. Attachment tools and local-only
+operations are unavailable. Update old bindings before resubmitting jobs
+that reference removed tools. Remote bindings must be nonempty; an explicit
+empty local tool list grants no tools.
 
 For parallel work with a fan-out manifest:
 ```
@@ -512,7 +515,7 @@ Total tokens so far: 4.3k
 
 ## Tools Used
 
-- Submit a background job — `submit_job` (MCP, non-protected names only; shell jobs are CLI-only, subagent jobs via `gbrain agent run`)
+- Submit a background job — `submit_job` (MCP: only `sync`, `import`, `lint`, and `lint-fix`, under the contract in `docs/guides/authorization-upgrade.md`; shell jobs use the local CLI, remote subagents use `submit_agent`)
 - Get job details — `get_job` (MCP)
 - List jobs with filters — `list_jobs` (MCP)
 - Cancel a job — `cancel_job` (MCP)

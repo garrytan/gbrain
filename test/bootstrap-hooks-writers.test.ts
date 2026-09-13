@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   buildClaudeHookCommand,
+  buildPortableClaudeHookCommand,
   claudeCommittedSettingsPath,
   claudeSettingsPath,
   registerClaudeMcp,
@@ -294,6 +295,16 @@ describe('buildClaudeHookCommand', () => {
     expect(cmd).toBe(
       `env GBRAIN_SOURCE=plain-slug 'GBRAIN_HOME=/has space/dir' ${BIN} hook user-prompt`,
     );
+  });
+
+  test('local carrier: an omitted GBRAIN_SOURCE renders NO source pin (harness lane under a live PGLite serve)', () => {
+    const cmd = buildClaudeHookCommand(BIN, 'SessionStart', { GBRAIN_HOOK_LANE: 'harness' });
+    expect(cmd).toBe(`env GBRAIN_HOOK_LANE=harness ${BIN} hook session-start`);
+    expect(cmd).not.toContain('GBRAIN_SOURCE');
+  });
+
+  test('committed carrier: an omitted GBRAIN_SOURCE is refused — the portable command must stay source-scoped', () => {
+    expect(() => buildPortableClaudeHookCommand('SessionStart', {})).toThrow(/source-scoped/);
   });
 });
 

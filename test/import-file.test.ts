@@ -143,6 +143,23 @@ This is the compiled truth.
     expect(chunkCall).toBeTruthy();
   });
 
+  test('strips a UTF-8 BOM so the heading title is used (#4798)', async () => {
+    // Written as bytes so no editor can silently strip the BOM from a fixture.
+    const filePath = join(TMP, 'bom-note.md');
+    writeFileSync(filePath, Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('# My Real Title\n\nbody text\n'),
+    ]));
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'notes/bom-note.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[1].title).toBe('My Real Title');
+    expect(putCall.args[1].compiled_truth).not.toContain('\uFEFF');
+  });
+
   test('skips files larger than MAX_FILE_SIZE (5MB)', async () => {
     const filePath = join(TMP, 'big-file.md');
     const bigContent = '---\ntitle: Big\n---\n' + 'x'.repeat(5_100_000);
@@ -485,6 +502,37 @@ ${longText}
 });
 
 describe('importFile — CJK wave (v0.32.7)', () => {
+  const isVersionStamp = (sql: string) => /^\s*UPDATE\s+pages\s+SET\s+chunker_version\s*=/i.test(sql);
+
+  function mockCompletedIndexEngine(): BrainEngine {
+    let deletionCompleted = false;
+    let replacementCompleted = false;
+    return mockEngine({
+      deleteChunks: async () => {
+        await Promise.resolve();
+        deletionCompleted = true;
+      },
+      upsertChunks: async () => {
+        expect(deletionCompleted).toBe(true);
+        await Promise.resolve();
+        replacementCompleted = true;
+      },
+      executeRaw: async (sql: string) => {
+        if (isVersionStamp(sql)) expect(replacementCompleted).toBe(true);
+        return [];
+      },
+    });
+  }
+
+  function expectCompletedIndexVersion(engine: BrainEngine, slug: string): void {
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[1].chunker_version).toBeUndefined();
+    const stamps = calls.filter((c: any) => c.method === 'executeRaw' && isVersionStamp(c.args[0]));
+    expect(stamps).toHaveLength(1);
+    expect(stamps[0].args[1]).toEqual([MARKDOWN_CHUNKER_VERSION, 'default', slug]);
+  }
+
   test('REGRESSION: pure-CJK filename with NO frontmatter slug imports cleanly as CJK slug', async () => {
     // After #115, slugifyPath('小米.md') = '小米' (CJK preserved). The
     // anti-spoof rule is content with no frontmatter slug present.
@@ -496,12 +544,12 @@ title: Xiaomi
 
 Body text.
 `);
-    const engine = mockEngine();
+    const engine = mockCompletedIndexEngine();
     const result = await importFile(engine, filePath, '小米.md', { noEmbed: true });
     expect(result.status).toBe('imported');
     expect(result.slug).toBe('小米');
     const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
-    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expectCompletedIndexVersion(engine, '小米');
     expect(putCall.args[1].source_path).toBe('小米.md');
   });
 
@@ -562,7 +610,7 @@ Hijack.
     expect((engine as any)._calls.length).toBe(0);
   });
 
-  test('chunker_version + source_path populated on every import', async () => {
+  test('completed index receives chunker_version and preserves source_path', async () => {
     const filePath = join(TMP, 'cjk-source-path.md');
     writeFileSync(filePath, `---
 type: concept
@@ -571,11 +619,12 @@ title: Has source path
 
 Content.
 `);
-    const engine = mockEngine();
-    await importFile(engine, filePath, 'concepts/cjk-source-path.md', { noEmbed: true });
+    const engine = mockCompletedIndexEngine();
+    const result = await importFile(engine, filePath, 'concepts/cjk-source-path.md', { noEmbed: true });
+    expect(result.status).toBe('imported');
     const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
     expect(putCall).toBeTruthy();
-    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expectCompletedIndexVersion(engine, 'concepts/cjk-source-path');
     expect(putCall.args[1].source_path).toBe('concepts/cjk-source-path.md');
   });
 });

@@ -1,8 +1,11 @@
-# Entity Detection: Run It on Every Message
+# Entity Detection: Opt-in Conversation Capture
 
 ## Goal
 
-Every inbound message gets scanned for original thinking AND entity mentions so the brain grows on every conversation, automatically.
+After the user opts in, scan substantive messages for original thinking and
+entity mentions within their chosen scope. Capture is off by default; ordinary
+recall and explicit remembering work without it. A chat-only request suppresses
+capture for that message. Paid enrichment and delegation need separate authority.
 
 ## What the User Gets
 
@@ -15,8 +18,9 @@ brain compounds.
 
 ## Implementation
 
-Spawn a lightweight sub-agent on EVERY inbound message. Do NOT wait for it
-to finish before responding. It runs in parallel.
+Check the stored capture choice before every pass. With an opt-in and authorized
+delegation, a lightweight sub-agent can run in parallel. Otherwise, perform
+authorized capture inline or skip it; never assume native background routing.
 
 This pattern is harness-side by design, but gbrain ships help on both ends:
 the `signal-detector` skill (`skills/signal-detector/`) is the bundled
@@ -26,9 +30,12 @@ extraction machinery (entities, facts) over already-synced content.
 ```
 on_every_message(message_text, source_context):
 
+  if not explicit_capture_opt_in or chat_only(message_text):
+    return
+
   // 1. SPAWN ASYNC — don't block the response
   spawn_subagent({
-    model: "sonnet-class",     // cheap + fast, not opus
+    model: configured_model,   // requires authorized delegation/spending
     timeout: 120,              // seconds
     task: build_detection_prompt(message_text, source_context)
   })
@@ -67,8 +74,8 @@ For each entity:
   a. Run: gbrain search "{name}"
   b. If page exists AND new info: append timeline entry
      Format: - YYYY-MM-DD | {what happened} [Source: {who}, {context}, {date}]
-  c. If no page AND entity is notable: create page with web enrichment
-  d. If page is thin (< 5 lines compiled truth): spawn background enrichment
+  c. If no page AND entity is notable: save supplied facts with provenance
+  d. Enrich further only when that capability and spending are authorized
 
 STEP 3 — BACK-LINKING (mandatory):
 For every entity mentioned, add a back-link FROM their page TO this source.
@@ -162,16 +169,15 @@ to Alice" only works if Alice's page links back to every mention.
    should see a response immediately, not wait 2 minutes while the sub-agent
    enriches 5 entity pages.
 
-2. **Sonnet, not Opus.** Entity detection is pattern matching, not deep
-   reasoning. Sonnet is 5-10x cheaper and fast enough. Use Opus for the
-   main conversation.
+2. **Capture and paid enrichment are separate.** Use the user's configured
+   model and budget only when authorized. Do not add provider calls just because
+   capture is on.
 
 3. **Exact phrasing matters.** "Markdown is actually code" is an insight.
    "Markdown can be used as code" is a summary. Capture the first version.
 
-4. **Don't create stubs.** If you create a page, make it good. Run a web
-   search, build out the compiled truth, add context. A stub page with just
-   a name is worse than no page (it gives false confidence).
+4. **Preserve uncertainty.** Save supported facts with provenance. Do not
+   invent details to fill a thin page or perform unrequested web enrichment.
 
 5. **Dedup before creating.** Always `gbrain search` before creating a page.
    Variant spellings, nicknames, and company abbreviations cause duplicates.
@@ -179,23 +185,31 @@ to Alice" only works if Alice's page links back to every mention.
 
 ## How to Verify
 
-1. **Send a message mentioning a person.** Say "I had coffee with Sarah Chen
-   from Acme Corp today." Verify: brain/people/sarah-chen.md was created or
-   updated, brain/companies/acme-corp.md was created or updated, both have
+First leave capture off and send a substantive message: verify no write occurs.
+Then explicitly enable capture for the following harmless fixtures. A generated
+skill file alone does not prove the harness runs this loop.
+
+1. **Send a message mentioning a person.** Say "I had coffee with alice-example
+   from acme-example today." Verify: brain/people/alice-example.md was created or
+   updated, brain/companies/acme-example.md was created or updated, both have
    timeline entries with today's date.
 
 2. **Send a message with an original idea.** Say "What if we could distribute
    software as markdown files that agents execute?" Verify:
    brain/originals/{slug}.md was created with your exact phrasing.
 
-3. **Check back-links.** Open Sarah Chen's page. It should have a timeline
-   entry linking back to today's conversation. Open Acme Corp's page. Same.
+3. **Check back-links.** Open alice-example's page. It should have a timeline
+   entry linking back to today's conversation. Check acme-example's page too.
 
 4. **Send a boring message.** Say "ok sounds good." Verify: nothing was
    created. The detector should report "No signals detected."
 
 5. **Check for duplicates.** Mention "Alice" then later "Alice Example."
    Verify: one page, not two.
+
+6. **Exercise consent boundaries.** A chat-only message creates no memory.
+   Turning capture off stops subsequent automatic writes; an explicit request
+   to remember one fact still works without re-enabling capture.
 
 ---
 

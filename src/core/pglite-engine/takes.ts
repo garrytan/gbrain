@@ -20,6 +20,7 @@ import { deriveResolutionTuple, finalizeScorecard } from '../takes-resolution.ts
 import { normalizeWeightForStorage } from '../takes-fence.ts';
 import { buildTakeRows } from '../batch-rows.ts';
 import { staleTakeRowToRow, takeRowToTake, takeHitRowToHit } from '../utils.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 /** Narrow slice of PGLiteEngine the takes operations use. */
 export interface PgliteTakesDeps {
@@ -282,6 +283,7 @@ export async function listTakes(deps: PgliteTakesDeps, opts: TakesListOpts = {})
          AND ($7::text[] IS NULL OR t.holder = ANY($7::text[]))
          AND ($11::text[] IS NULL OR p.source_id = ANY($11::text[]))
          AND ($12::text   IS NULL OR p.source_id = $12::text)
+         ${opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : ''}
        ORDER BY
          CASE WHEN $8 = 'weight'      THEN t.weight     END DESC NULLS LAST,
          CASE WHEN $8 = 'since_date'  THEN t.since_date END DESC NULLS LAST,
@@ -320,6 +322,7 @@ export async function searchTakes(
        JOIN pages p ON p.id = t.page_id
        WHERE t.active
          AND $1 <% t.claim
+         ${opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : ''}
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
          AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
          AND ($5::text IS NULL OR p.source_id = $5::text)
@@ -353,6 +356,7 @@ export async function searchTakesVector(
        JOIN pages p ON p.id = t.page_id
        WHERE t.active
          AND t.embedding IS NOT NULL
+         ${opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : ''}
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
          AND ($4::text[] IS NULL OR p.source_id = ANY($4::text[]))
          AND ($5::text IS NULL OR p.source_id = $5::text)
@@ -577,6 +581,7 @@ export async function getScorecard(deps: PgliteTakesDeps, opts: TakesScorecardOp
     // shares the SQL dialect with real Postgres so the math expressions match.
     const params: unknown[] = [];
     const clauses: string[] = [];
+    if (opts.excludePrivate) clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND ${privatePagesFilterFragment('p')})`);
     if (opts.holder !== undefined) { params.push(opts.holder); clauses.push(`AND holder = $${params.length}`); }
     if (opts.domainPrefix !== undefined) {
       params.push(opts.domainPrefix + '%');
@@ -623,6 +628,7 @@ export async function getCalibrationCurve(deps: PgliteTakesDeps, opts: Calibrati
     const maxIdx = Math.floor(1 / bucketSize) - 1;
     const params: unknown[] = [bucketSize, maxIdx];
     const clauses: string[] = [];
+    if (opts.excludePrivate) clauses.push(`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND ${privatePagesFilterFragment('p')})`);
     if (opts.holder !== undefined) { params.push(opts.holder); clauses.push(`AND holder = $${params.length}`); }
     if (allowList !== undefined) { params.push(allowList); clauses.push(`AND holder = ANY($${params.length}::text[])`); }
     // #2200-class: source scope via the take's page (EXISTS — no pages JOIN here).

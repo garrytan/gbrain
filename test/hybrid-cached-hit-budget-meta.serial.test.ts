@@ -1,17 +1,7 @@
 /**
- * Cache-HIT budget-meta provenance — companion to the miss-path fix.
- *
- * With a per-call tokenBudget, the miss path stores an already-budgeted
- * result set; a subsequent HIT re-applies the same budget to that trimmed
- * payload (a structural no-op: tokenBudget is folded into knobsHash, so a
- * hit only ever serves a lookup with the identical resolved budget as the
- * write) — and pre-fix published that no-op pass's meta, reporting
- * dropped=0 while the miss that produced the very same result set reported
- * the real cut. This file drives a real store→hit roundtrip (mocked
- * `embedQuery` for a deterministic vector, real PGLite SemanticQueryCache)
- * and pins that the hit's token_budget matches the miss's.
- *
- * Serial: mock.module + gateway/global-env mutation (isolation guard R2).
+ * Repeated fresh-search behavior while semantic response caching is disabled.
+ * Keeps the mode-limit, pagination and budget guarantees independent of cache
+ * availability. Serial because embedding/gateway mocks are process-global.
  */
 
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
@@ -50,15 +40,9 @@ let tmpHome: string;
 const savedGbrainHome = process.env.GBRAIN_HOME;
 
 beforeAll(async () => {
-  // Hermetic config home so the developer's real ~/.gbrain/config.json
-  // can't leak an embedding_model that flips the cache consult to
-  // 'disabled' via isCacheSafe.
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-hit-budget-meta-'));
   process.env.GBRAIN_HOME = tmpHome;
 
-  // Pin the gateway to a 1536d provider BEFORE initSchema so the
-  // query_cache.embedding column is sized for the mock vectors. The fake
-  // key is never used — embedQuery is mocked above.
   resetGateway();
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
@@ -70,9 +54,6 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
 
-  // Three keyword-findable pages, ~200 tokens each, mixed types so dedup's
-  // type-diversity layer keeps all of them. putPage never chunks —
-  // searchKeyword joins content_chunks, so chunks are explicit.
   const longText = 'x'.repeat(800);
   const fixtures: Array<[string, string, string]> = [
     ['alice-foo', 'Alice Foo', 'person'],
@@ -96,38 +77,32 @@ afterAll(async () => {
   try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-describe('cache HIT — token_budget provenance', () => {
-  test('hit reports the same cut the miss reported, not the no-op re-application', async () => {
-    // Miss: budget 250 keeps ~1 of 3 rows (~209 tokens each); the meta
-    // carries the real cut from the inner enforcement.
-    let missMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
-    const missResults = await hybridSearchCached(engine, 'builder', {
+describe('fresh repeated reads preserve token-budget provenance', () => {
+  test('repeated reads report the original inner budget cut', async () => {
+    let firstMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const firstResults = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       tokenBudget: 250,
-      onMeta: (m) => { missMeta = m; },
+      onMeta: (m) => { firstMeta = m; },
     });
-    expect(missResults.length).toBeGreaterThan(0);
-    expect(missMeta?.cache?.status).toBe('miss');
-    expect(missMeta?.token_budget?.budget).toBe(250);
-    const missDropped = missMeta?.token_budget?.dropped;
-    expect(missDropped).toBeGreaterThan(0);
+    expect(firstResults.length).toBeGreaterThan(0);
+    expect(firstMeta?.cache?.status).toBe('disabled');
+    expect(firstMeta?.token_budget?.budget).toBe(250);
+    const firstDropped = firstMeta?.token_budget?.dropped;
+    expect(firstDropped).toBeGreaterThan(0);
 
     await awaitPendingSearchCacheWrites();
 
-    // Hit: identical query + knobs (tokenBudget is part of knobsHash, so
-    // this is the ONLY kind of lookup the stored row can serve). The
-    // published budget record must match the miss's — pre-fix it was the
-    // outer no-op pass's meta with dropped=0.
-    let hitMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
-    const hitResults = await hybridSearchCached(engine, 'builder', {
+    let repeatMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const repeatResults = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       tokenBudget: 250,
-      onMeta: (m) => { hitMeta = m; },
+      onMeta: (m) => { repeatMeta = m; },
     });
-    expect(hitMeta?.cache?.status).toBe('hit');
-    expect(hitResults.length).toBe(missResults.length);
-    expect(hitMeta?.token_budget?.budget).toBe(250);
-    expect(hitMeta?.token_budget?.dropped).toBe(missDropped);
-    expect(hitMeta?.token_budget?.kept).toBe(missMeta?.token_budget?.kept);
+    expect(repeatMeta?.cache?.status).toBe('disabled');
+    expect(repeatResults.length).toBe(firstResults.length);
+    expect(repeatMeta?.token_budget?.budget).toBe(250);
+    expect(repeatMeta?.token_budget?.dropped).toBe(firstDropped);
+    expect(repeatMeta?.token_budget?.kept).toBe(firstMeta?.token_budget?.kept);
   });
 });

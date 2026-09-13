@@ -145,7 +145,7 @@ describe('serve-http.ts wiring (structural — the two defects of the original P
 
   test('tracking middleware is mounted before the first route registration', () => {
     const mw = src.indexOf('metricsTrackingMiddleware(');
-    const firstTokenRoute = src.indexOf("app.post('/token'");
+    const firstTokenRoute = src.indexOf('mountConfidentialOAuth(app,');
     const authRouterMount = src.indexOf('app.use(authRouter)');
     expect(mw).toBeGreaterThan(-1);
     expect(firstTokenRoute).toBeGreaterThan(-1);

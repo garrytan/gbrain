@@ -34,11 +34,16 @@ export interface BackupCliResult {
 }
 
 const HELP =
-  'gbrain backup <status|check> [--json]\n\n' +
+  'gbrain backup <status|check|create|restore> [--json]\n\n' +
   '  status   Backup-coverage verdict: which knowledge repos have a git remote,\n' +
   '           what survives a disk loss, and the exact fix commands. Uses the\n' +
   '           cached verdict when it is ok; recomputes when it is warn or stale.\n' +
-  '  check    Force a recompute and write the cache.\n\n' +
+  '  check    Force a recompute and write the cache.\n' +
+  '  create --output ABS   Snapshot local PGLite and installer-managed files.\n' +
+  '                        Pause file writers. Archive contains sensitive full DB state.\n' +
+  '  restore ARCHIVE --into ABS\n' +
+  '                        Restore into a NEW absent root; preserve the old brain.\n' +
+  '                        Quarantine unfinished jobs; never start automation.\n\n' +
   '  --json   Structured verdict (includes the recovery field).\n\n' +
   'Exit codes: 0 ok / 1 warn / 2 usage error. Off switches: GBRAIN_BACKUP_CHECK=0 or\n' +
   '`gbrain config set backup.check_enabled false`. Interval:\n' +
@@ -87,6 +92,42 @@ export async function runBackupCli(
     return { exitCode: 0 };
   }
   const sub = args[0];
+  if (sub === 'create' || sub === 'restore') {
+    const json = args.includes('--json');
+    try {
+      const { resolveBrainId } = await import('../core/brain-resolver.ts');
+      if (resolveBrainId(getCliOptions().brain) !== 'host') throw new Error('Full local backup currently supports the selected host installation only; use --brain host with its explicit GBRAIN_HOME.');
+      const values: Record<string, string> = {};
+      const positional: string[] = [];
+      for (let i = 1; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === '--json') continue;
+        if (arg === '--output' || arg === '--into') {
+          if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Missing value for ${arg}`);
+          values[arg] = args[++i];
+        } else if (arg.startsWith('-')) throw new Error(`Unknown backup option: ${arg}`);
+        else positional.push(arg);
+      }
+      const { createPgliteBackup, restorePgliteBackup } = await import('../core/backup/snapshot.ts');
+      if (sub === 'create') {
+        if (!values['--output'] || values['--into'] || positional.length) throw new Error('Usage: gbrain backup create --output /absolute/private/path/archive.gbrain-backup');
+        const result = await createPgliteBackup({ output: values['--output'] });
+        if (json) console.log(JSON.stringify({ ok: true, ...result }));
+        else console.log(`Backup created: ${result.archive}\nSensitive full database state; protect any off-VM copy.\nExcluded assets: ${(result.manifest.omitted as string[]).join('; ')}`);
+      } else {
+        if (!values['--into'] || values['--output'] || positional.length !== 1) throw new Error('Usage: gbrain backup restore ARCHIVE --into /absolute/new-root');
+        const result = await restorePgliteBackup({ archive: positional[0], into: values['--into'] });
+        if (json) console.log(JSON.stringify({ ok: true, ...result }));
+        else console.log(`Restored memory: ${result.root}\n${result.quarantined_jobs} unfinished jobs quarantined; no automation started.\nRun setup-in-agent.sh for this root to restore its runtime, then reconnect excluded credentials/services and verify memory.`);
+      }
+      return { exitCode: 0 };
+    } catch (error) {
+      const detail = error as Error & { code?: string; retryable?: boolean };
+      if (json) console.log(JSON.stringify({ ok: false, reason: detail.code ?? 'backup_failed', message: detail.message, ...(detail.retryable ? { retryable: true } : {}) }));
+      else console.error(detail.message);
+      return { exitCode: 1 };
+    }
+  }
   if (sub !== 'status' && sub !== 'check') {
     console.error(`Unknown backup subcommand: ${sub}\n\n${HELP}`);
     return { exitCode: 2 };

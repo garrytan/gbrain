@@ -13,8 +13,8 @@
  *   R1 — grep guard over the entire `src/core/eval-contradictions/`
  *        subtree and the `src/commands/eval-suspected-contradictions*.ts`
  *        files: no code path may UPDATE facts.valid_until.
- *   R8 — broader guard over all of `src/`: the only file that writes
- *        valid_until is `src/core/cycle/phases/consolidate.ts`. Any new
+ *   R8 — broader guard over all of `src/`: only reviewed writers may
+ *        change valid_until. Any new
  *        write site fails this guard; the human adding it must explicitly
  *        amend the allow-list AND document the deliberate design change.
  */
@@ -31,6 +31,13 @@ import { join } from 'node:path';
 //   - consolidate.ts (v0.35.4 — chronological writeback)
 //   - facts/forget.ts (v0.32.2 — user-initiated `gbrain forget`; user is
 //     the supersession authority, not the probe)
+//   - facts/withdrawal.ts — durable user-initiated forget closes every
+//     matching active claim in the same source and visibility lane. It
+//     records the user's withdrawal before filesystem work; this is an
+//     explicit retraction, never a contradiction-probe inference.
+//   - facts/withdrawal-schema.ts — its insert/update trigger reapplies an
+//     already-recorded user withdrawal when derived facts are rebuilt; it
+//     cannot invent a withdrawal or infer one from a contradiction.
 //   - postgres-engine.ts + pglite-engine.ts (v0.42.56.0, #2390 — Life
 //     Chronicle ontology: `mergeOntologyFact` forward-supersession closes
 //     the prior OPEN row's valid_until when a NEW value arrives for the
@@ -42,6 +49,8 @@ import { join } from 'node:path';
 const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/cycle/phases/consolidate.ts',
   'src/core/facts/forget.ts',
+  'src/core/facts/withdrawal.ts',
+  'src/core/facts/withdrawal-schema.ts',
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',
 ]);
@@ -84,6 +93,7 @@ function findValidUntilWrites(source: string): string[] {
   const hits: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (/\bNEW\.valid_until\s*:=/i.test(line)) hits.push(`${i + 1}: ${line.trim()}`);
     // Detect actual SQL writes. The narrow pattern `UPDATE facts SET ...
     // valid_until` is unambiguous — UPDATE is a SQL verb, not text
     // anyone writes in a description string. Tolerates same-line and
@@ -125,7 +135,7 @@ describe('R1 — contradiction probe never writes valid_until', () => {
   });
 });
 
-describe('R8 — only the consolidate phase + engine insert layer may write valid_until', () => {
+describe('R8 — only reviewed temporal and user-retraction writers may write valid_until', () => {
   test('every src/ TypeScript file that writes valid_until is on the allow-list', () => {
     const files = walkTs('src');
     const offenders: Array<{ file: string; hits: string[] }> = [];

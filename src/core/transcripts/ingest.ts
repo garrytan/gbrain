@@ -270,6 +270,12 @@ export async function runTranscriptsIngest(
           if (opts.dryRun) {
             outcome.statuses = rendered.parts.map(() => 'planned' as const);
             result.pages.planned += rendered.parts.length;
+            // #4762: a planned session is new work too, so the --limit gate
+            // above truncates the preview like the real run. A dry run cannot
+            // see hash-skips (no engine reads), so `--dry-run --limit N` shows
+            // the first N eligible sessions — an upper bound on what the write
+            // path would import.
+            newWorkSessions++;
           } else {
             // The RESOLVED base slug: identity dedup can resolve part 1 to an
             // EXISTING page under a different slug (same session id, changed

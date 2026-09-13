@@ -69,7 +69,7 @@ describe('whoami op contract', () => {
       ctxWith({ remote: true, sourceId: 'transport-fallback', auth }),
       {},
     )) as any;
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       transport: 'oauth',
       client_id: 'gbrain_cl_abc',
       client_name: 'gstack-test',

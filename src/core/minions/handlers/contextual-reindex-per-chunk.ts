@@ -206,9 +206,10 @@ export function makeContextualReindexHandler(opts: MakeContextualReindexHandlerO
         );
       },
       releaseSynopsisLease: async (lease) => {
-        if (typeof lease === 'number') {
-          await releaseLease(engine, lease);
-        }
+        // acquireLease coerces the id to a number at the seam; a strict
+        // typeof check here used to skip the release when Postgres handed
+        // the BIGSERIAL back as a native BigInt, idling every slot to TTL.
+        if (lease != null) await releaseLease(engine, lease as number);
       },
     });
 

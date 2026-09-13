@@ -150,7 +150,7 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
     );
     expect(response.isError).toBe(true);
     const envelope = JSON.parse(response.content[0]?.text ?? '{}') as Record<string, unknown>;
-    expect(envelope).toMatchObject({ error: 'invalid_params' });
+    expect(envelope).toMatchObject({ error: 'permission_denied' });
     expect(envelope.message).not.toContain('gbrain embed --stale --source');
   });
 
@@ -183,7 +183,7 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
       dryRun: false,
       remote: true,
     } as never, { name: 'embed-backfill', data: { sourceId: 'default' } })).rejects.toThrow(
-      'PGLite has no persistent worker',
+      'only sync, import, lint and lint-fix',
     );
     expect(fake.accesses).toEqual([]);
 
@@ -196,17 +196,16 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
     expect(response.isError).toBe(true);
     const envelope = JSON.parse(response.content[0]?.text ?? '{}') as Record<string, unknown>;
     expect(envelope).toMatchObject({
-      error: 'no_worker_surface',
-      suggestion: 'Run `gbrain embed --stale --source default` to drain embeddings inline.',
+      error: 'permission_denied',
     });
-    expect(envelope.message).toContain('PGLite has no persistent worker');
+    expect(envelope.message).toContain('only sync, import, lint and lint-fix');
     const rows = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM minion_jobs WHERE name = 'embed-backfill'`,
     );
     expect(Number(rows[0]?.n ?? 0)).toBe(0);
   });
 
-  test('submit_job dry-run reports the same no-worker capability refusal without access or a row', async () => {
+  test('submit_job dry-run enforces the same remote job-kind refusal before access', async () => {
     const fake = failOnAccessPglite();
     const submitJob = operationsByName.submit_job;
     await expect(submitJob.handler({
@@ -216,7 +215,7 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
       dryRun: true,
       remote: true,
     } as never, { name: 'embed-backfill', data: { sourceId: 'default' } })).rejects.toMatchObject({
-      code: 'no_worker_surface',
+      code: 'permission_denied',
     });
     expect(fake.accesses).toEqual([]);
 
@@ -228,7 +227,7 @@ describe('submitEmbedBackfill — worker-surface gate', () => {
     );
     expect(response.isError).toBe(true);
     expect(JSON.parse(response.content[0]?.text ?? '{}')).toMatchObject({
-      error: 'no_worker_surface',
+      error: 'permission_denied',
     });
     const rows = await engine.executeRaw<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM minion_jobs WHERE name = 'embed-backfill'`,
@@ -278,7 +277,7 @@ describe('submitEmbedBackfill — cooldown gate', () => {
     // Seed an active job manually
     await queue.add('embed-backfill', { sourceId: 'default' }, {});
     await engine.executeRaw(
-      `UPDATE minion_jobs SET status='active' WHERE name='embed-backfill'`,
+      `UPDATE minion_jobs SET status='active', claim_generation = claim_generation + 1 WHERE name='embed-backfill'`,
     );
 
     const result = await submitWithWorker('default', { reason: 'unit' });
@@ -428,7 +427,7 @@ describe('submitEmbedBackfill — source isolation', () => {
     const queue = new MinionQueue(workerBackedEngine);
     // Active job on 'default'
     await queue.add('embed-backfill', { sourceId: 'default' }, {});
-    await engine.executeRaw(`UPDATE minion_jobs SET status='active' WHERE name='embed-backfill'`);
+    await engine.executeRaw(`UPDATE minion_jobs SET status='active', claim_generation = claim_generation + 1 WHERE name='embed-backfill'`);
 
     // Submit for 'other' — should NOT be blocked
     const result = await submitWithWorker('other', { reason: 'unit' });

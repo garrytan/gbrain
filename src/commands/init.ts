@@ -11,6 +11,8 @@ import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath,
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 import { runInitEmbedCheck } from '../core/init-embed-check.ts';
+import { PgliteBusyError } from '../core/pglite-lock.ts';
+import { inspectRemoteInitState, preserveConversionConfig, readInitConfigState, printInAgentReady } from '../core/agent-install/init-state.ts';
 
 export async function runInit(args: string[]) {
   // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
@@ -36,6 +38,7 @@ export async function runInit(args: string[]) {
   const isNonInteractive = args.includes('--non-interactive');
   const isMigrateOnly = args.includes('--migrate-only');
   const jsonOutput = args.includes('--json');
+  const fileState = readInitConfigState(jsonOutput);
   const urlIndex = args.indexOf('--url');
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
   const keyIndex = args.indexOf('--key');
@@ -50,7 +53,7 @@ export async function runInit(args: string[]) {
   const schemaPackIdx = args.indexOf('--schema-pack');
   const schemaPack = schemaPackIdx !== -1 && args[schemaPackIdx + 1]
     ? args[schemaPackIdx + 1]
-    : 'gbrain-base-v2';
+    : (fileState.kind === 'present' ? fileState.config.schema_pack : undefined) ?? 'gbrain-base-v2';
 
   // Multi-topology v1: thin-client init. Skips local engine entirely; writes
   // remote_mcp config that the CLI dispatch guard reads to refuse DB-bound ops.
@@ -61,7 +64,7 @@ export async function runInit(args: string[]) {
   // Re-run guard (A8): if thin-client config is already present, refuse to
   // create a local engine without --force. Catches the scripted-setup-loop
   // friction (running setup-gbrain repeatedly on a thin-client machine).
-  const existing = loadConfig();
+  const existing = loadConfigFileOnly();
   if (isThinClient(existing) && !isForce && !isMigrateOnly) {
     const url = existing!.remote_mcp!.mcp_url;
     const msg = `Thin-client config already present at ${configPath()} (remote_mcp.mcp_url=${url}).\n` +
@@ -930,6 +933,8 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
       console.log(`Schema up to date (engine: ${result.engine}).`);
     }
   } catch (e) {
+    // Preserve the CLI's shared retryable busy envelope for migration callers.
+    if (e instanceof PgliteBusyError) throw e;
     const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
     const msg = e instanceof Error ? e.message : String(e);
     if (opts.jsonOutput) {
@@ -985,18 +990,7 @@ async function initRemoteMcp(opts: {
   if (!clientId) fail('missing_client_id', '--oauth-client-id is required (or set GBRAIN_REMOTE_CLIENT_ID). Get it from `gbrain auth register-client` on the host.');
   if (!clientSecret) fail('missing_client_secret', '--oauth-client-secret is required (or set GBRAIN_REMOTE_CLIENT_SECRET). Get it from `gbrain auth register-client` on the host.');
 
-  // Re-run guard for --mcp-only specifically: refuse without --force to
-  // avoid silently rotating credentials on a working install.
-  const existing = loadConfig();
-  if (isThinClient(existing) && !isForce) {
-    const prevUrl = existing!.remote_mcp!.mcp_url;
-    fail(
-      'thin_client_config_present',
-      `Thin-client config already present at ${configPath()} (remote_mcp.mcp_url=${prevUrl}).\n` +
-      `Re-running --mcp-only would overwrite. Use --force to refresh.`,
-      { mcp_url: prevUrl },
-    );
-  }
+  const existing = inspectRemoteInitState(isForce, fail);
 
   if (!jsonOutput) {
     console.log('Thin-client setup — running pre-flight smoke...');
@@ -1070,6 +1064,7 @@ async function initRemoteMcp(opts: {
   const configRecord = config as unknown as Record<string, unknown>;
   delete configRecord.database_url;
   delete configRecord.database_path;
+  preserveConversionConfig(true);
   saveConfig(config);
 
   if (jsonOutput) {
@@ -1350,6 +1345,8 @@ export async function initPGLite(opts: {
       // unless explicitly overridden by --schema-pack on re-init.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    delete config.remote_mcp;
+    delete config.database_url;
     // v0.46.3: leaving deferred-setup mode — a resolved (model, dims) tuple must
     // also CLEAR a stale embedding_disabled sentinel inherited via the
     // ...existingFile spread, or the documented recovery command
@@ -1368,6 +1365,7 @@ export async function initPGLite(opts: {
     // MEMORY_VERBS v1 [D6C]: TTHW stamp — `gbrain protocol stats` derives
     // install→first-verb-call from this. Idempotent on re-init.
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
+    preserveConversionConfig(false);
     saveConfig(config);
     if (opts.schemaPack) {
       process.stderr.write(
@@ -1393,6 +1391,8 @@ export async function initPGLite(opts: {
 
     if (opts.jsonOutput) {
       console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck }));
+    } else if (process.env.GBRAIN_IN_AGENT_SETUP === '1') {
+      printInAgentReady(dbPath);
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
       console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
@@ -1686,6 +1686,7 @@ export async function initPostgresCore(opts: {
       // v0.42 (T17): same schema_pack default as PGLite path.
       ...(opts.schemaPack ? { schema_pack: opts.schemaPack } : {}),
     };
+    delete config.remote_mcp;
     // v0.46.3: leaving deferred-setup mode — a resolved (model, dims) tuple must
     // also CLEAR a stale embedding_disabled sentinel inherited via the
     // ...existingFile spread, or the documented recovery command
@@ -1703,6 +1704,7 @@ export async function initPostgresCore(opts: {
     config.self_upgrade = { mode: 'notify', mode_prompted: true, ...(config.self_upgrade ?? {}) };
     // MEMORY_VERBS v1 [D6C]: TTHW stamp (see the PGLite path).
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
+    preserveConversionConfig(false);
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
     if (opts.schemaPack) {

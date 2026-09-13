@@ -47,6 +47,23 @@ describe('isSlugShapedQuery', () => {
 });
 
 describe('structuralExactLookup (#1663)', () => {
+  test('private exact slugs cannot bypass retrieval privacy; local and public controls survive', async () => {
+    await engine.putPage('notes/private-example', { type: 'note', title: 'Private', compiled_truth: 'SECRET_EXACT', frontmatter: { visibility: 'private' } });
+    await engine.putPage('notes/public-example', { type: 'note', title: 'Public', compiled_truth: 'PUBLIC_EXACT' });
+    expect(await structuralExactLookup(engine, 'notes/private-example', { sourceId: 'default', excludePrivate: true })).toEqual([]);
+    expect(await structuralExactLookup(engine, 'notes/private-example', { excludePrivate: true })).toEqual([]);
+    expect(await structuralExactLookup(engine, 'notes/private-example', { sourceId: 'default', sourceIds: [], excludePrivate: true })).toEqual([]);
+    expect((await structuralExactLookup(engine, 'notes/private-example', { sourceId: 'default' }))[0].chunk_text).toContain('SECRET_EXACT');
+    expect((await structuralExactLookup(engine, 'notes/public-example', { sourceId: 'default', excludePrivate: true }))[0].chunk_text).toContain('PUBLIC_EXACT');
+  });
+
+  test('injected excerpts strip protected sections before truncating', async () => {
+    await engine.putPage('notes/body-example', { type: 'note', title: 'Public', compiled_truth: '<!--- gbrain:takes:begin -->\nSECRET_EXACT_TAKE\n<!--- gbrain:takes:end -->\nPUBLIC_EXCERPT' });
+    const hits = await structuralExactLookup(engine, 'notes/body-example', { sourceId: 'default', excludePrivate: true });
+    expect(hits[0].chunk_text).toContain('PUBLIC_EXCERPT');
+    expect(hits[0].chunk_text).not.toContain('SECRET_EXACT_TAKE');
+  });
+
   test('slug-shaped query resolves the page directly (evidence → exists)', async () => {
     await engine.putPage('people/alice-example', {
       type: 'person', title: 'Alice Example', compiled_truth: 'Founder of widget-co.',

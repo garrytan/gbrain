@@ -6,8 +6,8 @@
  */
 
 import type { Operation } from './contract.ts';
-import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
-import { slugHiddenFromCaller } from '../search/private-visibility.ts';
+import { readPolicyOpts } from './context.ts';
+import { enforceClientSlugFence } from './context.ts';
 
 // --- Raw Data ---
 
@@ -39,11 +39,10 @@ const get_raw_data: Operation = {
     source: { type: 'string', description: 'Filter by source' },
   },
   handler: async (ctx, p) => {
-    const scope = sourceScopeOpts(ctx);
+    const scope = await readPolicyOpts(ctx);
     // #4352 remediation: a `visibility: private` page's raw data reads
     // exactly like a missing page's ([]) for untrusted callers — no
     // existence oracle.
-    if (await slugHiddenFromCaller(ctx.engine, ctx.remote, p.slug as string, scope)) return [];
     return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, scope);
   },
   scope: 'read',

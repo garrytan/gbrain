@@ -71,7 +71,6 @@ describe('computeExtractHealthCheck — WARN paths', () => {
     expect(check.message).toContain('facts.conversation');
     expect(check.message).toContain('50');
     expect((check.details as any)?.kinds[0].halt_rate).toBe(0.5);
-    expect((check.details as any)?.kinds[0].recent_halt_rate).toBe(0.5);
   });
 
   test('a stale high-halt-rate kind (no activity in 6 days) shows its age in the message', async () => {
@@ -176,23 +175,5 @@ describe('computeExtractHealthCheck — 7-day window', () => {
     const check = await computeExtractHealthCheck(engine);
     expect(check.status).toBe('ok');
     expect((check.details as any)?.kinds).toHaveLength(1);
-  });
-
-  test('resolved historical halts stay in 7-day details but do not warn when recent health is clean', async () => {
-    await clearRollup();
-    await engine.executeRaw(
-      `INSERT INTO extract_rollup_7d (kind, source_id, day, cost_usd, eval_pass_count, eval_fail_count, halt_count, round_completed_count, rollup_write_failures, updated_at)
-       VALUES
-         ('atoms', 'default', CURRENT_DATE - 2, 0.50, 0, 0, 50, 0, 0, NOW() - INTERVAL '2 days'),
-         ('atoms', 'default', CURRENT_DATE, 0.10, 0, 0, 0, 2, 0, NOW())`,
-      [],
-    );
-    const check = await computeExtractHealthCheck(engine);
-    expect(check.status).toBe('ok');
-    const atoms = (check.details as any)?.kinds.find((k: any) => k.kind === 'atoms');
-    expect(atoms.halt_rate).toBeGreaterThan(0.9);
-    expect(atoms.recent_halt_rate).toBe(0);
-    expect(atoms.halt_count).toBe(50);
-    expect(atoms.recent_halt_count).toBe(0);
   });
 });

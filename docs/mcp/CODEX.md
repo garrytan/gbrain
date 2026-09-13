@@ -1,5 +1,7 @@
 # Connect GBrain to Codex
 
+Adding memory to an existing Codex agent preserves its identity and needs no private repository. Use the [memory-only walkthrough](../tutorials/connect-coding-agent.md). Connecting an existing hosted brain? Use [private handoff and profiles](../guides/hosted-harness-access.md), including configuration that survives a new shell.
+
 > New to this? The [Give your coding agent a memory](../tutorials/connect-coding-agent.md)
 > tutorial walks both paths (local-from-nothing and connect-to-an-existing-brain)
 > end to end, plus the brain-first protocol that makes it worth it. This page is
@@ -62,7 +64,9 @@ Codex; route the brain axis with `GBRAIN_BRAIN_ID` (env only — there is no
 config default for the brain axis). `--source-guard` makes this fail-closed:
 when a brain has more than one source to choose from and no binding, write
 and admin operations error with an actionable message until a source is bound
-(the user-global stdio serve binds the source from `GBRAIN_SOURCE`, not a flag); a sole
+(the user-global stdio serve binds the source from `GBRAIN_SOURCE`, not a flag,
+and exits at startup when that value names a source that is missing or
+archived); a sole
 real source is unambiguous and unaffected, and reads always pass. (Edge case:
 a `.gbrain-source` dotfile placed at `$HOME` is an ancestor of the plugin
 snapshot dir and would bind every plugin-lane write to it — put source pins

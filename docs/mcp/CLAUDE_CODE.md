@@ -1,5 +1,7 @@
 # Connect GBrain to Claude Code
 
+For an existing agent, start with the [memory-only walkthrough](../tutorials/connect-coding-agent.md); a personal-agent identity and private repository are optional. For an existing hosted brain, use [private handoff and profiles](../guides/hosted-harness-access.md).
+
 > New to this? The [Give your coding agent a memory](../tutorials/connect-coding-agent.md)
 > tutorial walks both paths (local-from-nothing and connect-to-an-existing-brain)
 > end to end, plus the brain-first protocol that makes it worth it. This page is

@@ -22,7 +22,7 @@ The foundational read-write loop and data model.
 | Guide | What It Covers |
 |-------|---------------|
 | [The Brain-Agent Loop](guides/brain-agent-loop.md) | The read-write cycle that makes the brain compound over time |
-| [Entity Detection](guides/entity-detection.md) | Run it on every message. Capture original thinking + entity mentions |
+| [Entity Detection](guides/entity-detection.md) | After opt-in, capture original thinking + entity mentions; paid enrichment is separate |
 | [The Originals Folder](guides/originals-folder.md) | Capturing WHAT YOU THINK, not just what you found |
 | [Brain-First Lookup](guides/brain-first-lookup.md) | Check the brain before calling any external API |
 | [Push-Based Context](guides/push-context.md) | volunteer_context: the brain volunteers relevant pages instead of waiting to be asked |

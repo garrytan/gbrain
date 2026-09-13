@@ -4,7 +4,7 @@
  * frontmatter sugar. No engine needed.
  */
 import { describe, test, expect } from 'bun:test';
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../src/core/data-frontmatter.ts';
 import { __testing } from '../src/commands/capture.ts';
 const { defaultSlug, mergeCaptureFrontmatter } = __testing;
 

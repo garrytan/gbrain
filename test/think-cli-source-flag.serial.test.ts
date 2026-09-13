@@ -42,6 +42,30 @@ mock.module('../src/core/config.ts', () => ({
   isThinClient: () => false,
 }));
 
+// #4652: pin the ambient tier. The stub engine has no getConfig, so the real
+// tier-5 lookup would throw and a swallow-into-legacy-unscoped path would
+// look identical to the bug. Explicit ids still hit the real resolver so the
+// unknown-source exit-1 contract below stays real.
+const realResolver = await import('../src/core/source-resolver.ts');
+// Bind the real function BEFORE mocking: the namespace binding is re-pointed
+// at the mock, so calling through `realResolver.` later would recurse.
+const realResolveSourceWithTier = realResolver.resolveSourceWithTier;
+/** What the AMBIENT (no --source) resolution does; tests flip it per case. */
+const ambient: { mode: 'default' | 'target_error' | 'structural' } = { mode: 'default' };
+mock.module('../src/core/source-resolver.ts', () => ({
+  ...realResolver,
+  resolveSourceWithTier: async (engine: unknown, explicit: string | null | undefined) => {
+    if (explicit) return realResolveSourceWithTier(engine as never, explicit);
+    if (ambient.mode === 'target_error') {
+      throw new realResolver.SourceTargetError('Source "ghost-src" not found or is archived.');
+    }
+    if (ambient.mode === 'structural') throw new Error('relation "sources" does not exist');
+    return { source_id: 'default', tier: 'seed_default' as const };
+  },
+  localFederatedSourceIds: async (_engine: unknown, _id: string, tier: string) =>
+    tier === 'seed_default' ? ['default', 'team-wiki'] : undefined,
+}));
+
 const { runThinkCli } = await import('../src/commands/think.ts');
 
 /** Stub engine: assertSourceExists's query resolves only 'workspace'. */
@@ -109,14 +133,60 @@ describe('#4508 think --source CLI surface', () => {
     expect(captured.opts[0].calibrationHolder).toBe('holder-example');
   });
 
-  test('omitting --source keeps the default scope (no sourceId key)', async () => {
+  // #4652: without --source, think used to hand runThink no scope at all, so
+  // the gather spanned every source (including `--no-federated` ones) while
+  // `gbrain search` on the same brain honored the resolved default + its
+  // federated set. The CLI now resolves the same scope search does.
+  test('omitting --source resolves the default source and its federated set (#4652)', async () => {
     const r = await runCli(['plain', 'question']);
     expect(r.code).toBe(0);
+    expect(captured.opts[0].sourceId).toBe('default');
+    expect(captured.opts[0].allowedSources).toEqual(['default', 'team-wiki']);
+  });
+
+  test('explicit --source stays scalar (no federated widening)', async () => {
+    const r = await runCli(['plain', 'question', '--source', 'workspace']);
+    expect(r.code).toBe(0);
+    expect(captured.opts[0].sourceId).toBe('workspace');
+    expect(captured.opts[0].allowedSources).toBeUndefined();
+  });
+
+  test('--source __all__ spans the brain instead of scoping to the literal sentinel', async () => {
+    const r = await runCli(['plain', 'question', '--source', '__all__']);
+    expect(r.code).toBe(0);
     expect(captured.opts[0].sourceId).toBeUndefined();
+    expect(captured.opts[0].allowedSources).toBeUndefined();
   });
 
   test('think --help documents --source', async () => {
     const r = await runCli(['--help']);
     expect(r.out.join('\n')).toContain('--source');
+  });
+
+  // Wave review: the catch used to swallow EVERY ambient resolver error into
+  // an unscoped gather — only the structural pre-init failure may do that.
+  test('an ambient SourceTargetError (stale GBRAIN_SOURCE / dotfile) is exit 1, never an unscoped gather', async () => {
+    ambient.mode = 'target_error';
+    try {
+      const r = await runCli(['plain', 'question']);
+      expect(r.code).toBe(1);
+      expect(r.err.join('\n')).toContain('ghost-src');
+      expect(captured.opts).toHaveLength(0);
+    } finally {
+      ambient.mode = 'default';
+    }
+  });
+
+  test('a structural pre-init failure (no sources table) keeps the legacy unscoped gather', async () => {
+    ambient.mode = 'structural';
+    try {
+      const r = await runCli(['plain', 'question']);
+      expect(r.code).toBe(0);
+      expect(captured.opts).toHaveLength(1);
+      expect(captured.opts[0].sourceId).toBeUndefined();
+      expect(captured.opts[0].allowedSources).toBeUndefined();
+    } finally {
+      ambient.mode = 'default';
+    }
   });
 });

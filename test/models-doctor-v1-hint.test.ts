@@ -1,12 +1,14 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import { versionRoot, maybeAttachVersionSuffixHint } from '../src/core/ai/base-url-probe.ts';
 import {
   probeModel,
   probeEmbeddingReachability,
   probeRerankerReachability,
 } from '../src/commands/models.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { AIGatewayConfig } from '../src/core/ai/types.ts';
+
+afterEach(() => resetGateway());
 
 /**
  * `gbrain models doctor` — the openai-compatible-proxy base-URL classifier.

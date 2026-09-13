@@ -98,6 +98,21 @@ describe('agent register live-serve + duplicate-name refusals (real PGLite brain
     expect(firstDoc.ok).toBe(true);
     expect(firstDoc.client_id).toMatch(/^gbrain_cl_/);
 
+    // Reissue must also mint through a fresh transaction after rotating the
+    // client secret; returning a client row alone does not wire the harness.
+    const reissue = Bun.spawn([
+      'bun', '--no-env-file', 'run', 'src/cli.ts', 'agent', 'register',
+      '--reissue', firstDoc.client_id, '--harness', 'codex',
+      '--url', 'http://localhost:19139/mcp', '--json',
+    ], { cwd: REPO, env, stdout: 'pipe', stderr: 'pipe' });
+    const [reissueOut] = await Promise.all([
+      new Response(reissue.stdout).text(), new Response(reissue.stderr).text(),
+    ]);
+    expect(await reissue.exited).toBe(0);
+    const reissueDoc = JSON.parse(reissueOut.trim());
+    expect(reissueDoc.ok).toBe(true);
+    expect(reissueDoc.client_id).toBe(firstDoc.client_id);
+
     // Second register with the SAME name → duplicate_name envelope, exit 1,
     // message carries the existing client id + the --reissue hint.
     const dup = register(env);

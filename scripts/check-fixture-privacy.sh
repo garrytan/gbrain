@@ -24,10 +24,17 @@ set -euo pipefail
 # cathedral-4: the transcripts-import fixtures (raw harness/export shapes)
 # carry the same placeholder-names-only contract as conversation-formats.
 FIXTURE_DIRS=("test/fixtures/conversation-formats" "test/fixtures/transcripts")
+# Single-file fixtures under the same contract. The LongMemEval mixed-case
+# fixture mirrors the public dataset's ID SHAPE (sharegpt_yywfIrx_0-style)
+# but every session body is hand-written placeholder text.
+FIXTURE_FILES=("test/fixtures/longmemeval-mixedcase.jsonl")
 
 EXISTING_DIRS=()
 for d in "${FIXTURE_DIRS[@]}"; do
   [ -d "$d" ] && EXISTING_DIRS+=("$d")
+done
+for f in "${FIXTURE_FILES[@]}"; do
+  [ -f "$f" ] && EXISTING_DIRS+=("$f")
 done
 if [ ${#EXISTING_DIRS[@]} -eq 0 ]; then
   echo "[check-fixture-privacy] no fixture dirs exist; nothing to check"

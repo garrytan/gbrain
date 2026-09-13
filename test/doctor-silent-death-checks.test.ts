@@ -223,6 +223,22 @@ describe('undeclared_db_only_pages (#2784)', () => {
     expect(c.status).toBe('ok');
   });
 
+  test('basename-relative source_path under the slug directory → file-backed', async () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, '.git'));
+    mkdirSync(join(repo, 'journal'), { recursive: true });
+    writeFileSync(join(repo, 'journal', 'daily-note.md'), '# Daily note');
+    await addSource('src-a', repo);
+    await addPage('journal/daily-note', {
+      sourceId: 'src-a',
+      sourcePath: 'daily-note.md',
+    });
+
+    const c = await checkUndeclaredDbOnlyPages(engine);
+
+    expect(c.status).toBe('ok');
+  });
+
   test('derive-phase default prefixes are implicitly declared', async () => {
     const repo = makeRepo();
     await addSource('src-a', repo);

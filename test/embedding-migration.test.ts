@@ -40,6 +40,7 @@ import {
 } from '../src/core/embedding-migration.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from '../src/core/embedding-invalidation.ts';
 import { estimateCostFromChars } from '../src/core/embedding-pricing.ts';
+import { AUDIT_ROW_SOURCES } from '../src/core/facts/audit-sources.ts';
 import { operations } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
@@ -567,6 +568,22 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
 
     const status = await readMigrationStatus(engine);
     expect(status.embed_skip_null_chunks).toBe(1);
+  });
+});
+
+describe('#4875 facts_pending excludes audit checkpoint rows', () => {
+  test('terminal / non-extractable / legacy checkpoints are not a pending embedding backlog', async () => {
+    const seed = (source: string, extra = '') => engine.executeRaw(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, confidence${extra ? ', ' + extra : ''})
+       VALUES ('default', 'e', $1, 'fact', 'private', 'medium', $1, 1.0${extra ? ', now()' : ''})`,
+      [source],
+    );
+    await seed('test');                       // the one real pending fact
+    for (const s of AUDIT_ROW_SOURCES) await seed(s); // checkpoints, never embedded
+    await seed('expired-real', 'expired_at'); // expired rows already excluded
+
+    const status = await readMigrationStatus(engine);
+    expect(status.facts_pending).toBe(1);
   });
 });
 

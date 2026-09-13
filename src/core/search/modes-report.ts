@@ -6,6 +6,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { semanticResultCacheAvailable } from './query-cache.ts';
 import {
   MODE_BUNDLES,
   SEARCH_MODE_CONFIG_KEYS,
@@ -26,6 +27,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   keywordOrFallback: 'Keyword-arm AND→OR zero-recall fallback',
   tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
   expansion: 'LLM multi-query expansion (Haiku call per search)',
+  expansion_variant_budget: 'Total RRF weight shared by expansion variant lists (null = legacy weight 1 each; (0, 4])',
   searchLimit: 'Default `limit` for the operation layer',
   reranker_enabled: 'Cross-encoder reranker on/off',
   reranker_model: 'Provider:model for the reranker',
@@ -57,7 +59,32 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   // v0.43 relational recall
   relationalRetrieval: 'Typed-edge relational recall arm (relational queries walk the graph; no-op otherwise)',
   relational_retrieval_depth: 'Max hops for relational traversal (1..3, 2 default)',
+  relational_rerank_pin: 'Relational-arm rows re-pinned above reranked text rows in fused order (0 = off; 0..10, 3 default)',
+  // Ranker wave (Phase E2) arm-confidence fusion
+  keyword_arm_confidence_floor: 'Keyword-arm confidence floor: below this margin ratio the keyword + title lists fuse at half weight (null = off; (0, 1])',
+  // Ranker wave (Phase E3) metadata boost gate
+  metadata_boost_gate: 'Post-fusion metadata boosts (backlink/salience/recency/graph/alias): always, or lexical = only when a keyword/title/relational row fused',
 };
+
+/**
+ * Knobs whose legitimate `null` has a meaning of its own. The text renderer
+ * used to print `String(value ?? '(undefined)')`, so `expansion_variant_budget`
+ * at its bundle default (null = legacy weighting) rendered as `(undefined)` —
+ * indistinguishable from an unset knob. Null now renders distinctly; plain
+ * `(undefined)` stays reserved for knobs that are genuinely unset.
+ */
+export const KNOB_NULL_LABELS: Partial<Record<keyof ModeBundle, string>> = {
+  expansion_variant_budget: 'legacy (null)',
+  reranker_top_n_out: 'no truncate (null)',
+  keyword_arm_confidence_floor: 'off (null)',
+};
+
+/** Render one resolved knob value for the human `gbrain search modes` table. */
+export function formatKnobValue(knob: string, value: unknown): string {
+  if (value === undefined) return '(undefined)';
+  if (value === null) return KNOB_NULL_LABELS[knob as keyof ModeBundle] ?? '(null)';
+  return String(value);
+}
 
 /**
  * #4604: honest scope note carried on every report. The dashboard resolves
@@ -141,6 +168,15 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
       source: a.source,
       source_detail: a.source_detail,
       description: KNOB_DESCRIPTIONS[k],
+    };
+  }
+
+  if (!semanticResultCacheAvailable()) {
+    attributions.cache_enabled = {
+      ...attributions.cache_enabled,
+      value: false,
+      source: 'availability',
+      source_detail: 'Semantic result caching is temporarily disabled; configured settings are retained.',
     };
   }
 

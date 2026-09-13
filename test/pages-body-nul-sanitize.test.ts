@@ -12,6 +12,8 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 
 // Built via fromCharCode so no literal NUL / lone surrogate lands in this file.
 const NUL = String.fromCharCode(0);
@@ -20,13 +22,17 @@ const LONE_HI = String.fromCharCode(0xd83c);
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  // Other files can leave a different gateway shape configured. Pin the
+  // schema before opening the engine to match this test's synthetic vectors.
+  configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
 });
 
 afterAll(async () => {
-  await engine.disconnect();
+  try { await engine?.disconnect(); }
+  finally { resetGateway(); }
 });
 
 describe('putPage — NUL/lone-surrogate body sanitization (#3998)', () => {
@@ -72,7 +78,7 @@ describe('upsertChunks — NUL/lone-surrogate chunk_text sanitization (#3998)', 
         // Embedding present so the embedded_text_hash md5() bind path runs —
         // pre-fix that second raw chunk_text bind aborted the INSERT even if
         // the stored-text bind were sanitized, and the hash diverged.
-        embedding: new Float32Array(1536),
+        embedding: new Float32Array(LEGACY_EMBEDDING_CONFIG.embedding_dimensions),
       },
       {
         chunk_index: 1,

@@ -59,11 +59,15 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
+import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationGuard, isAIInvocationPolicyError } from './invocation-guard.ts';
+import { createGuardedGeneration, chatInvocation } from './guarded-generation.ts';
+const guardedGeneration = createGuardedGeneration(() => DEFAULT_MAX_OUTPUT_TOKENS);
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
@@ -2161,7 +2165,11 @@ async function embedSubBatch(
   opts?: EmbedOpts,
 ): Promise<Float32Array[]> {
   try {
-    const callTransport = () => _embedTransport({
+    const callTransport = () => invokeAI({ operation: 'gateway.embed', kind: 'embedding', model: `${recipe.id}:${modelId}`,
+      maxInputTokens: recipe.touchpoints.embedding?.max_batch_tokens
+        ?? (recipe.touchpoints.embedding?.max_input_tokens?.[modelId] !== undefined
+          ? recipe.touchpoints.embedding.max_input_tokens[modelId]! * texts.length : undefined),
+      maxOutputTokens: 0 }, () => _embedTransport({
       model,
       values: texts,
       providerOptions: providerOpts,
@@ -2170,8 +2178,8 @@ async function embedSubBatch(
       // per-SDK-call scope). Composes with a caller signal (Fix 3's 6s query
       // deadline) — shorter wins.
       abortSignal: withDefaultTimeout(opts?.abortSignal, AI_EMBED_TIMEOUT_MS),
-      ...(opts?.maxRetries !== undefined && { maxRetries: opts.maxRetries }),
-    });
+      ...(hasAIInvocationGuard() ? { maxRetries: 0 } : opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+    }), sdkInvocationUsage);
     // Carry the threaded input_type across the SDK boundary via
     // __embedInputTypeStore (the adapter strips it from providerOptions —
     // see the store's doc comment). Populated only when dimsProviderOptions
@@ -2201,6 +2209,7 @@ async function embedSubBatch(
     recordSubBatchSuccess(recipe);
     return result.embeddings.map((e: number[]) => new Float32Array(e));
   } catch (err) {
+    if (isAIInvocationPolicyError(err)) throw err;
     // On token-limit error, tighten the recipe's effective safety factor
     // (so the next embed() pre-splits smaller) and recursively halve THIS
     // batch to make forward progress without dropping work.
@@ -2374,7 +2383,7 @@ export async function embedMultimodal(
 
     let res: Response;
     try {
-      res = await fetch(`${baseUrl}/multimodalembeddings`, {
+      res = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${parsed.modelId}` }, () => fetch(`${baseUrl}/multimodalembeddings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2384,8 +2393,9 @@ export async function embedMultimodal(
         // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch
         // bypasses the SDK abortSignal).
         signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
-      });
+      }), responseInvocationUsage);
     } catch (err) {
+      if (isAIInvocationPolicyError(err)) throw err;
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${parsed.modelId})`);
     }
 
@@ -2520,7 +2530,7 @@ async function embedMultimodalOpenAICompat(
 
     let res: Response;
     try {
-      res = await fetch(`${baseUrl}/embeddings`, {
+      res = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}` }, () => fetch(`${baseUrl}/embeddings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2529,8 +2539,9 @@ async function embedMultimodalOpenAICompat(
         body: JSON.stringify(body),
         // v0.42.20.0 (codex #4) — per-request multimodal timeout (direct fetch).
         signal: AbortSignal.timeout(AI_MULTIMODAL_TIMEOUT_MS),
-      });
+      }), responseInvocationUsage);
     } catch (err) {
+      if (isAIInvocationPolicyError(err)) throw err;
       throw normalizeAIError(err, `embedMultimodal(${recipe.id}:${modelId})`);
     }
 
@@ -2682,6 +2693,7 @@ export async function embedMultimodalSafe(
       }
       return;
     } catch (err) {
+      if (isAIInvocationPolicyError(err)) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       // AIConfigError = permanent misconfig. Retrying smaller won't help.
       if (lastError instanceof AIConfigError) {
@@ -2904,12 +2916,13 @@ export async function expand(query: string): Promise<string[]> {
     const viaText = async (): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
-        textResult = await _generateTextTransport({
+        textResult = await guardedGeneration(modelLabel, _generateTextTransport, {
           model,
           abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
           prompt: expansionPrompt,
         });
       } catch (err) {
+        if (isAIInvocationPolicyError(err)) throw err;
         recordExpansionFailure(modelLabel, err); // failed call still billed upstream
         throw err; // outer catch degrades to [query]
       }
@@ -2917,14 +2930,34 @@ export async function expand(query: string): Promise<string[]> {
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
-    if (recipe.implementation !== 'openai-compatible') {
+    if (recipe.implementation === 'claude-cli') {
+      // claude-cli is NOT structured-output capable, despite being a 'native'
+      // tier recipe. ClaudeCliLanguageModel.doGenerate ignores
+      // `options.responseFormat` entirely (it renders prompt → `claude
+      // --print` subprocess → text), so generateObject's json_schema request
+      // is dropped on the floor and the CLI answers with markdown-fenced
+      // JSON as ordinary text. generateObject (ai@6) then throws
+      // NoObjectGeneratedError on the fenced text; the outer catch swallows
+      // it without a warn line (only AIConfigError is reported) and expansion
+      // silently degrades to the bare query — on EVERY call, after paying for
+      // the subprocess round trip. The native branch below has no viaText
+      // fallback to catch it.
+      //
+      // The schemaless text path handles this exact shape: parseLlmJson
+      // strips ```json fences (src/core/llm-json.ts) before the
+      // ExpansionSchema validation. Same recovery the openai-compatible
+      // branches already rely on, reached by implementation rather than by
+      // capability flag because claude-cli's transport — not its model — is
+      // what cannot carry a schema.
+      expansions = await viaText();
+    } else if (recipe.implementation !== 'openai-compatible') {
       // Native providers (Anthropic, OpenAI, Google) support generateObject's
       // structured output natively — unchanged path.
       // (Typed structurally: ReturnType<GenerateObjectFn> erases the schema
       // generic, so `object` would be `{}`.)
-      let result: { object?: { queries?: string[] }; usage?: unknown };
+      let result: { object?: unknown; usage?: unknown };
       try {
-        result = await _generateObjectTransport({
+        result = await guardedGeneration(modelLabel, _generateObjectTransport, {
           model,
           schema: ExpansionSchema,
           // Name the schema. On the native-anthropic path the SDK turns the schema
@@ -2946,17 +2979,19 @@ export async function expand(query: string): Promise<string[]> {
           prompt: expansionPrompt,
         });
       } catch (err) {
+        if (isAIInvocationPolicyError(err)) throw err;
         recordExpansionFailure(modelLabel, err);
         throw err; // outer catch degrades to [query]
       }
       recordExpansionUsage(modelLabel, result.usage);
-      expansions = result.object?.queries ?? [];
+      const parsed = ExpansionSchema.safeParse(result.object);
+      expansions = parsed.success ? parsed.data.queries : [];
     } else if (recipeSupportsStructuredOutputs(recipe) && !_structuredOutputRejectedRecipes.has(recipe.id)) {
       // openai-compatible backend that honors strict json_schema: request the
       // schema (strict validation), and fall back to the text path if it is
       // rejected at call time so a mis-declared capability never drops expansion.
       try {
-        const result = await _generateObjectTransport({
+        const result = await guardedGeneration(modelLabel, _generateObjectTransport, {
           model,
           schema: ExpansionSchema,
           // Same schema name+description as the native branch above: an
@@ -2969,8 +3004,10 @@ export async function expand(query: string): Promise<string[]> {
           prompt: expansionPrompt,
         });
         recordExpansionUsage(modelLabel, result.usage);
-        expansions = result.object?.queries ?? [];
+        const parsed = ExpansionSchema.safeParse(result.object);
+        expansions = parsed.success ? parsed.data.queries : [];
       } catch (err) {
+        if (isAIInvocationPolicyError(err)) throw err;
         // The rejected structured attempt billed real tokens — record it
         // before the fallback bills its own call (two records, both true).
         recordExpansionFailure(modelLabel, err);
@@ -2995,6 +3032,7 @@ export async function expand(query: string): Promise<string[]> {
     });
     return all;
   } catch (err) {
+    if (isAIInvocationPolicyError(err)) throw err;
     // Expansion is best-effort: on failure, fall back to the original query alone.
     const normalized = normalizeAIError(err, 'expand');
     if (normalized instanceof AIConfigError) {
@@ -3051,7 +3089,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
     recordSpendOnTracker(tracker, ocrModelId, label, tokens);
   let result: Awaited<ReturnType<GenerateTextFn>>;
   try {
-    result = await _generateTextTransport({
+    result = await guardedGeneration(ocrModelId, _generateTextTransport, {
       model,
       // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
       abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
@@ -3073,6 +3111,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
       ],
     });
   } catch (err) {
+    if (isAIInvocationPolicyError(err)) throw err;
     recordOcr('gateway.ocr.failed', _extractUsageFromError(err, {
       inputTokens: estimatedOcrInputTokens,
       outputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
@@ -3187,18 +3226,25 @@ export interface ChatToolDef {
  * schema" the moment the model calls a tool. Surfaced by the SkillOpt eval.
  */
 /**
- * Default per-call max output tokens. Thinking-by-default Claude 5 models
- * (`anthropic:claude-*-5`, including routed forms like
- * `openrouter:anthropic/claude-*-5`) burn a large chunk of the budget on internal
- * reasoning before emitting any text, so a 4096 default leaves them with empty
- * final text on the subagent tool loop. Give those models headroom; providers
- * bill actual tokens, not the cap, so it is free for the models that don't use
- * it. Everything else keeps 4096 on purpose: raising the default blanket-wide
- * would exceed some openai-compat providers' hard max-output caps (DeepSeek
- * 8192, gpt-4o 16384) and 400 on them — a regression for exactly the
- * non-Anthropic subagent users the gateway loop exists to serve.
+ * Default per-call max output tokens. Thinking-by-default models burn a large
+ * chunk of the budget on internal reasoning before emitting any text, so a
+ * 4096 default leaves them with empty final text (finish_reason "length") on
+ * the subagent tool loop and on any chat()/toolLoop() caller that omits
+ * maxTokens. Give those models headroom; providers bill actual tokens, not the
+ * cap, so it is free for the models that don't use it. Everything else keeps
+ * 4096 on purpose: raising the default blanket-wide would exceed some
+ * openai-compat providers' hard max-output caps (gpt-4o 16384) and 400 on
+ * them — a regression for exactly the non-Anthropic subagent users the
+ * gateway loop exists to serve.
+ *
+ * "Thinking-by-default" is decided by `isThinkingModel` below: Claude 5 by
+ * name, or any recipe whose chat touchpoint declares `thinking_by_default`
+ * (#4172, e.g. DeepSeek v4). The former "DeepSeek 8192" caveat here described
+ * the retired `deepseek-chat`; v4 accepts and honors a 32000 cap (verified
+ * 2026-09-02: max_tokens=32000 returned 19913 output tokens, finish_reason
+ * "stop"; the same prompt at 8192 truncated with finish_reason "length").
  */
-const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 export const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
 // Matches Claude 5-family ids behind ANY provider-prefix chain
 // (`anthropic:claude-sonnet-5`, `openrouter:anthropic/claude-sonnet-5`,
@@ -3209,10 +3255,26 @@ const THINKING_BY_DEFAULT_MODEL_RE = /(?:^|[:/])(?:anthropic[:/])?claude-[a-z]+-
 export function isThinkingByDefaultModel(modelStr: string | undefined): boolean {
   return !!modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr);
 }
-function defaultMaxOutputTokens(modelStr: string | undefined): number {
-  return isThinkingByDefaultModel(modelStr)
-    ? THINKING_MODEL_MAX_OUTPUT_TOKENS
-    : DEFAULT_MAX_OUTPUT_TOKENS;
+/**
+ * Name-matched Claude 5 OR recipe-declared `thinking_by_default` (#4172).
+ * Keyed on the declared capability rather than a model-name regex so a
+ * provider's model renames can't silently drop the headroom; `think`'s
+ * maxOutputTokensFor makes the same check. Fail-closed: unknown providers and
+ * chat-less recipes (getProviderCapabilities throws) count as non-thinking.
+ * Shared with the subagent handler's resolveMaxOutputTokens so the two
+ * output-cap defaults cannot drift.
+ */
+export function isThinkingModel(modelStr: string | undefined): boolean {
+  if (isThinkingByDefaultModel(modelStr)) return true;
+  if (!modelStr) return false;
+  try {
+    return getProviderCapabilities(modelStr).supportsThinking;
+  } catch {
+    return false;
+  }
+}
+export function defaultMaxOutputTokens(modelStr: string | undefined): number {
+  return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 /**
@@ -3404,6 +3466,12 @@ export interface ChatResult {
   };
   /** "provider:modelId" string of the model that actually answered. */
   model: string;
+  /**
+   * The model id the PROVIDER reported in its response (the API snapshot,
+   * e.g. `gpt-4o-2024-08-06`), when the SDK surfaced one. Eval receipts pin
+   * this alongside the requested id; absent when the provider reports none.
+   */
+  responseModel?: string;
   /** Recipe id for the answering provider. */
   providerId: string;
   /** Raw provider metadata (Anthropic-specific cache fields, OpenAI finish_reason, etc.) for downstream callers that need it. */
@@ -3418,6 +3486,12 @@ export interface ChatOpts {
   messages: ChatMessage[];
   tools?: ChatToolDef[];
   maxTokens?: number;
+  /**
+   * Sampling temperature, threaded verbatim to the AI SDK call. Left unset
+   * the provider's default applies; eval judges pin `0` (the official
+   * LongMemEval evaluate_qa.py setting) so verdicts are reproducible.
+   */
+  temperature?: number;
   abortSignal?: AbortSignal;
   /**
    * Per-call provider options keyed by recipe id, deep-merged LAST — after
@@ -3817,7 +3891,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     let res: ChatResult | null = null;
     let threw: unknown = null;
     try {
-      res = await _chatTransport(opts);
+      res = await invokeAI(chatInvocation('gateway.chat', modelStrEarly, maxOutputTokens), () => _chatTransport!(opts), sdkInvocationUsage);
       // #4218 success boundary (test-transport lane): same accounting call as
       // the production path below so transport-driven tests exercise it.
       recordChatUsage({
@@ -3832,6 +3906,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       });
       return res;
     } catch (err) {
+      if (isAIInvocationPolicyError(err)) throw err;
       threw = err;
       throw err;
     } finally {
@@ -3986,12 +4061,13 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     : opts.system;
 
   try {
-    const result = await _generateTextTransport({
+    const result = await guardedGeneration(modelStr, _generateTextTransport, {
       model,
       system: systemParam,
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
@@ -4064,16 +4140,19 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       usage: { ...usageOut, cache_write_tokens: usageOut.cache_creation_tokens },
     });
 
+    const responseModelId = (result as any).response?.modelId;
     return {
       text: blocks.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(''),
       blocks,
       stopReason: mapStopReason((result as any).finishReason, providerMetadata),
       usage: usageOut,
       model: `${recipe.id}:${modelId}`,
+      ...(typeof responseModelId === 'string' && responseModelId.length > 0 ? { responseModel: responseModelId } : {}),
       providerId: recipe.id,
       providerMetadata,
     };
   } catch (err) {
+    if (isAIInvocationPolicyError(err)) throw err;
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
     const fallback = _extractUsageFromError(err, {
@@ -4288,6 +4367,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         cacheSystem: opts.cacheSystem,
       });
     } catch (err) {
+      if (isAIInvocationPolicyError(err)) throw err;
       opts.onHeartbeat?.('llm_call_failed', {
         turn_idx: turnIdx,
         error: err instanceof Error ? err.message : String(err),
@@ -4427,6 +4507,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         });
         opts.onHeartbeat?.('tool_result', { turn_idx: turnIdx, tool_name: call.toolName });
       } catch (err) {
+        if (isAIInvocationPolicyError(err)) throw err;
         const errMsg = err instanceof Error ? err.message : String(err);
         await opts.onToolCallFailed?.(gbrainToolUseId, errMsg);
         toolResultBlocks.push({
@@ -4689,12 +4770,12 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   };
   try {
     const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
-    const resp = await transport(url, {
+    const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr }, () => transport(url, {
       method: 'POST',
       headers,
       body,
       signal: ctrl.signal,
-    });
+    }), responseInvocationUsage);
     if (!resp.ok) {
       let msg = `rerank HTTP ${resp.status}`;
       try {
@@ -4734,6 +4815,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     _rerankRecord();
     return mapped;
   } catch (err) {
+    if (isAIInvocationPolicyError(err)) throw err;
     _rerankRecord();
     if (err instanceof RerankError) throw err;
     // AbortError on timeout — classify cleanly.

@@ -1,3 +1,4 @@
+import { authorizeLegacyJobs, parseLegacyJobIds } from '../core/minions/authorize-legacy.ts';
 /**
  * CLI handler for `gbrain jobs` subcommands.
  * Thin wrapper around MinionQueue and MinionWorker.
@@ -355,6 +356,7 @@ export function formatJobDetail(job: MinionJob): string {
 const JOBS_HELP = `gbrain jobs — Minions job queue
 
 USAGE
+  gbrain jobs authorize-legacy --ids 12,34 [--expect <snapshot_digest> --yes] [--json]
   gbrain jobs submit <name> [--params JSON] [--follow] [--priority N]
                             [--delay Nms] [--max-attempts N] [--max-stalled N]
                             [--max-waiting N]
@@ -569,6 +571,16 @@ OPTIONS
   --refresh-ms=N   Refresh cadence in ms (default 1000). Equals form only —
                    'watch' does not accept a space-separated value.
 `,
+  'authorize-legacy': `gbrain jobs authorize-legacy — review old queued work locally
+
+USAGE
+  gbrain jobs authorize-legacy --ids 12,34 --json
+  gbrain jobs authorize-legacy --ids 12,34 --expect <snapshot_digest> --yes --json
+
+Stop producers and workers and drain active jobs first. The first command only
+previews; apply requires the exact reviewed snapshot digest and --yes. Dependencies
+are shown but never implicitly authorized. IDs, data, schedule and retries persist.
+`,
   prune: `gbrain jobs prune — delete old terminal jobs
 
 USAGE
@@ -645,6 +657,13 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
   const queue = new MinionQueue(engine);
 
   switch (sub) {
+    case 'authorize-legacy': {
+      const ids = parseLegacyJobIds(parseFlag(args, '--ids'));
+      const preview = args.includes('--dry-run');
+      const result = await authorizeLegacyJobs(engine, ids, preview ? undefined : parseFlag(args, '--expect'), !preview && args.includes('--yes'));
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
     case 'submit': {
       const name = args[1]?.trim();
       if (!name) {
@@ -2144,7 +2163,7 @@ export async function registerBuiltinHandlers(
     let result;
     try {
       result = await performSync(engine, {
-        repoPath, sourceId, noPull, noEmbed, noExtract,
+        repoPath, sourceId, noPull, noEmbed, noExtract, signal: job.signal,
         concurrency: concurrencyOverride,
         ...(githubItem ? { githubItem } : {}),
       });
@@ -2165,6 +2184,10 @@ export async function registerBuiltinHandlers(
       }
       throw err;
     }
+
+    // A cancelled durable job must not complete or schedule follow-up work,
+    // even when a direct sync interruption has a resumable partial result.
+    if (job.signal?.aborted) throw job.signal.reason ?? new Error('Sync job cancelled');
 
     // v0.40 D22: auto_embed_backfill defaults TRUE when sourceId is set AND
     // the feature flag is enabled. Submits a child embed-backfill job
@@ -2269,7 +2292,7 @@ export async function registerBuiltinHandlers(
     const target = typeof job.data.dir === 'string' ? job.data.dir : '.';
     // issue #1678: reuse the worker's live engine for lint's content-sanity
     // DB lift so it doesn't create + disconnect a competing engine.
-    const result = await runLintCore({ target, fix: !!job.data.fix, dryRun: !!job.data.dryRun, engine });
+    const result = await runLintCore({ target, fix: !!job.data.fix, dryRun: !!job.data.dryRun, engine, signal: job.signal });
     return result;
   });
 
@@ -2391,7 +2414,7 @@ export async function registerBuiltinHandlers(
     const { runLintCore } = await import('./lint.ts');
     const target = typeof job.data.dir === 'string' ? job.data.dir : '.';
     // issue #1678: reuse the worker's live engine (see 'lint' handler).
-    return await runLintCore({ target, fix: true, dryRun: false, engine });
+    return await runLintCore({ target, fix: true, dryRun: false, engine, signal: job.signal });
   });
 
   worker.register('integrity-auto', async () => {
@@ -2416,7 +2439,10 @@ export async function registerBuiltinHandlers(
     const importArgs: string[] = [];
     if (job.data.dir) importArgs.push(String(job.data.dir));
     if (job.data.noEmbed) importArgs.push('--no-embed');
-    await runImport(engine, importArgs);
+    const result = await runImport(engine, importArgs, { signal: job.signal, sourceId: typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined });
+    if (result.errors > 0) {
+      throw new Error(`Import failed for ${result.errors} file(s); fix rejected documents and retry the job.`);
+    }
     return { imported: true };
   });
 
@@ -2502,7 +2528,7 @@ export async function registerBuiltinHandlers(
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
     const page = await engine.getPage(slug, { sourceId });
     if (!page) return { skipped: 'page_missing', slug, sourceId };
-    const { runFactsBackstop } = await import('../core/facts/backstop.ts');
+    const { runFactsBackstop, coerceNotabilityFilter } = await import('../core/facts/backstop.ts');
     const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import', 'hook:writeback'] as const;
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
       ? (job.data.source as typeof KNOWN_SOURCES[number])
@@ -2520,7 +2546,7 @@ export async function registerBuiltinHandlers(
         sessionId: typeof job.data.sessionId === 'string' ? job.data.sessionId : null,
         source,
         mode: 'inline',
-        notabilityFilter: job.data.notabilityFilter === 'high-only' ? 'high-only' : 'all',
+        notabilityFilter: coerceNotabilityFilter(job.data.notabilityFilter),
         visibility: job.data.visibility === 'world' ? 'world' : 'private',
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
       },
@@ -2925,7 +2951,8 @@ export async function registerBuiltinHandlers(
   // the per-source lock) the job completes `{ deferred: true }` and retries
   // next tick instead of failing — cooperative interleave (CODEX accepted).
   registerBuiltinJob(worker, engine, 'extract-atoms-drain', async (job) => {
-    const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
+    const { formatDrainProviderFailure, runExtractAtomsDrainForSource } =
+      await import('../core/cycle/extract-atoms-drain.ts');
     const { LockUnavailableError } = await import('../core/db-lock.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     const windowSeconds =
@@ -2949,10 +2976,7 @@ export async function registerBuiltinHandlers(
       // handler failure. Partial success (>=1 item extracted) keeps
       // completing normally, unchanged.
       if (result.status === 'provider_failure') {
-        throw new Error(
-          `extract-atoms-drain: all provider calls failed this batch ` +
-          `(batches=${result.batches}, remaining=${result.remaining ?? '?'}) — retrying`,
-        );
+        throw new Error(formatDrainProviderFailure(result));
       }
       return result;
     } catch (e) {

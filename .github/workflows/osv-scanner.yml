@@ -12,6 +12,8 @@ on:
     paths:
       - 'bun.lock'
       - 'package.json'
+      - 'admin/bun.lock'
+      - 'admin/package.json'
   schedule:
     - cron: '30 6 * * 1'  # weekly, Monday 06:30 UTC
   workflow_dispatch:

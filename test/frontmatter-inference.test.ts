@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../src/core/data-frontmatter.ts';
 import {
   compileExcludePatterns,
   DEFAULT_EXCLUDE_PATTERNS,

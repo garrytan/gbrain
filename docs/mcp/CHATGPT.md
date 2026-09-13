@@ -18,7 +18,8 @@ Follow [DEPLOY.md — OAuth 2.1 Setup](DEPLOY.md#oauth-21-setup) to start
 `gbrain serve --http`, save the admin bootstrap token, and expose the server
 at a public HTTPS URL (e.g. `https://your-brain.ngrok.app`). ChatGPT's
 connector auto-discovers the spec-compliant endpoint at
-`/.well-known/oauth-authorization-server`.
+`/.well-known/oauth-authorization-server` and the `/mcp` protected-resource
+metadata at `/.well-known/oauth-protected-resource/mcp`.
 
 ### 2. Register a ChatGPT client
 

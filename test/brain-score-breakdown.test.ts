@@ -4,8 +4,8 @@
  * Assertions:
  *   1. getHealth() returns the new *_score breakdown fields.
  *   2. Breakdown fields sum to brain_score by construction.
- *   3. orphan_pages counts graph-required entity pages with neither inbound
- *      nor outbound links; artifact/catch-all pages are allowed to stand alone.
+ *   3. orphan_pages counts pages with zero INBOUND links, regardless of
+ *      whether they have outbound links (was: required both).
  *   4. BrainHealth type now carries dead_links.
  */
 
@@ -71,15 +71,18 @@ describe('Bug 11 — brain_score breakdown sums to total', () => {
   });
 });
 
-describe('Bug 11 — orphan_pages is entity-scoped islanded pages', () => {
-  test('an entity page with outbound-only links is NOT an orphan', async () => {
-    await engine.putPage('people/hub', { type: 'person', title: 'Hub', compiled_truth: 'index', frontmatter: {} });
-    await engine.putPage('people/leaf1', { type: 'person', title: 'L1', compiled_truth: 'x', frontmatter: {} });
-    await engine.putPage('people/leaf2', { type: 'person', title: 'L2', compiled_truth: 'y', frontmatter: {} });
-    await engine.putPage('people/leaf3', { type: 'person', title: 'L3', compiled_truth: 'z', frontmatter: {} });
+describe('Bug 11 — orphan_pages is "no inbound links"', () => {
+  test('a page with outbound-only links is NOT an orphan', async () => {
+    // Hub page: links out to three others, but nothing links back to it.
+    // Previous (buggy) behavior: hub counted as orphan because it had no
+    // inbound links (correct) AND the old query also required no outbound.
+    await engine.putPage('hub', { type: 'note', title: 'Hub', compiled_truth: 'index', frontmatter: {} });
+    await engine.putPage('leaf1', { type: 'note', title: 'L1', compiled_truth: 'x', frontmatter: {} });
+    await engine.putPage('leaf2', { type: 'note', title: 'L2', compiled_truth: 'y', frontmatter: {} });
+    await engine.putPage('leaf3', { type: 'note', title: 'L3', compiled_truth: 'z', frontmatter: {} });
 
-    const hubId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='people/hub'`)).rows[0].id;
-    for (const target of ['people/leaf1', 'people/leaf2', 'people/leaf3']) {
+    const hubId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='hub'`)).rows[0].id;
+    for (const target of ['leaf1', 'leaf2', 'leaf3']) {
       const tid = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug=$1`, [target])).rows[0].id;
       await (engine as any).db.query(
         `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
@@ -88,30 +91,31 @@ describe('Bug 11 — orphan_pages is entity-scoped islanded pages', () => {
     }
 
     const h = await engine.getHealth();
+    // hub has outbound, no inbound → NOT orphan (under the fixed definition).
+    // leaf1/2/3 have inbound from hub → NOT orphan.
+    // So orphan_pages should be 0.
     expect(h.orphan_pages).toBe(0);
   });
 
-  test('a note with no links is not a core orphan, but an entity with no links is', async () => {
+  test('a page with no links at all IS an orphan', async () => {
     await engine.putPage('loner', { type: 'note', title: 'Loner', compiled_truth: 'alone', frontmatter: {} });
-    let h = await engine.getHealth();
-    expect(h.orphan_pages).toBe(0);
-
-    await engine.putPage('people/loner', { type: 'person', title: 'Loner', compiled_truth: 'alone', frontmatter: {} });
-    h = await engine.getHealth();
+    const h = await engine.getHealth();
     expect(h.orphan_pages).toBe(1);
   });
 
-  test('an entity page with inbound links only is NOT an orphan', async () => {
-    await engine.putPage('people/sink', { type: 'person', title: 'Sink', compiled_truth: 'target', frontmatter: {} });
-    await engine.putPage('people/source', { type: 'person', title: 'Source', compiled_truth: 'origin', frontmatter: {} });
-    const sinkId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='people/sink'`)).rows[0].id;
-    const srcId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='people/source'`)).rows[0].id;
+  test('a page with inbound links only is NOT an orphan', async () => {
+    await engine.putPage('sink', { type: 'note', title: 'Sink', compiled_truth: 'target', frontmatter: {} });
+    await engine.putPage('source', { type: 'note', title: 'Source', compiled_truth: 'origin', frontmatter: {} });
+    const sinkId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='sink'`)).rows[0].id;
+    const srcId = (await (engine as any).db.query(`SELECT id FROM pages WHERE slug='source'`)).rows[0].id;
     await (engine as any).db.query(
       `INSERT INTO links (from_page_id, to_page_id, link_type) VALUES ($1, $2, 'mentions')`,
       [srcId, sinkId],
     );
 
     const h = await engine.getHealth();
+    // sink has 1 inbound (from source) → not orphan.
+    // source has no inbound (but has outbound) → not orphan under new definition.
     expect(h.orphan_pages).toBe(0);
   });
 });

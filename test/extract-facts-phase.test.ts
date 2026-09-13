@@ -10,10 +10,15 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { acquirePageLock } from '../src/core/page-lock.ts';
+import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 
 let engine: PGLiteEngine;
 
@@ -204,6 +209,279 @@ describe('runExtractFacts — happy path', () => {
     );
     expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Existing', 'New']);
   });
+
+  test('refuses destructive reconcile when canonical Markdown is newer than the pages cache', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-facts-stale-cache-'));
+    try {
+      // Point the default source at a real canonical tree for this case.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [root],
+      );
+
+      const cachedBody = FACT_FENCE(
+        `| 1 | Existing | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+      );
+      const canonicalBody = FACT_FENCE(
+        `| 1 | Existing | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
+| 2 | Newly remembered | event | 1.0 | world | medium | 2026-09-02 |  | remember:test |  |`,
+      );
+      await putPage('people/alice', cachedBody);
+      await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+      // Reproduce the real ordering: remember writes canonical Markdown and
+      // stamps the new facts row before page sync refreshes compiled_truth.
+      mkdirSync(join(root, 'people'), { recursive: true });
+      writeFileSync(join(root, 'people', 'alice.md'), canonicalBody, 'utf-8');
+      await engine.insertFacts(
+        [{
+          fact: 'Newly remembered',
+          kind: 'event',
+          source: 'remember:test',
+          row_num: 2,
+          source_markdown_slug: 'people/alice',
+        }],
+        { source_id: 'default' },
+      );
+
+      const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+      expect(r.factsDeleted).toBe(0);
+      expect(r.factsInserted).toBe(0);
+      expect(r.warnings).toContainEqual(expect.stringContaining('FACTS_PAGE_CACHE_STALE'));
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice' ORDER BY row_num`,
+      );
+      expect(rows.rows.map((row: { fact: string }) => row.fact))
+        .toEqual(['Existing', 'Newly remembered']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('page lock closes the empty-fence delete race with a concurrent canonical writer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-facts-empty-race-'));
+    const lockRoot = join(root, '.locks');
+    const slug = 'people/empty-race';
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [root],
+      );
+      await putPage(slug, '');
+      await engine.insertFacts(
+        [{ fact: 'Previously indexed', kind: 'fact', source: 'old', row_num: 1, source_markdown_slug: slug }],
+        { source_id: 'default' },
+      );
+
+      const held = await acquirePageLock(slug, { lockRoot });
+      expect(held).not.toBeNull();
+      let settled = false;
+      const reconcile = runExtractFacts(engine, { slugs: [slug], pageLockRoot: lockRoot })
+        .finally(() => { settled = true; });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+
+      const canonicalBody = FACT_FENCE(
+        `| 1 | Previously indexed | fact | 1.0 | world | medium | 2026-01-01 |  | old |  |\n` +
+        `| 2 | Concurrent remember | event | 1.0 | world | medium | 2026-09-02 |  | remember:test |  |`,
+      );
+      mkdirSync(join(root, 'people'), { recursive: true });
+      writeFileSync(join(root, 'people', 'empty-race.md'), canonicalBody, 'utf-8');
+      await engine.insertFacts(
+        [{ fact: 'Concurrent remember', kind: 'event', source: 'remember:test', row_num: 2, source_markdown_slug: slug }],
+        { source_id: 'default' },
+      );
+      await held!.release();
+
+      const r = await reconcile;
+      expect(r.factsDeleted).toBe(0);
+      expect(r.warnings).toContainEqual(expect.stringContaining('FACTS_PAGE_CACHE_STALE'));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT fact FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num`,
+        [slug],
+      );
+      expect(rows.rows.map((row: { fact: string }) => row.fact))
+        .toEqual(['Previously indexed', 'Concurrent remember']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test('page lock closes the transactional drift-replace race with a concurrent canonical writer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-facts-drift-race-'));
+    const lockRoot = join(root, '.locks');
+    const slug = 'people/drift-race';
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [root],
+      );
+      const cachedBody = FACT_FENCE(
+        `| 1 | Canonical cached | fact | 1.0 | world | medium | 2026-01-01 |  | cached |  |`,
+      );
+      await putPage(slug, cachedBody);
+      await engine.insertFacts(
+        [{ fact: 'Stale indexed row', kind: 'fact', source: 'stale', row_num: 1, source_markdown_slug: slug }],
+        { source_id: 'default' },
+      );
+
+      const held = await acquirePageLock(slug, { lockRoot });
+      expect(held).not.toBeNull();
+      let settled = false;
+      const reconcile = runExtractFacts(engine, { slugs: [slug], pageLockRoot: lockRoot })
+        .finally(() => { settled = true; });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+
+      const canonicalBody = FACT_FENCE(
+        `| 1 | Canonical cached | fact | 1.0 | world | medium | 2026-01-01 |  | cached |  |\n` +
+        `| 2 | Concurrent remember | event | 1.0 | world | medium | 2026-09-02 |  | remember:test |  |`,
+      );
+      mkdirSync(join(root, 'people'), { recursive: true });
+      writeFileSync(join(root, 'people', 'drift-race.md'), canonicalBody, 'utf-8');
+      await engine.insertFacts(
+        [{ fact: 'Concurrent remember', kind: 'event', source: 'remember:test', row_num: 2, source_markdown_slug: slug }],
+        { source_id: 'default' },
+      );
+      await held!.release();
+
+      const r = await reconcile;
+      expect(r.factsDeleted).toBe(0);
+      expect(r.factsInserted).toBe(0);
+      expect(r.warnings).toContainEqual(expect.stringContaining('FACTS_PAGE_CACHE_STALE'));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT fact FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num, id`,
+        [slug],
+      );
+      expect(rows.rows.map((row: { fact: string }) => row.fact))
+        .toEqual(['Stale indexed row', 'Concurrent remember']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test('fresh cache: canonical Markdown equal to the pages cache lets destructive reconcile proceed', async () => {
+    // Twin of the stale-refusal test above with ONE difference: the on-disk
+    // file carries the same body as the pages row. Pins the comparison itself,
+    // so a normally synced page is never mistaken for a stale one.
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-facts-fresh-cache-'));
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [root],
+      );
+      const body = FACT_FENCE(
+        `| 1 | Existing | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+      );
+      await putPage('people/alice-fresh', body);
+      mkdirSync(join(root, 'people'), { recursive: true });
+      writeFileSync(join(root, 'people', 'alice-fresh.md'), body, 'utf-8');
+      // DB drift the fence does not carry: the reconcile must wipe it.
+      await engine.insertFacts(
+        [{ fact: 'Stale indexed row', kind: 'fact', source: 'stale', row_num: 7, source_markdown_slug: 'people/alice-fresh' }],
+        { source_id: 'default' },
+      );
+
+      const r = await runExtractFacts(engine, { slugs: ['people/alice-fresh'] });
+      expect(r.warnings.some(w => w.includes('FACTS_PAGE_CACHE_STALE'))).toBe(false);
+      expect(r.factsDeleted).toBeGreaterThan(0);
+      expect(r.factsInserted).toBe(1);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice-fresh' ORDER BY row_num`,
+      );
+      expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Existing']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('sync.write_through=off: a stale mirror file never blocks destructive reconcile', async () => {
+    // With write-through off the fence writers already treat the file as
+    // non-canonical (fence-write.ts legacy fallback), so the staleness check
+    // must not hold the DB hostage to a mirror nobody maintains.
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-facts-wt-off-'));
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [root],
+      );
+      await engine.setConfig('sync.write_through', 'off');
+      _resetWriteThroughCacheForTest();
+      await putPage('people/alice-wt-off', FACT_FENCE(
+        `| 1 | Existing | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+      ));
+      mkdirSync(join(root, 'people'), { recursive: true });
+      writeFileSync(join(root, 'people', 'alice-wt-off.md'), '# Stale mirror\n\nNothing like the DB body.\n', 'utf-8');
+      await engine.insertFacts(
+        [{ fact: 'Stale indexed row', kind: 'fact', source: 'stale', row_num: 7, source_markdown_slug: 'people/alice-wt-off' }],
+        { source_id: 'default' },
+      );
+
+      const r = await runExtractFacts(engine, { slugs: ['people/alice-wt-off'] });
+      expect(r.warnings.some(w => w.includes('FACTS_PAGE_CACHE_STALE'))).toBe(false);
+      expect(r.factsDeleted).toBeGreaterThan(0);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/alice-wt-off' ORDER BY row_num`,
+      );
+      expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Existing']);
+    } finally {
+      await engine.unsetConfig('sync.write_through');
+      _resetWriteThroughCacheForTest();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a page lock held past the deadline degrades to FACTS_PAGE_LOCK_TIMEOUT and the run continues', async () => {
+    // One wedged page must cost a warning, not the rest of the phase run.
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-facts-lock-timeout-'));
+    const lockRoot = join(root, '.locks');
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [root],
+      );
+      // Wedged page: empty fence + a fence-owned row → the destructive delete path.
+      await putPage('people/wedged', '');
+      await engine.insertFacts(
+        [{ fact: 'Survives the wedge', kind: 'fact', source: 'old', row_num: 1, source_markdown_slug: 'people/wedged' }],
+        { source_id: 'default' },
+      );
+      // Healthy sibling later in the same run: must still reconcile.
+      await putPage('people/healthy', FACT_FENCE(
+        `| 1 | Healthy fact | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+      ));
+
+      const held = await acquirePageLock('people/wedged', { lockRoot });
+      expect(held).not.toBeNull();
+      try {
+        const r = await runExtractFacts(engine, { slugs: ['people/wedged', 'people/healthy'], pageLockRoot: lockRoot });
+        expect(r.warnings).toContainEqual(expect.stringContaining('people/wedged: FACTS_PAGE_LOCK_TIMEOUT'));
+        expect(r.factsDeleted).toBe(0);
+        expect(r.factsInserted).toBe(1);
+      } finally {
+        await held!.release();
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (engine as any).db.query(
+        `SELECT fact FROM facts WHERE source_markdown_slug = 'people/wedged'`,
+      );
+      expect(rows.rows).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 
   test('cli:-origin conversation facts (#1928) neither break idempotency nor get wiped', async () => {
     await putPage('people/alice', FACT_FENCE(

@@ -52,8 +52,17 @@ const atoms = [
   { slug: 'a2', title: 'A2', body: 'b2', concept_refs: ['theme'] },
 ];
 
+/** Persist the injected atoms in the source under test: the #4589 provenance
+ *  edges need both endpoints there, else the phase (rightly) reports a warn. */
+async function persistAtoms(sourceId: string): Promise<void> {
+  for (const a of atoms) {
+    await engine.putPage(a.slug, { type: 'atom', title: a.title, compiled_truth: a.body, timeline: '' }, { sourceId });
+  }
+}
+
 describe('synthesize_concepts source scoping (#4416)', () => {
   test('writes concept page + rollup under opts.sourceId; re-run (update path) survives on a non-default source', async () => {
+    await persistAtoms('personal');
     const first = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, sourceId: 'personal' });
     expect(first.status).toBe('ok');
 
@@ -79,6 +88,7 @@ describe('synthesize_concepts source scoping (#4416)', () => {
   }, 120000);
 
   test('omitting sourceId keeps the legacy default fallback', async () => {
+    await persistAtoms('default');
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms });
     expect(result.status).toBe('ok');
 
@@ -96,4 +106,40 @@ describe('synthesize_concepts source scoping (#4416)', () => {
     expect(rollup.length).toBeGreaterThan(0);
     expect(rollup.every((r) => r.source_id === 'default')).toBe(true);
   }, 120000);
+});
+
+// ─── wave review (Codex P2): atom discovery is scoped to the cycle source ──
+describe('synthesize_concepts atom discovery is source-scoped', () => {
+  async function seedAtomPage(slug: string, sourceId: string): Promise<void> {
+    await engine.putPage(slug, {
+      type: 'atom',
+      title: slug,
+      compiled_truth: `body of ${slug}`,
+      timeline: '',
+      frontmatter: { concepts: ['theme'] },
+    }, { sourceId });
+  }
+
+  test('atoms living in another source are not grouped into this source\'s concepts', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('other', 'Other') ON CONFLICT (id) DO NOTHING`,
+      [],
+    );
+    await seedAtomPage('atoms/o1', 'other');
+    await seedAtomPage('atoms/o2', 'other');
+
+    // The cycle for 'personal' must see NO atoms — the SQL discovery was
+    // brain-global while the provenance edges were pinned to the cycle
+    // source, so same-slug atoms from other sources were grouped in.
+    const personal = await runPhaseSynthesizeConcepts(engine, { sourceId: 'personal' });
+    expect(personal.status).toBe('skipped');
+    expect(personal.details?.reason).toBe('no_atoms');
+    expect(await engine.getPage('concepts/theme', { sourceId: 'personal' })).toBeNull();
+
+    // The owning source still synthesizes them.
+    const other = await runPhaseSynthesizeConcepts(engine, { sourceId: 'other' });
+    expect(other.status).toBe('ok');
+    expect(other.details?.concepts_written).toBe(1);
+    expect(await engine.getPage('concepts/theme', { sourceId: 'other' })).not.toBeNull();
+  });
 });

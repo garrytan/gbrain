@@ -18,7 +18,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runImport } from '../src/commands/import.ts';
+import { runImport, ImportAbortError } from '../src/commands/import.ts';
+import { SourceTargetError } from '../src/core/source-resolver.ts';
 
 let engine: PGLiteEngine;
 
@@ -98,5 +99,56 @@ describe('import --source-id (#1167)', () => {
       `SELECT source_id FROM pages LIMIT 1`,
     );
     expect(rows[0]?.source_id).toBe('dept-x');
+  });
+
+  // #4862: `--source <id>` is what every sibling command (and the resolver's
+  // own nudge) tells users to pass; import accepted it without error and
+  // silently ignored it. It is now an alias of --source-id.
+  test('--source dept-x routes pages to dept-x (#4862)', async () => {
+    await runImport(engine, [scratchDir, '--source', 'dept-x', '--no-embed', '--json']);
+    const rows = await engine.executeRaw<{ source_id: string }>(`SELECT source_id FROM pages`);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const r of rows) expect(r.source_id).toBe('dept-x');
+  });
+
+  test('--source value before the dir is NOT treated as the dir (#4862)', async () => {
+    await runImport(engine, ['--source', 'dept-x', scratchDir, '--no-embed', '--json']);
+    const rows = await engine.executeRaw<{ source_id: string }>(`SELECT source_id FROM pages LIMIT 1`);
+    expect(rows[0]?.source_id).toBe('dept-x');
+  });
+
+  test('--source and --source-id disagreeing aborts instead of picking one (#4862)', async () => {
+    await expect(
+      runImport(engine, [scratchDir, '--source', 'dept-x', '--source-id', 'default', '--no-embed', '--json']),
+    ).rejects.toBeInstanceOf(ImportAbortError);
+    const rows = await engine.executeRaw<{ n: string }>(`SELECT COUNT(*) AS n FROM pages`);
+    expect(parseInt(rows[0].n, 10)).toBe(0);
+  });
+
+  // Wave review: the flag parser mirrors sync-delegate — `--flag=value` is a
+  // form, a missing value is a refusal (never "no scope"), and the value goes
+  // through the shared resolver so a typo fails ONCE with the resolver's own
+  // SourceTargetError instead of N pages.source_id foreign-key failures.
+  test('--source=dept-x form routes pages to dept-x (wave review)', async () => {
+    await runImport(engine, [scratchDir, '--source=dept-x', '--no-embed', '--json']);
+    const rows = await engine.executeRaw<{ source_id: string }>(`SELECT source_id FROM pages`);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const r of rows) expect(r.source_id).toBe('dept-x');
+  });
+
+  test('a valueless --source / --source-id (last arg, next flag, --source=) is refused, nothing imported (wave review)', async () => {
+    const countPages = async () => parseInt((await engine.executeRaw<{ n: string }>(`SELECT COUNT(*) AS n FROM pages`))[0].n, 10);
+    await expect(runImport(engine, [scratchDir, '--no-embed', '--json', '--source'])).rejects.toBeInstanceOf(ImportAbortError);
+    await expect(runImport(engine, [scratchDir, '--source', '--no-embed', '--json'])).rejects.toBeInstanceOf(ImportAbortError);
+    await expect(runImport(engine, [scratchDir, '--source=', '--no-embed', '--json'])).rejects.toBeInstanceOf(ImportAbortError);
+    await expect(runImport(engine, [scratchDir, '--no-embed', '--json', '--source-id'])).rejects.toBeInstanceOf(ImportAbortError);
+    expect(await countPages()).toBe(0);
+  });
+
+  test('an unregistered or invalid --source fails with the resolver SourceTargetError before any write (wave review)', async () => {
+    await expect(runImport(engine, [scratchDir, '--source', 'ghost-src', '--no-embed', '--json'])).rejects.toBeInstanceOf(SourceTargetError);
+    await expect(runImport(engine, [scratchDir, '--source-id', 'Not!Valid', '--no-embed', '--json'])).rejects.toBeInstanceOf(SourceTargetError);
+    const rows = await engine.executeRaw<{ n: string }>(`SELECT COUNT(*) AS n FROM pages`);
+    expect(parseInt(rows[0].n, 10)).toBe(0);
   });
 });

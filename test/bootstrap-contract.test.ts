@@ -30,9 +30,11 @@ describe('bootstrap same-turn write-back contract', () => {
     };
     expect(plugin.shared_deps).toContain('skills/_AGENT_README.md');
     const onboarding = readFileSync(join(root, 'skills', '_AGENT_README.md'), 'utf8');
-    expect(onboarding).toContain('## The always-on memory loop');
-    expect(onboarding).toContain("GBrain's `remember` verb");
-    expect(onboarding).toContain('Context injection is read-side automation');
+    expect(onboarding).toContain('## The memory loop');
+    expect(onboarding).toContain('Start with keyless recall and explicit remembering');
+    expect(onboarding).toContain('Automatic capture is off until the user opts in');
+    expect(onboarding).toContain('A chat-only request suppresses writes');
+    expect(onboarding).toContain('Verify with `recall`, `entity`, or `get_page`');
   });
 
   test('audits a legacy one-way contract as missing', () => {

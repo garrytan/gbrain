@@ -21,6 +21,9 @@ import {
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
 import { __resetFactsQueueForTests } from '../src/core/facts/queue.ts';
+import { MinionWorker } from '../src/core/minions/worker.ts';
+import type { MinionJobContext } from '../src/core/minions/types.ts';
+import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 
 let engine: PGLiteEngine;
 
@@ -406,5 +409,55 @@ describe('runFactsBackstop — sync.write_through opt-out', () => {
       await (engine as any).db.query(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
       rmSync(brainDir, { recursive: true, force: true });
     }
+  });
+});
+
+// #4870: the durable facts-absorb payload carries the writer's notabilityFilter
+// verbatim (backstop.ts), but the minion handler (commands/jobs.ts) is the only
+// reader of that value — it must honor every value the ctx union permits, not
+// collapse everything but 'high-only' to 'all'. Drive the registered handler
+// directly with a queued 'medium-and-up' payload (reachable at stock master via
+// `gbrain jobs submit facts-absorb --params ...`).
+describe('facts-absorb minion handler honors the queued notabilityFilter (#4870)', () => {
+  test("a queued 'medium-and-up' payload persists high+medium and drops low", async () => {
+    const worker = new MinionWorker(engine, { queue: 'test' });
+    await registerBuiltinHandlers(worker, engine, { quiet: true });
+    const handler = worker.getHandler('facts-absorb');
+    expect(handler).toBeDefined();
+
+    const page = meetingPage();
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth) VALUES ($1, 'default', 'meeting', $1, $2)`,
+      [page.slug, LONG_BODY],
+    );
+    chatStub([
+      { fact: 'queued-medium-up-high', kind: 'event', notability: 'high', entity: 'people/queue-test' },
+      { fact: 'queued-medium-up-medium', kind: 'event', notability: 'medium', entity: 'people/queue-test' },
+      { fact: 'queued-medium-up-low', kind: 'event', notability: 'low', entity: 'people/queue-test' },
+    ]);
+    const job: MinionJobContext = {
+      id: 1,
+      name: 'facts-absorb',
+      data: { slug: page.slug, sourceId: 'default', source: 'mcp:put_page', notabilityFilter: 'medium-and-up' },
+      attempts_made: 0,
+      signal: new AbortController().signal,
+      deadlineAtMs: null,
+      shutdownSignal: new AbortController().signal,
+      updateProgress: async () => {},
+      updateTokens: async () => {},
+      log: async () => {},
+      isActive: async () => true,
+      readInbox: async () => [],
+    };
+    await handler!(job);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE fact LIKE 'queued-medium-up-%' ORDER BY fact`,
+    );
+    expect(rows.rows.map((r: { fact: string }) => r.fact)).toEqual([
+      'queued-medium-up-high',
+      'queued-medium-up-medium',
+    ]);
   });
 });

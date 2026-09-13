@@ -1,65 +1,38 @@
 # Doctor Authority and Surface Routing
 
-Updated: 2026-07-10
+Every health report must identify its runtime, database and effective source
+scope before interpreting differences between surfaces.
 
-## Rule
+## Required evidence
 
-Every G-Brain health report must name the surface it used before it interprets results.
+- Surface and command: local CLI, stdio MCP or authenticated HTTP endpoint.
+- Resolved executable or wrapper and runtime version/commit.
+- Database identity without credentials, schema version and active schema pack.
+- Effective source grant and whether the report is brain-wide or filtered.
+- Doctor status, warning names, scores and elapsed time.
+- Active-query and transaction state after diagnostics finish.
 
-For Steve's production brain, the authoritative Doctor path is:
+## Comparing surfaces
 
-```text
-/opt/homebrew/bin/gbrain
-  -> /Users/stevewandler/.hermes/scripts/gbrain_wrapper.sh
-  -> bun /Users/stevewandler/github-repos/gbrain/src/cli.ts
-```
+A trusted local brain-wide Doctor sees more than a scoped remote caller. Remote
+checks and counts obey visibility constraints; different totals are expected
+when source grants differ. Do not widen grants to make reports agree, and do
+not invent report fields that the current runtime does not emit.
 
-Remote MCP Doctor surfaces, including Railway-hosted MCP, are cross-checks. They are not allowed to override the local CLI unless the report proves the remote deployment is on the same code version, database, schema pack, and source set.
+When results differ, compare runtime versions, database identity, schema pack,
+source scope and observation time. Repair a stale or misrouted runtime when the
+evidence supports it. Evaluate knowledge-quality warnings separately rather
+than suppressing them because another surface reports a different score.
 
-The Railway MCP `run_doctor` surface is a remote subset report. It must be treated as:
+The configured host wrapper is the starting point for local diagnostics.
+Reestablish live service, tunnel, database, worker and scheduler topology before
+changing it. A public hostname or an old deployment note does not establish the
+current hosting provider.
 
-```yaml
-surface: railway_mcp_remote_subset
-comparable_to_local_cli: false
-```
+## Operational records
 
-Its `health_score` is a diagnostic supplement, not a direct substitute for local CLI Doctor's full `health_score`.
-
-## Required health-report fields
-
-Agents must include these fields in G-Brain Doctor summaries:
-
-- Surface used: local CLI, local stdio MCP, Railway MCP, or another named endpoint.
-- Command or tool name used.
-- Resolved binary/script path when local CLI is used.
-- Deployment/version identity when remote MCP is used.
-- Database/project identity at a non-secret level.
-- Doctor status, health score, brain score, warning count, and warning names.
-- Whether local CLI and remote MCP agree. If they disagree, call it surface drift.
-- Whether the report declares `comparable_to_local_cli: false`.
-
-## Surface drift protocol
-
-If two surfaces disagree:
-
-1. Stop treating the warning as a data-quality fact.
-2. Run the local CLI Doctor and record the resolved wrapper path.
-3. Run the remote MCP Doctor and record the remote deployment/version identity.
-4. Compare database, schema pack, source count, calibration state, and queue state.
-5. Fix or redeploy the stale surface before telling the operator the brain itself is unhealthy.
-
-## GitHub note requirement for infrastructure changes
-
-Any change to wrappers, LaunchAgents, cron jobs, Railway deploys, MCP servers, queue workers, source sync, embeddings, calibration, or Doctor checks must leave a GitHub note in `docs/operations/` or `docs/incidents/`.
-
-The note must include:
-
-- Owner and purpose.
-- Exact runtime path or deployment surface.
-- Source of truth and fallback path.
-- Verification command.
-- Rollback or recovery command.
-- Monitoring signal that proves the change is still working.
-- Known stale-result or drift failure mode.
-
-If this note is missing, the setup is incomplete.
+Keep exact topology, process observations, backup hashes, validation receipts
+and rollback commands in the operator's protected infrastructure archive.
+Public code and documentation should contain generic implementation details,
+not private identifiers, credentials or diagnostic data. Record source scope
+and freshness so another operator can reproduce the comparison.

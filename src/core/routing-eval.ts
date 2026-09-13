@@ -84,7 +84,7 @@ export interface RoutingCaseResult {
 /**
  * Normalize a string for routing comparison:
  *   - lowercase
- *   - replace any non-alphanumeric char with a space
+ *   - replace any non-letter/mark/number char with a space
  *   - collapse whitespace
  *   - trim
  *
@@ -94,10 +94,18 @@ export interface RoutingCaseResult {
  * a routing match should do. The cost is slightly over-permissive
  * matching; the benefit is reliable matches across quote/punctuation
  * variants that agents emit in practice.
+ *
+ * The character class is `\p{L}\p{M}\p{N}` (any Unicode letter, combining
+ * mark, or number) under the `u` flag, not `a-z0-9`. An ASCII-only class
+ * silently drops every non-Latin script — Korean, Chinese, Japanese,
+ * Cyrillic all collapse to an empty string, so a skill with only
+ * non-English triggers can never match any intent through this checker.
+ * `\p{M}` keeps abugida vowel signs and viramas (Devanagari, Thai) and
+ * NFD-decomposed accents attached to their base letter.
  */
 export function normalizeText(s: string): string {
   if (!s) return '';
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return s.toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim();
 }
 
 /**

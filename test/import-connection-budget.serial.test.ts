@@ -15,7 +15,7 @@
  * top-level mock.module for the child-engine connections.
  */
 import { afterAll, beforeAll, beforeEach, expect, mock, spyOn, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -40,6 +40,7 @@ let importDir: string;
 let previousGbrainHome: string | undefined;
 let previousMaxConnections: string | undefined;
 let previousPoolSize: string | undefined;
+let restoreFilesystemLock: (() => void) | undefined;
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'gbrain-import-budget-'));
@@ -56,10 +57,17 @@ beforeAll(async () => {
   process.env.GBRAIN_HOME = root;
   process.env.GBRAIN_MAX_CONNECTIONS = '10';
   delete process.env.GBRAIN_POOL_SIZE;
+  // These fake engines model pool allocation, not lock-table SQL. Imports
+  // here run inside an already-held fixture-root lock, as nested sync imports do.
+  const filesystem = await import('../src/core/minions/source-filesystem.ts');
+  const heldRoot = realpathSync(importDir);
+  const lockSpy = spyOn(filesystem, 'hasSourceFilesystemLock').mockImplementation(path => path === heldRoot);
+  restoreFilesystemLock = () => lockSpy.mockRestore();
   ({ runImport } = await import('../src/commands/import.ts'));
 });
 
 afterAll(() => {
+  restoreFilesystemLock?.();
   if (previousGbrainHome === undefined) delete process.env.GBRAIN_HOME;
   else process.env.GBRAIN_HOME = previousGbrainHome;
   if (previousMaxConnections === undefined) delete process.env.GBRAIN_MAX_CONNECTIONS;

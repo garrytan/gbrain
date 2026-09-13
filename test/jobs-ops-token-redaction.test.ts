@@ -49,8 +49,8 @@ function parsed(result: { content: Array<{ text: string }> }) {
 /** Direct SQL seed: a waiting private-queue job carrying the raw token. */
 async function seedPrivateJob(queue: string): Promise<number> {
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, queue, status, data, private_queue_owner_token, private_queue_lease_until)
-     VALUES ('subagent', $1, 'waiting', '{}'::jsonb, $2, now() + interval '10 minutes')
+    `INSERT INTO minion_jobs (name, queue, status, data, private_queue_owner_token, private_queue_lease_until, submission_authority)
+     VALUES ('subagent', $1, 'waiting', '{}'::jsonb, $2, now() + interval '10 minutes', '{"version":1,"kind":"application"}'::jsonb)
      RETURNING id`,
     [queue, RAW_TOKEN],
   );
@@ -59,8 +59,8 @@ async function seedPrivateJob(queue: string): Promise<number> {
 
 async function seedPlainJob(): Promise<number> {
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, queue, status, data)
-     VALUES ('embed', 'default', 'waiting', '{}'::jsonb)
+    `INSERT INTO minion_jobs (name, queue, status, data, submission_authority)
+     VALUES ('embed', 'default', 'waiting', '{}'::jsonb, '{"version":1,"kind":"application"}'::jsonb)
      RETURNING id`,
   );
   return Number(rows[0].id);
@@ -140,7 +140,7 @@ describe('submit_job — owner-token redaction', () => {
   });
 
   it('null passthrough: a fresh tokenless submission reports null, not the string [redacted]', async () => {
-    const res = await dispatchToolCall(engine, 'submit_job', { name: 'embed' }, { ...STDIO });
+    const res = await dispatchToolCall(engine, 'submit_job', { name: 'embed' }, { ...STDIO, remote: false });
     expect(res.isError ?? false).toBe(false);
     const body = parsed(res);
     expect(body.id).toBeGreaterThan(0);
@@ -152,8 +152,8 @@ describe('submit_job — owner-token redaction', () => {
 /** A2 (test-gap wave 1): status-variant seeder for the cancel/retry pair. */
 async function seedPrivateJobWithStatus(status: string): Promise<number> {
   const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, queue, status, data, private_queue_owner_token, private_queue_lease_until)
-     VALUES ('subagent', 'dream-inline-1700000000000-cafe0002', $1, '{}'::jsonb, $2, now() + interval '10 minutes')
+    `INSERT INTO minion_jobs (name, queue, status, data, private_queue_owner_token, private_queue_lease_until, submission_authority)
+     VALUES ('subagent', 'dream-inline-1700000000000-cafe0002', $1, '{}'::jsonb, $2, now() + interval '10 minutes', '{"version":1,"kind":"application"}'::jsonb)
      RETURNING id`,
     [status, RAW_TOKEN],
   );
@@ -171,7 +171,7 @@ describe('cancel_job / retry_job — owner-token redaction (A2)', () => {
 
   it('retry_job redacts a present token across the whole envelope', async () => {
     const id = await seedPrivateJobWithStatus('failed');
-    const res = await dispatchToolCall(engine, 'retry_job', { id }, { ...STDIO });
+    const res = await dispatchToolCall(engine, 'retry_job', { id }, { ...STDIO, remote: false });
     expect(res.isError ?? false).toBe(false);
     expect(parsed(res).private_queue_owner_token).toBe('[redacted]');
     expect(res.content[0].text).not.toContain(RAW_TOKEN);
@@ -182,9 +182,9 @@ describe('cancel_job / retry_job — owner-token redaction (A2)', () => {
     const cancelRes = await dispatchToolCall(engine, 'cancel_job', { id: waiting }, { ...STDIO });
     expect(parsed(cancelRes).private_queue_owner_token).toBeNull();
     const failedRows = await engine.executeRaw<{ id: number }>(
-      `INSERT INTO minion_jobs (name, queue, status, data) VALUES ('embed', 'default', 'failed', '{}'::jsonb) RETURNING id`,
+      `INSERT INTO minion_jobs (name, queue, status, data, submission_authority) VALUES ('embed', 'default', 'failed', '{}'::jsonb, '{"version":1,"kind":"application"}'::jsonb) RETURNING id`,
     );
-    const retryRes = await dispatchToolCall(engine, 'retry_job', { id: Number(failedRows[0].id) }, { ...STDIO });
+    const retryRes = await dispatchToolCall(engine, 'retry_job', { id: Number(failedRows[0].id) }, { ...STDIO, remote: false });
     expect(parsed(retryRes).private_queue_owner_token).toBeNull();
   });
 });

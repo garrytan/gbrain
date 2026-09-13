@@ -75,12 +75,12 @@ describeBench('Bench: Durability (SIGKILL mid-flight)', () => {
       // then got SIGKILLed (status=active, lock_until in the past).
       const seeded = await conn.unsafe<{ id: number }[]>(`
         INSERT INTO minion_jobs
-          (name, queue, status, priority, data, max_attempts, attempts_made, attempts_started,
+          (submission_authority, name, queue, status, priority, data, max_attempts, attempts_made, attempts_started,
            backoff_type, backoff_delay, backoff_jitter, stalled_counter, max_stalled,
            lock_token, lock_until, on_child_fail, depth, remove_on_complete, remove_on_fail,
            started_at)
         SELECT
-          'bench-rescue', 'default', 'active', 0, '{}'::jsonb, 3, 1, 1,
+          '{"version":1,"kind":"application"}'::jsonb, 'bench-rescue', 'default', 'active', 0, '{}'::jsonb, 3, 1, 1,
           'exponential', 1000, 0.2, 0, 3,
           'killed-worker:' || gs::text, now() - interval '10 seconds', 'fail_parent', 0, false, false,
           now() - interval '1 minute'

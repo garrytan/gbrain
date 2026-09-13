@@ -96,8 +96,8 @@ async function seedJob(rig: Rig, opts: {
   sourceId?: string;
 }): Promise<number> {
   const rows = await rig.engine.executeRaw<{ id: number }>(
-    `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key)
-     VALUES ('subagent', $1, $2, jsonb_build_object('source_id', $3::text), $4)
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, data, idempotency_key)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, 'subagent', $1, $2, jsonb_build_object('source_id', $3::text), $4)
      RETURNING id`,
     [opts.queue ?? 'dream-inline-1700000000000-deadbeef', opts.status ?? 'waiting', opts.sourceId ?? 'default', opts.key],
   );

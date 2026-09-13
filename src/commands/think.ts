@@ -156,10 +156,29 @@ prints what would have been the input (exit 0).
       // #4508: validate --source before the gather runs — an unknown or
       // archived source is a hard exit 1 (SourceTargetError message names
       // it), never a silent full-brain gather.
+      // #4652: without --source, resolve the SAME default scope `gbrain
+      // search` gets from makeContext (6-tier chain + the federated set for
+      // ambient tiers) — think used to hand runThink no scope at all, so the
+      // gather spanned every source, including ones registered --no-federated.
+      // Mirrors cli.ts makeContext: an explicit / ambient target that fails
+      // to resolve throws; only a structural pre-init failure (no sources
+      // table) keeps the legacy unscoped gather.
       let sourceId: string | undefined;
-      if (source !== undefined) {
-        const { resolveSourceWithTier } = await import('../core/source-resolver.ts');
-        sourceId = (await resolveSourceWithTier(engine, source)).source_id;
+      let allowedSources: string[] | undefined;
+      const { resolveSourceWithTier, localFederatedSourceIds, ALL_SOURCES } =
+        await import('../core/source-resolver.ts');
+      const { isUndefinedTableError } = await import('../core/utils.ts');
+      try {
+        const resolved = await resolveSourceWithTier(engine, source ?? null);
+        // __all__ spans the brain; runThink has no sentinel handling of its
+        // own, so a literal '__all__' sourceId would gather nothing.
+        sourceId = resolved.source_id === ALL_SOURCES ? undefined : resolved.source_id;
+        allowedSources = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
+      } catch (err) {
+        // Only the structural pre-init failure (no sources table) keeps the
+        // legacy unscoped gather; every other resolver error — an unknown
+        // ambient source, a connection failure, a genuine bug — propagates.
+        if (source !== undefined || !isUndefinedTableError(err)) throw err;
       }
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,
@@ -168,8 +187,10 @@ prints what would have been the input (exit 0).
         remote: false,
         // #3734: activate takes' vector retrieval arm for CLI think.
         embedQuestion: (q) => embedQuery(q),
-        // #4508: thread the validated scope (RunThinkOpts.sourceId).
+        // #4508/#4652: thread the validated scope (RunThinkOpts.sourceId /
+        // allowedSources — the array wins inside runGather, same as search).
         ...(sourceId ? { sourceId } : {}),
+        ...(allowedSources ? { allowedSources } : {}),
         // #1698: explicit --model → hard error on an unresolvable model (no silent
         // degrade to the no-LLM stub). Omitting --model keeps the graceful default path.
         modelExplicit: !!model,

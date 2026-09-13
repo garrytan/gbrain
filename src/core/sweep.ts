@@ -190,6 +190,9 @@ export async function runMaintenanceSweep(
             signal: budgetController.signal,
           });
           report.factsReconciled = r.factsInserted;
+          // The reconcile's refusals (FACTS_PAGE_CACHE_STALE, LOCK_TIMEOUT, …)
+          // ride r.warnings; dropped, a refused pass reads as "nothing to do".
+          for (const w of r.warnings) log(`[sweep] facts reconcile: ${w}`);
           if (r.guardTriggered) skip('facts_fence_guard');
           if (budgetController.signal.aborted) skip('budget_exhausted:facts_fence');
         }
@@ -280,6 +283,7 @@ async function runLinksTimelinePass(
     isGlobalBasenameEnabled,
     isAutoLinkEnabled,
     isAutoTimelineEnabled,
+    isCrossSourceLinksEnabled,
   } = await import('./link-extraction.ts');
 
   // Respect the same operator kill switches put_page's inline hooks honor.
@@ -315,7 +319,7 @@ async function runLinksTimelinePass(
   // resolveCandidateSources + stampExtracted are the shared helpers the
   // extract command exports precisely so sibling walkers can't drift from
   // its F10 multi-source resolution (see extract.ts:114).
-  const { resolveCandidateSources, stampExtracted } = await import('../commands/extract.ts');
+  const { resolveCandidateSources, stampExtracted, resolveLinkFallbackDefault } = await import('../commands/extract.ts');
 
   const resolver = makeResolver(engine, { mode: 'batch', sourceId });
   const globalBasename = await isGlobalBasenameEnabled(engine);
@@ -400,14 +404,28 @@ async function runLinksTimelinePass(
     const { fetchSource, isSourceFederated } = await import('./sources-load.ts');
     const sourceRow = await fetchSource(engine, sourceId);
     const allowCrossSource = sourceRow !== null && isSourceFederated(sourceRow.config);
+    // #3757: thread the same `link_resolution.cross_source` opt-in (#2589) and
+    // configured default source (#4611) the CLI extract lanes pass. Without
+    // them the sweep dropped every edge into a non-default source AND its
+    // reconcile below deleted the ones `extract links --source db` created.
+    const [crossSource, linkDefaultSourceId] = await Promise.all([
+      isCrossSourceLinksEnabled(engine),
+      resolveLinkFallbackDefault(engine),
+    ]);
+    let crossSourceDrops = 0;
     for (const { slug, candidates } of pageCandidates) {
       for (const c of candidates) {
         // #2589: a cross_source drop here means the target exists only in
-        // other sources and cross-source links are off — the sweep skips it
-        // exactly like the extract paths do (extract.ts counts these; the
-        // sweep has no drop ledger).
-        const resolved = resolveCandidateSources(c, slug, sourceId, allSlugs, slugToSources, allowCrossSource);
-        if (!resolved.ok) continue;
+        // other sources and cross-source links are off — counted in the
+        // skip ledger exactly like the extract paths count it.
+        const resolved = resolveCandidateSources(
+          c, slug, sourceId, allSlugs, slugToSources, allowCrossSource,
+          { crossSource, defaultSourceId: linkDefaultSourceId },
+        );
+        if (!resolved.ok) {
+          if (resolved.reason === 'cross_source') crossSourceDrops++;
+          continue;
+        }
         linkBatch.push({
           from_slug: resolved.fromSlug,
           to_slug: c.targetSlug,
@@ -422,6 +440,7 @@ async function runLinksTimelinePass(
         });
       }
     }
+    if (crossSourceDrops > 0) skip('cross_source_link', crossSourceDrops);
   }
 
   // Engine batch primitives self-retry; default auditSite labels apply

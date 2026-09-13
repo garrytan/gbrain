@@ -116,7 +116,10 @@ describe('confineCodexTranscriptPath — the S3#8 ladder on the codex root', () 
 
     expect(confineCodexTranscriptPath(undefined, { root })).toEqual({ ok: false, reason: 'missing_path' });
     expect(confineCodexTranscriptPath(join(day, 'x.txt'), { root })).toEqual({ ok: false, reason: 'not_jsonl' });
-    expect(confineCodexTranscriptPath(join(day, 'absent.jsonl'), { root })).toEqual({ ok: false, reason: 'unreadable' });
+    // A path that simply is not there is `missing_path`, NOT `unreadable` —
+    // hook.ts gates its discovery fallback on that rung, and `unreadable` is
+    // reserved for a real permission/IO fault.
+    expect(confineCodexTranscriptPath(join(day, 'absent.jsonl'), { root })).toEqual({ ok: false, reason: 'missing_path' });
 
     const outside = join(dir, 'outside.jsonl');
     writeFileSync(outside, meta + '\n');

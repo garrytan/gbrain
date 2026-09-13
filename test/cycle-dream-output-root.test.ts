@@ -317,6 +317,24 @@ describe('#4216: buildSynthesisPrompt manifest + allow-list blocks', () => {
     expect(prompt).toContain('Use the search tool to find existing pages first.');
   });
 
+  test('oneshot prompt removes tool-use and final-prose instructions; agentic keeps them', () => {
+    const manifest = '\nLINK CANDIDATES\n- [[people/alice-example]] — Alice Example is a founder.';
+    const oneshot = buildSynthesisPrompt(
+      transcript, 'chunk', 0, 1, '', 'wiki', '', manifest,
+      ['wiki/personal/reflections/*'], undefined, undefined, 'oneshot',
+    );
+    const agentic = buildSynthesisPrompt(
+      transcript, 'chunk', 0, 1, '', 'wiki', '', manifest,
+      ['wiki/personal/reflections/*'], undefined, undefined, 'agentic',
+    );
+
+    expect(oneshot).not.toContain('search tool');
+    expect(oneshot).not.toContain('put_page schema');
+    expect(oneshot).not.toContain('final message');
+    expect(agentic).toContain('use the search tool, if available');
+    expect(agentic).toContain('final message');
+  });
+
   test('ALLOWED WRITE PATHS block renders from prefixes (OV-7: oneshot never sees a tool schema)', () => {
     const prompt = buildSynthesisPrompt(
       transcript, 'chunk', 0, 1, '', 'wiki', '', '',

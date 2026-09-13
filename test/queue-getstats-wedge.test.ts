@@ -34,8 +34,8 @@ async function seed(
   extra: { lockUntilSql?: string; updatedAtSql?: string } = {},
 ): Promise<void> {
   await engine.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, lock_until, updated_at)
-     VALUES ($1, $2, $3, ${extra.lockUntilSql ?? 'NULL'}, ${extra.updatedAtSql ?? 'now()'})`,
+    `INSERT INTO minion_jobs (submission_authority, name, queue, status, lock_until, updated_at)
+     VALUES ('{"version":1,"kind":"application"}'::jsonb, $1, $2, $3, ${extra.lockUntilSql ?? 'NULL'}, ${extra.updatedAtSql ?? 'now()'})`,
     [name, q, status],
   );
 }

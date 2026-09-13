@@ -236,7 +236,7 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
   test('executeRaw failure returns [] (fail-soft, transcript path proceeds)', async () => {
     // Inject a SQL error by passing a sourceId that breaks the query —
     // actually easier: temporarily replace executeRaw to throw.
-    const realExecute = engine.executeRaw.bind(engine);
+    const realExecute = engine.executeRaw;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
       async () => { throw new Error('synthetic discovery failure'); };
     try {
@@ -591,6 +591,22 @@ describe('#2144: zero-yield tombstone', () => {
 //   cycle.extract_atoms.page_discovery_budget caps discovery LIMIT
 //   cycle.extract_atoms.max_source_chars truncates the prompt payload
 describe('local extract-atoms config knobs', () => {
+  test('a drain invocation limits discovery without changing the configured budget', async () => {
+    await engine.setConfig('cycle.extract_atoms.page_discovery_budget', '2');
+    for (let i = 0; i < 4; i++) {
+      await seedPage({ slug: `note/drain-cap-${i}`, type: 'note', compiled_truth: `page ${i} `.repeat(200) });
+    }
+    const first = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default', pageLimit: 1, _transcripts: [], _chat: stubChat('[]'),
+    });
+    expect(first.details.pages_processed).toBe(1);
+    expect(await engine.getConfig('cycle.extract_atoms.page_discovery_budget')).toBe('2');
+    const second = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default', pageLimit: 100, _transcripts: [], _chat: stubChat('[]'),
+    });
+    expect(second.details.pages_processed).toBe(2);
+  }, 30_000);
+
   test('page_discovery_budget caps discovery; max_source_chars truncates the prompt slice', async () => {
     await engine.setConfig('cycle.extract_atoms.page_discovery_budget', '1');
     await engine.setConfig('cycle.extract_atoms.max_source_chars', '600');
@@ -636,16 +652,17 @@ describe('local extract-atoms config knobs — invalid-value fallbacks', () => {
    * resolvePageDiscoveryLimit's parse/clamp behavior without exporting it.
    */
   async function effectiveDiscoveryLimit(): Promise<number> {
-    const realExecute = engine.executeRaw.bind(engine);
+    const realExecute = engine.executeRaw;
     let limitParam: number | undefined;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = (async (
+    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = (async function (
+      this: PGLiteEngine,
       sql: string,
       params?: unknown[],
-    ) => {
+    ) {
       if (sql.includes('atoms_scan_hash') && sql.includes('LIMIT $4')) {
         limitParam = Number((params ?? [])[3]);
       }
-      return realExecute(sql as never, params as never);
+      return realExecute.call(this, sql as never, params as never);
     }) as typeof engine.executeRaw;
     try {
       await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: stubChat('[]') });

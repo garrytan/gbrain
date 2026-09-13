@@ -64,7 +64,11 @@ describe('register-client route wiring (structural)', () => {
     // transposition hazard this pin exists for is now a NAMED-FIELD hazard —
     // pin that the normalized values land on the right keys of the
     // parsed-args object.
-    expect(src).toMatch(/registerScopedClient\(txSql,\s*name,\s*\{[\s\S]*?scopes:\s*scopeString,[\s\S]*?sourceId,[\s\S]*?federatedRead:\s*federatedReadIds,[\s\S]*?tokenEndpointAuthMethod:\s*validatedAuthMethod[\s\S]*?\}/);
+    // Profile requests pass through the validated preview before registration;
+    // the explicit sources must survive both named-field boundaries.
+    expect(src).toContain('previewNewAdminGrant(engine, name, grantRequest.patch, { sourceId, federatedRead: federatedReadIds, scopes: scopeString })');
+    expect(src).toMatch(/registerScopedClient\(txSql,\s*name,\s*\{[\s\S]*?scopes:\s*preview.scopes.join\(' '\),[\s\S]*?sourceId:\s*preview.sourceId!,[\s\S]*?federatedRead:\s*preview.federatedRead,[\s\S]*?tokenEndpointAuthMethod:\s*validatedAuthMethod[\s\S]*?\}/);
+    expect(src).toContain('grant: grantRequest.patch');
   });
 });
 

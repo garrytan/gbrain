@@ -50,13 +50,25 @@ describe('toRemoteMcpError', () => {
     expect(out.detail?.kind).toBe('aborted');
   });
 
-  test('Error with /abort/i in message becomes network/aborted (SDK swallows .name)', () => {
-    // The MCP SDK sometimes wraps AbortError in a generic Error with the
-    // word "abort" in the message. The funnel catches both shapes.
+  test('abort text alone does not classify cancellation', () => {
     const err = new Error('request was aborted by the user');
     const out = toRemoteMcpError(err, MCP_URL);
     expect(out.reason).toBe('network');
+    expect(out.detail?.kind).toBe('unreachable');
+  });
+
+  test('the call signal identifies cancellation even when the SDK wraps its error', () => {
+    const controller = new AbortController();
+    controller.abort(new Error('caller stopped'));
+    const out = toRemoteMcpError(new Error('SDK request failed'), MCP_URL, controller.signal);
     expect(out.detail?.kind).toBe('aborted');
+  });
+
+  test('a timeout signal overrides an already-normalized probe failure', () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    const out = toRemoteMcpError(new RemoteMcpError('network', 'probe failed'), MCP_URL, controller.signal);
+    expect(out.detail?.kind).toBe('timeout');
   });
 
   test('non-Error throwable (string) becomes network/unreachable', () => {
@@ -104,6 +116,11 @@ describe('toRemoteMcpError', () => {
 });
 
 describe('extractToolErrorCode', () => {
+  test('parses the operation error string without replacing it with a guessed code', () => {
+    const msg = JSON.stringify({ error: 'permission_denied', message: 'access denied to client abc401def' });
+    expect(extractToolErrorCode(msg)).toBe('permission_denied');
+  });
+
   test('parses JSON envelope with error.code', () => {
     const msg = JSON.stringify({ error: { code: 'missing_scope', message: 'admin required' } });
     expect(extractToolErrorCode(msg)).toBe('missing_scope');
@@ -199,11 +216,7 @@ describe('buildAbortController', () => {
     const { signal, cleanup } = buildAbortController({ timeoutMs: 30 });
     cleanup();
     await new Promise(r => setTimeout(r, 80));
-    // signal can fire from the timer if cleanup didn't clear it.
-    // We accept either outcome but clear cleanup is the contract.
-    // The hard assertion is that calling cleanup doesn't throw and the
-    // pending timer doesn't crash the process.
-    void signal;
+    expect(signal.aborted).toBe(false);
   });
 
   test('cleanup is idempotent (safe to call multiple times)', () => {

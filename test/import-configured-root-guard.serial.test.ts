@@ -186,6 +186,8 @@ describe('runImport configured-root admission', () => {
       await expect(
         runImport(engine, [root, '--no-embed'], { sourceId: 'default' }),
       ).rejects.toBeInstanceOf(ImportAbortError);
+      const rows = await engine.executeRaw<{ n: number | string }>('SELECT COUNT(*) AS n FROM pages');
+      expect(Number(rows[0].n)).toBe(0);
     } finally {
       query.mockRestore();
     }

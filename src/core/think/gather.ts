@@ -17,6 +17,7 @@
 
 import type { BrainEngine, TakeHit, Take } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { Page, SearchResult } from '../types.ts';
 import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
@@ -38,6 +39,8 @@ export interface ThinkGatherOpts {
   window?: TemporalWindow;
   /** When set, MCP-bound calls forward this allow-list to takes_search. Local CLI leaves unset. */
   takesHoldersAllowList?: string[];
+  excludePrivate?: boolean;
+  remote?: boolean;
   /** Source scope inherited from the caller. Federated array wins over scalar. */
   sourceId?: string;
   sourceIds?: string[];
@@ -121,6 +124,8 @@ export async function runGather(
     : opts.sourceId
       ? { sourceId: opts.sourceId }
       : {};
+  const pageScope = { ...sourceScope, excludePrivate: opts.excludePrivate, requireSafeChunks: opts.remote !== false, takesHoldersAllowList: opts.takesHoldersAllowList };
+  const visibleBody = (body: string) => opts.remote === false ? body : sanitizeRemoteBody(body);
 
   // Sanitize the question for any path that includes it in an LLM prompt.
   // (Direct DB search is fine — those are parameterized queries.)
@@ -131,7 +136,7 @@ export async function runGather(
 
   const toSearchResult = (page: Page, rank: number): SearchResult => ({
     slug: page.slug, page_id: page.id, title: page.title, type: page.type,
-    chunk_text: page.compiled_truth ?? '', chunk_source: 'compiled_truth',
+    chunk_text: visibleBody(page.compiled_truth ?? ''), chunk_source: 'compiled_truth',
     chunk_id: 0, chunk_index: 0, score: 1 / (51 + rank), stale: false,
     source_id: page.source_id ?? 'default',
     effective_date: page.effective_date instanceof Date ? page.effective_date.toISOString() : null,
@@ -151,12 +156,12 @@ export async function runGather(
       limit: Math.min(gatherLimit * 4, 200),
       expansion: false,
       autocut: false,
-      ...sourceScope,
+      ...pageScope,
     }),
     engine.listPages({
       ...(window.startMs !== null ? { effective_after: new Date(window.startMs).toISOString() } : {}),
       ...(window.endMs !== null ? { effective_before: new Date(window.endMs).toISOString() } : {}),
-      limit: 50, ...sourceScope,
+      limit: 50, ...pageScope,
     }).then(pages => pages.map(toSearchResult)).catch((e) => {
       warnings.push('GATHER_WINDOW_FLOOR_FAILED');
       process.stderr.write(`[think.gather] window floor failed: ${(e as Error).message}\n`);
@@ -172,7 +177,7 @@ export async function runGather(
     limit: gatherLimit,
     expansion: false,
     autocut: false,
-    ...sourceScope,
+    ...pageScope,
   })).catch((e) => {
     warnings.push('GATHER_HYBRID_FAILED');
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
@@ -182,8 +187,7 @@ export async function runGather(
   // Stream 2: keyword search across takes.
   const takesKwPromise = engine.searchTakes(opts.question, {
     limit: takesLimit,
-    takesHoldersAllowList: opts.takesHoldersAllowList,
-    ...sourceScope,
+    ...pageScope,
   }).catch((e) => {
     warnings.push('GATHER_TAKES_KEYWORD_FAILED');
     process.stderr.write(`[think.gather] takes-keyword stream failed: ${(e as Error).message}\n`);
@@ -194,8 +198,7 @@ export async function runGather(
   const takesVecPromise: Promise<TakeHit[]> = opts.questionEmbedding
     ? engine.searchTakesVector(opts.questionEmbedding, {
         limit: takesLimit,
-        takesHoldersAllowList: opts.takesHoldersAllowList,
-        ...sourceScope,
+        ...pageScope,
       }).catch((e) => {
         warnings.push('GATHER_TAKES_VECTOR_FAILED');
         process.stderr.write(`[think.gather] takes-vector stream failed: ${(e as Error).message}\n`);
@@ -205,7 +208,7 @@ export async function runGather(
 
   // Stream 4: graph walk (anchor only).
   const graphPromise: Promise<string[]> = opts.anchor
-    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both', ...sourceScope })
+    ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both', ...pageScope })
         .then(paths => {
           const slugs = new Set<string>([opts.anchor!]);
           for (const p of paths) {
@@ -228,7 +231,7 @@ export async function runGather(
   // compiled_truth always reaches the <pages> block.
   let anchorHydrateFailed = false;
   const anchorPagePromise: Promise<Page | null> = opts.anchor
-    ? engine.getPage(opts.anchor, sourceScope).catch((e) => {
+    ? engine.getPage(opts.anchor, pageScope).catch((e) => {
         anchorHydrateFailed = true;
         warnings.push('GATHER_ANCHOR_HYDRATE_FAILED');
         process.stderr.write(`[think.gather] anchor hydrate failed: ${(e as Error).message}\n`);
@@ -254,9 +257,10 @@ export async function runGather(
     pages.unshift({
       slug: anchorPage.slug,
       page_id: anchorPage.id,
+      source_id: anchorPage.source_id ?? 'default',
       title: anchorPage.title,
       type: anchorPage.type,
-      chunk_text: anchorPage.compiled_truth,
+      chunk_text: visibleBody(anchorPage.compiled_truth),
       chunk_source: 'compiled_truth',
       chunk_id: 0,
       chunk_index: 0,

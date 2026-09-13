@@ -19,13 +19,14 @@
  *     └── append-only, pruned to 30 days on read
  */
 
-import matter from 'gray-matter';
+import { dataFrontmatter as matter } from '../core/data-frontmatter.ts';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { execSync } from 'child_process';
+import { fetchWithSSRFGuard, HttpProxyError, SSRFError } from '../core/ssrf-validate.ts';
 
 // --- Types ---
 
@@ -206,7 +207,9 @@ export async function executeHealthCheck(
   integrationId: string,
   isEmbedded: boolean,
 ): Promise<CheckResult> {
-  const label = typeof check === 'string' ? check : (check as any).label || JSON.stringify(check);
+  // Typed checks can contain HTTP credentials, including under any_of. Keep
+  // the operator's display label, but never serialize the configuration.
+  const label = typeof check === 'string' ? check : (check as any).label || (check.type === 'http' ? 'HTTP' : check.type);
   const base = { integration: integrationId, check: label };
 
   // String health checks (deprecated path)
@@ -235,16 +238,16 @@ export async function executeHealthCheck(
       // Fix 4: gate http health_checks on embedded trust. User-provided recipes
       // must NOT be able to make arbitrary outbound HTTP (SSRF / internal reconnaissance).
       if (!isEmbedded) {
-        return { ...base, status: 'blocked', output: `Blocked: http health_checks are restricted to embedded recipes. (${check.label || check.url})` };
+        return { ...base, status: 'blocked', output: 'Blocked: http health_checks are restricted to embedded recipes.' };
       }
       try {
         const url = expandVars(check.url);
         if (!url || url.includes('undefined')) {
-          return { ...base, status: 'fail', output: `Missing env var in URL: ${check.url}` };
+          return { ...base, status: 'fail', output: 'HTTP: missing env var in URL' };
         }
         // B4: scheme allowlist. B3: manual redirect with per-hop re-validation.
         if (isInternalUrl(url)) {
-          return { ...base, status: 'blocked', output: `Blocked: URL targets internal/private network or uses non-http(s) scheme: ${check.url}` };
+          return { ...base, status: 'blocked', output: 'Blocked: URL targets internal/private network or uses non-http(s) scheme' };
         }
         const headers: Record<string, string> = {};
         if (check.headers) {
@@ -260,51 +263,38 @@ export async function executeHealthCheck(
           headers['Authorization'] = 'Bearer ' + expandVars(check.auth_token);
         }
         const method = check.method || 'GET';
-        const body = check.body ? expandVars(check.body) : undefined;
+        const body = check.body !== undefined ? expandVars(check.body) : undefined;
         if (body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
 
-        // B3: manual redirect handling. Follow up to 3 hops, re-validating each Location.
-        const MAX_REDIRECTS = 3;
-        let currentUrl = url;
-        let resp: Response | null = null;
-        for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-          const fetchOpts: RequestInit = {
-            method,
-            headers,
-            redirect: 'manual',
-            signal: AbortSignal.timeout(10000),
-          };
-          if (body) fetchOpts.body = body;
-          resp = await fetch(currentUrl, fetchOpts);
-          if (resp.status < 300 || resp.status >= 400) break; // terminal
-          const location = resp.headers.get('location');
-          if (!location) break;
-          // Resolve relative redirects against the current URL
-          let next: string;
-          try {
-            next = new URL(location, currentUrl).toString();
-          } catch {
-            return { ...base, status: 'blocked', output: `Blocked: malformed redirect Location header from ${currentUrl}` };
-          }
-          if (isInternalUrl(next)) {
-            return { ...base, status: 'blocked', output: `Blocked: redirect hop ${hop + 1} targets internal URL: ${next}` };
-          }
-          if (hop === MAX_REDIRECTS) {
-            return { ...base, status: 'fail', output: `${check.label || 'HTTP'}: exceeded ${MAX_REDIRECTS} redirect hops` };
-          }
-          currentUrl = next;
-        }
-        if (!resp) {
-          return { ...base, status: 'fail', output: `${check.label || 'HTTP'}: no response` };
-        }
+        const resp = await fetchWithSSRFGuard(url, {
+          method,
+          headers,
+          body,
+          headerOnly: true,
+          maxRedirects: 3,
+          timeoutMs: 10000,
+          // Even an otherwise harmless configured header can contain an env
+          // secret. Preserve recipe method/body on same-origin redirects only.
+          sameOrigin: Object.keys(check.headers ?? {}).length > 0 || check.auth !== undefined
+            || check.body !== undefined || !['GET', 'HEAD'].includes(method.toUpperCase()),
+        });
         const ok = resp.status >= 200 && resp.status < 400;
-        return { ...base, status: ok ? 'ok' : 'fail', output: `${check.label || 'HTTP'}: ${ok ? 'OK' : `HTTP ${resp.status}`}` };
+        return { ...base, status: ok ? 'ok' : 'fail', output: `HTTP: ${ok ? 'OK' : `HTTP ${resp.status}`}` };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (msg.includes('TimeoutError') || msg.includes('abort')) {
-          return { ...base, status: 'timeout', output: `${check.label || 'HTTP'}: timeout` };
+        if (e instanceof HttpProxyError) {
+          return { ...base, status: 'blocked', output: `HTTP: blocked (${e.code}). ${e.message}` };
         }
-        return { ...base, status: 'fail', output: `${check.label || 'HTTP'}: ${msg}` };
+        if (e instanceof SSRFError) {
+          if (e.code === 'REQUEST_TIMEOUT' || e.code === 'REQUEST_ABORTED') {
+            return { ...base, status: 'timeout', output: 'HTTP: timeout' };
+          }
+          return { ...base, status: 'blocked', output: `HTTP: blocked (${e.code})` };
+        }
+        if (msg.includes('TimeoutError') || msg.includes('abort')) {
+          return { ...base, status: 'timeout', output: 'HTTP: timeout' };
+        }
+        return { ...base, status: 'fail', output: 'HTTP: request failed' };
       }
     }
 
@@ -380,29 +370,28 @@ export async function executeHealthCheck(
 // --- Recipe Parsing ---
 
 /**
- * Parse a recipe markdown file. Uses gray-matter directly (NOT parseMarkdown,
- * which splits on --- as timeline separator and would corrupt recipe bodies
- * that use horizontal rules).
+ * Parse recipe metadata as data, retaining the complete recipe body rather
+ * than applying the page parser's timeline splitting.
  */
 export function parseRecipe(content: string, filename: string): ParsedRecipe | null {
   try {
     const { data, content: body } = matter(content);
-    if (!data.id) return null;
+    if (typeof data.id !== 'string' || !data.id) return null;
     const installKind: InstallKind =
       data.install_kind === 'copy-into-host-repo' ? 'copy-into-host-repo' : 'local-managed';
     return {
       frontmatter: {
         id: data.id,
-        name: data.name || data.id,
-        version: data.version || '0.0.0',
-        description: data.description || '',
-        category: data.category || 'sense',
+        name: typeof data.name === 'string' && data.name ? data.name : data.id,
+        version: typeof data.version === 'string' && data.version ? data.version : '0.0.0',
+        description: typeof data.description === 'string' ? data.description : '',
+        category: ['reflex', 'infra', 'sense', 'voice'].includes(String(data.category)) ? data.category as RecipeFrontmatter['category'] : 'sense',
         install_kind: installKind,
-        requires: data.requires || [],
-        secrets: data.secrets || [],
+        requires: Array.isArray(data.requires) ? data.requires.filter((v): v is string => typeof v === 'string') : [],
+        secrets: Array.isArray(data.secrets) ? data.secrets as RecipeSecret[] : [],
         health_checks: (data.health_checks || []) as HealthCheck[],
-        setup_time: data.setup_time || 'unknown',
-        cost_estimate: data.cost_estimate,
+        setup_time: typeof data.setup_time === 'string' ? data.setup_time : 'unknown',
+        cost_estimate: typeof data.cost_estimate === 'string' ? data.cost_estimate : undefined,
         output_paths: Array.isArray(data.output_paths) ? data.output_paths.map(String) : [],
       },
       body: body.trim(),

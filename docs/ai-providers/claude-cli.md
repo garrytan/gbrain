@@ -13,7 +13,11 @@ resolves to the `native-anthropic` implementation (SDK + `ANTHROPIC_API_KEY`),
 `claude-cli:claude-sonnet-5` resolves to `ClaudeCliLanguageModel` (subprocess,
 CLI-managed auth).
 
-**Chat-only — no embedding.** `gateway.embed()` throws immediately for
+**Chat + query expansion — no embedding.** Query expansion runs through the
+same `claude --print` subprocess as chat, on the schemaless text path (the CLI
+cannot carry a JSON schema, so the fenced JSON it answers with is parsed back),
+so a brain whose utility tier points at `claude-cli:` keeps the multi-query
+recall arm. `gateway.embed()` throws immediately for
 `claude-cli` models (`claude-cli has no embedding model. Use openai or google
 for embeddings.`). Claude has no first-party embedding model regardless of
 transport; pair this recipe with `openai`, `google`, or `voyage` for
@@ -115,7 +119,7 @@ above.
 | Multimodal | Not supported over the subprocess path. File/image message parts are rendered as a `[file <mediaType>]` text stub, not sent as actual content. |
 | Prompt caching | The recipe declares `supports_prompt_cache: false`. The CLI manages its own caching internally but does not expose it through gbrain's `cache_control` control plane, so from the gateway's point of view this model does not support prompt caching. |
 | Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); gbrain does not independently count tokens for this path. The envelope's `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens`, so cache reads are counted in gbrain's usage accounting; `cache_creation_input_tokens` is not surfaced (the AI SDK's usage shape has no corresponding field). |
-| Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. |
+| Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. The `--max-usd` / `--max-cost` budget gate does not read them either: it prices `claude-cli:<model>` at the nominal Anthropic rate for that model, and a short alias (`claude-cli:haiku`) prices identically to the dated id it resolves to; `pricing.overrides` forces $0 or a real rate for any `claude-cli:*` string. |
 | User-level CLAUDE.md | `~/.claude/CLAUDE.md` still loads on every call (see above) — only the working directory changes (see "What actually happens on a call" for exactly what that directory is and isn't). |
 
 ## Doctor probe timeout: per-recipe, 30s for claude-cli

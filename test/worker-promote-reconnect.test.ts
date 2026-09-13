@@ -5,6 +5,13 @@ import type { BrainEngine } from '../src/core/engine.ts';
 function makeEngineWithReconnect(counter: { calls: number }, events: string[]): BrainEngine & { reconnect: () => Promise<void> } {
   return {
     kind: 'postgres',
+    executeRaw: async (sql: string) => {
+      // Startup sees no unresolved legacy work; promotion recovery below is
+      // still exercised by the scripted queue error, before the next claim.
+      if (sql.includes('SELECT id, submission_authority FROM minion_jobs') &&
+          sql.includes('submission_authority IS DISTINCT FROM')) return [];
+      throw new Error('Unexpected SQL in worker promotion fixture');
+    },
     reconnect: async () => {
       counter.calls += 1;
       events.push('reconnect');

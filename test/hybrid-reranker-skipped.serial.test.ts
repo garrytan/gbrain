@@ -126,19 +126,24 @@ describe('balanced search without VOYAGE_API_KEY (v0.48.2)', () => {
     expect(second.meta.degraded ?? []).toContainEqual({ stage: 'reranker_skipped', reason: 'no_key' });
   });
 
-  test('a reranker_skipped stamp keeps the FULL cache TTL (config state, not a transient limp)', async () => {
+  test('fresh cached-wrapper searches retain reranker_skipped metadata with effective cache disabled', async () => {
     configure(false);
     _resetSunsetWarningsForTest();
     __setRerankTransportForTests(async () => new Response(JSON.stringify({ results: [] }), { status: 200 }));
     await engine.executeRaw('DELETE FROM query_cache');
-    let meta: HybridSearchMeta | undefined;
-    const results = await hybridSearchCached(engine, 'builder plumbing', { limit: 5, onMeta: (m) => { meta = m; } });
-    expect(results.length).toBeGreaterThan(0);
-    expect(meta?.degraded ?? []).toContainEqual({ stage: 'reranker_skipped', reason: 'no_key' });
+    await engine.setConfig('search.cache.enabled', 'true');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let meta: HybridSearchMeta | undefined;
+      const results = await hybridSearchCached(engine, 'builder plumbing', {
+        limit: 5, useCache: true, onMeta: (m) => { meta = m; },
+      });
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.every((r) => r.rerank_score === undefined)).toBe(true);
+      expect(meta?.degraded ?? []).toContainEqual({ stage: 'reranker_skipped', reason: 'no_key' });
+      expect(meta?.cache?.status).toBe('disabled');
+    }
     await awaitPendingSearchCacheWrites();
-    const rows = await engine.executeRaw<{ ttl_seconds: number }>('SELECT ttl_seconds FROM query_cache');
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.ttl_seconds).toBe(3600);
+    expect(await engine.executeRaw('SELECT id FROM query_cache')).toHaveLength(0);
   });
 
   test('with the key present the reranker runs: rerank_score stamped, no skip entry', async () => {

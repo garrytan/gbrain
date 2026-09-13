@@ -69,7 +69,7 @@ The doctor distinguishes two repair paths:
 - **Cost-sensitive, English-only**: Ollama (free, local) or Voyage (paid, best quality per dollar).
 - **Quality-first**: Voyage `voyage-4-large` (1024-2048 dims, ~3-4× more dense tokens than OpenAI tiktoken).
 - **Code-heavy brain (gstack per-worktree, source repos)**: Voyage `voyage-code-3` (1024 default; supports 256/512/1024/2048), or `voyage-code-4` (hosted, flexible dims, $0.12/M). Tuned on programming languages. Voyage publishes head-to-head numbers showing it outperforms their general flagships on code retrieval ([voyageai.com/blog](https://voyageai.com/blog)). For gstack's per-worktree pglite-backed code brain, this is the right default — see Topology 3 in `docs/architecture/topologies.md`.
-- **Reranking pair**: Voyage `rerank-2.5` ($0.05/M; `rerank-2.5-lite` at $0.02/M for cost-sensitive setups) is the mode-bundle default and rides the same `VOYAGE_API_KEY` as embeddings; without the key search fails open in fusion order and `gbrain search modes` says so. ZeroEntropy `zerank-2` is deprecated (hosted API ends 2026-09-04); an explicitly configured `zeroentropyai:zerank-*` short-circuits past that date (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)).
+- **Reranking pair**: Voyage `rerank-2.5` ($0.05/M; `rerank-2.5-lite` at $0.02/M for cost-sensitive setups) is the mode-bundle default and rides the same `VOYAGE_API_KEY` as embeddings. Voyage's preview `rerank-3` / `rerank-3-lite` pair is also allowlisted — opt in with `gbrain config set search.reranker.model voyage:rerank-3` (the default stays on `rerank-2.5` so upgrades never move you); without the key search fails open in fusion order and `gbrain search modes` says so. ZeroEntropy `zerank-2` is deprecated (hosted API ends 2026-09-04); an explicitly configured `zeroentropyai:zerank-*` short-circuits past that date (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)).
 - **Local reranking (no API spend)**: `llama-server-reranker` recipe — point gbrain at your own `llama-server --reranking` instance running Qwen3-Reranker or self-hosted ZeroEntropy weights. Same `gateway.rerank()` seam, $0 per call. Walkthrough in [`docs/ai-providers/llama-server-reranker.md`](../ai-providers/llama-server-reranker.md).
 - **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
@@ -91,7 +91,16 @@ Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-com
 
 Voyage 4 family shares an embedding space across all variants, so you can index with `voyage-4` and later point the query model at `voyage-4-large` or `voyage-4-lite` without reindexing. Dims: 256, 512, 1024, 2048. **2048 exceeds pgvector's HNSW cap of 2000** — those brains fall back to exact vector scans (still correct, just slower).
 
-Voyage also serves the hosted rerankers `rerank-2.5` ($0.05/M) and `rerank-2.5-lite` ($0.02/M) at `POST /v1/rerank` (prices verified 2026-08-15) — the mode-bundle reranker default, so no config row is needed (an explicit `search.reranker.model` equal to it is exactly what `gbrain doctor`'s `search_mode` check calls redundant).
+Voyage also serves four hosted rerankers at `POST /v1/rerank` — `rerank-2.5` ($0.05/M) and `rerank-2.5-lite` ($0.02/M), plus the preview `rerank-3` ($0.05/M) and `rerank-3-lite` ($0.02/M) (2.5 pair verified 2026-08-15, rerank-3 pair 2026-09-06). All four share one request/response wire, so switching is a config change and nothing else.
+
+`rerank-2.5` is the mode-bundle reranker default, so no config row is needed for it (an explicit `search.reranker.model` equal to it is exactly what `gbrain doctor`'s `search_mode` check calls redundant). Moving to the preview generation is one command:
+
+```bash
+gbrain config set search.reranker.model voyage:rerank-3
+gbrain models doctor          # green `reranker_config voyage:rerank-3` is the whole test
+```
+
+**Say to your agent:** *"switch my reranker to voyage rerank-3"* — *"check my model config"* (your agent runs `gbrain config set search.reranker.model voyage:rerank-3` then `gbrain models doctor`).
 
 **For brains that index source code** (gstack's per-worktree pglite-backed code brain — see Topology 3 in `docs/architecture/topologies.md`), prefer `voyage-code-3` over `voyage-4-large`. Voyage tunes it on programming languages and publishes head-to-head numbers vs their general flagships on code retrieval. Configure at install time:
 

@@ -31,6 +31,57 @@ import { LATEST_VERSION } from '../src/core/migrate.ts';
 delete process.env.GBRAIN_PGLITE_SNAPSHOT;
 
 describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
+  test('queue bootstrap preserves legacy jobs without authorizing them and repairs either missing column', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const db = (engine as any).db;
+      await db.exec(`
+        DROP TRIGGER IF EXISTS minion_queue_protocol ON minion_jobs;
+        ALTER TABLE minion_jobs DROP COLUMN submission_authority;
+        ALTER TABLE minion_jobs DROP COLUMN claim_generation;
+        INSERT INTO minion_jobs (name, status, data, attempts_made, attempts_started, delay_until)
+        VALUES ('sync', 'delayed', '{"sourceId":"default"}', 1, 2, '2026-09-01T00:00:00Z'),
+               ('lint', 'completed', '{}', 0, 1, NULL);
+      `);
+      const original = await engine.executeRaw(`
+        SELECT id, name, status, data, attempts_made, attempts_started, delay_until FROM minion_jobs ORDER BY id
+      `);
+      await (engine as any).applyForwardReferenceBootstrap();
+      await (engine as any).applyForwardReferenceBootstrap();
+      const columns = await engine.executeRaw<{ column_name: string; is_nullable: string; column_default: string | null }>(`
+        SELECT column_name, is_nullable, column_default FROM information_schema.columns
+        WHERE table_name = 'minion_jobs' AND column_name IN ('submission_authority', 'claim_generation')
+        ORDER BY column_name
+      `);
+      expect(columns).toEqual([
+        { column_name: 'claim_generation', is_nullable: 'NO', column_default: '0' },
+        { column_name: 'submission_authority', is_nullable: 'YES', column_default: null },
+      ]);
+      expect(await engine.executeRaw(`
+        SELECT id, name, status, data, attempts_made, attempts_started, delay_until FROM minion_jobs ORDER BY id
+      `)).toEqual(original);
+      expect(await engine.executeRaw(`
+        SELECT submission_authority, claim_generation::int FROM minion_jobs ORDER BY id
+      `)).toEqual([{ submission_authority: null, claim_generation: 0 }, { submission_authority: null, claim_generation: 0 }]);
+
+      // Partial upgrades must repair either field without overwriting the other.
+      await db.exec(`ALTER TABLE minion_jobs DROP COLUMN submission_authority;
+        UPDATE minion_jobs SET claim_generation = 7 WHERE name = 'lint';`);
+      await (engine as any).applyForwardReferenceBootstrap();
+      expect(await engine.executeRaw(`SELECT submission_authority, claim_generation::int FROM minion_jobs WHERE name = 'lint'`))
+        .toEqual([{ submission_authority: null, claim_generation: 7 }]);
+      await db.exec(`ALTER TABLE minion_jobs DROP COLUMN claim_generation;
+        UPDATE minion_jobs SET submission_authority = '{"version":1,"kind":"application"}' WHERE name = 'lint';`);
+      await (engine as any).applyForwardReferenceBootstrap();
+      expect(await engine.executeRaw(`SELECT submission_authority, claim_generation::int FROM minion_jobs WHERE name = 'lint'`))
+        .toEqual([{ submission_authority: { version: 1, kind: 'application' }, claim_generation: 0 }]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
   test('no-op on fresh install (no pages or links table)', async () => {
     const engine = new PGLiteEngine();
     await engine.connect({});

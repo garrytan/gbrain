@@ -85,6 +85,12 @@ export async function writeSingleFact(
   const kind = input.kind ?? 'fact';
   const visibility = input.visibility ?? 'private';
   const validUntil = input.validUntil ?? null;
+  const { isFactWithdrawn } = await import('./withdrawal.ts');
+  if (await isFactWithdrawn(engine, sourceId, visibility, factText)) {
+    const { verbError } = await import('../ops/contract.ts');
+    throw verbError('invalid_params', 'fact_withdrawn: this exact claim was explicitly forgotten in this source and visibility.',
+      'Remember a corrected claim. Repeating the old claim does not restore withdrawn memory.');
+  }
 
   // #4755: normalize null-like entity refs to ABSENT before resolution so
   // the `resolved?.slug ?? entityRef` fallback can never adopt "null" as a

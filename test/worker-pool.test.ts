@@ -369,6 +369,28 @@ describe('runSlidingPool — BudgetExhausted bypass (D13)', () => {
     expect(aborted).toBe(0);
   });
 
+  test('a must-abort error is rethrown only after in-flight siblings finish', async () => {
+    let done = 0;
+    class FakeBudget extends Error {
+      readonly tag = 'BUDGET_EXHAUSTED' as const;
+    }
+    await expect(
+      runSlidingPool({
+        items: [200, 1, 2, 3],
+        workers: 2,
+        onItem: async (ms: number) => {
+          if (ms === 1) throw new FakeBudget('cap');
+          await new Promise((r) => setTimeout(r, ms));
+          done++;
+        },
+      }),
+    ).rejects.toMatchObject({ tag: 'BUDGET_EXHAUSTED' });
+    // The 200 ms item was mid-flight when the cap hit and ran to completion
+    // BEFORE the pool rejected (no worker left running detached past the
+    // caller's catch); nothing after the cap was claimed.
+    expect(done).toBe(1);
+  });
+
   test('isMustAbortError + MUST_ABORT_ERROR_TAGS exposed and stable', () => {
     expect(MUST_ABORT_ERROR_TAGS.has('BUDGET_EXHAUSTED')).toBe(true);
     expect(isMustAbortError({ tag: 'BUDGET_EXHAUSTED' })).toBe(true);

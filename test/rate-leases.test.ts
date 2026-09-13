@@ -11,6 +11,7 @@ import {
   releaseLease,
   renewLeaseWithBackoff,
 } from '../src/core/minions/rate-leases.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -144,5 +145,24 @@ describe('renewLeaseWithBackoff', () => {
     const a = await acquireLease(engine, 'k', owner, 1);
     await releaseLease(engine, a.leaseId!);
     expect(await renewLeaseWithBackoff(engine, a.leaseId!)).toBe(false);
+  });
+});
+
+describe('acquireLease id coercion', () => {
+  test('a native BigInt RETURNING id (Postgres int8) is returned as a number', async () => {
+    // postgres.js parses BIGSERIAL as BigInt under `types: { bigint: postgres.BigInt }`;
+    // PGLite hands back a Number, so only a fake tx reproduces the shape.
+    const tx = {
+      async executeRaw(sql: string) {
+        if (sql.includes('count(*)')) return [{ count: '0' }];
+        if (sql.includes('RETURNING id')) return [{ id: 26016n }];
+        return [];
+      },
+    };
+    const fake = { transaction: async <T,>(fn: (t: typeof tx) => Promise<T>) => fn(tx) } as unknown as BrainEngine;
+    const res = await acquireLease(fake, 'k', 1, 2);
+    expect(res.acquired).toBe(true);
+    expect(typeof res.leaseId).toBe('number');
+    expect(res.leaseId).toBe(26016);
   });
 });

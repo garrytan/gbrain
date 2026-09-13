@@ -25,14 +25,16 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { SearchResult, PageType, RelationalFanoutRow } from '../types.ts';
+import type { SearchResult, PageType, RelationalFanoutRow, PageReadPolicy } from '../types.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { buildVisibilityClause } from './sql-ranking.ts';
+import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
 import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from './relational-intent.ts';
 import { stampEvidence, type EvidenceOpts } from './evidence.ts';
 
-export interface RelationalArmOpts {
+export interface RelationalArmOpts extends PageReadPolicy {
   sourceId?: string;
   sourceIds?: string[];
   depth?: number;
@@ -93,6 +95,7 @@ async function resolveSeedScoped(
   engine: BrainEngine,
   sources: string[],
   phrase: string,
+  policy: PageReadPolicy,
 ): Promise<Array<{ source_id: string; slug: string }>> {
   const out: Array<{ source_id: string; slug: string }> = [];
   const seen = new Set<string>();
@@ -104,7 +107,16 @@ async function resolveSeedScoped(
     seen.add(key);
     out.push({ source_id: sid, slug: r.slug });
   }
-  return out;
+  if (!out.length || !hasReadPolicy(policy)) return out;
+  const params: unknown[] = [out.map(ref => ref.source_id), out.map(ref => ref.slug)];
+  const filter = pageReadFilter('p', policy, params, true);
+  const admitted = await engine.executeRaw<{ source_id: string; slug: string }>(
+    `SELECT p.source_id, p.slug FROM pages p
+     JOIN unnest($1::text[], $2::text[]) AS refs(source_id, slug)
+       ON p.source_id = refs.source_id AND p.slug = refs.slug WHERE ${filter}`, params,
+  );
+  const allowed = new Set(admitted.map(ref => `${ref.source_id}:${ref.slug}`));
+  return out.filter(ref => allowed.has(`${ref.source_id}:${ref.slug}`));
 }
 
 /** Batch-hydrate fanout rows into SearchResult rows in fanout (ranked) order.
@@ -116,19 +128,22 @@ async function hydrate(
   engine: BrainEngine,
   rows: RelationalFanoutRow[],
   seedSlug: string,
-  excludePrivate: boolean,
+  policy: PageReadPolicy,
 ): Promise<SearchResult[]> {
   if (rows.length === 0) return [];
-  const slugs = Array.from(new Set(rows.map(r => r.slug)));
+  const params: unknown[] = [rows.map(r => r.source_id), rows.map(r => r.slug)];
+  const filter = pageReadFilter('p', policy, params);
   const pageRows = await engine.executeRaw<{
     page_id: number; slug: string; source_id: string; title: string; type: string; synopsis: string | null;
   }>(
     `SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type,
-            LEFT(p.compiled_truth, 240) AS synopsis
+            p.compiled_truth AS synopsis
      FROM pages p
      JOIN sources s ON s.id = p.source_id
-     WHERE p.slug = ANY($1::text[]) ${buildVisibilityClause('p', 's', { excludePrivate })}`,
-    [slugs],
+     JOIN unnest($1::text[], $2::text[]) AS refs(source_id, slug)
+       ON p.source_id = refs.source_id AND p.slug = refs.slug
+     WHERE ${filter} ${buildVisibilityClause('p', 's', { excludePrivate: policy.excludePrivate, requireSafeChunks: false })}`,
+    params,
   );
   const byKey = new Map<string, typeof pageRows[number]>();
   for (const pr of pageRows) byKey.set(`${pr.source_id}:${pr.slug}`, pr);
@@ -142,7 +157,7 @@ async function hydrate(
       page_id: pr.page_id,
       title: pr.title,
       type: pr.type as PageType,
-      chunk_text: pr.synopsis ?? r.slug,
+      chunk_text: sanitizeRemoteBody(pr.synopsis ?? r.slug).slice(0, 240),
       chunk_source: 'compiled_truth',
       // E1: reinforce the page's REAL canonical chunk; F3: chunkless entity
       // pages key page-level (chunk_id 0 → rrfKey `source:slug:0`, stable and
@@ -273,6 +288,11 @@ export async function buildRelationalArm(
   try {
     const sources = scopeSources(opts);
     const fanoutOpts = {
+      sourceId: opts.sourceId,
+      sourceIds: opts.sourceIds,
+      excludePrivate: opts.excludePrivate,
+      requireSafeChunks: opts.requireSafeChunks,
+      takesHoldersAllowList: opts.takesHoldersAllowList,
       linkTypes: parsed.linkTypes,
       direction: parsed.direction,
       depth: opts.depth,
@@ -281,20 +301,15 @@ export async function buildRelationalArm(
 
     if (parsed.kind === 'connects' && parsed.seeds.length === 2) {
       // Resolve both endpoints; both must resolve or the arm no-ops.
-      const resA = await resolveSeedScoped(engine, sources, parsed.seeds[0]);
-      const resB = await resolveSeedScoped(engine, sources, parsed.seeds[1]);
+      const resA = await resolveSeedScoped(engine, sources, parsed.seeds[0], opts);
+      const resB = await resolveSeedScoped(engine, sources, parsed.seeds[1], opts);
       if (resA.length === 0 || resB.length === 0) return finish([]);
       meta.seeds_resolved = resA.length + resB.length;
 
-      const perSource = (rs: typeof resA) => ({
-        sourceId: rs.length === 1 ? rs[0].source_id : undefined,
-        sourceIds: rs.length > 1 ? Array.from(new Set(rs.map(x => x.source_id))) : undefined,
-        slugs: Array.from(new Set(rs.map(x => x.slug))),
-      });
-      const a = perSource(resA);
-      const b = perSource(resB);
-      const fanA = await engine.relationalFanout(a.slugs, { ...fanoutOpts, sourceId: a.sourceId, sourceIds: a.sourceIds });
-      const fanB = await engine.relationalFanout(b.slugs, { ...fanoutOpts, sourceId: b.sourceId, sourceIds: b.sourceIds });
+      const a = { slugs: [...new Set(resA.map(ref => ref.slug))], seedRefs: resA };
+      const b = { slugs: [...new Set(resB.map(ref => ref.slug))], seedRefs: resB };
+      const fanA = await engine.relationalFanout(a.slugs, { ...fanoutOpts, seedRefs: a.seedRefs });
+      const fanB = await engine.relationalFanout(b.slugs, { ...fanoutOpts, seedRefs: b.seedRefs });
       // Shared midpoints: nodes reachable from BOTH endpoints (exclude the
       // endpoints themselves). Ordered by combined hop.
       const bByKey = new Map(fanB.map(r => [`${r.source_id}:${r.slug}`, r] as const));
@@ -304,23 +319,21 @@ export async function buildRelationalArm(
         .map(r => ({ row: r, combined: r.hop + bByKey.get(`${r.source_id}:${r.slug}`)!.hop }))
         .sort((x, y) => x.combined - y.combined || x.row.slug.localeCompare(y.row.slug))
         .map(x => x.row);
-      const list = await hydrate(engine, shared, parsed.seeds.join(' ↔ '), opts.excludePrivate === true);
+      const list = await hydrate(engine, shared, parsed.seeds.join(' ↔ '), opts);
       meta.fired = list.length > 0;
       return finish(list);
     }
 
     // who_rel / who_at / intro: single logical seed (may resolve in N sources).
-    const resolved = await resolveSeedScoped(engine, sources, parsed.seeds[0]);
+    const resolved = await resolveSeedScoped(engine, sources, parsed.seeds[0], opts);
     if (resolved.length === 0) return finish([]);
     meta.seeds_resolved = resolved.length;
     const slugs = Array.from(new Set(resolved.map(r => r.slug)));
-    const srcIds = Array.from(new Set(resolved.map(r => r.source_id)));
     const rows = await engine.relationalFanout(slugs, {
       ...fanoutOpts,
-      sourceId: srcIds.length === 1 ? srcIds[0] : undefined,
-      sourceIds: srcIds.length > 1 ? srcIds : undefined,
+      seedRefs: resolved,
     });
-    const list = await hydrate(engine, rows, resolved[0].slug, opts.excludePrivate === true);
+    const list = await hydrate(engine, rows, resolved[0].slug, opts);
     meta.fired = list.length > 0;
     return finish(list);
   } catch (err) {

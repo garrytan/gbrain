@@ -39,6 +39,9 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # The container user differs from checkout's owner. Trust only this
+          # workspace so our merge-base lookup works before Semgrep starts.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           if [ -n "$BASE_SHA" ]; then
             # Diff against the MERGE BASE, not the base-branch head captured at
             # event time: the checkout is the merge ref against current master,

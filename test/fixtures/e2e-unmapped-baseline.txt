@@ -126,8 +126,6 @@ test/e2e/source-routing.test.ts
 test/e2e/sources-remote-mcp.test.ts
 test/e2e/status-pglite.test.ts
 test/e2e/storage-tiering.test.ts
-test/e2e/subagent-crash-replay-multi-provider.test.ts
-test/e2e/subagent-gateway-path.test.ts
 test/e2e/subagent-gateway-resume-reconciliation.test.ts
 test/e2e/symbol-resolver-pglite.test.ts
 test/e2e/sync-cjk-git.test.ts
