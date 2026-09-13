@@ -87,6 +87,8 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.chat).toBeDefined();
     expect(recipe!.touchpoints.chat!.supports_tools).toBe(true);
     expect(recipe!.touchpoints.chat!.supports_subagent_loop).toBe(true);
+    expect(recipe!.touchpoints.chat!.models).toContain('default');
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-5');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-4-6');
     // Wave rider for #3976: pin the Claude 5 family the CLI already serves.
     expect(recipe!.touchpoints.chat!.models).toContain('claude-fable-5');
@@ -115,6 +117,7 @@ describe('claude-cli recipe registration', () => {
     const recipe = getRecipe('claude-cli');
     expect(recipe!.aliases!['sonnet']).toBe('claude-sonnet-4-6');
     expect(recipe!.aliases!['haiku']).toBe('claude-haiku-4-5-20251001');
+    expect(recipe!.aliases!['selected']).toBe('default');
   });
 });
 
@@ -777,6 +780,40 @@ describe('claude-cli LanguageModel — context isolation', () => {
       ].join('\n');
       writeFileSync(stubBin, fastStub);
       chmodSync(stubBin, 0o755);
+    });
+  });
+
+  test('default model follows Claude Code settings by omitting --model', async () => {
+    await withStubEnv(async () => {
+      const argvLog = join(stubDir, 'default-argv.log');
+      const recordStub = [
+        '#!/bin/sh',
+        `printf "%s\\n" "$@" > "${argvLog}"`,
+        'cat > /dev/null',
+        `cat "${stubResponsePath}"`,
+      ].join('\n');
+      writeFileSync(stubBin, recordStub);
+      chmodSync(stubBin, 0o755);
+      stageResponse(baseEnvelope('ok'));
+
+      try {
+        const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+        const model = new ClaudeCliLanguageModel('default');
+        await model.doGenerate({ prompt: [userMessage('hi')] } as LanguageModelV2CallOptions);
+
+        const fs = require('node:fs');
+        const argv = fs.readFileSync(argvLog, 'utf8').split('\n').filter(Boolean);
+        expect(argv).not.toContain('--model');
+        expect(argv).toContain('--disable-slash-commands');
+      } finally {
+        const fastStub = [
+          '#!/bin/sh',
+          'cat > /dev/null',
+          `cat "${stubResponsePath}"`,
+        ].join('\n');
+        writeFileSync(stubBin, fastStub);
+        chmodSync(stubBin, 0o755);
+      }
     });
   });
 

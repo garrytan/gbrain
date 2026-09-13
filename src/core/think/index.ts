@@ -205,6 +205,8 @@ export interface ThinkResult {
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
   diagnostics: {
     pagesFromHybrid: number;
+    /** Hits from gather's exact named-term keyword arm (absent on legacy stubs). */
+    pagesFromEntity?: number;
     takesFromKeyword: number;
     takesFromVector: number;
     graphHits: number;
@@ -524,6 +526,8 @@ export async function runThink(
   const gather = await runGather(engine, {
     question: opts.question,
     anchor: opts.anchor,
+    since: opts.since,
+    until: opts.until,
     questionEmbedding,
     ...(window ? { window } : {}),
     takesHoldersAllowList: opts.remote === false ? opts.takesHoldersAllowList : opts.takesHoldersAllowList ?? ['world'],
@@ -771,6 +775,7 @@ export async function runThink(
         usage: null,         // [E2] no LLM ran — no accounting
         diagnostics: {
           pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+          pagesFromEntity: gather.diagnostics.pagesFromEntity,
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
           takesFromVector: gather.diagnostics.takesFromVector,
           graphHits: gather.diagnostics.graphHits,
@@ -918,6 +923,7 @@ export async function runThink(
     usage,
     diagnostics: {
       pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
+      pagesFromEntity: gather.diagnostics.pagesFromEntity,
       takesFromKeyword: gather.diagnostics.takesFromKeyword,
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
