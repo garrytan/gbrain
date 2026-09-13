@@ -18,6 +18,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { HEALTH_TIMEOUT_MS, probeHealth, probeLiveness } from '../src/commands/serve-http.ts';
+import { resolveCommitSha } from '../src/version.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 /**
@@ -50,12 +51,13 @@ describe('HEALTH_TIMEOUT_MS', () => {
 describe('probeHealth', () => {
   test('happy path: returns 200 + status:ok + spread stats', async () => {
     const engine = makeMockEngine(async () => ({ pages: 42, links: 10 }));
-    const result = await probeHealth(engine, 'pglite', '0.27.1', 100);
+    const result = await probeHealth(engine, 'pglite', '0.27.1', 'abc1234', 100);
     expect(result.ok).toBe(true);
     expect(result.status).toBe(200);
     if (result.ok) {
       expect(result.body.status).toBe('ok');
       expect(result.body.version).toBe('0.27.1');
+      expect(result.body.commit).toBe('abc1234');
       expect(result.body.engine).toBe('pglite');
       expect(result.body.pages).toBe(42);
       expect(result.body.links).toBe(10);
@@ -65,7 +67,7 @@ describe('probeHealth', () => {
   test('timeout path: getStats() hangs forever → 503 with health_timeout description within 1s', async () => {
     const engine = makeMockEngine(() => new Promise(() => { /* never resolves */ }));
     const start = Date.now();
-    const result = await probeHealth(engine, 'pglite', '0.27.1', 100);
+    const result = await probeHealth(engine, 'pglite', '0.27.1', 'abc1234', 100);
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(1000);
     expect(result.ok).toBe(false);
@@ -80,7 +82,7 @@ describe('probeHealth', () => {
 
   test('db-error path: getStats() rejects → 503 with database_failed description', async () => {
     const engine = makeMockEngine(() => Promise.reject(new Error('ECONNREFUSED')));
-    const result = await probeHealth(engine, 'postgres', '0.27.1', 100);
+    const result = await probeHealth(engine, 'postgres', '0.27.1', 'abc1234', 100);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(503);
     if (!result.ok) {
@@ -93,17 +95,18 @@ describe('probeHealth', () => {
 describe('probeLiveness (v0.28.10)', () => {
   test('happy path: returns 200 + status:ok with NO engine-stats fields', async () => {
     const engine = makeMockLivenessEngine(async () => [{ '?column?': 1 }]);
-    const result = await probeLiveness(engine, 'postgres', '0.28.10', 100);
+    const result = await probeLiveness(engine, 'postgres', '0.28.10', 'abc1234', 100);
     expect(result.ok).toBe(true);
     expect(result.status).toBe(200);
     if (result.ok) {
       expect(result.body.status).toBe('ok');
       expect(result.body.version).toBe('0.28.10');
       expect(result.body.engine).toBe('postgres');
+      expect(result.body.commit).toBe('abc1234');
       // Regression: the lightweight body must NOT spread getStats() fields.
       // The original PR's pre-refactor /health leaked page_count etc.;
       // tightening this assertion is the iron-rule regression test.
-      expect(Object.keys(result.body).sort()).toEqual(['engine', 'status', 'version']);
+      expect(Object.keys(result.body).sort()).toEqual(['commit', 'engine', 'status', 'version']);
       expect((result.body as Record<string, unknown>).page_count).toBeUndefined();
       expect((result.body as Record<string, unknown>).chunk_count).toBeUndefined();
     }
@@ -126,7 +129,7 @@ describe('probeLiveness (v0.28.10)', () => {
       });
     });
     const start = Date.now();
-    const result = await probeLiveness(engine, 'postgres', '0.28.10', 100);
+    const result = await probeLiveness(engine, 'postgres', '0.28.10', 'abc1234', 100);
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(1000);
     expect(querySignal?.aborted).toBe(true);
@@ -143,7 +146,7 @@ describe('probeLiveness (v0.28.10)', () => {
 
   test('db-error path: query throws → 503 with database_failed description', async () => {
     const engine = makeMockLivenessEngine(() => Promise.reject(new Error('ECONNREFUSED')));
-    const result = await probeLiveness(engine, 'postgres', '0.28.10', 100);
+    const result = await probeLiveness(engine, 'postgres', '0.28.10', 'abc1234', 100);
     expect(result.ok).toBe(false);
     expect(result.status).toBe(503);
     if (!result.ok) {
@@ -158,7 +161,7 @@ describe('probeLiveness (v0.28.10)', () => {
     // clearTimeout regressed, every probe would leak a 100ms-pending timer.
     const beforeHandles = (process as any)._getActiveHandles?.()?.length ?? 0;
     await Promise.all(
-      Array.from({ length: 100 }, () => probeLiveness(engine, 'postgres', '0.28.10', 100)),
+      Array.from({ length: 100 }, () => probeLiveness(engine, 'postgres', '0.28.10', 'abc1234', 100)),
     );
     // Allow microtask + process tick drain to let any leaked timers settle.
     await new Promise(r => setImmediate(r));
@@ -166,5 +169,41 @@ describe('probeLiveness (v0.28.10)', () => {
     // Loose bound: bun's internal handles can drift by a small amount across
     // many fetches; we only care that we don't ramp by ~100 leaked timers.
     expect(afterHandles - beforeHandles).toBeLessThan(20);
+  });
+});
+
+describe('resolveCommitSha', () => {
+  test('returns the configured commit', () => {
+    expect(resolveCommitSha({ GBRAIN_COMMIT: 'deadbee' } as NodeJS.ProcessEnv)).toBe('deadbee');
+  });
+
+  test('trims surrounding whitespace', () => {
+    expect(resolveCommitSha({ GBRAIN_COMMIT: '  deadbee\n' } as NodeJS.ProcessEnv)).toBe('deadbee');
+  });
+
+  test('an empty value reads as absent, not as a commit named ""', () => {
+    // A platform that creates the key before its value writes '', not undefined.
+    // Reporting that verbatim would hand every client a commit id it can
+    // compare against and never match.
+    expect(resolveCommitSha({ GBRAIN_COMMIT: '' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(resolveCommitSha({ GBRAIN_COMMIT: '   ' } as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  test('unset returns null', () => {
+    expect(resolveCommitSha({} as NodeJS.ProcessEnv)).toBeNull();
+  });
+});
+
+describe('probe bodies carry the commit', () => {
+  test('liveness reports null when no commit is configured', async () => {
+    const engine = makeMockLivenessEngine(async () => []);
+    const result = await probeLiveness(engine, 'postgres', '0.28.10', null, 100);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.body.commit).toBeNull();
+      // The version still answers; a target that stamps no commit loses the
+      // finer identity, not the health check.
+      expect(result.body.version).toBe('0.28.10');
+    }
   });
 });

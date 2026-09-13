@@ -69,7 +69,7 @@ import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
 import { resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
-import { VERSION } from '../version.ts';
+import { VERSION, resolveCommitSha } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
@@ -363,7 +363,7 @@ export function resolveOAuthTokenRateLimit(env: NodeJS.ProcessEnv = process.env)
 }
 
 export type ProbeHealthResult =
-  | { ok: true; status: 200; body: { status: 'ok'; version: string; engine: string; [k: string]: unknown } }
+  | { ok: true; status: 200; body: { status: 'ok'; version: string; commit: string | null; engine: string; [k: string]: unknown } }
   | { ok: false; status: 503; body: { error: 'service_unavailable'; error_description: string } };
 
 /** Narrowest contract the handshake consumes; see {@link EventSubscriber}. */
@@ -398,6 +398,7 @@ export async function probeHealth(
   engine: BrainEngine,
   engineName: string,
   version: string,
+  commit: string | null,
   timeoutMs: number = HEALTH_TIMEOUT_MS,
 ): Promise<ProbeHealthResult> {
   // Capture the handle so we can clearTimeout when getStats() wins. Without
@@ -416,7 +417,7 @@ export async function probeHealth(
     return {
       ok: true,
       status: 200,
-      body: { status: 'ok', version, engine: engineName, ...stats },
+      body: { status: 'ok', version, commit, engine: engineName, ...stats },
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'unknown';
@@ -445,6 +446,7 @@ export async function probeLiveness(
   engine: BrainEngine,
   engineName: string,
   version: string,
+  commit: string | null,
   timeoutMs: number = HEALTH_TIMEOUT_MS,
 ): Promise<ProbeHealthResult> {
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -462,7 +464,7 @@ export async function probeLiveness(
     return {
       ok: true,
       status: 200,
-      body: { status: 'ok', version, engine: engineName },
+      body: { status: 'ok', version, commit, engine: engineName },
     };
   } catch (e: unknown) {
     const msg = controller.signal.aborted ? 'health_timeout' : (e instanceof Error ? e.message : 'unknown');
@@ -1211,7 +1213,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // /admin/api/full-stats (requireAdmin). See probeLiveness above for the why.
   // ---------------------------------------------------------------------------
   app.get('/health', async (_req, res) => {
-    const result = await probeLiveness(engine, config.engine || 'pglite', VERSION);
+    const result = await probeLiveness(engine, config.engine || 'pglite', VERSION, resolveCommitSha());
     res.status(result.status).json(result.body);
   });
 
@@ -1525,7 +1527,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // engine.getStats() against HEALTH_TIMEOUT_MS so a saturated pool returns
   // 503 rather than hanging.
   app.get('/admin/api/full-stats', requireAdmin, async (_req: Request, res: Response) => {
-    const result = await probeHealth(engine, config.engine || 'pglite', VERSION);
+    const result = await probeHealth(engine, config.engine || 'pglite', VERSION, resolveCommitSha());
     res.status(result.status).json(result.body);
   });
 
