@@ -162,6 +162,15 @@ export interface Page {
   source_kind?: string | null;
   /** Original URI/path/message-id the ingestion event carried. */
   source_uri?: string | null;
+  /**
+   * Scanner-recorded path of the file this row was imported from — the page's
+   * file of record. `<slug>.md` is not a substitute: slugs are lowercased and
+   * punctuation-folded, so a derived path lands BESIDE a human-authored file
+   * rather than on it. The write paths already resolve through this column
+   * (`resolvePageWriteTarget`); projecting it lets readers do the same. Same
+   * three-state read as the provenance columns above.
+   */
+  source_path?: string | null;
   /** Richer label paired with source_kind (often same value; indexable separately). */
   ingested_via?: string | null;
   /** Server-stamped first-write audit timestamp; CV12 COALESCE-preserved across edits. */
