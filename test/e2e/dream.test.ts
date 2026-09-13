@@ -83,12 +83,14 @@ describeE2E('E2E: gbrain dream CLI against real Postgres', () => {
       runDream(getEngine(), ['--dir', repo, '--dry-run', '--json']),
     );
 
-    // dream prints a CycleReport as pretty-printed JSON. It may be
-    // preceded by inline phase-runner log lines (e.g. sync's
-    // "Full-sync dry run: N files"). Extract the JSON object.
-    const jsonStart = output.indexOf('{');
-    expect(jsonStart).toBeGreaterThanOrEqual(0);
-    const parsed = JSON.parse(output.slice(jsonStart));
+    // dream --json emits EXACTLY ONE CycleReport on stdout; nested phase human
+    // logs (e.g. sync's "Full-sync dry run: N files") are routed to stderr via
+    // withHumanLogsToStderr. captureLog captures console.log
+    // (stdout) only, so the whole captured output must parse as one JSON object
+    // — a leading non-JSON line is a contract failure, not something to skip.
+    const trimmed = output.trim();
+    expect(trimmed.startsWith('{')).toBe(true);
+    const parsed = JSON.parse(trimmed);
     expect(parsed.schema_version).toBe('1');
     expect(parsed).toHaveProperty('status');
     expect(parsed).toHaveProperty('phases');

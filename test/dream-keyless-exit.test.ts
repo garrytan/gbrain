@@ -75,17 +75,20 @@ describe.skipIf(SKIP)('keyless `gbrain dream` exits 0 (nightly-cron contract)', 
   }
 
   /**
-   * `dream --json` prints the CycleReport as the LAST pretty-printed JSON
-   * object on stdout; on the first sync of a checkout the sync phase's
-   * full-import writes human lines to stdout first (the #394 quieting covers
-   * the embed phase, not sync's import). Parse from the first line that is
-   * exactly '{'.
+   * `dream --json` prints EXACTLY ONE CycleReport JSON on stdout and nothing
+   * else. Nested phase human logs (notably the sync phase's full-import on the
+   * first sync of a checkout) are routed to stderr via `withHumanLogsToStderr`.
+   * Assert the clean contract: the whole of stdout parses as one
+   * JSON object. A leading/trailing non-JSON line is a contract failure, not
+   * something to skip past — skipping to a later '{' is what masked the v0.50
+   * stdout-pollution defect.
    */
   function parseReport(stdout: string): CycleReportish {
-    const lines = stdout.split('\n');
-    const start = lines.findIndex((l) => l === '{');
-    if (start === -1) throw new Error(`no JSON object found on stdout:\n${stdout.slice(-2000)}`);
-    return JSON.parse(lines.slice(start).join('\n')) as CycleReportish;
+    const trimmed = stdout.trim();
+    if (!trimmed.startsWith('{')) {
+      throw new Error(`dream --json stdout must be a single CycleReport with no leading output; got:\n${stdout.slice(0, 800)}`);
+    }
+    return JSON.parse(trimmed) as CycleReportish;
   }
 
   function failedPhases(report: CycleReportish): string[] {
