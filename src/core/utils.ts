@@ -204,6 +204,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
   // (historical pre-v0.38 row); populated when v0.38+ ingestion stamped it.
   const sourceKind = row.source_kind === undefined ? undefined : (row.source_kind as string | null);
   const sourceUri = row.source_uri === undefined ? undefined : (row.source_uri as string | null);
+  const sourcePath = row.source_path === undefined ? undefined : (row.source_path as string | null);
   const ingestedVia = row.ingested_via === undefined ? undefined : (row.ingested_via as string | null);
   const ingestedAt = readOptionalDate(row.ingested_at);
   // #3507: the CR tier the page was last embedded under (three-state, same
@@ -237,6 +238,7 @@ export function rowToPage(row: Record<string, unknown>): Page {
     // optional read; absent SELECT projections compile unchanged.
     ...(sourceKind !== undefined && { source_kind: sourceKind }),
     ...(sourceUri !== undefined && { source_uri: sourceUri }),
+    ...(sourcePath !== undefined && { source_path: sourcePath }),
     ...(ingestedVia !== undefined && { ingested_via: ingestedVia }),
     ...(ingestedAt !== undefined && { ingested_at: ingestedAt }),
     ...(contextualRetrievalMode !== undefined && { contextual_retrieval_mode: contextualRetrievalMode }),

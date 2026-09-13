@@ -11,10 +11,14 @@
  * Also covers per-source scoping of the two sidecar reads in the export loop
  * (tags + raw data), which are keyed by slug and so cross source boundaries
  * unless pinned to the page's own source.
+ *
+ * And the already-on-disk check itself: --restore-only decides what to write
+ * by asking whether the page's file is present, so it has to ask about the
+ * right file.
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -201,5 +205,65 @@ describe('export sidecar reads are scoped to the page owning source', () => {
     const raw = JSON.parse(readFileSync(join(outDir, 'notes', '.raw', 'shared.json'), 'utf-8'));
     expect(Object.keys(raw)).toEqual(['feed-other']);
     expect(raw['feed-other']).toEqual({ owner: 'other' });
+  });
+});
+
+describe('export --restore-only asks about the page file of record', () => {
+  // A file a human named, and the slug gbrain derives from it. The two differ
+  // in case AND in punctuation, which is the ordinary shape for an imported
+  // vault rather than an edge case.
+  const REAL_FILE = 'Notes/Quarterly Review.md';
+  const SLUG = 'notes/quarterly-review';
+
+  async function seed(opts: { onDisk: boolean; recordPath: boolean }): Promise<void> {
+    writeFileSync(
+      join(tmp, 'gbrain.yml'),
+      `storage:\n  db_tracked: []\n  db_only:\n    - notes/\n`,
+    );
+    if (opts.onDisk) {
+      mkdirSync(join(tmp, 'Notes'), { recursive: true });
+      writeFileSync(join(tmp, REAL_FILE), '# Quarterly Review\n');
+    }
+    await engine.putPage(
+      SLUG,
+      {
+        type: 'note',
+        title: 'Quarterly Review',
+        compiled_truth: 'body',
+        ...(opts.recordPath ? { source_path: REAL_FILE } : {}),
+      },
+      { sourceId: 'default' },
+    );
+  }
+
+  test('a page whose recorded file is on disk is not restored again', async () => {
+    await seed({ onDisk: true, recordPath: true });
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', tmp]);
+    expect(exitCode).toBeNull();
+    expect(stdout.some((line) => line.includes('Restoring 0'))).toBe(true);
+    // The failure this pins: the slug-derived path names a file nobody wrote,
+    // so the page reads as missing and a lowercase twin lands next to the
+    // original. On a case-insensitive filesystem the twin instead OVERWRITES
+    // the original, which is the quieter half of the same bug.
+    expect(existsSync(join(outDir, SLUG + '.md'))).toBe(false);
+  });
+
+  test('a page whose recorded file is gone is still restored', async () => {
+    await seed({ onDisk: false, recordPath: true });
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', tmp]);
+    expect(exitCode).toBeNull();
+    expect(stdout.some((line) => line.includes('Restoring 1'))).toBe(true);
+    expect(existsSync(join(outDir, SLUG + '.md'))).toBe(true);
+  });
+
+  test('a page with no recorded file keeps the slug-derived check', async () => {
+    // put_page / capture rows carry no source_path; `<slug>.md` IS their file
+    // of record, so the old behaviour has to survive unchanged for them.
+    await seed({ onDisk: false, recordPath: false });
+    mkdirSync(join(tmp, 'notes'), { recursive: true });
+    writeFileSync(join(tmp, SLUG + '.md'), '# already here\n');
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', tmp]);
+    expect(exitCode).toBeNull();
+    expect(stdout.some((line) => line.includes('Restoring 0'))).toBe(true);
   });
 });

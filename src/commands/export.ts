@@ -6,6 +6,7 @@ import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
 import { slugifyPath } from '../core/sync.ts';
+import { resolveSourceLocalFilePath } from '../core/markdown.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 import type { PageType } from '../core/types.ts';
 
@@ -88,7 +89,15 @@ export async function runExport(engine: BrainEngine, args: string[]) {
         if (seen.has(p.slug)) continue;
         seen.add(p.slug);
         if (!isDbOnly(p.slug, storageConfig)) continue; // belt-and-suspenders
-        const filePath = join(repoPath, p.slug + '.md');
+        // Ask where the page's file actually IS, not where its slug says it
+        // would go. `<slug>.md` is lowercased and punctuation-folded, so for
+        // any page imported from a human-authored file the derived path names
+        // a file that was never written: existsSync says "missing", and
+        // --restore-only writes a second copy beside the original. Pages born
+        // via put/capture have no recorded path and keep the slug form, which
+        // for them is correct.
+        const filePath = resolveSourceLocalFilePath(repoPath, p.source_path, p.slug)
+          ?? join(repoPath, p.slug + '.md');
         if (existsSync(filePath)) continue;
         pages.push(p);
       }
