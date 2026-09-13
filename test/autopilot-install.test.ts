@@ -16,7 +16,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -35,8 +35,11 @@ beforeEach(() => {
   for (const k of envKeys()) envSnapshot[k] = process.env[k];
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-install-test-'));
   process.env.HOME = tmp;
-  // Start each test with a clean slate for ephemeral env vars.
-  delete process.env.GBRAIN_HOME;
+  // Bun's os.homedir() can retain the process-start home after HOME changes.
+  // Pin the application path resolver too, before wrapper/env writes occur.
+  process.env.GBRAIN_HOME = tmp;
+  expect(gbrainPath()).toBe(join(tmp, '.gbrain'));
+  // Start each test with a clean slate for ephemeral hosting env vars.
   delete process.env.RENDER;
   delete process.env.RAILWAY_ENVIRONMENT;
   delete process.env.FLY_APP_NAME;
@@ -373,6 +376,8 @@ describe('autopilot wrapper script — gbrain-owned env file (#2608)', () => {
       mkdirSync(gbrainDir, { recursive: true });
       const envFile = join(gbrainDir, 'env');
       writeFileSync(envFile, 'export USER_KEY=real\n', { mode: 0o644 });
+      // Make the fixture deliberately loose even under a restrictive umask.
+      chmodSync(envFile, 0o644);
 
       writeWrapperScript(repoDir, 'linux-cron');
 
