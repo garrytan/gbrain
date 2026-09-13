@@ -67,6 +67,7 @@ import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
 import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationGuard, isAIInvocationPolicyError } from './invocation-guard.ts';
 import { createGuardedGeneration, chatInvocation } from './guarded-generation.ts';
+import { resolveEmbedMaxChars } from './embed-env.ts';
 const guardedGeneration = createGuardedGeneration(() => DEFAULT_MAX_OUTPUT_TOKENS);
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
@@ -105,10 +106,6 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
-// Default per-text char cap for embed(); overridable via GBRAIN_EMBED_MAX_CHARS
-// (see embed() — read from the configure-time env snapshot like
-// GBRAIN_EMBED_MAX_BATCH_TOKENS, never process.env at call time).
-const MAX_CHARS = 8000;
 // v0.46.3 SPLIT-DEFAULT: DEFAULT_EMBEDDING_MODEL / DEFAULT_EMBEDDING_DIMENSIONS
 // are now the LEGACY CONFIGLESS RUNTIME FALLBACK only (brains with no
 // `embedding_model` in file config, whose stored vectors live in ZE's 1280d
@@ -1826,9 +1823,8 @@ const MIN_SUB_BATCH = 1;
 export const NO_BATCH_CAP_SUB_BATCH_ITEMS = 16;
 
 /**
- * Embed many texts. Truncates to MAX_CHARS (8000; overridable via
- * GBRAIN_EMBED_MAX_CHARS), then dispatches based on whether the recipe
- * declares a per-batch token budget.
+ * Embed many texts. Truncates to MAX_CHARS (8000; overridable via GBRAIN_EMBED_MAX_CHARS),
+ * then dispatches based on the recipe's per-batch token budget declaration.
  *
  * Flow:
  * ```
@@ -1930,16 +1926,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  // GBRAIN_EMBED_MAX_CHARS: operator-declared per-text char cap. Local /
-  // self-hosted embedding servers (llama.cpp GGUF such as qwen3-embedding-4b)
-  // time out or overflow their context window on very long inputs; the
-  // operator must be able to bound single-input length to their hardware
-  // without forking the gateway. Same cfg.env snapshot convention as
-  // GBRAIN_EMBED_MAX_BATCH_TOKENS (#3622) — never process.env at call time.
-  // Invalid values (non-numeric, non-positive) fall back to MAX_CHARS.
-  const envMaxCharsRaw = parseInt(cfg.env?.GBRAIN_EMBED_MAX_CHARS ?? '', 10);
-  const maxChars = Number.isFinite(envMaxCharsRaw) && envMaxCharsRaw > 0 ? envMaxCharsRaw : MAX_CHARS;
-  const truncated = texts.map(t => truncateUtf8(t ?? '', maxChars));
+  const truncated = texts.map(t => truncateUtf8(t ?? '', resolveEmbedMaxChars(cfg)));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
