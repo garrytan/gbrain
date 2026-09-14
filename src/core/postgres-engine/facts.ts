@@ -16,6 +16,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { tryParseEmbedding } from '../utils.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from '../facts/supersede-resolve.ts';
+import { normalizeClaim, normalizeSource } from '../facts/recoordinate-normalize.ts';
 import { escapeLikePattern } from '../cjk.ts';
 
 /**
@@ -191,6 +192,60 @@ export async function insertFacts(
       // every later UPDATE onto the wrong fact.
       const rowIds: Array<number | null> = [];
       for (const input of rows) {
+        // Central re-coordinate adoption seam (bp-u49.4.4.7). Every
+        // coordinate-producing insert funnels through here, so this is the ONE
+        // place that honours a durable `fact_recoordinations` marker. Round-4
+        // #1: adoption fires ONLY for a marker at phase `published_verified` —
+        // the operator enters that phase only after BOTH the local file and the
+        // CURRENT remote tip are proven to carry the exact postimage, so a
+        // concurrent sync can never coordinate an orphan onto a not-yet-durable
+        // append (earlier phases marker_created/written/committed are invisible
+        // here). If this exact coordinate + normalized claim/source has such a
+        // marker whose target is a still-live, still-uncoordinated orphan, coordinate that
+        // orphan (idempotent `row_num IS NULL` guard) INSTEAD of inserting a new
+        // fact — so a concurrent sync/reconcile cannot duplicate the row while a
+        // re-coordinate is mid-flight. Serialized inside this transaction.
+        if (input.row_num != null && input.source_markdown_slug != null) {
+          const marker = await tx<Array<{ id: string; fact_id: string }>>`
+            SELECT r.id AS id, r.fact_id AS fact_id FROM fact_recoordinations r
+             WHERE r.status = 'pending' AND r.phase = 'published_verified'
+               AND r.source_id = ${ctx.source_id}
+               AND r.slug = ${input.source_markdown_slug} AND r.row_num = ${input.row_num}
+               AND r.claim_norm = ${normalizeClaim(input.fact)} AND r.source_norm = ${normalizeSource(input.source)}
+             LIMIT 1
+             FOR UPDATE`;
+          if (marker[0]) {
+            // Correction 8: coordinate the orphan ONLY if its live exact
+            // identity + values still match the marker — same entity page, same
+            // normalized claim/source, still live and still uncoordinated.
+            const adopted = await tx<Array<{ id: number }>>`
+              UPDATE facts SET row_num = ${input.row_num}, source_markdown_slug = ${input.source_markdown_slug}
+               WHERE id = ${marker[0].fact_id}
+                 AND source_id = ${ctx.source_id}
+                 AND row_num IS NULL AND source_markdown_slug IS NULL
+                 AND entity_slug = ${input.source_markdown_slug}
+                 AND btrim(fact) = ${normalizeClaim(input.fact)}
+                 AND btrim(COALESCE(source, '')) = ${normalizeSource(input.source)}
+                 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
+              RETURNING id`;
+            if (adopted[0]) {
+              // Round-5 #3: the marker row is locked FOR UPDATE above, so this
+              // terminal transition must affect EXACTLY the one marker; if a
+              // concurrent actor moved it out from under us (impossible while the
+              // lock is held, but proven, not assumed), throw to roll the whole
+              // insert transaction back — never report an adoption whose marker
+              // was not applied in the same transaction.
+              const appliedMarker = await tx<Array<{ id: string }>>`
+                UPDATE fact_recoordinations SET status = 'applied', phase = 'applied', applied_at = now()
+                 WHERE id = ${marker[0].id} AND status = 'pending' AND phase = 'published_verified'
+                 RETURNING id`;
+              if (appliedMarker.length !== 1) throw new Error('recoordinate adoption: applied-marker update did not affect exactly one row');
+              out.push(Number(adopted[0].id));
+              rowIds.push(Number(adopted[0].id));
+              continue; // adopted the existing orphan; do NOT insert a new fact
+            }
+          }
+        }
         const validFrom = input.valid_from ?? new Date();
         const validUntil = input.valid_until ?? null;
         const expiredAt = input.expired_at ?? null;

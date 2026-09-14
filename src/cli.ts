@@ -3167,6 +3167,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runExtractConversationFacts(engine, args);
         break;
       }
+      case 'facts-recoordinate': {
+        const { runFactsRecoordinate } = await import('./commands/facts-recoordinate.ts');
+        await runFactsRecoordinate(engine, args);
+        break;
+      }
       case 'enrich': {
         const { runEnrich } = await import('./commands/enrich.ts');
         await runEnrich(engine, args);

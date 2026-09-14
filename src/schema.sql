@@ -859,6 +859,35 @@ CREATE INDEX IF NOT EXISTS extract_atoms_transcript_state_tombstoned_idx
   ON extract_atoms_transcript_state (source_id, content_hash)
   WHERE tombstoned;
 
+-- fact_recoordinations (migration v150): durable pending-operation journal for
+-- the single-record provenance re-coordinate operator. The central adoption
+-- seam in engine.insertFacts honours an active marker so a concurrent
+-- sync/reconcile coordinates the existing orphan instead of duplicating it.
+CREATE TABLE IF NOT EXISTS fact_recoordinations (
+  id           BIGSERIAL PRIMARY KEY,
+  fact_id      BIGINT      NOT NULL,
+  source_id    TEXT        NOT NULL DEFAULT 'default',
+  slug         TEXT        NOT NULL,
+  row_num      INTEGER     NOT NULL,
+  claim_norm   TEXT        NOT NULL,
+  source_norm  TEXT        NOT NULL,
+  status       TEXT        NOT NULL DEFAULT 'pending'
+               CHECK (status IN ('pending','applied','rolled_back','failed')),
+  note         TEXT,
+  phase        TEXT        NOT NULL DEFAULT 'marker_created'
+               CHECK (phase IN ('marker_created','written','committed','published_verified','rolling_back','applied','rolled_back','failed')),
+  preimage_hash  TEXT,
+  postimage_hash TEXT,
+  commit_id      TEXT,
+  remote_ref     TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  applied_at   TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS fact_recoord_active_fact_uniq
+  ON fact_recoordinations (fact_id) WHERE status = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS fact_recoord_active_coord_uniq
+  ON fact_recoordinations (source_id, slug, row_num) WHERE status = 'pending';
+
 -- chat_usage_log (#4218 / migration v140): durable per-call chat usage
 -- ledger. One row per SUCCESSFUL gateway.chat() call, written fire-and-forget
 -- by the chat-usage sink (src/core/ai/chat-usage.ts). cost_usd is a

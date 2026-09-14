@@ -2,6 +2,27 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.0.0] - 2026-09-14
+
+**Re-file one live fact that has no page row back onto its canonical page, without minting a duplicate.**
+
+Some facts live in the database but were never coordinated to a row in their page's `## Facts` fence, so `row_num` is null and the fact has no home in the file. The new `gbrain facts-recoordinate` command moves ONE such live orphan fact onto ONE freshly appended fence row on its canonical page, keeping the original fact id and creating zero new facts. It is single-record by design: there is no bulk mode.
+
+The move runs behind a durable, phase-aware crash boundary. A new `fact_recoordinations` journal (migration 150) records the exact step reached plus the before and after page-file hashes, so a crash anywhere across the Git and database boundary is recoverable. `--recover` finishes or safely abandons a half-done move and never coordinates a fact to evidence that is not durably published: the move is authorized only after both the local file and the current remote branch tip are proven to carry the exact appended row. A single central adoption point inside fact insertion means a concurrent sync can never duplicate the row while a move is in flight.
+
+The default is a dry preview that changes nothing. Nothing runs on its own, and no existing fact, page, or fence is rewritten in bulk.
+
+## To take advantage of v0.51.0.0
+
+**Say to your agent:** *"Re-file this orphaned fact onto its page."* Your agent previews with `gbrain facts-recoordinate <fact_id>` and applies it with `--apply`.
+
+```bash
+gbrain facts-recoordinate <fact_id>             # dry preview: revalidate only, no mutation
+gbrain facts-recoordinate <fact_id> --apply     # execute the single-record move
+gbrain facts-recoordinate --status [<fact_id>]  # list pending durable markers
+gbrain facts-recoordinate --recover [<fact_id>] # fail-forward recovery after a crash
+```
+
 ## [0.50.0.0] - 2026-09-10
 
 **Approve client connection requests and keep background work within the access you granted.**

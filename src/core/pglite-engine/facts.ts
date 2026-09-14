@@ -11,6 +11,7 @@ import type {
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from '../facts/supersede-resolve.ts';
+import { normalizeClaim, normalizeSource } from '../facts/recoordinate-normalize.ts';
 import { escapeLikePattern } from '../cjk.ts';
 
 /** Narrow slice of PGLiteEngine the facts operations use. */
@@ -180,6 +181,59 @@ export async function insertFacts(
       // every later UPDATE onto the wrong fact.
       const rowIds: Array<number | null> = [];
       for (const input of rows) {
+        // Central re-coordinate adoption seam (bp-u49.4.4.7) — engine-parity
+        // twin of the postgres path. Honours a durable `fact_recoordinations`
+        // marker only at phase `published_verified` (round-4 #1): adoption fires
+        // solely after the operator has proven both the local file and the
+        // CURRENT remote tip carry the exact postimage, so a concurrent
+        // sync/reconcile can never coordinate an orphan onto a not-yet-durable
+        // append. A coordinate-producing insert whose coordinate + normalized
+        // claim/source match such a marker coordinates the marker's existing
+        // orphan (idempotent `row_num IS NULL` guard) instead of inserting a new
+        // fact, so a concurrent sync/reconcile cannot duplicate the row.
+        if (input.row_num != null && input.source_markdown_slug != null) {
+          const marker = await tx.query<{ id: string; fact_id: string }>(
+            `SELECT r.id AS id, r.fact_id AS fact_id FROM fact_recoordinations r
+              WHERE r.status = 'pending' AND r.phase = 'published_verified'
+                AND r.source_id = $1 AND r.slug = $2 AND r.row_num = $3
+                AND r.claim_norm = $4 AND r.source_norm = $5
+              LIMIT 1
+              FOR UPDATE`,
+            [ctx.source_id, input.source_markdown_slug, input.row_num, normalizeClaim(input.fact), normalizeSource(input.source)],
+          );
+          if (marker.rows[0]) {
+            // Correction 8: coordinate the orphan ONLY if its live exact
+            // identity + values still match the marker (engine-parity twin).
+            const adopted = await tx.query<{ id: number }>(
+              `UPDATE facts SET row_num = $1, source_markdown_slug = $2
+                WHERE id = $3
+                  AND source_id = $6
+                  AND row_num IS NULL AND source_markdown_slug IS NULL
+                  AND entity_slug = $2
+                  AND btrim(fact) = $4
+                  AND btrim(COALESCE(source, '')) = $5
+                  AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
+               RETURNING id`,
+              [input.row_num, input.source_markdown_slug, marker.rows[0].fact_id, normalizeClaim(input.fact), normalizeSource(input.source), ctx.source_id],
+            );
+            if (adopted.rows[0]) {
+              // Round-5 #3 (engine-parity twin): the marker row is locked FOR
+              // UPDATE above; this terminal transition MUST affect exactly the
+              // one marker or we throw to roll the whole insert transaction back
+              // — never report an adoption whose marker was not applied here.
+              const appliedMarker = await tx.query<{ id: string }>(
+                `UPDATE fact_recoordinations SET status = 'applied', phase = 'applied', applied_at = now()
+                  WHERE id = $1 AND status = 'pending' AND phase = 'published_verified'
+                  RETURNING id`,
+                [marker.rows[0].id],
+              );
+              if (appliedMarker.rows.length !== 1) throw new Error('recoordinate adoption: applied-marker update did not affect exactly one row');
+              out.push(Number(adopted.rows[0].id));
+              rowIds.push(Number(adopted.rows[0].id));
+              continue; // adopted the existing orphan; do NOT insert a new fact
+            }
+          }
+        }
         const validFrom = input.valid_from ?? new Date();
         const validUntil = input.valid_until ?? null;
         const expiredAt = input.expired_at ?? null;

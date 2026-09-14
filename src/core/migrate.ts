@@ -6551,6 +6551,50 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
   FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
     `,
   },
+  {
+    version: 150,
+    name: 'fact_recoordination_pending',
+    // Durable pending-operation journal for the single-record provenance
+    // re-coordinate operator (`gbrain facts recoordinate`). A row records the
+    // intent to move ONE existing live orphan fact (row_num IS NULL) onto ONE
+    // fence coordinate on its canonical page. The central adoption seam in
+    // `engine.insertFacts` honours it: any coordinate-producing insert whose
+    // (source_id, slug, row_num) + normalized claim/source match an active
+    // marker coordinates the marker's existing fact instead of inserting a new
+    // row — so a concurrent sync/reconcile cannot manufacture a duplicate in
+    // the window between the fence push and the coordinate update. The two
+    // partial unique indexes enforce single active ownership of both the
+    // fact_id and the target coordinate. Locks alone are not crash-safe across
+    // the Git↔DB boundary; this durable record is (fail-forward recovery).
+    // Keep in sync with src/schema.sql and src/core/pglite-schema.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS fact_recoordinations (
+        id           BIGSERIAL PRIMARY KEY,
+        fact_id      BIGINT      NOT NULL,
+        source_id    TEXT        NOT NULL DEFAULT 'default',
+        slug         TEXT        NOT NULL,
+        row_num      INTEGER     NOT NULL,
+        claim_norm   TEXT        NOT NULL,
+        source_norm  TEXT        NOT NULL,
+        status       TEXT        NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','applied','rolled_back','failed')),
+        note         TEXT,
+        phase        TEXT        NOT NULL DEFAULT 'marker_created'
+                     CHECK (phase IN ('marker_created','written','committed','published_verified','rolling_back','applied','rolled_back','failed')),
+        preimage_hash  TEXT,
+        postimage_hash TEXT,
+        commit_id      TEXT,
+        remote_ref     TEXT,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        applied_at   TIMESTAMPTZ
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS fact_recoord_active_fact_uniq
+        ON fact_recoordinations (fact_id) WHERE status = 'pending';
+      CREATE UNIQUE INDEX IF NOT EXISTS fact_recoord_active_coord_uniq
+        ON fact_recoordinations (source_id, slug, row_num) WHERE status = 'pending';
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
