@@ -306,6 +306,12 @@ describe('buildClaudeHookCommand', () => {
   test('committed carrier: an omitted GBRAIN_SOURCE is refused — the portable command must stay source-scoped', () => {
     expect(() => buildPortableClaudeHookCommand('SessionStart', {})).toThrow(/source-scoped/);
   });
+
+  test('committed carrier refuses a machine-specific GBRAIN_HOME directly', () => {
+    expect(() => buildPortableClaudeHookCommand('SessionStart', {
+      GBRAIN_SOURCE: 'workspace', GBRAIN_HOME: '/machine-specific',
+    })).toThrow(/machine-specific/);
+  });
 });
 
 // ── committed hook carrier [D12] ────────────────────────────────────────────

@@ -23,7 +23,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -42,17 +42,21 @@ import {
   type HarnessDeps,
   type HarnessFlags,
 } from '../src/core/bootstrap/harness.ts';
-import { readHarnessReceiptState, harnessReceiptPath, type HarnessTarget } from '../src/core/bootstrap/format.ts';
+import { readHarnessReceiptState, harnessReceiptPath, writeHarnessReceipt, type HarnessTarget } from '../src/core/bootstrap/format.ts';
 import {
   CLAUDE_HOOK_EVENTS,
   CODEX_TOML_BLOCK_BEGIN,
   CODEX_TOML_BLOCK_END,
   GBRAIN_HARNESS_MARKER_VALUE,
+  GBRAIN_HOOK_MARKER_KEY,
+  harnessMarkerForHome,
+  isHarnessMarkerValue,
 } from '../src/core/bootstrap/host-specs.ts';
+import { claudeSettingsPath, writeClaudeHooksAt } from '../src/core/bootstrap/hooks.ts';
 import { AMBIENT_WRITEBACK_BLOCK_BEGIN } from '../src/core/bootstrap/instructions-block.ts';
 import type { ExecRunner } from '../src/core/bootstrap/repo.ts';
 import type { ConnectProbeResult } from '../src/core/connect-probe.ts';
-import type { GBrainConfig } from '../src/core/config.ts';
+import { configDir, type GBrainConfig } from '../src/core/config.ts';
 import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { SourceTargetError } from '../src/core/source-resolver.ts';
@@ -264,6 +268,7 @@ describe('full apply', () => {
     expect(Object.keys(hooks).sort()).toEqual([...CLAUDE_HOOK_EVENTS].sort());
     const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
     expect(cmd).toContain('GBRAIN_HOOK_LANE=harness');
+    expect(cmd).toContain('GBRAIN_HOOK_SCOPE=user');
     expect(cmd).toContain('GBRAIN_SOURCE=default');
 
     const state = readHarnessReceiptState(f.home);
@@ -1456,5 +1461,327 @@ describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () =>
     // claude-only run: no codex target, no codex agents-file write.
     expect(existsSync(agentsPath(f))).toBe(false);
     expect(instrTargets(f.home).map((t) => t.host)).toEqual(['claude-code']);
+  });
+});
+
+describe('two-brain project-hook home routing', () => {
+  function projDir(): string {
+    return mkdtempSync(join(tmpdir(), 'gb-proj-'));
+  }
+  function localSettings(dir: string): string {
+    return claudeSettingsPath(dir);
+  }
+  function markerValuesIn(path: string): Set<string> {
+    const s = readJson(path);
+    const hooks = (s.hooks ?? {}) as Record<string, unknown>;
+    const vals = new Set<string>();
+    for (const groups of Object.values(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      for (const g of groups) {
+        const es = (g as { hooks?: unknown[] }).hooks;
+        if (!Array.isArray(es)) continue;
+        for (const e of es) {
+          const v = (e as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
+          if (typeof v === 'string') vals.add(v);
+        }
+      }
+    }
+    return vals;
+  }
+  function commandsIn(path: string): string[] {
+    const s = readJson(path);
+    const hooks = (s.hooks ?? {}) as Record<string, unknown>;
+    const cmds: string[] = [];
+    for (const groups of Object.values(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      for (const g of groups) {
+        const es = (g as { hooks?: unknown[] }).hooks;
+        if (!Array.isArray(es)) continue;
+        for (const e of es) {
+          const c = (e as { command?: string }).command;
+          if (c) cmds.push(c);
+        }
+      }
+    }
+    return cmds;
+  }
+
+  test('T1: --project hooks carry the harness GBRAIN_HOME in the local command, under the per-home marker', async () => {
+    const f = makeFake();
+    const dir = projDir();
+    expect(await applyHarness(flags(['--project', dir]), f.deps)).toBe(0);
+    const cmds = commandsIn(localSettings(dir));
+    expect(cmds.length).toBe(CLAUDE_HOOK_EVENTS.length);
+    const envHome = dirname(realpathSync(f.home));
+    for (const c of cmds) {
+      expect(c).toContain(`GBRAIN_HOME=${envHome}`);
+      expect(c).toContain('GBRAIN_HOOK_SCOPE=project');
+    }
+    withEnv({ GBRAIN_HOME: envHome }, () => expect(realpathSync(configDir())).toBe(realpathSync(f.home)));
+    expect(markerValuesIn(localSettings(dir))).toEqual(new Set([harnessMarkerForHome(f.home)]));
+  });
+
+  test('T2: two homes own disjoint projects under distinct per-home markers', async () => {
+    const a = makeFake();
+    const b = makeFake();
+    const dirA = projDir();
+    const dirB = projDir();
+    expect(await applyHarness(flags(['--project', dirA]), a.deps)).toBe(0);
+    expect(await applyHarness(flags(['--project', dirB]), b.deps)).toBe(0);
+    expect(markerValuesIn(localSettings(dirA))).toEqual(new Set([harnessMarkerForHome(a.home)]));
+    expect(markerValuesIn(localSettings(dirB))).toEqual(new Set([harnessMarkerForHome(b.home)]));
+    expect(harnessMarkerForHome(a.home)).not.toBe(harnessMarkerForHome(b.home));
+  });
+
+  test('T3: a second home claiming an already-owned project refuses before mutating it', async () => {
+    const a = makeFake();
+    const b = makeFake();
+    const dir = projDir();
+    expect(await applyHarness(flags(['--project', dir]), a.deps)).toBe(0);
+    const before = readFileSync(localSettings(dir), 'utf8');
+    const code = await applyHarness(flags(['--project', dir]), b.deps);
+    expect(code).not.toBe(0); // fail-closed
+    expect(b.mintCalls).toHaveLength(0);
+    expect(readFileSync(localSettings(dir), 'utf8')).toBe(before); // byte-identical, still A's
+    expect(markerValuesIn(localSettings(dir))).toEqual(new Set([harnessMarkerForHome(a.home)]));
+  });
+
+  test("T10: another home's user-scope per-home-marker hooks block a --project install (structural namespace scan)", async () => {
+    const b = makeFake();
+    const uPath = b.deps.userSettingsPath!;
+    const otherHome = mkdtempSync(join(tmpdir(), 'gb-otherhome-'));
+    // Seed the shared user settings with ANOTHER home's per-home marker hooks
+    // (bootstrap-harness-v1:<hash>) — the form the old raw-substring scan misses.
+    writeClaudeHooksAt(uPath, {
+      gbrainBin: '/opt/fake/gbrain',
+      env: { GBRAIN_SOURCE: 'x', GBRAIN_HOME: otherHome },
+      marker: harnessMarkerForHome(otherHome),
+    });
+    expect(isHarnessMarkerValue([...markerValuesIn(uPath)][0])).toBe(true);
+    const dir = projDir();
+    const code = await applyHarness(flags(['--project', dir]), b.deps);
+    expect(code).toBe(2); // refuse before any receipt/token/settings mutation
+    expect(b.mintCalls).toHaveLength(0);
+    expect(existsSync(localSettings(dir))).toBe(false); // B never wired the project
+  });
+
+  test('T10: unreadable user settings refuse project wiring before mint or mutation', async () => {
+    const f = makeFake();
+    writeFileSync(f.deps.userSettingsPath!, '{"hooks":');
+    const dir = projDir();
+    expect(await applyHarness(flags(['--project', dir]), f.deps)).toBe(2);
+    expect(f.mintCalls).toHaveLength(0);
+    expect(existsSync(localSettings(dir))).toBe(false);
+    expect(f.err.join('\n')).toContain('refusing --project wiring to avoid double firing');
+  });
+
+  test('T8: an exact prior receipt authorizes one-pass legacy marker migration', async () => {
+    const f = makeFake();
+    const dir = projDir();
+    const path = localSettings(dir);
+    writeClaudeHooksAt(path, {
+      gbrainBin: '/opt/fake/gbrain',
+      env: { GBRAIN_SOURCE: 'default' },
+      marker: GBRAIN_HARNESS_MARKER_VALUE,
+    });
+    writeHarnessReceipt(f.home, {
+      harness_receipt_version: 1,
+      created_at: '2026-09-14T00:00:00Z',
+      created_by: 'gbrain@test',
+      url: URL,
+      source_id: 'default',
+      token: { name: 'bootstrap-harness', minted: false },
+      targets: [{
+        host: 'claude-code', kind: 'hooks', state: 'confirmed', scope: dir,
+        path, marker: GBRAIN_HARNESS_MARKER_VALUE,
+      }],
+    });
+
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--project', dir, '--token', TOKEN_A]), f.deps)).toBe(0);
+    expect(markerValuesIn(path)).toEqual(new Set([harnessMarkerForHome(f.home)]));
+    const state = readHarnessReceiptState(f.home);
+    expect(state.state).toBe('ok');
+    const receipt = (state as { state: 'ok'; receipt: { targets: HarnessTarget[] } }).receipt;
+    expect(receipt.targets.find((t) => t.kind === 'hooks')?.marker).toBe(harnessMarkerForHome(f.home));
+  });
+
+  test('T9: an unreceipted legacy marker remains foreign and byte-identical', async () => {
+    const f = makeFake();
+    const dir = projDir();
+    const path = localSettings(dir);
+    writeClaudeHooksAt(path, {
+      gbrainBin: '/opt/fake/gbrain',
+      env: { GBRAIN_SOURCE: 'default' },
+      marker: GBRAIN_HARNESS_MARKER_VALUE,
+    });
+    const before = readFileSync(path, 'utf8');
+
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--project', dir, '--token', TOKEN_A]), f.deps)).not.toBe(0);
+    expect(readFileSync(path, 'utf8')).toBe(before);
+    expect(markerValuesIn(path)).toEqual(new Set([GBRAIN_HARNESS_MARKER_VALUE]));
+  });
+
+  for (const state of ['pending', 'failed'] as const) {
+    test(`T9: a ${state} legacy receipt does not authorize adoption`, async () => {
+      const f = makeFake();
+      const dir = projDir();
+      const path = localSettings(dir);
+      writeClaudeHooksAt(path, { gbrainBin: '/opt/fake/gbrain', env: { GBRAIN_SOURCE: 'default' }, marker: GBRAIN_HARNESS_MARKER_VALUE });
+      writeHarnessReceipt(f.home, {
+        harness_receipt_version: 1, created_at: '2026-09-14T00:00:00Z', created_by: 'gbrain@test',
+        url: URL, source_id: 'default', token: { name: 'bootstrap-harness', minted: false },
+        targets: [{ host: 'claude-code', kind: 'hooks', state, scope: dir, path, marker: GBRAIN_HARNESS_MARKER_VALUE }],
+      });
+      const before = readFileSync(path, 'utf8');
+      expect(await applyHarness(flags(['--harness', 'claude-code', '--project', dir, '--token', TOKEN_A]), f.deps)).not.toBe(0);
+      expect(readFileSync(path, 'utf8')).toBe(before);
+    });
+  }
+
+  test('T8: legacy adoption authority survives interruption after write-ahead receipt', async () => {
+    const f = makeFake();
+    const dir = projDir();
+    const path = localSettings(dir);
+    writeClaudeHooksAt(path, { gbrainBin: '/opt/fake/gbrain', env: { GBRAIN_SOURCE: 'default' }, marker: GBRAIN_HARNESS_MARKER_VALUE });
+    writeHarnessReceipt(f.home, {
+      harness_receipt_version: 1, created_at: '2026-09-14T00:00:00Z', created_by: 'gbrain@test',
+      url: URL, source_id: 'default', token: { name: 'bootstrap-harness', minted: false },
+      targets: [{ host: 'claude-code', kind: 'hooks', state: 'confirmed', scope: dir, path, marker: GBRAIN_HARNESS_MARKER_VALUE }],
+    });
+    const mint = f.deps.mint;
+    f.deps.mint = async () => { throw new Error('injected mint interruption'); };
+    await expect(applyHarness(flags(['--harness', 'claude-code', '--project', dir]), f.deps)).rejects.toThrow('injected mint interruption');
+    const interrupted = readHarnessReceiptState(f.home);
+    expect(interrupted.state).toBe('ok');
+    expect((interrupted as { state: 'ok'; receipt: { targets: HarnessTarget[] } }).receipt.targets.find((t) => t.kind === 'hooks')?.adopt_markers).toEqual([GBRAIN_HARNESS_MARKER_VALUE]);
+    f.deps.mint = mint;
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--project', dir, '--token', TOKEN_A]), f.deps)).toBe(0);
+    expect(markerValuesIn(path)).toEqual(new Set([harnessMarkerForHome(f.home)]));
+  });
+
+  test('T8: a failed migration write preserves working legacy hooks for retry', async () => {
+    const f = makeFake();
+    const dir = projDir();
+    const path = localSettings(dir);
+    writeClaudeHooksAt(path, { gbrainBin: '/opt/fake/gbrain', env: { GBRAIN_SOURCE: 'default' }, marker: GBRAIN_HARNESS_MARKER_VALUE });
+    writeHarnessReceipt(f.home, {
+      harness_receipt_version: 1, created_at: '2026-09-14T00:00:00Z', created_by: 'gbrain@test',
+      url: URL, source_id: 'default', token: { name: 'bootstrap-harness', minted: false },
+      targets: [{ host: 'claude-code', kind: 'hooks', state: 'confirmed', scope: dir, path, marker: GBRAIN_HARNESS_MARKER_VALUE }],
+    });
+    f.deps.gbrainBin = null;
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--project', dir, '--token', TOKEN_A]), f.deps)).not.toBe(0);
+    expect(markerValuesIn(path)).toEqual(new Set([GBRAIN_HARNESS_MARKER_VALUE]));
+  });
+
+  test('T8: dropping an interrupted migration target removes its legacy marker', async () => {
+    const f = makeFake();
+    const dirA = projDir();
+    const dirB = projDir();
+    const pathA = localSettings(dirA);
+    writeClaudeHooksAt(pathA, { gbrainBin: '/opt/fake/gbrain', env: { GBRAIN_SOURCE: 'default' }, marker: GBRAIN_HARNESS_MARKER_VALUE });
+    writeHarnessReceipt(f.home, {
+      harness_receipt_version: 1, created_at: '2026-09-14T00:00:00Z', created_by: 'gbrain@test',
+      url: URL, source_id: 'default', token: { name: 'bootstrap-harness', minted: false },
+      targets: [{ host: 'claude-code', kind: 'hooks', state: 'confirmed', scope: dirA, path: pathA, marker: GBRAIN_HARNESS_MARKER_VALUE }],
+    });
+    const mint = f.deps.mint;
+    f.deps.mint = async () => { throw new Error('injected mint interruption'); };
+    await expect(applyHarness(flags(['--harness', 'claude-code', '--project', dirA]), f.deps)).rejects.toThrow();
+    f.deps.mint = mint;
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--project', dirB, '--token', TOKEN_A]), f.deps)).toBe(0);
+    expect(markerValuesIn(pathA)).toEqual(new Set());
+  });
+});
+
+describe('symlinked home: canonical identity in BOTH marker and command', () => {
+  function hookCommands(path: string): string[] {
+    const s = readJson(path);
+    const hooks = (s.hooks ?? {}) as Record<string, unknown>;
+    const cmds: string[] = [];
+    for (const groups of Object.values(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      for (const g of groups) {
+        const es = (g as { hooks?: unknown[] }).hooks;
+        if (!Array.isArray(es)) continue;
+        for (const e of es) {
+          const c = (e as { command?: string }).command;
+          if (c) cmds.push(c);
+        }
+      }
+    }
+    return cmds;
+  }
+  function hookMarkers(path: string): Set<string> {
+    const s = readJson(path);
+    const hooks = (s.hooks ?? {}) as Record<string, unknown>;
+    const vals = new Set<string>();
+    for (const groups of Object.values(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      for (const g of groups) {
+        const es = (g as { hooks?: unknown[] }).hooks;
+        if (!Array.isArray(es)) continue;
+        for (const e of es) {
+          const v = (e as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
+          if (typeof v === 'string') vals.add(v);
+        }
+      }
+    }
+    return vals;
+  }
+
+  test('a symlinked GBRAIN_HOME → canonical marker AND a command carrying the canonical target, never the symlink path', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'gb-symhome-'));
+    const realParent = join(base, 'real-parent');
+    const realHome = join(realParent, '.gbrain');
+    mkdirSync(realHome, { recursive: true });
+    const linkParent = join(base, 'link-parent');
+    symlinkSync(realParent, linkParent);
+    const linkedHome = join(linkParent, '.gbrain');
+    const canonical = realpathSync(linkedHome);
+    expect(canonical).not.toBe(linkedHome); // sanity: the two spellings differ
+
+    const f = makeFake();
+    f.deps.gbrainHome = linkedHome; // config dir reached through a symlinked parent
+    const dir = mkdtempSync(join(tmpdir(), 'gb-proj-'));
+    expect(await applyHarness(flags(['--project', dir]), f.deps)).toBe(0);
+
+    const path = claudeSettingsPath(dir);
+    // marker is the canonical one (symlink-stable: same as installing via realHome)
+    const markers = hookMarkers(path);
+    expect(markers).toEqual(new Set([harnessMarkerForHome(realHome)]));
+    expect([...markers][0]).toBe(harnessMarkerForHome(linkedHome));
+
+    // command embeds the CANONICAL target, never the symlink path — so the
+    // marker/receipt identity and the executed brain can't diverge if the
+    // symlink is later retargeted.
+    const cmds = hookCommands(path);
+    expect(cmds.length).toBe(CLAUDE_HOOK_EVENTS.length);
+    for (const c of cmds) {
+      expect(c).toContain(`GBRAIN_HOME=${realpathSync(realParent)}`);
+      expect(c).not.toContain(`GBRAIN_HOME=${linkParent}`);
+    }
+    withEnv({ GBRAIN_HOME: realpathSync(realParent) }, () => expect(realpathSync(configDir())).toBe(canonical));
+  });
+
+  test('a .gbrain symlink to a differently named target works for non-hook and hook runs', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'gb-sym-config-'));
+    const parent = join(base, 'parent');
+    const target = join(base, 'brain-store');
+    mkdirSync(parent, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    const linkedHome = join(parent, '.gbrain');
+    symlinkSync(target, linkedHome, 'dir');
+    const f = makeFake();
+    f.deps.gbrainHome = linkedHome;
+
+    expect(await applyHarness(flags(['--harness', 'codex', '--token', TOKEN_A]), f.deps)).toBe(0);
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--no-hooks', '--token', TOKEN_A]), f.deps)).toBe(0);
+    const dir = mkdtempSync(join(tmpdir(), 'gb-proj-'));
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--project', dir, '--token', TOKEN_A]), f.deps)).toBe(0);
+    const commands = hookCommands(claudeSettingsPath(dir));
+    expect(commands).toHaveLength(CLAUDE_HOOK_EVENTS.length);
+    for (const command of commands) expect(command).toContain(`GBRAIN_HOME=${realpathSync(parent)}`);
+    withEnv({ GBRAIN_HOME: realpathSync(parent) }, () => expect(realpathSync(configDir())).toBe(realpathSync(target)));
   });
 });

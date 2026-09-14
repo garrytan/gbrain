@@ -40,6 +40,7 @@ import type { RepoReceipt } from '../src/core/bootstrap/repo.ts';
 const FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'claude-code.jsonl');
 const ENV_KEYS = [
   'GBRAIN_HOME', 'DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_HOOKS',
+  'GBRAIN_HOOK_LANE', 'GBRAIN_HOOK_SCOPE',
   // stop-push [D3/D17/D20] + banner [D5] + cloud detection knobs
   'GBRAIN_STOP_PUSH', 'GBRAIN_STOP_PUSH_DEBOUNCE_MIN', 'CLAUDE_CODE_REMOTE',
   'CLAUDE_CODE_REMOTE_SESSION_ID', 'GH_TOKEN', 'GITHUB_TOKEN',
@@ -207,6 +208,48 @@ describe('dispatch', () => {
     } finally {
       delete process.env.GBRAIN_HOOK_LANE;
     }
+  });
+
+  test('user-scope harness lane yields to a project-scope per-home harness marker', async () => {
+    process.env.GBRAIN_HOOK_LANE = 'harness';
+    process.env.GBRAIN_HOOK_SCOPE = 'user';
+    const ws = mkdtempSync(join(tmpdir(), 'gb-lane-project-home-'));
+    mkdirSync(join(ws, '.claude'), { recursive: true });
+    writeFileSync(join(ws, '.claude', 'settings.local.json'), JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'gbrain hook session-start', _gbrain: 'bootstrap-harness-v1:abc123def456' }] }] },
+    }));
+    const out = collectStdout();
+    expect(await runHook(['session-start'], { ...out.io, stdin: '', cwd: ws })).toBe(0);
+    expect(out.get()).toBe('');
+    expect(existsSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'))).toBe(false);
+
+    process.env.GBRAIN_HOOK_SCOPE = 'project';
+    expect(await runHook(['session-start'], { ...out.io, stdin: '', cwd: ws })).toBe(0);
+    expect(existsSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'))).toBe(true);
+  });
+
+  test('user-scope capture yields to a project harness even when that project disables capture', async () => {
+    process.env.GBRAIN_HOOK_LANE = 'harness';
+    process.env.GBRAIN_HOOK_SCOPE = 'user';
+    const ws = mkdtempSync(join(tmpdir(), 'gb-lane-project-no-capture-'));
+    mkdirSync(join(ws, '.claude'), { recursive: true });
+    writeFileSync(join(ws, '.claude', 'settings.local.json'), JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'gbrain hook session-start', _gbrain: 'bootstrap-harness-v1:abc123def456' }] }] },
+    }));
+    expect(await runHook(['stop'], { stdin: JSON.stringify({ session_id: 's', cwd: ws }), cwd: ws })).toBe(0);
+    expect(existsSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'))).toBe(false);
+  });
+
+  test('a committed harness marker cannot suppress a user-scope hook', async () => {
+    process.env.GBRAIN_HOOK_LANE = 'harness';
+    process.env.GBRAIN_HOOK_SCOPE = 'user';
+    const ws = mkdtempSync(join(tmpdir(), 'gb-lane-committed-harness-'));
+    mkdirSync(join(ws, '.claude'), { recursive: true });
+    writeFileSync(join(ws, '.claude', 'settings.json'), JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'gbrain hook session-start', _gbrain: 'bootstrap-harness-v1:abc123def456' }] }] },
+    }));
+    expect(await runHook(['session-start'], { stdin: '', cwd: ws })).toBe(0);
+    expect(existsSync(join(home(), 'integrations', 'hooks', 'heartbeat.jsonl'))).toBe(true);
   });
 
   test('harness lane yields to the COMMITTED settings.json carrier too ([D12] — local strips carried events)', async () => {

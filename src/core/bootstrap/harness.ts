@@ -91,13 +91,14 @@ import {
   addPermissionsAllowEntry,
   claudeSettingsPath,
   committedHookEvents,
+  planClaudeHarnessHooks,
   removeClaudeHooksAt,
   removePermissionsAllowEntry,
+  settingsContainHarnessHooks,
   writeClaudeHooksAt,
   type ClaudeHookEnv,
 } from './hooks.ts';
 import {
-  CLAUDE_HOOK_EVENTS,
   CODEX_TOML_BLOCK_BEGIN,
   CODEX_TOML_BLOCK_END,
   GBRAIN_HARNESS_MARKER_VALUE,
@@ -109,7 +110,6 @@ import {
   mcpPermissionEntry,
   opencodeConfigDir,
   opencodeGlobalConfigPath,
-  type ClaudeHookEvent,
   claudeConfigDir,
 } from './host-specs.ts';
 import {
@@ -616,7 +616,10 @@ async function cleanupStalePriorTargets(
   const matches = (pt: HarnessTarget): boolean =>
     planned.some((nt) => {
       if (nt.host !== pt.host || nt.kind !== pt.kind) return false;
-      if (pt.kind === 'hooks') return nt.path === pt.path && nt.marker === pt.marker;
+      if (pt.kind === 'hooks') {
+        const priorMarker = pt.marker ?? GBRAIN_HARNESS_MARKER_VALUE;
+        return nt.path === pt.path && (nt.marker === priorMarker || nt.adopt_markers?.includes(priorMarker));
+      }
       if (pt.kind === 'permission') return nt.path === pt.path && nt.entry === pt.entry;
       if (pt.kind === 'instructions') return nt.path === pt.path;
       return (nt.name ?? 'gbrain') === (pt.name ?? 'gbrain');
@@ -642,7 +645,8 @@ async function cleanupStalePriorTargets(
           if (r.removed) d.log(`stale ambient-writeback block removed from ${pt.path} (no longer planned).`);
         }
       } else if (pt.host === 'claude-code' && pt.kind === 'hooks') {
-        const r = removeClaudeHooksAt(pt.path ?? d.userSettingsPath, pt.marker ?? GBRAIN_HARNESS_MARKER_VALUE);
+        const markers = new Set([pt.marker ?? GBRAIN_HARNESS_MARKER_VALUE, ...(pt.adopt_markers ?? [])]);
+        const r = removeClaudeHooksAt(pt.path ?? d.userSettingsPath, markers);
         if (r.notes.some((n) => n.startsWith('WARNING'))) throw new Error(r.notes.join('; '));
         if (r.removed > 0) d.log(`stale harness hooks unwired from ${r.settingsPath} (no longer planned).`);
       } else if (pt.host === 'claude-code' && pt.kind === 'permission') {
@@ -901,16 +905,9 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       return 2;
     }
   }
-  // Cross-HOME exclusivity (the receipt check above only sees THIS home's
-  // install): when wiring --project, another install's USER-scope harness
-  // hooks would double-fire in that project — the user settings file is
-  // knowable, so scan it. (The reverse — user-scope wiring vs some other
-  // home's --project dirs — is not enumerable; the receipt check plus the
-  // same-file writer refusal are the guards there.)
   if (flags.projects.length > 0 && !flags.noHooks && existsSync(d.userSettingsPath)) {
     try {
-      const raw = readFileSync(d.userSettingsPath, 'utf8');
-      if (raw.includes(`"${GBRAIN_HARNESS_MARKER_VALUE}"`)) {
+      if (settingsContainHarnessHooks(readFileSync(d.userSettingsPath, 'utf8'))) {
         d.logError(
           `user-scope harness hooks already exist in ${d.userSettingsPath} (possibly from another GBRAIN_HOME's ` +
             'install); --project wiring would double-fire every event. Remove that install first ' +
@@ -918,14 +915,13 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         );
         return 2;
       }
-    } catch {
-      /* unreadable → the writers' own fail-closed paths handle it */
+    } catch (e) {
+      d.logError(`cannot inspect user-scope hooks in ${d.userSettingsPath} (${e instanceof Error ? e.message : String(e)}) — refusing --project wiring to avoid double firing.`);
+      return 2;
     }
   }
 
-  // 4. Plan targets + WRITE-AHEAD receipt [F1/X6] — BEFORE the mint, so a
-  // crash (or a newer-format receipt refusal) can never leave a live token
-  // no receipt records.
+  // 4. Plan targets + WRITE-AHEAD receipt [F1/X6] before minting a token.
   // #4897: without --source the hooks must claim the source the serve's
   // resolve-IPC listener is bound to — resolved through the SAME chain the
   // serve runs (env → dotfile → local_path → sources.default → sole
@@ -936,8 +932,6 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // (or a `__all__` env) is the federated floor, not a scalar grant (same
   // guard as dream.ts).
   let bound: HookSourceBinding;
-  // Live PGLite serve + --token, no --source: the hooks carry NO source pin
-  // (a claim-free request resolves through the serve's own binding).
   let unpinnedHooks = false;
   try {
     bound = await d.resolveHookSource(flags.source ?? null);
@@ -986,11 +980,19 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   if (implicitSource) {
     d.log(`binding hooks + token to source '${implicitSource}' (the serve's resolved default; pass --source to override).`);
   }
-  const guard = guardHarnessReceiptOverwrite(d.gbrainHome);
-  if (guard.brokenBackupPath) {
-    d.logError(`WARNING: the harness receipt was unreadable; backed it up to ${guard.brokenBackupPath}.`);
-  }
   const targets: HarnessTarget[] = [];
+  let hookPlan: ReturnType<typeof planClaudeHarnessHooks> | null = null;
+  if (wireHooks) try {
+    const destinations = flags.projects.length > 0
+      ? flags.projects.map((dir) => ({ path: claudeSettingsPath(dir), scope: dir }))
+      : [{ path: d.userSettingsPath, scope: 'user' }];
+    hookPlan = planClaudeHarnessHooks({
+      configDir: d.gbrainHome, priorTargets: prior?.targets ?? [], destinations, capture: !flags.noCapture,
+    });
+  } catch (e) {
+    d.logError(e instanceof Error ? e.message : String(e));
+    return 2;
+  }
   if (wireClaude) {
     targets.push({ host: 'claude-code', kind: 'mcp', state: 'pending', scope: 'user', name: flags.name, mechanism: 'claude-cli' });
     targets.push({
@@ -1001,29 +1003,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       path: d.userSettingsPath,
       entry: mcpPermissionEntry(flags.name),
     });
-    if (wireHooks) {
-      if (flags.projects.length > 0) {
-        for (const dir of flags.projects) {
-          targets.push({
-            host: 'claude-code',
-            kind: 'hooks',
-            state: 'pending',
-            scope: dir,
-            path: claudeSettingsPath(dir),
-            marker: GBRAIN_HARNESS_MARKER_VALUE,
-          });
-        }
-      } else {
-        targets.push({
-          host: 'claude-code',
-          kind: 'hooks',
-          state: 'pending',
-          scope: 'user',
-          path: d.userSettingsPath,
-          marker: GBRAIN_HARNESS_MARKER_VALUE,
-        });
-      }
-    }
+    targets.push(...(hookPlan?.targets ?? []));
     if (wbInstall) {
       targets.push({
         host: 'claude-code',
@@ -1066,6 +1046,10 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       name: flags.name,
       mechanism: 'jsonc-entry',
     });
+  }
+  const guard = guardHarnessReceiptOverwrite(d.gbrainHome);
+  if (guard.brokenBackupPath) {
+    d.logError(`WARNING: the harness receipt was unreadable; backed it up to ${guard.brokenBackupPath}.`);
   }
   // [X4] EVERY unrevoked prior minted id is carried — on the --token lane
   // too. A failed rotation must never forget the token before last.
@@ -1140,9 +1124,6 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // writers (even with different GBRAIN_HOMEs) against the same user-scope
   // files. The race with Claude Code ITSELF is irreducible by any lock we
   // hold; the docs say so.
-  const hookEvents: ClaudeHookEvent[] = flags.noCapture
-    ? ([...CLAUDE_HOOK_EVENTS].filter((e) => e !== 'Stop' && e !== 'SessionEnd') as ClaudeHookEvent[])
-    : [...CLAUDE_HOOK_EVENTS];
   // [X5] Captured for rollback: the previous working claude registration and
   // the codex .bak from THIS run — a failed apply restores a working state
   // (the old token is still valid; mint-first means nothing was revoked yet).
@@ -1266,10 +1247,16 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         confirm(t);
         d.log(`ambient-writeback instruction block installed in ${t.path} (mode: ${wb.mode}).`);
       } else {
+        if (!hookPlan) {
+          failTarget(t, 'internal: hooks target planned without a hook identity');
+          continue;
+        }
         const settingsPath = t.scope === 'user' ? d.userSettingsPath : t.path!;
         const env: ClaudeHookEnv = {
           ...(hookSource !== null ? { GBRAIN_SOURCE: hookSource } : {}),
+          GBRAIN_HOME: hookPlan.envHome,
           GBRAIN_HOOK_LANE: 'harness',
+          GBRAIN_HOOK_SCOPE: t.scope === 'user' ? 'user' : 'project',
         };
         const bin = flags.gbrainBin ?? d.gbrainBin;
         if (!bin) {
@@ -1279,8 +1266,9 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         const r = writeClaudeHooksAt(settingsPath, {
           gbrainBin: bin,
           env,
-          events: hookEvents,
-          marker: GBRAIN_HARNESS_MARKER_VALUE,
+          events: hookPlan.events,
+          marker: hookPlan.marker,
+          ...(t.adopt_markers?.length ? { adoptMarkers: t.adopt_markers } : {}),
           backupStrategy: 'timestamped',
           refuseOnForeignGbrainMarker: true,
           ...(t.scope === 'user'
@@ -1291,6 +1279,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
               { carriedEvents: committedHookEvents(dirname(dirname(t.path!))) }),
         });
         for (const note of r.notes) d.logError(note);
+        delete t.adopt_markers;
         confirm(t);
         d.log(
           `hooks wired (${r.installed.length} event(s)${flags.noCapture ? ', capture off' : ''}) in ${r.settingsPath}`,
@@ -1903,7 +1892,8 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
         );
       } else if (t.host === 'claude-code' && t.kind === 'hooks') {
         const settingsPath = t.scope === 'user' ? (t.path ?? d.userSettingsPath) : t.path!;
-        const r = removeClaudeHooksAt(settingsPath, t.marker ?? GBRAIN_HARNESS_MARKER_VALUE);
+        const markers = new Set([t.marker ?? GBRAIN_HARNESS_MARKER_VALUE, ...(t.adopt_markers ?? [])]);
+        const r = removeClaudeHooksAt(settingsPath, markers);
         if (r.notes.some((n) => n.startsWith('WARNING'))) throw new Error(r.notes.join('; '));
         d.log(
           r.removed > 0

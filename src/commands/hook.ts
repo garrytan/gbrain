@@ -84,7 +84,7 @@ import {
   writeHeartbeat as writeHeartbeatShared,
   type HookHeartbeatEntry,
 } from '../core/context/hook-heartbeat.ts';
-import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../core/bootstrap/host-specs.ts';
+import { CLAUDE_HOOK_OUTPUT_CAP_CHARS, isHarnessMarkerValue } from '../core/bootstrap/host-specs.ts';
 import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstrap/format.ts';
 import { githubOwnerRepoString } from '../core/repo-visibility.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
@@ -268,14 +268,9 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
   // for silence, and a disabled hook writing telemetry would be a lie).
   if (process.env.GBRAIN_HOOKS === '0') return 0;
 
-  // #4043 harness-lane defer guard: Claude Code MERGES user- and
-  // project-scope hook settings, so a machine wired by `bootstrap harness`
-  // (user scope) plus a real workspace bootstrap install (settings.local.json,
-  // bootstrap-v1 marker) would fire the same event twice. The workspace
-  // install wins; the harness lane yields silently (exit 0, no output, no
-  // heartbeat). Same cwd resolution as the handlers (io.cwd is the test
-  // seam; the harness runs hooks in the session's working dir). Fail-open:
-  // any read hiccup means run normally.
+  // Claude Code merges user and project hooks. A user-scope harness hook
+  // yields to either project owner: a workspace bootstrap-v1 carrier or a
+  // per-home harness marker. Project-scope hooks never yield to themselves.
   if (process.env.GBRAIN_HOOK_LANE === 'harness') {
     try {
       // BOTH workspace carriers count: settings.local.json (local installs)
@@ -301,6 +296,12 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
         const settings = JSON.parse(readFileSync(p, 'utf8')) as {
           hooks?: Record<string, Array<{ hooks?: Array<Record<string, unknown>> }>>;
         };
+        if (file === 'settings.local.json' && process.env.GBRAIN_HOOK_SCOPE === 'user') {
+          const projectOwnsHooks = Object.values(settings.hooks ?? {}).some((eventGroups) => Array.isArray(eventGroups) &&
+            eventGroups.some((group) => Array.isArray(group?.hooks) && group.hooks.some((entry) =>
+              entry?._gbrain === 'bootstrap-v1' || isHarnessMarkerValue(entry?._gbrain))));
+          if (projectOwnsHooks) return 0;
+        }
         const groups = settings.hooks?.[eventKey ?? ''];
         if (!Array.isArray(groups)) continue;
         for (const g of groups) {
@@ -312,7 +313,6 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
       /* fail-open */
     }
   }
-
   switch (event) {
     case 'session-start':
       return hookSessionStart(io);
