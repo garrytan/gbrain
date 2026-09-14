@@ -1358,20 +1358,31 @@ describe('google-source secondary calendar', () => {
     }
   });
 
-  test('fresh sweep creates mode 0600 state file under permissive umask (0000) in isolated child process', () => {
+  test('fresh sweep creates mode 0600 state file under permissive umask (0000) in isolated child process with sentinel discrimination', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-umask0-proc-'));
     try {
       const script = `
         import { PGLiteEngine } from "./src/core/pglite-engine.ts";
         import { runGoogleSync, googleStateFile, parseGoogleSourceConfig } from "./src/core/google/google-source.ts";
+        import { atomicWriteFileSync } from "./src/core/atomic-write.ts";
         import { statSync } from "node:fs";
+        import { join } from "node:path";
 
         process.umask(0);
-        const engine = new PGLiteEngine();
+        const testDir = ${JSON.stringify(dir)};
+
+        // Discrimination test 1: legacy unhardened write (without mode option) under umask 0000
+        const legacyFile = join(testDir, ".legacy-state.json");
+        atomicWriteFileSync(legacyFile, "{}");
+        const legacyMode = (statSync(legacyFile).mode & 0o7777).toString(8);
+        process.stdout.write("__GBRAIN_LEGACY_MODE__=" + legacyMode + "\\n");
+
+        // Discrimination test 2: fixed public sweep seam under umask 0000
+        const EngineCtor = PGLiteEngine;
+        const engine = new EngineCtor();
         await engine.connect({});
         await engine.initSchema();
 
-        const testDir = ${JSON.stringify(dir)};
         await engine.executeRaw(
           "INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, $3, $4::text::jsonb)",
           ["gsrc", "google", testDir, JSON.stringify({ kind: "google", g_account: "a@example.com", g_services: "gmail", g_history_days: 90, g_dir: testDir })]
@@ -1401,14 +1412,25 @@ describe('google-source secondary calendar', () => {
         await runGoogleSync(engine, "gsrc", cfg, { sourceId: "gsrc", noEmbed: true, noExtract: true }, fakeFetch, vault);
         await engine.disconnect();
 
-        const mode = statSync(googleStateFile(testDir)).mode & 0o7777;
-        process.stdout.write(mode.toString(8));
+        const fixedMode = (statSync(googleStateFile(testDir)).mode & 0o7777).toString(8);
+        process.stdout.write("__GBRAIN_STATE_MODE__=" + fixedMode + "\\n");
       `;
       const res = Bun.spawnSync(['bun', '-e', script], {
         cwd: join(__dirname, '..'),
       });
       expect(res.exitCode).toBe(0);
-      expect(res.stdout.toString().trim()).toContain('600');
+
+      const stdout = res.stdout.toString();
+      const legacyMatch = stdout.match(/__GBRAIN_LEGACY_MODE__=([0-7]+)/);
+      const stateMatch = stdout.match(/__GBRAIN_STATE_MODE__=([0-7]+)/);
+
+      expect(legacyMatch).not.toBeNull();
+      expect(stateMatch).not.toBeNull();
+      // Unhardened write under umask 0000 yields non-600 mode with group/world permissions
+      expect(legacyMatch![1]).not.toBe('600');
+      expect(parseInt(legacyMatch![1], 8) & 0o044).not.toBe(0);
+      // Hardened Google source state file under umask 0000 yields strictly mode 0600
+      expect(stateMatch![1]).toBe('600');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
