@@ -20,6 +20,8 @@ export interface GoogleSourceConfig {
   services: GoogleService[];
   /** Backfill/reconcile window in days (default 90). */
   historyDays: number;
+  /** Future horizon window in days (default 60, bounded 1..365). */
+  futureDays: number;
   /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). One calendar per
    *  source so each keeps its own sync token — point a second source at a
    *  secondary calendar id to ingest it too. */
@@ -68,6 +70,14 @@ export interface GoogleSourceState {
    * calendars and was therefore always primary's.
    */
   calendar_id?: string | null;
+  /** Timestamp of the last successful 24-hour periodic rolling-window sidecar sync. */
+  calendar_last_window_sync_ms?: number | null;
+  /**
+   * Durable marker set when a 410 (syncToken expired) recovery executes over
+   * retained pages. Surfaces degraded/partial status across all subsequent runs
+   * until an authorized clean reconciliation is performed.
+   */
+  calendar_degraded?: boolean;
   contacts_sync_token: string | null;
   last_full_at: string | null;
 }
@@ -131,6 +141,13 @@ export interface CalendarEventData {
   startIso: string;
   endIso: string;
   allDay: boolean;
+  /** Raw provider start date (YYYY-MM-DD) for all-day events. */
+  startDate?: string;
+  recurringEventId?: string;
+  originalStartTime?: { dateTime?: string; date?: string; timeZone?: string };
+  recurrence?: 'recurring' | 'single';
+  timeZone?: string;
+  futureDays?: number;
   organizer: string | null;
   attendees: Array<{ email: string; displayName: string | null; self: boolean; responseStatus: string | null }>;
   location: string | null;

@@ -415,8 +415,8 @@ export function buildRecencyComponentSql(opts: {
     elseSql = `${c} * ${h}.0 / (${h}.0 + ${daysOldSql})`;
   }
 
-  if (branches.length === 0) return `(${elseSql})`;
-  return `(CASE ${branches.join(' ')} ELSE ${elseSql} END)`;
+  if (branches.length === 0) return `(CASE WHEN ${dateExpr} > ${nowSql} THEN 0.0 ELSE ${elseSql} END)`;
+  return `(CASE WHEN ${dateExpr} > ${nowSql} THEN 0.0 ${branches.join(' ')} ELSE ${elseSql} END)`;
 }
 
 // Exported for unit tests

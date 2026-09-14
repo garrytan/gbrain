@@ -641,10 +641,14 @@ function handleCredError(e: unknown, json: boolean): never {
 
 // ── status ───────────────────────────────────────────────────────────────────
 
-export async function runGoogleStatus(args: string[]): Promise<void> {
+export async function runGoogleStatus(
+  args: string[],
+  engineOverride?: import('../core/engine.ts').BrainEngine,
+  vaultOverride?: CredentialVault,
+): Promise<void> {
   const json = args.includes('--json');
   const probe = !args.includes('--no-probe');
-  const vault = openVault();
+  const vault = vaultOverride ?? openVault();
   const metas = await vault.list({ provider: GOOGLE_PROVIDER });
   const client = await vault.getClient(GOOGLE_PROVIDER);
 
@@ -674,45 +678,99 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
   }
 
   // Linked sources: best-effort, engine optional.
-  let linkedSources: Array<{ id: string; account: string | null }> = [];
+  interface LinkedSourceStatus {
+    id: string;
+    account: string | null;
+    calendar_degraded: boolean;
+    state_error?: string;
+  }
+  let linkedSources: LinkedSourceStatus[] = [];
   try {
-    const { loadConfig, toEngineConfig } = await import('../core/config.ts');
-    const cfg = loadConfig();
-    if (cfg) {
-      const { createEngine } = await import('../core/engine-factory.ts');
-      const engineConfig = toEngineConfig(cfg);
-      const engine = await createEngine(engineConfig);
-      await engine.connect(engineConfig);
-      try {
-        const rows = await engine.executeRaw<{ id: string; config: unknown }>(
-          `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
-          [],
-        );
-        linkedSources = rows
-          .map((r) => {
-            const c =
-              typeof r.config === 'string'
-                ? (JSON.parse(r.config) as Record<string, unknown>)
-                : ((r.config ?? {}) as Record<string, unknown>);
-            return c.kind === 'google'
-              ? { id: r.id, account: typeof c.g_account === 'string' ? c.g_account : null }
-              : null;
-          })
-          .filter((x): x is { id: string; account: string | null } => x !== null);
-      } finally {
-        await engine.disconnect();
+    const inspectSources = async (eng: import('../core/engine.ts').BrainEngine): Promise<LinkedSourceStatus[]> => {
+      const rows = await eng.executeRaw<{ id: string; config: unknown }>(
+        `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
+        [],
+      );
+      const { googleStateFile } = await import('../core/google/google-source.ts');
+      return rows
+        .map((r) => {
+          const c =
+            typeof r.config === 'string'
+              ? (JSON.parse(r.config) as Record<string, unknown>)
+              : ((r.config ?? {}) as Record<string, unknown>);
+          if (c.kind !== 'google') return null;
+          const account = typeof c.g_account === 'string' ? c.g_account : null;
+          const dir = typeof c.g_dir === 'string' && c.g_dir.length > 0 ? c.g_dir : null;
+          let calendarDegraded = false;
+          let stateError: string | null = null;
+          if (!dir) {
+            calendarDegraded = true;
+            stateError = 'missing source directory';
+          } else if (!existsSync(dir)) {
+            calendarDegraded = true;
+            stateError = `source directory does not exist: ${dir}`;
+          } else {
+            const stateFile = googleStateFile(dir);
+            const corruptFile = `${stateFile}.corrupt`;
+            if (existsSync(corruptFile)) {
+              calendarDegraded = true;
+              stateError = `quarantined corrupt state file detected: ${corruptFile}`;
+            } else if (existsSync(stateFile)) {
+              try {
+                const raw = readFileSync(stateFile, 'utf-8');
+                const parsed = JSON.parse(raw);
+                calendarDegraded = Boolean(parsed?.calendar_degraded);
+              } catch (err) {
+                calendarDegraded = true;
+                stateError = `failed to read state: ${err instanceof Error ? err.message : String(err)}`;
+              }
+            }
+          }
+          const item: LinkedSourceStatus = {
+            id: r.id,
+            account,
+            calendar_degraded: calendarDegraded,
+            ...(stateError ? { state_error: stateError } : {}),
+          };
+          return item;
+        })
+        .filter((x): x is LinkedSourceStatus => x !== null);
+    };
+
+    if (engineOverride) {
+      linkedSources = await inspectSources(engineOverride);
+    } else {
+      const { loadConfig, toEngineConfig } = await import('../core/config.ts');
+      const cfg = loadConfig();
+      if (cfg) {
+        const { createEngine } = await import('../core/engine-factory.ts');
+        const engineConfig = toEngineConfig(cfg);
+        const engine = await createEngine(engineConfig);
+        await engine.connect(engineConfig);
+        try {
+          linkedSources = await inspectSources(engine);
+        } finally {
+          await engine.disconnect();
+        }
       }
     }
   } catch {
     /* no engine — vault-only status */
   }
 
+  const anyCalendarDegraded = linkedSources.some((s) => s.calendar_degraded);
+  const statusVerdict = anyCalendarDegraded
+    ? 'degraded'
+    : accounts.length > 0
+      ? 'connected'
+      : 'not_connected';
+
   if (json) {
     process.stdout.write(
       JSON.stringify(
         {
           ok: true,
-          status: accounts.length > 0 ? 'connected' : 'not_connected',
+          status: statusVerdict,
           client_on_file: client !== null,
           accounts,
           linked_sources: linkedSources,
@@ -745,7 +803,13 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
   }
   if (linkedSources.length > 0) {
     process.stdout.write(
-      `Linked sources: ${linkedSources.map((s) => s.id).join(', ')}\n`,
+      `Linked sources: ${linkedSources
+        .map((s) => {
+          if (s.state_error) return `${s.id} (degraded: ${s.state_error})`;
+          if (s.calendar_degraded) return `${s.id} (degraded: calendar retained-store 410 recovery)`;
+          return s.id;
+        })
+        .join(', ')}\n`,
     );
   } else {
     process.stdout.write('Linked sources: none yet — `gbrain sources add <id> --kind google --account <email>`\n');

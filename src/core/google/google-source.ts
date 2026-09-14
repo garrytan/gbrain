@@ -37,6 +37,7 @@ import { createProgress, startHeartbeat } from '../progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { atomicWriteFileSync } from '../atomic-write.ts';
+import { getCutoffInstantMs, isEventBeyondFutureHorizon } from '../calendar-horizon.ts';
 import {
   CalendarClient,
   GmailClient,
@@ -54,6 +55,7 @@ import {
 import {
   ALL_GOOGLE_SERVICES,
   DEFAULT_CALENDAR_ID,
+  type CalendarEventData,
   type GmailThreadData,
   type GoogleService,
   type GoogleSourceConfig,
@@ -90,6 +92,10 @@ export function parseGoogleSourceConfig(
     config.g_history_days > 0
       ? Math.min(3650, Math.floor(config.g_history_days))
       : 90;
+  const futureDays =
+    typeof config.g_future_days === 'number' && Number.isFinite(config.g_future_days)
+      ? Math.max(1, Math.min(365, Math.floor(config.g_future_days)))
+      : 60;
   const calendarId =
     typeof config.g_calendar_id === 'string' && config.g_calendar_id.trim().length > 0
       ? config.g_calendar_id.trim()
@@ -102,6 +108,7 @@ export function parseGoogleSourceConfig(
     account,
     services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
     historyDays,
+    futureDays,
     calendarId,
     dir,
     access,
@@ -128,6 +135,8 @@ function emptyState(): GoogleSourceState {
     gmail_newest_ms: null,
     calendar_sync_token: null,
     calendar_id: null,
+    calendar_last_window_sync_ms: null,
+    calendar_degraded: false,
     contacts_sync_token: null,
     last_full_at: null,
   };
@@ -258,9 +267,10 @@ async function deletePageByRelPath(
   relPath: string,
   summary: GoogleSyncSummary,
 ): Promise<void> {
+  const slugCandidate = relPath.replace(/\.md$/, '');
   const rows = await deps.engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE source_id = $1 AND source_path = $2 AND deleted_at IS NULL`,
-    [deps.sourceId, relPath],
+    `SELECT slug FROM pages WHERE source_id = $1 AND (source_path = $2 OR slug = $3) AND deleted_at IS NULL`,
+    [deps.sourceId, relPath, slugCandidate],
   );
   if (rows.length > 0) {
     await deps.engine.deletePages(rows.map((r) => r.slug), { sourceId: deps.sourceId });
@@ -377,14 +387,15 @@ async function calendarPageRelPathByEventId(
   eventId: string,
 ): Promise<string | null> {
   try {
-    const rows = await deps.engine.executeRaw<{ source_path: string | null }>(
-      `SELECT source_path FROM pages
+    const rows = await deps.engine.executeRaw<{ source_path: string | null; slug: string }>(
+      `SELECT source_path, slug FROM pages
        WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'calendar/%'
          AND frontmatter->>'event_id' = $2
        LIMIT 1`,
       [deps.sourceId, eventId],
     );
-    return rows[0]?.source_path ?? null;
+    if (rows.length === 0) return null;
+    return rows[0].source_path ?? `${rows[0].slug}.md`;
   } catch {
     return null;
   }
@@ -392,52 +403,20 @@ async function calendarPageRelPathByEventId(
 
 
 
-async function sweepCalendar(
+async function processCalendarEventBatch(
   deps: GoogleSyncDeps,
-  calendar: CalendarClient,
-  state: GoogleSourceState,
+  events: CalendarEventData[],
+  timeZone: string,
   activePack: ActivePack,
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
+  now: number,
 ): Promise<void> {
-  const now = Date.now();
-  const windowOpts = {
-    timeMinIso: new Date(now - deps.cfg.historyDays * 86_400_000).toISOString(),
-    timeMaxIso: new Date(now + 60 * 86_400_000).toISOString(),
-  };
-  // The stored token is bound to the calendar it was minted for (legacy state
-  // without calendar_id predates secondary calendars, so it was primary's).
-  // A re-pointed source starts a fresh window; pairing the NEW calendar with
-  // the OLD cursor would silently import a foreign delta.
-  const tokenCalendarId = state.calendar_id ?? DEFAULT_CALENDAR_ID;
-  if (state.calendar_sync_token && tokenCalendarId !== deps.cfg.calendarId) {
-    deps.log(
-      `[google] calendar changed (${tokenCalendarId} → ${deps.cfg.calendarId}); discarding its sync token, windowed re-list`,
-    );
-    state.calendar_sync_token = null;
-  }
-  let result;
-  try {
-    result = await calendar.listEvents(deps.cfg.account, {
-      calendarId: deps.cfg.calendarId,
-      ...(deps.opts.full || !state.calendar_sync_token ? windowOpts : { syncToken: state.calendar_sync_token }),
-      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
-    });
-  } catch (e) {
-    if (e instanceof GoogleCursorExpiredError) {
-      deps.log('[google] calendar syncToken expired; windowed re-list');
-      state.calendar_sync_token = null;
-      result = await calendar.listEvents(deps.cfg.account, {
-        calendarId: deps.cfg.calendarId,
-        ...windowOpts,
-        ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
-      });
-    } else {
-      throw e;
-    }
-  }
-  for (const ev of result.events) {
+  const futureDays = deps.cfg.futureDays;
+  for (const ev of events) {
     if (deps.opts.signal?.aborted) return;
+    ev.futureDays = futureDays;
+    ev.timeZone = timeZone;
     // The page path derives from MUTABLE fields (start date, summary) while
     // identity is the immutable event id — look up the existing page by
     // frontmatter event_id so reschedules move (old page deleted) and
@@ -449,14 +428,182 @@ async function sweepCalendar(
       await deletePageByRelPath(deps, existingPath ?? calendarRelPath(ev), summary);
       continue;
     }
+    // Rescheduled move: old page deleted before horizon gating!
     if (existingPath && existingPath !== rendered.relPath) {
-      await deletePageByRelPath(deps, existingPath, summary); // rescheduled → moved
+      await deletePageByRelPath(deps, existingPath, summary);
+    }
+    // Horizon gating: recurring events beyond the future horizon are not imported.
+    // Legitimate far-future one-off events (recurrence === 'single') are admitted to storage.
+    const beyondHorizon = isEventBeyondFutureHorizon(ev, futureDays, timeZone, now);
+    if (ev.recurrence === 'recurring' && beyondHorizon) {
+      continue;
     }
     await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
   }
-  if (result.nextSyncToken) {
-    state.calendar_sync_token = result.nextSyncToken;
+}
+
+async function sweepCalendar(
+  deps: GoogleSyncDeps,
+  calendar: CalendarClient,
+  state: GoogleSourceState,
+  activePack: ActivePack,
+  summary: GoogleSyncSummary,
+  countedSlugs: Set<string>,
+): Promise<void> {
+  const now = Date.now();
+  const historyDays = deps.cfg.historyDays;
+  const futureDays = deps.cfg.futureDays;
+
+  // Window options for bootstrap/windowed listings.
+  // Use a conservative provider buffer (futureDays + 2 civil-day envelope) because
+  // across a fall-back DST transition (25h day) or extreme timezone offsets, the local
+  // end-of-horizon cutoff can exceed (futureDays + 1) * 24h from the current instant.
+  // Because the primary calendar's authoritative timezone is returned in the API response,
+  // `isEventBeyondFutureHorizon` serves as the authoritative local gate using that validated timezone.
+  const windowOpts = {
+    timeMinIso: new Date(now - historyDays * 86_400_000).toISOString(),
+    timeMaxIso: new Date(now + (futureDays + 2) * 86_400_000).toISOString(),
+  };
+
+  // Re-pointed source check
+  const tokenCalendarId = state.calendar_id ?? DEFAULT_CALENDAR_ID;
+  if (state.calendar_sync_token && tokenCalendarId !== deps.cfg.calendarId) {
+    deps.log(
+      `[google] calendar changed (${tokenCalendarId} → ${deps.cfg.calendarId}); discarding its sync token, windowed re-list`,
+    );
+    state.calendar_sync_token = null;
+  }
+
+  const isBootstrapOrFull = deps.opts.full || !state.calendar_sync_token;
+
+  if (isBootstrapOrFull) {
+    const result = await calendar.listEvents(deps.cfg.account, {
+      calendarId: deps.cfg.calendarId,
+      ...windowOpts,
+      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+    });
+
+    await processCalendarEventBatch(
+      deps,
+      result.events,
+      result.timeZone,
+      activePack,
+      summary,
+      countedSlugs,
+      now,
+    );
+
+    if (result.nextSyncToken) {
+      state.calendar_sync_token = result.nextSyncToken;
+      state.calendar_id = deps.cfg.calendarId;
+      state.calendar_last_window_sync_ms = now;
+      writeGoogleState(deps.cfg.dir, state);
+    }
+    return;
+  }
+
+  // ── Phase 1: Incremental Sync via calendar_sync_token ──
+  let incResult;
+  try {
+    incResult = await calendar.listEvents(deps.cfg.account, {
+      calendarId: deps.cfg.calendarId,
+      syncToken: state.calendar_sync_token,
+      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+    });
+  } catch (e) {
+    if (e instanceof GoogleCursorExpiredError) {
+      deps.log('[google] calendar syncToken expired (HTTP 410); marking state degraded and performing windowed recovery');
+      // 1. Durable source-state degradation marker persisted immediately
+      state.calendar_degraded = true;
+      state.calendar_sync_token = null;
+      writeGoogleState(deps.cfg.dir, state);
+
+      // 2. Windowed recovery list over retained pages (no pages deleted)
+      const recResult = await calendar.listEvents(deps.cfg.account, {
+        calendarId: deps.cfg.calendarId,
+        ...windowOpts,
+        ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+      });
+
+      await processCalendarEventBatch(
+        deps,
+        recResult.events,
+        recResult.timeZone,
+        activePack,
+        summary,
+        countedSlugs,
+        now,
+      );
+
+      if (recResult.nextSyncToken) {
+        state.calendar_sync_token = recResult.nextSyncToken;
+        state.calendar_id = deps.cfg.calendarId;
+        state.calendar_last_window_sync_ms = now;
+        writeGoogleState(deps.cfg.dir, state);
+      }
+      return;
+    }
+    throw e;
+  }
+
+  // Process Phase 1 events
+  await processCalendarEventBatch(
+    deps,
+    incResult.events,
+    incResult.timeZone,
+    activePack,
+    summary,
+    countedSlugs,
+    now,
+  );
+
+  // Crash-safe, atomic commit of Phase 1 cursor
+  if (incResult.nextSyncToken) {
+    state.calendar_sync_token = incResult.nextSyncToken;
     state.calendar_id = deps.cfg.calendarId;
+    writeGoogleState(deps.cfg.dir, state);
+  }
+
+  if (deps.opts.signal?.aborted) return;
+
+  // ── Phase 2: Rolling-window sidecar discovery pass (every 24h) ──
+  const sidecarIntervalMs = 24 * 3600 * 1000;
+  if (state.calendar_last_window_sync_ms == null) {
+    state.calendar_last_window_sync_ms = now;
+    writeGoogleState(deps.cfg.dir, state);
+  }
+  const isSidecarDue = now - state.calendar_last_window_sync_ms >= sidecarIntervalMs;
+
+  if (isSidecarDue) {
+    deps.log('[google] running periodic 24h calendar rolling-window sidecar discovery pass');
+    const cutoffInstantMs = getCutoffInstantMs(now, futureDays, incResult.timeZone);
+    const sidecarWindowOpts = {
+      timeMinIso: new Date(now - historyDays * 86_400_000).toISOString(),
+      timeMaxIso: new Date(cutoffInstantMs).toISOString(),
+    };
+
+    const sidecarResult = await calendar.listEvents(deps.cfg.account, {
+      calendarId: deps.cfg.calendarId,
+      ...sidecarWindowOpts,
+      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+    });
+
+    // NOTE: sidecarResult.nextSyncToken is DISCARDED!
+    // It must NEVER overwrite state.calendar_sync_token.
+    // The sidecar never does absence-based deletion.
+    await processCalendarEventBatch(
+      deps,
+      sidecarResult.events,
+      sidecarResult.timeZone,
+      activePack,
+      summary,
+      countedSlugs,
+      now,
+    );
+
+    // Crash-safe, atomic commit of Phase 2 timestamp
+    state.calendar_last_window_sync_ms = now;
+    writeGoogleState(deps.cfg.dir, state);
   }
 }
 
@@ -1107,6 +1254,10 @@ export async function runGoogleSync(
     summary.pagesAffected = [...new Set(summary.pagesAffected)];
     if (grantedScopes.length > 0 && missingServices.length > 0) summary.status = 'partial';
     if (opts.signal?.aborted) summary.status = 'partial';
+    if (state.calendar_degraded) {
+      summary.status = 'partial';
+      log('[google] calendar state is marked degraded (retained store after 410)');
+    }
     if (opts.full && summary.status === 'synced') state.last_full_at = new Date().toISOString();
 
     // Per-service cursors were advanced in-place only on success; persist.

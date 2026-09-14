@@ -287,10 +287,19 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
 // ── Calendar event page ──────────────────────────────────────────────────────
 
 export function calendarRelPath(ev: CalendarEventData): string {
-  const d = new Date(ev.startIso || 0);
-  const yyyy = String(d.getUTCFullYear());
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
+  let yyyy: string;
+  let mm: string;
+  let day: string;
+  if (ev.allDay && ev.startDate && /^\d{4}-\d{2}-\d{2}$/.test(ev.startDate)) {
+    yyyy = ev.startDate.slice(0, 4);
+    mm = ev.startDate.slice(5, 7);
+    day = ev.startDate.slice(8, 10);
+  } else {
+    const d = new Date(ev.startIso || 0);
+    yyyy = String(d.getUTCFullYear());
+    mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    day = String(d.getUTCDate()).padStart(2, '0');
+  }
   return `calendar/${yyyy}/${mm}/${yyyy}-${mm}-${day}-${subjectSlug(ev.summary)}-${sha8(ev.id)}.md`;
 }
 
@@ -305,8 +314,14 @@ export function renderCalendarEventPage(ev: CalendarEventData): RenderedPage | n
     `event_id: ${yamlStr(ev.id)}`,
     `account: ${yamlStr(ev.account)}`,
     `start: ${yamlStr(ev.startIso)}`,
+    ...(ev.allDay && ev.startDate ? [`start_date: ${yamlStr(ev.startDate)}`] : []),
     `end: ${yamlStr(ev.endIso)}`,
     `all_day: ${ev.allDay}`,
+    ...(ev.recurrence ? [`recurrence: ${yamlStr(ev.recurrence)}`] : []),
+    ...(ev.recurringEventId ? [`recurring_event_id: ${yamlStr(ev.recurringEventId)}`] : []),
+    ...(ev.originalStartTime ? [`original_start_time: ${yamlStr(JSON.stringify(ev.originalStartTime))}`] : []),
+    ...(ev.timeZone ? [`timezone: ${yamlStr(ev.timeZone)}`] : []),
+    ...(ev.futureDays ? [`horizon_days: ${ev.futureDays}`] : []),
     `organizer: ${yamlStr(ev.organizer ?? '')}`,
     `attendees: ${yamlList(attendees.map((a) => a.email))}`,
     ...(ev.location ? [`location: ${yamlStr(ev.location)}`] : []),

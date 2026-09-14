@@ -414,13 +414,15 @@ interface RawCalendarEvent {
   status?: string;
   summary?: string;
   description?: string;
-  start?: { dateTime?: string; date?: string };
-  end?: { dateTime?: string; date?: string };
+  start?: { dateTime?: string; date?: string; timeZone?: string };
+  end?: { dateTime?: string; date?: string; timeZone?: string };
   organizer?: { email?: string };
   attendees?: Array<{ email?: string; displayName?: string; self?: boolean; responseStatus?: string }>;
   location?: string;
   hangoutLink?: string;
   htmlLink?: string;
+  recurringEventId?: string;
+  originalStartTime?: { dateTime?: string; date?: string; timeZone?: string };
 }
 
 export class CalendarClient extends GoogleApiClient {
@@ -441,8 +443,9 @@ export class CalendarClient extends GoogleApiClient {
        *  its OWN gbrain source so their sync tokens never collide. */
       calendarId?: string;
     },
-  ): Promise<{ events: CalendarEventData[]; nextSyncToken: string | null }> {
+  ): Promise<{ events: CalendarEventData[]; nextSyncToken: string | null; timeZone: string }> {
     let nextSyncToken: string | null = null;
+    let calendarTimeZone: string | null = null;
     const calId = encodeURIComponent(opts.calendarId?.trim() || DEFAULT_CALENDAR_ID);
     const base = `${CALENDAR_BASE}/calendars/${calId}/events?maxResults=250&singleEvents=true`;
     const raw = await this.drainPages<RawCalendarEvent>(
@@ -458,6 +461,22 @@ export class CalendarClient extends GoogleApiClient {
         return qs ? `${base}&${qs}` : base;
       },
       (body) => {
+        const rawTz = typeof body.timeZone === 'string' ? body.timeZone.trim() : '';
+        if (!rawTz) {
+          throw new Error('Google Calendar response missing required timeZone property');
+        }
+        try {
+          new Intl.DateTimeFormat(undefined, { timeZone: rawTz });
+        } catch {
+          throw new Error(`Google Calendar response contains invalid IANA timeZone: "${rawTz}"`);
+        }
+        if (calendarTimeZone !== null && calendarTimeZone !== rawTz) {
+          throw new Error(
+            `Google Calendar response timeZone changed across pages: "${calendarTimeZone}" vs "${rawTz}"`,
+          );
+        }
+        calendarTimeZone = rawTz;
+
         if (typeof body.nextSyncToken === 'string') nextSyncToken = body.nextSyncToken;
         return {
           items: (body.items as RawCalendarEvent[] | undefined) ?? [],
@@ -467,27 +486,39 @@ export class CalendarClient extends GoogleApiClient {
       'calendar-json',
       opts,
     );
-    const events = raw.map((e): CalendarEventData => ({
-      id: e.id,
-      summary: e.summary ?? '(no title)',
-      description: e.description ?? '',
-      startIso: e.start?.dateTime ?? (e.start?.date ? `${e.start.date}T00:00:00Z` : ''),
-      endIso: e.end?.dateTime ?? (e.end?.date ? `${e.end.date}T00:00:00Z` : ''),
-      allDay: Boolean(e.start?.date),
-      organizer: e.organizer?.email?.toLowerCase() ?? null,
-      attendees: (e.attendees ?? []).map((a) => ({
-        email: (a.email ?? '').toLowerCase(),
-        displayName: a.displayName ?? null,
-        self: a.self ?? false,
-        responseStatus: a.responseStatus ?? null,
-      })),
-      location: e.location ?? null,
-      hangoutLink: e.hangoutLink ?? null,
-      htmlLink: e.htmlLink ?? null,
-      status: e.status ?? 'confirmed',
-      account,
-    }));
-    return { events, nextSyncToken };
+    if (!calendarTimeZone) {
+      throw new Error('Google Calendar response missing required timeZone property');
+    }
+    const events = raw.map((e): CalendarEventData => {
+      const allDay = Boolean(e.start?.date);
+      const isRecurring = Boolean(e.recurringEventId || e.originalStartTime);
+      return {
+        id: e.id,
+        summary: e.summary ?? '(no title)',
+        description: e.description ?? '',
+        startIso: e.start?.dateTime ?? (e.start?.date ? `${e.start.date}T00:00:00Z` : ''),
+        endIso: e.end?.dateTime ?? (e.end?.date ? `${e.end.date}T00:00:00Z` : ''),
+        allDay,
+        startDate: e.start?.date ? e.start.date : undefined,
+        recurringEventId: e.recurringEventId,
+        originalStartTime: e.originalStartTime,
+        recurrence: isRecurring ? 'recurring' : 'single',
+        timeZone: calendarTimeZone!,
+        organizer: e.organizer?.email?.toLowerCase() ?? null,
+        attendees: (e.attendees ?? []).map((a) => ({
+          email: (a.email ?? '').toLowerCase(),
+          displayName: a.displayName ?? null,
+          self: a.self ?? false,
+          responseStatus: a.responseStatus ?? null,
+        })),
+        location: e.location ?? null,
+        hangoutLink: e.hangoutLink ?? null,
+        htmlLink: e.htmlLink ?? null,
+        status: e.status ?? 'confirmed',
+        account,
+      };
+    });
+    return { events, nextSyncToken, timeZone: calendarTimeZone };
   }
 
   /**
