@@ -24,6 +24,12 @@ describe('classifyIntent — temporal triggers', () => {
     expect(classifyIntent('Notes from March?')).toBe('temporal');
   });
 
+  test('ordinary catch-up phrasing triggers temporal', () => {
+    expect(classifyIntent("What's been going on lately?")).toBe('temporal');
+    expect(classifyIntent('What has been happening recently?')).toBe('temporal');
+    expect(classifyIntent('Anything important lately?')).toBe('temporal');
+  });
+
   test('"last X" triggers temporal', () => {
     expect(classifyIntent('Last time we talked')).toBe('temporal');
     expect(classifyIntent('When was the last meeting?')).toBe('temporal');
