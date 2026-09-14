@@ -10,7 +10,7 @@
  * Synthetic data only: example.com addresses, hex message/thread ids.
  */
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -456,6 +456,42 @@ describe('google-source config + state units', () => {
     }
   });
 
+  test('readGoogleState: corrupt state file closes exposure window before rename and produces 0600 .corrupt file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-state-corrupt-'));
+    try {
+      const file = googleStateFile(dir);
+      // Simulate legacy corrupt file created at mode 0644
+      writeFileSync(file, '{ not valid json');
+      chmodSync(file, 0o644);
+      expect(statSync(file).mode & 0o7777).toBe(0o644);
+
+      const fallback = readGoogleState(dir);
+      expect(fallback.gmail_history_id).toBeNull();
+      expect(existsSync(file)).toBe(false);
+
+      const corruptFile = `${file}.corrupt`;
+      expect(existsSync(corruptFile)).toBe(true);
+      expect(statSync(corruptFile).mode & 0o7777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('readGoogleState: quarantine failure fails loudly if secure quarantine cannot be established', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-state-fail-'));
+    const roSubdir = join(dir, 'readonly-quarantine');
+    mkdirSync(roSubdir, { recursive: true });
+    const file = googleStateFile(roSubdir);
+    writeFileSync(file, 'not valid json');
+    chmodSync(roSubdir, 0o500);
+    try {
+      expect(() => readGoogleState(roSubdir)).toThrow();
+    } finally {
+      chmodSync(roSubdir, 0o700);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('myAddressSet includes the account and sendAs aliases, lowercased', () => {
     const vault = makeVault();
     const entry = vault.entries.get('google:a@example.com')!;
@@ -527,6 +563,7 @@ describe('google-source materialize', () => {
         expect(state.gmail_newest_ms).toBe(daysAgoMs(1)); // noise thread is newest seen
         expect(state.calendar_sync_token).toBe('cal-sync-1');
         expect(state.contacts_sync_token).toBe('ppl-sync-1');
+        expect(statSync(googleStateFile(dir)).mode & 0o7777).toBe(0o600);
 
         // SearchResult projection: subject word → message_id + thread_id.
         const results = await engine.searchKeyword('zephyr', { sourceId: 'gsrc' });
@@ -568,6 +605,10 @@ describe('google-source materialize', () => {
         fx.historyResponseId = '1010';
         const fetchesBefore = fx.threadFetches;
 
+        // Legacy mode 0644 simulation: delta sweep must reassert 0600 across atomic rewrite
+        chmodSync(googleStateFile(dir), 0o644);
+        expect(statSync(googleStateFile(dir)).mode & 0o7777).toBe(0o644);
+
         const res = await sweep(dir, fx, vault, {}, 'gmail');
         expect(res.status).toBe('synced');
         expect(res.modified).toBe(1);
@@ -577,6 +618,7 @@ describe('google-source materialize', () => {
         const state = readGoogleState(dir);
         expect(state.gmail_history_id).toBe('1010'); // cursor advanced
         expect(state.gmail_newest_ms).toBe(hoursAgoMs(1));
+        expect(statSync(googleStateFile(dir)).mode & 0o7777).toBe(0o600);
 
         const aSlug = (await slugsWhere(`slug LIKE 'emails/%'`)).find((s) => s.includes('quarterly-zephyr-roadmap'))!;
         const aMd = readFileSync(join(dir, `${aSlug}.md`), 'utf-8');
@@ -1312,6 +1354,23 @@ describe('google-source secondary calendar', () => {
         expect((await slugsWhere(`slug LIKE 'calendar/%zephyr%'`)).length).toBe(1);
       });
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fresh sweep creates mode 0600 state file under permissive umask (0000)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-umask0-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const oldUmask = process.umask(0);
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+        expect(statSync(googleStateFile(dir)).mode & 0o7777).toBe(0o600);
+      });
+    } finally {
+      process.umask(oldUmask);
       rmSync(dir, { recursive: true, force: true });
     }
   });

@@ -163,7 +163,7 @@ export function readGoogleState(dir: string): GoogleSourceState {
   }
 }
 
-export function writeGoogleState(dir: string, state: GoogleSourceState): void {
+function writeGoogleState(dir: string, state: GoogleSourceState): void {
   mkdirSync(dir, { recursive: true });
   // Atomic (tmp+fsync+rename): this file is written once per backfill batch;
   // a torn write would silently reset every cursor (full re-backfill).
