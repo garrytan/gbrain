@@ -1358,19 +1358,58 @@ describe('google-source secondary calendar', () => {
     }
   });
 
-  test('fresh sweep creates mode 0600 state file under permissive umask (0000)', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-umask0-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    const oldUmask = process.umask(0);
+  test('fresh sweep creates mode 0600 state file under permissive umask (0000) in isolated child process', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-umask0-proc-'));
     try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        await sweep(dir, fx, vault, {}, 'gmail');
-        expect(statSync(googleStateFile(dir)).mode & 0o7777).toBe(0o600);
+      const script = `
+        import { PGLiteEngine } from "./src/core/pglite-engine.ts";
+        import { runGoogleSync, googleStateFile, parseGoogleSourceConfig } from "./src/core/google/google-source.ts";
+        import { statSync } from "node:fs";
+
+        process.umask(0);
+        const engine = new PGLiteEngine();
+        await engine.connect({});
+        await engine.initSchema();
+
+        const testDir = ${JSON.stringify(dir)};
+        await engine.executeRaw(
+          "INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, $3, $4::text::jsonb)",
+          ["gsrc", "google", testDir, JSON.stringify({ kind: "google", g_account: "a@example.com", g_services: "gmail", g_history_days: 90, g_dir: testDir })]
+        );
+
+        const cfg = parseGoogleSourceConfig({ g_account: "a@example.com", g_services: "gmail", g_dir: testDir }, testDir);
+        const fakeFetch = async (url) => {
+          if (url.includes("/users/me/profile")) {
+            return new Response(JSON.stringify({ historyId: "1000" }), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+          if (url.includes("/messages?")) {
+            return new Response(JSON.stringify({ messages: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+          }
+          return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+        };
+        const vault = {
+          get: async () => ({
+            id: "google:a@example.com",
+            provider: "google",
+            kind: "bearer",
+            client_ref: "byo",
+            secret: { access_token: "fake-tok", expires_at: Date.now() + 3600000 },
+            meta: { account: "a@example.com" }
+          })
+        };
+
+        await runGoogleSync(engine, "gsrc", cfg, { sourceId: "gsrc", noEmbed: true, noExtract: true }, fakeFetch, vault);
+        await engine.disconnect();
+
+        const mode = statSync(googleStateFile(testDir)).mode & 0o7777;
+        process.stdout.write(mode.toString(8));
+      `;
+      const res = Bun.spawnSync(['bun', '-e', script], {
+        cwd: join(__dirname, '..'),
       });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout.toString().trim()).toContain('600');
     } finally {
-      process.umask(oldUmask);
       rmSync(dir, { recursive: true, force: true });
     }
   });
