@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { v0_32_2, __setTestEngineOverride, __testing } from '../src/commands/migrations/v0_32_2.ts';
-import { parseFactsFence } from '../src/core/facts-fence.ts';
+import { parseFactsFence, upsertFactRow } from '../src/core/facts-fence.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -203,6 +203,95 @@ describe('phaseBFenceFacts — happy path backfill', () => {
       'SELECT row_num FROM facts WHERE row_num IS NOT NULL ORDER BY row_num',
     );
     expect(rows.rows.map((r: { row_num: number }) => r.row_num)).toEqual([1, 2]);
+  });
+
+  test('continues after the highest DB row_num when the markdown fence disappeared', async () => {
+    // Reproduce the production collision: the DB still owns row_num=1 for
+    // this page, but the current markdown body has no Facts fence. The legacy
+    // row must be assigned row_num=2 rather than reissuing 1 and violating
+    // idx_facts_fence_key.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, row_num, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'Already indexed', 'fact', 'world', 'medium',
+               now(), 'mcp:put_page', 1.0, 1, 'people/alice')`,
+    );
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Needs fencing' });
+
+    mkdirSync(join(brainDir, 'people'), { recursive: true });
+    writeFileSync(
+      join(brainDir, 'people/alice.md'),
+      '---\ntype: person\ntitle: Alice\nslug: people/alice\n---\n\n# Alice\n',
+      'utf-8',
+    );
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r).toMatchObject({
+      status: 'complete',
+      detail: expect.stringContaining('fenced=1'),
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, row_num FROM facts
+        WHERE source_id = 'default' AND source_markdown_slug = 'people/alice'
+        ORDER BY row_num`,
+    );
+    expect(rows.rows).toEqual([
+      expect.objectContaining({ fact: 'Already indexed', row_num: 1 }),
+      expect.objectContaining({ fact: 'Needs fencing', row_num: 2 }),
+    ]);
+  });
+
+  test('reassigns a stranded matching fence row when its row_num is already occupied in the DB', async () => {
+    // Exact production shape: a prior partial attempt wrote the legacy fact
+    // to markdown as row 1 but failed before linking it in the DB. Another
+    // already-fenced DB fact owns row 1 for the same page, so blindly reusing
+    // the matching markdown row violates idx_facts_fence_key.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, row_num, source_markdown_slug)
+       VALUES ('default', 'people/alice', 'Already indexed', 'fact', 'world', 'medium',
+               now(), 'mcp:put_page', 1.0, 1, 'people/alice')`,
+    );
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Stranded partial fact' });
+
+    mkdirSync(join(brainDir, 'people'), { recursive: true });
+    let body = '---\ntype: person\ntitle: Alice\nslug: people/alice\n---\n\n# Alice\n';
+    body = upsertFactRow(body, {
+      rowNum: 1,
+      claim: 'Stranded partial fact',
+      kind: 'fact',
+      confidence: 1,
+      visibility: 'private',
+      notability: 'medium',
+      validFrom: new Date().toISOString().slice(0, 10),
+      source: 'mcp:put_page',
+    }).body;
+    writeFileSync(join(brainDir, 'people/alice.md'), body, 'utf-8');
+
+    const r = await __testing.phaseBFenceFacts(engine, OPTS);
+    expect(r).toMatchObject({
+      status: 'complete',
+      detail: expect.stringContaining('fenced=1'),
+    });
+
+    const fenced = parseFactsFence(readFileSync(join(brainDir, 'people/alice.md'), 'utf-8')).facts;
+    expect(fenced).toHaveLength(1);
+    expect(fenced[0]).toMatchObject({ claim: 'Stranded partial fact', rowNum: 2 });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact, row_num FROM facts
+        WHERE source_id = 'default' AND source_markdown_slug = 'people/alice'
+        ORDER BY row_num`,
+    );
+    expect(rows.rows).toEqual([
+      expect.objectContaining({ fact: 'Already indexed', row_num: 1 }),
+      expect.objectContaining({ fact: 'Stranded partial fact', row_num: 2 }),
+    ]);
   });
 
   test('skips facts with NULL entity_slug (unfenceable)', async () => {
