@@ -332,7 +332,13 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     expect(ranPhases).toContain('synthesize');
     expect(ranPhases).toContain('patterns');
     expect(ranPhases).not.toContain('sync');
-    expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).not.toBeNull();
+    // The hermetic keyless run has a real failing phase (LLM-backed maintenance
+    // phases fail with no provider), so this is a fail-bearing partial.
+    // globalMaintenanceMayStamp correctly WITHHOLDS the freshness stamp — the old
+    // expectation demanded a false-fresh stamp on a run that did not fully succeed.
+    expect(result.report.phases.some((p: any) => p.status === 'fail')).toBe(true);
+    expect(result.report.status).toBe('partial');
+    expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
   }, 60_000);
 
   test('runs global phases (no source_id) and stamps autopilot.last_global_at on success', async () => {
@@ -347,17 +353,24 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     expect(handler).toBeTruthy();
 
     // id present so the handler threads a real privateQueueOwnerJobId into
-    // runCycle (worker jobs always carry one).
+    // runCycle (worker jobs always carry one). Use a deterministic provider-free
+    // global phase (orphans) so the run genuinely succeeds on a keyless brain;
+    // that a fresh stamp requires a NON-failed run is the whole point, so the
+    // success case must not include a phase that fails without a provider (embed).
+    // Existing phase-partition tests already prove embed is global-scoped.
     const result = await handler!({
       id: 4102,
-      data: { phases: ['orphans', 'embed'], repoPath },
+      data: { phases: ['orphans'], repoPath },
       signal: undefined,
     });
-    // The cycle ran the requested global phases (DB-only on an empty brain).
+    // The cycle ran the requested global phase (DB-only on an empty brain).
     const orphans = result.report.phases.find((p: any) => p.phase === 'orphans');
     expect(orphans).toBeTruthy();
     expect(orphans.details.source_id).toBeUndefined();
-    expect(['ok', 'clean', 'partial']).toContain(result.report.status);
+    // Prove it is a genuine success: NO failed phase, so globalMaintenanceMayStamp
+    // may stamp.
+    expect(result.report.phases.some((p: any) => p.status === 'fail')).toBe(false);
+    expect(['ok', 'clean']).toContain(result.report.status);
     // Freshness stamped so the dispatch gate backs off.
     const stamped = await engine.getConfig(LAST_GLOBAL_AT_KEY);
     expect(stamped).not.toBeNull();

@@ -3198,6 +3198,24 @@ export function deriveStatus(phases: PhaseResult[], totals: CycleReport['totals'
   return anyWork ? 'ok' : 'clean';
 }
 
+/**
+ * Whether a completed global-maintenance cycle may advance
+ * `autopilot.last_global_at`. A run must NOT stamp freshness when a required
+ * phase failed — any attempted phase whose status is `fail`. Warn-only partials
+ * and completed runs still stamp, so a benign partial does not force a
+ * re-dispatch every tick. This complements `deriveStatus`'s all-failed guard
+ * (#4250) by also withholding the stamp for the MIXED case: some phases ok but a
+ * required global phase (e.g. `embed`) threw. Without it, that fail-bearing
+ * `partial` marks global maintenance fresh and defers the failed phase's retry
+ * by up to `GLOBAL_FLOOR_MIN`.
+ */
+export function globalMaintenanceMayStamp(
+  report: Pick<CycleReport, 'status' | 'phases'>,
+): boolean {
+  if (report.status === 'failed' || report.status === 'skipped') return false;
+  return !report.phases.some((p) => p.status === 'fail');
+}
+
 // ── Test-only export ───────────────────────────────────────
 // `__testing` re-exports otherwise-private helpers so unit tests can pin
 // behavior at function granularity without going through a full runCycle.
