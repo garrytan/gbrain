@@ -75,4 +75,38 @@ describe('atomicWriteFileSync', () => {
     // assert it is readable and not world-writable garbage.
     expect(statSync(target).mode & 0o200).toBe(0o200);
   });
+
+  test('fresh file with explicit mode 0o600 lands as 0o600 even under permissive umask (0000)', () => {
+    const oldUmask = process.umask(0);
+    try {
+      const target = join(dir, 'secret-fresh.json');
+      atomicWriteFileSync(target, '{"secret":true}\n', { mode: 0o600 });
+      expect(readFileSync(target, 'utf-8')).toBe('{"secret":true}\n');
+      expect(statSync(target).mode & 0o7777).toBe(0o600);
+    } finally {
+      process.umask(oldUmask);
+    }
+  });
+
+  test('atomic overwrite of existing 0o644 file with mode 0o600 reasserts 0o600', () => {
+    const target = join(dir, 'reassert.json');
+    writeFileSync(target, '{"version":1}\n');
+    chmodSync(target, 0o644);
+    expect(statSync(target).mode & 0o7777).toBe(0o644);
+
+    atomicWriteFileSync(target, '{"version":2}\n', { mode: 0o600 });
+    expect(readFileSync(target, 'utf-8')).toBe('{"version":2}\n');
+    expect(statSync(target).mode & 0o7777).toBe(0o600);
+  });
+
+  test('atomic overwrite of existing 0o600 file with mode 0o600 preserves 0o600', () => {
+    const target = join(dir, 'preserve.json');
+    writeFileSync(target, '{"version":1}\n');
+    chmodSync(target, 0o600);
+    expect(statSync(target).mode & 0o7777).toBe(0o600);
+
+    atomicWriteFileSync(target, '{"version":2}\n', { mode: 0o600 });
+    expect(readFileSync(target, 'utf-8')).toBe('{"version":2}\n');
+    expect(statSync(target).mode & 0o7777).toBe(0o600);
+  });
 });

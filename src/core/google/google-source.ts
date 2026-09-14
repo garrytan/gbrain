@@ -24,7 +24,7 @@
  * sources.config, which stores only the account pointer.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
@@ -143,9 +143,18 @@ export function readGoogleState(dir: string): GoogleSourceState {
     // A CORRUPT existing state file is not a fresh install: silently
     // returning emptyState() would re-run the entire backfill with zero
     // diagnostic. Quarantine for forensics and say so loudly.
+    // Close exposure window by chmodding to 0600 BEFORE rename, then reapply 0600 on target.
+    // Fail loudly if secure quarantine cannot be established.
     try {
+      chmodSync(file, 0o600);
       renameSync(file, `${file}.corrupt`);
-    } catch { /* best-effort */ }
+      chmodSync(`${file}.corrupt`, 0o600);
+    } catch (quarantineErr) {
+      process.stderr.write(
+        `[google] failed to securely quarantine corrupt state file ${file}: ${quarantineErr instanceof Error ? quarantineErr.message : String(quarantineErr)}\n`,
+      );
+      throw quarantineErr;
+    }
     process.stderr.write(
       `[google] state file ${file} was corrupt (${e instanceof Error ? e.message : String(e)}); ` +
         `quarantined to .corrupt — cursors reset, the next sync re-anchors and resumes.\n`,
@@ -154,11 +163,12 @@ export function readGoogleState(dir: string): GoogleSourceState {
   }
 }
 
-function writeGoogleState(dir: string, state: GoogleSourceState): void {
+export function writeGoogleState(dir: string, state: GoogleSourceState): void {
   mkdirSync(dir, { recursive: true });
   // Atomic (tmp+fsync+rename): this file is written once per backfill batch;
   // a torn write would silently reset every cursor (full re-backfill).
-  atomicWriteFileSync(googleStateFile(dir), JSON.stringify(state, null, 2));
+  // Mode 0600: private connector state (history IDs, sync tokens) must not be world-readable.
+  atomicWriteFileSync(googleStateFile(dir), JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */

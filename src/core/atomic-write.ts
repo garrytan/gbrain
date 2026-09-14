@@ -39,6 +39,12 @@ export interface AtomicWriteOpts {
    * still parses (backlinks uses parseMarkdown here).
    */
   verify?: (onDisk: string) => void;
+  /**
+   * Enforce a specific file mode (e.g. 0o600 for private connector state/tokens).
+   * When specified, enforces this mode past process umask on fresh files
+   * and reasserts it across rewrites.
+   */
+  mode?: number;
 }
 
 export function atomicWriteFileSync(filePath: string, content: string, opts?: AtomicWriteOpts): void {
@@ -53,8 +59,10 @@ export function atomicWriteFileSync(filePath: string, content: string, opts?: At
     /* stat raced a delete — fall through with default mode */
   }
 
+  const targetMode = opts?.mode !== undefined ? opts.mode : (mode ?? 0o644);
+
   try {
-    const fd = openSync(tmpPath, 'w', mode ?? 0o644);
+    const fd = openSync(tmpPath, 'w', targetMode);
     try {
       // Loop until every byte lands: writeSync may legally return a short
       // count under disk pressure/quotas, and a silent short write that
@@ -74,8 +82,9 @@ export function atomicWriteFileSync(filePath: string, content: string, opts?: At
     // open(2)'s mode argument is masked by the process umask (0664 & ~022 →
     // 0644), so an explicit chmod is required to actually PRESERVE the
     // target's mode across the rename — the pre-wave in-place write kept the
-    // inode's mode exactly; this keeps that property.
-    if (mode !== null) chmodSync(tmpPath, mode);
+    // inode's mode exactly; this keeps that property. When caller passes an
+    // explicit mode, enforce it past umask on fresh files and reassert it.
+    if (opts?.mode !== undefined || mode !== null) chmodSync(tmpPath, targetMode);
     if (opts?.verify) {
       opts.verify(readFileSync(tmpPath, 'utf-8'));
     }
