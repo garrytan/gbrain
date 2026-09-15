@@ -72,7 +72,7 @@ console.log(JSON.stringify({ anthropic: cfg.env.ANTHROPIC_BASE_URL, openai: cfg.
   azure: cfg.env.AZURE_OPENAI_ENDPOINT ?? null, ollama: cfg.base_urls?.ollama ?? null,
   authToken: cfg.env.ANTHROPIC_AUTH_TOKEN ?? null, organization: cfg.env.OPENAI_ORG_ID ?? null }));\n`);
   const launcher = join(temporary, 'gbrain');
-  writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: process.execPath, cliPath: probe }), { mode: 0o700 });
+  writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: process.execPath, cliPath: probe, mode: 'local' }), { mode: 0o700 });
   const hostile = { ANTHROPIC_BASE_URL: 'https://ambient.invalid', OPENAI_BASE_URL: 'https://ambient.invalid',
     ANTHROPIC_API_KEY: 'ambient-key', OPENAI_API_KEY: 'ambient-key', ANTHROPIC_AUTH_TOKEN: 'ambient-token',
     OPENAI_ORG_ID: 'ambient-tenant', AZURE_OPENAI_ENDPOINT: 'https://ambient.invalid', OLLAMA_BASE_URL: 'https://ambient.invalid' };
@@ -85,7 +85,7 @@ console.log(JSON.stringify({ anthropic: cfg.env.ANTHROPIC_BASE_URL, openai: cfg.
 
 test('missing runtime reports the recovery owned by its installer', async () => {
   const launcher = join(temporary, 'gbrain');
-  writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: join(temporary, 'missing'),
+  writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: join(temporary, 'missing'), mode: 'local',
     repairHint: 'Reinstall GBrain, then repeat connect with your private handoff.' }), { mode: 0o700 });
   const child = Bun.spawn(['bash', launcher], { stdout: 'pipe', stderr: 'pipe' });
   const errors = await new Response(child.stderr).text();
@@ -98,11 +98,22 @@ test('generated executable launcher really scrubs environment and survives a hos
   const executable = join(temporary, 'fake-gbrain');
   writeFileSync(executable, '#!/usr/bin/env bash\nprintf "%s\\n" "$GBRAIN_HOME" "$GBRAIN_BRAIN_ID" "$GBRAIN_SOURCE" "$DATABASE_URL" "${OPENAI_API_KEY-unset}" "$PWD" "$@"\n', { mode: 0o700 });
   const launcher = join(temporary, 'gbrain');
-  writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: executable }), { mode: 0o700 });
+  writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: executable, mode: 'local' }), { mode: 0o700 });
   const child = Bun.spawn(['bash', launcher, 'recall', 'example'], { cwd: '/', env: { ...process.env, DATABASE_URL: 'postgres://foreign', GBRAIN_SOURCE: 'foreign', OPENAI_API_KEY: 'private' }, stdout: 'pipe', stderr: 'pipe' });
   const output = await new Response(child.stdout).text();
   expect(await child.exited).toBe(0);
   expect(output.split('\n')).toEqual([temporary, 'host', 'default', '', 'unset', temporary, '--brain', 'host', 'recall', 'example', '']);
+});
+
+test('hosted thin-client launcher leaves read routing to the remote grant', async () => {
+  const executable = join(temporary, 'fake-gbrain');
+  writeFileSync(executable, '#!/usr/bin/env bash\nprintf "%s\\n" "${GBRAIN_BRAIN_ID-unset}" "${GBRAIN_SOURCE-unset}" "$@"\n', { mode: 0o700 });
+  const launcher = join(temporary, 'gbrain');
+  writeFileSync(launcher, renderAgentLauncher({ root: temporary, bunPath: executable, sourceId: 'isolated-write', mode: 'thin-client' }), { mode: 0o700 });
+  const child = Bun.spawn(['bash', launcher, 'search', 'known marker'], { cwd: '/', env: { ...process.env, GBRAIN_BRAIN_ID: 'foreign', GBRAIN_SOURCE: 'foreign' }, stdout: 'pipe', stderr: 'pipe' });
+  const output = await new Response(child.stdout).text();
+  expect(await child.exited).toBe(0);
+  expect(output.split('\n')).toEqual(['unset', 'unset', 'search', 'known marker', '']);
 });
 
 test('private archive round trip verifies exact bytes and refuses an existing output', () => {
