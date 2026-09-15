@@ -47,7 +47,7 @@ import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
-import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
+import { resolveAutopilotDispatchTimeoutMs, resolveMixedMaintenanceDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
   shouldRunAutopilotFullCycle,
@@ -1348,7 +1348,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // codex P1-3). Fresh-install brains with no sources rows fall
           // back to the legacy single autopilot-cycle so existing
           // behavior is preserved.
-          const { dispatchPerSource, dispatchGlobalMaintenance, maybeDispatchConnectorSyncs, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
+          const { dispatchPerSource, dispatchGlobalMaintenance, dispatchMixedMaintenance, maybeDispatchConnectorSyncs, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
           // #2194 fix #1: clamp fan-out to the worker's effective concurrency
           // (reserve ≥1 slot), gated on a LIVE supervisor so a stale audit row
           // can't shrink throughput (codex #9/D5). autopilot-cycle jobs run on
@@ -1372,16 +1372,23 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             fanoutMax,
             jsonMode,
           });
-          // #2194 fix #3 / #2227 bug #3: dispatch the single brain-wide
-          // maintenance job (embed/orphans/purge/…) once per window — the per-
-          // source cycles above no longer run global phases, so this is where
-          // the brain-wide work happens (single-flight, no RSS blowout). Only on
-          // the per-source path (legacy single-source still runs everything).
+          // #2194 fix #3 / #2227 bug #3 + v0.50.1.1 split: dispatch the two
+          // brain-wide maintenance LANES (global hygiene + mixed synthesis)
+          // once per window — the per-source cycles above no longer run
+          // global/mixed phases, so this is where that work happens
+          // (single-flight per lane, no RSS blowout). Each lane carries its
+          // own handler-anchored timeout (#2781). Only on the per-source path
+          // (legacy single-source still runs everything).
           if (!result.legacy_fallback) {
             try {
               await dispatchGlobalMaintenance(engine, queue, { repoPath, slot, timeoutMs: fullCycleTimeoutMs, jsonMode });
             } catch (e) {
               if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
+            }
+            try {
+              await dispatchMixedMaintenance(engine, queue, { repoPath, slot, timeoutMs: resolveMixedMaintenanceDispatchTimeoutMs(baseInterval), jsonMode });
+            } catch (e) {
+              if (jsonMode) process.stderr.write(JSON.stringify({ event: 'mixed_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
             }
           }
           // Opt-in scheduled chat-connector sync (OV#4). Credential-gated +

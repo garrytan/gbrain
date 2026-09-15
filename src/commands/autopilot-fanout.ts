@@ -35,7 +35,7 @@
 import { existsSync } from 'fs';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
-import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { SOURCE_FRESHNESS_PHASES, GLOBAL_PHASES, MIXED_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
 import { sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
@@ -623,17 +623,57 @@ export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = D
 }
 
 /**
- * #2194 fix #3 / #2227 bug #3 — dispatch the single brain-wide maintenance job
- * that runs the `mixed` + `global` cycle phases ONCE per
- * window, instead of N per-source cycles each running them concurrently (the
- * RSS blowout). Single-flight is structural: one `idempotency_key` per slot +
+ * #2194 fix #3 / #2227 bug #3 — dispatch ONE brain-wide maintenance lane,
+ * once per window, instead of N per-source cycles each running it concurrently
+ * (the RSS blowout). Two lanes exist since the v0.50.1.1 maintenance split:
+ *
+ *   - `autopilot-global-maintenance` runs the global hygiene phases
+ *     (embed / orphans / purge / …) and stamps `autopilot.last_global_at` —
+ *     the window gate both lanes read.
+ *   - `autopilot-mixed-maintenance` runs the mixed phases
+ *     (synthesize → patterns) in its OWN job, so a large synthesis backlog
+ *     plus the keeper wall can no longer starve the hygiene phases and the
+ *     freshness stamp behind it (TODOS P2 maintenance-lane structure: the
+ *     single combined job ran mixed FIRST, and everything behind synthesize
+ *     was starved whenever the drain overran the window).
+ *
+ * Single-flight is structural, per lane: one `idempotency_key` per slot +
  * `maxPending:1` (an in-flight waiting/live-lock-active run suppresses
- * re-dispatch even across slot rotation), so a slow run never stacks. Gated on
- * `autopilot.last_global_at` (stamped by the handler on success). Postgres-only
- * fan-out concern; on PGLite the file lock already serializes, but the job is
- * still correct there.
+ * re-dispatch even across slot rotation), so a slow run never stacks. Both
+ * lanes are gated on `autopilot.last_global_at` so they dispatch as a pair
+ * within the same window. Postgres-only fan-out concern; on PGLite the file
+ * lock already serializes, but the jobs are still correct there.
  */
-export async function dispatchGlobalMaintenance(
+type MaintenanceLane = {
+  jobName: 'autopilot-global-maintenance' | 'autopilot-mixed-maintenance';
+  /** Idempotency-key prefix — the lane's structural single-flight identity. */
+  keyPrefix: string;
+  /** The phase set this lane dispatches (its handler normalizes payloads to it). */
+  phases: readonly string[];
+  /** `--json` event mode for the lane. */
+  mode: string;
+  /** Human log label for the lane. */
+  logLabel: string;
+};
+
+const GLOBAL_MAINTENANCE_LANE: MaintenanceLane = {
+  jobName: 'autopilot-global-maintenance',
+  keyPrefix: 'autopilot-global',
+  phases: GLOBAL_PHASES,
+  mode: 'global_maintenance',
+  logLabel: 'autopilot-global-maintenance (brain-wide phases)',
+};
+
+const MIXED_MAINTENANCE_LANE: MaintenanceLane = {
+  jobName: 'autopilot-mixed-maintenance',
+  keyPrefix: 'autopilot-mixed',
+  phases: MIXED_PHASES,
+  mode: 'mixed_maintenance',
+  logLabel: 'autopilot-mixed-maintenance (mixed phases: synthesize → patterns)',
+};
+
+async function dispatchMaintenanceLane(
+  lane: MaintenanceLane,
   engine: BrainEngine,
   queue: MinionQueue,
   opts: { repoPath: string; slot: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
@@ -653,14 +693,14 @@ export async function dispatchGlobalMaintenance(
   }
 
   const job = await queue.add(
-    'autopilot-global-maintenance',
-    { repoPath: opts.repoPath, phases: MAINTENANCE_PHASES },
+    lane.jobName,
+    { repoPath: opts.repoPath, phases: lane.phases },
     {
       queue: 'default',
-      // Structural single-flight: one global job per slot; maxPending:1
+      // Structural single-flight: one job per lane per slot; maxPending:1
       // coalesces any surplus — including across slot rotation while a slow
-      // brain-wide pass is still in flight — so duplicates never stack.
-      idempotency_key: `autopilot-global:${opts.slot}`,
+      // pass is still in flight — so duplicates never stack.
+      idempotency_key: `${lane.keyPrefix}:${opts.slot}`,
       max_attempts: 2,
       timeout_ms: opts.timeoutMs,
       maxPending: 1,
@@ -668,9 +708,9 @@ export async function dispatchGlobalMaintenance(
   );
   if (job.coalesced) {
     if (opts.jsonMode) {
-      emit(JSON.stringify({ event: 'dispatch_coalesced', job_id: job.id, mode: 'global_maintenance', slot: opts.slot }));
+      emit(JSON.stringify({ event: 'dispatch_coalesced', job_id: job.id, mode: lane.mode, slot: opts.slot }));
     } else {
-      log(`[dispatch] coalesced onto job #${job.id} autopilot-global-maintenance (already in flight)`);
+      log(`[dispatch] coalesced onto job #${job.id} ${lane.jobName} (already in flight)`);
     }
     // dispatched: false — no row was inserted (same honest-dispatch contract
     // as dispatchPerSource, where coalesced sources are excluded from
@@ -678,11 +718,29 @@ export async function dispatchGlobalMaintenance(
     return { dispatched: false, coalesced: true, reason: 'stale' };
   }
   if (opts.jsonMode) {
-    emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'global_maintenance', slot: opts.slot }));
+    emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: lane.mode, slot: opts.slot }));
   } else {
-    log(`[dispatch] job #${job.id} autopilot-global-maintenance (brain-wide phases)`);
+    log(`[dispatch] job #${job.id} ${lane.logLabel}`);
   }
   return { dispatched: true, reason: 'stale' };
+}
+
+/** Dispatch the global hygiene lane (`embed` / `orphans` / `purge` / …). */
+export async function dispatchGlobalMaintenance(
+  engine: BrainEngine,
+  queue: MinionQueue,
+  opts: { repoPath: string; slot: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
+): Promise<{ dispatched: boolean; coalesced?: boolean; reason: 'stale' | 'fresh' }> {
+  return dispatchMaintenanceLane(GLOBAL_MAINTENANCE_LANE, engine, queue, opts);
+}
+
+/** Dispatch the mixed lane (`synthesize` → `patterns`) in its own job. */
+export async function dispatchMixedMaintenance(
+  engine: BrainEngine,
+  queue: MinionQueue,
+  opts: { repoPath: string; slot: string; timeoutMs: number; jsonMode: boolean; emit?: (l: string) => void; log?: (l: string) => void },
+): Promise<{ dispatched: boolean; coalesced?: boolean; reason: 'stale' | 'fresh' }> {
+  return dispatchMaintenanceLane(MIXED_MAINTENANCE_LANE, engine, queue, opts);
 }
 
 /**

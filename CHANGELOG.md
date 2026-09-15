@@ -2,6 +2,34 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.50.1.1] - 2026-09-16
+
+**The brain-wide maintenance job becomes two jobs: synthesis and brain hygiene stop sharing one wall-clock.** The single `autopilot-global-maintenance` job ran the mixed phases first — `synthesize` (per-transcript subagents, drained inline) and `patterns` — and everything else after them. A large synthesis backlog made that first phase overrun the job's keeper wall, and the phases behind it paid for it: hygiene work could be starved and `autopilot.last_global_at` never stamped, so the next window re-dispatched straight back into the same wall. The maintenance lane now runs as two single-flight jobs dispatched together each window: `autopilot-global-maintenance` (global hygiene phases; keeps stamping `last_global_at`) and the new `autopilot-mixed-maintenance` (`synthesize → patterns`; its own 30-minute handler anchor). A slow or killed synthesis pass can no longer delay a hygiene pass, and can no longer suppress the freshness stamp.
+
+## To take advantage of v0.50.1.1
+
+`gbrain upgrade` should do this automatically. No schema migration and no data rewrite — the split changes which job runs which phases, nothing else.
+
+1. **Nothing to run for most brains.** The daemon dispatches both lanes on the next full-cycle window. A maintenance job queued before the upgrade still drains after it: the global lane runs the global subset of its payload, and the mixed lane picks the rest up next window.
+2. **Verify the split (optional):**
+   ```bash
+   gbrain jobs stats
+   ```
+   Both `autopilot-global-maintenance` and `autopilot-mixed-maintenance` appear in the 24h window.
+
+**Say to your agent:** *"verify both autopilot maintenance lanes are dispatching and the freshness stamp is advancing"*
+
+### Behavior changes (read before you upgrade)
+
+- **The maintenance lane is now two jobs.** `autopilot-global-maintenance` runs only global phases; `synthesize` and `patterns` run in `autopilot-mixed-maintenance`. Dashboards or scripts that assumed one maintenance job per window should expect both names. `autopilot.last_global_at` semantics are unchanged: the global lane stamps it on success, and both lanes gate on it.
+- **A pre-split maintenance payload is drained, not dropped.** The global handler intersects a queued payload with `GLOBAL_PHASES` and the mixed handler with `MIXED_PHASES`; a legacy full-`MAINTENANCE_PHASES` payload runs its global subset immediately and its mixed entries are picked up by the mixed lane on the next window (#4250 normalization posture, now per lane).
+
+### Minions / autopilot
+
+- Split the brain-wide maintenance job into two single-flight lanes (TODOS P2 *maintenance-lane structure*, finding (b): "consider global-before-mixed ordering or splitting mixed into its own job"). `autopilot-global-maintenance` now carries `GLOBAL_PHASES` and keeps the `autopilot.last_global_at` stamp; the new `autopilot-mixed-maintenance` carries `MIXED_PHASES` (`synthesize` → `patterns`) with its own `HANDLER_DEFAULT_TIMEOUT_MS` / `HANDLER_DEFAULT_LOCK_DURATION_MS` anchors and a dispatch timeout floor derived from that anchor (#2781 contract, same as the full-cycle floor). Both dispatch under the shared window gate, single-flight per lane (`autopilot-global:<slot>` / `autopilot-mixed:<slot>`, `maxPending: 1`), and both thread `privateQueueOwnerJobId` — synthesize's inline drain is parent-owned, so the owner id is load-bearing for private-queue recovery.
+- Both handlers normalize queued payloads against their own lane's phase set (#4250 posture); the mixed lane never stamps `last_global_at`, so a slow or killed mixed run cannot suppress the next window's hygiene pass.
+- Tests: pinned the per-lane phase partition, both dispatchers' gates (fresh / stale / coalesced), both handlers' payload normalization, the mixed lane's stamp absence, and the timeout-floor derivation from the handler anchor (not a literal).
+
 ## [0.50.1.0] - 2026-09-14
 
 **The community fix wave, rebased onto 0.50.0.0: 21 contributor pull requests adopted or reworked with credit, 35 verified open issues fixed directly.** `gbrain sync --json` prints one JSON document again, so piping it into `jq` works, and a sync that only swept dead pages tells you so instead of "Already up to date". Brains on Gemini embeddings get a real dollar estimate in the cost gate, facts extraction on a local Ollama model asks for schema-constrained JSON so small models stop returning malformed output, and `gbrain dream --dry-run` stops billing you for takes and calibration while the patterns phase skips outright when nothing new has been reflected on. A remote search on a brain that has not been reindexed says so instead of claiming a clean miss, each Codex rollout lands on its own conversation page, and `gbrain config set` accepts the `search.*` keys the search path actually reads. A source marked `syncEnabled: false` is left alone by the daemon, the phantom redirect no longer aborts on a canonical page that already holds facts, and emoji folder names carrying an invisible variation selector slugify cleanly. Every adopted code fix carries a regression test proven red before the fix.

@@ -137,9 +137,9 @@ describe('deadline plumbing wiring (structural)', () => {
     expect(workerSrc).toContain('job.timeout_at.getTime() - Date.now()');
   });
 
-  test('autopilot-cycle, global-maintenance AND phase-wrapper handlers thread deadlineAtMs into runCycle', () => {
+  test('autopilot-cycle, global-maintenance, mixed-maintenance AND phase-wrapper handlers thread deadlineAtMs into runCycle', () => {
     const matches = jobsSrc.match(/deadlineAtMs: job\.deadlineAtMs/g) ?? [];
-    expect(matches.length).toBe(3);
+    expect(matches.length).toBe(4);
   });
 
   test('runCycle forwards deadlineAtMs to the patterns phase', () => {

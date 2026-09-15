@@ -2,12 +2,20 @@
  * #2194 fix #3 / #2227 bug #3 — the cycle split.
  *
  * Per-source autopilot cycles run ONLY source-scoped phases; mixed + global
- * phases run ONCE in a separate autopilot-global-maintenance
- * job. This replaces the rejected skip-and-stamp-fresh design (codex #1/#2): the
- * split makes single-flight structural (one global job, not N concurrent embeds)
- * and never marks a source "fresh" for global work it didn't do. These tests pin
- * the phase partition, the dispatch gate, the per-source phase set, and the
- * global handler stamping autopilot.last_global_at.
+ * phases run ONCE in separate brain-wide maintenance jobs. This replaces the
+ * rejected skip-and-stamp-fresh design (codex #1/#2): the split makes
+ * single-flight structural (one job per lane, not N concurrent embeds)
+ * and never marks a source "fresh" for global work it didn't do.
+ *
+ * v0.50.1.1 maintenance split: the brain-wide work is further split into two
+ * lanes — `autopilot-global-maintenance` (global hygiene phases; stamps
+ * `autopilot.last_global_at`) and `autopilot-mixed-maintenance`
+ * (synthesize → patterns; no stamp) — so a large synthesis backlog + the
+ * keeper wall can no longer starve hygiene phases or the window stamp.
+ *
+ * These tests pin the phase partition, both dispatchers' gates, the
+ * per-source phase set, and each lane's handler behavior (including the
+ * stamp ownership).
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -33,6 +41,7 @@ import {
 } from '../src/core/cycle.ts';
 import {
   dispatchGlobalMaintenance,
+  dispatchMixedMaintenance,
   isGlobalMaintenanceStale,
   dispatchPerSource,
 } from '../src/commands/autopilot-fanout.ts';
@@ -179,7 +188,9 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
     // across slot rotation (upstream issue #2).
     expect(added[0].opts.maxPending).toBe(1);
     expect(added[0].opts.maxWaiting).toBeUndefined();
-    expect(added[0].data.phases).toEqual(MAINTENANCE_PHASES);
+    expect(added[0].data.phases).toEqual(GLOBAL_PHASES);
+    expect(added[0].data.phases).not.toContain('synthesize');
+    expect(added[0].data.phases).not.toContain('patterns');
   });
 
   test('fresh → does NOT dispatch', async () => {
@@ -203,6 +214,60 @@ describe('dispatchGlobalMaintenance — single-flight gate', () => {
     });
     // Honest-dispatch contract: nothing was inserted, so dispatched is false;
     // coalesced says the work is already in flight.
+    expect(r.dispatched).toBe(false);
+    expect(r.coalesced).toBe(true);
+    const kinds = events.map(e => JSON.parse(e).event);
+    expect(kinds).toContain('dispatch_coalesced');
+    expect(kinds).not.toContain('dispatched');
+  });
+});
+
+describe('dispatchMixedMaintenance — single-flight gate (v0.50.1.1 split)', () => {
+  function stubs(lastGlobalAt: string | null) {
+    const added: Array<{ name: string; data: any; opts: any }> = [];
+    const engine = {
+      kind: 'postgres' as const,
+      getConfig: async (k: string) => (k === LAST_GLOBAL_AT_KEY ? lastGlobalAt : null),
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async (name: string, data: unknown, opts: Record<string, unknown>) => {
+        added.push({ name, data, opts }); return { id: 1 };
+      },
+    } as any;
+    return { engine, queue, added };
+  }
+
+  test('stale (never run) → dispatches the mixed lane with its own key + MIXED_PHASES', async () => {
+    const { engine, queue, added } = stubs(null);
+    const r = await dispatchMixedMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
+    expect(r.dispatched).toBe(true);
+    expect(added.length).toBe(1);
+    expect(added[0].name).toBe('autopilot-mixed-maintenance');
+    expect(added[0].opts.idempotency_key).toBe('autopilot-mixed:s1');
+    expect(added[0].opts.maxPending).toBe(1);
+    expect(added[0].opts.maxWaiting).toBeUndefined();
+    expect(added[0].data.phases).toEqual(MIXED_PHASES);
+  });
+
+  test('fresh window → does NOT dispatch (both lanes share the last_global_at gate)', async () => {
+    const { engine, queue, added } = stubs(new Date().toISOString());
+    const r = await dispatchMixedMaintenance(engine, queue, { repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: () => {} });
+    expect(r.dispatched).toBe(false);
+    expect(added.length).toBe(0);
+  });
+
+  test('coalesced submission → coalesced-aware return + mixed_maintenance event', async () => {
+    const events: string[] = [];
+    const engine = {
+      kind: 'postgres' as const,
+      getConfig: async (k: string) => (k === LAST_GLOBAL_AT_KEY ? null : null),
+    } as unknown as BrainEngine;
+    const queue = {
+      add: async () => ({ id: 8, coalesced: true }),
+    } as any;
+    const r = await dispatchMixedMaintenance(engine, queue, {
+      repoPath: '/tmp', slot: 's1', timeoutMs: 1, jsonMode: true, emit: (l: string) => events.push(l),
+    });
     expect(r.dispatched).toBe(false);
     expect(r.coalesced).toBe(true);
     const kinds = events.map(e => JSON.parse(e).event);
@@ -317,10 +382,10 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     expect(source?.config.last_full_cycle_at).toBeUndefined();
   });
 
-  test('a maintenance job with NO phases payload defaults to MAINTENANCE_PHASES (mixed included), not GLOBAL_PHASES', async () => {
-    // Regression pin for the split's changed default: a legacy queued
-    // maintenance job (or a hand-submitted one) with no explicit phases now
-    // runs mixed + global — synthesize/patterns must appear in the report.
+  test('a maintenance job with NO phases payload defaults to GLOBAL_PHASES (mixed moved to its own lane)', async () => {
+    // v0.50.1.1 split: the global lane runs ONLY global phases. The mixed
+    // phases (synthesize/patterns) moved to autopilot-mixed-maintenance and
+    // must NOT appear in this handler's report.
     const repoPath = mkdtempSync(join(tmpdir(), 'gbrain-global-default-'));
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-global-maintenance');
@@ -328,11 +393,55 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     // runCycle (worker jobs always carry one).
     const result = await handler!({ id: 4101, data: { repoPath }, signal: undefined });
     const ranPhases = result.report.phases.map((p: any) => p.phase);
-    for (const p of MAINTENANCE_PHASES) expect(ranPhases).toContain(p);
+    for (const p of GLOBAL_PHASES) expect(ranPhases).toContain(p);
+    expect(ranPhases).toContain('embed');
+    expect(ranPhases).not.toContain('synthesize');
+    expect(ranPhases).not.toContain('patterns');
+    expect(ranPhases).not.toContain('sync');
+    expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).not.toBeNull();
+  }, 60_000);
+
+  test('a legacy full-MAINTENANCE payload normalizes down to GLOBAL_PHASES (mixed entries dropped)', async () => {
+    // Pre-split dispatches queued payloads carrying mixed + global. After the
+    // split the global handler intersects with GLOBAL_PHASES, so the mixed
+    // entries never run in the global lane; the mixed lane picks that work
+    // up next window.
+    const repoPath = mkdtempSync(join(tmpdir(), 'gbrain-global-legacy-'));
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-global-maintenance');
+    const result = await handler!({ id: 4103, data: { phases: [...MAINTENANCE_PHASES], repoPath }, signal: undefined });
+    const ranPhases = result.report.phases.map((p: any) => p.phase);
+    expect(ranPhases).not.toContain('synthesize');
+    expect(ranPhases).not.toContain('patterns');
+    expect(ranPhases).toContain('orphans');
+  }, 60_000);
+
+  test('the mixed lane runs synthesize → patterns and does NOT stamp last_global_at', async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), 'gbrain-mixed-lane-'));
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-mixed-maintenance');
+    expect(handler).toBeTruthy();
+    const result = await handler!({ id: 4104, data: { repoPath }, signal: undefined });
+    const ranPhases = result.report.phases.map((p: any) => p.phase);
     expect(ranPhases).toContain('synthesize');
     expect(ranPhases).toContain('patterns');
     expect(ranPhases).not.toContain('sync');
-    expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).not.toBeNull();
+    expect(ranPhases).not.toContain('embed');
+    // No window stamp from this lane — the global lane owns the shared gate,
+    // so a slow/killed mixed run cannot suppress the next hygiene pass.
+    expect(await engine.getConfig(LAST_GLOBAL_AT_KEY)).toBeNull();
+  }, 60_000);
+
+  test('the mixed lane normalizes a legacy full-MAINTENANCE payload down to MIXED_PHASES', async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), 'gbrain-mixed-legacy-'));
+    const handlers = await captureHandlers();
+    const handler = handlers.get('autopilot-mixed-maintenance');
+    const result = await handler!({ id: 4105, data: { phases: [...MAINTENANCE_PHASES], repoPath }, signal: undefined });
+    const ranPhases = result.report.phases.map((p: any) => p.phase);
+    expect(ranPhases).toContain('synthesize');
+    expect(ranPhases).toContain('patterns');
+    expect(ranPhases).not.toContain('orphans');
+    expect(ranPhases).not.toContain('embed');
   }, 60_000);
 
   test('runs global phases (no source_id) and stamps autopilot.last_global_at on success', async () => {

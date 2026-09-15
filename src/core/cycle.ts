@@ -1136,9 +1136,9 @@ interface SyncPhaseResult extends PhaseResult {
  * path matches a registered source's local_path is a per-source cycle in
  * everything but name, so dream derives the source id up front and passes
  * it as opts.sourceId — landing the freshness stamp without changing
- * runCycle's stamp/lock semantics for legacy global callers (the
- * autopilot-global-maintenance handler runs MAINTENANCE_PHASES with a brainDir
- * and MUST NOT stamp per-source freshness; see rejected PR #2549).
+ * runCycle's stamp/lock semantics for legacy global callers (the maintenance
+ * handlers run MAINTENANCE_PHASES with a brainDir and MUST NOT stamp
+ * per-source freshness; see rejected PR #2549).
  */
 export async function resolveSourceForDir(
   engine: BrainEngine,

@@ -31,6 +31,12 @@ const FULL_CYCLE_TIMEOUT_FLOOR_MS = Math.max(
   requireHandlerAnchorMs('autopilot-global-maintenance'),
 );
 
+// v0.50.1.1 maintenance split: the mixed lane's floor derives from its own
+// handler anchor for the same reason as the full-cycle floor above — a
+// duplicated literal here could silently drift from the handler default it
+// tracks (#2781), and a missing anchor should fail fast, not fall back.
+const MIXED_MAINTENANCE_TIMEOUT_FLOOR_MS = requireHandlerAnchorMs('autopilot-mixed-maintenance');
+
 export function resolveAutopilotDispatchTimeoutMs(
   baseIntervalSeconds: number,
   fullCycle: boolean,
@@ -39,4 +45,18 @@ export function resolveAutopilotDispatchTimeoutMs(
   return fullCycle
     ? Math.max(intervalDerivedTimeoutMs, FULL_CYCLE_TIMEOUT_FLOOR_MS)
     : intervalDerivedTimeoutMs;
+}
+
+/**
+ * Same contract as `resolveAutopilotDispatchTimeoutMs(..., true)` but floored
+ * on the mixed-maintenance handler anchor instead of the full-cycle pair —
+ * the mixed lane has its own wall-clock budget (handler-timeouts.ts) and the
+ * dispatch stamp must track it by construction, exactly like the full-cycle
+ * floor (#2781).
+ */
+export function resolveMixedMaintenanceDispatchTimeoutMs(
+  baseIntervalSeconds: number,
+): number {
+  const intervalDerivedTimeoutMs = Math.max(baseIntervalSeconds * 2 * 1000, 300_000);
+  return Math.max(intervalDerivedTimeoutMs, MIXED_MAINTENANCE_TIMEOUT_FLOOR_MS);
 }
