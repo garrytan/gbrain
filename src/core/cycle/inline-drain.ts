@@ -44,14 +44,15 @@ import { reconnectAfterConnectionError } from '../minions/reconnect.ts';
 import { withChatPhase } from '../ai/chat-usage.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { anySignal, throwIfAborted } from '../abort-check.ts';
-import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
+import { CYCLE_DEADLINE_RESERVE_MS, MIN_SUBAGENT_CLAIM_BUDGET_MS } from './base-phase.ts';
 
 /**
  * #4168: minimum budget a freshly-claimed child is worth starting with.
- * Mirrors patterns.ts's MIN_PATTERNS_SUBAGENT_BUDGET_MS (importing it here
- * would close a module cycle: patterns → synthesize → inline-drain).
+ * Single-homed in base-phase.ts (no module cycle: base-phase imports no
+ * phase module). The private 2-min twin this replaced admitted children
+ * that could not finish inside the parent's keeper wall.
  */
-const MIN_CHILD_BUDGET_MS = 2 * 60 * 1000;
+const MIN_CHILD_BUDGET_MS = MIN_SUBAGENT_CLAIM_BUDGET_MS;
 
 export const INLINE_LOCK_MS = 30_000;
 
