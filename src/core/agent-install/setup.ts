@@ -257,7 +257,7 @@ export async function setupInAgent(options: AgentSetupOptions): Promise<AgentSet
       const target = confinedPath(root, path);
       if (!existsSync(target)) mkdirSync(target, { mode: 0o700 });
     }
-    const launcher = renderAgentLauncher({ root, bunPath: join(root, artifact.directory, 'bun'), cliPath: join(root, artifact.cli), sourceId: receipt.source_id, repairHint: `Run: bash ${shellQuote(join(root, 'bin', 'gbrain-setup'))}` });
+    const launcher = renderAgentLauncher({ root, bunPath: join(root, artifact.directory, 'bun'), cliPath: join(root, artifact.cli), sourceId: receipt.source_id, mode: 'local', repairHint: `Run: bash ${shellQuote(join(root, 'bin', 'gbrain-setup'))}` });
     changed = ownFile(receipt, 'bin/gbrain', launcher, 0o700) || changed;
     const setupScript = readFileSync(join(root, artifact.directory, 'app', 'node_modules', 'gbrain', 'scripts', 'setup-in-agent.sh'), 'utf8');
     changed = ownFile(receipt, 'bin/gbrain-setup', setupScript, 0o700) || changed;
