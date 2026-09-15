@@ -2,13 +2,13 @@
  * codex.ts — Codex rollout (.jsonl) adapter (cathedral-4).
  *
  * One rollout file = one session. Line shape: {timestamp, type, payload}.
- * Verified against a live local rollout 2026-08-14 (see SPEC_TARGET).
+ * Verified against CLI and desktop rollouts (see SPEC_TARGET).
  *
- * TURN SELECTION IS STRUCTURAL, not heuristic: the human's typed text is
- * recorded as `event_msg` payload.type='user_message' (payload.message);
- * `response_item` rows with role user/developer are INJECTED context
- * (app-context, plugin lists, instruction preambles) and are skipped
- * wholesale. Assistant text comes from `response_item` payload.type='message'
+ * User text comes from event_msg user_message OR desktop response_item
+ * user/input_text. Known leading runtime envelopes are removed from the
+ * latter; arbitrary markup and attached app context remain user content.
+ * Paired event/item copies are deduplicated by createCodexLineMapper.
+ * Developer messages are skipped. Assistant text comes from response_item
  * role='assistant' output_text blocks. reasoning / tool calls / token_count
  * and every other event kind are skipped — the archive records conversation
  * text only (lossy by design).
@@ -36,20 +36,22 @@ const CODEX_HEAD_WINDOW_BYTES = 256 * 1024;
 export const CODEX_SPEC_TARGET: HostSpecTarget = {
   id: 'codex-rollout-2026-08',
   status: 'verified',
-  verifiedAt: '2026-08-14',
+  verifiedAt: '2026-09-15',
   references: [
     'local ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl (codex CLI, live sample 2026-08-14)',
     'test/fixtures/transcripts/codex-rollout.jsonl',
+    'test/codex-desktop-transcripts.test.ts (synthetic desktop records, verified 2026-09-15)',
   ],
   note:
     'One JSON object per line: {timestamp: ISO, type, payload}. type ' +
     "'session_meta' header carries payload.{id, session_id, cwd, timestamp, " +
     "cli_version}; identity = payload.id (per-thread; session_id is the root " +
     "session shared by forked/subagent threads), first header wins. User turns: type 'event_msg' with payload.type " +
-    "'user_message' (payload.message = typed text). Assistant turns: type " +
+    "'user_message' (payload.message = typed text), or desktop response_item " +
+    "user/input_text after removing known leading runtime envelopes. Adjacent " +
+    "event/item copies of the same user text count once. Assistant turns: type " +
     "'response_item' with payload.{type:'message', role:'assistant', " +
-    "content:[{type:'output_text', text}]}. response_item rows with role " +
-    'user/developer are injected context and are skipped. reasoning, ' +
+    "content:[{type:'output_text', text}]}. Developer context, reasoning, " +
     'custom_tool_call*, function_call*, token_count, world_state, ' +
     'turn_context, compacted: all skipped. Unknown fields tolerated.',
 };
@@ -63,6 +65,37 @@ function textFromBlocks(content: unknown, blockType: string): string {
     if (b.type === blockType && typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
   }
   return parts.join('\n').trim();
+}
+
+/** Strip only known leading harness envelopes, never arbitrary XML or quoted markup. */
+function desktopUserText(content: unknown): string {
+  let text = textFromBlocks(content, 'input_text');
+  const envelope = /^<(environment_context|recommended_plugins|app-context|codex_internal_context|subagent_notification|turn_aborted|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/;
+  const instructions = /^# AGENTS\.md instructions for [^\n]+\n\s*<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>\s*/;
+  for (;;) {
+    const rest = text.replace(envelope, '').replace(instructions, '').trim();
+    if (rest === text) return text;
+    text = rest;
+  }
+}
+
+/** One mapper per file: pair duplicate representations without collapsing repeated turns. */
+export function createCodexLineMapper(): (entry: unknown) => CodexLineResult {
+  let previous: { text: string; type: unknown } | undefined;
+  return entry => {
+    const mapped = mapCodexLine(entry);
+    if (mapped.kind === 'user') {
+      const type = (entry as Record<string, unknown>).type;
+      if (previous && previous.type !== type && previous.text === mapped.message.text) {
+        previous = undefined;
+        return { kind: 'skip' };
+      }
+      previous = { text: mapped.message.text, type };
+    } else if (mapped.kind !== 'skip') {
+      previous = undefined;
+    }
+    return mapped;
+  };
 }
 
 /**
@@ -125,6 +158,10 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
     const text = typeof payload.message === 'string' ? payload.message.trim() : '';
     return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text } } : { kind: 'skip' };
   }
+  if (e.type === 'response_item' && payload.type === 'message' && payload.role === 'user') {
+    const text = desktopUserText(payload.content);
+    return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text } } : { kind: 'skip' };
+  }
   if (e.type === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
     const text = textFromBlocks(payload.content, 'output_text');
     return text ? { kind: 'assistant', message: { role: 'assistant', timestamp: lineTs, text } } : { kind: 'skip' };
@@ -135,7 +172,7 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
     const rawArgs = payload.type === 'custom_tool_call' ? payload.input : payload.arguments;
     return { kind: 'tool_call', name, input: tolerantJson(rawArgs) };
   }
-  // reasoning, *_output rows, injected user/developer response_items,
+  // reasoning, *_output rows, developer response_items,
   // telemetry events: skipped by design.
   return { kind: 'skip' };
 }
@@ -207,6 +244,7 @@ export const codexAdapter: TranscriptAdapter = {
     let startedAt = '';
     const messages: TranscriptMessage[] = [];
     let rawMeta: Record<string, unknown> | undefined;
+    const mapLine = createCodexLineMapper();
 
     for (const line of raw.split('\n')) {
       const t = line.trim();
@@ -218,7 +256,7 @@ export const codexAdapter: TranscriptAdapter = {
         skippedLines++;
         continue;
       }
-      const mapped = mapCodexLine(entry);
+      const mapped = mapLine(entry);
       if (mapped.kind === 'session') {
         // #4981: first header wins — a child rollout carries its inherited parent
         // session_meta later in the file; it must not rewrite identity/cwd/start.
@@ -265,7 +303,7 @@ export const codexAdapter: TranscriptAdapter = {
       truncated,
       sessions,
       zeroSessionsReason:
-        sessions === 0 ? 'no user_message events or assistant message items in rollout' : undefined,
+        sessions === 0 ? 'no user or assistant text in rollout' : undefined,
     };
   },
 };

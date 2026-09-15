@@ -5,7 +5,7 @@
  * whole-session ParsedSession semantics; the session-end hook needs the
  * claude parser's shape instead (ParsedTranscript: WindowTurn[] + tool calls
  * + boundary positions, bounded reads, engine-free). Line→row mapping is
- * DELEGATED to codex.ts's exported mapCodexLine, so the dated
+ * DELEGATED to codex.ts's createCodexLineMapper, so the dated
  * CODEX_SPEC_TARGET stays the single source of truth — the openclaw
  * precedent (mapOpenclawLine / readOpenclawBoundaryTail) exactly.
  *
@@ -38,7 +38,7 @@ import { isPathContained } from '../path-confine.ts';
 import type { ConfineTranscriptResult, ParsedTranscript, ToolCallRecord } from './claude-code-jsonl.ts';
 import { capToolCallInput, TRANSCRIPT_HARD_CAP_BYTES, TRANSCRIPT_MAX_BYTES_DEFAULT } from './claude-code-jsonl.ts';
 import type { WindowTurn } from '../context/entity-salience.ts';
-import { mapCodexLine } from './codex.ts';
+import { createCodexLineMapper } from './codex.ts';
 
 /** Head window kept on over-budget reads: session_meta is byte 0 of a rollout
  * and carries the identity a pure tail read would lose (codex.ts rationale). */
@@ -150,6 +150,7 @@ export function parseCodexHookTranscript(
   let cwd: string | undefined;
   let parsedLines = 0;
   let skippedLines = 0;
+  const mapLine = createCodexLineMapper();
 
   for (const line of raw.split('\n')) {
     const t = line.trim();
@@ -162,7 +163,7 @@ export function parseCodexHookTranscript(
       continue;
     }
     parsedLines++;
-    const mapped = mapCodexLine(entry);
+    const mapped = mapLine(entry);
     switch (mapped.kind) {
       case 'session':
         // #4981: first header wins (a forked rollout inherits its parent's header
