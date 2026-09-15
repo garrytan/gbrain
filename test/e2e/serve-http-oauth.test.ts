@@ -424,7 +424,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // location and no longer at the bare root, so a hardcoded root URL in the
   // challenge would send clients to a 404. Advertised URL and mounted
   // document have to move together.
-  test('401 challenge advertises a resource_metadata URL that resolves', async () => {
+  test('401 challenge advertises resolvable metadata and least-privilege bootstrap scopes', async () => {
     const res = await fetch(`${BASE}/mcp`, {
       method: 'POST',
       headers: {
@@ -438,6 +438,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const challenge = res.headers.get('www-authenticate') ?? '';
     const advertised = challenge.match(/resource_metadata="([^"]+)"/)?.[1];
     expect(advertised).toBeTruthy();
+    expect(challenge).toContain('scope="read write"');
 
     const meta = await fetch(advertised!);
     expect(meta.ok).toBe(true);
