@@ -126,6 +126,48 @@ describe('runFactsPipeline (extract_facts MCP op path) — response shape stabil
     expect(r.entity_slugs).toEqual([]);
   });
 
+  test('unresolved entity references stay unparented with provenance in every storage mode', async () => {
+    const { mkdtempSync, readdirSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { _resetWriteThroughCacheForTest } = await import('../src/core/write-through.ts');
+    const dir = mkdtempSync(join(tmpdir(), 'unresolved-facts-'));
+    try {
+      for (const mode of ['thin-client', 'local', 'disabled']) {
+        await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+          [mode === 'thin-client' ? null : dir]);
+        await engine.setConfig('sync.write_through', mode === 'disabled' ? 'false' : 'true');
+        _resetWriteThroughCacheForTest();
+        chatStub(['Unresolved Example', 'people/missing-example'].map(entity => ({
+          fact: `${mode}: ${entity} supplied a useful fact`, entity, kind: 'fact', notability: 'high',
+        })));
+        const result = await runFactsPipeline('A conversation with unresolved entities', {
+          engine, sourceId: 'default', sessionId: `unresolved-${mode}`, source: 'mcp:extract_facts',
+          sourceSlug: 'meetings/provenance-example',
+        });
+        expect(result.inserted).toBe(2);
+        expect(result.entity_slugs).toEqual([]);
+        const rows = await engine.executeRaw<{
+          entity_slug: string | null; source: string; context: string | null; row_num: number | null;
+        }>(`SELECT entity_slug, source, context, row_num FROM facts WHERE source_id = 'default' AND source_session = $1`,
+          [`unresolved-${mode}`]);
+        expect(rows).toHaveLength(2);
+        for (const row of rows) {
+          expect(row.entity_slug).toBeNull();
+          expect(row.source).toBe('mcp:extract_facts');
+          expect(row.context).toBe('meetings/provenance-example');
+          expect(row.row_num).toBeNull();
+        }
+        expect(readdirSync(dir)).toEqual([]);
+      }
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      await engine.unsetConfig('sync.write_through');
+      _resetWriteThroughCacheForTest();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('empty extraction → zero counts (no NaN, no undefined)', async () => {
     chatStub([]);
     const r = await runFactsPipeline('nothing claim-worthy here', {

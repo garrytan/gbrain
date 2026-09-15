@@ -28,7 +28,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
-import { mountConfidentialOAuth, mountOAuthConsent } from './serve-http-oauth.ts';
+import { mountConfidentialOAuth, mountOAuthConsent, withBearerScopeHint } from './serve-http-oauth.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
@@ -1216,11 +1216,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const authRouterOptions: any = {
     provider: oauthProvider,
     issuerUrl,
-    // v0.28: scopesSupported sourced from ALLOWED_SCOPES_LIST so MCP clients
-    // (Claude Desktop, ChatGPT, Perplexity) can discover sources_admin and
-    // users_admin via /.well-known/oauth-authorization-server. The legacy
-    // ['read','write','admin'] list left those new scopes invisible.
-    scopesSupported: [...ALLOWED_SCOPES_LIST],
+    scopesSupported: ALLOWED_SCOPES_LIST.filter(scope => scope !== 'agent'),
     resourceName: 'GBrain MCP Server',
     // Advertise /mcp as the protected resource (see mcpResourceUrl above).
     resourceServerUrl: mcpResourceUrl,
@@ -2308,7 +2304,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
-  app.post('/mcp', requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), async (req: Request, res: Response) => {
+  app.post('/mcp', withBearerScopeHint(
+    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read'],
+  ), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 

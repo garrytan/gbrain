@@ -486,6 +486,7 @@ function printHelp(): void {
 }
 
 export interface RunOpts {
+  exitOnError?: boolean;
   /** Inject a chat client for tests; defaults to the gateway-routed client (#4636). */
   client?: ThinkLLMClient;
   /** Separate stub for the Haiku claim extractor (defaults to the same gateway client). */
@@ -608,19 +609,23 @@ function gitShort(argv: readonly string[], fallback: string): string {
 }
 
 export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}): Promise<void> {
+  const fail = (code: number): never => {
+    if (runOpts.exitOnError !== false) process.exit(code);
+    throw new Error(`longmemeval failed (exit ${code}); see evaluation diagnostics`);
+  };
   let opts: ParsedArgs;
   try {
     opts = parseArgs(args);
   } catch (err: any) {
     process.stderr.write(`Error: ${err.message ?? err}\n`);
-    process.exit(1);
+    fail(1);
     return;
   }
   if (opts.help) { printHelp(); return; }
   if (!opts.datasetPath) {
     process.stderr.write(`Error: <dataset.jsonl> is required.\n\n`);
     printHelp();
-    process.exit(1);
+    fail(1);
     return;
   }
 
@@ -630,7 +635,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     ({ questions, sha256: datasetSha256 } = loadDataset(opts.datasetPath, HUGGINGFACE_URL));
   } catch (err: any) {
     process.stderr.write(`Error: ${err.message ?? err}\n`);
-    process.exit(1);
+    fail(1);
     return;
   }
   const datasetQuestionCount = questions.length;
@@ -666,7 +671,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       questions = questions.filter(q => want.has(q.question_id));
     } catch (err: any) {
       process.stderr.write(`Error: ${err.message ?? err}\n`);
-      process.exit(1);
+      fail(1);
       return;
     }
   }
@@ -675,7 +680,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   }
   if (questions.length === 0) {
     process.stderr.write(`Error: dataset contains no questions.\n`);
-    process.exit(1);
+    fail(1);
     return;
   }
 
@@ -883,7 +888,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       persistRunRecord(repoRoot, record, runOpts.recordDir);
       process.stderr.write(`[longmemeval] recorded ${record.run_id} (${record.status})\n`);
     }
-    if (exitCode !== 0) process.exit(exitCode);
+    if (exitCode !== 0) fail(exitCode);
   };
 
   // --resume-from: filter out already-answered question_ids before any
@@ -902,7 +907,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
         `(${check.foreign.map(h => h.slice(0, 12)).join(', ')} vs this run's ${retrievalHash.slice(0, 12)}).`;
       if (!opts.allowMixedRunConfig) {
         process.stderr.write(`${msg} Refusing to mix runs; pass --allow-mixed-run-config to override.\n`);
-        process.exit(1);
+        fail(1);
         return;
       }
       process.stderr.write(`${msg} Continuing (--allow-mixed-run-config).\n`);
@@ -925,14 +930,14 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
           `(${sel.foreign.map(h => h.slice(0, 12)).join(', ')} vs this run's ${runJudgeHash.slice(0, 12)}).`;
         if (!opts.allowMixedRunConfig) {
           process.stderr.write(`${msg} Refusing to mix judge configs; pass --allow-mixed-run-config to override.\n`);
-          process.exit(1);
+          fail(1);
           return;
         }
         process.stderr.write(`${msg} Continuing (--allow-mixed-run-config).\n`);
       }
       if (sel.retrievalOnly > 0) {
         process.stderr.write(`Error: --judge: ${sel.retrievalOnly} row(s) in ${opts.resumeFromPath} were produced with --retrieval-only and carry no reader hypothesis to judge.\n`);
-        process.exit(1);
+        fail(1);
         return;
       }
       if (sel.missingFromDataset > 0) process.stderr.write(`[longmemeval] WARN judge backfill: ${sel.missingFromDataset} row(s) not in this dataset — left unjudged\n`);
@@ -989,7 +994,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       replay = loadExpansionReplay(opts.expansionReplayPath);
     } catch (err: any) {
       process.stderr.write(`Error: ${err.message ?? err}\n`);
-      process.exit(1);
+      fail(1);
       return;
     }
     process.stderr.write(`[longmemeval] expansion replay: ${replay.size} recorded variant set(s) from ${opts.expansionReplayPath}\n`);
@@ -1008,6 +1013,15 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       })
     : '';
 
+  if (runOpts.exitOnError === false) {
+    if (!opts.retrievalOnly && !runOpts.client && !isAvailable('chat', model)) {
+      throw new Error(`longmemeval reader chat provider not configured for ${model}; configure this model's provider or models.eval.longmemeval`);
+    }
+    if (trajectoryEnabled && !runOpts.extractorClient && !isAvailable('chat', extractorModel)) {
+      throw new Error(`longmemeval extractor chat provider not configured for ${extractorModel}; configure this model's provider or its utility tier`);
+    }
+  }
+
   // --judge preflight (Phase D): availability → pricing → estimate → cap.
   // Runs before the brain connects so a refused run costs nothing.
   let judgeCtx: JudgeLaneContext | null = null;
@@ -1025,7 +1039,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     });
     if (!pre.ok) {
       process.stderr.write(`Error: ${pre.message}\n`);
-      process.exit(pre.exitCode);
+      fail(pre.exitCode);
       return;
     }
     for (const line of pre.lines) process.stderr.write(`${line}\n`);
@@ -1135,7 +1149,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       const r = await probe(engine, pins.reranker.model);
       if (!r.readiness.ready) {
         process.stderr.write(`[longmemeval] reranker not ready (${r.plane} plane): ${describeRerankerFix(r.readiness) ?? 'not ready'}\n`);
-        process.exit(2);
+        fail(2);
         return;
       }
     }

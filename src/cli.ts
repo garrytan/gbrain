@@ -1946,7 +1946,7 @@ export function formatResult(
 // work on any install shape.
 export const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'retrieval-upgrade', 'apply-migrations',
-  'repair-jsonb', 'orphans', 'integrity', 'serve',
+  'repair-jsonb', 'orphans', 'integrity', 'serve', 'call',
   // v0.43 (#2095): watch streams against a LOCAL engine; thin clients get
   // the volunteer_context MCP op instead.
   'watch',
@@ -1994,6 +1994,7 @@ export const THIN_CLIENT_REFUSED_COMMANDS = new Set([
  * place during code review.
  */
 const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
+  call: '`call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `gbrain call` on the host.',
   sync: 'sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `gbrain sync` on the host.',
   embed: 'embed runs on the host. Run `gbrain embed` or `gbrain cycle` on the host machine.',
   extract: 'extract runs on the host. Run `gbrain extract` or `gbrain cycle` on the host machine.',

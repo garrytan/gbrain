@@ -10,12 +10,26 @@ empty local PGLite, so a populated remote brain can't silently return
 "No results." Local-only commands refuse with a pinpoint hint instead of
 falling through.
 
+Installed thin-client launchers clear inherited brain and source overrides without
+adding `--brain host` or pinning the grant's write source onto reads. Unqualified
+reads use the host grant's readable sources; explicit `--source` remains subject
+to host authorization. Local PGLite launchers retain their host/source binding.
+The generic `gbrain call` dispatcher is host-only and refuses before opening a
+local engine; use the named CLI command or an authorized MCP tool instead.
+
 **Surface posture:** thin CLI clients use the full MCP surface for remote
 command compatibility. Bootstrap pins `--surface full`; managed thin CLI grants
 for OpenClaw, Grok Bot, and Muse also select `full`. Surface visibility does not
 grant authority: profiles, token scopes, operation snapshots, sources, and write
 fences still restrict requests. A `memory-writer` thin client gains neither
 administration nor delegation from its full surface.
+
+OAuth bootstrap challenges advertise `scope="read"` without enforcing it as a
+literal transport requirement. Existing writer, administrator, and delegated
+tokens keep their granted authority. New generic connections following the
+hint start read-only; writing requires an explicit authorized scope request.
+Discovery excludes `agent`, which DCR cannot grant, while explicit DCR requests
+for delegation remain rejected.
 
 Keep general-purpose thin-client OAuth rows at `full` (or NULL). Native MCP
 configurations can deliberately use starter/verbs to expose fewer tools. Stdio

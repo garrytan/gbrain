@@ -76,4 +76,10 @@ if [[ "$OUTPUT" != *'"calculateScore"'* ]]; then
   exit 1
 fi
 
+if [[ "$OUTPUT" != *'"has_bash_case_symbol": true'* ]]; then
+  echo "[check-wasm-embedded] FAIL: Bash case statement lost its function symbol." >&2
+  echo "$OUTPUT" >&2
+  exit 1
+fi
+
 echo "[check-wasm-embedded] OK — compiled binary produced real semantic chunks."

@@ -70,8 +70,8 @@ function isAbortError(err: unknown): boolean {
  * resolver. Mutates `facts` in place. Sequential so a PGLite-pinned
  * transaction sees one alias probe at a time.
  *
- * Ordinary resolver failures keep the raw value and increment
- * resolution_errors. Abort and BudgetExhausted propagate.
+ * Unresolved references keep the fact unparented. Ordinary resolver failures
+ * increment resolution_errors. Abort and BudgetExhausted propagate.
  */
 export async function resolveExtractedEntitiesForSave(
   engine: BrainEngine,
@@ -85,7 +85,7 @@ export async function resolveExtractedEntitiesForSave(
     if (raw === null) continue;
     try {
       const resolved = await resolveEntitySlugWithSource(engine, sourceId, raw);
-      facts[i] = { ...facts[i], entity_slug: resolved?.slug ?? null };
+      facts[i] = { ...facts[i], entity_slug: resolved?.source === 'fallback_slugify' ? null : resolved?.slug ?? null };
       if (!resolved) continue;
       stats.counts[resolved.source] = (stats.counts[resolved.source] ?? 0) + 1;
       if (resolved.source === 'fallback_slugify') {
@@ -93,6 +93,7 @@ export async function resolveExtractedEntitiesForSave(
       }
     } catch (err) {
       if (isAbortError(err) || err instanceof BudgetExhausted) throw err;
+      facts[i] = { ...facts[i], entity_slug: null };
       stats.resolution_errors++;
       const message = err instanceof Error ? err.message : String(err);
       onError?.(raw, message);

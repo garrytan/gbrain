@@ -33,6 +33,7 @@ import { parseMarkdown, serializeMarkdown } from '../../markdown.ts';
 import { loadActivePackForWriteVocabulary } from '../../schema-pack/write-vocabulary.ts';
 import { classifyStoredType, sanitizeTypeForDisplay } from '../../schema-pack/type-usage.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
+import { putPageRejection } from './put-page-result.ts';
 
 /**
  * v0.15 brain-tool allow-list. Review carefully when extending. Op names
@@ -325,7 +326,10 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
         if (op.name === 'put_page' && opts.allowedSlugPrefixes?.length) {
           await pinUndeclaredType(params, opCtx);
         }
-        return op.handler(opCtx, params);
+        const output = await op.handler(opCtx, params);
+        const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
+        if (rejection) throw new Error(rejection);
+        return output;
       },
     };
   });

@@ -18,6 +18,7 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync, r
 import { join } from 'path';
 import { execFileSync } from 'node:child_process';
 import { parseGlobalFlags } from './cli-options.ts';
+import { readProcessCommand, type ProcessCommandProbeDeps } from './autopilot-lock.ts';
 
 const LOCK_DIR_NAME = '.gbrain-lock';
 const LOCK_FILE = 'lock';
@@ -237,12 +238,14 @@ export function isProcessAlive(pid: number): boolean {
  * Read a process's full command line, or null when it can't be determined.
  * `ps -o args=` works on Linux + macOS (same pattern as autopilot-lock's
  * readProcessCommand); the /proc fallback covers minimal Linux containers
- * where `ps` is absent (cf. #4300). Null means "unknowable" — callers must
- * treat it as ALIVE, never as evidence of death.
+ * where `ps` is absent (cf. #4300). Windows uses the shared CIM probe.
+ * Null means "unknowable" — callers must treat it as ALIVE, never as death.
  */
-function readProcessArgs(pid: number): string | null {
+function readProcessArgs(pid: number, deps?: ProcessCommandProbeDeps): string | null {
+  if ((deps?.platform ?? process.platform) === 'win32') return readProcessCommand(pid, deps);
+  const exec = deps?.execFile ?? execFileSync;
   try {
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
+    const out = exec('ps', ['-p', String(pid), '-o', 'args='], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 1000,
@@ -250,8 +253,8 @@ function readProcessArgs(pid: number): string | null {
     if (out.length > 0) return out;
   } catch { /* fall through to /proc */ }
   try {
-    const raw = readFileSync(`/proc/${pid}/cmdline`, 'utf-8');
-    const args = raw.replace(/\0/g, ' ').trim();
+    const raw = (deps?.readCmdlineFile ?? readFileSync)(`/proc/${pid}/cmdline`);
+    const args = raw.toString().replace(/\0/g, ' ').trim();
     if (args.length > 0) return args;
   } catch { /* unreadable — unknowable */ }
   return null;
@@ -294,33 +297,37 @@ function readBootId(): string | null {
  * the PID — a dead holder's PID can be recycled by an unrelated program
  * (docker-proxy, a shell, a supervisor's next child), which previously wedged
  * the lock until acquire timeout with no automatic recovery. A command line
- * that matches neither "gbrain" nor the recorded command's first token is
- * affirmative proof the original holder is gone — equivalent to an ESRCH
- * verdict — so the lock can be reaped.
+ * that matches neither "gbrain" nor the structured argv's script identity
+ * can prove reuse. Legacy command-only locks cannot preserve path boundaries
+ * and never authorize cmdline-based reaping; ESRCH still recovers dead holders.
  *
  * Fail-safe like isProcessAlive: ANY doubt reads as "not reused" (alive) —
  * unreadable/missing command line, a same-process PID (#1963 semantics: a
  * second acquire from the holder process still waits out the timeout), or
  * missing/mismatched namespace markers. On Linux the cmdline verdict REQUIRES
- * affirmative same-namespace proof (lock's recorded pid_ns === ours; boot_id
- * must also match when both are recorded): legacy locks without markers are
+ * affirmative same-namespace proof (both recorded pid_ns and boot_id must be
+ * readable and match ours): legacy locks without markers are
  * never cmdline-reaped (ESRCH reaps still apply). Platforms without namespace
  * markers (macOS) have no reachable cross-namespace data-dir sharing — a
  * Docker VM's PIDs aren't visible to host `ps` at all — so the cmdline
  * verdict stands alone there.
  */
-function isPidReusedByOtherProgram(
+export function isPidReusedByOtherProgram(
   pid: number,
-  recordedCommand: unknown,
+  recordedArgv: unknown,
   recordedPidNs: unknown,
   recordedBootId: unknown,
+  deps?: ProcessCommandProbeDeps,
 ): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   // Same-process re-acquire: WE are the recorded holder, so the PID is by
   // definition not recycled. (Also keeps non-gbrain test harnesses that hold a
   // lock with their own PID from reaping themselves.)
   if (pid === process.pid) return false;
-  if (process.platform === 'linux') {
+  if (!Array.isArray(recordedArgv) || recordedArgv.length === 0
+    || !recordedArgv.every(arg => typeof arg === 'string')
+    || recordedArgv[0].trim().length === 0) return false;
+  if ((deps?.platform ?? process.platform) === 'linux') {
     // Linux: cmdline evidence is only meaningful within one PID namespace on
     // one host, so EVERY marker must be readable AND matching — pid_ns rules
     // out other containers, boot_id rules out other hosts (pid_ns inode
@@ -333,25 +340,16 @@ function isPidReusedByOtherProgram(
     if (recordedPidNs !== ourNs) return false;
     if (recordedBootId !== ourBoot) return false;
   }
-  const cmdline = readProcessArgs(pid);
+  const cmdline = readProcessArgs(pid, deps);
   if (cmdline === null) return false; // unknowable — cannot prove reuse
-  if (cmdline.includes('gbrain')) return false;
-  if (typeof recordedCommand === 'string' && recordedCommand.length > 0) {
-    const firstToken = recordedCommand.trim().split(/\s+/)[0];
-    if (firstToken && cmdline.includes(firstToken)) return false;
-    // False-steal hardening: the recorded first token is often an ABSOLUTE
-    // script path (Bun normalizes argv[1]) while `ps`/procfs report the
-    // spawn-time RELATIVE form (`bun run src/cli.ts serve …`), so the literal
-    // includes() above never matches and a LIVE holder gets classified as
-    // recycled — observed as a harness mint stealing a running serve's lock
-    // and writing its token to a second PGLite instance the serve never
-    // sees. Compare the token's basename too: an unrelated program that
-    // genuinely recycled the PID is no more likely to carry `cli.ts` in its
-    // argv than the full path, so precision holds.
-    const baseToken = firstToken ? firstToken.split('/').pop() : undefined;
-    if (baseToken && baseToken.length > 0 && cmdline.includes(baseToken)) return false;
-  }
-  return true;
+  const isWin32 = (deps?.platform ?? process.platform) === 'win32';
+  const normalize = (s: string) => isWin32 ? s.toLowerCase().replace(/\\/g, '/') : s;
+  const normalizedCommand = normalize(cmdline);
+  if (normalizedCommand.includes('gbrain')) return false;
+  const scriptPath = recordedArgv[0];
+  if (normalizedCommand.includes(normalize(scriptPath))) return false;
+  const scriptName = scriptPath.split(/[\\/]/).pop();
+  return !!scriptName && !normalizedCommand.includes(normalize(scriptName));
 }
 
 const REAP_CLAIM_TTL_MS = 30_000;
@@ -571,7 +569,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         // dead PID (ESRCH) or a PID provably recycled by a non-gbrain program
         // (cmdline mismatch under affirmative same-namespace proof) is.
         const alive = isProcessAlive(lockPid)
-          && !isPidReusedByOtherProgram(lockPid, lockData.command, lockData.pid_ns, lockData.boot_id);
+          && !isPidReusedByOtherProgram(lockPid, lockData.argv, lockData.pid_ns, lockData.boot_id);
         if (!alive) {
           // Holder process is gone — reap and try to acquire. This verdict is
           // affirmative (kill-0 threw ESRCH; EPERM reads as alive), so no
@@ -643,6 +641,7 @@ export async function acquireLock(dataDir: string | undefined, opts?: { timeoutM
         acquired_at: now,
         refreshed_at: now,
         command: process.argv.slice(1).join(' '),
+        argv: process.argv.slice(1),
         subcommand: parseGlobalFlags(process.argv.slice(2)).rest[0] ?? null,
         pid_ns: readPidNs(),
         boot_id: readBootId(),

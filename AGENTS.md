@@ -99,9 +99,10 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 - **Drive the brain to a target health score:** the one-command
   loop. `gbrain doctor --remediation-plan --json` previews what would be
   fixed; `gbrain doctor --remediate --yes --target-score 90 --max-usd 5`
-  walks a dependency-ordered plan (sync before extract, embed after
-  consolidate), re-checking score between every step, refusing to spend
-  past the cost cap. Empty brains (no entity pages) or unconfigured embedding
+  walks a dependency-ordered plan, re-checking score between every step and
+  refusing to spend past the cost cap. Stale extraction uses source-scoped
+  database pages, including DB-only pages; it does not require a repository
+  sync first. Empty brains (no entity pages) or unconfigured embedding
   keys hit a `max_reachable_score` ceiling and bail with what's missing.
   Three phase handlers (synthesize / patterns / consolidate) are
   PROTECTED — only trusted local callers can submit them; MCP cannot.

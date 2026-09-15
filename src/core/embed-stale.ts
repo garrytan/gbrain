@@ -22,7 +22,7 @@ import type { Chunk, ChunkInput } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retry.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
-import { invalidateStaleSignatureEmbeddingsGuarded } from './embedding-invalidation.ts';
+import { invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
 import {
   resolveActiveEmbeddingColumnFromEngine,
   quoteIdentifier,
@@ -157,7 +157,8 @@ export async function resolveProvenanceStamp(
 /**
  * Stamp `pages.embedding_signature` once EVERY chunk on the page carries an
  * active-column vector written by the signature's model against the CURRENT
- * chunk_text (`embedded_text_hash = md5(chunk_text)`). Judged from DB state,
+ * chunk_text (`embedded_text_hash = md5(chunk_text)`) at the signature's vector
+ * width. Judged from DB state,
  * not from the caller's batch: `listStaleChunks` pages by ROW with no page
  * alignment, so a page straddling a batch boundary is never wholly in one
  * batch — the batch that lands its last chunk stamps it here. A partially
@@ -174,17 +175,14 @@ export async function stampIfPageProvenanceComplete(
 ): Promise<boolean> {
   // Signature is `<provider:model>:<dims>`; the model part is what
   // upsertChunks records in content_chunks.model.
-  const model = signature.slice(0, signature.lastIndexOf(':'));
+  const { model, dims } = splitEmbeddingSignature(signature);
   const colId = quoteIdentifier(column);
   const rows = await engine.executeRaw<{ complete: boolean }>(
     `SELECT count(*) > 0
-            AND bool_and(COALESCE(
-              cc.${colId} IS NOT NULL
-              AND cc.model = $1
-              AND cc.embedded_text_hash = md5(cc.chunk_text), false)) AS complete
+            AND bool_and(${currentSpaceChunkPredicate(colId, 1, 4)}) AS complete
        FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
       WHERE p.slug = $2 AND p.source_id = $3`,
-    [model, slug, sourceId],
+    [model, slug, sourceId, dims],
   );
   if (rows[0]?.complete !== true) return false;
   await engine.setPageEmbeddingSignature(slug, { sourceId, signature });

@@ -74,6 +74,19 @@ surface area.
 Recommended ChatGPT scope: `read write`. Leave `admin` for your local CLI
 and the admin dashboard.
 
+The initial MCP authentication challenge requests only `read`. Clients that
+follow that hint bootstrap with read access, even when their registration
+allows `read write`; registration is a ceiling, not automatic authorization
+for every listed scope. Saving requires the client to explicitly request
+`write` and the operator to approve it. Existing authorized writer sessions
+keep their permissions.
+
+OAuth discovery omits the operator-only `agent` scope so clients that register
+using advertised scopes do not request unsupported delegation. Explicit DCR
+requests for `agent` still fail; delegation requires a separately approved
+host grant. The server's SDK/HTTP tests cover these flows, not a live ChatGPT
+or Claude connector session.
+
 ## Deep research
 
 ChatGPT's **deep research** mode has a stricter MCP contract than normal

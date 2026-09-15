@@ -231,6 +231,11 @@ export interface ParsedPage {
   tags: string[];
 }
 
+export interface ImportEmbeddingResult {
+  status: 'embedded' | 'failed' | 'superseded';
+  error?: string;
+}
+
 export interface ImportResult {
   slug: string;
   status: 'imported' | 'skipped' | 'error';
@@ -304,7 +309,9 @@ async function refreshSourcePath(engine: BrainEngine, slug: string, sourceId: st
 
 /**
  * Import content from a string. Core pipeline:
- * parse -> hash -> embed (external) -> transaction(version + putPage + tags + chunks)
+ * parse -> hash -> transaction(version + putPage + tags + chunks + beforeCommit).
+ * Embedding normally precedes persistence; onPostCommitEmbedding lets callers
+ * enrich outside their filesystem lock with page/chunk revision checks.
  *
  * Used by put_page operation and importFromFile.
  *
@@ -388,6 +395,8 @@ export async function importFromContent(
      * and reindex leave it unset so the guard stays armed.
      */
     allowEmptyOverwrite?: boolean;
+    beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>;
+    onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } = {},
 ): Promise<ImportResult> {
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
@@ -753,8 +762,19 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
+  const persistUnchanged = async (refreshBody = false) => {
+    const write = async (tx: BrainEngine) => {
+      if (refreshBody) await tx.refreshPageBody(slug, sourceId ?? 'default', parsed.compiled_truth, parsed.timeline || '', hash);
+      await refreshSourcePath(tx, slug, sourceId, opts.sourcePath, existing?.source_path);
+      if (opts.beforeCommit) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
+      await opts.beforeCommit?.(tx, slug);
+    };
+    if (opts.beforeCommit) await engine.transaction(write);
+    else await write(engine);
+  };
+
   if (existing?.content_hash === hash && !opts.forceRechunk) {
-    await refreshSourcePath(engine, slug, sourceId, opts.sourcePath, existing?.source_path);
+    await persistUnchanged();
     return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
   }
 
@@ -772,14 +792,7 @@ export async function importFromContent(
       frontmatter: parsed.frontmatter,
     });
     if (existing.content_hash === legacyHash) {
-      await engine.refreshPageBody(
-        slug,
-        sourceId ?? 'default',
-        parsed.compiled_truth,
-        parsed.timeline || '',
-        hash,
-      );
-      await refreshSourcePath(engine, slug, sourceId, opts.sourcePath, existing?.source_path);
+      await persistUnchanged(true);
       return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
     }
   }
@@ -884,9 +897,8 @@ export async function importFromContent(
     }
   }
 
-  // Embed BEFORE the transaction (external API call).
-  // v0.14+ (Codex C2): embedding failure PROPAGATES. Silent drop accumulates
-  // unembedded pages invisibly. Caller can pass opts.noEmbed=true to skip.
+  // Embedding failures propagate unless onPostCommitEmbedding lets the caller
+  // report enrichment separately from the already-persisted content.
   //
   // v0.40.3.0 contextual retrieval wrapper (D20-T1 chunk_text separation):
   // - Resolve effective CR mode via the page/source/global override chain.
@@ -942,7 +954,8 @@ export async function importFromContent(
     effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
   }
 
-  if (!opts.noEmbed && chunks.length > 0) {
+  const embedChunks = async () => {
+    if (opts.noEmbed || chunks.length === 0) return;
     const safeTitle = sanitizeTitle(parsed.title);
     const prefix =
       modeRequiresWrapper(effectiveCRMode) && !modeRequiresSynopsis(effectiveCRMode)
@@ -958,7 +971,8 @@ export async function importFromContent(
       // reflects what we actually sent to the embedder.
       chunks[i].token_count = Math.ceil(wrappedTexts[i].length / 4);
     }
-  }
+  };
+  if (!opts.onPostCommitEmbedding) await embedChunks();
 
   // v0.40.3.0: corpus_generation hash for D27 P1-5 cache invalidation.
   // Only set when we actually applied a wrapper; 'none' tier writes NULL
@@ -976,11 +990,12 @@ export async function importFromContent(
           // the service layer.
         });
 
-  // Transaction wraps all DB writes. Every per-page tx call carries the
+  // Transaction wraps the canonical DB writes. Every per-page tx call carries the
   // caller's sourceId so writes target (sourceId, slug) rather than the
   // schema DEFAULT — required for multi-source brains; harmless ('default')
   // for single-source callers.
   const txOpts = { sourceId: sourceId ?? 'default' };
+  let persistedRevision: { id: number; generation: string; chunk_id: number } | undefined;
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -1030,7 +1045,7 @@ export async function importFromContent(
     // UPDATE that runs after putPage's INSERT/UPDATE so the row exists.
     // For opts.noEmbed callers, we skip stamping — the next embed pass
     // (gbrain embed --stale or contextual reindex Minion) will set it.
-    if (!opts.noEmbed) {
+    if (!opts.noEmbed && !opts.onPostCommitEmbedding) {
       await tx.updatePageContextualRetrievalState(
         slug,
         sourceId ?? 'default',
@@ -1072,7 +1087,7 @@ export async function importFromContent(
       // embedded (not --no-embed), so a later model/dims swap is detectable
       // as stale via embed --stale. The deferred/backfill + per-slug embed
       // paths stamp too; this covers the inline import/sync path.
-      if (!opts.noEmbed) {
+      if (!opts.noEmbed && !opts.onPostCommitEmbedding) {
         // D9: signature is null when the gateway is unconfigured — skip the
         // stamp (a wrong signature is worse than none).
         const importSig = currentEmbeddingSignature();
@@ -1125,6 +1140,17 @@ export async function importFromContent(
         );
       } catch { /* same reason — silent skip */ }
     }
+    if (opts.onPostCommitEmbedding && !opts.noEmbed && chunks.length > 0) {
+      const rows = await tx.executeRaw<{ id: number; generation: string; chunk_id: number }>(
+        `SELECT id, generation::text AS generation,
+                (SELECT MIN(id) FROM content_chunks WHERE page_id = pages.id) AS chunk_id
+           FROM pages WHERE source_id = $1 AND slug = $2`,
+        [txOpts.sourceId, slug],
+      );
+      persistedRevision = rows[0];
+    }
+    if (opts.beforeCommit) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
+    await opts.beforeCommit?.(tx, slug);
   }).catch(async (err: unknown) => {
     // #4287: name the dimension-mismatch rollback instead of letting the bare
     // pgvector message ("expected N dimensions, not M") surface with no code,
@@ -1173,6 +1199,34 @@ export async function importFromContent(
   // this guard, the operation reports success and the page is invisible to all
   // reads (get_page, search, query) until someone notices the gap manually.
   await verifyPageReadable(engine, slug, hash, sourceId, 'importFromContent');
+
+  if (opts.onPostCommitEmbedding && !opts.noEmbed && chunks.length > 0) {
+    opts.onPostCommitEmbedding(async () => {
+      try {
+        await embedChunks();
+        return await engine.transaction(async (tx) => {
+          const rows = await tx.executeRaw<{ id: number; generation: string; chunk_id: number }>(
+            `SELECT id, generation::text AS generation,
+                    (SELECT MIN(id) FROM content_chunks WHERE page_id = pages.id) AS chunk_id
+               FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR UPDATE`,
+            [txOpts.sourceId, slug],
+          );
+          const current = rows[0];
+          if (!persistedRevision || !current || current.id !== persistedRevision.id
+            || current.generation !== persistedRevision.generation || current.chunk_id !== persistedRevision.chunk_id) {
+            return { status: 'superseded' as const };
+          }
+          await tx.upsertChunks(slug, chunks, txOpts);
+          await tx.updatePageContextualRetrievalState(slug, txOpts.sourceId, effectiveCRMode, corpusGeneration);
+          const signature = currentEmbeddingSignature();
+          if (signature) await tx.setPageEmbeddingSignature(slug, { sourceId: txOpts.sourceId, signature });
+          return { status: 'embedded' as const };
+        });
+      } catch {
+        return { status: 'failed', error: 'Page content was saved, but embedding failed. Check the embedding provider and database on the brain host, then run gbrain embed --stale --source <source-id>.' };
+      }
+    });
+  }
 
   return {
     slug,

@@ -53,6 +53,39 @@ async function columnTruth(
 // ---- Shared scenario, run against both engines (parity) -----------------
 
 function registryWriteScenario(name: string, getEngine: () => BrainEngine) {
+  for (const column of ['embedding_test8', 'embedding_hv8']) {
+    test(`${name}: resumed invalidation preserves proven current ${column} vectors (#5051)`, async () => {
+      const engine = getEngine();
+      const slug = 'docs/resumed-signature';
+      const signature = 'voyage:voyage-3-large:8';
+      await engine.setConfig('embedding_columns', REGISTRY_JSON);
+      await engine.setConfig('search_embedding_column', column);
+      try {
+        for (const guarded of [false, true]) {
+          for (const includeNullSignature of [false, true]) {
+            await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: '# resumed' });
+            await engine.upsertChunks(slug, [0, 1].map((i) => ({
+              chunk_index: i, chunk_text: `resumed chunk ${i}`, chunk_source: 'compiled_truth',
+              embedding: VEC8, model: i === 0 ? 'voyage:voyage-3-large' : 'foreign:model',
+            })));
+            if (!includeNullSignature) await engine.setPageEmbeddingSignature(slug, { signature: 'old:model:8' });
+            const opts = { signature, includeNullSignature };
+            const invalidated = guarded
+              ? await invalidateStaleSignatureEmbeddingsGuarded(engine, opts)
+              : await engine.invalidateStaleSignatureEmbeddings(opts);
+            expect(invalidated).toBe(1);
+            const chunks = await engine.getChunks(slug);
+            expect(chunks.map((chunk) => chunk.embedding_is_null)).toEqual([false, true]);
+            await engine.deletePage(slug);
+          }
+        }
+      } finally {
+        await engine.deletePage(slug);
+        await engine.setConfig('search_embedding_column', 'embedding_test8');
+      }
+    });
+  }
+
   test(`${name}: registry-routed write lands in the active column, not legacy embedding`, async () => {
     const engine = getEngine();
     await engine.setConfig('search_embedding_column', 'embedding_test8');

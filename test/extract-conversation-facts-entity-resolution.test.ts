@@ -162,7 +162,7 @@ describe('conversation backfill entity resolution', () => {
 
       expect(await dataEntities()).toEqual([
         'people/brian-example',
-        'unlisted-person',
+        null,
         null,
       ]);
       expect(result.fallback_slugify_count).toBe(1);
@@ -256,11 +256,11 @@ describe('conversation backfill entity resolution', () => {
       }]),
     });
 
-    expect(await dataEntities()).toEqual(['spectre']);
+    expect(await dataEntities()).toEqual([null]);
     expect(result.fallback_slugify_count).toBe(1);
   });
 
-  test('best-effort resolver failure keeps the raw value and later segments checkpoint', async () => {
+  test('best-effort resolver failure keeps the fact unparented and later segments checkpoint', async () => {
     await seedConversation(TWO_SEGMENT_BODY);
     const original = resolve.resolveEntitySlugWithSource;
     const spy = spyOn(resolve, 'resolveEntitySlugWithSource').mockImplementation(
@@ -286,7 +286,7 @@ describe('conversation backfill entity resolution', () => {
 
       expect(await dataEntities()).toEqual([
         'people/brian-example',
-        'Unlisted Person',
+        null,
         'people/brian-example',
         null,
       ]);
@@ -302,7 +302,7 @@ describe('conversation backfill entity resolution', () => {
 
       const stderr = writeSpy.mock.calls.map((call) => String(call[0])).join('');
       expect(stderr).toContain('entity resolution failed for "Unlisted Person"');
-      expect(stderr).toContain('keeping raw value');
+      expect(stderr).toContain('preserving fact without an entity target');
     } finally {
       spy.mockRestore();
       writeSpy.mockRestore();

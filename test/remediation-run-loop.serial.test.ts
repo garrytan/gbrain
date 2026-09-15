@@ -83,7 +83,7 @@ describe('runRemediation idempotency-key rotation (#3626)', () => {
     attemptedJobs.length = 0;
     submittedKeys.length = 0;
     seededRows.clear();
-    const health = makeHealth();
+    const health = { ...makeHealth(), missing_embeddings: 1 };
     const engine = {
       kind: 'postgres',
       getHealth: async () => health,
@@ -108,7 +108,7 @@ describe('runRemediation idempotency-key rotation (#3626)', () => {
 
     // Steps 1+2 re-ran for REAL under rotated keys; step 3 deduped onto the
     // in-flight waiting row with no rotated resubmit.
-    expect(attemptedJobs).toEqual(['backlinks', 'sync']);
+    expect(attemptedJobs).toEqual(['embed', 'backlinks']);
     expect(submittedKeys).toEqual([
       baseKeys[0]!,
       `${baseKeys[0]!}:r:${result.doctor_run_id}`,
@@ -147,11 +147,10 @@ describe('runRemediation recheck loop guard', () => {
     const result = await runRemediation(engine, { maxJobs: 4 });
 
     expect(attemptedJobs.filter((name) => name === 'backlinks')).toHaveLength(1);
-    expect(attemptedJobs).toEqual(['backlinks', 'sync', 'extract']);
+    expect(attemptedJobs).toEqual(['backlinks', 'extract']);
     expect(result.submitted.map((step) => step.id)).toEqual([
       'backlinks.fix',
-      'sync.repo',
-      'extract.all',
+      'extract.stale',
     ]);
   });
 });
