@@ -1,8 +1,8 @@
 # System of record
 
-**The GitHub repo (markdown + frontmatter) is the system of record.
-The Postgres/PGLite database is a derived cache. We do not back up
-the database — we rebuild it from the repo.**
+**Canonical Markdown and frontmatter are the system of record for file-backed
+knowledge. Their database indexes can be rebuilt from those files. DB-only
+knowledge and operational state still need a separate backup.**
 
 This document is the canonical reference for that contract. Every code
 path that writes user-knowledge state should match the pattern
@@ -13,22 +13,23 @@ enforces it programmatically.
 
 The DB is a derived index over the markdown content. It exists to make
 search fast, to dedup embedding-similar claims, to materialize the
-cross-page graph. None of that data is irreplaceable — as long as the
-markdown is intact, `gbrain sync && gbrain extract all` rebuilds the
-entire DB from scratch.
+cross-page graph. `gbrain sync && gbrain extract all` rebuilds the indexes
+represented by intact Markdown; it does not recover DB-only knowledge,
+credentials, or page revision history.
 
 This means:
 
 - **Disaster recovery is a short, boring sequence.** If your DB volume
   corrupts, if Postgres eats itself, if PGLite's WASM lock wedges — you
-  don't need a backup. You wipe the derived tables (on PGLite,
+  first verify your backups and which state exists only in the database.
+  After preserving that state, you can wipe derived tables (on PGLite,
   `gbrain reinit-pglite` wipes the whole embedded DB), re-import from
   your brain repo with `gbrain sync`, and `gbrain extract all`
   regenerates the derived state. See "Disaster recovery" below for the
   exact commands.
 - **Multi-machine sync is git.** Your brain is a repo. Push from one
   machine, pull from another, and the second machine's DB rebuilds on
-  its next sync. No "back up the database" step.
+  its next sync. This does not transfer DB-only state or gitignored files.
 - **Privacy is in your hands.** Sensitive entity pages can be
   gitignored (via `gbrain.yml` `db_only` paths or per-page) and they
   stay on disk but not in git. The fence respects whatever git
@@ -39,16 +40,16 @@ This means:
 
 ## The three categories
 
-Every table in the gbrain schema belongs to exactly one of three
-categories. The category determines how it gets rebuilt during
-disaster recovery.
+Use these categories to distinguish reconstructible file-backed records
+from state that needs a database backup. A table can contain both: the
+facts table, for example, also holds unresolved facts without a fence.
 
 ### FS-canonical (markdown is the source of truth)
 
-These are user-authored knowledge. The DB row is a derived index over
-the markdown — wipe the table and `gbrain extract` rebuilds it
-identically. The CI gate keeps direct DB writes from drifting away
-from the markdown contract.
+For knowledge preserved in canonical files, the DB row is a derived index
+over the Markdown. Reconciliation rebuilds the represented fields; it does
+not promise identical database rows or recover records absent from the files.
+The CI gate constrains direct DB writes to the documented paths.
 
 | Category | How it's stored in markdown | Derived DB table | Reconciler |
 |---|---|---|---|
@@ -74,9 +75,9 @@ chunker + embedder rebuild these on import.
 
 ### DB-only by design (named exceptions)
 
-These hold runtime / infrastructure state that's intentionally not in
-the repo. The architectural rule still holds — these aren't
-"user knowledge" — but they're DB-only by design.
+These hold runtime or infrastructure state intentionally kept outside the
+repo. This list does not cover every DB-only record: pages and facts can
+also contain knowledge absent from canonical files and must be backed up.
 
 | Category | Why it's OK to be DB-only |
 |---|---|
@@ -96,6 +97,31 @@ If you're tempted to add one as "DB-only for now," the structural
 question is: does it belong in this DB-only-by-design list? If not,
 it's FS-canonical and needs a fence (or frontmatter field) plus a
 reconciler.
+
+## Page-write persistence boundary
+
+For a file-backed `put_page`, the root worktree lock is acquired before importing
+the revision. If that acquisition times out, `storage_busy` means the write was
+not applied and was not queued. Canonical Markdown is staged with fsync and
+renamed inside the import's database transaction, after required source-path
+bookkeeping. Ordinary filesystem rejection rolls back the imported page, tags,
+chunks, and version snapshot.
+
+This is not a distributed transaction between the filesystem and database. A
+crash or database COMMIT failure after rename can leave the Markdown ahead of
+the index. It is also not a durable write queue or a caller-supplied revision
+precondition. The page operation releases its own worktree lock before optional
+embedding, so a slow provider does not block other writes to the same worktree.
+Embedding is page-scoped, rejects superseded page/chunk generations, and reports
+failure separately without undoing a saved page or exposing provider exception
+text. A lock owned by a surrounding caller remains that caller's responsibility.
+
+The rebuild contract above applies only to knowledge actually preserved in
+canonical files. DB-only pages, unresolved facts not written to a fence, audit
+history, and site-local credentials are not recoverable from Markdown alone.
+Keep an appropriate database backup before any destructive recovery, and do
+not delete historical unmatched facts or generate empty pages to make them
+appear file-backed.
 
 ## The privacy boundary
 
@@ -143,10 +169,15 @@ remove the row. The next `extract_facts` cycle wipes the DB row.
 
 ## Disaster recovery
 
-The promise the rule makes:
+This example is only for a database whose affected facts, takes, links and
+timeline entries have been verified to exist in canonical files. Before running
+the destructive commands, stop writers and verify a restorable database backup
+plus source-file backups. Do not use this recipe on unresolved DB-only facts or
+assume a repository backup covers gitignored files.
 
 ```bash
-# Snapshot what's there
+# File-backed state only: verify restorable DB + source backups before proceeding.
+# Record counts for comparison; this is not a backup.
 gbrain stats > /tmp/before.txt
 
 # Wipe and rebuild — delete the derived tables (pages + content_chunks
@@ -156,13 +187,14 @@ psql -c 'DELETE FROM facts; DELETE FROM takes; DELETE FROM links; DELETE FROM ti
 gbrain sync
 gbrain extract all
 
-# Counts match
+# Compare file-backed counts and investigate differences; full DB parity is not promised.
 gbrain stats > /tmp/after.txt
 diff /tmp/before.txt /tmp/after.txt
 ```
 
 The invariant E2E test at `test/e2e/system-of-record-invariant.test.ts`
-exercises this exact flow on every CI run.
+proves reconstruction of its file-backed facts/takes fixture. It does not prove
+recovery of DB-only knowledge, operational state, or every production database.
 
 ## Rule for new code
 

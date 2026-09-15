@@ -10,9 +10,11 @@
 import type { BrainEngine } from '../engine.ts';
 import { clampSearchLimit } from '../engine.ts';
 import type { Page, PageType } from '../types.ts';
-import { importFromContent } from '../import-file.ts';
+import { importFromContent, type ImportEmbeddingResult } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { writePageThrough, deletePageThrough, resolvePageWriteTarget, withNoRepoWriteThroughWarning, type WriteThroughResult } from '../write-through.ts';
+import { writePageThrough, deletePageThrough, resolvePageWriteTarget, isWriteThroughDisabled, withNoRepoWriteThroughWarning, type WriteThroughResult } from '../write-through.ts';
+import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesystemActive } from '../minions/source-filesystem.ts';
+import { LockUnavailableError } from '../db-lock.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
 // #3190: pack-aware link typing on the put_page auto-link path.
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
@@ -349,7 +351,7 @@ const put_page: Operation = {
   },
   mutating: true,
   scope: 'write',
-  handler: async (ctx, p) => {
+  handler: async function putPage(ctx, p, deferEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void): Promise<Record<string, unknown>> {
     const slug = p.slug as string;
     validatePageSlug(slug);
 
@@ -389,6 +391,32 @@ const put_page: Operation = {
     if (ctx.viaSubagent === true && ctx.auth) await requireWritablePage(ctx, slug.toLowerCase(), 'put_page', 'page', true);
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+
+    const isSandboxSubagent = ctx.viaSubagent === true
+      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
+    if (!isSandboxSubagent && !(await isWriteThroughDisabled(ctx.engine))) {
+      const target = await resolvePageWriteTarget(ctx.engine, slug.toLowerCase(), ctx.sourceId ?? 'default');
+      if (!target.ok) {
+        requirePageWriteThrough({ written: false, skipped: target.skipped });
+      } else if (!hasSourceFilesystemLock(target.writeRoot)) {
+        let entered = false;
+        let completeEmbedding: (() => Promise<ImportEmbeddingResult>) | undefined;
+        try {
+          const result = await withSourceFilesystemLock(ctx.engine, target.writeRoot, () => {
+            entered = true;
+            return putPage(ctx, p, complete => { completeEmbedding = complete; });
+          });
+          return { ...result, ...(completeEmbedding ? { embedding: await completeEmbedding() } : {}) };
+        } catch (err) {
+          if (entered || !(err instanceof LockUnavailableError)) throw err;
+          throw new OperationError(
+            'storage_busy',
+            'put_page: the source worktree is busy. This write was not applied and was not queued.',
+            'Wait for the current source operation to finish, then read the latest page and retry. No durable write queue is available.',
+          );
+        }
+      }
+    }
 
     // Empty-overwrite guard: empty/whitespace-only content over an existing
     // non-empty page is almost always an input-plumbing failure (e.g. a
@@ -444,8 +472,23 @@ const put_page: Operation = {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
     }
+    let writeThrough: (Omit<WriteThroughResult, 'skipped'> & { skipped?: WriteThroughResult['skipped'] | 'subagent_sandbox' }) | undefined;
+    const persistPage = async (engine: BrainEngine, resolvedSlug: string) => {
+      const via = ctx.remote === false ? 'put_page' : 'mcp:put_page';
+      const written = await writePageThrough(engine, resolvedSlug, {
+        sourceId: ctx.sourceId ?? 'default',
+        frontmatterOverrides: { ingested_via: via, ingested_at: new Date().toISOString(), source_kind: via },
+        logger: ctx.logger,
+      });
+      requirePageWriteThrough(written);
+      assertSourceFilesystemActive();
+      writeThrough = written;
+    };
+    let completeEmbedding: (() => Promise<ImportEmbeddingResult>) | undefined;
     const result = await importFromContent(ctx.engine, slug, p.content as string, {
       noEmbed,
+      onPostCommitEmbedding: complete => { completeEmbedding = complete; },
+      ...(!isSandboxSubagent ? { beforeCommit: persistPage } : {}),
       // v0.42 (#1699): untrusted callers can't smuggle gate-owned frontmatter
       // markers (quarantine/content_flag/embed_skip). Fail-closed — anything
       // not strictly local is remote (matches CV6 / v0.26.9 F7b posture).
@@ -528,76 +571,10 @@ const put_page: Operation = {
       }
     }
 
-    // v0.38 put_page write-through (ingestion cathedral):
-    // After importFromContent succeeds, if `sync.repo_path` resolves to a
-    // real directory, persist the markdown file to disk alongside the DB
-    // row. A failure here is fatal to the call (see the check right below)
-    // except for the deliberate DB-only configurations.
-    //
-    // Trust gating:
-    //   - Subagent sandbox (viaSubagent without allowedSlugPrefixes) → DB-only.
-    //   - All other writes → write-through.
-    // put_page's own trust-gating produces two skip reasons ('subagent_sandbox',
-    // 'dry_run') that never come out of writePageThrough itself — widen the
-    // field rather than losing the commit/pushed/lastPushStatus typing.
-    let writeThrough: (Omit<WriteThroughResult, 'skipped'> & { skipped?: WriteThroughResult['skipped'] | 'subagent_sandbox' | 'dry_run' }) | undefined;
-    const isSandboxSubagent = ctx.viaSubagent === true
-      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
-    if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
-      const sourceId = ctx.sourceId ?? 'default';
-      const provenanceVia = ctx.remote === false ? 'put_page' : 'mcp:put_page';
-      // Shared canonical write-through (also used by `gbrain brainstorm/lsd
-      // --save`). Renders the file from the saved DB row and writes it
-      // atomically; never throws (failures land in skipped/error).
-      writeThrough = await writePageThrough(ctx.engine, result.slug, {
-        sourceId,
-        frontmatterOverrides: {
-          ingested_via: provenanceVia,
-          ingested_at: new Date().toISOString(),
-          source_kind: provenanceVia,
-        },
-        logger: ctx.logger,
-      });
+    if (!writeThrough && result.parsedPage && result.status !== 'error' && !isSandboxSubagent) {
+      await persistPage(ctx.engine, result.slug);
     } else if (isSandboxSubagent) {
       writeThrough = { written: false, skipped: 'subagent_sandbox' };
-    } else if (ctx.dryRun) {
-      writeThrough = { written: false, skipped: 'dry_run' };
-    }
-
-    // The markdown file is the system of record (docs/architecture/
-    // system-of-record.md); the DB row is a derived cache. The deliberate,
-    // by-design DB-only outcomes are `no_repo_configured` (no `sync.repo_path`
-    // set at all), `disabled_by_config` (operator opted out via
-    // `sync.write_through=false`), `subagent_sandbox`, and `dry_run` (no real
-    // write was supposed to happen). Every other non-written outcome — a
-    // thrown write error, or a guard that REFUSED to write into an existing
-    // repo (missing dir, sibling-source collision, escaped path, case-fold
-    // clash, unreadable row) — means a file was supposed to exist and
-    // doesn't, so put_page must not report success.
-    if (writeThrough && !writeThrough.written
-      && writeThrough.skipped !== 'no_repo_configured'
-      && writeThrough.skipped !== 'disabled_by_config'
-      && writeThrough.skipped !== 'subagent_sandbox'
-      && writeThrough.skipped !== 'dry_run') {
-      // Roll back rather than leave an index-only orphan, but only when this
-      // call is what created the row: created_at === updated_at is set by
-      // the SAME insert statement (the ON CONFLICT UPDATE branch never
-      // touches created_at), so equality here means "brand new, this call."
-      // An update (or a dedup hit resolved to a pre-existing page) is left
-      // alone — the prior file on disk still matches the prior DB content.
-      try {
-        const row = await ctx.engine.getPage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
-        if (row && row.created_at.getTime() === row.updated_at.getTime()) {
-          await ctx.engine.deletePage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
-        }
-      } catch {
-        // best-effort; the error thrown below still surfaces the failure
-      }
-      throw new OperationError(
-        'storage_error',
-        `put_page: the page content could not be written to disk (${writeThrough.skipped ?? writeThrough.error}).`,
-        'Check that the configured repo path exists and is writable, then retry.',
-      );
     }
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -815,10 +792,16 @@ const put_page: Operation = {
       }
     }
 
+    let embedding: ImportEmbeddingResult | undefined;
+    if (completeEmbedding) {
+      if (deferEmbedding) deferEmbedding(completeEmbedding);
+      else embedding = await completeEmbedding();
+    }
     return {
       slug: result.slug,
       status: result.status === 'imported' ? 'created_or_updated' : result.status,
       chunks: result.chunks,
+      ...(embedding ? { embedding } : {}),
       // #3984: a skipped/error status without the reason is a silent no-op to
       // MCP callers (e.g. the >5MB size guard returned bare status 'skipped'
       // and the agent had no idea why the page never appeared). Thread
@@ -836,6 +819,15 @@ const put_page: Operation = {
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
+
+function requirePageWriteThrough(result: WriteThroughResult): void {
+  if (result.written || result.skipped === 'no_repo_configured' || result.skipped === 'disabled_by_config') return;
+  throw new OperationError(
+    'storage_error',
+    `put_page: the page content could not be written to disk (${result.skipped ?? result.error}).`,
+    'Check that the configured repo path exists and is writable, then retry.',
+  );
+}
 
 // v0.31.2: isFactsBackstopEligible moved to src/core/facts/eligibility.ts
 // so sync.ts, file_upload, code_import, and runFactsBackstop all share one

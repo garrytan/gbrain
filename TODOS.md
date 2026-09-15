@@ -9272,3 +9272,38 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   pin in `test/chronicle-ontology-private-visibility.test.ts` and the
   e2e content-privacy suite). **Context:** filed from the #4881 adoption
   (refuter amendment). **Effort:** S.
+
+## v0.50.2.0 persistence and verification follow-ups
+
+- [ ] **P3 — historical migration banner accuracy.** The source-owned v0.32.2
+  feature pitch still promises full database reconstruction from Markdown and
+  refers to an unsupported `--write` flag. Align it with the corrected
+  `skills/migrations/v0.32.2.md` guide, preserving preview/retry behavior and
+  separate backups for DB-only knowledge. The guide is current; the historical
+  banner remains documentation debt.
+
+- [ ] **P2 — durable contention queue and caller revision preconditions (#5105).**
+  The collector rejects a busy worktree before changing the page and reports
+  that the write was not queued. Add a separately reviewed acceptance/replay
+  contract and revision check before claiming queued or conflict-safe writes.
+  Preserve source authorization, cancellation, and idempotency across replay.
+
+- [ ] **P2 — file/database commit-failure recovery.** A crash or database commit
+  failure after atomic rename can leave canonical Markdown ahead of the index.
+  Add fault injection at that boundary and a reconciler with explicit recovery
+  semantics before claiming crash-atomic persistence. Do not treat a Markdown
+  rebuild as recovery of DB-only knowledge or operational state.
+
+- [ ] **P2 — reviewed historical fact and stub repair (#5110, #5111).** New
+  unresolved facts retain provenance without inventing an entity page, and the
+  fence migration skips references without a canonical page. Existing unmatched
+  facts, empty stubs, and fence drift still need a source-scoped preview and
+  backup-backed repair plan. Never erase facts or fabricate backing pages just
+  to improve a parity count.
+
+- [ ] **P3 — native host and client verification for v0.50.2.0.** Exercise the
+  Windows process probe and subdirectory sync on Windows, then verify the
+  installed hosted launcher and read-only OAuth bootstrap in the intended
+  ChatGPT/Claude harness. Injected platform tests and SDK/HTTP tests do not prove
+  those native integrations. Live provider checks require separate consent and
+  configured credentials.

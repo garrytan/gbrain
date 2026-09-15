@@ -86,6 +86,16 @@ describe('pglite-lock', () => {
     await releaseLock(lock);
   });
 
+  test('lock file preserves argv boundaries (#5072)', async () => {
+    const lock = await acquireLock(TEST_DIR);
+    try {
+      const lockData = JSON.parse(readFileSync(join(TEST_DIR, '.gbrain-lock', 'lock'), 'utf-8'));
+      expect(lockData.argv).toEqual(process.argv.slice(1));
+    } finally {
+      await releaseLock(lock);
+    }
+  });
+
   test('releases lock on disconnect even if DB close fails', async () => {
     const lock = await acquireLock(TEST_DIR);
     expect(lock.acquired).toBe(true);
@@ -474,7 +484,7 @@ describe('pglite-lock PID-reuse detection', () => {
     try { return readlinkSync('/proc/self/ns/pid'); } catch { return null; }
   }
 
-  function writeHolderAt(dataDir: string, pid: number, command: string, opts?: { subcommand?: string; bootId?: string | null; pidNs?: string | null }) {
+  function writeHolderAt(dataDir: string, pid: number, command: string, opts?: { subcommand?: string; bootId?: string | null; pidNs?: string | null; argv?: unknown }) {
     const lockDir = join(dataDir, '.gbrain-lock');
     mkdirSync(lockDir, { recursive: true });
     const now = Date.now();
@@ -483,6 +493,7 @@ describe('pglite-lock PID-reuse detection', () => {
       acquired_at: now - 60_000,
       refreshed_at: now - 60_000,
       command,
+      argv: opts?.argv,
       boot_id: opts?.bootId === undefined ? currentBootId() : opts.bootId,
       pid_ns: opts?.pidNs === undefined ? currentPidNs() : opts.pidNs,
       ...(opts?.subcommand === undefined ? {} : { subcommand: opts.subcommand }),
@@ -509,12 +520,46 @@ describe('pglite-lock PID-reuse detection', () => {
     throw new Error(`child ${pid} never exec'd into ${pattern}`);
   }
 
+  for (const [script, structured] of [
+    ['/Users/Example User/project/src/cli.ts', true],
+    ['/Users/Example User/project/src/cli.ts', false],
+    ['C:\\Users\\Example User\\project\\src\\cli.ts', true],
+    ['C:\\Users\\Example User\\project\\src\\cli.ts', false],
+  ] as const) {
+    test.skipIf(!canProbe)(`does not reap a live holder with ${structured ? 'structured' : 'legacy'} argv path ${script} (#5072)`, async () => {
+      const holder = Bun.spawn(['bash', '-c', 'exec -a "bun run src/cli.ts serve --http" sleep 60'], {
+        stdout: 'ignore', stderr: 'ignore',
+      });
+      try {
+        await waitForExec(holder.pid, /src\/cli\.ts/);
+        writeHolderAt(TEST_DIR, holder.pid, `${script} serve --http`, {
+          subcommand: 'serve', argv: structured ? [script, 'serve', '--http'] : undefined,
+        });
+        let stolen: LockHandle | undefined;
+        try {
+          await expect((async () => { stolen = await acquireLock(TEST_DIR, { timeoutMs: 200 }); })())
+            .rejects.toThrow(/already open through `gbrain serve`/);
+          const data = JSON.parse(readFileSync(join(TEST_DIR, '.gbrain-lock', 'lock'), 'utf-8'));
+          expect(data.pid).toBe(holder.pid);
+        } finally {
+          if (stolen) await releaseLock(stolen);
+        }
+      } finally {
+        holder.kill();
+        await holder.exited;
+        rmSync(join(TEST_DIR, '.gbrain-lock'), { recursive: true, force: true });
+      }
+    });
+  }
+
   test.skipIf(!canProbe)('reaps a lock whose PID was recycled by an unrelated program', async () => {
     // `sleep` is a live process that is provably NOT the gbrain holder.
     const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
     try {
       await waitForExec(squatter.pid, /sleep/);
-      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve' });
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', {
+        subcommand: 'serve', argv: ['/home/user/.bun/bin/gbrain', 'serve', '--http'],
+      });
 
       const lock = await acquireLock(TEST_DIR, { timeoutMs: 5000 });
       try {
@@ -538,7 +583,9 @@ describe('pglite-lock PID-reuse detection', () => {
     const holder = Bun.spawn(['bash', '-c', 'sleep 60; exit 0', 'gbrain-fake-holder'], { stdout: 'ignore', stderr: 'ignore' });
     try {
       await waitForExec(holder.pid, /gbrain-fake-holder/);
-      writeHolderAt(TEST_DIR, holder.pid, 'gbrain-fake-holder embed', { subcommand: 'embed' });
+      writeHolderAt(TEST_DIR, holder.pid, 'gbrain-fake-holder embed', {
+        subcommand: 'embed', argv: ['gbrain-fake-holder', 'embed'],
+      });
 
       await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
       // Live holder's lock was never stolen.
@@ -560,7 +607,9 @@ describe('pglite-lock PID-reuse detection', () => {
     const holder = Bun.spawn(['bash', '-c', 'sleep 60; exit 0', 'bun run src/cli.ts serve --http'], { stdout: 'ignore', stderr: 'ignore' });
     try {
       await waitForExec(holder.pid, /cli\.ts/);
-      writeHolderAt(TEST_DIR, holder.pid, '/home/user/checkouts/brain-project/src/cli.ts serve --http', { subcommand: 'serve' });
+      writeHolderAt(TEST_DIR, holder.pid, '/home/user/checkouts/brain-project/src/cli.ts serve --http', {
+        subcommand: 'serve', argv: ['/home/user/checkouts/brain-project/src/cli.ts', 'serve', '--http'],
+      });
 
       await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/already open through `gbrain serve`/);
       expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
@@ -576,7 +625,9 @@ describe('pglite-lock PID-reuse detection', () => {
     const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
     try {
       await waitForExec(squatter.pid, /sleep/);
-      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve', pidNs: 'pid:[1]' });
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', {
+        subcommand: 'serve', pidNs: 'pid:[1]', argv: ['/home/user/.bun/bin/gbrain', 'serve', '--http'],
+      });
 
       await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/already open through `gbrain serve`/);
       expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
@@ -608,7 +659,9 @@ describe('pglite-lock PID-reuse detection', () => {
     const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
     try {
       await waitForExec(squatter.pid, /sleep/);
-      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve', bootId: null });
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', {
+        subcommand: 'serve', bootId: null, argv: ['/home/user/.bun/bin/gbrain', 'serve', '--http'],
+      });
 
       await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/already open through `gbrain serve`/);
       expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
@@ -633,7 +686,9 @@ describe('pglite-lock PID-reuse detection', () => {
     const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
     try {
       await waitForExec(squatter.pid, /sleep/);
-      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve' });
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', {
+        subcommand: 'serve', argv: ['/home/user/.bun/bin/gbrain', 'serve', '--http'],
+      });
 
       const results = await Promise.allSettled([
         acquireLock(TEST_DIR, { timeoutMs: 5000 }),

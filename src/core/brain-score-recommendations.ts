@@ -232,25 +232,6 @@ export function computeRecommendations(
   const source = ctx.sourceId ?? 'default';
 
   // ---------------------------------------------------------------------
-  // sync.repo — fires when sync hasn't run recently OR pages are stale
-  // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
-    const params = { repoPath: ctx.repoPath, sourceId: ctx.sourceId, noEmbed: true };
-    out.push({
-      id: 'sync.repo',
-      job: 'sync',
-      params,
-      idempotency_key: idemKey(source, 'sync', params),
-      severity: health.stale_pages > 50 ? 'high' : 'medium',
-      est_seconds: Math.min(600, 30 + health.stale_pages * 0.5),
-      est_usd_cost: 0,  // sync is fs+DB only
-      depends_on: [],
-      rationale: `${health.stale_pages} stale page${health.stale_pages === 1 ? '' : 's'} on disk`,
-      status: 'remediable',
-    });
-  }
-
-  // ---------------------------------------------------------------------
   // embed.stale — missing embeddings AND/OR the NULL-signature cohort
   // (unknown-provenance vectors that the grandfather clause would otherwise
   // keep in a previous model's space forever). Critical: invisible to (or
@@ -295,8 +276,7 @@ export function computeRecommendations(
       severity: 'critical',
       est_seconds: Math.min(3600, 5 + (health.missing_embeddings + nullSigCohort) * 0.05),
       est_usd_cost,
-      // sync should run first so embed sees fresh pages.
-      depends_on: ctx.repoPath && health.stale_pages > 0 ? ['sync.repo'] : [],
+      depends_on: [],
       rationale: rationaleParts.join('; '),
       status: 'remediable',
     });
@@ -321,26 +301,18 @@ export function computeRecommendations(
     });
   }
 
-  // ---------------------------------------------------------------------
-  // extract.all — runs after sync to materialize links + timeline.
-  // Triggered when sync.repo fires (because sync was set to noEmbed:true,
-  // and noExtract:true after T5 lands → extract job is the materializer).
-  // ---------------------------------------------------------------------
-  if (ctx.repoPath && health.stale_pages > 0) {
-    // #3957: carry the source id so the extract job's fs-walk rows land in
-    // (and its watermark stamp targets) the brain source that owns repoPath —
-    // not the 'default' fallback that silently no-ops on federated brains.
-    const params = { mode: 'all', dir: ctx.repoPath, ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}) };
+  if (health.stale_pages > 0) {
+    const params = { stale: true, ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}) };
     out.push({
-      id: 'extract.all',
+      id: 'extract.stale',
       job: 'extract',
       params,
       idempotency_key: idemKey(source, 'extract', params),
-      severity: 'medium',
-      est_seconds: Math.min(600, 30 + health.page_count * 0.01),
+      severity: health.stale_pages > 50 ? 'high' : 'medium',
+      est_seconds: Math.min(600, 30 + health.stale_pages * 0.01),
       est_usd_cost: 0,
-      depends_on: ['sync.repo'],
-      rationale: 'Materialize link + timeline edges from fresh pages',
+      depends_on: [],
+      rationale: `Materialize link + timeline edges for ${health.stale_pages} stale database page${health.stale_pages === 1 ? '' : 's'}`,
       status: 'remediable',
     });
   }

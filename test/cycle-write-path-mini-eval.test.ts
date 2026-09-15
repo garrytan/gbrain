@@ -258,7 +258,7 @@ describe('F-Eval: hermetic write-path mini-eval (real phase, scripted transport)
     }
   }, 120_000);
 
-  test('kill switch: quote_verify=false leaves fabricated quotes intact and reports quote_verify null; a declining child counts in children_zero_pages', async () => {
+  test('kill switch: quote_verify=false leaves fabricated quotes intact and reports quote_verify null; a declining required-write child stays incomplete', async () => {
     const brainDir2 = mkdtempSync(join(tmpdir(), 'gbrain-minieval-brain2-'));
     const corpusDir2 = mkdtempSync(join(tmpdir(), 'gbrain-minieval-corpus2-'));
     try {
@@ -295,9 +295,12 @@ describe('F-Eval: hermetic write-path mini-eval (real phase, scripted transport)
       const result = await withEnv({ ANTHROPIC_API_KEY: 'sk-test-mini-eval' }, () =>
         runPhaseSynthesize(engine, { brainDir: brainDir2, dryRun: false }));
       expect(result.status).toBe('ok');
-      const d = result.details as { written_slugs: string[]; synthesis: { quote_verify: unknown; children_zero_pages: number } };
+      const d = result.details as { written_slugs: string[]; child_outcomes: Array<{ status: string }>; synthesis: { quote_verify: unknown; children_zero_pages: number; non_completed_jobs: number } };
       expect(d.synthesis.quote_verify).toBeNull();               // pass skipped entirely
-      expect(d.synthesis.children_zero_pages).toBe(1);           // rule-D decliner counted
+      expect(d.synthesis.children_zero_pages).toBe(0);
+      expect(d.synthesis.non_completed_jobs).toBe(1);
+      expect(d.child_outcomes.filter(child => child.status !== 'completed')).toEqual([expect.objectContaining({ status: 'dead' })]);
+      expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBe('');
       const killSlug = d.written_slugs.find(s => s.includes('killswitch'));
       expect(killSlug).toBeDefined();
       const page = await engine.getPage(killSlug!, { sourceId: 'default' });

@@ -3,7 +3,24 @@
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only.
 
-`test/e2e/serve-http-oauth.test.ts` additionally pins confidential POST/Basic revocation, public-client SDK fallthrough, malformed/mixed authentication rejection, cross-client isolation, unknown-token opacity, metadata auth methods, no-store responses, strict post-revoke `401`, and retryable backend `503` semantics.
+`test/e2e/serve-http-oauth.test.ts` additionally pins confidential POST/Basic revocation, public-client SDK fallthrough, malformed/mixed authentication rejection, cross-client isolation, unknown-token opacity, metadata auth methods, no-store responses, strict post-revoke `401`, and retryable backend `503` semantics. SDK-driven discovery and real owner-approved PKCE also pin read-only bootstrap, explicit writer requests, scope clamping, and DCR delegation refusal. `test/oauth-scope-hint.test.ts` exercises the actual SDK middleware over HTTP without requiring a database.
+
+`test/put-page-persistence.test.ts` and `test/e2e/put-page-persistence-postgres.test.ts`
+pin the ordinary-error persistence boundary: contention does not publish a
+revision, filesystem failure rolls back the database transaction, embedding
+failure preserves the saved page, and a slow embed releases the page-owned
+worktree lock. The PGLite suite also covers source-path bookkeeping failure,
+legacy hashes, deletion/recreation, and secret-safe embedding diagnostics.
+Neither suite proves crash-atomic filesystem/database commit or a durable queue.
+
+`test/subagent-required-writes.test.ts` and
+`test/subagent-put-page-rejection.serial.test.ts` distinguish a persisted write
+from prose-only completion, rejected imports, and historical rejected ledger
+envelopes across the Anthropic, gateway, and oneshot lanes. Unchanged saves,
+optional-write jobs, and saved pages with failed enrichment are positive controls.
+`test/cycle/global-freshness-postcondition.serial.test.ts` exercises the registered
+maintenance handler with failed phases, incomplete children, budget deferrals,
+abort/lock loss, and successful warning-only controls.
 
 ### Test command tiers
 

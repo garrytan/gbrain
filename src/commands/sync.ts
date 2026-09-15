@@ -116,6 +116,7 @@ import {
   isWithinRoot,
   resolveNoEmbed,
   discoverGitRoot,
+  gitRelativePath,
 } from '../core/sync-git.ts';
 import {
   readSyncAnchor,
@@ -1567,8 +1568,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `Refusing to sync: possible path traversal via --src-subpath.`,
     );
   }
-  // Relative path from git root to sync scope ('' when scope == root).
-  const syncScopeRelPath = syncScopeRoot === gitContextRoot ? '' : relative(gitContextRoot, syncScopeRoot);
+  const syncScopeRelPath = gitRelativePath(gitContextRoot, syncScopeRoot);
   const scoped = syncScopeRelPath !== '';
   // Anchor written back to sync state (sources.local_path / sync.repo_path):
   // the SCOPE path, so a follow-up bare `gbrain sync` auto-discovers the same
@@ -4309,7 +4309,7 @@ async function performFullSync(
     // whose source_path lives outside the subpath (e.g. from an earlier
     // root-level sync of this source) are out of this walk's sight and must
     // not be treated as stale.
-    const scopePrefix = slugRoot ? relative(gitContextRoot, syncScopeRoot) + '/' : '';
+    const scopePrefix = slugRoot ? gitRelativePath(gitContextRoot, syncScopeRoot) + '/' : '';
     // 'malformed-path' rows ARE reconcile-eligible: junk filenames (bracket /
     // control-char paths minted by misbehaving producers) can never be
     // re-imported, so their rows are permanent search pollution unless the

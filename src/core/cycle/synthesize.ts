@@ -1232,11 +1232,11 @@ async function runPhaseSynthesizeInner(
     // still-unknown keys) AND nothing was budget-deferred (#4168 adversarial:
     // "deferred transcripts retry next cycle" is a lie if the next cycle is
     // cooldown-skipped for half a day).
-    if (failedChildren.length === 0 && budgetExhaustedDeferrals.length === 0) {
+    if (failedChildren.length === 0 && budgetExhaustedDeferrals.length === 0 && pass.deferred === 0) {
       await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
     } else {
       process.stderr.write(
-        `[dream] synthesize: ${failedChildren.length}/${childOutcomes.length} child job(s) incomplete + ${budgetExhaustedDeferrals.length} deferred — cooldown NOT stamped so the next run retries them.\n`,
+        `[dream] synthesize: ${failedChildren.length}/${childOutcomes.length} child job(s) incomplete + ${budgetExhaustedDeferrals.length} synthesis-budget deferred + ${pass.deferred} triage-deferred — cooldown NOT stamped so the next run retries them.\n`,
       );
     }
 

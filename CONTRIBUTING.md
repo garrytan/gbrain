@@ -9,7 +9,7 @@ bun install
 bun test
 ```
 
-Requires Bun 1.0+.
+Requires Bun 1.3.11 or newer, matching `package.json`.
 
 ### Windows
 

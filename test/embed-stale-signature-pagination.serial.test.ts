@@ -17,6 +17,7 @@ import {
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { embedStaleForSource, EMBED_PROBE_TEXT } from '../src/core/embed-stale.ts';
 
 const DIMS = 1536;
 const MODEL = 'openai:text-embedding-3-large';
@@ -101,6 +102,51 @@ beforeEach(async () => {
 });
 
 describe('embed --stale page-level signature reconciliation', () => {
+  test('signature drift preserves completed chunks across interrupted source drains (#5051)', async () => {
+    await seedPage('interrupted-page', [0, 1, 2].map((i) => embeddedChunk(i, 'old:model')));
+    await engine.setPageEmbeddingSignature('interrupted-page', { signature: `old:model:${DIMS}` });
+    const controller = new AbortController();
+    const first = await embedStaleForSource(engine, 'default', {
+      embeddingSignature: SIGNATURE,
+      batchSize: 1,
+      signal: controller.signal,
+      embedFn: async (texts) => texts.map(() => new Float32Array(DIMS).fill(0.003)),
+      onProgress: () => controller.abort(),
+    });
+    expect(first.invalidated).toBe(3);
+    expect(first.embedded).toBe(1);
+    expect(await pageSignature('interrupted-page')).toBe(`old:model:${DIMS}`);
+
+    const inputs: string[] = [];
+    const second = await embedStaleForSource(engine, 'default', {
+      embeddingSignature: SIGNATURE,
+      batchSize: 1,
+      embedFn: async (texts) => {
+        inputs.push(...texts.filter((text) => text !== EMBED_PROBE_TEXT));
+        return texts.map(() => new Float32Array(DIMS).fill(0.004));
+      },
+    });
+    expect(second.invalidated).toBe(0);
+    expect(second.embedded).toBe(2);
+    expect(inputs).toEqual(['embedded chunk 1', 'embedded chunk 2']);
+    expect(second.done).toBe(true);
+    expect(await pageSignature('interrupted-page')).toBe(SIGNATURE);
+  });
+
+  test('fully current vectors with a stale page stamp converge without re-embedding (#5051)', async () => {
+    await seedPage('current-vectors', [embeddedChunk(0), embeddedChunk(1)]);
+    await engine.setPageEmbeddingSignature('current-vectors', { signature: `old:model:${DIMS}` });
+    let embeddedInputs = 0;
+    transportBehavior = async (input) => {
+      embeddedInputs += input.values.filter((text) => text !== EMBED_PROBE_TEXT).length;
+      return fakeTransport(input);
+    };
+    const result = await runEmbedCore(engine, { stale: true, catchUp: true, quiet: true });
+    expect(result.embedded).toBe(0);
+    expect(embeddedInputs).toBe(0);
+    expect(await pageSignature('current-vectors')).toBe(SIGNATURE);
+  });
+
   test('page split across the 2,000-row cursor boundary is stamped after the pass', async () => {
     for (let page = 0; page < 40; page++) {
       const chunkCount = page === 39 ? 49 : 50;
