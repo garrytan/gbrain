@@ -450,6 +450,7 @@ describe('runExtractConversationFactsCore', () => {
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
+    await engine.unsetConfig('facts.default_visibility');
     await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
     await engine.setConfig('sync.repo_path', repoDir);
     // Seed test pages.
@@ -857,7 +858,8 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_skipped).toBe(0);
   });
 
-  test('writes facts with per-segment source_session AND terminal audit row (E16)', async () => {
+  test('honors the world fact default while keeping the terminal audit row private (E16)', async () => {
+    await engine.setConfig('facts.default_visibility', 'world');
     const result = await runExtractConversationFactsCore(engine, {
       sourceId: 'default',
       slug: 'conversations/imessage/alice-example',
@@ -867,11 +869,12 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.facts_inserted).toBeGreaterThan(0);
 
     // Per-segment facts present.
-    const perSegFacts = await engine.executeRaw<{ count: string | number }>(
-      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session = $2`,
+    const perSegFacts = await engine.executeRaw<{ visibility: string }>(
+      `SELECT visibility FROM facts WHERE source = $1 AND source_session = $2`,
       [PER_SEGMENT_SOURCE_PREFIX, `${PER_SEGMENT_SOURCE_PREFIX}:conversations/imessage/alice-example`],
     );
-    expect(Number(perSegFacts[0]?.count ?? 0)).toBeGreaterThan(0);
+    expect(perSegFacts.length).toBeGreaterThan(0);
+    expect(perSegFacts.every((row) => row.visibility === 'world')).toBe(true);
 
     const validTimes = await engine.executeRaw<{ valid_from: Date }>(
       `SELECT valid_from FROM facts
@@ -885,12 +888,27 @@ describe('runExtractConversationFactsCore', () => {
     ]);
 
     // Terminal audit row present.
-    const terminalRows = await engine.executeRaw<{ count: string | number }>(
-      `SELECT COUNT(*) AS count FROM facts
+    const terminalRows = await engine.executeRaw<{ visibility: string }>(
+      `SELECT visibility FROM facts
         WHERE source = $1 AND source_session LIKE $2`,
       [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example:page-%`],
     );
-    expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
+    expect(terminalRows).toEqual([{ visibility: 'private' }]);
+  });
+
+  test('keeps extracted conversation facts private when the default is unset', async () => {
+    await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+
+    const rows = await engine.executeRaw<{ visibility: string }>(
+      `SELECT visibility FROM facts WHERE source = $1`,
+      [PER_SEGMENT_SOURCE_PREFIX],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.visibility === 'private')).toBe(true);
   });
 
   test('canonicalizes a raw LLM entity display name before writing facts.entity_slug', async () => {
