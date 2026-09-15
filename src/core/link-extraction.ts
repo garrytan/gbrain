@@ -848,16 +848,21 @@ export async function extractPageLinks(
   }
 
   // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`
-  // field along with the full field map. Caller can suppress via
-  // `opts.skipFrontmatter` — used by `extractLinksFromDB` to keep
+  // field along with the full field map. Caller can suppress the BUILT-IN
+  // map via `opts.skipFrontmatter` — used by `extractLinksFromDB` to keep
   // `--include-frontmatter` off semantics while still passing a real
   // resolver (needed for `resolveBasenameMatches` in global-basename
   // mode). Pre-issue-#972 this gating lived in the caller via a
   // synthetic `nullResolver`; that pattern broke once the bare-wikilink
   // path needed `resolveBasenameMatches` on the real resolver.
+  //
+  // Pack-declared `frontmatter_links` are an explicit operator opt-in, so
+  // they still run in that mode (pack-only pass; rules that mirror a
+  // built-in stay gated with it).
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
-  if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack);
+  const packOnly = Boolean(opts.skipFrontmatter);
+  if (!packOnly || (pack && pack.frontmatter_links.length > 0)) {
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack, packOnly);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -1161,6 +1166,15 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
   { fields: ['related', 'see_also'], type: 'related_to', direction: 'outgoing', dirHint: '' },
 ];
 
+/**
+ * `${pageType ?? ''}\u0000${field}` for every FRONTMATTER_LINK_MAP row. A
+ * pack rule keyed the same way mirrors a built-in (the shipped base pack
+ * re-declares all of them) and stays gated with it under `packOnly`.
+ */
+const BUILTIN_FRONTMATTER_KEYS = new Set(
+  FRONTMATTER_LINK_MAP.flatMap(m => m.fields.map(f => `${m.pageType ?? ''}\u0000${f}`)),
+);
+
 // ─── Slug resolver ──────────────────────────────────────────────
 
 export interface SlugResolver {
@@ -1445,6 +1459,7 @@ export async function extractFrontmatterLinks(
   resolver: SlugResolver,
   globalBasename = false,
   pack?: LinkExtractionPack | null,
+  packOnly = false, // skip FRONTMATTER_LINK_MAP (and pack rules mirroring it); operator-added pack rules still run
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
@@ -1464,6 +1479,7 @@ export async function extractFrontmatterLinks(
       for (const field of fl.fields) {
         if (seenFields.has(field)) continue;
         seenFields.add(field);
+        if (packOnly && (BUILTIN_FRONTMATTER_KEYS.has(`${pageType}\u0000${field}`) || BUILTIN_FRONTMATTER_KEYS.has(`\u0000${field}`))) continue;
         const type = frontmatterLinkTypeFromPack(pack, pageType as string, field);
         if (!type) continue; // no pack rule for this page type
         packMappings.push({ fields: [field], type, direction: 'outgoing', dirHint: '' });
@@ -1471,7 +1487,7 @@ export async function extractFrontmatterLinks(
     }
   }
 
-  for (const mapping of [...FRONTMATTER_LINK_MAP, ...packMappings]) {
+  for (const mapping of [...(packOnly ? [] : FRONTMATTER_LINK_MAP), ...packMappings]) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];

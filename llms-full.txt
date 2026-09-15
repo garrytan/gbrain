@@ -3623,7 +3623,17 @@ version bump changes it.
    (pg_resetwal semantics — data files preserved; transactions not
    checkpointed before the corruption may be lost), and retries once. On
    success it prints a loud stderr notice naming the backup and recommending
-   `gbrain doctor`. Safety bounds: repair only runs under a cleanly-acquired
+   `gbrain doctor`. **The reset does not rebuild indexes.** pg_resetwal's
+   documented hazard applies: a heap page flushed ahead of its index pages
+   leaves a row that `gbrain get` and keyword search find but the HNSW vector
+   index does not, so that page is unreachable by vector search at any
+   candidate limit — and `gbrain doctor` cannot see it (its index probes are
+   Postgres-only, and the data-dir check only runs when connect fails). Verify
+   after a repair with `gbrain search diagnose "<phrase from a recently written
+   page>" --target <its-slug>`: `vector rank=absent` alongside a keyword hit is
+   the signature. Recover one page with `gbrain embed <slug>` (the re-embed
+   writes fresh index entries); for many, `gbrain embed --all`, or rung 3.
+   Safety bounds: repair only runs under a cleanly-acquired
    data-dir lock (never after reaping another process's lock), skips for a
    cooldown window after a failed attempt
    (`GBRAIN_PGLITE_WAL_REPAIR_COOLDOWN_SECONDS`, default 3600), reuses one

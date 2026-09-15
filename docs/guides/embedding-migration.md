@@ -141,7 +141,9 @@ ingestion — not just new content.
    served across the swap.
 6. **Re-embed.** The standard embed pipeline (`embed --stale --catch-up`)
    with per-source single-flight locks, rate-limit backoff, stderr progress,
-   and optional DB-contention pacing (`--pace[=mode]`).
+   and optional DB-contention pacing (`--pace[=mode]`). Then
+   `gbrain embed --stale --facts` for the hot-memory fact rows — the page
+   sweep does not touch `facts.embedding`.
 
 ## What the rebuild deletes
 
@@ -149,8 +151,8 @@ The dimension change **deletes every stored embedding vector** in the brain —
 they are in the old model's space and unusable. They are not recoverable:
 going back to the previous provider means paying for a second full re-embed.
 `content_chunks` vectors are rebuilt by the re-embed pass, the query cache
-refills on the next query, and fact embeddings are rewritten on their next
-write (or a `gbrain extract` pass).
+refills on the next query, and fact embeddings are restored by
+`gbrain embed --stale --facts` (a write never re-embeds an existing row).
 
 ## Resume after a kill
 

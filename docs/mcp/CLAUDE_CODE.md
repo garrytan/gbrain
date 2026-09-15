@@ -126,7 +126,9 @@ claude mcp add gbrain -t http \
 ```
 
 Replace `YOUR-DOMAIN` with your ngrok domain and `YOUR_TOKEN` with a token from
-`gbrain auth create "claude-code"`.
+`gbrain auth create "claude-code"`. On a multi-source brain add `--source <id>`
+so the token reads and writes the source you mean — without it, a bearer token
+lands in whichever source is named `default`.
 
 > A `gbrain auth create` token is a long-lived, full-access secret. Keep it
 > private (it lands in `~/.claude.json`), and prefer a scoped/short-lived token

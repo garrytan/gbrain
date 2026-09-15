@@ -17,7 +17,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync } from '../core/spawn.ts';
 import { flushThenExit } from '../core/cli-force-exit.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../core/cli-options.ts';
 import { createProgress } from '../core/progress.ts';

@@ -35,7 +35,7 @@ import type {
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
-  FactRow, FactInsertStatus,
+  FactRow, FactInsertStatus, StaleFactRow, FactEmbeddingInput,
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
@@ -125,6 +125,7 @@ import type { PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
 import * as salienceImpl from './pglite-engine/salience.ts';
 import type { PgliteSalienceDeps } from './pglite-engine/salience.ts';
 import { searchKeywordCJK } from './pglite-engine/cjk-search.ts';
+import { entityTypesForEngine } from './schema-pack/entity-types.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -570,9 +571,12 @@ export function buildWalRepairNotice(receipt: WalRepairReceipt): string {
     `    Data dir: ${receipt.dataDir}`,
     `    Cause: torn WAL/checkpoint state from an unclean shutdown (issue #223 class).`,
     `    Data files were preserved; transactions not checkpointed before the`,
-    `    corruption may be lost (the standard pg_resetwal caveat).`,
+    `    corruption may be lost (the standard pg_resetwal caveat). Indexes were NOT`,
+    `    rebuilt: a page written just before the crash can be missing from vector`,
+    `    search while \`gbrain get\` and keyword search still find it.`,
     `    Pre-repair backup: ${receipt.backupPath}`,
-    `    Recommended: run \`gbrain doctor\` to verify brain integrity.`,
+    `    Recommended: \`gbrain doctor\`, then \`gbrain search diagnose "<phrase>" --target`,
+    `    <recent-slug>\` — vector rank absent means re-embed it: \`gbrain embed <slug>\`.`,
     `    Disable auto-repair with GBRAIN_PGLITE_WAL_REPAIR=off.`,
   ].join('\n');
 }
@@ -2514,7 +2518,7 @@ export class PGLiteEngine implements BrainEngine {
            -- OCR text doesn't drown text-page hits. Image-similarity queries
            -- run a separate vector path on embedding_image.
            AND cc.modality = 'text'
-         ORDER BY score DESC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $2
        ),
        ${buildBestPerPagePoolCte('ranked')}
@@ -2802,7 +2806,7 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages p ON p.id = cc.page_id
        JOIN sources s ON s.id = p.source_id
        WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-       ORDER BY score DESC
+       ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $2 OFFSET $3`,
       params
     );
@@ -5155,7 +5159,13 @@ export class PGLiteEngine implements BrainEngine {
   /** Narrow deps for the peeled facts module. */
   private get factsDeps(): PgliteFactsDeps {
     const self = this;
-    return { get db() { return self.db; } };
+    return {
+      get db() { return self.db; },
+      batchRetry: <T>(auditSite: BatchAuditSite, signal: AbortSignal | undefined, fn: () => Promise<T>, batchSize: number) =>
+        self.batchRetry(auditSite, signal, fn, batchSize),
+      executeRawJsonb: <R = Record<string, unknown>>(sqlText: string, scalarParams: SqlValue[], jsonbParams: unknown[]) =>
+        executeRawJsonb<R>(self, sqlText, scalarParams, jsonbParams),
+    };
   }
 
   async insertFact(
@@ -5239,6 +5249,14 @@ export class PGLiteEngine implements BrainEngine {
 
   async getFactsHealth(source_id: string): Promise<FactsHealth> {
     return factsImpl.getFactsHealth(this.factsDeps, source_id);
+  }
+
+  async listFactsNeedingEmbedding(opts: { limit: number; afterId?: number; sourceId?: string | null }): Promise<StaleFactRow[]> {
+    return factsImpl.listFactsNeedingEmbedding(this.factsDeps, opts);
+  }
+
+  async updateFactEmbeddings(rowsIn: FactEmbeddingInput[], opts?: BatchOpts): Promise<number> {
+    return factsImpl.updateFactEmbeddings(this.factsDeps, rowsIn, opts);
   }
 
   // ============================================================
@@ -5549,7 +5567,11 @@ export class PGLiteEngine implements BrainEngine {
     // (bound as $1, never interpolated; both-endpoint rule for link-derived
     // numbers; out-of-scope endpoints can't rescue a page from orphan-hood).
     const scope: string[] | null = opts?.sourceIds ?? (opts?.sourceId ? [opts.sourceId] : null);
-    const colId = await this.activeEmbeddingColId({ fallbackToLegacy: true });
+    // #4772: entity types come from the active pack (+ legacy literals), bound
+    // as $2 text[] — deliberately pack-aware where onboard's checks.ts predicate
+    // is still literal (that flip changes what extract-ner is asked to write).
+    const [colId, entityTypes] =
+      await Promise.all([this.activeEmbeddingColId({ fallbackToLegacy: true }), entityTypesForEngine(this)]);
     const { rows: [h] } = await this.db.query(`
       WITH scoped_pages AS (
         SELECT id, slug, frontmatter, deleted_at, source_id FROM pages p
@@ -5557,10 +5579,9 @@ export class PGLiteEngine implements BrainEngine {
       ),
       entity_pages AS (
         -- #4280: quarantined entity shells are not served memory — keep them
-        -- out of the link/timeline coverage denominators (parity with
-        -- onboard's VISIBLE_ENTITY_PREDICATE).
+        -- out of the link/timeline coverage denominators.
         SELECT id, slug FROM scoped_pages WHERE id IN (
-          SELECT id FROM pages WHERE type IN ('entity', 'person', 'company') AND deleted_at IS NULL
+          SELECT id FROM pages WHERE type = ANY($2::text[]) AND deleted_at IS NULL
             AND ${quarantineFilterFragment('pages')}
         )
       )
@@ -5615,7 +5636,7 @@ export class PGLiteEngine implements BrainEngine {
         (SELECT count(*) FROM entity_pages e
          WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
           GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
-    `, [scope]);
+    `, [scope, entityTypes]);
 
     // Top 5 most connected entities by total link count (in + out).
     // X8 (#4592): a degree counts an edge only when its FAR endpoint is in
@@ -5631,12 +5652,12 @@ export class PGLiteEngine implements BrainEngine {
                            OR EXISTS (SELECT 1 FROM pages fp WHERE fp.id = l.from_page_id AND fp.source_id = ANY($1))))
              )::int as link_count
       FROM pages p
-      WHERE p.type IN ('entity', 'person', 'company') AND p.deleted_at IS NULL
+      WHERE p.type = ANY($2::text[]) AND p.deleted_at IS NULL
         AND ${QUARANTINE_FILTER_FRAGMENT}
         AND ($1::text[] IS NULL OR p.source_id = ANY($1))
       ORDER BY link_count DESC
       LIMIT 5
-    `, [scope]);
+    `, [scope, entityTypes]);
 
     // Per-page flags for the linkable scope: orphan_pages and the
     // no-orphans / timeline-coverage DENOMINATORS are all computed over

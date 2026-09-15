@@ -22,7 +22,7 @@
  * gate. See plan note "v0.41.27.1+ TODOs" in
  * ~/.claude/plans/system-instruction-you-are-working-eager-bird.md.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 
 export type GitHeadProbe = (localPath: string) => string | null;
 // `null` distinguishes probe error from known-dirty (false). Doctor treats

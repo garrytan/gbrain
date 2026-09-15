@@ -123,6 +123,11 @@ Every read + write path consults the active pack at runtime:
 - **`extract_facts`** runs only on `extractable: true` types.
 - **`enrichment-service`** routes person/company enrichment based on the
   pack's primitive declarations.
+- **`gbrain health`, doctor's graph-coverage / orphan-ratio checks, and the
+  post-init nudge** count entity pages from the pack's `primitive: entity`
+  types unioned with the legacy `entity` / `person` / `company` /
+  `organization` literals (`src/core/schema-pack/entity-types.ts`), so a
+  pack-declared entity type counts as soon as the pack is active.
 - **Search hybrid cache** (`knobsHash`) folds in pack name + version.
   A cache row written under pack A is unreachable when pack
   B is active. Cross-pack contamination is structurally impossible.

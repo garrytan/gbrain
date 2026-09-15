@@ -121,7 +121,7 @@ describe('runInitEmbedCheck — live probe (best-effort)', () => {
     // seam bypasses the SDK call, not the auth-resolution step).
     await withEnv({ OPENAI_API_KEY: 'sk-test' }, async () => {
       __setEmbedTransportForTests(async (args: any) => ({
-        embeddings: (args.values as string[]).map(() => new Array(1536).fill(0)),
+        embeddings: (args.values as string[]).map(() => new Array(1536).fill(1e-3) /* non-zero: the gateway rejects zero-norm vectors (#4616) */),
         usage: { tokens: 1 },
       }) as any);
       const { warn, warned } = capture();

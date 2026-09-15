@@ -21,7 +21,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, uti
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'path';
-import { execSync } from 'child_process';
+import { execSync } from '../core/spawn.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig, loadConfigFileOnly, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';

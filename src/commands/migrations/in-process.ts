@@ -21,7 +21,7 @@
  * `getaddrinfo ENOTFOUND` line instead of the bare `Command failed: ...`.
  */
 
-import { execSync } from 'child_process';
+import { execSync } from '../../core/spawn.ts';
 
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';

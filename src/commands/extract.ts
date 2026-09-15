@@ -675,7 +675,11 @@ export async function extractLinksFromFile(
     }
   }
 
-  if (opts?.includeFrontmatter) {
+  // Same gate as extractPageLinks: without includeFrontmatter only the
+  // pack-declared rules run (pack-only pass), so the FS walk and the cycle's
+  // incremental FS pass agree with the DB path on which edges a page gets.
+  const packOnly = !opts?.includeFrontmatter;
+  if (!packOnly || (pack && pack.frontmatter_links.length > 0)) {
     // Synthetic sync-ish resolver: only does step 1 (already a slug) and
     // step 2 (dir-hint + slugify via normalizeBasename — #2367: was an inline
     // ASCII-only clone that emptied CJK names and mis-folded accents).
@@ -709,7 +713,7 @@ export async function extractLinksFromFile(
     // #3190: thread the pack so pack-declared frontmatter_links fire on the
     // FS path too (globalBasename false here — the synthetic resolver has no
     // basename index).
-    const fmLinks = await extractFrontmatterLinks(slug, guessedPageType as never, fm, fsResolver, false, pack);
+    const fmLinks = await extractFrontmatterLinks(slug, guessedPageType as never, fm, fsResolver, false, pack, packOnly);
     for (const c of fmLinks.candidates) {
       links.push({
         from_slug: c.fromSlug ?? slug,

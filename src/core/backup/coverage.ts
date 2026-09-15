@@ -19,7 +19,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';

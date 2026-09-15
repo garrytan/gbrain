@@ -31,7 +31,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../../core/spawn.ts';
 
 import type {
   Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult,

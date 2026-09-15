@@ -19,7 +19,7 @@
  * descriptor covers both processes — not a per-call EPIPE swallow.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn } from '../spawn.ts';
 import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveAuditDir } from '../audit/audit-writer.ts';

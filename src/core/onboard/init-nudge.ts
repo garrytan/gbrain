@@ -6,16 +6,18 @@
 // Hard contract per A18: init MUST succeed even if the nudge crashes.
 // Any throw in this module is caught + logged to stderr + suppressed.
 // Per A20: the 3-second cap uses real cancellation via the AbortSignal
-// extension on executeRaw (T5) — Promise.race against a timer was the
-// codex #7 finding's wrong shape. Cancelled queries actually stop on
-// Postgres; PGLite has a documented gap.
+// extension on executeRaw (T5), so cancelled counts actually stop on
+// Postgres (PGLite has a documented gap). The schema-pack lookup takes no
+// signal, so it is raced against its own shorter timer instead.
 //
 // Bypass: GBRAIN_NO_ONBOARD_NUDGE=1 short-circuits. Non-TTY default
 // also short-circuits (CI/scripted callers see nothing).
 
 import type { BrainEngine } from '../engine.ts';
+import { entityTypesForEngine, LEGACY_ENTITY_TYPES } from '../schema-pack/entity-types.ts';
 
 const NUDGE_BUDGET_MS = 3000;
+const PACK_LOOKUP_BUDGET_MS = 1000;
 
 /**
  * Post-initSchema nudge. Fail-open per A18.
@@ -38,6 +40,22 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), NUDGE_BUDGET_MS);
 
+    // #4772: entity types = active pack's primitive:entity types + legacy
+    // literals (same set getHealth / doctor count), bound as $1 text[]. The
+    // pack lookup (`getConfig('schema_pack')`) takes no signal, so it gets its
+    // own 1 s sub-budget: if it loses, the legacy floor is used and the counts
+    // still run inside the remaining nudge budget. (Falling back only at the
+    // 3 s mark would hand every count an already-aborted signal — both real
+    // engines throw AbortError on it — and print the "incomplete" notice.)
+    let packTimer: ReturnType<typeof setTimeout> | undefined;
+    const entityTypes = await Promise.race([
+      entityTypesForEngine(engine),
+      new Promise<string[]>(res => {
+        packTimer = setTimeout(() => res([...LEGACY_ENTITY_TYPES]), PACK_LOOKUP_BUDGET_MS);
+      }),
+    ]);
+    clearTimeout(packTimer);
+
     let totalStale = 0;
     let totalEntities = 0;
     let linkedCount = 0;
@@ -59,25 +77,25 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
       ),
       engine.executeRaw<{ count: string | number }>(
         `SELECT COUNT(*) AS count FROM pages
-           WHERE type IN ('person', 'company', 'organization', 'entity')
+           WHERE type = ANY($1::text[])
              AND deleted_at IS NULL`,
-        [],
+        [entityTypes],
         { signal: controller.signal },
       ),
       engine.executeRaw<{ count: string | number }>(
         `SELECT COUNT(*) AS count FROM pages p
-           WHERE p.type IN ('person', 'company', 'organization', 'entity')
+           WHERE p.type = ANY($1::text[])
              AND p.deleted_at IS NULL
              AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)`,
-        [],
+        [entityTypes],
         { signal: controller.signal },
       ),
       engine.executeRaw<{ count: string | number }>(
         `SELECT COUNT(*) AS count FROM pages p
-           WHERE p.type IN ('person', 'company', 'organization', 'entity')
+           WHERE p.type = ANY($1::text[])
              AND p.deleted_at IS NULL
              AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)`,
-        [],
+        [entityTypes],
         { signal: controller.signal },
       ),
       engine.executeRaw<{ count: string | number }>(

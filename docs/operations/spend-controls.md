@@ -63,6 +63,7 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | refuse without a cap (non-TTY) | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker | — | **not** consulted (phase budget enforces regardless) |
+| Dream `synthesize_concepts` phase budget | `cycle.synthesize_concepts.budget_usd` | `1.50` | no — past the cap T1/T2 groups get deterministic stubs (`budget_fallback`), run still reports ok | — | **not** consulted |
 
 The `extract_atoms` cap is enforced only for models in the pricing maps. A model
 the tracker cannot price — e.g. a local Ollama model selected via

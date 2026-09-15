@@ -1,5 +1,41 @@
 # TODOS
 
+## Community fix wave 2 follow-ups (filed 2026-09-15)
+
+- [ ] **P3 — hand the semantic-cache lookup embedding to `hybridSearch` when the result cache returns (#4839).**
+  **What:** `hybridSearchCached` (`src/core/search/hybrid.ts`) embeds the query for the
+  `query_cache` similarity lookup and, on a miss, `hybridSearch` embeds the same query
+  again — two provider calls per search. Masked today: `semanticResultCacheAvailable()`
+  (`src/core/search/query-cache.ts`) returns `false`, so the lookup embed is unreachable
+  and every search embeds exactly once; the root cause (no embedding hand-off from the
+  cached wrapper to the inner search) comes back the moment the cache is re-enabled.
+  **How:** add `_queryEmbedding?: Float32Array` beside `_queryEmbedDeadline` in
+  `HybridSearchOpts`; `embedOneQuery` returns it when `q === query` (expansion variants
+  still embed); `hybridSearchCached` passes `_queryEmbedding: queryEmbedding ?? undefined`
+  alongside the deadline; build the lookup embed with the same `embedOpts` shape the inner
+  path uses so the reused vector is provably the same model/dims. ~12 lines, one file; the
+  closed PR #4840 is the template minus its cache-hit assertion. Land it WITH the cache
+  re-enable so the test exercises a real cache hit (no fails-on-master proof exists while
+  the cache is off — the reason it was not taken in the wave). **Effort:** S. **Priority:** P3.
+
+- [ ] **P2 — sweep adds pack-declared frontmatter edges but never reconciles them away.**
+  **What:** since #4982 the sweep's link pass inserts edges for operator-added schema-pack `frontmatter_links` rules on DB-born pages (link_source `frontmatter`), but its removal filter still only reconciles `markdown` / NULL / `wikilink-resolved` edges, so when a page's frontmatter list shrinks the dropped value's edge persists until `gbrain extract links --source db --include-frontmatter` rebuilds it. Widening the removal filter naively would delete built-in-map edges written by `--include-frontmatter` runs, because the sweep's desired set excludes the built-in rules. **Why:** found by the v0.50.2.0 adversarial review; the wave disclosed it in the CHANGELOG rather than change the sweep's desired-set semantics. **Fix:** compute the sweep's desired set with the built-in map included when reconciling `frontmatter` edges whose origin is the swept page, or record the rule that produced each edge. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — a single degenerate embedding vector fails its whole batch, permanently.**
+  **What:** the #4616 gateway guard throws `AIConfigError` for a zero-norm / non-finite vector and `embed()` has no per-sub-batch isolation, so one degenerate input (deterministic for some local models on whitespace- or emoji-only chunks) fails up to 100 unrelated chunks and is retried every cycle; the facts drain records only the batch error. The failure unit is the whole `embed()` call, not the sub-batch: sub-batches run sequentially and a throw in a later one discards the earlier, already-paid sub-batches of the same call. On the search path a zero-norm QUERY vector now surfaces as a provider error (the guard runs on every embedding producer, including the single-query embed). **Why:** review of v0.50.2.0; the guard is correct (HNSW would silently skip the row) but the blast radius is a design call. **Fix:** on backfill paths, retry a failed sub-batch one vector at a time and skip only the degenerate input with a named warning; keep the vectors from sub-batches that already succeeded. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — facts drain: an over-token-limit fact is counted as a failure on every run.**
+  **What:** `embed --stale --facts` has no per-row skip for a fact the provider rejects on input size, so the same fact fails on every pass and a scheduled `embed --stale --facts` exits non-zero permanently; needs a skip/quarantine analogous to `embed_skip` on the chunk path. The drain is also unpaced (`pace.mode` is not consulted). **Why:** review of v0.50.2.0. **Fix:** record the rejected fact id (skip marker or quarantine table) and exclude it from the selector; route the drain through the shared pacer. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — the zero-norm embedding guard checks float32, but `facts.embedding` / `content_chunks` store halfvec on pgvector >= 0.7.**
+  **What:** `assertIndexableEmbedding` (src/core/ai/gateway.ts) rejects a vector whose float32 norm is zero or non-finite, while the columns store half precision; a vector whose components all sit below half's smallest subnormal (~6e-8) passes the guard and flushes to all-zero on write, which HNSW then skips silently — the class #4616 set out to close. Real embeddings are unit-normalized (components ~1/sqrt(d)), so this is theoretical today. **Why:** adversarial review of v0.50.2.0. **Fix:** when the target column is halfvec, apply the norm check after a half-precision round trip (or reject components below the half subnormal floor). **Effort:** S. **Priority:** P3.
+- [ ] **P3 — the facts drain skips "over-limit" facts by the CHUNKING token budget, not the embedding provider's input limit.**
+  **What:** `embedStaleFacts` uses `resolveMaxChunkTokens()` (the page-chunking budget, hundreds of tokens) as the per-fact ceiling; embedding providers accept far more (8k+ tokens), so an unusually long fact is skipped as over-limit although it would embed. Facts are short in practice. `embed-takes.ts` shares the shape. **Why:** Codex review of v0.50.2.0. **Fix:** resolve the provider's max input tokens for the configured embedding model and use it for both drains. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — chunk-path `embed --stale --source <id>` validates the id's shape but not its existence.**
+  **What:** the facts branch refuses an unknown `--source` with `SELECT id FROM sources WHERE id = $1` before any spend; the chunk path (and the `--background` payload) only checks the id's shape, so `embed --stale --source typo` acquires `gbrain-embed-backfill:typo`, drains 0 chunks and exits 0 — a silent no-op rather than a paid mistake (an unknown source matches no rows). **Why:** review of v0.50.2.0; moving the query into the shared `sourceFlag` helper means the Proxy-engine serial suite and the mock-engine chunk tests must answer the existence query. **Fix:** make `sourceFlag` take the engine and run the existence check for both paths; update the two mocks. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — the facts drain is not mutually exclusive with `gbrain migrate embeddings`.**
+  **What:** `embed --stale --facts` single-flights on its own lock (`gbrain-embed-facts-backfill`), independent of the global and per-source locks `executeMigrationFlow` takes while it rebuilds `facts.embedding`; a migration that changes the column width after the drain's one-time preflight makes the remaining batches fail the vector cast (wasted spend, counted as failures; pgvector refuses the wrong width, so no silent corruption). **Why:** Codex review of v0.50.2.0. **Fix:** take the migration's locks (or the per-source chunk locks the migration already excludes) around the drain, or re-read `readFactsEmbeddingDim` per batch and abort with a named reason when it moves. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — the facts drain's count and selector queries take no abort signal and have no stall watchdog.**
+  **What:** `embedStaleFacts` passes the lock-heartbeat signal only to the provider call; `listFactsNeedingEmbedding` and the up-front count run unsignalled, so a wedged query keeps the process alive past a lost lock (the chunk drain has the embed-stall watchdog and signal-bound queries). **Why:** Codex review of v0.50.2.0. **Fix:** thread `opts.signal` through the two engine calls (the engines already honor `executeRaw` signals) and reuse the chunk path's stall watchdog. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `facts` has no partial index for the stale-embedding drain.**
+  **What:** `embed --stale --facts` counts and pages `WHERE embedding IS NULL AND expired_at IS NULL` on `facts` with no covering index (content_chunks got `content_chunks_stale_idx` in migration 103 for the same scan). Fine at thousands of NULL rows; a seq scan per batch at millions. Also unpaced (`pace.mode` is not consulted). **Why:** performance review of v0.50.2.0; a migration was out of scope for a fix wave. **Fix:** `CREATE INDEX CONCURRENTLY IF NOT EXISTS facts_stale_embedding_idx ON facts (id) WHERE embedding IS NULL AND expired_at IS NULL` (transaction:false; plain CREATE INDEX on PGLite) + bootstrap probe; route the drain through the shared pacer. **Effort:** S. **Priority:** P3.
 ## Community fix wave follow-ups (filed 2026-09-09)
 
 - [ ] **P3 — new v0.49/v0.50 tests assume `os.tmpdir()` is already a realpath (macOS `/var` vs `/private/var`).**
@@ -217,7 +253,7 @@
   retrieval-gate path were deferred. Triage records (verdict, evidence, fix
   sketch, key files per issue) live in the wave workspace
   `.context/wave/triage/issue/` + `.context/wave/refute/issue/` (gitignored
-  wave working state, not repo content). Deferred: #4381 #4576 #4578 #4603 #4616 #4622 #4649 #4772 #4921 (of the 0.48.5.0 wave's 26 deferrals, 17 shipped in 0.48.6.0: #4558 #4586 #4588 #4600 #4605 #4613 #4653 #4670 #4684 #4741 #4761 #4766 #4795 #4797 #4852 #4879 #4910).
+  wave working state, not repo content). Deferred: #4381 #4576 #4578 #4616 (two of its pieces shipped in 0.50.3.0) #4622 #4649 #4921; #4603 and #4772 shipped in 0.50.3.0 (of the 0.48.5.0 wave's 26 deferrals, 17 shipped in 0.48.6.0: #4558 #4586 #4588 #4600 #4605 #4613 #4653 #4670 #4684 #4741 #4761 #4766 #4795 #4797 #4852 #4879 #4910).
   Of the 0.48.1.0 wave's 27 deferrals, ten shipped in 0.48.5.0 (#4744 via
   #4933, #4729 via #4865, #4728, #4696, #4652, #4620, #4606, #4597, #4589,
   #4563), five were re-classified on verification (#4738 and #4732
@@ -631,7 +667,11 @@ deferred M-effort issues above are NOT repeated here.
   `reindex_vector` admin op + doctor self-recall reachability probe (ANN-query
   the K most recent chunks with their own vectors) + rebuild-or-flag after WAL
   repair. Design care: probe false positives (exact-scan columns, empty
-  index); inline-vs-queued rebuild after repair.
+  index); inline-vs-queued rebuild after repair. **Landed so far:** the gateway
+  rejects zero-norm / non-finite provider vectors (`assertIndexableEmbedding`),
+  and the WAL-repair notice + `docs/ENGINES.md` state that indexes are NOT
+  rebuilt, how to verify (`gbrain search diagnose`) and how to recover
+  (`gbrain embed <slug>`). Still open: the rebuild-after-repair and probe work.
 - [ ] **P3 — hoist prompt-too-long helpers to a shared module.** **What:**
   #4675 has subagent-oneshot.ts import isPromptTooLongError/
   extractPromptTooLongDetail from subagent.ts while subagent.ts imports
@@ -2011,11 +2051,14 @@ Staged-deletion discipline (ship replacements → migrate call sites → update 
   same transaction — mirror that on the bare config-set path (or fold the
   reranker model into the knobs hash, the same contamination class as
   graph_signals/relational). Filed from the migration-hardening wave review.
-- [ ] **P2 — Facts re-embed backfill command.** A dimension transition drops
-  `facts.embedding`; facts regenerate only on their next write/`gbrain extract`
-  pass. `migrate embeddings --status` + the completion output now report the
-  pending census, but there is no command to proactively re-embed the backlog.
-  Filed from the migration-hardening wave (outside-voice C5).
+- [x] **P2 — Facts re-embed backfill command.** **Completed:** v0.50.3.0 (2026-09-15).
+  `gbrain embed --stale --facts [--dry-run] [--batch-size N] [--source <id>] [--json]`
+  (`src/core/embed-facts.ts`) drains exactly the rows `migrate embeddings --status`
+  counts as facts pending, on both engines, and the status output now names the
+  command. Original ask: a dimension transition drops `facts.embedding`; facts
+  regenerated only on their next write/`gbrain extract` pass, and the status +
+  completion output reported the pending census with no command to re-embed the
+  backlog. Filed from the migration-hardening wave (outside-voice C5).
 - [ ] **P2 — Tier-preserving re-embed.** A bulk stale re-embed (embedding
   migration included) lands per_chunk_synopsis pages at the TITLE context tier
   (embedding-context.ts:211, embed.ts restamp) — a retrieval-quality downgrade

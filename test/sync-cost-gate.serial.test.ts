@@ -36,7 +36,7 @@ import type { ChunkInput } from '../src/core/types.ts';
 /** Offline embed stub so inline-proceed paths (posture tokenmax) don't network. */
 function stubOfflineEmbed(): void {
   __setEmbedTransportForTests(async ({ values }: any) => ({
-    embeddings: values.map(() => new Array(1536).fill(0)),
+    embeddings: values.map(() => new Array(1536).fill(1e-3) /* non-zero: the gateway rejects zero-norm vectors (#4616) */),
     usage: { tokens: 0 },
   }) as any);
 }

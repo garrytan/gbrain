@@ -660,8 +660,8 @@ export function buildFactsAlterRecipe(
     // MUST keep it. Cross-dimension changes are different: pgvector refuses
     // to cast existing vectors across dimensions ("expected N dimensions,
     // not M") and aborts the transaction — and the old-space vectors are
-    // unusable at the new width anyway. NULL them first; the facts pipeline
-    // re-embeds on the next write.
+    // unusable at the new width anyway. NULL them first; `gbrain embed --stale
+    // --facts` re-embeds them (the facts write path does not).
     ...(dimsChanged
       ? [
           `-- Dimension change: NULL embeddings BEFORE the alter — pgvector`,

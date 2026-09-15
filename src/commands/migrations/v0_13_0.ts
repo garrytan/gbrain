@@ -25,7 +25,7 @@
  * not one-time schema+backfill work.
  */
 
-import { execSync } from 'child_process';
+import { execSync } from '../../core/spawn.ts';
 import { runGbrainSubprocess } from './in-process.ts';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts). The

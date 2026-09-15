@@ -18,7 +18,7 @@
  * gzip -n for no original filename + mtime=0 in the header).
  */
 
-import { spawnSync } from 'child_process';
+import { spawnSync } from '../spawn.ts';
 import { createHash } from 'crypto';
 import {
   existsSync,

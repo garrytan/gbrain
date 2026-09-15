@@ -28,6 +28,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../src/core/types.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const SKIP_PG = !hasDatabase();
 const describeBoth = SKIP_PG ? describe.skip : describe;
@@ -161,5 +162,30 @@ describeBoth('getHealth parity — islanded liveness + entity-coverage floor (#4
     expect(postgresH.link_coverage).toBe(1);
     expect(pgliteH.timeline_coverage).toBe(0);
     expect(postgresH.timeline_coverage).toBe(0);
+  });
+
+  test('#4772: pack-declared entity types count identically on BOTH engines', async () => {
+    // gbrain-base declares `yc` as primitive:entity; the pre-fix literal did
+    // not name it. Under that pack the yc pages join the person pages in the
+    // entity denominator and most_connected on both engines.
+    for (const engine of [pglite, postgres] as BrainEngine[]) {
+      for (let i = 0; i < 3; i++) {
+        await engine.putPage(`yc/batch-${i}`, { type: 'yc', title: `Y${i}`, compiled_truth: 'co', frontmatter: {} });
+      }
+      await link(engine, 'hub', 'yc/batch-0');
+      // A second inbound edge puts yc/batch-0 strictly above the persons (all
+      // tied at one link), so its membership in the LIMIT 5 below is
+      // deterministic on both engines; most_connected has no tiebreaker.
+      await link(engine, 'people/p0', 'yc/batch-0');
+    }
+
+    const [pgliteH, postgresH] = await withEnv({ GBRAIN_SCHEMA_PACK: 'gbrain-base' }, async () =>
+      [await pglite.getHealth(), await postgres.getHealth()]);
+
+    expect(postgresH.entity_page_count).toBe(MIN_ENTITY_PAGES_FOR_COVERAGE + 3);
+    expect(pgliteH.entity_page_count).toBe(postgresH.entity_page_count);
+    expect(pgliteH.link_coverage).toBe(postgresH.link_coverage);
+    expect(postgresH.most_connected.map(r => r.slug)).toContain('yc/batch-0');
+    expect(pgliteH.most_connected.map(r => r.slug).sort()).toEqual(postgresH.most_connected.map(r => r.slug).sort());
   });
 });

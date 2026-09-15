@@ -39,7 +39,7 @@
  *   be reverted.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { GSTACK_LEARNING_NAMESPACE } from './gstack-coupling.ts';
 import type { BrainEngine } from '../engine.ts';
 

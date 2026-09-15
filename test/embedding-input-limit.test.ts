@@ -171,6 +171,13 @@ describe('the per-input 400 is non-transient (#4530)', () => {
 
   test('never classified retriable — no 60s backoff loop', () => {
     expect(isEmbedRetriableError(nvidia400())).toBe(false);
+    // A configuration-class error never retries, even when its diagnostic
+    // (an input hash and a length) happens to carry 429/502/503 digits.
+    expect(isEmbedRetriableError(new AIConfigError(
+      'Embedding provider returned a zero-norm vector for model text-embedding-3-large at batch index 0 (input sha256 4290502a, 503 chars); it cannot be indexed for vector search.',
+      'Retry the import after checking provider health.',
+    ))).toBe(false);
+    expect(isTransientNetworkEmbedError(new AIConfigError('provider returned a non-finite vector (input sha256 ecff11aa, 12 chars)', undefined, { code: 'ECONNRESET' }))).toBe(false);
     expect(isTransientNetworkEmbedError(nvidia400())).toBe(false);
   });
 

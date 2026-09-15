@@ -177,7 +177,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
            JOIN sources s ON s.id = p.source_id
            WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
              AND cc.modality = 'text'
-           ORDER BY score DESC
+           ORDER BY score DESC, page_id ASC, chunk_id ASC
            LIMIT $${innerLimitIndex}
          ),
          ${buildBestPerPagePoolCte('ranked')}
@@ -204,7 +204,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
          WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY score DESC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
     params,
   };

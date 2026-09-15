@@ -32,7 +32,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync, copyFileSync, realpathSync, readdirSync, statSync, lstatSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';

@@ -16,7 +16,7 @@
 
 import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync, renameSync, readlinkSync, type Stats } from 'fs';
 import { join } from 'path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { parseGlobalFlags } from './cli-options.ts';
 import { readProcessCommand, type ProcessCommandProbeDeps } from './autopilot-lock.ts';
 

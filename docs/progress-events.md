@@ -141,6 +141,8 @@ Stable phase names:
   life)
 - `orphans.scan`
 - `embed.pages`
+- `embed.facts` (the `embed --stale --facts` drain; total is the NULL-embedding
+  fact count at the start of the pass, emitted before the first provider call)
 - `extract.links_fs`, `extract.timeline_fs`, `extract.links_db`, `extract.timeline_db`
 - `import.files`
 - `sync.deletes`, `sync.renames`, `sync.imports`

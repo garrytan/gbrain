@@ -115,6 +115,10 @@ gbrain connect https://YOUR-DOMAIN.ngrok.app/mcp --token gbrain_xxx --agent code
 a wrong/expired token fails right away. Because Codex reads the token from the env
 var at runtime, keep `GBRAIN_REMOTE_TOKEN` exported in your shell profile.
 
+On a multi-source brain, mint the token with `gbrain auth create "codex" --source <id>`
+so it reads and writes the source you mean; without `--source`, a bearer token lands
+in whichever source is named `default`.
+
 ## Manual setup
 
 ```bash

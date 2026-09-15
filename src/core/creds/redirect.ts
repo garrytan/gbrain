@@ -16,6 +16,7 @@
  * Contacts scopes are not on its allowed-scope list. Don't re-litigate.
  */
 
+import { bunSpawn } from '../spawn.ts';
 import { CredentialError } from './errors.ts';
 
 export type RedirectStrategy = 'loopback' | 'paste' | 'hosted-callback';
@@ -239,7 +240,7 @@ export function openBrowser(url: string, platform: NodeJS.Platform = process.pla
         ? ['cmd', '/c', 'start', '', url.replace(/&/g, '^&')]
         : ['xdg-open', url];
   try {
-    Bun.spawn(argv, { stdout: 'ignore', stderr: 'ignore', stdin: 'ignore' });
+    bunSpawn(argv, { stdout: 'ignore', stderr: 'ignore', stdin: 'ignore' });
     return true;
   } catch {
     return false;

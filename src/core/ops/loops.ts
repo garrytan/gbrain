@@ -393,6 +393,27 @@ const open_loops: Operation = {
   },
 };
 
+/**
+ * Remote write ops (`loops_close` / `loops_mute` / `loops_unmute`) honour an
+ * explicit `source_id` only when the caller's grant covers it: a scalar scope
+ * must equal it, a federated grant must include it. Trusting the param
+ * unchecked on a remote WRITE would let any client close loops or plant/lift
+ * suppression rows in sources it cannot even read. Callers gate the call on
+ * `ctx.remote !== false` (anything not strictly local is remote).
+ */
+function assertLoopsSourceGranted(
+  scope: { sourceId?: string; sourceIds?: string[] },
+  sourceId: string,
+  opName: string,
+): void {
+  const granted =
+    (scope.sourceId && scope.sourceId === sourceId) ||
+    (scope.sourceIds?.includes(sourceId) ?? false);
+  if (!granted) {
+    throw new OperationError('permission_denied', `${opName}: source "${sourceId}" is outside the caller's scope`);
+  }
+}
+
 const loops_close: Operation = {
   name: 'loops_close',
   description:
@@ -402,23 +423,36 @@ const loops_close: Operation = {
     id: { type: 'number', required: true, description: 'Loop id (from open_loops).' },
     status: { type: 'string', required: true, enum: ['done', 'dropped'], description: 'Terminal state.' },
     note: { type: 'string', description: 'Optional closed_by note (default: manual).' },
+    source_id: {
+      type: 'string',
+      description:
+        'Source the loop belongs to. Remote callers default to the granted source when the grant ' +
+        'names exactly one, and must name one inside the grant otherwise; a trusted local caller ' +
+        'closes unscoped (any source) unless it names one.',
+    },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
     const scope = sourceScopeOpts(ctx);
+    const requested = p.source_id as string | undefined;
+    if (requested) validateSourceId(requested);
     // Remote callers stay inside their granted source scope; trusted local
-    // closes across sources (null = unscoped).
-    let sourceId: string | null = null;
+    // closes across sources (null = unscoped) unless it names one.
+    let sourceId: string | null = requested ?? null;
     if (ctx.remote !== false) {
-      sourceId = scope.sourceId ?? (scope.sourceIds && scope.sourceIds.length === 1 ? scope.sourceIds[0] : null);
-      if (!sourceId) {
-        // Enumerated error envelope (dispatch classifies + request-logs it),
-        // never a success-shaped { closed:false } payload.
-        throw new OperationError(
-          'permission_denied',
-          'loops_close: remote callers need a single-source scope',
-        );
+      if (requested) {
+        assertLoopsSourceGranted(scope, requested, 'loops_close');
+      } else {
+        sourceId = scope.sourceId ?? (scope.sourceIds && scope.sourceIds.length === 1 ? scope.sourceIds[0] : null);
+        if (!sourceId) {
+          // Enumerated error envelope (dispatch classifies + request-logs it),
+          // never a success-shaped { closed:false } payload.
+          throw new OperationError(
+            'permission_denied',
+            'loops_close: remote callers need a single-source scope, or an explicit source_id inside their grant',
+          );
+        }
       }
     }
     if (ctx.dryRun) return { dry_run: true, action: 'loops_close', id: p.id, status: p.status };
@@ -459,23 +493,9 @@ const loops_mute: Operation = {
   handler: async (ctx, p) => {
     const sourceId = (p.source_id as string | undefined) ?? ctx.sourceId ?? 'default';
     validateSourceId(sourceId);
-    // Remote callers stay strictly inside their grant (mirrors loops_close):
-    // a scalar-scoped caller may only mute within its own source; federated
-    // grants must include the target. Trusting p.source_id for a remote
-    // WRITE would let any remote client plant suppression rows into
-    // arbitrary sources (targeted denial-of-loop-detection).
-    if (ctx.remote !== false) {
-      const scope = sourceScopeOpts(ctx);
-      const granted =
-        (scope.sourceId && scope.sourceId === sourceId) ||
-        (scope.sourceIds?.includes(sourceId) ?? false);
-      if (!granted) {
-        throw new OperationError(
-          'permission_denied',
-          `loops_mute: source "${sourceId}" is outside the caller's scope`,
-        );
-      }
-    }
+    // Remote callers stay strictly inside their grant (a remote mute into an
+    // arbitrary source would be targeted denial-of-loop-detection).
+    if (ctx.remote !== false) assertLoopsSourceGranted(sourceScopeOpts(ctx), sourceId, 'loops_mute');
     if (ctx.dryRun) return { dry_run: true, action: 'loops_mute', kind: p.kind, value: p.value };
     await addSuppression(ctx.engine, sourceId, p.kind as 'sender' | 'thread', p.value as string);
     return { muted: true, kind: p.kind, value: (p.value as string).toLowerCase(), source_id: sourceId };
@@ -497,21 +517,9 @@ const loops_unmute: Operation = {
   handler: async (ctx, p) => {
     const sourceId = (p.source_id as string | undefined) ?? ctx.sourceId ?? 'default';
     validateSourceId(sourceId);
-    // Same grant check as loops_mute — an unmute is equally a targeted write:
-    // letting a remote caller lift another source's suppression would re-open
-    // the very noise channel its owner silenced.
-    if (ctx.remote !== false) {
-      const scope = sourceScopeOpts(ctx);
-      const granted =
-        (scope.sourceId && scope.sourceId === sourceId) ||
-        (scope.sourceIds?.includes(sourceId) ?? false);
-      if (!granted) {
-        throw new OperationError(
-          'permission_denied',
-          `loops_unmute: source "${sourceId}" is outside the caller's scope`,
-        );
-      }
-    }
+    // An unmute is equally a targeted write: letting a remote caller lift
+    // another source's suppression would re-open the noise its owner silenced.
+    if (ctx.remote !== false) assertLoopsSourceGranted(sourceScopeOpts(ctx), sourceId, 'loops_unmute');
     if (ctx.dryRun) return { dry_run: true, action: 'loops_unmute', kind: p.kind, value: p.value };
     const removed = await removeSuppression(
       ctx.engine,

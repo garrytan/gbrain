@@ -247,8 +247,11 @@ mode wires them in one command, with no `agent.json` and no interview:
   settings writes (the host also writes that file).
 
 PGLite note: minting needs the single-writer lock, so on a PGLite brain
-either pre-mint (`gbrain auth create bootstrap-harness --scopes read,write`
-while the serve is stopped) and pass `--token`, or stop/re-run/restart.
+either pre-mint while the serve is stopped
+(`gbrain auth create bootstrap-harness --scopes read,write [--source <id>]` —
+on a multi-source brain pass `--source` so the token reads and writes the
+source you mean instead of the one named `default`) and pass `--token`, or
+stop/re-run/restart.
 Postgres brains mint fine while the serve runs. A token you supply is never
 revoked by `--remove` or rotation (it is not the harness's to revoke) —
 retire it yourself with `gbrain auth revoke` when you're done with it.

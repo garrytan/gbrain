@@ -457,9 +457,11 @@ async function runLinksTimelinePass(
   // inserts leave a phantom edge forever once a page drops a reference.
   // Mirror runAutoLink's provenance-scoped removal (ops/pages.ts) — markdown /
   // NULL-legacy / wikilink-resolved only — minus its own-frontmatter clause:
-  // the sweep extracts with skipFrontmatter, so its desired set can never
-  // contain frontmatter candidates and deleting them would clobber valid
-  // edges. 'manual' and 'mentions' are never touched. A page whose reconcile
+  // the sweep extracts with skipFrontmatter, so the desired set carries at
+  // most pack-declared frontmatter candidates (never the built-in map), and
+  // the provenance filter below keeps 'frontmatter' edges out of removal
+  // either way — deleting them would clobber valid edges. 'manual' and
+  // 'mentions' are never touched. A page whose reconcile
   // fails (or is cut by budget) is left unstamped so the next sweep retries.
   const stampable = new Set(processedRefs.map(r => r.slug));
   if (linksEnabled) {

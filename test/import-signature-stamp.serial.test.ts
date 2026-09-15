@@ -45,7 +45,7 @@ beforeEach(async () => {
   // Fake transport (AI SDK embedMany shape): receives { values }, returns
   // one zero-vector (sized to the column) per input value.
   __setEmbedTransportForTests(async ({ values }: { values: string[] }) => ({
-    embeddings: values.map(() => Array(colDim).fill(0)),
+    embeddings: values.map(() => Array(colDim).fill(1e-3) /* non-zero: the gateway rejects zero-norm vectors (#4616) */),
     usage: { tokens: 0 },
   }) as any);
 });

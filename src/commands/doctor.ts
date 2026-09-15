@@ -239,6 +239,7 @@ import {
   buildMemoryVerbsCheck,
   buildRetrievalReflexCheck,
 } from './doctor/checks/verbs-reflex.ts';
+import { entityTypesForEngine } from '../core/schema-pack/entity-types.ts';
 export interface Check {
   name: string;
   status: 'ok' | 'warn' | 'fail';
@@ -1594,7 +1595,7 @@ export async function buildChecks(
   // PATH or the entry is broken. Skips silently when gbrain isn't on PATH
   // at all (e.g. running via `bun src/cli.ts`).
   try {
-    const { execSync } = await import('node:child_process');
+    const { execSync } = await import('../core/spawn.ts');
     let candidates: string[] = [];
     try {
       candidates = execSync('which -a gbrain', {
@@ -2540,6 +2541,11 @@ export async function buildChecks(
   // notes brains). The coverage formula divides by entity-page count, so it's
   // structurally undefined when no entities exist — emitting WARN under that
   // condition is a false positive. Closes #530.
+  // #4772: entity types = active pack's primitive:entity types + legacy
+  // literals, bound as text[] (same set getHealth counts). Deliberately
+  // pack-aware where onboard's checks.ts predicate stays literal. Resolved
+  // once here for graph_coverage AND orphan_ratio below (never throws).
+  const entityTypes = await entityTypesForEngine(engine);
   progress.heartbeat('graph_coverage');
   try {
     const health = await engine.getHealth();
@@ -2549,9 +2555,9 @@ export async function buildChecks(
       // warn about coverage on pages the rest of the system treats as gone.
       // buildGazetteer (src/core/by-mention.ts) already filters this way, so
       // without it the two disagree about whether entity pages exist at all.
-      // #4280: quarantined shells are excluded too — parity with onboard's
-      // VISIBLE_ENTITY_PREDICATE, which never counted them.
-      `SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization') AND ${quarantineFilterFragment('pages')}`,
+      // #4280: quarantined shells are excluded too — they are not served memory.
+      `SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type = ANY($1::text[]) AND ${quarantineFilterFragment('pages')}`,
+      [entityTypes],
     ))[0]?.count ?? 0;
 
     // Compute coverage against eligible entities only — exclude test fixtures
@@ -2568,7 +2574,7 @@ export async function buildChecks(
       `WITH eligible AS (
         SELECT id FROM pages
         WHERE deleted_at IS NULL
-          AND type IN ('entity','person','company','organization')
+          AND type = ANY($1::text[])
           AND ${quarantineFilterFragment('pages')}
           AND slug NOT LIKE 'tools/gbrain/test/%'
           AND slug <> 'templates/new-person'
@@ -2579,6 +2585,7 @@ export async function buildChecks(
            WHERE EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = e.id)
               OR EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id)) AS connected,
         (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`,
+      [entityTypes],
     ))[0] ?? { entities: entityCount, connected: 0, timeline: 0 };
 
     const eligibleEntityCount = Number(eligibleStats.entities ?? entityCount);
@@ -2654,8 +2661,8 @@ export async function buildChecks(
     const srcId = orphanRatioSourceId;
     const inSource = srcId ? ` in source '${srcId}'` : '';
     const entityCount = (await engine.executeRaw<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization') AND deleted_at IS NULL${srcId ? ' AND source_id = $1' : ''}`,
-      srcId ? [srcId] : [],
+      `SELECT COUNT(*)::int AS count FROM pages WHERE type = ANY($1::text[]) AND deleted_at IS NULL${srcId ? ' AND source_id = $2' : ''}`,
+      srcId ? [entityTypes, srcId] : [entityTypes],
     ))[0]?.count ?? 0;
     // Brain-wide (no --source): <100 entities is vacuous — small brains
     // naturally show a high orphan ratio; not actionable signal. Skip.

@@ -1,4 +1,4 @@
-import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from './spawn.ts';
 import { readFileSync } from 'node:fs';
 
 export type AutopilotLockHolder =

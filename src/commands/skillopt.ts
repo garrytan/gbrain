@@ -262,7 +262,7 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
         }, { allowProtectedSubmit: true });
         process.stdout.write(`job_id=${job.id}\n`);
         if (args.includes('--follow')) {
-          const { spawn } = await import('child_process');
+          const { spawn } = await import('../core/spawn.ts');
           const cmd = process.argv[0] ?? 'bun';
           const script = process.argv[1] ?? '';
           const child = spawn(cmd, [script, 'jobs', 'follow', String(job.id)], { stdio: 'inherit' });

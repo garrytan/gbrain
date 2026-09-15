@@ -809,7 +809,7 @@ async function cmdRevisit(_engine: BrainEngine, rest: string[]): Promise<void> {
   }
   const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
-  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { execFileSync, spawnSync } = await import('../core/spawn.ts');
   const { loadConfig } = await import('../core/config.ts');
   const cfg = loadConfig();
   const repoPath = (cfg as { sync?: { repo_path?: string } } | null)?.sync?.repo_path;

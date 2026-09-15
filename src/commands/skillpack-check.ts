@@ -16,7 +16,7 @@
  *   2 — Could not determine (missing binary / crashed).
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import { VERSION } from '../version.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 

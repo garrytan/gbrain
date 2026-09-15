@@ -89,6 +89,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity',
   'listFactsSince', 'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts',
   'findCandidateDuplicates', 'consolidateFact', 'findTrajectory', 'getFactsHealth',
+  'listFactsNeedingEmbedding', 'updateFactEmbeddings',
   // Versions
   'createVersion', 'getVersions', 'revertToVersion',
   // Stats + health + ingest log

@@ -34,7 +34,7 @@
 
 import { readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../spawn.ts';
 import { UnrecoverableError } from './types.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
 

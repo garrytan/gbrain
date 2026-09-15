@@ -195,7 +195,7 @@ function renderPlan(ctx: MigrationPlanContext): string {
       lines.push('          going back to the old provider means paying for a second full re-embed.');
       lines.push('          Until the re-embed finishes, semantic search is degraded to lexical-only.');
       lines.push(`          The query cache and fact embeddings are rebuilt at ${plan.to_dims}d too`);
-      lines.push('          (cache refills on next query; facts re-embed on their next write/extract).');
+      lines.push('          (cache refills on next query; facts: run `gbrain embed --stale --facts`).');
     } else {
       // Absent/unreadable column: nothing stored to lose, but the DDL still
       // runs — say so instead of silently skipping the warning (dim-honesty).

@@ -432,3 +432,29 @@ describe('#2955 — sync multi-source repoPath routes through msysToNativePath',
     expect(src).not.toMatch(/repoPath:\s*src\.local_path!/);
   });
 });
+
+describe('#4603 — keyword-arm ORDER BY score DESC carries the stable tiebreaker', () => {
+  // `score` (ts_rank * source factor, or the CJK LIKE score) is a heavily
+  // degenerate key, so a bare `ORDER BY score DESC` + LIMIT cuts arbitrarily
+  // into tie groups (candidate-pool membership becomes planner-dependent) and
+  // LIMIT/OFFSET pagination duplicates-and-skips under parallel Gather Merge.
+  // The vector arm, title arm and pooling CTE already pin `page_id ASC,
+  // chunk_id ASC` (v0.41.13); this pins the keyword arm to the same shape in
+  // both engines and the shared CJK builder. A behavioral PGLite test cannot
+  // observe the bug (single worker, insertion-order heap), so the line shape
+  // is the guard.
+  const files = [
+    'src/core/postgres-engine.ts',
+    'src/core/pglite-engine.ts',
+    'src/core/search/cjk-keyword-sql.ts',
+  ];
+  for (const file of files) {
+    test(`${file}: no bare \`ORDER BY score DESC\` sort remains`, () => {
+      const src = readFileSync(file, 'utf8');
+      const bare = src.match(/ORDER BY score DESC[ \t]*(--[^\n]*)?\n/g) ?? [];
+      expect(bare).toEqual([]);
+      const pinned = src.match(/ORDER BY score DESC, page_id ASC, chunk_id ASC/g) ?? [];
+      expect(pinned.length).toBeGreaterThanOrEqual(3);
+    });
+  }
+});

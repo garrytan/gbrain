@@ -27,6 +27,7 @@ import { assertAllowedScopes } from '../core/scope.ts';
 import { generateToken, isUndefinedColumnError, isUndefinedTableError } from '../core/utils.ts';
 import { TOKEN_ID_RE } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
+import { assertValidSourceId } from '../core/source-id.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseRescopeGrantArgs } from '../core/grants/cli.ts';
@@ -68,8 +69,71 @@ async function withConfiguredSql<T>(
   }
 }
 
-async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[] } = {}) {
-  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write]'); process.exit(1); }
+/**
+ * Exit-free, print-free mint core behind `gbrain auth create` (the
+ * registerScopedClient precedent: injected engine, throws on failure, so
+ * tests drive the real write path without a second withConfiguredSql handle).
+ *
+ * `source` is validated at mint time — it must name an existing, non-archived
+ * source, so a typo fails here instead of surfacing later as writes landing
+ * in whichever source happens to be called 'default' — and lands in
+ * `permissions.source_id` as a one-element ARRAY, the same shape
+ * `mintLegacyToken` (bootstrap harness) writes, so parseLegacyTokenScope
+ * confines the token's reads AND writes to it. Omitted → no source_id → the
+ * historical 'default' floor (grandfathered, unchanged).
+ */
+export async function insertLegacyToken(
+  engine: BrainEngine,
+  row: { name: string; hash: string; takesHolders: string[]; scopes?: string[]; source?: string },
+): Promise<void> {
+  const permissions: Record<string, unknown> = { takes_holders: row.takesHolders };
+  if (row.source !== undefined) {
+    assertValidSourceId(row.source);
+    const known = await engine.executeRaw<{ id: string; archived: boolean | null }>(
+      `SELECT id, archived FROM sources WHERE id = $1`,
+      [row.source],
+    );
+    if (known.length === 0) {
+      throw new Error(
+        `source "${row.source}" does not exist — create it first (gbrain sources add ${row.source}) or check the spelling with \`gbrain sources list\`.`,
+      );
+    }
+    if (known[0].archived) {
+      throw new Error(`source "${row.source}" is archived — unarchive it or pick another source.`);
+    }
+    permissions.source_id = [row.source];
+  }
+  // JSONB write: pass the object via executeRawJsonb with an explicit
+  // ::jsonb cast in the SQL string. Both engines round-trip the object
+  // through the wire-protocol type oid without the v0.12.0 double-encode
+  // bug class (verified by test/e2e/auth-permissions.test.ts:67 on
+  // Postgres and test/sql-query.test.ts on PGLite).
+  //
+  // Scopes (when given) land in the original-schema scopes TEXT[] column
+  // via an array literal through a TEXT param — values are allowlisted,
+  // so the literal needs no quoting and runs identically on both engines.
+  // Omitted → NULL → the historical grandfathered full-access grant.
+  if (row.scopes !== undefined) {
+    await executeRawJsonb(
+      engine,
+      `INSERT INTO access_tokens (name, token_hash, permissions, scopes)
+       VALUES ($1, $2, $4::jsonb, $3::text[])`,
+      [row.name, row.hash, `{${row.scopes.join(',')}}`],
+      [permissions],
+    );
+  } else {
+    await executeRawJsonb(
+      engine,
+      `INSERT INTO access_tokens (name, token_hash, permissions)
+       VALUES ($1, $2, $3::jsonb)`,
+      [row.name, row.hash],
+      [permissions],
+    );
+  }
+}
+
+async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; source?: string } = {}) {
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--source <id>]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
   // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
   // here, never silently brick (or widen) the token.
@@ -84,46 +148,22 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
   }
   const token = generateToken('gbrain_');
   const hash = hashToken(token);
+  // v0.28: persist per-token takes-holder allow-list. Default ['world'] keeps
+  // private hunches hidden from MCP-bound tokens.
+  const takesHolders = opts.takesHolders && opts.takesHolders.length > 0
+    ? opts.takesHolders
+    : ['world'];
 
   try {
     await withConfiguredSql(async (_sql, engine) => {
-      // v0.28: persist per-token takes-holder allow-list. Default ['world'] keeps
-      // private hunches hidden from MCP-bound tokens.
-      const takesHolders = opts.takesHolders && opts.takesHolders.length > 0
-        ? opts.takesHolders
-        : ['world'];
-      const permissions = { takes_holders: takesHolders };
-      // JSONB write: pass the object via executeRawJsonb with an explicit
-      // ::jsonb cast in the SQL string. Both engines round-trip the object
-      // through the wire-protocol type oid without the v0.12.0 double-encode
-      // bug class (verified by test/e2e/auth-permissions.test.ts:67 on
-      // Postgres and test/sql-query.test.ts on PGLite).
-      //
-      // Scopes (when given) land in the original-schema scopes TEXT[] column
-      // via an array literal through a TEXT param — values are allowlisted,
-      // so the literal needs no quoting and runs identically on both engines.
-      // Omitted → NULL → the historical grandfathered full-access grant.
-      if (opts.scopes !== undefined) {
-        await executeRawJsonb(
-          engine,
-          `INSERT INTO access_tokens (name, token_hash, permissions, scopes)
-           VALUES ($1, $2, $4::jsonb, $3::text[])`,
-          [name, hash, `{${opts.scopes.join(',')}}`],
-          [permissions],
-        );
-      } else {
-        await executeRawJsonb(
-          engine,
-          `INSERT INTO access_tokens (name, token_hash, permissions)
-           VALUES ($1, $2, $3::jsonb)`,
-          [name, hash],
-          [permissions],
-        );
-      }
+      await insertLegacyToken(engine, { name, hash, takesHolders, scopes: opts.scopes, source: opts.source });
       const scopeLine = opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
-      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}):\n`);
+      const sourceLine = opts.source !== undefined
+        ? `source=${opts.source}`
+        : 'source=default (pass --source <id> to confine the token to one source)';
+      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}, ${sourceLine}):\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
@@ -1037,38 +1077,65 @@ async function clientsCmd(args: string[]) {
 /**
  * Parse `auth create` args into `{ name, takesHolders, scopes }`.
  *
- * Exported + pure so the positional-vs-flag logic is unit-testable. Only
- * excludes flag VALUES from the positional search when their flag is
- * present — the pre-v0.41 inline version used `rest[takesIdx + 1]` which
- * resolved to `rest[0]` when `takesIdx === -1`, silently dropping the name on
- * the bare `gbrain auth create <name>` form.
+ * Exported + pure so the positional-vs-flag logic is unit-testable. Flag
+ * VALUES are excluded from the positional search only when their flag is
+ * present, so the bare `gbrain auth create <name>` form keeps its name.
  *
  * --scopes accepts comma- and/or whitespace-separated input (the
  * register-client #3990 normalization precedent). Validation against the
  * allowed scope set happens in create() so the error path exits cleanly.
  */
-export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; error?: string } {
-  const takesIdx = rest.indexOf('--takes-holders');
-  const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
-  // Fail closed on a missing/flag-like value: `--scopes` as the last arg
-  // silently minting a grandfathered FULL-ACCESS token is the exact
-  // fail-open-by-silent-precedence class the harness parser rejects [X14].
-  if (takesIdx >= 0 && (takesValue === undefined || takesValue.startsWith('--'))) {
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; source?: string; error?: string } {
+  // Every flag accepts the bare (`--flag <v>`) and inline (`--flag=<v>`)
+  // forms (the CLI flag validator admits both for `auth`). A missing, empty
+  // or flag-like value fails closed in either form: a silently dropped
+  // --scopes would otherwise mint a full-access token.
+  const findFlag = (flag: string) => {
+    const idx = rest.findIndex(a => a === flag || a.startsWith(`${flag}=`));
+    const inline = idx >= 0 && rest[idx] !== flag;
+    const value = idx < 0 ? undefined : inline ? rest[idx].slice(flag.length + 1) : rest[idx + 1];
+    return { idx, inline, value };
+  };
+  const badValue = (v: string | undefined) => v === undefined || v === '' || v.startsWith('--');
+
+  const takes = findFlag('--takes-holders');
+  if (takes.idx >= 0 && badValue(takes.value)) {
     return { name: '', error: 'the takes-holders flag requires a value (e.g. world,garry)' };
   }
-  const takesHolders = takesValue !== undefined
-    ? takesValue.split(',').map(s => s.trim()).filter(Boolean)
+  const takesHolders = takes.value !== undefined
+    ? takes.value.split(',').map(s => s.trim()).filter(Boolean)
     : undefined;
-  const scopesIdx = rest.indexOf('--scopes');
-  const scopesValue = scopesIdx >= 0 ? rest[scopesIdx + 1] : undefined;
-  if (scopesIdx >= 0 && (scopesValue === undefined || scopesValue.startsWith('--'))) {
+  const scopesFlag = findFlag('--scopes');
+  if (scopesFlag.idx >= 0 && badValue(scopesFlag.value)) {
     return { name: '', error: 'the scopes flag requires a value (e.g. read,write) — omitting it would mint a full-access token' };
   }
-  const scopes = scopesValue !== undefined
-    ? scopesValue.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+  const scopes = scopesFlag.value !== undefined
+    ? scopesFlag.value.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
     : undefined;
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue);
-  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}) };
+  // --source (#4780): an empty/whitespace value gets its own message.
+  const sourceFlag = findFlag('--source');
+  if (sourceFlag.idx >= 0 && (sourceFlag.value === undefined || sourceFlag.value.startsWith('--'))) {
+    return { name: '', error: 'the source flag requires a value (e.g. workspace)' };
+  }
+  const source = sourceFlag.value?.trim();
+  if (source !== undefined && source.length === 0) {
+    return { name: '', error: 'the source flag requires a non-empty value (e.g. workspace)' };
+  }
+  // Flag VALUES are excluded from the positional scan by index, not by string
+  // equality, so a token named after its source (`auth create workspace
+  // --source workspace`) keeps its name. Only the BARE forms occupy a value
+  // slot; an inline `--scopes=read` token is itself `--`-prefixed and skipped.
+  const valueIdx = new Set<number>();
+  for (const f of [takes, scopesFlag, sourceFlag]) {
+    if (f.idx >= 0 && !f.inline) valueIdx.add(f.idx + 1);
+  }
+  const positional = rest.find((a, i) => !a.startsWith('--') && !valueIdx.has(i));
+  return {
+    name: positional || '',
+    takesHolders,
+    ...(scopes !== undefined ? { scopes } : {}),
+    ...(source !== undefined ? { source } : {}),
+  };
 }
 
 const AUTH_USAGE = `GBrain Token Management
@@ -1081,14 +1148,17 @@ Admin dashboard login (running HTTP server):
   This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--source <id>]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
                                                           takes_list / takes_search / query filter by this.
                                                           --scopes narrows the token to the listed op scopes
                                                           (comma or space separated; omit = full access,
-                                                          grandfathered).
+                                                          grandfathered). --source confines the token's reads
+                                                          and writes to that one source (default: default;
+                                                          must exist and not be archived) — recommended on
+                                                          a multi-source brain.
   gbrain auth list                                         List all tokens (id, scopes, usage)
   gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
   gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
@@ -1155,12 +1225,13 @@ export async function runAuth(args: string[]): Promise<void> {
     case 'create': {
       // v0.28: optional --takes-holders world,garry,brain (default: world only)
       // #4043: optional --scopes read,write (default: full access, grandfathered)
+      // #4780: optional --source <id> (default: the historical 'default' floor)
       const parsed = parseAuthCreateArgs(rest);
       if (parsed.error) {
         console.error(`Error: ${parsed.error}`);
         process.exit(1);
       }
-      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes });
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, source: parsed.source });
       return;
     }
     case 'list': await list(); return;

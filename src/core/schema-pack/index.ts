@@ -124,6 +124,12 @@ export {
 } from './expert-types.ts';
 
 export {
+  LEGACY_ENTITY_TYPES,
+  entityTypesFromPack,
+  entityTypesForEngine,
+} from './entity-types.ts';
+
+export {
   extractableTypesFromPack,
   extractableSpecsFromPack,
   getExtractableSpec,

@@ -36,7 +36,7 @@
  *                  (escalating exponential backoff).
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from '../spawn.ts';
 import { buildSpawnInvocation, detectTini } from './spawn-helpers.ts';
 import { classifyWorkerExit } from './exit-classification.ts';
 import { calculateBackoffMs } from './supervisor.ts';

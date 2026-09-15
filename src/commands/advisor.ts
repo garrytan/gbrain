@@ -11,7 +11,7 @@
  * via a child process (never a shell — no injection), and confirms first.
  */
 
-import { spawnSync } from 'child_process';
+import { spawnSync } from '../core/spawn.ts';
 import { createInterface } from 'readline';
 import { resolve as resolvePath } from 'path';
 

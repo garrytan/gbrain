@@ -26,7 +26,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../spawn.ts';
 import { join } from 'node:path';
 
 import { VERSION } from '../../version.ts';

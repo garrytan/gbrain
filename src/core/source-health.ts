@@ -21,7 +21,7 @@
  *      `newest_content_at` column instead — NO git subprocess on a DB-supplied
  *      local_path (preserves the v0.41.27.0 trust boundary).
  */
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import type { BrainEngine } from './engine.ts';
 import { parseSourceConfig, type SourceRow } from './sources-load.ts';
 import { isSourceUnchangedSinceSync } from './git-head.ts';

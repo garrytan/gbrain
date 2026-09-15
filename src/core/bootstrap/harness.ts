@@ -721,7 +721,7 @@ function liveServeRefusal(): BootstrapError {
   return new BootstrapError(
     'LIVE_SERVE',
     'a live `gbrain serve` holds this PGLite brain, so the harness cannot mint a token — either ' +
-      'pre-mint one while the serve is stopped (`gbrain auth create bootstrap-harness --scopes read,write`) ' +
+      'pre-mint one while the serve is stopped (`gbrain auth create bootstrap-harness --scopes read,write [--source <id>]`) ' +
       'and re-run with --token <value>, or stop the serve, re-run this command, and restart it. ' +
       '(Postgres brains mint fine while the serve runs.)',
   );

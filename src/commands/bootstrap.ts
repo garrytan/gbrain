@@ -27,6 +27,7 @@
  * B5 relay instruction), never a stack trace.
  */
 
+import { bunSpawn } from '../core/spawn.ts';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -438,7 +439,7 @@ function defaultOpencodeProbeSpawn(
   argv: string[],
   opts: { cwd: string; env: Record<string, string | undefined> },
 ): OpencodeProbeHandle {
-  const proc = Bun.spawn(argv, {
+  const proc = bunSpawn(argv, {
     cwd: opts.cwd,
     env: opts.env as Record<string, string>,
     stdin: 'ignore',
@@ -1912,7 +1913,7 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
     // by a re-push once the workspace is gone).
     try {
       const { pushStatusPathForRoot, workspaceRootHash } = await import('../core/workspace-push.ts');
-      const { execFileSync } = await import('node:child_process');
+      const { execFileSync } = await import('../core/spawn.ts');
       let root = ws;
       try {
         root = execFileSync('git', ['-C', ws, 'rev-parse', '--show-toplevel'], {

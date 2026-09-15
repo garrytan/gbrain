@@ -10,6 +10,13 @@
  *     non-empty, so the takes nudge still fires
  *   - non-empty + healthy + one rejected arm → partial-checks notice
  *   - non-empty + takes 0 → "0 takes" opportunity nudge
+ *   - a hanging schema-pack lookup (getConfig never resolves) loses its own
+ *     1s sub-budget: legacy entity types, and the counts still RUN (the
+ *     signal is not yet aborted) so the "0 takes" nudge prints, not the
+ *     "incomplete" notice
+ *
+ * The stub honors `opts.signal` like the real engines (AbortError once
+ * aborted), so a fallback that only fired at the 3s mark would fail here.
  *
  * The gate is process.stderr.isTTY (NOT process.env), so monkeypatching it
  * here does not trip the serial-isolation rules for env-mutating tests.
@@ -19,6 +26,7 @@
 import { describe, test, expect } from 'bun:test';
 import { runInitNudge } from '../src/core/onboard/init-nudge.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { LEGACY_ENTITY_TYPES } from '../src/core/schema-pack/entity-types.ts';
 
 /** Per-probe result: a count, or an Error to make that arm reject. */
 interface ProbeCounts {
@@ -33,7 +41,7 @@ interface ProbeCounts {
 /**
  * Stub engine shaped like { executeRaw: async (sql) => [...] }. Routes each
  * of runInitNudge's 6 COUNT queries by a distinctive SQL fragment. Order
- * matters: the linked/timeline queries also contain "type IN ('person'",
+ * matters: the linked/timeline queries also contain "type = ANY($1::text[])",
  * so they are matched first.
  */
 function stubEngine(counts: ProbeCounts): BrainEngine {
@@ -42,12 +50,14 @@ function stubEngine(counts: ProbeCounts): BrainEngine {
     if (sql.includes('FROM takes')) return counts.takes ?? 0;
     if (sql.includes('FROM links')) return counts.linked ?? 0;
     if (sql.includes('timeline_entries')) return counts.timeline ?? 0;
-    if (sql.includes("type IN ('person'")) return counts.entities ?? 0;
+    if (sql.includes('type = ANY($1::text[])')) return counts.entities ?? 0;
     // 6th probe: SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL
     return counts.pages ?? 0;
   };
   return {
-    executeRaw: async (sql: string) => {
+    executeRaw: async (sql: string, _params: unknown[] = [], opts?: { signal?: AbortSignal }) => {
+      // Both real engines reject on an already-aborted signal.
+      if (opts?.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
       const r = route(sql);
       if (r instanceof Error) throw r;
       return [{ count: r }];
@@ -136,5 +146,32 @@ describe('runInitNudge — non-empty brain opportunities', () => {
     expect(out).toContain("Run 'gbrain onboard --check' to see the plan");
     // All 6 probes succeeded — no partial-checks suffix.
     expect(out).not.toContain('checks complete');
+  });
+});
+
+describe('runInitNudge — schema-pack lookup has its own sub-budget', () => {
+  test('getConfig that never resolves → legacy entity types, counts still run, "0 takes" nudge prints', async () => {
+    const base = stubEngine({ stale: 0, entities: 0, linked: 0, timeline: 0, takes: 0, pages: 5 });
+    let getConfigCalls = 0;
+    const seenTypes: unknown[] = [];
+    const engine = {
+      getConfig: () => { getConfigCalls++; return new Promise(() => {}); },
+      executeRaw: async (sql: string, params: unknown[] = [], opts?: { signal?: AbortSignal }) => {
+        if (sql.includes('$1::text[]')) seenTypes.push(params[0]);
+        return base.executeRaw(sql, params, opts);
+      },
+    } as unknown as BrainEngine;
+    const t0 = Date.now();
+    const out = await runNudgeCaptured(engine);
+    // The lookup lost its 1s sub-budget, well inside the 3s nudge budget, so
+    // the signal was still live and every count ran (the stub throws
+    // AbortError on an aborted signal, so a 3s fallback would fail here).
+    expect(Date.now() - t0).toBeLessThan(2500);
+    expect(getConfigCalls).toBeGreaterThan(0);
+    expect(out).toContain('Brain has opportunities: 0 takes');
+    expect(out).not.toContain('Init checks incomplete');
+    expect(out).not.toContain('checks complete');
+    expect(seenTypes).toHaveLength(3);
+    for (const types of seenTypes) expect(types).toEqual([...LEGACY_ENTITY_TYPES]);
   });
 });

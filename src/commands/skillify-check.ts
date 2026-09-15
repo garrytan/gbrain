@@ -25,7 +25,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
-import { spawnSync } from 'child_process';
+import { spawnSync } from '../core/spawn.ts';
 
 import { gbrainPath } from '../core/config.ts';
 import {

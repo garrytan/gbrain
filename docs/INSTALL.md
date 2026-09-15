@@ -117,6 +117,10 @@ gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex        # C
 gbrain connect https://your-host/mcp --agent perplexity --oauth --register   # Perplexity (OAuth)
 ```
 
+On a multi-source brain, mint the token with `gbrain auth create "<name>" --source <id>`
+so it reads and writes the source you mean; without `--source`, a bearer token lands
+in whichever source is named `default`.
+
 Per-client setup guides live in [`docs/mcp/`](mcp/):
 
 - [`docs/mcp/CLAUDE_CODE.md`](mcp/CLAUDE_CODE.md)

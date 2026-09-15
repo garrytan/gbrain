@@ -162,6 +162,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/health-parity-postgres.test.ts",
     // #4109: FOR KEY SHARE deletion-race behavior of addLink/addTimelineEntry.
     "test/e2e/source-boundary-mutation-postgres.test.ts",
+    // #4812: facts embedding backfill selector/writer (jsonb_to_recordset bind) parity.
+    "test/e2e/facts-embedding-backfill-parity.test.ts",
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
@@ -172,6 +174,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",
     "test/e2e/health-parity-postgres.test.ts",
+    "test/e2e/facts-embedding-backfill-parity.test.ts",
   ],
   // Engine method modules peeled from the façades carry the same blast
   // radius as the façades themselves.
@@ -187,6 +190,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/migrate-embeddings-postgres.test.ts",
     "test/e2e/health-parity-postgres.test.ts",
     "test/e2e/source-boundary-mutation-postgres.test.ts",
+    "test/e2e/facts-embedding-backfill-parity.test.ts",
   ],
   "src/core/pglite-engine/**": [
     "test/e2e/chunk-canonical-text-privacy.test.ts",
@@ -196,6 +200,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",
     "test/e2e/health-parity-postgres.test.ts",
+    "test/e2e/facts-embedding-backfill-parity.test.ts",
     // master's own remote-privacy sweep suite for the scoped salience arms
     // (mapped at the test-gap-wave merge — arrived unclaimed).
     "test/e2e/salience-anomalies-source-isolation-pglite.test.ts",

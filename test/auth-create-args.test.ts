@@ -1,5 +1,6 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test';
-import { parseAuthCreateArgs, parseAuthClientsArgs, parseRescopeSurfaceValue, renderTokenScopes, listClientRows } from '../src/commands/auth.ts';
+import { parseAuthCreateArgs, parseAuthClientsArgs, parseRescopeSurfaceValue, renderTokenScopes, listClientRows, insertLegacyToken } from '../src/commands/auth.ts';
+import { parseLegacyTokenScope } from '../src/core/legacy-token-scope.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 describe('parseAuthCreateArgs', () => {
@@ -63,6 +64,90 @@ describe('parseAuthCreateArgs', () => {
     expect(parseAuthCreateArgs(['n', '--takes-holders']).error).toMatch(/takes-holders flag requires a value/);
     expect(parseAuthCreateArgs(['n', '--takes-holders', '--scopes', 'read']).error).toMatch(/takes-holders flag requires a value/);
   });
+
+  // --source (#4780): the source grant of a legacy bearer token. Without it
+  // every hand-minted token fell back to the literal 'default' in
+  // parseLegacyTokenScope, which on a multi-source brain routes writes to
+  // whichever source happens to be named 'default' with no warning.
+  test('name + --source', () => {
+    expect(parseAuthCreateArgs(['claude-code', '--source', 'workspace'])).toEqual({
+      name: 'claude-code',
+      takesHolders: undefined,
+      source: 'workspace',
+    });
+  });
+
+  test('--source before the name still finds the name', () => {
+    expect(parseAuthCreateArgs(['--source', 'workspace', 'claude-code']).name).toBe('claude-code');
+  });
+
+  test('the source value is not mistaken for the name', () => {
+    expect(parseAuthCreateArgs(['--source', 'workspace', 'mybot']).source).toBe('workspace');
+    expect(parseAuthCreateArgs(['--source', 'workspace', 'mybot']).name).toBe('mybot');
+  });
+
+  test('--source as the last arg fails closed', () => {
+    // Fail-open here would mint a token silently scoped to 'default' — the
+    // exact bug this flag exists to fix.
+    expect(parseAuthCreateArgs(['mybot', '--source']).error).toContain('source flag requires a value');
+  });
+
+  test('--source followed by another flag fails closed', () => {
+    // The other flag gets a value here on purpose — otherwise ITS check
+    // fires first: the parser checks takes-holders and scopes before source.
+    expect(parseAuthCreateArgs(['mybot', '--source', '--takes-holders', 'world']).error)
+      .toContain('source flag requires a value');
+  });
+
+  test('omitting --source leaves source undefined (grandfathered behaviour)', () => {
+    expect(parseAuthCreateArgs(['mybot']).source).toBeUndefined();
+  });
+
+  test('--source combines with --scopes and --takes-holders', () => {
+    expect(parseAuthCreateArgs([
+      'mybot', '--scopes', 'read,write', '--takes-holders', 'world', '--source', 'workspace',
+    ])).toEqual({
+      name: 'mybot',
+      takesHolders: ['world'],
+      scopes: ['read', 'write'],
+      source: 'workspace',
+    });
+  });
+
+  test('--source=<id> (equals form) is parsed, not silently dropped', () => {
+    // The CLI flag validator admits `--source=x` for `auth`; a parser that
+    // only looked for the bare `--source` token would mint a default-floor
+    // token without a word.
+    expect(parseAuthCreateArgs(['mybot', '--source=workspace'])).toEqual({
+      name: 'mybot',
+      takesHolders: undefined,
+      source: 'workspace',
+    });
+    // A name that equals the inline value is still the name.
+    expect(parseAuthCreateArgs(['workspace', '--source=workspace']).name).toBe('workspace');
+    expect(parseAuthCreateArgs(['mybot', '--source=']).error).toContain('source flag requires a non-empty value');
+  });
+
+  test('--scopes=<v> / --takes-holders=<v> (equals form) are parsed, not silently dropped', () => {
+    // Same class as the --source= gap: the CLI flag validator admits the
+    // inline form, and an unmatched --scopes= left scopes undefined, so
+    // insertLegacyToken wrote scopes = NULL and minted a full-access token.
+    expect(parseAuthCreateArgs(['bot', '--scopes=read'])).toEqual({ name: 'bot', takesHolders: undefined, scopes: ['read'] });
+    expect(parseAuthCreateArgs(['bot', '--takes-holders=world,charlie-example'])).toEqual({
+      name: 'bot',
+      takesHolders: ['world', 'charlie-example'],
+    });
+    expect(parseAuthCreateArgs(['bot', '--scopes=']).error).toMatch(/scopes flag requires a value/);
+    expect(parseAuthCreateArgs(['bot', '--scopes=--x']).error).toMatch(/scopes flag requires a value/);
+    expect(parseAuthCreateArgs(['bot', '--takes-holders=']).error).toMatch(/takes-holders flag requires a value/);
+    // Inline forms never occupy a value slot, so the positional survives.
+    expect(parseAuthCreateArgs(['workspace', '--source=workspace', '--scopes=read,write'])).toEqual({
+      name: 'workspace',
+      takesHolders: undefined,
+      source: 'workspace',
+      scopes: ['read', 'write'],
+    });
+  });
 });
 
 describe('renderTokenScopes', () => {
@@ -121,6 +206,12 @@ describe('parseAuthClientsArgs (E4)', () => {
     expect(parseAuthClientsArgs(['--days', '3650']).days).toBe(3650);
   });
 
+  test('a token named after its source keeps its name (value equality must not swallow the positional)', () => {
+    expect(parseAuthCreateArgs(['workspace', '--source', 'workspace'])).toEqual({ name: 'workspace', source: 'workspace' });
+    expect(parseAuthCreateArgs(['--source', 'workspace', 'workspace'])).toEqual({ name: 'workspace', source: 'workspace' });
+    expect(parseAuthCreateArgs(['read', '--scopes', 'read'])).toEqual({ name: 'read', scopes: ['read'] });
+  });
+
   test('--days rejects out-of-bounds and non-integer values loudly', () => {
     expect(() => parseAuthClientsArgs(['--days', '0'])).toThrow(/--days/);
     expect(() => parseAuthClientsArgs(['--days', '3651'])).toThrow(/--days/);
@@ -169,5 +260,75 @@ describe('listClientRows (projection widen)', () => {
     expect(aurora!.surface_set_by).toBe('operator');
     expect(aurora!.source_id).toBe('proj-widget');
     expect(aurora!.federated_read).toEqual(['proj-widget', 'default']);
+  });
+});
+
+describe('insertLegacyToken (auth create mint core, PGLite)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('workspace-a', 'workspace-a')`);
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, archived, archived_at) VALUES ('old-import', 'old-import', true, now())`,
+    );
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  const permissionsOf = async (name: string): Promise<Record<string, unknown>> => {
+    const rows = await engine.executeRaw<{ permissions: Record<string, unknown> }>(
+      `SELECT permissions FROM access_tokens WHERE name = $1`,
+      [name],
+    );
+    expect(rows.length).toBe(1);
+    return rows[0].permissions;
+  };
+
+  test('--source lands in permissions.source_id as a one-element grant that parseLegacyTokenScope confines to', async () => {
+    await insertLegacyToken(engine, {
+      name: 'scoped-bot', hash: 'h-scoped', takesHolders: ['world'], scopes: ['read', 'write'], source: 'workspace-a',
+    });
+    const perms = await permissionsOf('scoped-bot');
+    expect(perms.takes_holders).toEqual(['world']);
+    // Same shape token-mint.ts (bootstrap harness) writes: ARRAY, element 0 =
+    // write floor — so both legacy mint paths emit one shape.
+    expect(perms.source_id).toEqual(['workspace-a']);
+    const scope = parseLegacyTokenScope(perms.source_id);
+    expect(scope.sourceId).toBe('workspace-a');
+    expect(scope.allowedSources).toEqual(['workspace-a']);
+  });
+
+  test('omitting --source writes no source_id → the historical default floor (grandfathered)', async () => {
+    await insertLegacyToken(engine, { name: 'plain-bot', hash: 'h-plain', takesHolders: ['world'] });
+    const perms = await permissionsOf('plain-bot');
+    expect('source_id' in perms).toBe(false);
+    expect(parseLegacyTokenScope(perms.source_id)).toEqual({ sourceId: 'default' });
+  });
+
+  test('unknown source refuses loudly at mint time and inserts nothing', async () => {
+    await expect(insertLegacyToken(engine, {
+      name: 'typo-bot', hash: 'h-typo', takesHolders: ['world'], source: 'workspace-b',
+    })).rejects.toThrow(/source "workspace-b" does not exist/);
+    const rows = await engine.executeRaw(`SELECT 1 FROM access_tokens WHERE name = 'typo-bot'`);
+    expect(rows.length).toBe(0);
+  });
+
+  test('archived source refuses — writes must not land in a search-excluded import', async () => {
+    await expect(insertLegacyToken(engine, {
+      name: 'archived-bot', hash: 'h-archived', takesHolders: ['world'], source: 'old-import',
+    })).rejects.toThrow(/source "old-import" is archived/);
+    const rows = await engine.executeRaw(`SELECT 1 FROM access_tokens WHERE name = 'archived-bot'`);
+    expect(rows.length).toBe(0);
+  });
+
+  test('malformed source id is rejected before the sources query', async () => {
+    await expect(insertLegacyToken(engine, {
+      name: 'bad-id-bot', hash: 'h-bad', takesHolders: ['world'], source: 'Not A Source!',
+    })).rejects.toThrow(/Invalid source_id/);
   });
 });

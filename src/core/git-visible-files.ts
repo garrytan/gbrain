@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { lstatSync } from 'fs';
 import { join } from 'path';
 

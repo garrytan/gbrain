@@ -1482,7 +1482,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
       process.exit(1);
     }
     try {
-      const { execFileSync } = await import('node:child_process');
+      const { execFileSync } = await import('../core/spawn.ts');
       const branch = execFileSync('git', ['-C', src.local_path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
       cfg.tracked_branch = branch;
       await engine.executeRaw(

@@ -53,7 +53,7 @@ beforeAll(async () => {
     env: { ...process.env, OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-test-stub' },
   });
   __setEmbedTransportForTests(async ({ values }: any) => ({
-    embeddings: values.map(() => new Array(1536).fill(0)),
+    embeddings: values.map(() => new Array(1536).fill(1e-3) /* non-zero: the gateway rejects zero-norm vectors (#4616) */),
     usage: { tokens: 0 },
   }) as any);
 

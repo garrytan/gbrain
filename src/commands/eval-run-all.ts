@@ -157,7 +157,7 @@ export interface EvalRunRecord {
 
 function getRepoRoot(): string {
   try {
-    const { execSync } = require('child_process') as typeof import('child_process');
+    const { execSync } = require('../core/spawn.ts') as typeof import('../core/spawn.ts');
     return execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
   } catch {
     return process.cwd();
@@ -166,7 +166,7 @@ function getRepoRoot(): string {
 
 function getCommitSha(): string {
   try {
-    const { execSync } = require('child_process') as typeof import('child_process');
+    const { execSync } = require('../core/spawn.ts') as typeof import('../core/spawn.ts');
     return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
   } catch {
     return 'unknown';

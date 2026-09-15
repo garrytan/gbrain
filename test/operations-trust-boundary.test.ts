@@ -495,12 +495,14 @@ describe('ops-module system-access containment — top-level fs/child_process im
   const opsFiles = readdirSync(OPS_DIR).filter(f => f.endsWith('.ts')).sort();
 
   // Matches static top-level `import ... from 'fs'` / `export ... from
-  // 'node:child_process'` / side-effect `import 'node:fs'` forms. Does NOT
-  // match dynamic `await import('node:fs')` (no `from` clause, no leading
-  // import keyword at a line start) or commented-out imports (`//` and `*`
-  // are not whitespace, so the line-start anchor excludes them).
+  // 'node:child_process'` / side-effect `import 'node:fs'` forms, plus the
+  // repo's own subprocess seam `src/core/spawn.ts` (every child_process
+  // caller in src/ imports it instead — see test/spawn-windows-hide-guard).
+  // Does NOT match dynamic `await import('node:fs')` (no `from` clause, no
+  // leading import keyword at a line start) or commented-out imports (`//`
+  // and `*` are not whitespace, so the line-start anchor excludes them).
   const SYSTEM_IMPORT_RE =
-    /(?:^|\n)\s*(?:import|export)\s+(?:[^;]*?\bfrom\s+)?['"](?:node:)?(?:fs|fs\/promises|child_process)['"]/;
+    /(?:^|\n)\s*(?:import|export)\s+(?:[^;]*?\bfrom\s+)?['"](?:(?:node:)?(?:fs|fs\/promises|child_process)|\.\.\/spawn\.ts)['"]/;
 
   /**
    * Canonical ops contributed by one ops module: import it, walk every
@@ -537,6 +539,7 @@ describe('ops-module system-access containment — top-level fs/child_process im
     expect(SYSTEM_IMPORT_RE.test(`import {\n  readFileSync,\n  writeFileSync,\n} from 'fs/promises';`)).toBe(true);
     expect(SYSTEM_IMPORT_RE.test(`import 'node:fs';`)).toBe(true);
     expect(SYSTEM_IMPORT_RE.test(`export { execSync } from 'node:child_process';`)).toBe(true);
+    expect(SYSTEM_IMPORT_RE.test(`import { execFileSync } from '../spawn.ts';`)).toBe(true);
     expect(SYSTEM_IMPORT_RE.test(`const nodeFs = await import('node:fs');`)).toBe(false);
     expect(SYSTEM_IMPORT_RE.test(`import { resolve } from 'node:path';`)).toBe(false);
     expect(SYSTEM_IMPORT_RE.test(`code();\n// import { x } from 'node:fs'`)).toBe(false);

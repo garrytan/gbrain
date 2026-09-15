@@ -15,3 +15,14 @@ export function embedBackfillLockId(sourceId: string): string {
 
 /** Lock TTL (minutes) for embed backfills. */
 export const EMBED_BACKFILL_LOCK_TTL_MIN = 60;
+
+/**
+ * Lock id for the `embed --stale --facts` drain. Its own key, NOT
+ * `embedBackfillLockId('facts')`: a source may legitimately be named `facts`,
+ * and the facts pass must neither block nor be blocked by the chunk drain.
+ * ponytail: one global key regardless of --source scope, so an all-source run
+ * and a scoped run stay mutually exclusive without the chunk path's sorted
+ * per-source acquire; per-source keys if concurrent scoped facts drains ever
+ * matter.
+ */
+export const EMBED_FACTS_BACKFILL_LOCK_ID = 'gbrain-embed-facts-backfill';

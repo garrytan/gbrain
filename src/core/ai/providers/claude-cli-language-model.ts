@@ -34,7 +34,7 @@
  * (gateway.toolLoop primarily) use doGenerate.
  */
 import { randomUUIDv7 } from 'bun';
-import { spawn } from 'node:child_process';
+import { spawn } from '../../spawn.ts';
 import { mkdirSync } from 'node:fs';
 import {
   claudeCliConfigDir,

@@ -119,7 +119,7 @@ function readEvalResults(repoRoot: string, override?: string): ParsedRecord[] {
 
 function getRepoRoot(): string {
   try {
-    const { execSync } = require('child_process') as typeof import('child_process');
+    const { execSync } = require('../core/spawn.ts') as typeof import('../core/spawn.ts');
     return execSync('git rev-parse --show-toplevel', { encoding: 'utf-8' }).trim();
   } catch {
     return process.cwd();

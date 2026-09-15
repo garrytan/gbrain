@@ -4,7 +4,7 @@
  * src/commands/sync.ts (containment sprint C13-C14) as a pure move.
  */
 import { existsSync, readFileSync, realpathSync } from 'fs';
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { isAbsolute, join, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { resolveSlugForPath, DEFAULT_SOURCE_ID } from './sync.ts';

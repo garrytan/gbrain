@@ -3,7 +3,7 @@
  * gate) + sync deadline/stall resolution (#1633, #1950). Peeled out of
  * src/commands/sync.ts (containment sprint C13-C14) as a pure move.
  */
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { parseDurationSeconds } from './sync-concurrency.ts';
 import { resolveStallAbortSecondsFromEnv } from './stall-env.ts';
 

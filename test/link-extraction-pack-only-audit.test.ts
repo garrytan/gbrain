@@ -1,0 +1,73 @@
+/**
+ * Coverage audit for the pack-only frontmatter pass (#4982). Companion to
+ * link-extraction-pack-frontmatter-always.test.ts; pins the two arms that
+ * file leaves open:
+ *
+ *  1. FS path (`extractLinksFromFile`, includeFrontmatter false): the block
+ *     now RUNS whenever the pack has rules, so `packOnly` must be threaded
+ *     through or the built-in map leaks. A pack rule on a wildcard built-in
+ *     field (`related` — FRONTMATTER_LINK_MAP row with no pageType) exercises
+ *     the `\u0000${field}` arm of the BUILTIN_FRONTMATTER_KEYS check, which no
+ *     shipped pack reaches (gbrain-base.yaml only mirrors page-typed rows).
+ *  2. Same field name, different page type: `attendees` is built-in only for
+ *     `meeting`; a pack rule `workshop.attendees` mirrors nothing and must run.
+ */
+import { describe, test, expect } from 'bun:test';
+import { extractPageLinks, type SlugResolver } from '../src/core/link-extraction.ts';
+import { extractLinksFromFile } from '../src/commands/extract.ts';
+import { parseSchemaPackManifest } from '../src/core/schema-pack/index.ts';
+
+const PACK = parseSchemaPackManifest({
+  api_version: 'gbrain-schema-pack-v1',
+  name: 'pack-only-audit',
+  version: '0.1.0',
+  extends: null,
+  page_types: [],
+  link_types: [{ name: 'discusses' }, { name: 'hosted' }],
+  frontmatter_links: [
+    // operator-added, no built-in equivalent
+    { page_type: 'concept', fields: ['concepts'], link_type: 'discusses' },
+    // mirrors the wildcard built-in `related` (no pageType on the built-in row)
+    { page_type: 'concept', fields: ['related'], link_type: 'discusses' },
+    // same field as built-in `meeting.attendees`, different page type
+    { page_type: 'workshop', fields: ['attendees'], link_type: 'hosted' },
+    { page_type: 'meeting', fields: ['attendees'], link_type: 'hosted' },
+  ],
+});
+
+const KNOWN: Record<string, string> = { 'alice-example': 'people/alice-example' };
+const resolver: SlugResolver = { resolve: async (name) => KNOWN[name] ?? null };
+
+describe('pack-only pass — FS path threads packOnly (extractLinksFromFile)', () => {
+  const content = '---\nconcepts:\n  - concepts/cloud-drift\nrelated:\n  - concepts/other\n---\nbody with no links\n';
+  const allSlugs = new Set(['notes/example', 'concepts/cloud-drift', 'concepts/other']);
+
+  test('includeFrontmatter false: operator rule fires, built-in `related` and its pack mirror do not', async () => {
+    const links = await extractLinksFromFile(content, 'notes/example.md', allSlugs, { includeFrontmatter: false, pack: PACK });
+    expect(links.map((l) => [l.to_slug, l.link_type])).toEqual([['concepts/cloud-drift', 'discusses']]);
+
+    // Contrast: the same fixture with includeFrontmatter true emits the
+    // built-in related_to edge AND the pack mirror — proves the negative
+    // above is the gate, not a fixture that could never resolve.
+    const full = await extractLinksFromFile(content, 'notes/example.md', allSlugs, { includeFrontmatter: true, pack: PACK });
+    expect(full.map((l) => `${l.to_slug}|${l.link_type}`).sort())
+      .toEqual(['concepts/cloud-drift|discusses', 'concepts/other|discusses', 'concepts/other|related_to']);
+  });
+});
+
+describe('pack-only pass — mirror check is keyed on (pageType, field)', () => {
+  test('pack `workshop.attendees` runs under skipFrontmatter; `meeting.attendees` stays gated', async () => {
+    const workshop = await extractPageLinks(
+      'workshops/2026-09-08', 'body', { attendees: ['alice-example'] }, 'workshop' as never,
+      resolver, { skipFrontmatter: true, pack: PACK },
+    );
+    expect(workshop.candidates.map((c) => [c.fromSlug, c.targetSlug, c.linkType]))
+      .toEqual([['workshops/2026-09-08', 'people/alice-example', 'hosted']]);
+
+    const meeting = await extractPageLinks(
+      'meetings/2026-09-08', 'body', { attendees: ['alice-example'] }, 'meeting' as never,
+      resolver, { skipFrontmatter: true, pack: PACK },
+    );
+    expect(meeting.candidates).toEqual([]);
+  });
+});

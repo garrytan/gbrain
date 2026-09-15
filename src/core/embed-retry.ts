@@ -13,6 +13,7 @@
  */
 
 import { embedBatch } from './embedding.ts';
+import { AIConfigError } from './ai/errors.ts';
 import { serr } from './console-prefix.ts';
 import { noteEmbedApiResponse } from './embed-stall.ts';
 import { titleTierCorpusGeneration } from './contextual-retrieval-service.ts';
@@ -254,6 +255,11 @@ export async function embedBatchWithBackoff(
  * providers whose wrappers strip `cause.status`.
  */
 export function isEmbedRetriableError(e: unknown): boolean {
+  // A configuration-class error (bad key, unsupported model, a degenerate
+  // vector the provider returned) never becomes retriable, whatever digits its
+  // message happens to carry — the diagnostics below embed hashes and lengths
+  // that would otherwise trip the bare 429/502/503 text matches.
+  if (e instanceof AIConfigError) return false;
   const msg = e instanceof Error ? e.message : String(e);
   return (
     detect429FromCause(e) ||
@@ -293,6 +299,8 @@ export function transientBackoffMs(attempt: number, rng: () => number = Math.ran
  * @internal exported for unit tests.
  */
 export function isTransientNetworkEmbedError(e: unknown): boolean {
+  // Configuration-class errors are never transient (see isEmbedRetriableError).
+  if (e instanceof AIConfigError) return false;
   const TRANSIENT_CODES = /^(DNS_ETIMEOUT|ETIMEOUT|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|ECONNABORTED|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/;
   let cur: unknown = e;
   for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {

@@ -14,7 +14,7 @@
  * reachable only via Tailscale, set GBRAIN_ALLOW_PRIVATE_REMOTES=1; loud
  * stderr warning at use site is the operator's signal.
  */
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { lstatSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { isInternalUrl } from './url-safety.ts';

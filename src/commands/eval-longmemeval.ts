@@ -58,7 +58,7 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import { withBenchmarkBrain, resetTables } from '../eval/longmemeval/harness.ts';
 import { haystackToPages, normalizeSessions } from '../eval/longmemeval/adapter.ts';
 import {

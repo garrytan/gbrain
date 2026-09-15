@@ -1,4 +1,5 @@
 /** One resumable, non-root local setup path. It never creates a personal identity or server. */
+import { bunSpawn, bunSpawnSync } from '../spawn.ts';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -37,7 +38,7 @@ export interface AgentSetupResult {
 
 async function cli(root: string, artifact: InstallArtifact, args: string[]): Promise<void> {
   const commandArgs = args.includes('--migrate-only') ? [...args, '--json'] : args;
-  const child = Bun.spawn([join(root, artifact.directory, 'bun'), '--no-env-file', join(root, artifact.cli), '--brain', 'host', ...commandArgs], {
+  const child = bunSpawn([join(root, artifact.directory, 'bun'), '--no-env-file', join(root, artifact.cli), '--brain', 'host', ...commandArgs], {
     cwd: root, env: { ...isolatedAgentEnv(root), DATABASE_URL: '', GBRAIN_DATABASE_URL: '', ...(args[0] === 'init' ? { GBRAIN_IN_AGENT_SETUP: '1' } : {}) },
     stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
   });
@@ -76,7 +77,7 @@ function artifactFromBundle(bundle: string, sourceRef: string): Omit<InstallArti
     throw new AgentInstallError('invalid_artifact', 'Setup bundle does not contain the GBrain package and setup helper.');
   }
   if (!/^[a-f0-9]{40}$/.test(sourceRef)) throw new AgentInstallError('invalid_artifact_ref', 'A resolved 40-character source commit is required.');
-  const version = Bun.spawnSync([bun, '--version'], { stdout: 'pipe', stderr: 'pipe' });
+  const version = bunSpawnSync([bun, '--version'], { stdout: 'pipe', stderr: 'pipe' });
   if (version.exitCode !== 0) throw new AgentInstallError('runtime_unusable', 'The staged Bun runtime is not executable on this machine.');
   return { source_ref: sourceRef, version: pkg.version, bun_version: version.stdout.toString().trim(), bun_sha256: sha256(readFileSync(bun)), package_sha256: sha256(readFileSync(join(packageDir, 'package.json'))) };
 }
@@ -105,7 +106,7 @@ function installArtifact(root: string, options: AgentSetupOptions, identity: Ret
 function artifactUsable(root: string, artifact: InstallArtifact): boolean {
   try {
     if (!existsSync(confinedPath(root, artifact.cli)) || sha256(readFileSync(confinedPath(root, `${artifact.directory}/bun`))) !== artifact.bun_sha256) return false;
-    const probe = Bun.spawnSync([join(root, artifact.directory, 'bun'), '--no-env-file', join(root, artifact.cli), '--version'], {
+    const probe = bunSpawnSync([join(root, artifact.directory, 'bun'), '--no-env-file', join(root, artifact.cli), '--version'], {
       cwd: root, env: { ...isolatedAgentEnv(root), DATABASE_URL: '', GBRAIN_DATABASE_URL: '' }, stdout: 'pipe', stderr: 'pipe', timeout: 15_000,
     });
     return probe.exitCode === 0;

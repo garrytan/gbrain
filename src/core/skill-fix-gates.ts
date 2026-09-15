@@ -26,7 +26,7 @@
  * appear in dry-fix's own argument surface.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from './spawn.ts';
 import { dirname } from 'node:path';
 
 // ---------------------------------------------------------------------------

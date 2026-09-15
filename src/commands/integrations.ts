@@ -25,7 +25,7 @@ import { join, basename } from 'path';
 import { homedir } from 'os';
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
-import { execSync } from 'child_process';
+import { execSync } from '../core/spawn.ts';
 import { fetchWithSSRFGuard, HttpProxyError, SSRFError } from '../core/ssrf-validate.ts';
 
 // --- Types ---
@@ -314,7 +314,7 @@ export async function executeHealthCheck(
         return { ...base, status: 'blocked', output: `Blocked: command health_checks are restricted to embedded recipes. (${check.argv[0]})` };
       }
       try {
-        const { spawnSync } = await import('child_process');
+        const { spawnSync } = await import('../core/spawn.ts');
         const result = spawnSync(check.argv[0], check.argv.slice(1), {
           timeout: 10000,
           encoding: 'utf-8',

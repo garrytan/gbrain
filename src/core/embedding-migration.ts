@@ -342,8 +342,8 @@ export const TEXT_EMBEDDING_DIM_PINNED_TABLES: ReadonlyArray<{
  *
  * Dropping the column discards the stored vectors, which is correct: they are
  * in the OLD embedding space and unusable after the swap. query_cache is a
- * cache (refills on the next query); facts re-embed on their next write /
- * `gbrain extract` pass.
+ * cache (refills on the next query); facts are backfilled by
+ * `gbrain embed --stale --facts` (existing rows are never re-embedded by a write).
  */
 async function transitionDimPinnedColumn(
   tx: { executeRaw: <T = unknown>(sql: string, params?: unknown[]) => Promise<T[]> },

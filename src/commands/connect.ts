@@ -37,7 +37,7 @@ import { harnessAdapter } from '../core/harness/registry.ts';
  *   - generic: prints the connector fields for any other MCP client.
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from '../core/spawn.ts';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ConnectProbeResult } from '../core/connect-probe.ts';
@@ -224,7 +224,7 @@ function claudeBlock(p: { name: string; url: string; token: string | null }): st
   const headerToken = p.token ?? PLACEHOLDER_TOKEN;
   const cmd = cmdString('claude', buildClaudeMcpAddArgv({ name: p.name, url: p.url, headerToken }));
   const lines = ['# Paste into Claude Code:', '', 'Connect my knowledge brain, then learn what it can do:', '', `  ${cmd}`, ''];
-  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "claude-code"\` on the host.`, '');
+  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "claude-code"\` on the host (on a multi-source brain add \`--source <id>\`).`, '');
   lines.push(LEARN_INSTRUCTION, '', SECRET_NOTE);
   return lines.join('\n');
 }
@@ -241,7 +241,7 @@ function codexBlock(p: { name: string; url: string; token: string | null }): str
     `  ${cmd}`,
     '',
   ];
-  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "codex"\` on the host.`, '');
+  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "codex"\` on the host (on a multi-source brain add \`--source <id>\`).`, '');
   lines.push(
     `Codex reads the token from $${ENV_VAR} at runtime — keep that variable set in your shell profile so new Codex sessions can reach the brain.`,
     '',
@@ -264,7 +264,7 @@ function opencodeBlock(p: { name: string; url: string; token: string | null }): 
     `  ${cmd}`,
     '',
   ];
-  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "opencode"\` on the host.`, '');
+  if (!p.token) lines.push(`Replace ${PLACEHOLDER_TOKEN} with a token from \`gbrain auth create "opencode"\` on the host (on a multi-source brain add \`--source <id>\`).`, '');
   lines.push(
     `The config stores the literal \`{env:${ENV_VAR}}\` interpolation — opencode resolves it at read time, ` +
       `so keep that variable exported in your shell profile; the token never lands in the config file. ` +

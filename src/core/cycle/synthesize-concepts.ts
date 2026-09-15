@@ -226,7 +226,18 @@ export async function runPhaseSynthesizeConcepts(
   // 4. Per group: synthesize narrative (LLM for T1/T2, deterministic for T3+)
   let conceptsWritten = 0;
   let estimatedSpendUsd = 0;
-  const budgetCap = DEFAULT_BUDGET_USD;
+  // Per-run cap, `cycle.synthesize_concepts.budget_usd` (same read + validation
+  // as extract_atoms): finite positive number wins, anything else keeps the default.
+  let budgetCap = DEFAULT_BUDGET_USD;
+  try {
+    const configured = await engine.getConfig('cycle.synthesize_concepts.budget_usd');
+    if (configured) {
+      const n = Number(configured);
+      if (Number.isFinite(n) && n > 0) budgetCap = n;
+    }
+  } catch {
+    // keep the default — a config lookup must never stop a maintenance phase
+  }
   const failures: Array<{ concept: string; error: string }> = [];
   // #4589 provenance-link problems. Kept OUT of `failures`: that list means
   // "the LLM call failed → template fallback" downstream (summary wording,

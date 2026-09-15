@@ -1,6 +1,6 @@
 import type { Recipe } from '../types.ts';
 import { AIConfigError } from '../errors.ts';
-import { execSync } from 'node:child_process';
+import { execSync } from '../../spawn.ts';
 
 const DEFAULT_API_VERSION = '2024-10-21'; // stable Azure OpenAI version as of 2026-05
 

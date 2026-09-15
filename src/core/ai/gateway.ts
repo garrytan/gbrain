@@ -2152,6 +2152,24 @@ export function __getShrinkStateForTests(recipeId: string): ShrinkEntry | undefi
 }
 
 /**
+ * #4616 — pgvector rejects non-finite components at insert and its cosine
+ * HNSW silently SKIPS a zero-norm vector, so a degenerate provider vector is a
+ * stored embedding no vector search can reach (`get` / keyword search still see the
+ * row). Fail loud here, before upsertChunks. Checked on the float32 view (what the column
+ * stores), so a vector flushing to all-zero at float32 precision is zero-norm too. The input
+ * is named by sha256 prefix + length, never by content (query_hash norm; this reaches stderr/--json/job records).
+ */
+function assertIndexableEmbedding(vector: Float32Array, modelId: string, index: number, input?: string | MultimodalInput): Float32Array {
+  const norm = vector.reduce((sum, x) => sum + x * x, 0);
+  if (norm > 0 && Number.isFinite(norm)) return vector;
+  const text = typeof input === 'string' ? input : input?.kind === 'text' ? input.text : undefined;
+  throw new AIConfigError(
+    `Embedding provider returned a ${norm === 0 ? 'zero-norm' : 'non-finite'} vector for model ${modelId} at batch index ${index}${text === undefined ? '' : ` (input sha256 ${createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 8)}, ${text.length} chars)`}; it cannot be indexed for vector search.`,
+    `Retry the import after checking provider health; a degenerate vector would be stored but never reachable by search.`,
+  );
+}
+
+/**
  * Embed a single sub-batch with automatic halving on token-limit errors.
  * If the batch is already at MIN_SUB_BATCH and still fails, throws.
  */
@@ -2206,8 +2224,9 @@ async function embedSubBatch(
       }
     }
 
+    const vectors = result.embeddings.map((e: number[], i: number) => assertIndexableEmbedding(new Float32Array(e), modelId, i, texts[i]));
     recordSubBatchSuccess(recipe);
-    return result.embeddings.map((e: number[]) => new Float32Array(e));
+    return vectors;
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
     // On token-limit error, tighten the recipe's effective safety factor
@@ -2427,7 +2446,7 @@ export async function embedMultimodal(
       );
     }
 
-    for (const row of parsedBody.data) {
+    for (const [j, row] of parsedBody.data.entries()) {
       if (!Array.isArray(row.embedding) || row.embedding.length !== targetDims) {
         throw new AIConfigError(
           `Voyage multimodal returned ${row.embedding?.length ?? 0}-dim vector; expected ${targetDims}.`,
@@ -2435,7 +2454,7 @@ export async function embedMultimodal(
           `(used by the text path). Image vectors land in content_chunks.embedding_image (1024).`,
         );
       }
-      allEmbeddings.push(new Float32Array(row.embedding));
+      allEmbeddings.push(assertIndexableEmbedding(new Float32Array(row.embedding), parsed.modelId, i + j, batch[j]));
     }
   }
 
@@ -2511,7 +2530,7 @@ async function embedMultimodalOpenAICompat(
   const inputType = opts.inputType ?? 'document';
 
   const allEmbeddings: Float32Array[] = [];
-  for (const input of inputs) {
+  for (const [k, input] of inputs.entries()) {
     const body: Record<string, unknown> = {
       model: modelId,
       input: [
@@ -2597,7 +2616,7 @@ async function embedMultimodalOpenAICompat(
         `and reinitialize the embedding column at the new width.`,
       );
     }
-    allEmbeddings.push(new Float32Array(row.embedding));
+    allEmbeddings.push(assertIndexableEmbedding(new Float32Array(row.embedding), modelId, k, input));
   }
 
   return allEmbeddings;

@@ -1,5 +1,5 @@
 import { isZeroEntropyModel } from '../core/ai/defaults.ts';
-import { execSync, execFileSync } from 'child_process';
+import { execSync, execFileSync } from '../core/spawn.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { parseSemver, semverGt } from '../core/semver.ts';
