@@ -430,6 +430,13 @@ describe('signature invalidation is probe-gated (#4283)', () => {
     // The re-embed stamps only a signature naming the model the vectors were
     // actually written under (#4825), so the target names the recorded model.
     const target = `${await recordedModel('p1')}:1536`;
+    // Make the seeded vectors genuinely stale: invalidation preserves chunks
+    // already recorded under the target model (#5051), so drift needs a
+    // different recorded model, not just a drifted page signature.
+    await engine.executeRaw(
+      `UPDATE content_chunks SET model = 'old:model'
+        WHERE page_id = (SELECT id FROM pages WHERE slug = 'p1' AND source_id = 'default')`,
+    );
     const seen: string[] = [];
     const result = await embedStaleForSource(engine, 'default', {
       embeddingSignature: target,

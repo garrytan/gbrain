@@ -1180,13 +1180,13 @@ export interface BrainEngine {
    */
   setPageEmbeddingSignature(slug: string, opts: { sourceId?: string; signature: string }): Promise<void>;
   /**
-   * NULL out the embeddings (and embedded_at) of every chunk whose page
-   * `embedding_signature` is set AND differs from `signature` — i.e. pages
-   * embedded under a now-stale model. Returns the chunk count invalidated.
-   * The embed-stale loop calls this BEFORE listStaleChunks so signature-
-   * drift pages flow through the existing NULL-embedding cursor (keeps
-   * listStaleChunks's keyset pagination untouched). GRANDFATHER: NULL
-   * signature is never invalidated. `sourceId` scopes the sweep.
+   * NULL embeddings and embedded_at on signature-drifted pages, preserving
+   * chunks whose exact model, text hash, and active-column vector width match
+   * the signature and current chunk_text. Returns the invalidated chunk count.
+   * The embed-stale loop uses invalidateStaleSignatureEmbeddingsGuarded to
+   * also exclude embed_skip pages and restamp fully-current active pages
+   * before listStaleChunks, preserving its NULL-embedding keyset cursor.
+   * NULL signatures are grandfathered by default; sourceId scopes the sweep.
    *
    * `includeNullSignature` (#3391): ALSO invalidate embedded chunks whose
    * page signature is NULL (pre-v108 pages that predate the stamp). After a

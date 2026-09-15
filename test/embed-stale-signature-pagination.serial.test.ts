@@ -101,6 +101,86 @@ beforeEach(async () => {
 });
 
 describe('embed --stale page-level signature reconciliation', () => {
+  test('drifted page converges across two runs without replacing completed embeddings', async () => {
+    const slug = 'drifted-partial';
+    const oldModel = 'openai:old-embedding-model';
+    const oldSignature = `${oldModel}:${DIMS}`;
+    await seedPage(slug, [
+      embeddedChunk(0, oldModel),
+      embeddedChunk(1, oldModel),
+      { ...embeddedChunk(2, oldModel), chunk_text: 'FAIL this chunk' },
+    ]);
+    await engine.setPageEmbeddingSignature(slug, { signature: oldSignature });
+    transportBehavior = async (input) => {
+      if (input.values.some((value) => value.includes('FAIL'))) {
+        throw Object.assign(new Error('bad embedding input'), { status: 400 });
+      }
+      return fakeTransport(input);
+    };
+    const readChunks = () => engine.executeRaw<{
+      chunk_index: number; embedded: boolean; embedded_at: string | null;
+    }>(
+      `SELECT cc.chunk_index, cc.embedding IS NOT NULL AS embedded,
+              cc.embedded_at::text AS embedded_at
+         FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = $1 AND p.source_id = 'default' ORDER BY cc.chunk_index`,
+      [slug],
+    );
+
+    const first = await runEmbedCore(engine, { stale: true, catchUp: true, quiet: true });
+    expect(first.embedded).toBe(2);
+    expect(first.failures).toBe(1);
+    expect(await pageSignature(slug)).toBe(oldSignature);
+    const afterFirst = await readChunks();
+    expect(afterFirst.map((chunk) => chunk.embedded)).toEqual([true, true, false]);
+    expect(afterFirst[0].embedded_at).not.toBeNull();
+    expect(afterFirst[1].embedded_at).not.toBeNull();
+
+    transportBehavior = fakeTransport;
+    const second = await runEmbedCore(engine, { stale: true, catchUp: true, quiet: true });
+    expect(second.embedded).toBe(1);
+    expect(second.failures).toBe(0);
+    expect(await pageSignature(slug)).toBe(SIGNATURE);
+    const afterSecond = await readChunks();
+    expect(afterSecond.map((chunk) => chunk.embedded)).toEqual([true, true, true]);
+    expect(afterSecond.slice(0, 2)).toEqual(afterFirst.slice(0, 2));
+  });
+
+  test('fully-current drifted page is restamped without re-embedding', async () => {
+    await seedPage('fully-current', [embeddedChunk(0), embeddedChunk(1)]);
+    await engine.setPageEmbeddingSignature('fully-current', { signature: `openai:old:${DIMS}` });
+
+    const result = await runEmbedCore(engine, { stale: true, catchUp: true, quiet: true });
+
+    expect(result.embedded).toBe(0);
+    expect(await pageSignature('fully-current')).toBe(SIGNATURE);
+    expect(await engine.countStaleChunks({ signature: SIGNATURE })).toBe(0);
+  });
+
+  test('old-model chunk on a drifted page is still invalidated and re-embedded', async () => {
+    await seedPage('old-model', [embeddedChunk(0, 'openai:old')]);
+    await engine.setPageEmbeddingSignature('old-model', { signature: `openai:old:${DIMS}` });
+
+    const result = await runEmbedCore(engine, { stale: true, catchUp: true, quiet: true });
+
+    expect(result.embedded).toBe(1);
+    expect(await pageSignature('old-model')).toBe(SIGNATURE);
+  });
+
+  test('NULL embedded_text_hash on a drifted page is not preserved', async () => {
+    await seedPage('null-hash', [embeddedChunk(0)]);
+    await engine.setPageEmbeddingSignature('null-hash', { signature: `openai:old:${DIMS}` });
+    await engine.executeRaw(
+      `UPDATE content_chunks SET embedded_text_hash = NULL
+        WHERE page_id = (SELECT id FROM pages WHERE slug = 'null-hash' AND source_id = 'default')`,
+    );
+
+    const result = await runEmbedCore(engine, { stale: true, catchUp: true, quiet: true });
+
+    expect(result.embedded).toBe(1);
+    expect(await pageSignature('null-hash')).toBe(SIGNATURE);
+  });
+
   test('page split across the 2,000-row cursor boundary is stamped after the pass', async () => {
     for (let page = 0; page < 40; page++) {
       const chunkCount = page === 39 ? 49 : 50;

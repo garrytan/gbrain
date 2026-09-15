@@ -63,6 +63,33 @@ async function seedEmbedded(slug: string, text: string, signature: string | null
 }
 
 describe('embedding_signature stale semantics', () => {
+  for (const includeNullSignature of [false, true]) {
+    test(`invalidation preserves current chunks on a ${includeNullSignature ? 'NULL-signature' : 'drifted'} page`, async () => {
+      const model = 'openai:current';
+      const signature = `${model}:${colDim}`;
+      await engine.putPage('mixed', { type: 'note', title: 'mixed', compiled_truth: '# mixed' });
+      await engine.upsertChunks('mixed', [
+        { chunk_index: 0, chunk_text: 'old chunk', chunk_source: 'compiled_truth',
+          embedding: new Float32Array(colDim).fill(0.001), model: 'openai:old' },
+        { chunk_index: 1, chunk_text: 'current chunk', chunk_source: 'compiled_truth',
+          embedding: new Float32Array(colDim).fill(0.002), model },
+      ]);
+      if (!includeNullSignature) {
+        await engine.setPageEmbeddingSignature('mixed', { signature: `openai:old:${colDim}` });
+      }
+
+      expect(await engine.invalidateStaleSignatureEmbeddings({
+        signature, includeNullSignature, sourceId: 'default',
+      })).toBe(1);
+      const rows = await engine.executeRaw<{ embedded: boolean }>(
+        `SELECT cc.embedding IS NOT NULL AS embedded
+           FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+          WHERE p.slug = 'mixed' AND p.source_id = 'default' ORDER BY cc.chunk_index`,
+      );
+      expect(rows.map((row) => row.embedded)).toEqual([false, true]);
+    });
+  }
+
   test('R-4 GRANDFATHER: NULL signature is never stale', async () => {
     await seedEmbedded('legacy', 'abcde', null); // embedded, NULL signature
     // No NULL embeddings, NULL signature → not stale under any signature.
