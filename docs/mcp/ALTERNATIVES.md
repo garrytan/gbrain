@@ -26,20 +26,33 @@ ngrok http 8787 --url your-brain.ngrok.app
 See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup
 including auth token configuration and fixed domain setup.
 
-## Tailscale Funnel
+## Tailscale Serve (tailnet-only) / Funnel (public)
 
-[Tailscale Funnel](https://tailscale.com/kb/1223/tailscale-funnel) gives you
-a permanent public HTTPS URL with automatic TLS. Free tier available. Best for
-private networks where you control both endpoints.
+[Tailscale](https://tailscale.com) gives you a permanent MagicDNS name with
+automatic TLS. Free tier available. Two modes, one command apart:
+
+| | `tailscale serve` | `tailscale funnel` |
+|--|---|---|
+| Reachable from | Your tailnet only | The public internet |
+| Best for | Your own devices; nothing exposed | Cloud connectors (ChatGPT, Claude.ai) that must reach you |
+| Docs | [Tailscale Serve](https://tailscale.com/kb/1312/serve) | [Tailscale Funnel](https://tailscale.com/kb/1223/tailscale-funnel) |
 
 ```bash
 # 1. Install Tailscale
 brew install tailscale
 
-# 2. Expose your MCP server
+# 2. Start gbrain with the HTTPS issuer Tailscale presents (default 127.0.0.1 bind is right)
+gbrain serve --http --port 8787 --public-url https://your-machine.your-tailnet.ts.net
+
+# 3a. Tailnet-only
+tailscale serve --bg 8787
+# 3b. Public
 tailscale funnel 8787
-# Your brain is now at https://your-machine.ts.net
+# Your brain is now at https://your-machine.your-tailnet.ts.net/mcp
 ```
+
+For a plain-HTTP, bearer-only LAN endpoint with no TLS at all, see
+[DEPLOY.md — Tailnet / LAN-only](DEPLOY.md#tailnet--lan-only-no-public-tunnel).
 
 ## Fly.io / Railway (always-on)
 

@@ -4,12 +4,15 @@ import { loadSearchModeConfig, SEARCH_MODE_CONFIG_KEYS } from '../src/core/searc
 /**
  * loadSearchModeConfig resolves the mode key plus every per-knob override key.
  * Read one key per round trip and that is 33 `SELECT value FROM config WHERE
- * key = $1` queries on every uncached search (66 on the cached path, which
- * resolves the mode twice). On a hosted Postgres with the default pool of 10
- * that is ~4 sequential RTT rounds and 33 pooler-slot grabs before any
- * retrieval work runs. config-snapshot.ts exists to collapse exactly this
- * shape into one whole-table read; these tests pin that the loader uses it
- * and falls back to per-key reads when it cannot.
+ * key = $1` queries on every search — on a hosted Postgres with the default
+ * pool of 10 that is ~4 sequential RTT rounds and 33 pooler-slot grabs before
+ * any retrieval work runs. (#4359, fixed) `hybridSearchCached` used to call
+ * this twice per request (once for its own cache-key resolution, once again
+ * inside the bare `hybridSearch` it calls on a miss) before threading the
+ * loaded snapshot through; now it's once either way. config-snapshot.ts
+ * exists to collapse the 33-reads-per-call shape into one whole-table read;
+ * these tests pin that the loader uses it and falls back to per-key reads
+ * when it cannot.
  */
 function countingEngine(rows: Record<string, string>) {
   const calls = { getConfig: 0, getAllConfig: 0 };

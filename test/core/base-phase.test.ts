@@ -190,12 +190,27 @@ describe('BaseCyclePhase', () => {
   });
 
   describe('dry-run propagation', () => {
-    test('opts.dryRun is forwarded through to process()', async () => {
+    // #4823: no subclass has a dry-run path (they bill LLM calls + INSERT rows),
+    // so run() skips process() entirely under dry-run — from either channel.
+    test('opts.dryRun skips process() with no_dry_run_support', async () => {
       captured.length = 0;
       const phase = new TestPhase();
       const ctx = buildCtx({ sourceId: 'tenant-a' });
-      await phase.run(ctx, { dryRun: true });
-      expect(captured[0]!.dryRun).toBe(true);
+      const r = await phase.run(ctx, { dryRun: true });
+      expect(captured.length).toBe(0);
+      expect(r.status).toBe('skipped');
+      expect(r.details.reason).toBe('no_dry_run_support');
+      expect(r.details.dryRun).toBe(true);
+    });
+
+    test('ctx.dryRun === true skips process() even when opts omit dryRun', async () => {
+      captured.length = 0;
+      const phase = new TestPhase();
+      const ctx = { ...buildCtx({ sourceId: 'tenant-a' }), dryRun: true };
+      const r = await phase.run(ctx);
+      expect(captured.length).toBe(0);
+      expect(r.status).toBe('skipped');
+      expect(r.details.reason).toBe('no_dry_run_support');
     });
 
     test('omitting opts.dryRun leaves it undefined (not coerced)', async () => {

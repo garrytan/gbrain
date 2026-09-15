@@ -28,7 +28,7 @@ import { buildTranscriptSlug } from '../../src/core/transcripts/types.ts';
 import { buildHermesFixture } from '../fixtures/transcripts/hermes-fixture-builder.ts';
 
 const CODEX_SLUG = buildTranscriptSlug('codex', '2026-08-02T09:00:00.000Z', {
-  sessionId: 'codex-fixture-session-1',
+  sessionId: 'rollout-1', // payload.id — the per-thread id (#4981)
 });
 const AGENT_SLUG = buildTranscriptSlug('openclaw', '2026-08-03T14:00:00.000Z', {
   sessionId: 'agent-fixture-session-1',

@@ -81,11 +81,13 @@ let hermeticEnsured = false;
  * (today's behavior). `1`/`true` → a per-process empty tmpdir; any other
  * non-empty value is used verbatim as the config-dir path.
  *
- * Opt-in, NOT default: on non-macOS installs the config dir also holds the
- * OAuth session credentials, so pointing the child at an empty dir logs it
- * out (macOS keeps credentials in the keychain and survives). SkillOpt runs
- * that need hermetic measurements (no user-level CLAUDE.md / settings.json /
- * hooks bleeding into rollouts) flip it deliberately — see
+ * Opt-in, NOT default: the config dir also holds the CLI's session
+ * credentials, so the empty-dir form logs the child out wherever the CLI
+ * reads its session from the config dir (observed on macOS with Claude Code
+ * 2.1.x too — #4741; nothing here seeds or looks up credential material).
+ * For hermetic-with-auth use the explicit-path form with a pre-seeded config.
+ * SkillOpt runs that need hermetic measurements (no user-level CLAUDE.md /
+ * settings.json / hooks bleeding into rollouts) flip it deliberately — see
  * docs/guides/skillopt.md, "Hermetic claude-cli rollouts".
  */
 export function resolveHermeticConfigDir(

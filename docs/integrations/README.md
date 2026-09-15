@@ -46,6 +46,10 @@ These require manual setup (no self-installing recipe yet):
 | [Meeting & Call Webhooks](meeting-webhooks.md) | Circleback meeting transcripts + Quo/OpenPhone SMS/calls |
 | [qm Harness](qm-harness.md) | gbrain as the company brain for a qm (multi-user agent harness) deployment — central HTTP MCP, per-scope clients, roster provisioning, write fencing |
 
+Something came in wrong? [Reliability repair](reliability-repair.md) covers what
+`gbrain doctor` flags after import (double-encoded JSONB values, truncated
+markdown bodies) and the commands that fix each one.
+
 ## How to Read a Recipe
 
 Integration recipes are markdown files with YAML frontmatter. Your agent reads

@@ -1097,3 +1097,38 @@ describe('cycle.propose_takes.enabled gate (#4102)', () => {
     expect(calls()).toBe(1);
   });
 });
+
+// ─── #4823: `gbrain dream --dry-run` promises "no writes" ────────────
+// BaseCyclePhase.run() must skip every subclass (propose_takes / grade_takes /
+// calibration_profile) under dry-run — they bill LLM calls and INSERT rows and
+// have no dry-run path of their own — the same shape extract uses.
+
+describe('runPhaseProposeTakes — dry-run (#4823)', () => {
+  function armedEngine(): { engine: BrainEngine; calls: () => number } {
+    let calls = 0;
+    const engine = {
+      kind: 'pglite',
+      async executeRaw() { calls++; throw new Error('executeRaw must not run under dry-run'); },
+      async listPages() { calls++; throw new Error('listPages must not run under dry-run'); },
+    } as unknown as BrainEngine;
+    return { engine, calls: () => calls };
+  }
+  const meter = () => new BudgetMeter({ budgetUsd: 1, phase: 'propose_takes' });
+
+  test('opts.dryRun: skipped with no_dry_run_support; engine never touched', async () => {
+    const { engine, calls } = armedEngine();
+    const r = await runPhaseProposeTakes(buildCtx(engine), { dryRun: true, meter: meter() });
+    expect(r.status).toBe('skipped');
+    expect(r.details.reason).toBe('no_dry_run_support');
+    expect(r.details.dryRun).toBe(true);
+    expect(calls()).toBe(0);
+  });
+
+  test('ctx.dryRun alone (caller forgot to thread opts): still skipped; engine never touched', async () => {
+    const { engine, calls } = armedEngine();
+    const r = await runPhaseProposeTakes({ ...buildCtx(engine), dryRun: true }, { meter: meter() });
+    expect(r.status).toBe('skipped');
+    expect(r.details.reason).toBe('no_dry_run_support');
+    expect(calls()).toBe(0);
+  });
+});

@@ -11,6 +11,7 @@ import { readPolicyOpts } from '../../src/core/ops/context.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
 import { runReindex } from '../../src/commands/reindex.ts';
+import { buildEmptyRetrievalBlock } from '../../src/mcp/dispatch.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../../src/core/chunkers/recursive.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, renderFactsTable } from '../../src/core/facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../../src/core/takes-fence.ts';
@@ -73,10 +74,15 @@ for (const kind of ['pglite', 'postgres'] as const) {
       resetGateway();
     }, 60_000);
 
+    // Response-meta side channel captured per call (the `retrieval` block MCP reads).
+    let meta: Record<string, unknown> = {};
+    const degradedStages = () => ((meta.retrieval as { degraded?: Array<{ stage: string }> } | undefined)?.degraded ?? []).map(d => d.stage);
+
     function context(remote: boolean | undefined, sourceId = A, allowedSources?: string[]): OperationContext {
       return {
         engine, config: { engine: 'pglite' }, dryRun: false, remote: remote as boolean, sourceId,
         logger: { info: () => {}, warn: () => {}, error: () => {} },
+        emitResponseMeta: (key: string, value: unknown) => { meta[key] = value; },
         ...(allowedSources !== undefined ? { auth: {
           token: 'fixture', clientId: 'chunk-reader-example', scopes: ['read'], allowedSources,
         } } : {}),
@@ -203,6 +209,31 @@ for (const kind of ['pglite', 'postgres'] as const) {
       const after = await engine.searchVector(vector, { ...policy, limit: 1 });
       expect(after.map(row => [row.page_id, row.score])).toEqual(before.map(row => [row.page_id, row.score]));
       expect((await engine.searchVector(vector, { sourceId: A, limit: 1 }))[0].page_id).toBe(unsafe);
+    }, 60_000);
+
+    test('a remote read emptied by the safe-chunk fence reports safe_index_pending, never a clean miss (#5004)', async () => {
+      // Only unsealed (pre-fence) pages match QUERY in source A; B holds one sealed page.
+      await legacy('notes/legacy-only', A, `${QUERY} OLD_PUBLIC_CHUNK`, `${QUERY} OLD_PUBLIC_CHUNK`);
+      await safe('notes/current-clean-b', B, 'Sealed page without the marker.');
+      for (const keywordOnly of ['true', 'false']) {
+        await engine.setConfig('search.mcp_keyword_only', keywordOnly);
+        for (const name of ['search', 'query']) {
+          meta = {};
+          expect(await call(context(true), name, { query: QUERY, expand: false, limit: 5 })).toEqual([]);
+          expect(degradedStages()).toContain('safe_index_pending');
+          const block = buildEmptyRetrievalBlock(meta.retrieval) ?? '';
+          expect(block).toContain('safe_index_pending');
+          expect(block).not.toContain('clean miss');
+          // Trusted local reads still see the legacy page and carry no stamp.
+          meta = {};
+          expect((await call(context(false), name, { query: QUERY, expand: false, limit: 5 }) as SearchResult[]).length).toBeGreaterThan(0);
+          expect(degradedStages()).not.toContain('safe_index_pending');
+          // A scope holding only sealed pages is a genuine miss: the probe is source-scoped.
+          meta = {};
+          expect(await call(context(true, FOREIGN, [B]), name, { query: 'nosuchtokenanywhere', expand: false, limit: 5 })).toEqual([]);
+          expect(degradedStages()).not.toContain('safe_index_pending');
+        }
+      }
     }, 60_000);
 
     test('direct page rewrites cannot bless unsafe chunks even after protected markers are removed', async () => {

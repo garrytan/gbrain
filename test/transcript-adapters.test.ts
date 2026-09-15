@@ -358,6 +358,55 @@ describe('codexAdapter', () => {
     expect(diag.skippedLines).toBeGreaterThanOrEqual(2);
   });
 
+  // #4981: codex child rollouts (subagents / forks) carry their OWN payload.id
+  // but the ROOT session's payload.session_id, and inherit the parent's
+  // session_meta header later in the file. Identity must be payload.id with
+  // first-header-wins, or every child collapses onto the parent's page and
+  // ping-pongs it on each ingest pass.
+  test('forked rollouts keep their own identity: payload.id wins, first session_meta wins (#4981)', async () => {
+    const dir = tdir();
+    const T0 = '2026-08-02T09:00:00.000Z';
+    const T1 = '2026-08-02T10:00:00.000Z';
+    const header = (id: string, ts: string, cwd: string, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        timestamp: ts,
+        type: 'session_meta',
+        payload: { id, session_id: 'parent', timestamp: ts, cwd, cli_version: '0.150.0', ...extra },
+      });
+    const user = (ts: string, text: string) =>
+      JSON.stringify({ timestamp: ts, type: 'event_msg', payload: { type: 'user_message', message: text } });
+    const assistant = (ts: string, text: string) =>
+      JSON.stringify({
+        timestamp: ts,
+        type: 'response_item',
+        payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
+      });
+    const parentPath = join(dir, 'rollout-parent.jsonl');
+    const childPath = join(dir, 'rollout-child.jsonl');
+    writeFileSync(parentPath, [header('parent', T0, '/repo'), user(T0, 'parent question'), assistant(T0, 'parent answer')].join('\n') + '\n');
+    writeFileSync(
+      childPath,
+      [
+        header('child', T1, '/repo/child', { forked_from_id: 'parent', parent_thread_id: 'parent' }),
+        header('parent', T0, '/repo'), // inherited parent header copied into the child
+        user(T1, 'child question'),
+        assistant(T1, 'child answer'),
+      ].join('\n') + '\n',
+    );
+    const parent = (await drain(codexAdapter.parse(parentPath))).sessions[0]!;
+    const child = (await drain(codexAdapter.parse(childPath))).sessions[0]!;
+    expect(parent.meta.sessionId).toBe('parent');
+    expect(child.meta.sessionId).toBe('child');
+    // First header wins: the inherited parent header must not rewrite identity, cwd, or start.
+    expect(child.meta.startedAt).toBe(T1);
+    expect(child.meta.cwd).toBe('/repo/child');
+    expect(child.messages.map((m) => m.text)).toEqual(['child question', 'child answer']);
+    // Same day, distinct ids → distinct pages (slug is derived from sessionId).
+    expect(buildTranscriptSlug('codex', T1, { sessionId: child.meta.sessionId })).not.toBe(
+      buildTranscriptSlug('codex', T0, { sessionId: parent.meta.sessionId }),
+    );
+  });
+
   test('a rollout within budget is read whole and not marked truncated', async () => {
     const { diag } = await drain(codexAdapter.parse(CODEX_FIXTURE));
     expect(diag.truncated).toBe(false);
@@ -368,7 +417,7 @@ describe('codexAdapter', () => {
     const { sessions, diag } = await drain(codexAdapter.parse(CODEX_FIXTURE));
     expect(sessions).toHaveLength(1);
     const s = sessions[0];
-    expect(s.meta.sessionId).toBe('codex-fixture-session-1');
+    expect(s.meta.sessionId).toBe('rollout-1'); // payload.id (per-thread), not the root session_id (#4981)
     expect(s.meta.cwd).toBe('/home/alice-example/agent-workspace');
     expect(s.meta.startedAt).toBe('2026-08-02T09:00:00.000Z');
     expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);

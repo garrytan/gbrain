@@ -1471,11 +1471,9 @@ async function hookStop(io: HookIo): Promise<number> {
         ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
       });
       if (!conf.ok) return `transcript_${conf.reason}`;
-      const findLastUser = (ts: WindowTurn[]): WindowTurn | undefined => {
-        for (let i = ts.length - 1; i >= 0; i--) {
-          if (ts[i].role === 'user' && ts[i].text) return ts[i];
-        }
-        return undefined;
+      const findLastUser = (parsed: ReturnType<typeof parseTranscript>): WindowTurn | undefined => {
+        const index = parsed.genuineUserTurnIndexes.at(-1);
+        return index === undefined ? undefined : parsed.turns[index];
       };
       let lastUser: WindowTurn | undefined;
       try {
@@ -1488,11 +1486,11 @@ async function hookStop(io: HookIo): Promise<number> {
         // wide parse only ever runs when the cheap one failed, so the common
         // path keeps the 128KB cost inside this lane's 2s budget.
         lastUser = findLastUser(
-          parseTranscript(conf.path, { maxBytes: WRITEBACK_TRANSCRIPT_TAIL_BYTES }).turns,
+          parseTranscript(conf.path, { maxBytes: WRITEBACK_TRANSCRIPT_TAIL_BYTES }),
         );
         if (!lastUser) {
           lastUser = findLastUser(
-            parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES }).turns,
+            parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES }),
           );
         }
       } catch {

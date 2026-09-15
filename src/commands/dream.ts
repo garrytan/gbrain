@@ -87,9 +87,11 @@ interface DreamArgs {
   /**
    * issue #2860 — `--once`. One-shot bypass of the named `--phase`'s own
    * `dream.<phase>.enabled` / `cycle.<phase>.enabled` config gate, for this
-   * invocation only. Never reads or writes config — unlike the old
-   * "toggle enabled true, run, toggle back to false" workaround, a crash
-   * mid-run can't leave any global state stuck. Requires an explicit
+   * invocation only. Never reads or writes the `.enabled` key — unlike the
+   * old "toggle enabled true, run, toggle back to false" workaround, a crash
+   * mid-run can't leave any global state stuck. (Phases may still write
+   * their own completion stamps, e.g. patterns' `last_evidence_ts` per
+   * #4879, so a forced run isn't re-paid by the next tick.) Requires an explicit
    * `--phase <name>`; bare `--once` is a usage error (there'd be no single
    * phase to target). Applies only to phases with a config `.enabled` gate
    * (patterns, synthesize, conversation_facts_backfill, enrich_thin,
@@ -391,7 +393,8 @@ re-scores the corpus and reconciles the queued synthesis backlog.
 Options:
   --dry-run           Preview all fixes without writing. Note: synthesize
                       runs the cheap scored triage pass (caches verdicts),
-                      but skips the synthesis subagents.
+                      but skips the synthesis subagents; propose_takes,
+                      grade_takes and calibration_profile are skipped.
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
   --phase <name>      Run only the named phase(s). Repeatable — every named

@@ -35,6 +35,7 @@ import {
 import { volunteerContext, type VolunteeredPage } from './volunteer.ts';
 import { getBrainHotMemoryMeta } from '../facts/meta-hook.ts';
 import { buildEntityCard, type EntityCard, type EntityOpenThread } from '../verbs/entity-card.ts';
+import { estimateTokens } from '../search/token-budget.ts';
 
 /**
  * v0.45.7 ambient recall (issue #1). The per-turn assembler is extended into the
@@ -646,6 +647,31 @@ export function assembleDeltaContext(
  * does not enforce maxBytes, so the section bounds itself). */
 export const CHECKPOINT_LINKS_RENDER_CAP = 10;
 
+// #4761: ONE template per item, shared by the renderers below and the budget
+// packers in ops/facts.ts — the packer prices exactly the bytes the renderer
+// emits, so `text` honors budget_tokens instead of overshooting it.
+export const renderCardLine = (c: EntityCard): string =>
+  `- **${c.entity.title}** → \`${c.entity.slug}\`${c.summary ? ` — ${c.summary}` : ''} (use get_page/entity before relying on details)`;
+export const renderThreadLine = (t: EntityOpenThread): string =>
+  `- [${t.kind}] ${t.text}${t.date ? ` (${t.date})` : ''}`;
+export const renderFactLine = (f: TurnContextFact): string =>
+  `- ${f.fact}${f.entity_slug ? ` [${f.entity_slug}]` : ''} (${f.confidence.toFixed(2)})`;
+export const renderPageLine = (p: DeltaPage): string => `- **${p.title}** → \`${p.slug}\` (${p.updated_at})`;
+
+const PACK_HEADERS = ['## Standing entities', '## Open threads', '## Hot memory (recent facts)'] as const;
+const deltaHeaders = (since?: string): readonly [string, string, string] => {
+  const s = since ? ` since ${since}` : '';
+  return [`## Pages changed${s}`, `## New facts${s}`, `## Thread updates${s}`];
+};
+/** Tokens the envelope + every section header cost once rendered (each header
+ * rides a blank line before it). The packers reserve this up front so
+ * estimateTokens(text) <= budget_tokens holds whenever any item fits; a
+ * section that ends up empty is over-reserved — the safe direction. */
+const headerCost = (headers: readonly string[]): number =>
+  estimateTokens([TURN_CONTEXT_ENVELOPE, ...headers.flatMap((h) => ['', h])].join('\n') + '\n');
+export const packHeaderCost = (): number => headerCost(PACK_HEADERS);
+export const deltaHeaderCost = (since?: string): number => headerCost(deltaHeaders(since));
+
 export function renderPack(
   cards: EntityCard[],
   openThreads: EntityOpenThread[],
@@ -665,27 +691,9 @@ export function renderPack(
       're-pull with get_page. Trust these links over the compaction summary.',
     );
   }
-  if (cards.length) {
-    lines.push('', '## Standing entities');
-    for (const c of cards) {
-      const syn = c.summary ? ` — ${c.summary}` : '';
-      lines.push(`- **${c.entity.title}** → \`${c.entity.slug}\`${syn} (use get_page/entity before relying on details)`);
-    }
-  }
-  if (openThreads.length) {
-    lines.push('', '## Open threads');
-    for (const t of openThreads) {
-      const d = t.date ? ` (${t.date})` : '';
-      lines.push(`- [${t.kind}] ${t.text}${d}`);
-    }
-  }
-  if (facts.length) {
-    lines.push('', '## Hot memory (recent facts)');
-    for (const f of facts) {
-      const ent = f.entity_slug ? ` [${f.entity_slug}]` : '';
-      lines.push(`- ${f.fact}${ent} (${f.confidence.toFixed(2)})`);
-    }
-  }
+  if (cards.length) lines.push('', PACK_HEADERS[0], ...cards.map(renderCardLine));
+  if (openThreads.length) lines.push('', PACK_HEADERS[1], ...openThreads.map(renderThreadLine));
+  if (facts.length) lines.push('', PACK_HEADERS[2], ...facts.map(renderFactLine));
   return lines.join('\n');
 }
 
@@ -698,24 +706,9 @@ export function renderDelta(
 ): string {
   if (!pages.length && !facts.length && !threads.length) return '';
   const lines: string[] = [TURN_CONTEXT_ENVELOPE];
-  const sinceNote = since ? ` since ${since}` : '';
-  if (pages.length) {
-    lines.push('', `## Pages changed${sinceNote}`);
-    for (const p of pages) lines.push(`- **${p.title}** → \`${p.slug}\` (${p.updated_at})`);
-  }
-  if (facts.length) {
-    lines.push('', `## New facts${sinceNote}`);
-    for (const f of facts) {
-      const ent = f.entity_slug ? ` [${f.entity_slug}]` : '';
-      lines.push(`- ${f.fact}${ent} (${f.confidence.toFixed(2)})`);
-    }
-  }
-  if (threads.length) {
-    lines.push('', `## Thread updates${sinceNote}`);
-    for (const t of threads) {
-      const d = t.date ? ` (${t.date})` : '';
-      lines.push(`- [${t.kind}] ${t.text}${d}`);
-    }
-  }
+  const [pagesHeader, factsHeader, threadsHeader] = deltaHeaders(since);
+  if (pages.length) lines.push('', pagesHeader, ...pages.map(renderPageLine));
+  if (facts.length) lines.push('', factsHeader, ...facts.map(renderFactLine));
+  if (threads.length) lines.push('', threadsHeader, ...threads.map(renderThreadLine));
   return lines.join('\n');
 }

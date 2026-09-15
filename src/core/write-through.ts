@@ -88,6 +88,8 @@ export interface WriteThroughResult {
    *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
   skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
+  /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
+  warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -97,6 +99,16 @@ export interface WritePageThroughOpts {
   /** Merged over the page's own frontmatter at render time (e.g. provenance). */
   frontmatterOverrides?: Record<string, unknown>;
   logger?: WriteThroughLogger;
+}
+
+export function withNoRepoWriteThroughWarning<T extends { written: boolean; skipped?: string; warning?: string }>(result: T, sourceId: string): T {
+  if (result.written || result.skipped !== 'no_repo_configured') return result;
+  return {
+    ...result,
+    warning:
+      `put_page wrote only to the database for source '${sourceId}': no repo/local_path is configured, so no durable markdown file was created. ` +
+      'Bind this MCP server/token to a git-backed source or configure source local_path/sync.repo_path before relying on the write.',
+  } as T;
 }
 
 /**
@@ -495,6 +507,13 @@ export interface DeleteThroughResult {
   /** The path that was removed (or would have been). */
   path?: string;
   /**
+   * True when the removal was also committed (path-limited) because the repo
+   * is durability-hardened — the delete-side twin of
+   * `WriteThroughResult.committed`. Absent on unhardened repos and when the
+   * best-effort commit did not land (the unlink still stands).
+   */
+  committed?: boolean;
+  /**
    * Non-error reasons nothing was removed. Shares the target-resolution skip
    * vocabulary (kept in lockstep via the Extract), plus:
    *   - disabled_by_config: the operator opted the brain out of the disk sink.
@@ -544,7 +563,7 @@ export async function deletePageThrough(
     }
     const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);
     if (!target.ok) return { removed: false, skipped: target.skipped };
-    const { filePath } = target;
+    const { filePath, writeRoot } = target;
     if (!hasSourceFilesystemLock(target.writeRoot)) {
       return await withSourceFilesystemLock(engine, target.writeRoot, () => deletePageThrough(engine, slug, opts));
     }
@@ -555,7 +574,20 @@ export async function deletePageThrough(
 
     assertSourceFilesystemActive();
     unlinkSync(filePath);
-    return { removed: true, path: filePath };
+    // Mirror writePageThrough (#2426): on a durability-hardened repo, commit
+    // the removal (path-limited) so the post-commit hook pushes it. Pre-fix
+    // the deletion sat in the working tree as an uncommitted ` D` — invisible
+    // to commit-driven sync (the autopilot's own sync then warned "N
+    // uncommitted file(s) invisible to commit-driven sync") until a human
+    // committed it by hand. Best-effort, like the write side: a commit failure
+    // never fails the delete (the DB row + the unlink are the durable state).
+    let committed = false;
+    try {
+      if (isDurabilityHardened(writeRoot)) {
+        committed = commitWriteThroughFile(writeRoot, filePath, slug, 'delete write-through');
+      }
+    } catch { /* best-effort */ }
+    return { removed: true, path: filePath, ...(committed ? { committed } : {}) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] delete failed for ${slug}: ${msg}`);

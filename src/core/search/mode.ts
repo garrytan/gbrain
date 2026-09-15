@@ -873,7 +873,7 @@ export function attributeKnob<K extends keyof ModeBundle>(
     return { knob, value: resolved[knob], source: 'per-call', source_detail: 'SearchOpts' };
   }
   if (ov[knob] !== undefined) {
-    return { knob, value: resolved[knob], source: 'override', source_detail: `config: search.${knob}` };
+    return { knob, value: resolved[knob], source: 'override', source_detail: `config: ${KNOB_CONFIG_KEY[knob]}` };
   }
   if (resolved.mode_valid) {
     return { knob, value: resolved[knob], source: 'mode', source_detail: `mode: ${resolved.resolved_mode}` };
@@ -1643,57 +1643,57 @@ export function loadOverridesFromConfig(
   return out;
 }
 
+/**
+ * knob → the config key `loadOverridesFromConfig` reads it from (#4605). The
+ * Record type forces a row per ModeBundle knob. `attributeKnob` prints these
+ * (the dashboard's copy-pasteable `config set` target — knob name and key
+ * spelling differ for 14 of them); SEARCH_MODE_CONFIG_KEYS derives from it;
+ * KNOWN_CONFIG_KEYS (config.ts, kept import-light) mirrors it by hand, pinned
+ * equal by test/config-search-registry.test.ts.
+ */
+export const KNOB_CONFIG_KEY: Readonly<Record<keyof ModeBundle, string>> = Object.freeze({
+  cache_enabled: 'search.cache.enabled',
+  cache_similarity_threshold: 'search.cache.similarity_threshold',
+  cache_ttl_seconds: 'search.cache.ttl_seconds',
+  intentWeighting: 'search.intentWeighting',
+  keywordOrFallback: 'search.keywordOrFallback',
+  tokenBudget: 'search.tokenBudget',
+  expansion: 'search.expansion',
+  expansion_variant_budget: 'search.expansion_variant_budget',
+  searchLimit: 'search.searchLimit',
+  reranker_enabled: 'search.reranker.enabled',
+  reranker_model: 'search.reranker.model',
+  reranker_top_n_in: 'search.reranker.top_n_in',
+  reranker_top_n_out: 'search.reranker.top_n_out',
+  reranker_timeout_ms: 'search.reranker.timeout_ms',
+  floor_ratio: 'search.floor_ratio',
+  title_boost: 'search.title_boost',
+  evidence_cosine_floor: 'search.evidence_cosine_floor',
+  cross_modal_both_text_weight: 'search.cross_modal.both_mode_text_weight',
+  cross_modal_both_image_weight: 'search.cross_modal.both_mode_image_weight',
+  image_query_text_refinement_weight: 'search.image_query.text_refinement_weight',
+  image_query_image_refinement_weight: 'search.image_query.image_refinement_weight',
+  unified_multimodal: 'search.unified_multimodal',
+  unified_multimodal_only: 'search.unified_multimodal_only',
+  cross_modal_llm_intent: 'search.cross_modal.llm_intent',
+  graph_signals: 'search.graph_signals',
+  // Per-mode default lives in the bundle; these let power users override at
+  // the per-key level without flipping the global mode.
+  contextual_retrieval: 'search.contextual_retrieval',
+  contextual_retrieval_disabled: 'search.contextual_retrieval_disabled',
+  autocut: 'search.autocut',
+  autocut_jump: 'search.autocut_jump',
+  autocut_min_top: 'search.autocut_min_top',
+  autocut_min_keep: 'search.autocut_min_keep',
+  relationalRetrieval: 'search.relational_retrieval',
+  relational_retrieval_depth: 'search.relational_retrieval_depth',
+  relational_rerank_pin: 'search.relational_rerank_pin',
+  keyword_arm_confidence_floor: 'search.keyword_arm_confidence_floor',
+  metadata_boost_gate: 'search.metadata_boost_gate',
+});
+
 /** The full list of config keys this module reads. Used by `gbrain search modes --reset`. */
-export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
-  'search.cache.enabled',
-  'search.cache.similarity_threshold',
-  'search.cache.ttl_seconds',
-  'search.intentWeighting',
-  'search.keywordOrFallback',
-  'search.tokenBudget',
-  'search.expansion',
-  'search.expansion_variant_budget',
-  'search.searchLimit',
-  // v0.35.0.0+ reranker keys
-  'search.reranker.enabled',
-  'search.reranker.model',
-  'search.reranker.top_n_in',
-  'search.reranker.top_n_out',
-  'search.reranker.timeout_ms',
-  // v0.35.6.0 — floor-ratio gate
-  'search.floor_ratio',
-  'search.title_boost',
-  'search.evidence_cosine_floor',
-  // v0.36 cross-modal keys (D3)
-  'search.cross_modal.both_mode_text_weight',
-  'search.cross_modal.both_mode_image_weight',
-  'search.image_query.text_refinement_weight',
-  'search.image_query.image_refinement_weight',
-  'search.unified_multimodal',
-  'search.unified_multimodal_only',
-  'search.cross_modal.llm_intent',
-  // v0.40.4 graph signals
-  'search.graph_signals',
-  // v0.40.3.0 contextual retrieval — tier override + soft kill switch.
-  // Per-mode default lives in the bundle; this key lets power users
-  // override at the per-key level without flipping the global mode.
-  'search.contextual_retrieval',
-  'search.contextual_retrieval_disabled',
-  // v0.42.3.0 autocut
-  'search.autocut',
-  // v0.43 relational recall
-  'search.relational_retrieval',
-  'search.relational_retrieval_depth',
-  // Ranker wave (R1) relational rerank pin
-  'search.relational_rerank_pin',
-  // Ranker wave (Phase E2) keyword-arm confidence floor
-  'search.keyword_arm_confidence_floor',
-  // Ranker wave (Phase E3) metadata boost gate
-  'search.metadata_boost_gate',
-  'search.autocut_jump',
-  'search.autocut_min_top',
-  'search.autocut_min_keep',
-]);
+export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze(Object.values(KNOB_CONFIG_KEY));
 
 /**
  * The mode-selection config key itself. Separated from SEARCH_MODE_CONFIG_KEYS
@@ -1705,11 +1705,15 @@ export const SEARCH_MODE_KEY = 'search.mode';
 /**
  * Load the live mode config (mode + per-key overrides) from the brain engine.
  * This reads SEARCH_MODE_KEY plus every SEARCH_MODE_CONFIG_KEYS entry, and it
- * runs on every search (twice on the cached path, which resolves the mode
- * before and inside hybridSearch). One key per round trip is free on PGLite
- * and is most of the pre-retrieval wall clock on a hosted Postgres (dozens of
- * pooler-slot grabs per query), so read the whole config table once and
- * answer every key from that snapshot. See config-snapshot.ts.
+ * runs once per direct `hybridSearch` call. (#4359, fixed) On the cached path
+ * it also runs exactly once — `hybridSearchCached` loads the snapshot to
+ * resolve its own cache-key knobs, then threads that SAME snapshot into the
+ * inner `hybridSearch` call (the INTERNAL `HybridSearchOpts._searchModeInput`
+ * field in hybrid.ts) instead of letting it load a second, independent one.
+ * One key per round trip is free on PGLite and is most of the pre-retrieval
+ * wall clock on a hosted Postgres (dozens of pooler-slot grabs per query), so
+ * read the whole config table once and answer every key from that snapshot.
+ * See config-snapshot.ts.
  *
  * Errors are swallowed and fall through to mode-bundle defaults. The cache
  * config table predates v0.32.3 and may not exist on very old brains, and an

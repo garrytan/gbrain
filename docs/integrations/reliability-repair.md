@@ -48,12 +48,16 @@ across every affected column. Idempotent. Second run reports 0 rows. Use
 `--dry-run` to preview, `--json` for structured output. The `v0_12_2`
 version migration runs this automatically on `gbrain upgrade`.
 
-For truncated markdown bodies (source-dependent):
+For truncated markdown bodies (source-dependent): the importer skips a file
+whose content hash has not changed, and trailing whitespace is trimmed before
+hashing, so a re-import needs a real edit to the page body. Make the edit, then
+re-import:
 
 ```
-gbrain sync --force
-# or per-page
-gbrain import <slug> --force
+gbrain sync                  # git-backed brain: commit the edit first
+gbrain sync --working-tree   # or import the uncommitted working tree
+gbrain import <brain-root> --fresh   # or re-import the root you originally imported;
+                                     # --fresh ignores a resume checkpoint that would skip the path
 ```
 
 gbrain cannot recover content that is already lost if you no longer have

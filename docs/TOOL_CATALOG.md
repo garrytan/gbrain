@@ -158,7 +158,7 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `capture` | Capture a quick note into the brain — the "just remember this" write. | write | yes |  |
-| `delete_page` | Soft-delete a page. | write |  |  |
+| `delete_page` | Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). | write |  |  |
 | `fetch` | Fetch the full text of one search result by its `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `get_chunks` | Get content chunks for a page | read |  |  |
 | `get_page` | Read a page by slug (supports optional fuzzy matching). | read | yes |  |
@@ -168,7 +168,7 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 | `put_page` | Write or replace a page (markdown with frontmatter). | write | yes |  |
 | `put_raw_data` | Store raw API response data for a page | write |  |  |
 | `resolve_slugs` | Fuzzy-resolve a partial slug to matching page slugs | read | yes |  |
-| `restore_page` | v0.26.5 — restore a soft-deleted page (clear deleted_at). | write |  |  |
+| `restore_page` | v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). | write |  |  |
 | `revert_version` | Revert page to a previous version | write |  |  |
 
 ## schema

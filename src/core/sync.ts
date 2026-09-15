@@ -11,7 +11,7 @@
  *   pathToSlug()  →  convert file paths to page slugs
  */
 
-import { SLUG_WORD_CHARS } from './cjk.ts';
+import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
@@ -637,6 +637,10 @@ export function slugifySegment(segment: string): string {
     // are already decomposed and their points strip too.
     .replace(/[\u0591-\u05c7]/g, '')      // Strip Hebrew niqqud + cantillation
     .normalize('NFC')                     // Recompose Hangul Jamo back to Syllables (v0.32.7)
+    // Strip variation selectors (emoji VS16, ideographic IVS): Mn invisibles
+    // that survive \p{M}, so `🗂️ entities` forked a `<U+FE0F>-entities` twin of
+    // the clean-slug page. Shared with normalizeBasename via cjk.ts (#4985).
+    .replace(SLUG_VARIATION_SELECTORS_RE, '')
     .toLowerCase()
     .replace(SLUGIFY_KEEP_RE, '')         // Keep alnum, dots, spaces, _-, and CJK (v0.32.7)
     .replace(/[\s]+/g, '-')              // Spaces → hyphens

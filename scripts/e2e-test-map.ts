@@ -225,7 +225,16 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Schema source of truth: any change must pass the cross-engine drift gate.
   "src/schema.sql": ["test/e2e/schema-drift.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts"],
-  "src/core/migrate.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/migrate-chain.test.ts"],
+  "src/core/migrate.ts": [
+    "test/e2e/schema-drift.test.ts",
+    "test/e2e/migrate-chain.test.ts",
+    "test/e2e/link-source-check-repair-postgres.test.ts",
+  ],
+  // #4613: the links_link_source_check self-heal must use migration v114's
+  // two-phase DDL (DROP + ADD NOT VALID, then VALIDATE outside the txn) on real
+  // Postgres — lock semantics PGLite can't observe. Keyed on the repair module
+  // and on migrate.ts (the definition it reproduces).
+  "src/core/link-source-check-repair.ts": ["test/e2e/link-source-check-repair-postgres.test.ts"],
   // MCP stdio + HTTP transports share dispatch.
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // G6: the --surface verbs CEILING journey over a real `serve --http` boot

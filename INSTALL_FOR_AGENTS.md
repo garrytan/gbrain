@@ -201,6 +201,9 @@ Per-query cost @ 10K queries/mo (typical single-user volume):
 >   3) tokenmax (recommended default — preserves v0.31.x retrieval shape) —
 >      no budget, LLM expansion ON, 50 chunks. Best for Opus/frontier models.
 >
+> ("no expansion" governs `gbrain search` and callers that leave expansion
+> unset; `gbrain query` expands in every mode unless you pass `--no-expand`.)
+>
 > Cost depends on BOTH the mode AND the downstream model you run. See the
 > matrix above for the 9-cell breakdown.
 

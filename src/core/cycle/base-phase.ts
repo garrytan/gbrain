@@ -49,7 +49,12 @@ export interface ScopedReadOpts {
 export interface BasePhaseOpts {
   /** Optional progress reporter. Phases call tick() / start() through the base. */
   reporter?: ProgressReporter;
-  /** Dry-run mode propagated from cycle opts. Subclasses honor this in process(). */
+  /**
+   * Dry-run mode propagated from cycle opts. Honored in run(): the phase is
+   * skipped (`status: 'skipped'`, `reason: 'no_dry_run_support'`) before
+   * process() is called — every subclass bills LLM calls and INSERTs rows and
+   * has no dry-run path of its own (#4823). `ctx.dryRun` is honored too.
+   */
   dryRun?: boolean;
   /** Optional explicit budget override in USD. Otherwise base reads config. */
   budgetUsd?: number;
@@ -197,6 +202,21 @@ export abstract class BaseCyclePhase {
     // Source-scope discipline — required by every base-phase subclass. Forgetting
     // to thread this would have been the v0.34.1 leak class. Now structural.
     const scope = sourceScopeOpts(ctx);
+
+    // `--dry-run` promises "preview without writing". No subclass has a
+    // dry-run path (LLM calls + INSERT take_proposals / take_grade_cache /
+    // calibration_profiles), so skip here — one guard for all three, the same
+    // shape extract / resolve_symbol_edges use (#4823). Read both channels so
+    // a caller that forgets to thread opts.dryRun still can't bill.
+    if (opts.dryRun || ctx.dryRun === true) {
+      return {
+        phase: this.name,
+        status: 'skipped',
+        duration_ms: Date.now() - t0,
+        summary: `dry-run: ${this.name} skipped (LLM calls + DB writes)`,
+        details: { dryRun: true, reason: 'no_dry_run_support' },
+      };
+    }
 
     // Budget meter construction. The default path reads config; tests inject.
     if (!opts.meter) {

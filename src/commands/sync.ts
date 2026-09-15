@@ -99,6 +99,7 @@ import {
   resolveSingleSyncEmbedPlan,
   resolveSyncAllEmbedPlan,
   resolveSyncEmbedBackfill,
+  syncProducedEmbeddableContent,
   type SyncEmbedBackfillOutcome,
 } from '../core/sync-embed-backfill.ts';
 import {
@@ -125,6 +126,7 @@ import {
   resolveSlugRootMode,
   type SlugRootMode,
 } from '../core/sync-anchor.ts';
+import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import {
   SyncLockBusyError,
   formatLockBusyMessage,
@@ -396,6 +398,11 @@ export interface SyncOpts {
    * fallback aren't covered). Unlike `exclude`, this has to reach the
    * collection step itself — a pruned path is never collected in the first
    * place, so there's nothing for a post-collection filter to add back.
+   *
+   * Unioned with the persisted `sync.include_hidden` config key (same dialect
+   * and trailing-`/` normalization as `sync.exclude`), so callers that never
+   * touch the CLI — `sync --all`, autopilot, the dream cycle — inherit the
+   * waiver. Union, not override; unset admits nothing.
    */
   includeHidden?: string[];
   /**
@@ -1794,6 +1801,23 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
   } catch { /* config unreadable — never break a sync over the scope read */ }
 
+  // #4901: the WAIVER's persisted twin, read exactly like `sync.exclude` above
+  // (same dialect, trailing-slash normalization, union, best-effort, position).
+  // `--include-hidden` is refused under `--all` and unavailable to autopilot /
+  // the dream cycle, so this key is the only way the unattended paths get it.
+  // An unset key admits nothing — the dot-directory default does not move.
+  try {
+    const storedHidden = await engine.getConfig('sync.include_hidden');
+    const hiddenPatterns = (storedHidden ?? '')
+      .split(/[\n,]/)
+      .map(p => p.trim())
+      .filter(Boolean)
+      .map(p => (p.endsWith('/') ? `${p}**` : p));
+    if (hiddenPatterns.length > 0) {
+      opts = { ...opts, includeHidden: [...new Set([...(opts.includeHidden ?? []), ...hiddenPatterns])] };
+    }
+  } catch { /* config unreadable — never break a sync over the scope read */ }
+
   // #1970: bookmark reachability. The ONLY thing that should force a full
   // reconcile is a truly-absent object; a present-but-non-ancestor bookmark
   // (history rewrite: force-push, master→main consolidation, squash) is still
@@ -2272,6 +2296,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // unsyncable cleanup in source A doesn't accidentally sweep same-slug
   // pages in sources B/C/D.
   const pageOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
+  // #4786: pages this loop retires count as `deleted` in the result (only rows
+  // that actually transitioned), so a sweep-only run never reports up_to_date.
+  let swept = 0;
   for (const path of unsyncableModified) {
     // v0.41.13 #1433: never delete on metafile classification.
     // #2404 hardening: same for 'pruned-dir' — a page under a pruned
@@ -2304,7 +2331,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // Scope falls back to DEFAULT_SOURCE_ID to preserve deletePage's
           // old 'default' fallback; softDeletePages requires an explicit
           // sourceId. The purge phase owns the eventual hard delete.
-          await engine.softDeletePages([slug], { sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID });
+          swept += (await engine.softDeletePages([slug], { sourceId: opts.sourceId ?? DEFAULT_SOURCE_ID })).length;
           slog(`  Soft-deleted un-syncable page (recoverable 72h): ${slug}`);
         }
       }
@@ -2316,8 +2343,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // plus zero imports must not produce a clean `up_to_date` (and must not
     // advance the anchor past commits this run never looked at remotely).
     // Reached when local-only commits landed with no syncable content while
-    // the pull kept failing. Nothing is written; the next sync re-diffs the
-    // same trivial range and retries the pull.
+    // the pull kept failing. Nothing is imported (the #4786 sweep above may
+    // have soft-deleted pages — report it); the next sync re-diffs the same
+    // trivial range and retries the pull.
     if (pullFailed) {
       serr(
         `[sync] git pull failed and no syncable changes imported — reporting partial ` +
@@ -2329,7 +2357,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         filesImported: 0,
         pagesAffected: [],
         chunksCreated: 0,
-        added: 0, modified: 0, deleted: 0, renamed: 0,
+        added: 0, modified: 0, deleted: swept, renamed: 0,
         reason: 'pull_failed',
       });
     }
@@ -2356,10 +2384,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // sweep orphaned `<rename:…>` sentinels here too.
     await sweepOrphanedRenameSentinels(engine, opts.sourceId ?? DEFAULT_SOURCE_ID);
     return {
-      status: 'up_to_date',
+      status: swept > 0 ? 'synced' : 'up_to_date',
       fromCommit: lastCommit,
       toCommit: pin,
-      added: 0, modified: 0, deleted: 0, renamed: 0,
+      added: 0, modified: 0, deleted: swept, renamed: 0,
       chunksCreated: 0,
       embedded: 0,
       pagesAffected: [],
@@ -2510,7 +2538,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       chunksCreated,
       added: filtered.added.length,
       modified: filtered.modified.length,
-      deleted: filtered.deleted.length,
+      deleted: filtered.deleted.length + swept,
       renamed: filtered.renamed.length,
       reason: checkpointDead ? 'checkpoint_unavailable' : reason,
       bankedFiles,
@@ -3742,7 +3770,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       toCommit: pin,
       added: filtered.added.length,
       modified: filtered.modified.length,
-      deleted: filtered.deleted.length,
+      deleted: filtered.deleted.length + swept,
       renamed: filtered.renamed.length,
       chunksCreated,
       embedded: 0,
@@ -3873,13 +3901,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
   if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
     try {
-      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted } = await import('./extract.ts');
+      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted, slugsSafeToStamp } = await import('./extract.ts');
       // #774: pages' source_path is git-root-relative, so extract resolves
       // files from gitContextRoot (== repoPath realpath when unscoped).
-      const linksCreated = await extractLinksForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
-      const timelineCreated = await extractTimelineForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
-      if (linksCreated > 0 || timelineCreated > 0) {
-        slog(`  Extracted: ${linksCreated} links, ${timelineCreated} timeline entries`);
+      const linksResult = await extractLinksForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
+      const timelineResult = await extractTimelineForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
+      if (linksResult.created > 0 || timelineResult.created > 0) {
+        slog(`  Extracted: ${linksResult.created} links, ${timelineResult.created} timeline entries`);
       }
       // v0.42.7 (#1696, CDX-6): stamp the links_extracted_at watermark for the
       // pages we just extracted, AFTER the import set their updated_at, so
@@ -3887,9 +3915,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // Source-correct via opts.sourceId. Stamp at the CALL SITE (not inside
       // extractLinksForSlugs) so we use the per-source sourceId the sync owns.
       // Best-effort: a stamp miss just means extract --stale re-sweeps later.
+      // Only the slugs both hooks actually read — a page the extractor
+      // skipped must stay stale so the sweep still owes it.
       await stampExtracted(
         engine,
-        pagesAffected.map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
+        slugsSafeToStamp(linksResult, timelineResult)
+          .map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
       );
     } catch { /* extraction is best-effort */ }
   }
@@ -3991,7 +4022,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     toCommit: pin,
     added: filtered.added.length,
     modified: filtered.modified.length,
-    deleted: filtered.deleted.length,
+    deleted: filtered.deleted.length + swept,
     renamed: filtered.renamed.length,
     chunksCreated,
     embedded,
@@ -4470,10 +4501,11 @@ function manageGitignoreAtGitRoot(path: string, engineKind?: 'pglite' | 'postgre
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
-  // #4888: under --json, stdout is reserved for JSON lines (the envelope and
-  // any JSON status lines); every slog() human line from performSync and its
-  // callees routes to stderr instead. serr/progress are stderr already, and
-  // the console.log(JSON.stringify(..)) sites are untouched by the wrap.
+  // #4888: under --json, stdout is reserved for the ONE JSON envelope (#4684:
+  // the cost-gate status object rides inside it as `cost_gate`); every slog()
+  // human line from performSync and its callees routes to stderr instead.
+  // serr/progress are stderr already, and the envelope's own
+  // console.log(JSON.stringify(..)) site is untouched by the wrap.
   return args.includes('--json')
     ? withHumanLogsToStderr(() => runSyncInner(engine, args))
     : runSyncInner(engine, args);
@@ -4525,7 +4557,10 @@ Options:
                        waivable) for paths matching this glob (repeatable).
                        Does not reach a non-git directory's FS-walk import
                        fallback; every git-tracked source (the normal case)
-                       is covered. Cannot combine with --all.
+                       is covered. Cannot combine with --all; persist it as
+                       the sync.include_hidden config key (gbrain config set
+                       sync.include_hidden '<globs>') so --all, autopilot and
+                       the dream cycle honor it.
   --include-gitignored Include otherwise-syncable files matched by .gitignore.
                        Forces a full filesystem walk so periodic syncs see
                        ignored untracked content.
@@ -4755,7 +4790,9 @@ See also:
     console.error(
       `--src-subpath/--exclude/--include-hidden scope a single sync invocation; they cannot be combined with --all. ` +
       `For --all runs, register the subdirectory as the source's local_path instead ` +
-      `(gbrain sources add <id> --path <repo>/<subdir>).`,
+      `(gbrain sources add <id> --path <repo>/<subdir>), persist exclusions with ` +
+      `\`gbrain config set sync.exclude <globs>\`, and persist the dot-directory waiver with ` +
+      `\`gbrain config set sync.include_hidden <globs>\` so --all, autopilot and the dream cycle honor it.`,
     );
     process.exit(1);
   }
@@ -4946,10 +4983,7 @@ See also:
     //     performSync get the [<source-id>] prefix under parallel mode (D6)
     //   - stable JSON envelope {schema_version:1, sources, ...} when --json
     // v0.41.31: v2Enabled resolved once above (cost gate). Reused here.
-    const activeSources = sources.filter((s) => {
-      const cfg = (s.config || {}) as { syncEnabled?: boolean };
-      return cfg.syncEnabled !== false;
-    });
+    const activeSources = sources.filter((s) => !isSyncDisabledConfig(s.config));
     const disabledCount = sources.length - activeSources.length;
     const humanSink: NodeJS.WriteStream = jsonOut ? process.stderr : process.stdout;
     const writeHuman = (line: string) => humanSink.write(line + '\n');
@@ -5112,7 +5146,7 @@ See also:
         !dryRun &&
         result.status !== 'dry_run' &&
         result.status !== 'up_to_date' &&
-        result.status !== 'partial'
+        result.status !== 'partial' && syncProducedEmbeddableContent(result)
       ) {
         try {
           const outcome = await resolveSyncEmbedBackfill(engine, src.id, {
@@ -5262,6 +5296,8 @@ See also:
         ok_count: okCount,
         error_count: errCount,
         skipped_count: perSourceResults.filter((r) => r.status === 'skipped_missing_path').length,
+        // #4684: the cost-gate status object rides inside the ONE envelope.
+        ...(embedPlan.costGate ? { cost_gate: embedPlan.costGate } : {}),
       }));
     }
 
@@ -5316,6 +5352,7 @@ See also:
   // inline spend into informed inline-or-deferred spend.
   let singleSourceAutoDefer = false;
   let singleSourceNoWorkerSurface = false;
+  let singleCostGate: Record<string, unknown> | undefined;
   if (!noEmbed && !dryRun && !watch) {
     const gateRows = await engine.executeRaw<{ local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null }>(
       `SELECT local_path, config, last_commit, chunker_version FROM sources WHERE id = $1`,
@@ -5333,6 +5370,7 @@ See also:
         jsonOut, yesFlag, full, includeGitignored, noAutoEmbed,
       });
       singleSourceNoWorkerSurface = gate.workerSurface.status === 'no_worker_surface';
+      singleCostGate = gate.costGate;
       if (gate.stop) return;
       if (gate.autoDeferEmbeds) {
         opts.noEmbed = true;
@@ -5416,7 +5454,7 @@ See also:
       )) &&
       result.status !== 'dry_run' &&
       result.status !== 'up_to_date' &&
-      result.status !== 'partial'
+      result.status !== 'partial' && syncProducedEmbeddableContent(result)
     ) {
       try {
         singleEmbedBackfill = await resolveSyncEmbedBackfill(engine, sourceId, {
@@ -5428,7 +5466,7 @@ See also:
       }
     }
     if (jsonOut) {
-      console.log(JSON.stringify(buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill)));
+      console.log(JSON.stringify(buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill, singleCostGate)));
     }
     return;
   }

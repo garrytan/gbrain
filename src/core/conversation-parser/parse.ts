@@ -325,7 +325,7 @@ export function applyPattern(
   body: string,
   entry: PatternEntry,
   dateCtx: DateContext,
-  diag?: { unrecognized_headings: string[] },
+  diag?: { unrecognized_headings: string[]; date_fallback_count?: number },
 ): MatchedMessage[] {
   if (!body) return [];
   const out: MatchedMessage[] = [];
@@ -400,8 +400,17 @@ export function applyPattern(
 
     const m = entry.regex.exec(line);
     if (m) {
-      const iso = buildIso(m, entry, runningCtx);
-      if (iso === null) continue; // reconstruction failed; skip line
+      let iso = buildIso(m, entry, runningCtx);
+      if (iso === null) {
+        // Reconstruction failed (e.g. a localized month name). Dropping the
+        // anchor would fold this message's body into the PREVIOUS speaker
+        // (silent misattribution, phase still regex_match), so open the
+        // message anyway and count it. Inherit the previous anchor's
+        // timestamp so ordering and downstream segment continuity survive;
+        // midnight of the page date only when this is the first anchor.
+        iso = out[out.length - 1]?.timestamp ?? `${runningCtx.fallbackDate}T00:00:00Z`;
+        if (diag) diag.date_fallback_count = (diag.date_fallback_count ?? 0) + 1;
+      }
       const rawSpeaker = m[entry.captures.speaker_group] ?? '';
       const speaker = cleanSpeaker(rawSpeaker, entry.speaker_clean);
       let text = '';
@@ -660,7 +669,7 @@ export function parseConversation(
     };
   }
 
-  const diag = { unrecognized_headings: [] as string[] };
+  const diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
   const messages = applyPattern(body, top.entry, dateCtx, diag);
 
   // Timezone warning surface (D19).
@@ -679,6 +688,8 @@ export function parseConversation(
     matched_pattern_id: top.entry.id,
     patterns_scored: patternsScored,
     timezone_warning,
+    // Anchors rescued onto a fallback timestamp; undefined when zero.
+    date_fallback_count: diag.date_fallback_count || undefined,
     // #4136 — populated unconditionally (NOT behind opts.diagnostic): the
     // extractor's decline gate depends on it. Undefined when empty.
     unrecognized_headings:

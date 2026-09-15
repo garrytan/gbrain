@@ -188,10 +188,11 @@ describe('expand() budget accounting — openai-compatible schemaless (viaText) 
 });
 
 describe('expand() budget accounting — openai-compatible structured-output (generateObject) path', () => {
-  // No built-in recipe currently opts into supports_structured_outputs (it's
-  // an opt-in per-backend capability declared in ChatTouchpoint — see
-  // recipeSupportsStructuredOutputs()'s own unit test in gateway-chat.test.ts
-  // for the same "no shipped recipe exercises this today" situation). Rather
+  // supports_structured_outputs is an opt-in per-backend capability declared
+  // in ChatTouchpoint; ollama is the one built-in recipe that declares it
+  // (server-side json_schema, #4863), and the hosted openai-compat recipes
+  // (deepseek/groq/together) stay opted out — see recipeSupportsStructuredOutputs()'s
+  // own unit test in gateway-chat.test.ts. Rather
   // than mutating a shipped recipe singleton, use the established synthetic-
   // recipe seam (__setTestRecipesForTests, already used by
   // no-batch-cap-suppression.serial.test.ts / adaptive-embed-batch.test.ts):

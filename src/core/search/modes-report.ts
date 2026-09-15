@@ -91,12 +91,17 @@ export function formatKnobValue(knob: string, value: unknown): string {
  * the BRAIN-LEVEL planes (config override > mode bundle); per-call
  * SearchOpts overrides on individual searches are not represented here —
  * a live search that passes its own knobs can legitimately differ from
- * this report for that one call.
+ * this report for that one call. #4601: the `query` op ALWAYS supplies
+ * `expand` (default on), so the `expansion` row never governs it — say so
+ * here, on the surface operators actually read, or the dashboard gives a
+ * confident wrong answer for the primary agent verb.
  */
 export const MODES_REPORT_PER_CALL_NOTE =
   'Resolved from config overrides + the active mode bundle. Per-call SearchOpts ' +
   'overrides on individual searches are not shown — a call that passes its own ' +
-  'knobs (e.g. expand, autocut, relational) wins for that call only.';
+  'knobs (e.g. expand, autocut, relational) wins for that call only. The `query` ' +
+  'op always passes `expand` (default on; `--no-expand` opts out), so the ' +
+  '`expansion` row here does not govern it.';
 
 export interface SearchModesReport {
   schema_version: 2;

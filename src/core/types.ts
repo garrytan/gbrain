@@ -166,6 +166,8 @@ export interface Page {
   ingested_via?: string | null;
   /** Server-stamped first-write audit timestamp; CV12 COALESCE-preserved across edits. */
   ingested_at?: Date | null;
+  /** Repo-relative import path (see PageInput.source_path); projected by getPage so the import skip path can compare before writing. */
+  source_path?: string | null;
   /**
    * v0.40.3.0 (renumbered from v0.40.3.0 v81 to v90 on master merge):
    * which contextual retrieval tier the page was last embedded under. One
@@ -1879,6 +1881,11 @@ export interface EvalCaptureFailure {
  *                        otherwise a transitional relaxed-carried row would
  *                        shadow the recovered pipeline for the full TTL
  *                        under the same knobs hash (2026-09 red-team).
+ *   safe_index_pending — a remote/untrusted read returned nothing while its
+ *                        scope still holds markdown pages below the safe-chunk
+ *                        index version (withheld from remote chunk retrieval
+ *                        until `gbrain reindex --markdown` seals them); stamped
+ *                        by the search/query ops' retrieval meta (#5004)
  */
 export const DEGRADED_STAGES = [
   'embed_unavailable',
@@ -1894,6 +1901,7 @@ export const DEGRADED_STAGES = [
   'reranker_skipped',
   'rerank_passthrough',
   'keyword_relaxed_carried',
+  'safe_index_pending',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 

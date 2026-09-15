@@ -24,6 +24,7 @@ import {
   shouldSleepHealthyAutopilot,
 } from '../src/commands/autopilot-remediation-policy.ts';
 import type { SourceRow, BrainEngine } from '../src/core/engine.ts';
+import { SOURCE_FRESHNESS_PHASES } from '../src/core/cycle.ts';
 
 function src(id: string, last_full_cycle_at?: string | null, extra: Record<string, unknown> = {}): SourceRow {
   return {
@@ -394,6 +395,28 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     const { engine, queue, added, fanoutOpts } = makeStubs([remote]);
     await dispatchPerSource(engine, queue, fanoutOpts);
     expect((added[0].data as Record<string, unknown>).pull).toBe(true);
+  });
+
+  test('#4399: a syncEnabled:false source keeps its freshness cycle but is never pulled or synced', async () => {
+    // The full-cycle fan-out is autopilot's SECOND automatic sync path (the
+    // freshness dispatcher in autopilot.ts is the first). A source the operator
+    // excluded from automatic sync must still get lint/backlinks/extract and its
+    // last_full_cycle_at stamp — only the sync phase (and the pull that feeds
+    // it) is dropped. normalizeQueuedSourcePhases passes a subset through.
+    const disabled = src('disabled', undefined, { syncEnabled: false, remote_url: 'https://github.com/x/y' });
+    const normal = src('normal', undefined, { remote_url: 'https://github.com/x/y' });
+    const { engine, queue, added, fanoutOpts } = makeStubs([disabled, normal]);
+    await dispatchPerSource(engine, queue, fanoutOpts);
+    const byId = new Map<string, AddedJob>(
+      added.map(j => [(j.data as Record<string, unknown>).source_id as string, j]),
+    );
+    const disabledData = byId.get('disabled')!.data as Record<string, unknown>;
+    expect(disabledData.phases).toEqual(SOURCE_FRESHNESS_PHASES.filter((p) => p !== 'sync'));
+    expect(disabledData.phases).toContain('extract');
+    expect(disabledData.pull).toBe(false);
+    const normalData = byId.get('normal')!.data as Record<string, unknown>;
+    expect(normalData.phases).toEqual(SOURCE_FRESHNESS_PHASES);
+    expect(normalData.pull).toBe(true);
   });
 
   test('fanoutMax cap: 3 sources, fanoutMax=1, 1 dispatched + 2 in skippedCap', async () => {

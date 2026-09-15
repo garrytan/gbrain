@@ -2412,11 +2412,11 @@ export interface BrainEngine {
   /**
    * v0.35.5 — lossless DB-side migration of fact rows from one slug to
    * another within a single source. UPDATEs `entity_slug` and
-   * `source_markdown_slug` on every active fact row whose
-   * `source_markdown_slug` matches the phantom slug. Every other column
-   * (embedding, valid_from, valid_until, kind, notability, confidence,
-   * source_session, status, etc.) is preserved verbatim — codex #3 fix
-   * for the writeFactsToFence lossy-migration trap.
+   * `source_markdown_slug` on every active fact row keyed on the phantom
+   * slug, and offsets `row_num` past the canonical page's current
+   * MAX(row_num) — all rows incl. expired, since partial idx_facts_fence_key
+   * only excludes NULL — so overlapping fence rows never collide (#4558);
+   * NULL row_num stays NULL. Every other column is preserved verbatim.
    *
    * Idempotent: re-run after success finds no rows to update and returns
    * `{migrated: 0}`. Hard-deletes are out of scope; the caller wipes the
@@ -2531,13 +2531,13 @@ export interface BrainEngine {
   ): Promise<CodeEdgeResult[]>;
 
   /**
-   * "What does this symbol call?" Returns edges from chunks whose
-   * from_symbol_qualified = qualifiedName. Same source-scoping semantics
-   * as getCallersOf.
+   * "What does this symbol call?" Edges from chunks whose from_symbol_qualified
+   * = qualifiedName; same source scoping as getCallersOf. opts.bareFallback (#4670):
+   * zero-row miss + delimiter-free input re-keys on content_chunks.symbol_name.
    */
   getCalleesOf(
     qualifiedName: string,
-    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean },
   ): Promise<CodeEdgeResult[]>;
 
   /**
@@ -2602,8 +2602,8 @@ export interface BrainEngine {
    * source — a slug-only UPDATE would fan out across sources, the same bug
    * that the v0.18.0 link batches fixed for cross-source edges.
    *
-   * Returns the count of rows actually updated. Pages whose `(slug, source_id)`
-   * tuple doesn't exist (race with delete) are silently skipped.
+   * Rewrites ONLY rows whose stored weight differs (`IS DISTINCT FROM`, #4797) —
+   * returns rows CHANGED; missing `(slug, source_id)` tuples are skipped.
    */
   setEmotionalWeightBatch(rows: EmotionalWeightWriteRow[]): Promise<number>;
 

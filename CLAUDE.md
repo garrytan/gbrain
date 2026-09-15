@@ -217,6 +217,11 @@ project resolves through `src/core/search/mode.ts`.
 | `autocut` (rerank-cliff cut)  | off            | off        | off            |
 | `searchLimit` default         | 10             | 25         | 50             |
 
+The `expansion` row governs no shipped verb today: `gbrain query` expands by
+default in every mode (`--no-expand` / `expand: false` opts out); `search`, the
+memory verbs and the eval harnesses pin it per call; only a caller that leaves
+`expansion` unset AND wires an `expandFn` would inherit the bundle value.
+
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
 The corner-to-corner spread is 25x once you pair mode with downstream model.
 Chunks ~400 tokens avg. Per-query cost @ 10K queries/month (typical
@@ -234,8 +239,9 @@ Mismatches (tokenmax+Haiku, conservative+Opus) waste capacity differently
 — too-big payload overwhelms a cheap model; too-small payload starves an
 expensive one.
 
-tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top of
-the matrix (\$15/mo @ 10K). Semantic result caching is temporarily disabled; budget for fresh retrieval on every query. **The matrix
+`gbrain query` adds ~\$1.50 per 1K queries for the Haiku expansion call in
+EVERY mode (\$15/mo @ 10K; `--no-expand` skips it) — `gbrain search` and the
+memory verbs never expand, so no mode buys that line item back. Semantic result caching is temporarily disabled; budget for fresh retrieval on every query. **The matrix
 has three verbatim homes: this section, the `gbrain init` picker copy
 (`src/commands/init-mode-picker.ts`), and `INSTALL_FOR_AGENTS.md` Step
 3.5** — update all three when refreshing.

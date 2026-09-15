@@ -132,8 +132,10 @@ Three named modes. Cost depends on BOTH the mode AND your downstream model
 
 The "cost" isn't gbrain itself — it's the downstream agent's input cost
 reading the retrieved chunks back into its context window. gbrain's own
-overhead is rounding-error (semantic cache is free; tokenmax adds ~$1.50
-per 1K queries for the Haiku expansion call).
+overhead is rounding-error (semantic result caching is temporarily disabled,
+so budget for fresh retrieval on every query; gbrain query adds ~$1.50 per 1K
+queries for the Haiku expansion call in every mode — --no-expand skips it;
+gbrain search never expands).
 
 Per-query cost @ 10K queries/mo (full search payload, no cache savings):
 
@@ -161,6 +163,9 @@ discount on top of these numbers (cache hits skip downstream entirely).
   3) tokenmax       no cap, LLM query expansion ON, 50 chunks.
                     Best for: Opus/frontier models, max retrieval quality,
                     low-volume high-stakes work.
+
+("no LLM expansion" governs gbrain search + callers that leave expansion
+unset; gbrain query expands in every mode unless you pass --no-expand.)
 
 You can change this any time with: gbrain config set search.mode <mode>
 Per-knob tuning + recommendation engine ships at: gbrain search tune

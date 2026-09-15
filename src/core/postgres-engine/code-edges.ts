@@ -110,26 +110,33 @@ export async function getCallersOf(
 export async function getCalleesOf(
   deps: PgCodeEdgesDeps,
     qualifiedName: string,
-    opts?: { sourceId?: string; allSources?: boolean; limit?: number },
+    opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean },
   ): Promise<import('../types.ts').CodeEdgeResult[]> {
     const sql = deps.sql;
     const limit = Math.min(opts?.limit ?? 100, 500);
     const scopedSource: string | null =
       !opts?.allSources && opts?.sourceId ? opts.sourceId : null;
-    const rows = await sql`
+    const run = (fromPredicate: ReturnType<typeof sql>) => sql`
       SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, true as resolved
         FROM code_edges_chunk
-        WHERE from_symbol_qualified = ${qualifiedName}
+        WHERE ${fromPredicate}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       UNION ALL
       SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, false as resolved
         FROM code_edges_symbol
-        WHERE from_symbol_qualified = ${qualifiedName}
+        WHERE ${fromPredicate}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       LIMIT ${limit}
     `;
+    let rows = await run(sql`from_symbol_qualified = ${qualifiedName}`);
+    // #4670: parity twin of the PGLite fallback — see pglite-engine/code-edges.ts.
+    // Opt-in; zero-row exact miss + delimiter-free input re-keys on the bare
+    // content_chunks.symbol_name (exact, never LIKE).
+    if (rows.length === 0 && opts?.bareFallback && !/[.#:]/.test(qualifiedName)) {
+      rows = await run(sql`from_chunk_id IN (SELECT id FROM content_chunks WHERE symbol_name = ${qualifiedName})`);
+    }
     return rows.map(r => pgRowToCodeEdge(r as Record<string, unknown>));
   }
 

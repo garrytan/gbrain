@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
-import { startMcpServer, stdioRpcsInFlightCount } from '../mcp/server.ts';
+import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import {
@@ -665,8 +665,15 @@ function installStdioLifecycle(
       if (runner.isDelegatedSyncRunning()) return;
       // Lazy import keeps the sweep core off the serve boot path.
       const { runMaintenanceSweep } = await import('../core/sweep.ts');
+      // #4679: same source ladder as stdio dispatch and the startup sweep
+      // (GBRAIN_SOURCE > .gbrain-source dotfile > local_path > sources.default
+      // > …). Pre-fix `GBRAIN_SOURCE || 'default'` swept the wrong source on
+      // dotfile/local_path-scoped serves, so in-session MCP writes never got
+      // their links reconciled until a restart. Never throws (falls back to
+      // 'default'); degraded engines short-circuit without a DB touch.
+      const { sourceId } = await resolveMcpStdioSourceScope(e);
       await runMaintenanceSweep(e, {
-        sourceId: process.env.GBRAIN_SOURCE || 'default',
+        sourceId,
         budgetMs: IDLE_SWEEP_BUDGET_MS,
       });
       // Deferred-embed drain: delegated syncs always run noEmbed (the #2139

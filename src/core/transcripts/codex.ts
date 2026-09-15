@@ -43,8 +43,9 @@ export const CODEX_SPEC_TARGET: HostSpecTarget = {
   ],
   note:
     'One JSON object per line: {timestamp: ISO, type, payload}. type ' +
-    "'session_meta' header carries payload.{session_id, cwd, timestamp, " +
-    "cli_version}. User turns: type 'event_msg' with payload.type " +
+    "'session_meta' header carries payload.{id, session_id, cwd, timestamp, " +
+    "cli_version}; identity = payload.id (per-thread; session_id is the root " +
+    "session shared by forked/subagent threads), first header wins. User turns: type 'event_msg' with payload.type " +
     "'user_message' (payload.message = typed text). Assistant turns: type " +
     "'response_item' with payload.{type:'message', role:'assistant', " +
     "content:[{type:'output_text', text}]}. response_item rows with role " +
@@ -105,7 +106,14 @@ export function mapCodexLine(entry: unknown): CodexLineResult {
   if (e.type === 'session_meta') {
     return {
       kind: 'session',
-      sessionId: typeof payload.session_id === 'string' ? payload.session_id : undefined,
+      // #4981: payload.id is the per-thread identity (present in every real rollout
+      // and embedded in its filename); payload.session_id is the ROOT session shared
+      // by every forked/subagent thread. Keying on session_id collapsed children onto
+      // the parent's page. session_id stays as the legacy/fixture fallback.
+      sessionId:
+        (typeof payload.id === 'string' && payload.id) ||
+        (typeof payload.session_id === 'string' && payload.session_id) ||
+        undefined,
       cwd: typeof payload.cwd === 'string' ? payload.cwd : undefined,
       startedAt: typeof payload.timestamp === 'string' ? payload.timestamp : lineTs || undefined,
       cliVersion: typeof payload.cli_version === 'string' ? payload.cli_version : undefined,
@@ -212,6 +220,9 @@ export const codexAdapter: TranscriptAdapter = {
       }
       const mapped = mapCodexLine(entry);
       if (mapped.kind === 'session') {
+        // #4981: first header wins — a child rollout carries its inherited parent
+        // session_meta later in the file; it must not rewrite identity/cwd/start.
+        if (rawMeta) continue;
         if (mapped.sessionId) sessionId = mapped.sessionId;
         if (mapped.cwd) cwd = mapped.cwd;
         if (mapped.startedAt) startedAt = mapped.startedAt;

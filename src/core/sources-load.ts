@@ -144,7 +144,8 @@ export function parseSourceConfig(config: unknown): Record<string, unknown> {
     const shape = recoveredArray ? 'historical JSON array' : `${layers}-layer nested JSON string`;
     console.warn(
       `[gbrain] source config was stored as a ${shape}; ` +
-      `it will be repaired on the next config write. Run 'gbrain doctor' to find affected sources.`,
+      `it will be repaired on the next config-column write (e.g. 'gbrain sources federate' / 'unfederate'). ` +
+      `Run 'gbrain doctor' to find affected sources.`,
     );
   }
   return value ?? {};

@@ -51,7 +51,8 @@ import {
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { bundledPackPath } from '../core/schema-pack/bundled-assets.ts';
-import { gbrainPath, loadConfig, configPath, toEngineConfig } from '../core/config.ts';
+import { gbrainPath, loadConfig, configPath, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { readDbSchemaPack } from '../core/schema-pack/best-effort.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
   const sub = args[0];
@@ -167,27 +168,28 @@ Resolution chain (7-tier, tier 1 trust-gated):
 `);
 }
 
+/**
+ * DB-plane `schema_pack` (tier 4) for the read-only inspection verbs
+ * (active / show / graph / lint / explain), so they all report the SAME pack
+ * the engine queries with on brains whose active pack was flipped via
+ * `gbrain config set schema_pack` / unify-types (#3792, #4653). Best-effort
+ * AND gated on an actually-configured brain (cfg non-null): an unconfigured
+ * home has no DB plane to consult, and connecting would cold-CREATE a PGLite
+ * data dir as a side effect of a read-only command. No connectable DB →
+ * undefined, so file/env resolution stands.
+ */
+async function readDbSchemaPackConfig(cfg: GBrainConfig | null): Promise<string | undefined> {
+  if (!cfg) return undefined;
+  try {
+    return await withConnectedEngine((engine) => readDbSchemaPack(engine));
+  } catch {
+    return undefined;
+  }
+}
+
 async function runActive(_args: string[]): Promise<void> {
   const cfg = loadConfig();
-  // #3792: consult the DB-plane schema_pack (tier 4) so `gbrain schema
-  // active` reports the SAME pack the engine queries with on brains whose
-  // active pack was flipped via `gbrain config set schema_pack` /
-  // unify-types. Best-effort AND gated on an actually-configured brain
-  // (cfg non-null): an unconfigured home has no DB plane to consult, and
-  // connecting would cold-CREATE a PGLite data dir as a side effect of a
-  // read-only inspection command.
-  let dbConfig: string | undefined;
-  if (cfg) {
-    try {
-      dbConfig = await withConnectedEngine(async (engine) => {
-        try {
-          return (await engine.getConfig('schema_pack')) ?? undefined;
-        } catch {
-          return undefined;
-        }
-      });
-    } catch { /* no connectable DB — file/env resolution stands */ }
-  }
+  const dbConfig = await readDbSchemaPackConfig(cfg);
   const resolution = resolveActivePackNameOnly({ cfg, remote: false, dbConfig });
   const pack = await loadActivePack({ cfg, remote: false, dbConfig });
   console.log(`Active pack: ${pack.manifest.name} v${pack.manifest.version}`);
@@ -248,7 +250,8 @@ async function runShow(args: string[]): Promise<void> {
     }
     manifest = loadPackFromFile(path);
   } else {
-    const pack = await loadActivePack({ cfg: loadConfig(), remote: false });
+    const cfg = loadConfig();
+    const pack = await loadActivePack({ cfg, remote: false, dbConfig: await readDbSchemaPackConfig(cfg) });
     manifest = pack.manifest;
   }
   if (asFilingRules) {
@@ -704,7 +707,7 @@ async function runDiffCmd(args: string[]): Promise<void> {
 async function runGraphCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
   const cfg = loadConfig();
-  const pack = await loadActivePack({ cfg, remote: false });
+  const pack = await loadActivePack({ cfg, remote: false, dbConfig: await readDbSchemaPackConfig(cfg) });
   if (json) {
     console.log(JSON.stringify({
       schema_version: 1,
@@ -727,42 +730,46 @@ async function runLintCmd(args: string[]): Promise<void> {
   const withDb = args.includes('--with-db');
   const name = positional[0];
   const cfg = loadConfig();
-  let pack: SchemaPackManifest | null;
-  if (name) {
-    const p = packPathByName(name);
-    let raw: SchemaPackManifest | null;
-    try { raw = p ? loadPackFromFile(p) : null; } catch { raw = null; }
-    if (raw) {
-      // #4501: lint the MERGED manifest (extends chain + borrow_from
-      // resolved), matching the no-name branch's loadActivePack path —
-      // a child pack referencing inherited parent types must not fail
-      // raw-manifest lint. Fall back to the raw child (with a stderr
-      // warning) when the chain can't be resolved, e.g. missing parent.
-      try {
-        pack = (await loadResolvedPackByName(name)).manifest;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(`warn: could not resolve extends chain for pack \`${name}\` (${msg}); linting raw manifest only`);
-        pack = raw;
-      }
-    } else {
-      pack = null;
-    }
-  } else {
-    pack = (await loadActivePack({ cfg, remote: false })).manifest;
-  }
-  if (!pack) {
-    console.error(`Pack not found: ${name}`);
-    process.exit(1);
-  }
   // v0.40.6.0 Phase 5: swap basic 2-rule check for the rich 11-rule lint
   // suite from Phase 1.5. File-plane rules run by default; --with-db
   // opts into extractable_empty_corpus + mutation_count_anomaly which
   // need an engine connection.
   const { runAllLintRules } = await import('../core/schema-pack/lint-rules.ts');
-  const report = withDb
-    ? await withConnectedEngine(async (engine) => runAllLintRules(pack!, { engine }))
-    : await runAllLintRules(pack);
+  // Resolve + lint in one step so --with-db reads the tier-4 DB-plane
+  // schema_pack (#4653) on the SAME connection the DB-backed rules use.
+  const lint = async (engine?: import('../core/engine.ts').BrainEngine) => {
+    let pack: SchemaPackManifest | null;
+    if (name) {
+      const p = packPathByName(name);
+      let raw: SchemaPackManifest | null;
+      try { raw = p ? loadPackFromFile(p) : null; } catch { raw = null; }
+      if (raw) {
+        // #4501: lint the MERGED manifest (extends chain + borrow_from
+        // resolved), matching the no-name branch's loadActivePack path —
+        // a child pack referencing inherited parent types must not fail
+        // raw-manifest lint. Fall back to the raw child (with a stderr
+        // warning) when the chain can't be resolved, e.g. missing parent.
+        try {
+          pack = (await loadResolvedPackByName(name)).manifest;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`warn: could not resolve extends chain for pack \`${name}\` (${msg}); linting raw manifest only`);
+          pack = raw;
+        }
+      } else {
+        pack = null;
+      }
+    } else {
+      const dbConfig = engine ? await readDbSchemaPack(engine) : await readDbSchemaPackConfig(cfg);
+      pack = (await loadActivePack({ cfg, remote: false, dbConfig })).manifest;
+    }
+    if (!pack) {
+      console.error(`Pack not found: ${name}`);
+      process.exit(1);
+    }
+    return { pack, report: await runAllLintRules(pack, engine ? { engine } : undefined) };
+  };
+  const { pack, report } = withDb ? await withConnectedEngine(lint) : await lint();
   if (json) {
     console.log(JSON.stringify({ schema_version: 1, pack: pack.name, ...report }, null, 2));
     if (!report.ok) process.exit(1);
@@ -792,7 +799,7 @@ async function runExplainCmd(args: string[]): Promise<void> {
     process.exit(2);
   }
   const cfg = loadConfig();
-  const pack = await loadActivePack({ cfg, remote: false });
+  const pack = await loadActivePack({ cfg, remote: false, dbConfig: await readDbSchemaPackConfig(cfg) });
   const found = pack.manifest.page_types.find((t) => t.name === typeName);
   if (!found) {
     console.error(`Type \`${typeName}\` not in active pack \`${pack.manifest.name}\`.`);

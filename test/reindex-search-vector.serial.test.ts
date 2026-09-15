@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { runReindexSearchVector } from '../src/commands/reindex-search-vector.ts';
 import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
+import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 
 const ENV_KEY = 'GBRAIN_FTS_LANGUAGE';
 const originalLang = process.env[ENV_KEY];
@@ -9,20 +10,43 @@ const originalLang = process.env[ENV_KEY];
 interface MockState {
   calls: string[];
   rowsToReturn: { pages: number; chunks: number };
+  /** In-memory config table (marker + checkpoints). Separate from `calls`
+   *  so the executeRaw call-count assertions stay intact. */
+  config?: Map<string, string>;
+  /** Interleaved timeline of executeRaw SQL + `set:<key>` / `unset:<key>`. */
+  order?: string[];
+  /** Throw from executeRaw on the first SQL matching this pattern. */
+  failOn?: RegExp;
 }
 
 function makeMockEngine(state: MockState): BrainEngine {
+  const config = state.config ?? (state.config = new Map());
+  const order = state.order ?? (state.order = []);
   return {
     executeRaw: async (sql: string) => {
       state.calls.push(sql);
+      order.push(sql);
+      if (state.failOn && state.failOn.test(sql)) throw new Error(`injected failure: ${state.failOn}`);
       // Inventory query — return the configured counts
       if (sql.includes('SELECT') && sql.includes('FROM pages WHERE search_vector')) {
         return [{ pages: state.rowsToReturn.pages, chunks: state.rowsToReturn.chunks }];
       }
       return [];
     },
+    getConfig: async (key: string) => config.get(key) ?? null,
+    setConfig: async (key: string, value: string) => {
+      order.push(`set:${key}`);
+      config.set(key, value);
+    },
+    unsetConfig: async (key: string) => {
+      order.push(`unset:${key}`);
+      return config.delete(key) ? 1 : 0;
+    },
   } as unknown as BrainEngine;
 }
+
+const MARKER = 'fts.reindex_in_progress';
+const CHUNKS_CKPT = 'backfill.fts_content_chunks.last_id';
 
 beforeEach(() => {
   delete process.env[ENV_KEY];
@@ -148,5 +172,120 @@ describe('runReindexSearchVector', () => {
 
     expect(typeof result.durationMs).toBe('number');
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  // #4795 — an interrupted run commits the trigger-language flip but leaves
+  // rows un-backfilled. The in-progress marker + persisted checkpoint make
+  // that state visible (doctor) and resumable (re-run).
+  describe('interrupted-run marker + checkpoint (#4795)', () => {
+    test('backfill failure leaves the in-progress marker set', async () => {
+      const state: MockState = {
+        calls: [], rowsToReturn: { pages: 10, chunks: 30 }, failOn: /UPDATE content_chunks/,
+      };
+      const engine = makeMockEngine(state);
+      process.env[ENV_KEY] = 'pt_br';
+      resetFtsLanguageCache();
+
+      await expect(runReindexSearchVector(engine, { yes: true, json: true })).rejects.toThrow();
+      expect(state.config!.get(MARKER)).toBe('pt_br');
+    });
+
+    test('a failure on the first DDL clears the marker — nothing landed, so doctor must not flag an incomplete reindex', async () => {
+      // A missing CREATE FUNCTION privilege fails here, before either trigger
+      // flipped. Leaving the marker set would be a permanent false
+      // fts_reindex_incomplete whose suggested fix (re-run) fails the same way.
+      const state: MockState = {
+        calls: [], rowsToReturn: { pages: 10, chunks: 30 }, failOn: /update_page_search_vector/,
+      };
+      const engine = makeMockEngine(state);
+      process.env[ENV_KEY] = 'pt_br';
+      resetFtsLanguageCache();
+
+      await expect(runReindexSearchVector(engine, { yes: true, json: true })).rejects.toThrow();
+      expect(state.config!.has(MARKER)).toBe(false);
+    });
+
+    test('a failure on the first DDL restores a PRE-EXISTING marker — a previously split index must stay visible to doctor', async () => {
+      // A prior run already flipped triggers and was interrupted (marker set).
+      // This resume fails before any DDL lands, so the index is still split
+      // exactly as before: the marker must survive with its prior value.
+      for (const prior of ['pt_br', 'english']) {
+        const state: MockState = {
+          calls: [], rowsToReturn: { pages: 10, chunks: 30 }, failOn: /update_page_search_vector/,
+          config: new Map([[MARKER, prior]]),
+        };
+        const engine = makeMockEngine(state);
+        process.env[ENV_KEY] = 'pt_br';
+        resetFtsLanguageCache();
+
+        await expect(runReindexSearchVector(engine, { yes: true, json: true })).rejects.toThrow();
+        expect(state.config!.get(MARKER)).toBe(prior);
+      }
+    });
+
+    test('a failure on the second DDL keeps the marker — the pages trigger already flipped', async () => {
+      const state: MockState = {
+        calls: [], rowsToReturn: { pages: 10, chunks: 30 }, failOn: /update_chunk_search_vector/,
+      };
+      const engine = makeMockEngine(state);
+      process.env[ENV_KEY] = 'pt_br';
+      resetFtsLanguageCache();
+
+      await expect(runReindexSearchVector(engine, { yes: true, json: true })).rejects.toThrow();
+      expect(state.config!.get(MARKER)).toBe('pt_br');
+    });
+
+    test('the marker key is registered so `gbrain config` treats the escape hatch as a known key', () => {
+      expect(KNOWN_CONFIG_KEYS).toContain(MARKER);
+    });
+
+    test('successful run sets the marker before the first CREATE OR REPLACE and clears all state at the end', async () => {
+      const state: MockState = { calls: [], rowsToReturn: { pages: 10, chunks: 30 } };
+      const engine = makeMockEngine(state);
+      process.env[ENV_KEY] = 'pt_br';
+      resetFtsLanguageCache();
+
+      await runReindexSearchVector(engine, { yes: true, json: true });
+
+      const order = state.order!;
+      const markerAt = order.indexOf(`set:${MARKER}`);
+      const firstDdlAt = order.findIndex(s => s.includes('CREATE OR REPLACE FUNCTION'));
+      expect(markerAt).toBeGreaterThanOrEqual(0);
+      expect(firstDdlAt).toBeGreaterThan(markerAt);
+      // Marker + both checkpoints gone once both backfills return.
+      expect([...state.config!.keys()]).toEqual([]);
+      // The existing executeRaw shape is untouched (config goes through
+      // get/set/unsetConfig, not executeRaw).
+      expect(state.calls.length).toBe(5);
+    });
+
+    test('resumes the chunks backfill from the persisted checkpoint when the marker matches the language', async () => {
+      const state: MockState = { calls: [], rowsToReturn: { pages: 10, chunks: 30 } };
+      state.config = new Map([[MARKER, 'pt_br'], [CHUNKS_CKPT, '10000']]);
+      const engine = makeMockEngine(state);
+      process.env[ENV_KEY] = 'pt_br';
+      resetFtsLanguageCache();
+
+      await runReindexSearchVector(engine, { yes: true, json: true });
+
+      const chunksUpdate = state.calls.find(s => /UPDATE content_chunks/.test(s));
+      expect(chunksUpdate).toContain('id > 10000');
+    });
+
+    // Regression guard for the reset branch (passes on the unpatched tree,
+    // which always emits `id > 0`; not part of the fails-on-master proof).
+    test('a different target language discards the stale checkpoint', async () => {
+      const state: MockState = { calls: [], rowsToReturn: { pages: 10, chunks: 30 } };
+      state.config = new Map([[MARKER, 'english'], [CHUNKS_CKPT, '10000']]);
+      const engine = makeMockEngine(state);
+      process.env[ENV_KEY] = 'pt_br';
+      resetFtsLanguageCache();
+
+      await runReindexSearchVector(engine, { yes: true, json: true });
+
+      const chunksUpdate = state.calls.find(s => /UPDATE content_chunks/.test(s));
+      expect(chunksUpdate).toContain('id > 0');
+      expect(state.config!.has(CHUNKS_CKPT)).toBe(false);
+    });
   });
 });

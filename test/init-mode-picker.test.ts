@@ -93,6 +93,14 @@ describe('MENU_TEXT cost-matrix anchors (must match CLAUDE.md + methodology doc)
     expect(MODE_PICKER_MENU).toContain('corner-to-corner');
   });
 
+  test('does not claim the semantic result cache saves money while it is disabled', async () => {
+    const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
+    // CLAUDE.md ## Search Mode: "Semantic result caching is temporarily
+    // disabled; budget for fresh retrieval on every query."
+    expect(MODE_PICKER_MENU).not.toContain('semantic cache is free');
+    expect(MODE_PICKER_MENU).toContain('semantic result caching is temporarily disabled');
+  });
+
   test('cost matrix lists every cell at the natural diagonal and corners', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
     // Three anchor cells from the natural diagonal at 10K/mo volume. Scales
@@ -119,11 +127,15 @@ describe('MENU_TEXT cost-matrix anchors (must match CLAUDE.md + methodology doc)
     expect(MODE_PICKER_MENU).toContain('$5/M');
   });
 
-  test('tokenmax Haiku-expansion surcharge is named explicitly', async () => {
+  test('query-verb Haiku-expansion surcharge is named explicitly, not attributed to tokenmax', async () => {
     const { MODE_PICKER_MENU } = await import('../src/commands/init-mode-picker.ts');
     // Cross-line match — the surcharge phrase can wrap.
-    expect(MODE_PICKER_MENU.replace(/\s+/g, ' ')).toContain('~$1.50 per 1K queries');
+    const flat = MODE_PICKER_MENU.replace(/\s+/g, ' ');
+    expect(flat).toContain('gbrain query adds ~$1.50 per 1K queries');
     expect(MODE_PICKER_MENU).toContain('Haiku expansion call');
+    // `gbrain query` expands in every mode (#4601); the surcharge is not a tokenmax line item.
+    expect(flat).not.toContain('tokenmax adds');
+    expect(flat).toContain('--no-expand');
   });
 
   test('cache-hit discount framing is named', async () => {

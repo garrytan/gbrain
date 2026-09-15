@@ -240,6 +240,9 @@ export function rowToPage(row: Record<string, unknown>): Page {
     ...(ingestedVia !== undefined && { ingested_via: ingestedVia }),
     ...(ingestedAt !== undefined && { ingested_at: ingestedAt }),
     ...(contextualRetrievalMode !== undefined && { contextual_retrieval_mode: contextualRetrievalMode }),
+    // Three-state like the provenance columns: getPage projects it so the import
+    // skip path can compare before issuing the #4588 source_path refresh.
+    ...(row.source_path !== undefined && { source_path: row.source_path as string | null }),
     // v0.31.12: propagate source_id so downstream callers (embed, reconcile-links)
     // can thread it through getChunks / upsertChunks without defaulting to 'default'.
     // v0.32.8: Page.source_id is required. Every SELECT feeding rowToPage now

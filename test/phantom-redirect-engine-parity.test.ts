@@ -209,4 +209,73 @@ describe('migrateFactsToCanonical (parity)', () => {
       expect(facts['Expired']).toBe('alice'); // audit trail intact
     }
   });
+
+  test('#4558 — offsets migrated row_num past canonical MAX so idx_facts_fence_key never collides; NULL stays NULL', async () => {
+    for (const engine of [pglite, pg].filter(Boolean) as BrainEngine[]) {
+      await seed(engine, 'alice', '# alice\n');
+      await seed(engine, 'people/alice-example', '# alice-example\n');
+      // Canonical already owns fence row 1 (the common case: a full-name person
+      // page with a fence vs a bare first-name phantom that also starts at 1).
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source, source_markdown_slug, row_num)
+         VALUES ('default', 'people/alice-example', 'Canonical', 'fact', '2020-01-01'::date, 'm', 'people/alice-example', 1)`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source, source_markdown_slug, row_num)
+         VALUES ('default', 'alice', 'Phantom fenced', 'fact', '2020-01-01'::date, 'm', 'alice', 1)`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source, source_markdown_slug, row_num)
+         VALUES ('default', 'alice', 'Phantom unfenced', 'fact', '2020-01-01'::date, 'm', 'alice', NULL)`,
+      );
+
+      const r = await engine.migrateFactsToCanonical('alice', 'people/alice-example', 'default');
+      expect(r.migrated).toBe(2);
+
+      const rows = await engine.executeRaw<{ fact: string; row_num: number | null }>(
+        `SELECT fact, row_num FROM facts
+         WHERE source_id='default' AND source_markdown_slug='people/alice-example'
+         ORDER BY row_num NULLS LAST`,
+      );
+      expect(rows.map((x) => [x.fact, x.row_num])).toEqual([
+        ['Canonical', 1],        // untouched
+        ['Phantom fenced', 2],   // 1 + MAX(canonical)=1
+        ['Phantom unfenced', null], // NULL + offset stays NULL (legacy-guard semantics intact)
+      ]);
+      const left = await engine.executeRaw<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM facts WHERE source_id='default' AND source_markdown_slug='alice' AND expired_at IS NULL`,
+      );
+      expect(Number(left[0].n)).toBe(0);
+    }
+  });
+
+  test('#4558 — offset is canonical MAX incl. expired rows (the partial index only excludes NULL)', async () => {
+    for (const engine of [pglite, pg].filter(Boolean) as BrainEngine[]) {
+      await seed(engine, 'alice', '# alice\n');
+      await seed(engine, 'people/alice-example', '# alice-example\n');
+      // Canonical rows 1..2 active, row 3 expired: still occupies (source, slug, 3).
+      for (const [n, expired] of [[1, false], [2, false], [3, true]] as const) {
+        await engine.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source, source_markdown_slug, row_num, expired_at)
+           VALUES ('default', 'people/alice-example', 'C${n}', 'fact', '2020-01-01'::date, 'm', 'people/alice-example', ${n}, ${expired ? 'now()' : 'NULL'})`,
+        );
+      }
+      for (const n of [1, 2]) {
+        await engine.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source, source_markdown_slug, row_num)
+           VALUES ('default', 'alice', 'P${n}', 'fact', '2020-01-01'::date, 'm', 'alice', ${n})`,
+        );
+      }
+
+      const r = await engine.migrateFactsToCanonical('alice', 'people/alice-example', 'default');
+      expect(r.migrated).toBe(2);
+
+      const rows = await engine.executeRaw<{ fact: string; row_num: number }>(
+        `SELECT fact, row_num FROM facts
+         WHERE source_id='default' AND source_markdown_slug='people/alice-example' AND fact LIKE 'P%'
+         ORDER BY row_num`,
+      );
+      expect(rows.map((x) => [x.fact, Number(x.row_num)])).toEqual([['P1', 4], ['P2', 5]]);
+    }
+  });
 });

@@ -2739,3 +2739,38 @@ describe('#4597: a fallback rename\'s own stale duplicate converges under increm
     expect(await engine.getPage('party-notes')).toBeNull();
   });
 });
+
+describe('#4588: a legacy row whose source_path names a pre-rename path self-heals on the next full sync', () => {
+  test('sync --full refreshes source_path on the unchanged-content skip instead of reconcile-deleting the live page', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alpha.md': personMd('Alpha', 'Alpha original body.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // Cheap rename alpha -> beta, then recreate the LEGACY bookkeeping a
+    // pre-GATE13 brain still carries: the live beta row naming the OLD path
+    // (which git history once committed, so the reconcile may delete it).
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "cheap rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'people/alpha.md'
+       WHERE source_id = 'default' AND slug = 'people/beta'`,
+    );
+
+    // Full sync: runImport sees people/beta.md unchanged (hash-equal skip),
+    // THEN the reconcile re-reads source_path. Pre-fix the skip wrote
+    // nothing, the reconcile read 'people/alpha.md' as "file removed" and
+    // soft-deleted the live page (the mass valve needs >20 pages to trip).
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS, full: true });
+    expect(result.status).toBe('first_sync');
+    const beta = await engine.getPage('people/beta');
+    expect(beta).not.toBeNull();
+    expect(beta!.compiled_truth).toContain('Alpha original body.');
+    const rows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages
+        WHERE source_id = 'default' AND slug = 'people/beta' AND deleted_at IS NULL`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source_path).toBe('people/beta.md');
+  });
+});

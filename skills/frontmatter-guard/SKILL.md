@@ -229,4 +229,4 @@ title: "My "Quoted" Title"
 
 **Don't run `audit` on a brain where sources aren't registered.** The CLI returns "no registered sources to audit" gracefully, but the migration emits a `skipped: no_sources` phase result. Don't paper over this with a manual path-walk; the right fix is to register the source via `gbrain sources add`.
 
-**Don't install the pre-commit hook on non-git brain dirs.** The install-hook command skips them automatically with a one-line note. If you see "skipped — not a git repo" and want validation at write time anyway, use the `audit` command on a cron schedule.
+**Don't install the pre-commit hook on brain dirs outside any git repo.** The install-hook command skips them automatically with a one-line note (a brain that is a subdirectory of a host repo is fine — the hook installs at the host root, scoped to that subdirectory). If you see "skipped, not a git repo" and want validation at write time anyway, use the `audit` command on a cron schedule.

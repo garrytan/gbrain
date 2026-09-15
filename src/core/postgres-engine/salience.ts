@@ -88,22 +88,21 @@ export async function setEmotionalWeightBatch(deps: PgSalienceDeps, rows: Emotio
     // Composite-keyed UPDATE FROM unnest (codex C4#3): pages.slug is unique
     // only within a source, so a slug-only join would fan out across sources.
     //
-    // v0.29.1: bump salience_touched_at to NOW() ONLY when emotional_weight
-    // actually changes. The salience query window then includes the page in
-    // GREATEST(updated_at, salience_touched_at) >= boundary, so a previously
-    // calm page that just became salient surfaces in the recent salience
-    // results without a content edit. No-op writes (same weight) leave
-    // salience_touched_at alone — preserves "actual change" semantics.
+    // Only rows whose emotional_weight actually changes are rewritten (#4797):
+    // a same-value row is skipped entirely — no new tuple version, no per-row
+    // BEFORE UPDATE trigger fan-out (generation bump + search_vector), not
+    // counted in the return value. Every rewritten row bumps
+    // salience_touched_at to NOW() so the salience query window
+    // (GREATEST(updated_at, salience_touched_at) >= boundary) surfaces a
+    // previously calm page that just became salient without a content edit.
     const result = await sql`
       UPDATE pages
          SET emotional_weight = u.weight,
-             salience_touched_at = CASE
-               WHEN pages.emotional_weight IS DISTINCT FROM u.weight THEN now()
-               ELSE pages.salience_touched_at
-             END
+             salience_touched_at = now()
         FROM unnest(${slugs}::text[], ${sourceIds}::text[], ${weights}::real[])
           AS u(slug, source_id, weight)
        WHERE pages.slug = u.slug AND pages.source_id = u.source_id
+         AND pages.emotional_weight IS DISTINCT FROM u.weight
       RETURNING 1
     `;
     return result.length;

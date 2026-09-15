@@ -15,7 +15,7 @@ test/auto-link-targeted-probe-2544.test.ts	#2544 — auto-link behavior through 
 test/autopilot-auto-drain-wiring.test.ts	autopilot auto-drain wiring	8	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	autopilot cycle-failure classification — only 'failed' trips the circuit breaker	2	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	runPhaseOrphans ratio threshold — no more absolute count > 20	3	readFileSync
-test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	15	readFileSync
+test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	16	readFileSync
 test/autopilot-install.test.ts	autopilot install — reload-safety (#2608)	1	readFileSync
 test/autopilot-install.test.ts	autopilot showStatus — wrapper-path detection	1	readFileSync
 test/autopilot-install.test.ts	autopilot wiring: chat-unavailable boot warning (#2608)	1	readFileSync
@@ -73,6 +73,7 @@ test/compile-view.test.ts	compileView — determinism	3	readFileSync
 test/compile-view.test.ts	compileView — source isolation + read errors	3	readFileSync
 test/config.test.ts	config source correctness	1	readFileSync
 test/connection-resilience.test.ts	Eng-review D3 — executeRaw has no per-call retry wrapper	3	readFileSync
+test/context-audit-skill.test.ts	#4988 context-audit skill states its token-estimate basis	3	readFileSync
 test/contextual-retrieval-service-pure.test.ts	inline import contextual synopsis containment	1	readFileSync
 test/conversation-facts-type-allowlist-drift.test.ts	(file-level)	18	readFileSync
 test/cycle-abort.test.ts	#1972 — complete cooperative-abort coverage	3	readFileSync
@@ -96,6 +97,11 @@ test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
 test/destructive-guard.test.ts	formatters (display helpers)	4	readFileSync
 test/destructive-guard.test.ts	purgeExpiredSources — clone cleanup containment	1	readFileSync
 test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	readFileSync
+test/docs-bootstrap-persistence-table.test.ts	#4986 bootstrap.md scopes the Stop-push knobs and lists every push path	2	readFileSync
+test/docs-mcp-deploy.test.ts	DEPLOY.md documents dual-mode /mcp auth (#4893)	1	readFileSync
+test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#5007)	5	readFileSync
+test/docs-mcp-deploy.test.ts	DEPLOY.md documents the tailnet/LAN-only serve --http shape (#4500)	3	readFileSync
+test/docs-timeline-extraction-guide.test.ts	#4987 timeline extraction docs describe the real trigger	2	readFileSync
 test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	18	doctor-source-helper
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
@@ -144,13 +150,15 @@ test/eval-takes-bootstrap.test.ts	corpus integrity	4	readFileSync
 test/exit-classification.test.ts	consumer wire-up — helper used by all 3 sites (no inline filters left)	5	doctor-source-helper,readFileSync
 test/extract-atoms-drain-errors.test.ts	runExtractAtomsDrainForSource forwards typed per-item failures (#4730)	1	readFileSync
 test/extract-atoms-drain.test.ts	extract-atoms-drain Minion handler retries on provider_failure (issue #3218)	2	readFileSync
+test/extract-atoms-drain.test.ts	protected-names register comment names the real trust mechanism	1	readFileSync
 test/extract-atoms-drain.test.ts	shared wiring helper holds the cycle lock (5A)	2	readFileSync
+test/extract-include-frontmatter-config.serial.test.ts	no extraction path hardcodes includeFrontmatter	1	readFileSync
 test/extract-workers.test.ts	extract.ts → workers wiring (T7)	10	readFileSync
 test/facts-backstop-remedy-verb.test.ts	facts backstop thin-client-fallback remedy verb (#4489)	3	readFileSync
 test/features.test.ts	CLI routing	2	bun-file
 test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFileSync
 test/files.test.ts	collectFiles (production import)	9	readFileSync
-test/files.test.ts	files upload-raw git-storage branch (#2297)	5	readFileSync
+test/files.test.ts	files upload-raw git-storage branch (#2297)	6	readFileSync
 test/files.test.ts	files verify git lane (per-source root resolution)	1	readFileSync
 test/files.test.ts	storage precondition — the silent-no-op class (#4022)	3	readFileSync
 test/filing-rules-resolution.serial.test.ts	per-source filing-rules resolution	3	readFileSync
@@ -166,6 +174,7 @@ test/fix-wave-structural.test.ts	v0.41.8.0 #1340 — PGLite WASM init classifier
 test/fix-wave-structural.test.ts	v0.42.20.0 — background-work registry drains every sink before disconnect	9	readFileSync
 test/fix-wave-structural.test.ts	v0.42.20.0 — search-cache drained via the background-work registry	1	readFileSync
 test/fix-wave-structural.test.ts	v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)	2	readFileSync
+test/frontmatter-install-hook.test.ts	frontmatter install-hook (B13)	22	readFileSync
 test/harness-onboarding.test.ts	harness identity and private handoff	5	readFileSync
 test/hook-command.serial.test.ts	user-prompt	14	readFileSync
 test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	6	readFileSync
@@ -175,9 +184,11 @@ test/jobs-gateway-refresh-set.test.ts	#3387 — GATEWAY_REFRESH_JOB_NAMES ⇔ re
 test/jobs-list-get-json.serial.test.ts	help advertises --json on list/get/stats (#3685)	2	readFileSync
 test/jobs-thin-client-date-rehydration.test.ts	thin-client unpack sites route through rehydrateJobDates (source audit)	2	readFileSync
 test/jobs-worker-startup-recovery.test.ts	work-handler recovery placement (structural)	1	readFileSync
+test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFileSync
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	readFileSync
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync
+test/mcp-registration-blocks.test.ts	OpenClaw stdio registration docs (#4842)	2	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	readFileSync
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync
 test/migrate.test.ts	PR #356 — LATEST_VERSION is max(versions), not array[-1]	2	readFileSync
@@ -257,6 +268,7 @@ test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync
+test/skillopt/deadline-and-hermetic.test.ts	#4741 — hermetic-config docs make no platform-survives-logout claim	2	readFileSync
 test/skillpack-harness-bridge.test.ts	review-driven hardening (ship pre-landing findings)	5	readFileSync
 test/skillpack-harvest.test.ts	addToBundleManifest	1	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — happy path	2	readFileSync

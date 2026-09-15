@@ -5,6 +5,7 @@ import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
 import { applyDbPlaneReadSideMerge, type DbPlaneEngineReader } from './config-db-merge.ts';
 import { loadConfigSnapshot } from './config-snapshot.ts';
 import { loadGbrainEnvFile } from './gbrain-env-file.ts';
+import { REMOTE_PRIVATE_PAGES_KEY } from './search/private-visibility.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -246,14 +247,13 @@ export interface GBrainConfig {
       max_usd_per_day?: number;
     };
     /**
-     * v0.42 — keep frontmatter links fresh on the incremental cycle. The cycle's
-     * extract phase re-extracts only the slugs a sync changed, but `extractForSlugs`
-     * extracts BODY links only — frontmatter (`sources:`/`related:` etc.) link edges
-     * silently drift stale when a page's YAML is edited externally and synced in.
-     * Set true to also extract frontmatter links per changed page each cycle, keeping
-     * externally-edited YAML edges fresh without a full rescan. Default false
-     * (preserves current behavior). Read via the file/env/DB plane in the cycle's
-     * extract dispatch. Disable/enable with
+     * v0.42 — extract frontmatter (`sources:`/`related:` etc.) link edges too, not
+     * just body links, on every extraction path: the incremental cycle, sync's
+     * inline extract, the GitHub/Google source inline extracts, the extract_stale
+     * minion, `gbrain maintain`, and a flagless stale extract sweep
+     * (src/core/extract-frontmatter.ts resolves it once for all of them).
+     * Keeps externally-edited YAML edges fresh without a full rescan. Default
+     * false (body links only). Read via the file/DB plane, file wins. Enable with
      * `gbrain config set autopilot.incremental_extract_include_frontmatter <bool>`.
      */
     incremental_extract_include_frontmatter?: boolean;
@@ -263,6 +263,16 @@ export interface GBrainConfig {
     capture?: boolean;
     /** false disables PII scrubbing before insert. Defaults to true. */
     scrub_pii?: boolean;
+  };
+  /**
+   * Adaptive return-sizing (search/return-policy.ts, default OFF). DB-plane
+   * `search.adaptive_return*` rows nest here via loadConfigWithEngine (file > DB).
+   */
+  search?: {
+    adaptive_return?: boolean;
+    adaptive_return_entity_max?: number;
+    adaptive_return_other_max?: number;
+    adaptive_return_min_keep?: number;
   };
 
   /**
@@ -1200,6 +1210,25 @@ export async function loadConfigWithEngine(
     merged.eval = mergedEval;
   }
 
+  // #4605 — search.adaptive_return* DB-plane merge, same class as #1475: the
+  // keys are registered and stored, but return-policy.ts reads the NESTED
+  // `cfg.search.*` of THIS merged object (via hybrid.ts), so without this the
+  // row was accepted, echoed by `config get`, and never read. Strict bool;
+  // caps must be finite numbers (return-policy clamps); file > DB; no empty container.
+  const mergedSearch: NonNullable<GBrainConfig['search']> = { ...(merged.search ?? {}) };
+  const dbAdaptiveReturn = await dbBoolStrict('search.adaptive_return');
+  if (mergedSearch.adaptive_return === undefined && dbAdaptiveReturn !== undefined) {
+    mergedSearch.adaptive_return = dbAdaptiveReturn;
+  }
+  for (const cap of ['adaptive_return_entity_max', 'adaptive_return_other_max', 'adaptive_return_min_keep'] as const) {
+    if (mergedSearch[cap] !== undefined) continue;
+    const n = Number(await dbStr(`search.${cap}`));
+    if (Number.isFinite(n)) mergedSearch[cap] = n;
+  }
+  if (Object.keys(mergedSearch).length > 0) {
+    merged.search = mergedSearch;
+  }
+
   // #2119-class read-side merge (also #2137/#4297): provider credentials,
   // chat/expansion pins, chat_fallback_chain, flat cycle.* (env > file > DB).
   // Served from the SAME snapshot as the reads above when available (zero
@@ -1302,21 +1331,48 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // 30 days; interval clamps to >=1 day at read time (backup/status-file.ts).
   'backup.check_enabled',
   'backup.check_interval_days',
-  // DB-plane (v0.32.3 search modes + related)
+  // DB-plane search-mode knobs: one row per key mode.ts reads (its
+  // KNOB_CONFIG_KEY, hand-mirrored so this module stays import-light; pinned
+  // equal by test/config-search-registry.test.ts). camelCase where the code
+  // reads camelCase (#4605 — snake_case rows here had no reader).
   'search.mode',
   'search.cache.enabled',
   'search.cache.similarity_threshold',
   'search.cache.ttl_seconds',
-  'search.token_budget',
+  'search.intentWeighting',
+  'search.keywordOrFallback',
+  'search.tokenBudget',
   'search.expansion',
-  'search.intent_weighting',
-  'search.limit_default',
-  'search.mode_upgrade_notice_shown',
+  'search.searchLimit',
+  'search.reranker.enabled',
+  'search.reranker.model',
+  'search.reranker.top_n_in',
+  'search.reranker.top_n_out',
+  'search.reranker.timeout_ms',
+  'search.floor_ratio',
+  'search.title_boost',
+  'search.evidence_cosine_floor',
+  'search.cross_modal.both_mode_text_weight',
+  'search.cross_modal.both_mode_image_weight',
+  'search.image_query.text_refinement_weight',
+  'search.image_query.image_refinement_weight',
   'search.unified_multimodal',
   'search.unified_multimodal_only',
   'search.cross_modal.llm_intent',
+  'search.graph_signals',
+  'search.contextual_retrieval',
+  'search.contextual_retrieval_disabled',
+  'search.relational_retrieval',
+  'search.relational_retrieval_depth',
+  // DB-plane search.* singletons read directly via engine.getConfig
+  // (commands/upgrade.ts, ops/image.ts, ops/search.ts, private-visibility.ts,
+  // last-retrieved.ts).
+  'search.mode_upgrade_notice_shown',
   'search.image_query.max_bytes',
-  'search.reranker.enabled',
+  'search.image_query.daily_budget_usd_per_client',
+  'search.image_query.remote_max_bytes',
+  'search.mcp_keyword_only',
+  REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
   // #4415: per-brain query-intent pattern extensions (JSON bank→regex[]),
   // merged over the shipped banks in src/core/search/query-intent.ts.
@@ -1542,6 +1598,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // reconcile-links, and sweep. The documented off-switch is `gbrain config
   // set auto_link false` — same unregistered-key class as auto_chronicle.
   'auto_link',
+  // #4987: the write-path timeline extractor's off switch (read by
+  // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
+  // works without --force, as the compiled-truth guide documents.
+  'auto_timeline',
   // v0.46.3: the provider_sunset doctor check's own suppression escape hatch
   // (doctor.ts) and docs/guides/embedding-migration.md both document
   // `gbrain config set doctor.suppress_provider_sunset true`, but the key was
@@ -1571,6 +1631,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Registering it here is what makes `gbrain config set sync.exclude ...`
   // work — the operator path to the feature (unregistered-key class).
   'sync.exclude',
+  // #4901: the dot-directory WAIVER's persisted twin (unioned with the per-call
+  // include-hidden flag, which bulk sync refuses); registered so `config set` accepts it.
+  'sync.include_hidden',
   // #2179: clamp window for DCR-requested per-client token TTLs. Read by
   // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
   // defaults fail-closed to max(--token-ttl, min).
@@ -1589,6 +1652,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Read by performSync + runImport summary aggregation; 'false'/'0'/'off'
   // silences both surfaces (schema lint rules stay active).
   'schema.type_warnings',
+  // #4795 reindex-search-vector marker (doctor fts_reindex_incomplete reads it); `config unset` is the escape hatch.
+  'fts.reindex_in_progress',
 ];
 
 /**

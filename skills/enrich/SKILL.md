@@ -277,8 +277,11 @@ Active items, pending decisions, things to track.
 **Note (v0.10.1):** Links between brain pages are auto-created on every
 `put_page` call (auto-link post-hook). Step 7 focuses on content
 cross-references (updating related pages' compiled truth with new signal
-from this enrichment), not on creating links. Verify via the `auto_links`
-field in the put_page response (`{ created, removed, errors }`).
+from this enrichment), not on creating links. On a trusted local write the
+put_page response carries `auto_links: { created, removed, errors }`; MCP
+writes (stdio and HTTP) return `auto_links: { skipped: "remote", hint }`
+instead — edges are reconciled by the serve maintenance sweep or
+`gbrain sweep --once`, and `add_link` covers an edge you need immediately.
 Timeline entries still need explicit `gbrain timeline-add` calls.
 
 ## Bulk Enrichment Rules

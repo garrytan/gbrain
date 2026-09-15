@@ -19,6 +19,7 @@ import {
 // drift from what search actually filters.
 import { resolveHardExcludes, DEFAULT_HARD_EXCLUDES } from '../../../core/search/source-boost.ts';
 import { escapeLikePattern, buildVisibilityClause } from '../../../core/search/sql-ranking.ts';
+import { safeChunksFilter } from '../../../core/search/safe-chunks.ts';
 import type { Check } from '../../doctor.ts';
 
 // --- v0.36.1.0 calibration doctor checks (T12) ---
@@ -49,22 +50,34 @@ import type { Check } from '../../doctor.ts';
  * `src/core/audit-synopsis.ts`. Failure-only audit means low write
  * volume on healthy brains.
  */
-export async function checkContextualRetrievalCoverage(engine: BrainEngine): Promise<Check> {
+export async function checkContextualRetrievalCoverage(
+  engine: BrainEngine,
+  // Source isolation (#4592 class): the remote report threads the caller's
+  // resolved grant here so a source-bound token never reads brain-wide
+  // page counts. Unset = brain-wide (trusted/unrestricted).
+  opts: { sourceIds?: string[] } = {},
+): Promise<Check> {
   try {
     const { MARKDOWN_CHUNKER_VERSION } = await import('../../../core/chunkers/recursive.ts');
-    const rows = await engine.executeRaw<{ chunker_drift: number; mode_null: number }>(
+    const rows = await engine.executeRaw<{ chunker_drift: number; unsealed: number; mode_null: number }>(
       `SELECT
          COUNT(*) FILTER (WHERE chunker_version < $1)::int AS chunker_drift,
+         -- #5004: pages the safe-chunk fence withholds from every remote read.
+         -- Counted separately from drift: the chunker version may move past
+         -- the fence floor, and only the fence has this consequence.
+         COUNT(*) FILTER (WHERE NOT (${safeChunksFilter('pages')}))::int AS unsealed,
          -- #4009 belt+braces: extract receipts are audit artifacts stamped
          -- mode 'none' at write time, but a reindex DB fallback can clear
          -- the stamp — never count them as "never evaluated".
          COUNT(*) FILTER (WHERE contextual_retrieval_mode IS NULL AND type <> 'extract_receipt')::int AS mode_null
        FROM pages
        WHERE page_kind = 'markdown'
-         AND deleted_at IS NULL`,
-      [MARKDOWN_CHUNKER_VERSION],
+         AND deleted_at IS NULL
+         ${opts.sourceIds ? 'AND source_id = ANY($2::text[])' : ''}`,
+      opts.sourceIds ? [MARKDOWN_CHUNKER_VERSION, opts.sourceIds] : [MARKDOWN_CHUNKER_VERSION],
     );
     const chunkerDrift = rows[0]?.chunker_drift ?? 0;
+    const unsealed = rows[0]?.unsealed ?? 0;
     const modeNull = rows[0]?.mode_null ?? 0;
 
     // Synopsis-failures audit summary (best-effort; missing audit file = 0).
@@ -83,7 +96,8 @@ export async function checkContextualRetrievalCoverage(engine: BrainEngine): Pro
       // Audit module unavailable — skip the summary line.
     }
 
-    if (chunkerDrift === 0 && modeNull === 0 && failureSummaryLine === '') {
+    const needsReindex = chunkerDrift > 0 || unsealed > 0 || modeNull > 0;
+    if (!needsReindex && failureSummaryLine === '') {
       return {
         name: 'contextual_retrieval_coverage',
         status: 'ok',
@@ -95,16 +109,16 @@ export async function checkContextualRetrievalCoverage(engine: BrainEngine): Pro
     if (chunkerDrift > 0) {
       parts.push(`${chunkerDrift} page(s) at older chunker_version`);
     }
+    if (unsealed > 0) {
+      parts.push(`${unsealed} page(s) below the safe-chunk index version — withheld from remote/MCP chunk retrieval until reindexed`);
+    }
     if (modeNull > 0) {
       parts.push(`${modeNull} page(s) never evaluated against CR ladder`);
     }
-    const fixHint =
-      chunkerDrift > 0 || modeNull > 0
-        ? ` Run \`gbrain reindex --markdown\` to align.`
-        : '';
+    const fixHint = needsReindex ? ` Run \`gbrain reindex --markdown\` to align.` : '';
     return {
       name: 'contextual_retrieval_coverage',
-      status: chunkerDrift > 0 || modeNull > 0 ? 'warn' : 'ok',
+      status: needsReindex ? 'warn' : 'ok',
       message: `${parts.join('; ')}.${fixHint}${failureSummaryLine}`,
     };
   } catch (e) {

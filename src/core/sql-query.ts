@@ -141,3 +141,17 @@ export async function executeRawJsonb<R = Record<string, unknown>>(
   const params: unknown[] = [...scalarParams, ...jsonbParams];
   return engine.executeRaw<R>(sql, params);
 }
+
+/**
+ * `ON CONFLICT (storage_path) DO UPDATE SET` fragment for `files.metadata`,
+ * shared by every files upsert (CLI upload / upload-raw / smart upload / sync
+ * in `src/commands/files.ts`, the MCP `file_upload` op in `src/core/ops/files.ts`).
+ * jsonb `||` merges only object||object — any other left operand is
+ * ARRAY-WRAPPED, so a bare `files.metadata || EXCLUDED.metadata` would turn a
+ * #2339-era string-scalar row (`"{}"`, the shape `gbrain repair-jsonb` heals
+ * via `jsonb_typeof = 'string'`) into `["{}", {...}]`: invisible to
+ * repair-jsonb and unreadable by every `.storage` reader. Reset anything that
+ * isn't already an object to `{}` before merging.
+ */
+export const FILES_METADATA_MERGE_SQL =
+  `metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;

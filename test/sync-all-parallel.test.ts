@@ -192,6 +192,24 @@ describe('buildSyncStatusReport', () => {
     expect(byId.get('never')!.staleness_hours).toBeNull();
   });
 
+  // #4399 predicate parity: status.ts and the skills-catalog snapshot hand this
+  // function RAW `SELECT config` rows, and PGLite returns jsonb as a JSON
+  // string. A raw `.syncEnabled` cast reads undefined on that shape and reports
+  // a disabled source as enabled while `sync --all` (isSyncDisabledConfig)
+  // skips it — two surfaces contradicting each other on the same row.
+  test('sync_enabled reads a PGLite JSON-string config through the shared predicate', async () => {
+    const sources = [
+      { id: 'off', name: 'off', local_path: '/tmp/off', config: JSON.stringify({ syncEnabled: false }) },
+      { id: 'on', name: 'on', local_path: '/tmp/on', config: JSON.stringify({ syncEnabled: true }) },
+      { id: 'obj_off', name: 'obj_off', local_path: '/tmp/obj_off', config: { syncEnabled: false } },
+    ];
+    const report = await buildSyncStatusReport(makeEngine({}), sources);
+    const byId = new Map(report.sources.map((s) => [s.source_id, s]));
+    expect(byId.get('off')!.sync_enabled).toBe(false);
+    expect(byId.get('on')!.sync_enabled).toBe(true);
+    expect(byId.get('obj_off')!.sync_enabled).toBe(false);
+  });
+
   // v0.41.32.0 (supersedes #1623): buildSyncStatusReport backs the REMOTE
   // get_status_snapshot MCP op, so staleness reads the stored newest_content_at
   // column (NO git subprocess on a DB-supplied local_path). The makeEngine stub

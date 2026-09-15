@@ -89,7 +89,6 @@ The handler is PROTECTED (manual_only) — autopilot will never auto-fire it. Su
 
 ```bash
 gbrain jobs submit unify-types \
-  --allow-protected \
   --params '{"target_pack":"gbrain-base-v2","apply":true}'
 ```
 
@@ -97,7 +96,7 @@ On PGLite (the install default), or on any setup without a running `gbrain jobs 
 
 ```bash
 gbrain jobs submit unify-types \
-  --allow-protected --follow \
+  --follow \
   --params '{"target_pack":"gbrain-base-v2","apply":true}'
 ```
 
@@ -208,7 +207,7 @@ Worried about a specific cluster's mapping?
 
 Inputs:
 - A brain on `gbrain-base` (or any pack with `migration_from: gbrain-base-v2`).
-- Write access to submit a PROTECTED Minion handler (`--allow-protected`).
+- Trusted local CLI access on the brain host: `gbrain jobs submit` grants the PROTECTED-handler opt-in itself for protected names; the remote MCP `submit_job` op cannot.
 - ~10 min wallclock on a 186K-page brain.
 
 Outputs:
@@ -230,7 +229,7 @@ Failure modes:
 ## Anti-Patterns
 
 DON'T:
-- Submit `unify-types` directly via the MCP `submit_job` op without `--allow-protected`. PROTECTED handlers require trusted local callers; remote MCP rejection is the intentional trust boundary.
+- Submit `unify-types` via the remote MCP `submit_job` op. PROTECTED handlers require trusted local callers (`gbrain jobs submit` on the brain host); remote MCP rejection is the intentional trust boundary.
 - Edit `mapping_rules` in `gbrain-base-v2.yaml` to skip clusters you don't trust. Fork the pack instead (`gbrain schema fork`) so the source-of-truth migration stays consistent across brains.
 - Run `unify-types` from inside an autopilot tick. The check is `manual_only` — autopilot deliberately never auto-fires it because pack upgrades are one-time consenting taxonomy decisions.
 - Hard-delete soft-deleted source pages before the 72h restore window. Use `gbrain restore <slug>` first if rollback is needed.

@@ -29,6 +29,9 @@ import type { AuthInfo, Operation, OperationContext } from '../../operations.ts'
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
 import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
+import { parseMarkdown, serializeMarkdown } from '../../markdown.ts';
+import { loadActivePackForWriteVocabulary } from '../../schema-pack/write-vocabulary.ts';
+import { classifyStoredType, sanitizeTypeForDisplay } from '../../schema-pack/type-usage.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
 /**
@@ -319,10 +322,50 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
         const params = normalizeOptionalParams(op, raw);
         const validationError = validateParams(op, params);
         if (validationError) throw new Error(`${toolName}: ${validationError}`);
+        if (op.name === 'put_page' && opts.allowedSlugPrefixes?.length) {
+          await pinUndeclaredType(params, opCtx);
+        }
         return op.handler(opCtx, params);
       },
     };
   });
+}
+
+/**
+ * #4852: trusted-workspace subagents (dream synth agentic lane, patterns,
+ * delegated jobs — the `allowedSlugPrefixes` writers) author page content
+ * model-side, and the model mints types no bundled pack declares
+ * (`reflection` / `original` / `pattern`). The orchestrator reverse-writes
+ * that type to disk as explicit frontmatter, so every `gbrain sync` re-warns.
+ * The oneshot lane already pins its output to 'note' (F5 in
+ * subagent-oneshot.ts); this extends the same rule to the tool-calling lanes:
+ * an EXPLICIT frontmatter type the active pack classifies as `undeclared`
+ * rewrites to 'note' with the model's type kept in `frontmatter.legacy_type`
+ * (the base-v2 D12 shape). Declared types and aliases pass through untouched
+ * (alias_of stays a sync warning); no resolvable pack → no-op (the #4655
+ * fail-open posture). Never rejects — patterns children run require_writes
+ * and a rejection would dead-letter the whole phase. Runs BEFORE import so
+ * content_hash is computed once over the final type (no re-chunk churn).
+ */
+async function pinUndeclaredType(
+  params: Record<string, unknown>,
+  opCtx: OperationContext,
+): Promise<void> {
+  if (typeof params.content !== 'string' || typeof params.slug !== 'string') return;
+  const parsed = parseMarkdown(params.content, `${params.slug}.md`);
+  if (parsed.typeExplicit !== true) return;
+  const pack = await loadActivePackForWriteVocabulary(opCtx);
+  if (!pack || classifyStoredType(parsed.type, pack.manifest).kind !== 'undeclared') return;
+  params.content = serializeMarkdown(
+    { ...parsed.frontmatter, legacy_type: parsed.type },
+    parsed.compiled_truth,
+    parsed.timeline,
+    { type: 'note', title: parsed.title, tags: parsed.tags },
+  );
+  opCtx.logger.warn(
+    `undeclared type '${sanitizeTypeForDisplay(parsed.type)}' normalized to 'note' ` +
+    `(legacy_type kept; pack ${pack.manifest.name})`,
+  );
 }
 
 /**

@@ -66,6 +66,7 @@ export {
   whoknowsHealthCheck,
   pgvectorCheck,
   pagesUpsertArbiterCheck,
+  linkSourceCheckConstraintCheck,
   jsonbIntegrityCheck,
   checkVolunteerChannels,
   takesWeightGridCheck,
@@ -163,6 +164,7 @@ import {
   whoknowsHealthCheck,
   pgvectorCheck,
   pagesUpsertArbiterCheck,
+  linkSourceCheckConstraintCheck,
   jsonbIntegrityCheck,
   checkVolunteerChannels,
   takesWeightGridCheck,
@@ -1671,6 +1673,18 @@ export async function buildChecks(
     // Best-effort. A broken sources table should not stop doctor.
   }
 
+  // 3a-ter. fts_reindex_incomplete (#4795). An interrupted
+  // `reindex-search-vector` leaves the trigger language flipped with rows
+  // still un-backfilled; the command's marker row stays set until it
+  // completes. Logic lives in doctor/checks/fts-reindex.ts (module-dir rule).
+  if (engine !== null) try {
+    const { ftsReindexIncompleteCheck } = await import('./doctor/checks/fts-reindex.ts');
+    const ftsCheck = await ftsReindexIncompleteCheck(engine!);
+    if (ftsCheck) checks.push(ftsCheck);
+  } catch {
+    // Best-effort. A missing config table should not stop doctor.
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface
@@ -1920,6 +1934,12 @@ export async function buildChecks(
   // page write fails brain-wide and the version counter can't see the drift.
   progress.heartbeat('pages_upsert_arbiter');
   checks.push(await pagesUpsertArbiterCheck(engine));
+
+  // 4a-ter. #4613: links_link_source_check shape — a ledger-current brain
+  // whose CHECK reverted to the pre-v114 allowlist rejects every kebab
+  // provenance write; the version counter can't see it.
+  progress.heartbeat('links_link_source_check');
+  checks.push(await linkSourceCheckConstraintCheck(engine));
 
   // 4b. pglite_scale — engine-fit signal: makes the init-time 1000-file
   // Supabase suggestion re-evaluable for the life of the brain.
@@ -2955,7 +2975,7 @@ export async function buildChecks(
       checks.push({
         name: 'markdown_body_completeness',
         status: 'warn',
-        message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import with: gbrain sync --force`,
+        message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import: edit each page body, then run gbrain sync (see docs/integrations/reliability-repair.md)`,
       });
     }
   } catch {
@@ -3869,18 +3889,23 @@ export async function buildChecks(
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null }>(
-        `SELECT f.storage_path, s.local_path AS source_local_path FROM files f LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') WHERE f.mime_type LIKE 'image/%' LIMIT 1000`
+      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null; metadata: unknown }>(
+        `SELECT f.storage_path, f.metadata, s.local_path AS source_local_path FROM files f LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') WHERE f.mime_type LIKE 'image/%' LIMIT 1000`
       );
       let vanished = 0;
       let foreign = 0;
+      let remote = 0;
       const vanishedPaths: string[] = [];
       const fs = await import('node:fs');
-      const { resolveImageAssetPath } = await import('./doctor-asset-paths.ts');
+      const { resolveImageAssetPath, imageAssetStorageLane } = await import('./doctor-asset-paths.ts');
       // storage_path is repo-relative for sync-ingested assets. Prefer the
       // owning source's root; sync.repo_path is only a legacy fallback.
       const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
       for (const r of rows) {
+        // #4910: an explicit non-git lane (supabase/s3/local backend) means
+        // storage_path is a bucket key, never a source-relative file. Only
+        // `gbrain files verify` can probe those; unmarked rows keep the stat.
+        if (imageAssetStorageLane(r.metadata) === 'backend') { remote++; continue; }
         // #1835: Windows drive paths (D:/…) translate to the WSL automount
         // (/mnt/d/…) under WSL, and are SKIPPED (not "missing") on hosts
         // where they cannot exist (macOS / plain Linux) — never joined onto
@@ -3897,12 +3922,16 @@ export async function buildChecks(
           if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
         }
       }
-      const checked = rows.length - foreign;
-      const foreignNote = foreign > 0
+      const checked = rows.length - foreign - remote;
+      const foreignNote = (foreign > 0
         ? ` (${foreign} Windows-drive path(s) skipped — not resolvable on this platform)`
-        : '';
+        : '') + (remote > 0
+        ? ` (${remote} storage-backend object(s) not checked locally — run \`gbrain files verify\`)`
+        : '');
       if (rows.length === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: 'No image assets indexed yet' });
+      } else if (checked === 0) {
+        checks.push({ name: 'image_assets', status: 'ok', message: `No local image assets to check${foreignNote}` });
       } else if (vanished === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: `${checked} image(s) all present on disk${foreignNote}` });
       } else {

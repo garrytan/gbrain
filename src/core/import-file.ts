@@ -278,6 +278,31 @@ function invalidYamlFrontmatterError(parsed: ReturnType<typeof parseMarkdown>): 
 }
 
 /**
+ * #4588: refresh `pages.source_path` on the import SKIP path. A row whose slug
+ * moved before the sync rename repair (GATE13) existed still names the OLD
+ * file; write-through prefers source_path, so every later write recreates the
+ * old directory, and the full-sync reconcile reads the stale path as "file
+ * removed" and soft-deletes the live page. The changed-content path already
+ * heals this via putPage's `COALESCE(EXCLUDED.source_path, …)`; the
+ * unchanged-content skip is the natural heal moment and used to discard the
+ * real path importFile handed in. `current` is the path getPage already read:
+ * equal → no statement at all (an unchanged 20k-file tree must not issue 20k
+ * zero-row UPDATEs, each firing the generation-clock trigger); undefined
+ * (projection-less engine) falls through and `IS DISTINCT FROM` keeps the
+ * UPDATE zero-row. brainstorm passes `${slug}.md`, the value putPage writes on
+ * its own path. Bookkeeping only — never fails the import.
+ */
+async function refreshSourcePath(engine: BrainEngine, slug: string, sourceId: string | undefined, sourcePath: string | undefined, current: string | null | undefined): Promise<void> {
+  if (!sourcePath || current === sourcePath) return;
+  try {
+    await engine.executeRaw(
+      'UPDATE pages SET source_path = $1 WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL AND source_path IS DISTINCT FROM $1',
+      [sourcePath, sourceId ?? 'default', slug],
+    );
+  } catch { /* bookkeeping only — never fail the import over it */ }
+}
+
+/**
  * Import content from a string. Core pipeline:
  * parse -> hash -> embed (external) -> transaction(version + putPage + tags + chunks)
  *
@@ -729,6 +754,7 @@ export async function importFromContent(
   };
 
   if (existing?.content_hash === hash && !opts.forceRechunk) {
+    await refreshSourcePath(engine, slug, sourceId, opts.sourcePath, existing?.source_path);
     return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
   }
 
@@ -753,6 +779,7 @@ export async function importFromContent(
         parsed.timeline || '',
         hash,
       );
+      await refreshSourcePath(engine, slug, sourceId, opts.sourcePath, existing?.source_path);
       return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
     }
   }
@@ -1473,7 +1500,7 @@ export async function importCodeFile(
   });
 
   // Hash for idempotency. CHUNKER_VERSION is folded in so chunker shape
-  // changes across releases force clean re-chunks without sync --force.
+  // changes across releases force clean re-chunks without a forced re-import.
   const hash = createHash('sha256')
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');

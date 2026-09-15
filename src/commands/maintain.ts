@@ -78,6 +78,7 @@ async function runStaleExtraction(
   engine: BrainEngine,
   beforeHealth: BrainHealth,
   dryRun: boolean,
+  json: boolean,
 ): Promise<MaintenanceAction> {
   if (beforeHealth.stale_pages <= 0) {
     return { name: 'extract_stale', status: 'ok', message: 'No stale pages.' };
@@ -92,10 +93,12 @@ async function runStaleExtraction(
     };
   }
 
+  // maintain owns the report: in --json mode the helper's human summary must
+  // stay off stdout or the JSON document stops parsing.
   const result = await extractStaleFromDB(engine, {
     dryRun: false,
     jsonMode: false,
-    includeFrontmatter: false,
+    quiet: json,
     catchUp: false,
   });
 
@@ -183,7 +186,7 @@ Not auto-applied:
   const beforeDoctor = await buildDoctorReport(engine);
   const actions: MaintenanceAction[] = [];
 
-  actions.push(await runStaleExtraction(engine, beforeHealth, opts.dryRun));
+  actions.push(await runStaleExtraction(engine, beforeHealth, opts.dryRun, opts.json));
   actions.push(...await runCycleFreshnessMaintenance(engine, beforeDoctor, opts.dryRun));
 
   const afterHealth = await engine.getHealth();

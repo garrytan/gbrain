@@ -330,6 +330,48 @@ export function buildExtractorSystem(admitsLow: boolean): string {
 
 const MAX_TURN_TEXT_CHARS = 8000;
 
+/**
+ * #4863 — JSON Schema for the extractor reply, sent as `responseSchema` on
+ * every chat() call. Only openai-compatible recipes that declare
+ * `supports_structured_outputs` (Ollama: server-side grammar-constrained
+ * decoding) receive it; every other lane ignores it. Mirrors RawExtracted:
+ * fact + kind carry data, the rest are nullable. `parseExtractorJsonDetailed`
+ * still validates the text — the schema removes the malformed-JSON class on
+ * small local models, it does not replace the parser. OpenAI-strict-safe:
+ * `@ai-sdk/openai-compatible` sends `strict: true` by default, and strict
+ * mode demands every property in `required` (nullable via type unions) plus
+ * `additionalProperties: false` on each object — so a proxied backend that
+ * honors strict accepts this schema instead of 400ing on it. The parser
+ * still tolerates absent keys for backends that ignore the schema.
+ */
+const FACTS_EXTRACTION_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    facts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          fact: { type: 'string' },
+          kind: { type: 'string', enum: [...ALL_EXTRACT_KINDS] },
+          entity: { type: ['string', 'null'] },
+          confidence: { type: ['number', 'null'] },
+          notability: { type: 'string', enum: ['high', 'medium', 'low'] },
+          metric: { type: ['string', 'null'] },
+          value: { type: ['number', 'null'] },
+          unit: { type: ['string', 'null'] },
+          period: { type: ['string', 'null'] },
+        },
+        required: ['fact', 'kind', 'entity', 'confidence', 'notability', 'metric', 'value', 'unit', 'period'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['facts'],
+  additionalProperties: false,
+};
+const FACTS_RESPONSE_SCHEMA = { name: 'facts_extraction', schema: FACTS_EXTRACTION_SCHEMA };
+
 export type ExtractFailureReason =
   | 'chat_unavailable'
   | 'provider_error'
@@ -476,6 +518,7 @@ export async function extractFactsFromTurnWithOutcome(
       messages: [{ role: 'user', content: userContent }],
       maxTokens,
       abortSignal: input.abortSignal,
+      responseSchema: FACTS_RESPONSE_SCHEMA,
     });
     // #2113: never checked pre-fix — a truncated response (stopReason
     // 'length', e.g. reasoning tokens eating the cap on mandatory-reasoning
@@ -493,6 +536,7 @@ export async function extractFactsFromTurnWithOutcome(
         messages: [{ role: 'user', content: userContent }],
         maxTokens: effectiveMaxTokens,
         abortSignal: input.abortSignal,
+        responseSchema: FACTS_RESPONSE_SCHEMA,
       });
       if (result.stopReason === 'length') {
         process.stderr.write(
@@ -533,6 +577,7 @@ export async function extractFactsFromTurnWithOutcome(
         messages: [{ role: 'user', content: userContent }],
         maxTokens: effectiveMaxTokens,
         abortSignal: input.abortSignal,
+        responseSchema: FACTS_RESPONSE_SCHEMA,
       });
     } catch (err) {
       if (isAbort(err)) throw err;

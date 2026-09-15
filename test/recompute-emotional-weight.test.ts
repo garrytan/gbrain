@@ -119,6 +119,49 @@ describe('runPhaseRecomputeEmotionalWeight', () => {
     expect(engine.written[0].weight).toBeCloseTo(0.5, 5);
   });
 
+  // #4797: one synchronous full-brain UPDATE on PGLite wedges the main thread
+  // (no lock refresh, no progress, no abort) for as long as the statement
+  // runs. The phase must write in bounded slices and yield between them.
+  test('full mode writes in slices of 1000 with a yield + progress tick between statements (#4797)', async () => {
+    const rows: EmotionalWeightInputRow[] = Array.from({ length: 2500 }, (_, i) => ({
+      slug: `p/${i}`, source_id: 'default', tags: [], takes: [],
+    }));
+    const calls: number[] = [];
+    let yields = 0;
+    let ticks = 0;
+    const engine: FakeEngine = {
+      batchLoadEmotionalInputs: async () => rows,
+      setEmotionalWeightBatch: async (rs) => { calls.push(rs.length); return 0; }, // 0 = nothing changed
+      getConfig: async () => null,
+    };
+    const r = await runPhaseRecomputeEmotionalWeight(engine as any, {
+      yieldDuringPhase: async () => { yields++; },
+      onProgress: () => { ticks++; },
+    });
+    expect(r.status).toBe('ok');
+    expect(calls).toEqual([1000, 1000, 500]);
+    expect(yields).toBeGreaterThanOrEqual(2);
+    expect(ticks).toBeGreaterThanOrEqual(3);
+    // pages_recomputed = pages EVALUATED (cycle totals + dry-run stay consistent);
+    // pages_updated = rows the engine actually changed.
+    expect(r.pages_recomputed).toBe(2500);
+    expect(r.details.pages_recomputed).toBe(2500);
+    expect(r.details.pages_updated).toBe(0);
+  });
+
+  test('an already-aborted signal stops the phase before the first write (#4797)', async () => {
+    const rows: EmotionalWeightInputRow[] = Array.from({ length: 2500 }, (_, i) => ({
+      slug: `p/${i}`, source_id: 'default', tags: [], takes: [],
+    }));
+    const engine = makeEngine(rows);
+    const ac = new AbortController();
+    ac.abort(new Error('SIGTERM'));
+    const r = await runPhaseRecomputeEmotionalWeight(engine as any, { signal: ac.signal });
+    expect(r.status).toBe('fail');
+    expect(r.error?.message.toLowerCase()).toContain('abort');
+    expect(engine.written.length).toBe(0);
+  });
+
   test('engine throw bubbles into a fail PhaseResult, not an unhandled exception', async () => {
     const engine: FakeEngine = {
       batchLoadEmotionalInputs: async () => { throw new Error('db down'); },

@@ -357,12 +357,20 @@ describe('attributeKnob source attribution', () => {
     expect(a.value).toBe(999);
   });
 
-  test('override source labels the config key path', () => {
-    const input = { mode: 'conservative', overrides: { cache_enabled: false } };
+  test('override source labels the REAL config key path, not the knob name (#4605)', () => {
+    // `gbrain search modes` prints source_detail verbatim as a copy-pasteable
+    // `gbrain config set` target, so it must be the key mode.ts reads.
+    const input = {
+      mode: 'conservative',
+      overrides: { cache_enabled: false, reranker_top_n_in: 5, relationalRetrieval: false },
+    };
     const resolved = resolveSearchMode(input);
     const a = attributeKnob('cache_enabled', input, resolved);
     expect(a.source).toBe('override');
-    expect(a.source_detail).toContain('search.cache_enabled');
+    expect(a.source_detail).toContain('search.cache.enabled');
+    expect(a.source_detail).not.toContain('search.cache_enabled');
+    expect(attributeKnob('reranker_top_n_in', input, resolved).source_detail).toBe('config: search.reranker.top_n_in');
+    expect(attributeKnob('relationalRetrieval', input, resolved).source_detail).toBe('config: search.relational_retrieval');
   });
 
   test('mode source labels the mode name', () => {

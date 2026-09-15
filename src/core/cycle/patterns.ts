@@ -54,8 +54,10 @@ export interface PatternsPhaseOpts {
   yieldDuringPhase?: () => Promise<void>;
   /**
    * issue #2860 — `gbrain dream --phase patterns --once`. Bypasses the
-   * `dream.patterns.enabled` gate for THIS call only; never reads or
-   * writes config.
+   * `dream.patterns.enabled` gate AND the #4879 no-new-evidence gate for
+   * THIS call only; never reads or writes the `.enabled` key. A completed
+   * forced run still stamps `dream.patterns.last_evidence_ts` so the next
+   * autopilot tick doesn't re-pay for evidence the operator just consumed.
    */
   once?: boolean;
   /**
@@ -152,6 +154,25 @@ export async function runPhasePatterns(
         'insufficient_evidence',
         `${reflections.length} reflections in last ${config.lookbackDays}d (need ≥${config.minEvidence})`,
       );
+    }
+
+    // #4879: evidence watermark. Autopilot re-dispatches this phase every
+    // global tick (~60 min); without a consumed-marker it re-paid a Sonnet
+    // run on the same unchanged reflections and minted near-duplicate pattern
+    // pages. Skip when no reflection is newer than the evidence the last
+    // COMPLETED run consumed (rows are ORDER BY updated_at DESC, so [0] is
+    // the high-water mark). Absent/unparseable stamp fails open, same as
+    // synthesize's checkCooldown; `--once` forces past it.
+    const newestEvidenceMs = reflections[0].updatedAt.getTime();
+    if (!opts.once) {
+      const stampMs = Date.parse((await engine.getConfig(LAST_EVIDENCE_KEY)) ?? '');
+      if (Number.isFinite(stampMs) && newestEvidenceMs <= stampMs) {
+        return skipped(
+          'no_new_evidence',
+          `${reflections.length} reflections in window, none newer than last completed run ` +
+          `(${new Date(stampMs).toISOString()}); pass --once to force`,
+        );
+      }
     }
 
     if (opts.dryRun) {
@@ -356,6 +377,13 @@ export async function runPhasePatterns(
       };
     }
 
+    // #4879: stamp the EVIDENCE watermark (not now()) only on a completed
+    // child — fail/warn/timeout above must retry next tick. A reflection
+    // edited between gather and here has updated_at > stamp, so the next run
+    // still fires. Zero writes stamps too: the model saw this evidence and
+    // named nothing; re-running it is exactly the spend bug.
+    await engine.setConfig(LAST_EVIDENCE_KEY, new Date(newestEvidenceMs).toISOString());
+
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, details);
   } catch (e) {
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
@@ -468,10 +496,16 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
 
 // ── Reflection gathering ─────────────────────────────────────────────
 
+/** #4879: config-plane STATE row (not a user knob) — ISO of the newest
+ *  reflection `updated_at` the last completed run consumed. Same class as
+ *  `dream.synthesize.last_completion_ts`; `dream.` is already a known prefix. */
+const LAST_EVIDENCE_KEY = 'dream.patterns.last_evidence_ts';
+
 interface ReflectionRef {
   slug: string;
   title: string;
   excerpt: string;
+  updatedAt: Date;
 }
 
 async function gatherReflections(
@@ -482,8 +516,10 @@ async function gatherReflections(
   const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
   // Reflections live under the configured source slug prefix (bound as a
   // parameter; see PatternsConfig.sourceSlugPrefix / dream.patterns.source_slug_prefix).
-  const rows = await engine.executeRaw<{ slug: string; title: string | null; compiled_truth: string | null }>(
-    `SELECT slug, title, compiled_truth
+  const rows = await engine.executeRaw<{
+    slug: string; title: string | null; compiled_truth: string | null; updated_at: string | Date;
+  }>(
+    `SELECT slug, title, compiled_truth, updated_at
        FROM pages
       WHERE slug LIKE $2
         AND updated_at >= $1::timestamptz
@@ -494,6 +530,9 @@ async function gatherReflections(
   return rows.map(r => ({
     slug: r.slug,
     title: r.title ?? r.slug,
+    // Both engines hand timestamptz back as Date; wrap so a string-returning
+    // driver shape still parses (backfill-registry.ts precedent).
+    updatedAt: new Date(r.updated_at),
     // A raw UTF-16 slice can split an astral character at the boundary and
     // leave a lone surrogate. Postgres rejects that when the prompt is bound
     // into the minion job's JSONB payload. Use the shared safe truncator so a

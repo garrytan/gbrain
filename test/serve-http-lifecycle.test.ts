@@ -130,6 +130,67 @@ describe('HTTP server lifecycle', () => {
     expect(server.listenerCount('error')).toBe(0);
     expect(signals.listenerCount('SIGINT')).toBe(0);
   });
+
+  // Sockets are held weakly (Bun never emits 'close' on them), so destroyAll()
+  // can only sever wrappers still reachable. An idle keep-alive wrapper the
+  // runtime already collected leaves its native handle keeping close() waiting
+  // forever — the same hang the severing fixed, from the other side. The
+  // lifecycle bounds that wait instead of trusting close() to return.
+  test('bounds a close() that never finishes, says so, and still completes the lifecycle', async () => {
+    const server = new FakeHttpServer();
+    server.close = function (this: FakeHttpServer) {
+      this.closeCalls++;
+      this.listening = false;
+      return this; // never calls back, never emits 'close'
+    };
+    const signals = new EventEmitter();
+    const logs: string[] = [];
+    let deregistered = false;
+
+    const lifecycle = waitForHttpServerLifecycle(server, {
+      signals,
+      register() { return () => { deregistered = true; }; },
+      closeTimeoutMs: 20,
+      log: (msg) => { logs.push(msg); },
+    });
+
+    signals.emit('SIGINT');
+    const outcome = await Promise.race([
+      lifecycle.then(() => 'settled'),
+      new Promise<string>((r) => setTimeout(() => r('hung'), 500)),
+    ]);
+
+    expect(outcome).toBe('settled');
+    expect(server.closeCalls).toBe(1);
+    expect(deregistered).toBe(true);
+    expect(logs.join('\n')).toMatch(/20ms/);
+    expect(signals.listenerCount('SIGINT')).toBe(0);
+  });
+
+  test('a close() error that lands after the deadline is logged, not dropped', async () => {
+    const server = new FakeHttpServer();
+    server.close = function (this: FakeHttpServer, callback?: (error?: Error) => void) {
+      this.closeCalls++;
+      this.listening = false;
+      setTimeout(() => callback?.(new Error('late close failure')), 40); // after the 20ms deadline
+      return this;
+    };
+    const signals = new EventEmitter();
+    const logs: string[] = [];
+
+    const lifecycle = waitForHttpServerLifecycle(server, {
+      signals,
+      register() { return () => {}; },
+      closeTimeoutMs: 20,
+      log: (msg) => { logs.push(msg); },
+    });
+    signals.emit('SIGINT');
+    await lifecycle; // resolved by the deadline
+    await new Promise((r) => setTimeout(r, 60)); // let the late callback fire
+
+    expect(logs.join('\n')).toMatch(/20ms/);
+    expect(logs.join('\n')).toContain('late close failure');
+  });
 });
 
 // Severing sockets lets close() finish; this is what actually stops the

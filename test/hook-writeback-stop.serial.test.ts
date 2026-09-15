@@ -81,6 +81,36 @@ function writeTranscript(userText: string, opts: { assistantOnly?: boolean; assi
   return { path: p, root };
 }
 
+function writeTranscriptWithToolResult(userText: string, resultChars: number): { path: string; root: string } {
+  const root = join(tmp, 'projects-root');
+  mkdirSync(root, { recursive: true });
+  const p = join(root, 'session.jsonl');
+  const lines = [
+    JSON.stringify({
+      parentUuid: null, isSidechain: false, type: 'user',
+      message: { role: 'user', content: userText },
+      uuid: 'u-1', sessionId: 's-wb', timestamp: '2026-09-01T10:00:00.000Z',
+    }),
+    JSON.stringify({
+      parentUuid: 'u-1', isSidechain: false, type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tool-1', name: 'Read', input: { file_path: '/tmp/a' } }] },
+      uuid: 'a-1', sessionId: 's-wb', timestamp: '2026-09-01T10:00:01.000Z',
+    }),
+    JSON.stringify({
+      parentUuid: 'a-1', isSidechain: false, type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'x'.repeat(resultChars) }] },
+      uuid: 'u-tool-1', sessionId: 's-wb', timestamp: '2026-09-01T10:00:02.000Z',
+    }),
+    JSON.stringify({
+      parentUuid: 'u-tool-1', isSidechain: false, type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Done — noted.' }] },
+      uuid: 'a-2', sessionId: 's-wb', timestamp: '2026-09-01T10:00:03.000Z',
+    }),
+  ];
+  writeFileSync(p, lines.join('\n') + '\n');
+  return { path: p, root };
+}
+
 const io = { write: () => {} };
 
 async function wbHeartbeats() {
@@ -127,6 +157,32 @@ describe('hook stop — ambient writeback banking', () => {
       stdin: JSON.stringify({ session_id: 's-wb', transcript_path: t.path }),
     })).toBe(0);
     expect((await wbHeartbeats())[0]?.reason).toBe('no_user_turn');
+  });
+
+  test('tool_result user entries do not shadow the genuine user prompt', async () => {
+    writeConfig({ writeback: 'salient' });
+    const prompt = 'I prefer dark mode in every editor, and I want weekly summaries.';
+    const t = writeTranscriptWithToolResult(prompt, 20);
+    expect(await runHook(['stop'], {
+      ...io, transcriptRoot: t.root,
+      stdin: JSON.stringify({ session_id: 's-wb', transcript_path: t.path }),
+    })).toBe(0);
+    const file = readdirSync(corpus()).find((f) => /^s-wb\.wb-[0-9a-f]{24}\.txt$/.test(f));
+    expect(file).toBeDefined();
+    expect(await Bun.file(join(corpus(), file!)).text()).toBe(prompt + '\n');
+  });
+
+  test('tool_result beyond the cheap tail triggers the wide retry for the genuine prompt', async () => {
+    writeConfig({ writeback: 'salient' });
+    const prompt = 'I prefer dark mode in every editor, and I want weekly summaries.';
+    const t = writeTranscriptWithToolResult(prompt, 140_000);
+    expect(await runHook(['stop'], {
+      ...io, transcriptRoot: t.root,
+      stdin: JSON.stringify({ session_id: 's-wb', transcript_path: t.path }),
+    })).toBe(0);
+    const file = readdirSync(corpus()).find((f) => /^s-wb\.wb-[0-9a-f]{24}\.txt$/.test(f));
+    expect(file).toBeDefined();
+    expect(await Bun.file(join(corpus(), file!)).text()).toBe(prompt + '\n');
   });
 
   test('user turn pushed past the 128KB tail by ONE huge assistant payload: wide retry finds it — banked, NOT no_user_turn', async () => {

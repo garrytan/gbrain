@@ -798,8 +798,70 @@ describe('outside-voice hardening (X-batch)', () => {
       },
     };
     const code = await statusHarness(parseHarnessArgs(['--status']), statusDeps);
-    expect(f.out.join('\n')).toMatch(/verify unavailable/);
-    expect(code).toBe(0); // honest degrade, all targets confirmed
+    const out = f.out.join('\n');
+    expect(out).toMatch(/verify unavailable/);
+    expect(out).not.toContain(TOKEN_B);
+    // #4586: the live registration no longer points at OUR serve — the target
+    // line and the exit code say so instead of replaying the receipt's
+    // apply-time 'confirmed'.
+    expect(out).toMatch(/claude-code\/mcp \(user\): failed — .*127\.0\.0\.1:9999.*--force/);
+    expect(code).toBe(1);
+  });
+
+  test('#4586 --status: a user-scope registration replaced by a stdio serve reads failed (human + --json), receipt untouched', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--no-hooks']), f.deps)).toBe(0);
+    const deps: HarnessDeps = {
+      ...f.deps,
+      runner: async (argv: string[]) => {
+        if (argv[0] === 'claude' && argv[2] === 'get') {
+          // `bootstrap hooks --scope user` / a manual `claude mcp add` took the
+          // name over at OUR scope with a stdio launch: no URL line at all.
+          return {
+            code: 0,
+            stdout: 'gbrain:\n  Scope: User config\n  Type: stdio\n  Command: /usr/local/bin/gbrain\n  Args: serve --surface full\n',
+            stderr: '',
+          };
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+    expect(await statusHarness(parseHarnessArgs(['--status']), deps)).toBe(1);
+    expect(f.out.join('\n')).toMatch(/claude-code\/mcp \(user\): failed — .*stdio/);
+
+    f.out.length = 0;
+    expect(await statusHarness(parseHarnessArgs(['--status', '--json']), deps)).toBe(1);
+    const payload = JSON.parse(f.out[f.out.length - 1]) as {
+      token_verified: unknown;
+      targets: Array<{ host: string; kind: string; state: string }>;
+    };
+    expect(payload.targets.find((t) => t.host === 'claude-code' && t.kind === 'mcp')?.state).toBe('failed');
+    expect(payload.token_verified).toBe('unavailable');
+    // Status is read-only: the receipt still carries the apply-time state.
+    const state = readHarnessReceiptState(f.home) as { receipt: { targets: HarnessTarget[] } };
+    expect(state.receipt.targets.find((t) => t.host === 'claude-code' && t.kind === 'mcp')?.state).toBe('confirmed');
+  });
+
+  test('#4586 negative control: a PROJECT-scope stdio entry (default `bootstrap hooks` shadow) leaves the user-scope target confirmed, exit 0', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--no-hooks']), f.deps)).toBe(0);
+    const deps: HarnessDeps = {
+      ...f.deps,
+      runner: async (argv: string[]) => {
+        if (argv[0] === 'claude' && argv[2] === 'get') {
+          return {
+            code: 0,
+            stdout: 'gbrain:\n  Scope: Project config (shared via .mcp.json)\n  Type: stdio\n  Command: /usr/local/bin/gbrain\n  Args: serve --surface full\n',
+            stderr: '',
+          };
+        }
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+    // Not positive evidence of replacement at OUR scope — a cwd-dependent
+    // shadow, not a takeover — so the receipt state stands (honest degrade).
+    expect(await statusHarness(parseHarnessArgs(['--status']), deps)).toBe(0);
+    expect(f.out.join('\n')).toMatch(/claude-code\/mcp \(user\): confirmed/);
   });
 
   test('canary impostor guard: an endpoint that accepts an INVALID credential fails the apply and the fresh mint is revoked', async () => {

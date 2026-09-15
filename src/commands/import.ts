@@ -1068,6 +1068,8 @@ export async function runImport(
       unchanged: skipped - failures.length - malformedFileSkips,
       malformed_skipped: malformedFileSkips,
       failures,
+      // Effective destination — same expression as the import-file write (import-file.ts) and the ingest_log row below.
+      source_id: sourceId ?? 'default',
     }));
   } else {
     slog(`\nImport complete (${totalTime}s):`);

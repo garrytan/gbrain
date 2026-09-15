@@ -135,7 +135,7 @@ For `detail: 'high'` searches, `src/core/search/expansion.ts` runs a Haiku-class
 
 The fix is budget-normalized weighted RRF, composed in `src/core/search/fusion-lists.ts`. Every vector list is a role-tagged arm (`original` | `variant` | `clause` | `image`) — tagged objects, never a positional convention, so a failed arm or a fell-open image branch can't mis-tag a list. The `original` arm always fuses at weight 1; the non-empty `variant`/`clause` arms share ONE total weight budget, `search.expansion_variant_budget` (`weight_i = b / n_voting_arms`, each row scored `weight / (k + rank)`), so total expansion influence is exactly `b` however many variants the LLM produced. `null` — the default in all three mode bundles — is the legacy equal-weight fusion (every list weight 1, byte-identical). A budget in (0, 4] is set with `gbrain config set search.expansion_variant_budget <b>`, per call via `HybridSearchOpts.expansionVariantBudget`, or pinned per eval arm with `gbrain eval longmemeval --expansion-variant-budget <b>` (sweep it against frozen `--expansion-replay` variants so cells differ only in `b`). Arithmetic: two variants agreeing on a distractor at rank 0 tie the original's rank-0 vote exactly at `b = 1.0`; legacy with two variants is ≈ `b = 2.0`; `b = 0.5` subordinates them. The knob is a no-op when expansion is off and folds into the query-cache key (`evb=`). Outcome (ranker wave, 2026-09-06, recorded Haiku variants replayed at every budget): the mechanism is real — strict `recall_all@5` rises from 255/470 at the legacy weighting to 394/470 at budget 0.25 — but its pre-registered rule (≥ plain hybrid − 2 on the 430-question decision set, no type losing > 1) failed at every budget (0.25: −43; plain hybrid 439/470), so every bundle keeps `expansion_variant_budget: null` and the knob is an operator lever. The receipts point at a trigger rather than a weight (expand only when the original query's evidence is weak), filed as the next pre-registered mechanism.
 
-Expansion is opt-in per mode bundle (`tokenmax` on by default; `balanced` + `conservative` off). Default off in the cheap tiers because the LLM call adds ~$0.001/query and ~200ms — real money at scale. The `query` op is the exception: it defaults `expand: true` per call (pass `expand: false` to opt out) — expansion-by-default is what makes it the concept/landscape verb.
+The mode bundles carry an `expansion` value (`tokenmax` true; `balanced` + `conservative` false — off in the cheap tiers because the LLM call adds ~$0.001/query and ~200ms, real money at scale), but the bundle value (and the `search.expansion` config key) only reaches a caller that leaves `expansion` unset AND wires an `expandFn`, and no shipped verb does today. The `query` op defaults `expand: true` per call in every mode (pass `expand: false` / `--no-expand` to opt out) — expansion-by-default is what makes it the concept/landscape verb — while `search`, the memory verbs and the eval harnesses pin expansion per call. `gbrain search modes` reports the bundle value, not what `query` does.
 
 ## Putting it together
 
@@ -371,7 +371,10 @@ Markdown chunk creation applies the strict protected-body sanitizer before
 splitting text. For remote reads, all existing chunks are withheld until a
 successful rebuild records the current chunker version. Public pages require
 this rebuild too; trusted local chunk reads remain available. Body or chunk changes
-invalidate that record until the next successful rebuild. Direct page reads
+invalidate that record until the next successful rebuild. While pages are withheld,
+remote `search` / `query` report `degraded: [safe_index_pending]` (the MCP
+empty-result block names it) instead of a clean miss, and `gbrain doctor` counts
+the withheld pages and points at the `gbrain reindex --markdown` fix. Direct page reads
 continue to use current source and visibility policy plus body sanitization.
 
 Run rebuild commands from a local installation on the brain host; thin clients

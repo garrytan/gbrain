@@ -88,6 +88,25 @@ describe('v0.29 E2E — setEmotionalWeightBatch is multi-source safe', () => {
     expect(updated).toBe(1);
   });
 
+  // #4797: a first full-brain pass recomputes almost every page to the value
+  // already stored (0.0 default). Rewriting those rows fires the per-row
+  // BEFORE UPDATE triggers (generation bump + search_vector) for nothing.
+  // Same-value rows must be left alone: not rewritten, not counted.
+  test('same-value rows are not rewritten and are not counted (#4797)', async () => {
+    const readXmin = () => engine.executeRaw<{ source_id: string; row_xmin: string }>(
+      `SELECT source_id, xmin::text AS row_xmin FROM pages WHERE slug = 'shared/page' ORDER BY source_id`
+    );
+    const before = Object.fromEntries((await readXmin()).map(r => [r.source_id, r.row_xmin]));
+    const updated = await engine.setEmotionalWeightBatch([
+      { slug: 'shared/page', source_id: 'default', weight: 0.50 },  // unchanged (set above)
+      { slug: 'shared/page', source_id: 'src-b',   weight: 0.30 },  // 0.20 → 0.30
+    ]);
+    expect(updated).toBe(1);
+    const after = Object.fromEntries((await readXmin()).map(r => [r.source_id, r.row_xmin]));
+    expect(after.default).toBe(before.default);      // no new tuple version
+    expect(after['src-b']).not.toBe(before['src-b']); // the changed row was rewritten
+  });
+
   test('empty batch returns 0', async () => {
     const updated = await engine.setEmotionalWeightBatch([]);
     expect(updated).toBe(0);

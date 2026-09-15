@@ -1201,6 +1201,11 @@ project resolves through `src/core/search/mode.ts`.
 | `autocut` (rerank-cliff cut)  | off            | off        | off            |
 | `searchLimit` default         | 10             | 25         | 50             |
 
+The `expansion` row governs no shipped verb today: `gbrain query` expands by
+default in every mode (`--no-expand` / `expand: false` opts out); `search`, the
+memory verbs and the eval harnesses pin it per call; only a caller that leaves
+`expansion` unset AND wires an `expandFn` would inherit the bundle value.
+
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
 The corner-to-corner spread is 25x once you pair mode with downstream model.
 Chunks ~400 tokens avg. Per-query cost @ 10K queries/month (typical
@@ -1218,8 +1223,9 @@ Mismatches (tokenmax+Haiku, conservative+Opus) waste capacity differently
 — too-big payload overwhelms a cheap model; too-small payload starves an
 expensive one.
 
-tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top of
-the matrix (\$15/mo @ 10K). Semantic result caching is temporarily disabled; budget for fresh retrieval on every query. **The matrix
+`gbrain query` adds ~\$1.50 per 1K queries for the Haiku expansion call in
+EVERY mode (\$15/mo @ 10K; `--no-expand` skips it) — `gbrain search` and the
+memory verbs never expand, so no mode buys that line item back. Semantic result caching is temporarily disabled; budget for fresh retrieval on every query. **The matrix
 has three verbatim homes: this section, the `gbrain init` picker copy
 (`src/commands/init-mode-picker.ts`), and `INSTALL_FOR_AGENTS.md` Step
 3.5** — update all three when refreshing.
@@ -2145,6 +2151,9 @@ Per-query cost @ 10K queries/mo (typical single-user volume):
 >   3) tokenmax (recommended default — preserves v0.31.x retrieval shape) —
 >      no budget, LLM expansion ON, 50 chunks. Best for Opus/frontier models.
 >
+> ("no expansion" governs `gbrain search` and callers that leave expansion
+> unset; `gbrain query` expands in every mode unless you pass `--no-expand`.)
+>
 > Cost depends on BOTH the mode AND the downstream model you run. See the
 > matrix above for the 9-cell breakdown.
 
@@ -2861,7 +2870,7 @@ commands, embedding costs, and the restrictions that remain after rebuilding.
 - **[Muse personal agent](docs/guides/muse.md)** — first verify its durable user-files location, then install the local CLI. Native MCP configuration and skill activation are not assumed.
 - **[Grok Build](docs/mcp/GROK.md)** — `grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- gbrain serve --surface verbs`. The add is lazy (exit 0 without connecting) — verify with `grok mcp doctor gbrain`, which spawns the server and reports `7 tools discovered`. Verified against Grok Build v1.0.4.
 - **[opencode](docs/mcp/OPENCODE.md)** (opencode.ai / SST — not OpenClaw) — `opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- gbrain serve --surface verbs`, or let `gbrain bootstrap hooks --harness opencode` write the config for you (opencode is a bootstrap-supported harness — it reads AGENTS.md natively). The add is lazy — verify with `opencode mcp list`, which spawns the server (`✓ gbrain connected`). Remote: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent opencode [--install]` — the config stores only the `{env:GBRAIN_REMOTE_TOKEN}` interpolation. Verified against opencode v1.18.18.
-- **[OpenClaw](docs/mcp/OPENCLAW.md)** — the ClawHub bundle plugin registers gbrain automatically (`openclaw.plugin.json` ships in this repo), or add `{"command": "gbrain", "args": ["serve"]}` to `~/.openclaw/config.json`'s `mcpServers`.
+- **[OpenClaw](docs/mcp/OPENCLAW.md)** — the ClawHub bundle plugin registers gbrain automatically (`openclaw.plugin.json` ships in this repo), or register the stdio server with `openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --env GBRAIN_HOME=$HOME` (absolute path: the launchd gateway PATH lacks `~/.bun/bin`); verify with `openclaw mcp list`.
 - **[Claude Desktop (Cowork)](docs/mcp/CLAUDE_DESKTOP.md)** — Settings → Integrations → add the URL of your HTTP server. Remote only; the local `claude_desktop_config.json` does not work for remote servers.
 - **[Claude Cowork (team plan)](docs/mcp/CLAUDE_COWORK.md)** — org Owner adds the connector under Organization Settings → Connectors.
 - **[Perplexity Computer](docs/mcp/PERPLEXITY.md)** — `gbrain connect https://your-host/mcp --agent perplexity --oauth --register` mints a least-privilege OAuth client and prints the Issuer/Client ID/Secret to paste into Settings → Connectors (OAuth is the right path for a cloud connector; a bearer token also works for local use). Pro subscription required.
@@ -3001,7 +3010,7 @@ Most personal-knowledge tools force one fixed layout: their idea of "notes" + "p
 **gbrain doesn't have a fixed layout.** It ships with bundled schema packs and lets you author your own when none fit:
 
 - **`gbrain-base-v2`** (default) — 15-type DRY/MECE canonical taxonomy (14 canonical + `note` catch-all): `person`, `company`, `media`, `tweet`, `social-digest`, `analysis`, `atom`, `concept`, `source`, `deal`, `email`, `slack`, `writing`, `project`, `note`. Subtypes/format/origin pushed to frontmatter.
-- **`gbrain-base`** (legacy) — the wider 24-type layout. Stays bundled for back-compat; brains on it can upgrade via `gbrain onboard --check --explain` → `gbrain jobs submit unify-types --allow-protected --params '{"target_pack":"gbrain-base-v2","apply":true}'` (omit `"apply":true` for a dry-run preview — that is the default).
+- **`gbrain-base`** (legacy) — the wider 24-type layout. Stays bundled for back-compat; brains on it can upgrade via `gbrain onboard --check --explain` → `gbrain jobs submit unify-types --params '{"target_pack":"gbrain-base-v2","apply":true}'` (omit `"apply":true` for a dry-run preview — that is the default).
 - **`gbrain-recommended`** — extends `gbrain-base` with the 13 additional directories from `docs/GBRAIN_RECOMMENDED_SCHEMA.md` (source, place, trip, conversation, personal, civic, project, etc.). Activate with `gbrain schema use gbrain-recommended`.
 - **Your own pack** — `gbrain schema detect` clusters your actual filesystem into proposed types, `gbrain schema suggest` runs an LLM pass over them, and `gbrain schema review-candidates --apply` promotes the ones you like. Three commands and the brain knows your shape. Authoring a successor pack (declares `migration_from:` so existing brains can opt in): see [`docs/architecture/pack-upgrade-mechanism.md`](docs/architecture/pack-upgrade-mechanism.md).
 
@@ -4394,11 +4403,17 @@ A dot-directory you deliberately keep content in (say `.decisions/`) can be
 waived back in with `--include-hidden '<glob>'` on `gbrain sync` — the glob
 names exactly which hidden paths to admit
 (`gbrain sync --include-hidden '.decisions/**'`); everything else hidden
-stays pruned, and vendored/generated exclusions are never waived. Two
-bounds: the flag scopes a single sync invocation (it cannot combine with
-`--all` — register the subdirectory as the source's `local_path` instead),
-and it does not reach a non-git directory's filesystem-walk import fallback
-(every git-tracked source, the normal case, is covered).
+stays pruned, and vendored/generated exclusions are never waived. The flag
+scopes a single sync invocation and cannot combine with `--all`; to make the
+waiver hold on every path — `sync --all`, autopilot, the dream cycle — persist
+it as the `sync.include_hidden` config key (same dialect as `sync.exclude`; a
+trailing `/` means the whole subtree). Unset admits nothing, and a per-call
+flag unions with the persisted list rather than replacing it. One remaining
+bound: neither form reaches a non-git directory's filesystem-walk import
+fallback (every git-tracked source, the normal case, is covered).
+
+**Say to your agent:** *"index my repo's .github folder on every sync"* — your
+agent runs `gbrain config set sync.include_hidden '.github/'`.
 
 Everything else is ordinary synced content — including `ops/` (the bundled
 daily-task-manager skill files its canonical page under `ops/tasks`).
@@ -5858,6 +5873,45 @@ and per-client config export.
 > stderr warning fires at startup). Multi-tenant deployments should leave it on
 > the redacted default.
 
+### Owner login links for AI agents
+
+**Say to your agent:** *"Give me the GBrain admin login link"* — the agent
+uses the existing HTTP mint endpoint described below.
+
+When an authenticated owner asks **"Give me the GBrain admin login link"**,
+use the existing single-use login flow. A static `/admin/` URL opens the login
+page; it does not authenticate the owner.
+
+1. Confirm the requesting owner and a private destination for the login link.
+2. Obtain the running server's bootstrap credential through the host's existing
+   protected credential mechanism. `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` is the supported
+   deployment setting. Never expose its value in chat, logs, shell arguments,
+   or a URL. If the credential is unavailable, report that specific setup blocker;
+   do not claim the login-link capability is missing.
+3. Send `POST /admin/api/issue-magic-link` to the running server, with the
+   bootstrap credential in the `Authorization: Bearer` header through that
+   protected mechanism. An MCP client bearer token or client secret is not the
+   server bootstrap credential.
+4. The response contains `url` and `expires_in` (300 seconds). The returned URL
+   uses the server's configured `--public-url`; without it, the fallback is
+   localhost. Ensure the deployment has an owner-reachable public URL rather
+   than substituting a remembered tunnel address.
+5. Deliver the returned short-lived login link only to the requesting owner in
+   private. In a shared channel, acknowledge private delivery without reproducing
+   the link. Never put it into a public issue or commit.
+
+**Do not GET or fetch the generated login URL to verify it.** That redeems the
+single-use nonce before the owner can use it. Check the base `/admin/` page and
+non-secret response metadata separately. The link expires after five minutes,
+cannot be replayed, and is invalidated by a server restart. Successful redemption
+establishes the admin browser session and redirects to `/admin/`.
+
+This logs the owner into the dashboard; it does not create, reveal, or rotate an
+MCP client credential. Register the intended OAuth client separately in the
+credential-reveal screen below. For unattended deployments, provision the
+bootstrap credential through the operator's protected configuration before
+starting the server; generated secrets are deliberately hidden in captured logs.
+
 ### 2. Register OAuth clients
 
 Register clients from the **`/admin` dashboard**:
@@ -5950,7 +6004,14 @@ gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://your-brain.n
 
 When `--public-url` is set without `--bind`, a stderr WARN fires at
 startup so the misconfiguration ("the tunnel is up but my agent gets
-ECONNREFUSED") is loud.
+ECONNREFUSED") is loud. Binding `0.0.0.0` without `GBRAIN_HTTP_CORS_ORIGIN`
+warns too: browser-based clients get no CORS header until you set the
+allowlist (see [SECURITY.md — CORS](../../SECURITY.md#cors)).
+
+`--source-guard` is a stdio-lane flag: with `--http` it prints a warning and
+is ignored. HTTP writes are fenced by each token's scopes instead, so
+operators migrating from stdio mint narrowed tokens
+(`gbrain auth create <name> --scopes read`) rather than relying on the guard.
 
 ```bash
 brew install ngrok
@@ -5968,6 +6029,53 @@ clients), and every 401 carries `WWW-Authenticate: Bearer
 resource_metadata="<that URL>"`, so an MCP client pointed at
 `https://your-brain.ngrok.app/mcp` finds the token endpoint from a fresh
 connection without any pasted URLs.
+
+**Dual-mode auth on `/mcp`.** The same route verifies OAuth 2.1 access
+tokens and `gbrain auth create` bearers (OAuth first, then the
+`access_tokens` fallback). The 401 + `resource_metadata` challenge is emitted
+by the MCP SDK middleware for ANY request lacking an `Authorization` header
+(RFC 9728 / MCP auth spec §5.1 discovery) and says nothing about whether a
+configured token works. A client status probe that omits the header will
+therefore report `needsAuth` / `authentication_required` even while the
+configured bearer succeeds. Judge auth from `whoami`
+(`transport: legacy|oauth`) or `gbrain auth test <url> --token <t>`; treat a
+client's needsAuth flag as advisory unless the authenticated call itself
+returns 401 / `invalid_token`.
+
+#### Tailnet / LAN-only (no public tunnel)
+
+Two shapes work without exposing anything to the internet. In both, clients
+authenticate with `gbrain auth create` bearer tokens.
+
+**Tailscale Serve (HTTPS, tailnet-only).** Keep the default `127.0.0.1`
+bind, let Tailscale terminate TLS on the tailnet, and point `--public-url` at
+your MagicDNS name:
+
+```bash
+gbrain serve --http --port 3131 --public-url https://your-machine.your-tailnet.ts.net
+tailscale serve --bg 3131
+```
+
+Clients on the tailnet use `https://your-machine.your-tailnet.ts.net/mcp`.
+The "--public-url is set but --bind is not" WARN is expected in this shape —
+Tailscale Serve forwards to loopback. `tailscale serve` stays inside your
+tailnet; `tailscale funnel` is public exposure (see
+[ALTERNATIVES.md](ALTERNATIVES.md)).
+
+**Plain HTTP, bearer-only.** Bind the tailnet/LAN interface and omit
+`--public-url` entirely:
+
+```bash
+gbrain serve --http --port 3131 --bind 100.x.y.z   # or --bind 0.0.0.0
+```
+
+The OAuth issuer defaults to `http://localhost:3131`, which the MCP SDK
+accepts, and bearer-token verification never reads the issuer. Clients connect
+to `http://100.x.y.z:3131/mcp` with `Authorization: Bearer …`. OAuth discovery
+is the one thing this shape does not offer (the advertised issuer is
+loopback), so OAuth-only clients such as ChatGPT need the HTTPS shape above.
+Passing `--public-url http://100.x.y.z:3131` instead fails at startup — see
+[Troubleshooting](#troubleshooting).
 
 ### 4. Scopes and localOnly
 
@@ -6142,8 +6250,27 @@ Include the Authorization header: `Authorization: Bearer YOUR_TOKEN`
 **"invalid_token" error**
 Run `gbrain auth list` to see active tokens.
 
+**Client status shows needsAuth / authentication_required but tool calls succeed**
+The client probed `/mcp` without an `Authorization` header and read the
+spec-mandated discovery 401 as a failed login. Both OAuth tokens and legacy
+bearers are accepted on `/mcp`; confirm with `whoami` (`transport: legacy`)
+or `gbrain auth test <url> --token <t>` and only re-authenticate if THAT
+call returns 401. See
+[Dual-mode auth on /mcp](#3-expose-the-server).
+
 **"service_unavailable" error**
 Database connection failed. Check your Supabase dashboard for outages.
+
+**"Issuer URL must be HTTPS" at startup**
+The MCP SDK rejects a non-HTTPS OAuth issuer unless the host is `localhost`
+or `127.0.0.1`, so `--public-url http://<lan-or-tailnet-ip>:3131` exits
+before the server listens. Either terminate TLS in front (Tailscale Serve,
+ngrok, Cloudflare Tunnel) and pass the `https://` URL, or drop `--public-url`
+for a bearer-only LAN endpoint — both shapes are in
+[Tailnet / LAN-only](#tailnet--lan-only-no-public-tunnel). Last resort, for
+plain-HTTP OAuth discovery on a private network you fully control: the SDK's
+own `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=1` opt-in. Bearer auth works
+either way; OAuth clients may still refuse a non-HTTPS issuer.
 
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT
@@ -6463,8 +6590,10 @@ after compaction to rehydrate what the summary dropped. Composes existing arms
 (`entity` card builder + the hot-facts arm); never calls an LLM.
 
 `entities` is comma-separated, capped at 8 (the response echoes the capped list). `budget_tokens` packs
-server-side (cards first, then facts) and the response reports
-`budget_used` + `dropped_count` — it never trims client-side. `since` filters
+server-side (cards first, then facts; each item costs its rendered line and the
+envelope + section headers are reserved first, so `text` fits the budget) and the
+response reports `budget_used` (the token estimate of `text`) + `dropped_count`
+— it never trims client-side. `since` filters
 open-thread events to those after the cursor. **Visibility is WORLD-ONLY by
 default** on every arm (a pack is injected into an agent context window that may
 be logged or synced to a cloud model). `include_private` widens ALL arms in
@@ -6473,7 +6602,8 @@ remote caller never widens (fail-closed).
 
 Response: `{ protocol_version, entities, cards[], open_threads[], facts[], text,
 degraded_reason?, budget_tokens?, budget_used?, dropped_count? }`. `text` is the
-pre-rendered, envelope-wrapped injectable block.
+pre-rendered, envelope-wrapped injectable block; with `budget_tokens` it is
+rendered from the packed sets and never exceeds the declared budget.
 
 ### delta(since?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
 
@@ -6501,9 +6631,17 @@ of livelocking. Stateless callers resume by passing the response's
 
 Response: `{ protocol_version, since, pages[], facts[], threads[], text,
 has_more, next_cursor: { since, slug }, degraded_reason?, budget_tokens?,
-budget_used?, dropped_count? }`. `text` is rendered from the budget-packed sets
-(it honors the declared budget) and `since` is always normalized ISO (never the
-raw input string).
+budget_used?, dropped_count? }`. `budget_tokens` applies to pages and facts
+(pages pack first, then facts) — each item costs its rendered line and the
+envelope + section headers are reserved first, so `text` (rendered from the
+packed sets) fits the declared budget. **Threads are never truncated**: every
+open-thread event after `since` is delivered and its line is reserved ahead of
+pages and facts, so `dropped_count` / `has_more` count only pages and facts.
+If the envelope + headers + threads alone exceed `budget_tokens`, all threads
+are still returned and `budget_used` (the token estimate of `text`) reports the
+real rendered size, which then exceeds the budget. Cursor semantics are the v1
+page keyset alone — facts and threads never move `next_cursor`. `since` is
+always normalized ISO (never the raw input string).
 
 ## Latency classes (per verb)
 
@@ -7139,12 +7277,16 @@ across every affected column. Idempotent. Second run reports 0 rows. Use
 `--dry-run` to preview, `--json` for structured output. The `v0_12_2`
 version migration runs this automatically on `gbrain upgrade`.
 
-For truncated markdown bodies (source-dependent):
+For truncated markdown bodies (source-dependent): the importer skips a file
+whose content hash has not changed, and trailing whitespace is trimmed before
+hashing, so a re-import needs a real edit to the page body. Make the edit, then
+re-import:
 
 ```
-gbrain sync --force
-# or per-page
-gbrain import <slug> --force
+gbrain sync                  # git-backed brain: commit the edit first
+gbrain sync --working-tree   # or import the uncommitted working tree
+gbrain import <brain-root> --fresh   # or re-import the root you originally imported;
+                                     # --fresh ignores a resume checkpoint that would skip the path
 ```
 
 gbrain cannot recover content that is already lost if you no longer have

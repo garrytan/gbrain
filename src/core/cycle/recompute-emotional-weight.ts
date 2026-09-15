@@ -3,11 +3,16 @@
  * it sees the union of (sync-touched, synthesize-written) pages with fresh
  * tag + take state. Pure deterministic computation; no LLM calls.
  *
- * Two SQL round-trips total regardless of brain size (codex C4#3, C4#4):
+ * One read plus bounded writes (codex C4#3, C4#4; #4797):
  *   1. batchLoadEmotionalInputs — single CTE-shaped read with per-table
  *      pre-aggregates so a page × N tags × M takes never produces N×M rows.
  *   2. setEmotionalWeightBatch — composite-keyed (slug, source_id) UPDATE
- *      FROM unnest so multi-source brains can't get cross-source fan-out.
+ *      FROM unnest so multi-source brains can't get cross-source fan-out,
+ *      issued in slices of WRITE_SLICE rows. PGLite runs each statement
+ *      synchronously on the main thread, so ONE full-brain UPDATE blocks the
+ *      lock refresher, progress, and SIGTERM for its whole duration; between
+ *      slices the phase checks the abort signal, refreshes the cycle lock
+ *      (yieldDuringPhase), ticks progress, and yields a macrotask.
  *
  * In incremental mode (`affectedSlugs` non-empty), only those pages are
  * touched. In full mode (`affectedSlugs` undefined or null) every page in
@@ -35,10 +40,19 @@ export interface RecomputeEmotionalWeightOpts {
   affectedSlugs?: string[];
   /** GBrain config for high_emotion_tags + user_holder overrides. */
   config?: GBrainConfig;
+  /** Cooperative abort — checked before every write slice. */
+  signal?: AbortSignal;
+  /** Cycle-lock refresh / steal detection hook, awaited between write slices. */
+  yieldDuringPhase?: () => Promise<void>;
+  /** Progress tick, fired after every write slice. */
+  onProgress?: () => void;
 }
 
+/** Rows per UPDATE statement. Bounds how long PGLite wedges the main thread. */
+const WRITE_SLICE = 1000;
+
 export interface RecomputeEmotionalWeightResult extends PhaseResult {
-  /** Number of pages whose emotional_weight was (re)computed. */
+  /** Number of pages whose emotional_weight was (re)computed (evaluated). */
   pages_recomputed: number;
 }
 
@@ -91,11 +105,29 @@ export async function runPhaseRecomputeEmotionalWeight(
       }, start);
     }
 
-    const updated = await engine.setEmotionalWeightBatch(writes);
+    let updated = 0;
+    for (let i = 0; i < writes.length; i += WRITE_SLICE) {
+      if (opts.signal?.aborted) {
+        const reason = opts.signal.reason instanceof Error
+          ? opts.signal.reason.message
+          : String(opts.signal.reason || 'aborted');
+        throw new Error(`recompute_emotional_weight aborted: ${reason}`);
+      }
+      updated += await engine.setEmotionalWeightBatch(writes.slice(i, i + WRITE_SLICE));
+      opts.onProgress?.();
+      if (i + WRITE_SLICE < writes.length) {
+        try { await opts.yieldDuringPhase?.(); } catch { /* keepalive errors non-fatal */ }
+        // Macrotask yield: PGLite resolves queries on a microtask chain, so a
+        // tight loop of statements still starves the timers phase (same reason
+        // GBRAIN_SYNC_YIELD_EVERY uses setTimeout(0), not setImmediate).
+        await new Promise(r => setTimeout(r, 0));
+      }
+    }
 
-    return result('ok', `recompute_emotional_weight (${updated} pages)`, updated, {
+    return result('ok', `recompute_emotional_weight (${updated} updated / ${writes.length} evaluated)`, writes.length, {
       mode: opts.affectedSlugs ? 'incremental' : 'full',
-      pages_recomputed: updated,
+      pages_recomputed: writes.length,
+      pages_updated: updated,
     }, start);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

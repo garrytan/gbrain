@@ -417,3 +417,77 @@ describe('reload_schema_pack', () => {
     expect(result.invalidated).toContain('foo');
   });
 });
+
+// ── #4653: DB-plane schema_pack (tier 4) honored by every inspection op ─
+
+describe('#4653 inspection ops honor the DB-plane schema_pack tier', () => {
+  // `tweet` is declared ONLY in gbrain-base-v2 — the discriminator between
+  // "resolved through the DB tier" and "fell through to the default".
+  it('schema_explain_type resolves a type declared only in the DB-configured pack', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      await engine.setConfig('schema_pack', 'gbrain-base-v2');
+      const result = await operationsByName.schema_explain_type!.handler(ctxOf(), { type: 'tweet' }) as Record<string, unknown>;
+      expect(result.error).toBeUndefined();
+      expect(result.pack).toBe('gbrain-base-v2');
+    });
+  });
+
+  it('schema_graph reports the DB-configured pack', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      await engine.setConfig('schema_pack', 'gbrain-base-v2');
+      const result = await operationsByName.schema_graph!.handler(ctxOf(), {}) as Record<string, unknown>;
+      expect(result.pack).toBe('gbrain-base-v2');
+    });
+  });
+
+  it('get_active_schema_pack and schema_graph agree on the same ctx (no split resolution)', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      await engine.setConfig('schema_pack', 'gbrain-base-v2');
+      const ctx = ctxOf();
+      const active = await operationsByName.get_active_schema_pack!.handler(ctx, {}) as Record<string, unknown>;
+      const graph = await operationsByName.schema_graph!.handler(ctx, {}) as Record<string, unknown>;
+      expect(active.source_tier).toBe('db-config');
+      expect(graph.pack).toBe(active.pack_name);
+    });
+  });
+
+  it('schema_lint (no pack arg) lints the DB-configured pack', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      // A user pack with a deliberate alias_shadows_type error; each LintIssue
+      // names its pack, so the report itself says which pack was linted.
+      // Pre-fix: the bundled gbrain-base is linted instead → clean report.
+      const dir = join(tmpDir, '.gbrain', 'schema-packs', 'lintme');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'pack.yaml'), `api_version: gbrain-schema-pack-v1
+name: lintme
+version: 1.0.0
+description: ""
+gbrain_min_version: 0.38.0
+extends: null
+borrow_from: []
+page_types:
+  - name: person
+    primitive: entity
+    path_prefixes: [people/]
+    aliases: [company]
+    extractable: false
+    expert_routing: false
+  - name: company
+    primitive: entity
+    path_prefixes: [companies/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+link_types: []
+frontmatter_links: []
+takes_kinds: [fact]
+enrichable_types: []
+filing_rules: []
+`, 'utf-8');
+      await engine.setConfig('schema_pack', 'lintme');
+      const result = await operationsByName.schema_lint!.handler(ctxOf(), {}) as { ok: boolean; errors: Array<{ rule: string; pack: string }> };
+      expect(result.ok).toBe(false);
+      expect(result.errors).toContainEqual(expect.objectContaining({ rule: 'alias_shadows_type', pack: 'lintme' }));
+    });
+  });
+});

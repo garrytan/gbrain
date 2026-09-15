@@ -331,3 +331,14 @@ describe('runStatsCore — type/untyped split', () => {
     });
   });
 });
+
+describe('runStatsCore — #4653 DB-plane schema_pack tier', () => {
+  it('pack_identity follows the brain-wide DB config schema_pack (tier 4)', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      await engine.setConfig('schema_pack', 'gbrain-base-v2');
+      const result = await runStatsCore(ctxOf());
+      // Pre-fix: loadActivePackBestEffort never read the engine → 'gbrain-base@1.0.0+…'.
+      expect(result.pack_identity).toStartWith('gbrain-base-v2@1.2.0');
+    });
+  });
+});

@@ -126,6 +126,38 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(freshnessBlock).toContain('sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config)');
   });
 
+  test('#4399: freshness sync dispatch skips a syncEnabled:false source BEFORE queuing a job', () => {
+    // Real execution of this loop needs the full runAutopilot() daemon (per
+    // this file's own header comment), so this pins the static shape:
+    // the isSyncDisabledConfig skip must sit between the loop's local_path
+    // guard and the queue.add call this file already pins above, so it can
+    // never fire too late to prevent the enqueue. isSyncDisabledConfig
+    // itself has direct unit coverage in test/sync-policy.test.ts.
+    const loopIdx = AUTOPILOT_SRC.indexOf('for (const src of sources) {');
+    expect(loopIdx).toBeGreaterThan(-1);
+    const queueAddIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    expect(queueAddIdx).toBeGreaterThan(loopIdx);
+    const loopBody = AUTOPILOT_SRC.slice(loopIdx, queueAddIdx);
+    // Exact-literal match on the FULL guard clause (condition + continue),
+    // not just the function-call substring — a mutation that keeps calling
+    // isSyncDisabledConfig() but drops the `if (...) continue` (e.g.
+    // `isSyncDisabledConfig(src.config);` as a no-op statement) restores the
+    // #4399 bug while still containing the bare substring, so a loose
+    // `.toContain('isSyncDisabledConfig')` check alone would not catch it.
+    expect(loopBody).toContain('if (isSyncDisabledConfig(src.config)) continue;');
+    // The predicate comes from the sync-policy module via a STATIC import
+    // (the wave review made sources-load static for the same loop; a dynamic
+    // import here would re-introduce what that review removed), not from
+    // performSync's own enforcement — this dispatcher is meant to stand on
+    // its own regardless of what performSync does internally.
+    expect(AUTOPILOT_SRC).toContain("import { isSyncDisabledConfig } from '../core/sync-policy.ts';");
+    expect(AUTOPILOT_SRC).not.toContain("await import('../core/sync-policy.ts')");
+    const skipIdx = loopBody.indexOf('if (isSyncDisabledConfig(src.config)) continue;');
+    const localPathGuardIdx = loopBody.indexOf("if (!src.local_path) continue;");
+    expect(localPathGuardIdx).toBeGreaterThan(-1);
+    expect(skipIdx).toBeGreaterThan(localPathGuardIdx);
+  });
+
   test('#4046: targeted dispatch scopes stable recommendation keys to the interval', () => {
     expect(AUTOPILOT_SRC).toContain(
       'idempotency_key: autopilotRemediationIdempotencyKey(step.idempotency_key, slot)',

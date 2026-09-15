@@ -146,7 +146,8 @@ const run_doctor: Operation = {
     // Source isolation (cross-model P1): a source-bound caller's report must
     // not aggregate other sources' activity. Scope-aware checks (connection,
     // brain_score, chronicle_projection_health, multi_source_drift,
-    // volunteer_channels, extract_atoms_backlog) filter on these ids;
+    // volunteer_channels, extract_atoms_backlog,
+    // contextual_retrieval_coverage) filter on these ids;
     // unscoped ctx = brain-wide.
     const scope = sourceScopeOpts(ctx);
     const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);

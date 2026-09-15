@@ -289,8 +289,10 @@ after compaction to rehydrate what the summary dropped. Composes existing arms
 (`entity` card builder + the hot-facts arm); never calls an LLM.
 
 `entities` is comma-separated, capped at 8 (the response echoes the capped list). `budget_tokens` packs
-server-side (cards first, then facts) and the response reports
-`budget_used` + `dropped_count` — it never trims client-side. `since` filters
+server-side (cards first, then facts; each item costs its rendered line and the
+envelope + section headers are reserved first, so `text` fits the budget) and the
+response reports `budget_used` (the token estimate of `text`) + `dropped_count`
+— it never trims client-side. `since` filters
 open-thread events to those after the cursor. **Visibility is WORLD-ONLY by
 default** on every arm (a pack is injected into an agent context window that may
 be logged or synced to a cloud model). `include_private` widens ALL arms in
@@ -299,7 +301,8 @@ remote caller never widens (fail-closed).
 
 Response: `{ protocol_version, entities, cards[], open_threads[], facts[], text,
 degraded_reason?, budget_tokens?, budget_used?, dropped_count? }`. `text` is the
-pre-rendered, envelope-wrapped injectable block.
+pre-rendered, envelope-wrapped injectable block; with `budget_tokens` it is
+rendered from the packed sets and never exceeds the declared budget.
 
 ### delta(since?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
 
@@ -327,9 +330,17 @@ of livelocking. Stateless callers resume by passing the response's
 
 Response: `{ protocol_version, since, pages[], facts[], threads[], text,
 has_more, next_cursor: { since, slug }, degraded_reason?, budget_tokens?,
-budget_used?, dropped_count? }`. `text` is rendered from the budget-packed sets
-(it honors the declared budget) and `since` is always normalized ISO (never the
-raw input string).
+budget_used?, dropped_count? }`. `budget_tokens` applies to pages and facts
+(pages pack first, then facts) — each item costs its rendered line and the
+envelope + section headers are reserved first, so `text` (rendered from the
+packed sets) fits the declared budget. **Threads are never truncated**: every
+open-thread event after `since` is delivered and its line is reserved ahead of
+pages and facts, so `dropped_count` / `has_more` count only pages and facts.
+If the envelope + headers + threads alone exceed `budget_tokens`, all threads
+are still returned and `budget_used` (the token estimate of `text`) reports the
+real rendered size, which then exceeds the budget. Cursor semantics are the v1
+page keyset alone — facts and threads never move `next_cursor`. `since` is
+always normalized ISO (never the raw input string).
 
 ## Latency classes (per verb)
 

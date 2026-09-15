@@ -11,11 +11,12 @@
  * dispatch markers — `case 'X':` labels AND every `if (command === 'X' …)`
  * head, plain or compound (see segmentDispatchBlocks) — collect every
  * `import('./commands/Y.ts')` inside each block, then scan the
- * case-block text (with `//` and `/* *\/` comments stripped — prose next to a
- * marker is not consumption; see stripComments) plus each imported module
- * (plus one level of that module's ./relative same-directory imports) for
- * `--flag` string literals — including
- * help text, which deliberately over-includes: accepting a flag the handler
+ * case-block text plus each imported module (plus one level of that module's
+ * ./relative same-directory imports) for `--flag` string literals. `//` and
+ * `/* *\/` comments are stripped at EVERY depth before the scan (prose is not
+ * consumption; see stripComments) — a helper's doc comment must not legalise a
+ * flag for a command that merely imports one function from it. String
+ * literals include help text, which deliberately over-includes: accepting a flag the handler
  * ignores is the pre-#2185 status quo for that flag, while missing a real
  * flag would break working invocations on upgrade.
  *
@@ -335,10 +336,17 @@ export function buildFlagRegistry(): Record<string, string[]> {
       const surface = [modPath, ...facadeExpansion(modPath)];
       for (const sfPath of surface) {
         const sfSrc = readSrc(sfPath);
-        depthZeroText += sfSrc;
-        for (const f of flagsInText(sfSrc)) { flags.add(f); depthZero.add(f); }
+        // Comments are prose at every depth, not just in the dispatch block:
+        // a helper's doc comment ("Used by --fresh + after manual reset" in
+        // backfill-base.ts) handed reindex-search-vector a --fresh it never
+        // parses the moment the command imported one function from it.
+        // Consumed flags are always string literals, so stripping can only
+        // remove phantoms.
+        const sfCode = stripComments(sfSrc);
+        depthZeroText += sfCode;
+        for (const f of flagsInText(sfCode)) { flags.add(f); depthZero.add(f); }
         for (const dep of relativeImports(sfSrc, dirname(sfPath))) {
-          for (const f of flagsInText(readSrc(dep))) flags.add(f);
+          for (const f of flagsInText(stripComments(readSrc(dep)))) flags.add(f);
         }
       }
     }

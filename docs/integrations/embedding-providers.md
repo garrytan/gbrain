@@ -110,7 +110,7 @@ gbrain init --pglite --embedding-model voyage:voyage-code-3 --embedding-dimensio
 
 To switch an existing brain, run `gbrain migrate embeddings --to voyage:voyage-code-3 --dim 1024` (works on both engines; resumable, cost-previewed with `--dry-run` — see [`docs/guides/embedding-migration.md`](../guides/embedding-migration.md)). `gbrain config set embedding_model` is refused — the schema column has to resize, and the migration command is the path that does that safely.
 
-`gbrain reindex --code` will print a recommendation when run against a brain whose configured embedding model isn't code-tuned; suppress with `GBRAIN_NO_CODE_MODEL_NUDGE=1` if you've intentionally chosen another model (single-vendor procurement, compliance, etc.).
+`gbrain reindex-code` will print a recommendation when run against a brain whose configured embedding model isn't code-tuned; suppress with `GBRAIN_NO_CODE_MODEL_NUDGE=1` if you've intentionally chosen another model (single-vendor procurement, compliance, etc.).
 
 ### Google Gemini
 

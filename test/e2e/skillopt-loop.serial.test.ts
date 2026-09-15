@@ -43,6 +43,11 @@ import {
   skillPath,
 } from '../../src/core/skillopt/version-store.ts';
 import { loadRejectedBuffer } from '../../src/core/skillopt/rejected-buffer.ts';
+import {
+  _resetAuditWriterForTests,
+  currentAuditFilename,
+  resolveAuditDir,
+} from '../../src/core/skillopt/audit.ts';
 import type { EditOp } from '../../src/core/skillopt/types.ts';
 
 let engine: PGLiteEngine;
@@ -441,13 +446,25 @@ describe('skillopt full-loop E2E (happy path + broken cases)', () => {
     }
   });
 
-  test('broken: malformed reflect JSON (no edits parsed, no acceptance)', async () => {
+  test('broken: malformed reflect JSON (no edits parsed, no acceptance, zero-candidate step is SAID on stderr)', async () => {
     // The optimizer returns syntactically broken JSON. The reflect module's
     // forgiving parser yields zero valid edits; applyEditBatch sees an empty
-    // batch; the orchestrator hits the "no_edits_applied" branch; the sel
+    // batch; the orchestrator hits the zero-candidate branch; the sel
     // gate is never invoked. SKILL.md stays untouched. Critically: the run
     // does NOT crash on malformed optimizer output (graceful degradation).
+    //
+    // #4741: a step where the optimizer proposed NOTHING must be
+    // distinguishable from "gated N candidates and rejected all" — both used
+    // to log reason 'no_edits_applied' and print nothing, so a whole run of
+    // zero candidates read as a real `no_improvement` measurement. Now the
+    // step says so on stderr and logs reason 'no_edits_proposed'.
     const fixture = setupFixture(SKILL_PEOPLE_ONLY);
+    const stderrLines: string[] = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrLines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
     try {
       installStub({
         // Adversarial: looks like JSON but isn't. Different broken shapes
@@ -456,6 +473,7 @@ describe('skillopt full-loop E2E (happy path + broken cases)', () => {
       });
       try {
         await withEnv({ GBRAIN_AUDIT_DIR: fixture.skillsDir }, async () => {
+          _resetAuditWriterForTests();
           const result = await runOnce(fixture);
 
           expect(result.outcome).toBe('no_improvement');
@@ -464,11 +482,23 @@ describe('skillopt full-loop E2E (happy path + broken cases)', () => {
             .toBe(SKILL_PEOPLE_ONLY);
           expect(loadHistory(fixture.skillsDir, SKILL).filter((r) => r.status === 'committed'))
             .toHaveLength(0);
+
+          // #4741: the operator is told, per step, that no candidate existed.
+          expect(stderrLines.join('')).toMatch(/optimizer proposed no edits/);
+          // …and the audit step carries a reason distinct from apply-rejected.
+          const auditFile = path.join(resolveAuditDir(), currentAuditFilename());
+          const steps = fs.readFileSync(auditFile, 'utf8').trim().split('\n')
+            .map((l) => JSON.parse(l) as { kind: string; reason?: string })
+            .filter((e) => e.kind === 'step');
+          expect(steps.length).toBeGreaterThan(0);
+          for (const st of steps) expect(st.reason).toMatch(/^no_edits_proposed/);
         });
       } finally {
         uninstallStub();
       }
     } finally {
+      process.stderr.write = realWrite;
+      _resetAuditWriterForTests();
       fixture.cleanup();
     }
   });

@@ -95,12 +95,13 @@ describeBoth('v0.29 engine parity — getRecentSalience', () => {
 // Pinned engine shapes (src/core/{pglite,postgres}-engine/salience.ts +
 // the getSalienceScores methods on both engine classes):
 //   - setEmotionalWeightBatch(rows: {slug, source_id, weight}[]) → number of
-//     MATCHED pages (composite (slug, source_id) join against unnest;
-//     RETURNING 1 counts a match even when the weight value is unchanged;
-//     rows whose (slug, source_id) matches no page are silently dropped).
-//   - salience_touched_at = now() ONLY on the
-//     `pages.emotional_weight IS DISTINCT FROM u.weight` branch; a same-value
-//     write leaves the old timestamp untouched.
+//     CHANGED pages (composite (slug, source_id) join against unnest filtered
+//     by `pages.emotional_weight IS DISTINCT FROM u.weight`; a same-value row
+//     is NOT rewritten — no new tuple version, no BEFORE UPDATE trigger
+//     fan-out (#4797) — and is not counted; rows whose (slug, source_id)
+//     matches no page are silently dropped).
+//   - salience_touched_at = now() on every rewritten row (only changed rows
+//     are rewritten); a same-value write leaves the old timestamp untouched.
 //   - getSalienceScores(refs: {slug, source_id}[]) → Map keyed
 //     `${source_id}::${slug}`, score = COALESCE(emotional_weight,0)*5
 //     + ln(1 + COUNT(DISTINCT active takes)); unmatched refs are absent.
@@ -122,6 +123,16 @@ interface D5Snapshot {
   before: Map<string, number>;  // slug → EXTRACT(EPOCH FROM salience_touched_at)
   after: Map<string, number>;
   weights: Map<string, number>; // slug → stored emotional_weight
+  xminBefore: Map<string, string>; // slug → xmin::text before the mixed batch
+  xminAfter: Map<string, string>;
+}
+
+async function readXmins(engine: BrainEngine): Promise<Map<string, string>> {
+  const rows = await engine.executeRaw<{ slug: string; row_xmin: string | number }>(
+    `SELECT slug, xmin::text AS row_xmin
+       FROM pages WHERE slug LIKE 'salience/batch-%'`
+  );
+  return new Map(rows.map(r => [String(r.slug), String(r.row_xmin)]));
 }
 
 async function readTouchedEpochs(engine: BrainEngine): Promise<Map<string, number>> {
@@ -168,6 +179,7 @@ async function runD5Fixture(engine: BrainEngine): Promise<D5Snapshot> {
       WHERE slug LIKE 'salience/batch-%'`
   );
   const before = await readTouchedEpochs(engine);
+  const xminBefore = await readXmins(engine);
 
   // The MIXED batch: one changing row, two same-value rows, one row changing
   // from the column default, one missing slug, one wrong-source ref.
@@ -180,8 +192,9 @@ async function runD5Fixture(engine: BrainEngine): Promise<D5Snapshot> {
     { slug: 'salience/batch-changed', source_id: 'no-such-source', weight: 0.99 },
   ]);
   const after = await readTouchedEpochs(engine);
+  const xminAfter = await readXmins(engine);
   const weights = await readStoredWeights(engine);
-  return { firstCount, mixedCount, before, after, weights };
+  return { firstCount, mixedCount, before, after, weights, xminBefore, xminAfter };
 }
 
 describeBoth('D5 engine parity — setEmotionalWeightBatch + getSalienceScores', () => {
@@ -205,14 +218,26 @@ describeBoth('D5 engine parity — setEmotionalWeightBatch + getSalienceScores',
     await teardownDB();
   });
 
-  test('mixed batch: identical matched-row counts on both engines', () => {
-    // First write matched all 3 existing targets.
+  test('mixed batch: identical changed-row counts on both engines', () => {
+    // First write changed all 3 existing targets (0.0 default → new value).
     expect(pgliteSnap.firstCount).toBe(3);
     expect(postgresSnap.firstCount).toBe(3);
-    // Mixed batch: 4 matched pages (same-value writes still match + count);
-    // the missing slug and the wrong-source ref match nothing.
-    expect(pgliteSnap.mixedCount).toBe(4);
-    expect(postgresSnap.mixedCount).toBe(4);
+    // Mixed batch: 2 CHANGED pages (batch-changed + batch-fresh); the two
+    // same-value rows are filtered out before the write (#4797); the missing
+    // slug and the wrong-source ref match nothing.
+    expect(pgliteSnap.mixedCount).toBe(2);
+    expect(postgresSnap.mixedCount).toBe(2);
+  });
+
+  test('mixed batch: same-value rows are not rewritten on either engine (#4797)', () => {
+    for (const snap of [pgliteSnap, postgresSnap]) {
+      // No new tuple version → the per-row BEFORE UPDATE triggers never fired.
+      expect(snap.xminAfter.get('salience/batch-same')).toBe(snap.xminBefore.get('salience/batch-same')!);
+      expect(snap.xminAfter.get('salience/batch-same-2')).toBe(snap.xminBefore.get('salience/batch-same-2')!);
+      // The changed rows were rewritten.
+      expect(snap.xminAfter.get('salience/batch-changed')).not.toBe(snap.xminBefore.get('salience/batch-changed')!);
+      expect(snap.xminAfter.get('salience/batch-fresh')).not.toBe(snap.xminBefore.get('salience/batch-fresh')!);
+    }
   });
 
   test('mixed batch: identical stored weights on both engines', () => {
