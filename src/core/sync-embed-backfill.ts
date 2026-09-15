@@ -5,6 +5,8 @@
  * single-source JSON envelope aligned without growing the sync command facade.
  */
 import type { BrainEngine } from './engine.ts';
+import type { ImportResult } from './import-file.ts';
+import type { OperationContext } from './ops/contract.ts';
 import { submitEmbedBackfill } from './embed-backfill-submit.ts';
 import { resolveWorkerBackedSyncEmbedMode } from './embedding.ts';
 import {
@@ -115,6 +117,35 @@ export type SyncEmbedBackfillOutcome =
     }
   | { status: 'skipped'; reason: 'cooldown'; command: string }
   | { status: 'skipped'; reason: 'spend_capped'; command: string; spend_cap_usd: number };
+
+export type RemotePutEmbedBackfillOutcome = SyncEmbedBackfillOutcome | { status: 'submission_failed' };
+
+/**
+ * Authenticated MCP writes persist first and deliver embeddings through the
+ * durable source-wide queue. The returned closure is intentionally invoked
+ * only after put_page has completed DB + markdown write-through.
+ */
+export function remotePutEmbedDeferral(
+  ctx: Pick<OperationContext, 'engine' | 'remote' | 'auth' | 'sourceId' | 'logger'>,
+  embeddingAvailable: boolean,
+): { enabled: boolean; deliver: (result: ImportResult) => Promise<RemotePutEmbedBackfillOutcome | undefined> } {
+  const enabled = ctx.remote !== false && ctx.auth !== undefined && embeddingAvailable;
+  return {
+    enabled,
+    async deliver(result) {
+      if (!enabled || result.status !== 'imported' || result.chunks === 0) return undefined;
+      try {
+        return await resolveSyncEmbedBackfill(ctx.engine, ctx.sourceId ?? 'default', {
+          reason: 'remote_put_page',
+          autoSubmitDisabled: false,
+        });
+      } catch (e) {
+        ctx.logger.warn(`[put_page] embed-backfill submission failed for ${result.slug}: ${e instanceof Error ? e.message : String(e)}`);
+        return { status: 'submission_failed' };
+      }
+    },
+  };
+}
 
 export async function resolveSyncEmbedBackfill(
   engine: BrainEngine,

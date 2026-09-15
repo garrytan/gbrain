@@ -18,9 +18,11 @@ import {
   toRemoteMcpError,
   extractToolErrorCode,
   buildAbortController,
+  buildMcpRequestOptions,
   RemoteMcpError,
   type CallRemoteToolOptions,
 } from '../src/core/mcp-client.ts';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 const MCP_URL = 'https://brain-host.example/mcp';
 
@@ -68,6 +70,15 @@ describe('toRemoteMcpError', () => {
     const controller = new AbortController();
     controller.abort(new DOMException('deadline', 'TimeoutError'));
     const out = toRemoteMcpError(new RemoteMcpError('network', 'probe failed'), MCP_URL, controller.signal);
+    expect(out.detail?.kind).toBe('timeout');
+  });
+
+  test('SDK RequestTimeout becomes network/timeout while the caller signal is still live', () => {
+    const controller = new AbortController();
+    const err = new McpError(ErrorCode.RequestTimeout, 'Request timed out', { timeout: 60_000 });
+    const out = toRemoteMcpError(err, MCP_URL, controller.signal);
+    expect(controller.signal.aborted).toBe(false);
+    expect(out.reason).toBe('network');
     expect(out.detail?.kind).toBe('timeout');
   });
 
@@ -235,6 +246,21 @@ describe('buildAbortController', () => {
     // Inner signal stays whatever it was at cleanup time. Since neither timeout
     // nor pre-cleanup external abort fired, it must still be NOT aborted.
     expect(signal.aborted).toBe(false);
+  });
+});
+
+describe('buildMcpRequestOptions', () => {
+  test('forwards the caller timeout into the MCP SDK request deadline', () => {
+    const controller = new AbortController();
+    expect(buildMcpRequestOptions({ timeoutMs: 200_000 }, controller.signal)).toEqual({
+      signal: controller.signal,
+      timeout: 200_000,
+    });
+  });
+
+  test('leaves the SDK default untouched when no timeout was requested', () => {
+    const controller = new AbortController();
+    expect(buildMcpRequestOptions({}, controller.signal)).toEqual({ signal: controller.signal });
   });
 });
 

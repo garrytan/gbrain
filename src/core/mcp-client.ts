@@ -19,6 +19,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { anySignal } from './abort-check.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
@@ -102,6 +103,17 @@ export function toRemoteMcpError(e: unknown, mcpUrl: string, signal?: AbortSigna
     );
   }
   if (e instanceof RemoteMcpError) return e;
+  // The MCP SDK owns its own request timer. When it fires before our composed
+  // AbortSignal, the signal is still live and the error is an McpError rather
+  // than a DOM TimeoutError. Preserve that distinction so the CLI never calls
+  // a reachable server "unreachable" merely because one operation was slow.
+  if (e instanceof McpError && e.code === ErrorCode.RequestTimeout) {
+    return new RemoteMcpError(
+      'network',
+      `Request to ${mcpUrl} timed out`,
+      { mcp_url: mcpUrl, kind: 'timeout' },
+    );
+  }
   if (e instanceof Error) {
     if (e.name === 'AbortError' || e.name === 'TimeoutError') {
       return new RemoteMcpError(
@@ -265,6 +277,25 @@ export interface CallRemoteToolOptions {
 }
 
 /**
+ * Keep the SDK request deadline aligned with the transport AbortSignal.
+ * Passing only `signal` leaves the MCP SDK's independent 60s default active,
+ * so a caller-selected ten-minute deadline still dies at 60s.
+ *
+ * @internal Exported for the regression test.
+ */
+export function buildMcpRequestOptions(
+  opts: CallRemoteToolOptions,
+  signal: AbortSignal,
+): { signal: AbortSignal; timeout?: number } {
+  return {
+    signal,
+    ...(opts.timeoutMs !== undefined && opts.timeoutMs > 0
+      ? { timeout: opts.timeoutMs }
+      : {}),
+  };
+}
+
+/**
  * Compose an external signal with a timeout into a single AbortController.
  * Returns the controller (so callers can pass `controller.signal` to
  * downstream fetch) plus a `cleanup` to stop the timer + drop listeners.
@@ -330,7 +361,11 @@ export async function callRemoteTool(
       const client = await buildClient(remote.mcp_url, token, signal);
       try {
         signal.throwIfAborted();
-        const res = await client.callTool({ name: toolName, arguments: args }, undefined, { signal });
+        const res = await client.callTool(
+          { name: toolName, arguments: args },
+          undefined,
+          buildMcpRequestOptions(opts, signal),
+        );
         if (res.isError) {
           const message = Array.isArray(res.content)
             ? res.content.map((c: unknown) => (c as { text?: string }).text ?? '').join('\n')
