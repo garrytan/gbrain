@@ -2752,35 +2752,39 @@ export async function registerBuiltinHandlers(
     };
   });
 
-  // Brain-wide maintenance. Runs mixed + global phases ONCE per window instead
-  // of repeating cross-source transcript/reflection reads in every source.
-  // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
-  // on success so the dispatch gate backs off.
+  // Brain-wide maintenance lanes run ONCE per window instead of repeating
+  // cross-source transcript/reflection reads in every source. Since the
+  // v0.50.1.1 split there are TWO lanes: this one (global hygiene) and
+  // `autopilot-mixed-maintenance` (synthesize → patterns) below. No source_id
+  // → uses the legacy global cycle lock; THIS lane stamps autopilot.last_global_at
+  // on success so the shared dispatch gate backs off for both lanes.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
+    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
     // #4250: queued maintenance payloads are machine-authored too — intersect
-    // with MAINTENANCE_PHASES so a stale (or remote-submitted) payload can't
-    // run source-scoped phases through the global lane, symmetric with the
-    // per-source normalization in the autopilot-cycle handler.
-    const maintenanceSet = new Set<string>(MAINTENANCE_PHASES);
+    // with GLOBAL_PHASES so a stale (or remote-submitted) payload can't run
+    // source-scoped or mixed phases through the global lane, symmetric with
+    // the per-source normalization in the autopilot-cycle handler. A legacy
+    // payload submitted before the split (full MAINTENANCE_PHASES) drops its
+    // mixed entries here; the mixed lane picks that work up next window.
+    const globalSet = new Set<string>(GLOBAL_PHASES);
     const requested = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter((p) => maintenanceSet.has(p))
-      : MAINTENANCE_PHASES;
-    const phases = (requested.length > 0 ? requested : MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
+      ? (job.data.phases as string[]).filter((p) => globalSet.has(p))
+      : GLOBAL_PHASES;
+    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
 
     const report = await runCycle(engine, {
       brainDir: repoPath,
       pull: false, // brain-wide DB/maintenance work never git-pulls
       signal: job.signal,
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
-      // The maintenance lane is where synthesize/patterns actually run on
-      // multi-source brains (per-source payloads normalize down to the
-      // freshness phases) — without the owner id its private queues would be
-      // owner-less and recovery would degrade to lease-expiry only.
+      // Per-source payloads normalize down to the freshness phases, so this
+      // lane is where the brain-wide phases actually run — without the owner
+      // id its private queues would be owner-less and recovery would degrade
+      // to lease-expiry only.
       privateQueueOwnerJobId: job.id,
       phases,
       forceGlobalOrphans: true,
@@ -2796,6 +2800,46 @@ export async function registerBuiltinHandlers(
         console.warn(`[autopilot-global-maintenance] failed to stamp last_global_at: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+
+    return {
+      partial: report.status === 'partial' || report.status === 'failed',
+      status: report.status,
+      report,
+    };
+  });
+
+  // The mixed lane (synthesize → patterns) runs in its OWN job so a large
+  // synthesis backlog + the keeper wall cannot starve the global hygiene
+  // phases or the last_global_at stamp behind it (TODOS P2 maintenance-lane
+  // structure: the combined job ran mixed FIRST). Same private-queue owner
+  // threading as the global lane — synthesize's inline drain is
+  // parent-owned, and without the owner id its private queue would degrade
+  // to lease-expiry recovery only. NO last_global_at stamp here: the global
+  // lane owns the shared window gate, so a killed or slow mixed run cannot
+  // suppress the next window's hygiene pass.
+  worker.register('autopilot-mixed-maintenance', async (job) => {
+    const { runCycle, MIXED_PHASES } = await import('../core/cycle.ts');
+    const repoPath: string | null = typeof job.data.repoPath === 'string'
+      ? job.data.repoPath
+      : (await engine.getConfig('sync.repo_path')) ?? null;
+
+    // Same #4250 posture as the global lane: intersect queued payloads with
+    // this lane's own phase set.
+    const mixedSet = new Set<string>(MIXED_PHASES);
+    const requested = Array.isArray(job.data.phases)
+      ? (job.data.phases as string[]).filter((p) => mixedSet.has(p))
+      : MIXED_PHASES;
+    const phases = (requested.length > 0 ? requested : MIXED_PHASES) as typeof MIXED_PHASES;
+
+    const report = await runCycle(engine, {
+      brainDir: repoPath,
+      pull: false, // brain-wide DB/maintenance work never git-pulls
+      signal: job.signal,
+      deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
+      privateQueueOwnerJobId: job.id,
+      phases,
+      yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
+    });
 
     return {
       partial: report.status === 'partial' || report.status === 'failed',

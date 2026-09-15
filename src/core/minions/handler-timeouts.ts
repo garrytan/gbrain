@@ -62,6 +62,12 @@ export const HANDLER_DEFAULT_TIMEOUT_MS: Readonly<Record<string, number>> = {
   // #2194 fix #3: brain-wide maintenance (embed-all/orphans/purge/…) can run
   // longer than a single source cycle; give it the same 30-min budget.
   'autopilot-global-maintenance': THIRTY_MIN_MS,
+  // v0.50.1.1 maintenance split: the mixed lane (synthesize → patterns) has
+  // its own job + wall-clock so the inline synthesis drain can no longer
+  // outlive a budget that the global hygiene phases share — same 30-min
+  // anchor as the lanes it was split out of, so combined throughput is
+  // unchanged; only the blast radius is.
+  'autopilot-mixed-maintenance': THIRTY_MIN_MS,
   // v0.42.x (#2390) — Life Chronicle: one page = one LLM extraction call + a
   // few writes. Generous 10-min budget (vs the tight null-default) covers a
   // slow gateway without the 30-min loop budget.
@@ -103,6 +109,7 @@ export const HANDLER_DEFAULT_LOCK_DURATION_MS: Readonly<Record<string, number>> 
   'connector-sync': FIVE_MIN_MS,
   'autopilot-cycle': FIVE_MIN_MS,
   'autopilot-global-maintenance': FIVE_MIN_MS,
+  'autopilot-mixed-maintenance': FIVE_MIN_MS,
   contextual_reindex_per_chunk: FIVE_MIN_MS,
   chronicle_extract: TWO_MIN_MS,
   'facts-absorb': TWO_MIN_MS,

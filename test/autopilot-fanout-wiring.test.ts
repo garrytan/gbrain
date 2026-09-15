@@ -15,7 +15,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { resolveAutopilotDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
+import { resolveAutopilotDispatchTimeoutMs, resolveMixedMaintenanceDispatchTimeoutMs } from '../src/commands/autopilot-timeout.ts';
 import { defaultTimeoutMsFor } from '../src/core/minions/handler-timeouts.ts';
 
 const AUTOPILOT_SRC = readFileSync(
@@ -70,6 +70,34 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     );
     expect(AUTOPILOT_SRC).toMatch(
       /dispatchPerSource\(engine, queue, \{[\s\S]{0,300}timeoutMs: fullCycleTimeoutMs/,
+    );
+  });
+
+  test('dispatches the mixed maintenance lane alongside the global one (v0.50.1.1 split)', () => {
+    // Both lanes must be dispatched from the same !legacy_fallback block so a
+    // refactor cannot silently drop one of them.
+    expect(AUTOPILOT_SRC).toMatch(
+      /dispatchMixedMaintenance\(engine, queue, \{[\s\S]{0,220}timeoutMs: resolveMixedMaintenanceDispatchTimeoutMs\(baseInterval\)/,
+    );
+    const legacyIdx = AUTOPILOT_SRC.indexOf('if (!result.legacy_fallback) {');
+    const mixedIdx = AUTOPILOT_SRC.indexOf('dispatchMixedMaintenance(engine, queue');
+    const globalIdx = AUTOPILOT_SRC.indexOf('dispatchGlobalMaintenance(engine, queue');
+    expect(legacyIdx).toBeGreaterThan(-1);
+    expect(globalIdx).toBeGreaterThan(legacyIdx);
+    expect(mixedIdx).toBeGreaterThan(globalIdx);
+  });
+
+  test('the mixed lane timeout floor derives from its own handler anchor (#2781 contract)', () => {
+    // A literal floor could silently drift from the handler default it tracks;
+    // the resolver must derive from requireHandlerAnchorMs like the full-cycle
+    // floor does, and the test's synthetic interval must still floor at the
+    // handler anchor.
+    expect(AUTOPILOT_TIMEOUT_SRC).toContain("requireHandlerAnchorMs('autopilot-mixed-maintenance')");
+    const baseIntervalSeconds = 60;
+    const intervalDerivedTimeoutMs = Math.max(baseIntervalSeconds * 2 * 1000, 300_000);
+    expect(resolveMixedMaintenanceDispatchTimeoutMs(baseIntervalSeconds)).toBeGreaterThanOrEqual(30 * 60_000);
+    expect(resolveMixedMaintenanceDispatchTimeoutMs(baseIntervalSeconds)).toBe(
+      Math.max(intervalDerivedTimeoutMs, defaultTimeoutMsFor('autopilot-mixed-maintenance')!),
     );
   });
 
