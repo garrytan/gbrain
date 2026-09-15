@@ -15,7 +15,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { operations, OperationError } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
-import { resetGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
@@ -123,6 +123,49 @@ describe('put_page write-through — happy path', () => {
     // YAML quotes strings containing `:` so the literal frontmatter line
     // is `ingested_via: 'mcp:put_page'`. Match the value substring.
     expect(onDisk).toMatch(/ingested_via:\s*['"]?mcp:put_page['"]?/);
+  });
+
+  test('authenticated MCP writes persist before embedding and report backfill delivery', async () => {
+    let embedCalls = 0;
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-small',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-test' },
+    });
+    __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+      embedCalls++;
+      return { embeddings: values.map(() => new Array(1536).fill(0)), usage: { tokens: 1 } } as any;
+    });
+    try {
+      const ctx = makeCtx({
+        remote: true,
+        auth: { token: 'test', clientId: 'test-client', scopes: ['read', 'write'] },
+      });
+      const result = (await putPage.handler(ctx, {
+        slug: 'inbox/mcp-deferred-embed',
+        content: '---\ntitle: Deferred\n---\n\nThis page must be durable before its embedding runs.',
+      })) as {
+        status: string;
+        chunks: number;
+        embed_backfill?: { status: string; reason?: string };
+      };
+
+      expect(result.status).toBe('created_or_updated');
+      expect(result.chunks).toBeGreaterThan(0);
+      expect(embedCalls).toBe(0);
+      expect(result.embed_backfill).toMatchObject({
+        status: 'manual_drain_required',
+        reason: 'no_worker_surface',
+      });
+      expect(await engine.getPage('inbox/mcp-deferred-embed', { sourceId: 'default' })).not.toBeNull();
+      const rows = await engine.executeRaw<{ n: number }>(
+        'SELECT COUNT(*)::int AS n FROM content_chunks WHERE embedding IS NULL',
+      );
+      expect(Number(rows[0]?.n ?? 0)).toBeGreaterThan(0);
+    } finally {
+      __setEmbedTransportForTests(null);
+      resetGateway();
+    }
   });
 });
 

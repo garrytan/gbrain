@@ -332,7 +332,7 @@ const fetch_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write or replace a page (markdown with frontmatter). REPLACES the entire page; this is not a partial edit. Before modifying an existing page, read its canonical content with `get_page include_content:true`, then submit the complete page. Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. Remote (MCP) callers: body wikilinks are NOT reconciled into the graph — auto_link/auto_timeline are skipped for untrusted writers (response reports auto_links: {skipped: "remote"}); use local capture/put_page for link extraction. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
+  description: 'Write or replace a page (markdown with frontmatter). REPLACES the entire page; this is not a partial edit. Before modifying an existing page, read its canonical content with `get_page include_content:true`, then submit the complete page. Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. Authenticated remote (MCP) writes persist first and defer embeddings to the durable embed-backfill worker; the response reports embed_backfill status. Remote callers: body wikilinks are NOT reconciled into the graph — auto_link/auto_timeline are skipped for untrusted writers (response reports auto_links: {skipped: "remote"}); use local capture/put_page for link extraction. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Complete markdown content with YAML frontmatter. REPLACES the entire page; this is not a partial edit. Read the canonical page first with `get_page include_content:true` before modifying it.' },
@@ -413,14 +413,11 @@ const put_page: Operation = {
       }
     }
 
-    // Skip embedding when the AI gateway has no embedding provider configured.
-    // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
-    // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
-    // #4216: ctx.deferEmbeds (server-side-only context field, set by the
-    // oneshot runner) also defers — chunks land `embedding IS NULL` and the
-    // standing embed machinery backfills them outside the model loop.
+    // #4216: explicit deferral leaves NULL embeddings for the standing backfill.
     const { isAvailable } = await import('../ai/gateway.ts');
-    const noEmbed = ctx.deferEmbeds === true || !isAvailable('embedding');
+    const embeddingAvailable = isAvailable('embedding');
+    const embedDeferral = (await import('../sync-embed-backfill.ts')).remotePutEmbedDeferral(ctx, embeddingAvailable);
+    const noEmbed = ctx.deferEmbeds === true || embedDeferral.enabled || !embeddingAvailable;
     // v0.31.8 (D7 / codex OV-1): thread ctx.sourceId so put_page on a
     // multi-source brain lands in the intended source instead of the
     // default-source clobber path. importFromContent already accepts
@@ -599,6 +596,8 @@ const put_page: Operation = {
         'Check that the configured repo path exists and is writable, then retry.',
       );
     }
+
+    const embedBackfill = await embedDeferral.deliver(result);
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
     // transaction). Runs even on status='skipped' so reconciliation catches drift
@@ -832,6 +831,7 @@ const put_page: Operation = {
       ...(factsQueued ? { facts_backstop: factsQueued } : {}),
       ...(chronicleQueued ? { chronicle_backstop: chronicleQueued } : {}),
       ...(writeThrough ? { write_through: writeThrough } : {}),
+      ...(embedBackfill ? { embed_backfill: embedBackfill } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
