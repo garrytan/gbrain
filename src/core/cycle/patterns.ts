@@ -92,8 +92,8 @@ export interface PatternsPhaseOpts {
  * every phase); re-exported here so existing imports (tests included) keep
  * working.
  */
-import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
-export { CYCLE_DEADLINE_RESERVE_MS };
+import { CYCLE_DEADLINE_RESERVE_MS, MIN_SUBAGENT_CLAIM_BUDGET_MS } from './base-phase.ts';
+export { CYCLE_DEADLINE_RESERVE_MS, MIN_SUBAGENT_CLAIM_BUDGET_MS };
 
 /**
  * Smallest remaining budget worth submitting a subagent for. Below this,
@@ -102,7 +102,7 @@ export { CYCLE_DEADLINE_RESERVE_MS };
  * (`insufficient_cycle_budget`) and the next cycle retries with a fresh
  * budget.
  */
-export const MIN_PATTERNS_SUBAGENT_BUDGET_MS = 2 * 60 * 1000;
+export const MIN_PATTERNS_SUBAGENT_BUDGET_MS = MIN_SUBAGENT_CLAIM_BUDGET_MS;
 
 /**
  * Clamp the configured subagent budgets to the remaining parent-job time.

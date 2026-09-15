@@ -84,6 +84,28 @@ export interface BasePhaseOpts {
 export const CYCLE_DEADLINE_RESERVE_MS = 60 * 1000;
 
 /**
+ * Smallest remaining parent-job budget worth starting a fresh subagent
+ * child with. Below this, the LLM call is near-certain to be killed
+ * mid-flight (wasted spend + a guaranteed-timeout child), so deadline-aware
+ * phases stop claiming/submitting honestly (`insufficient_cycle_budget`)
+ * and the next cycle retries with a fresh budget.
+ *
+ * Sized against the OBSERVED child runtime, not just the clean-exit unwind
+ * margin: a synthesize child runs p50 ~5min / p90 ~10min / max ~22min
+ * (7d, n=126). A gate far below p50 admits children that cannot finish
+ * inside the parent's keeper wall — measured 2026-09-15 with the previous
+ * 2-min gate: the drain kept claiming, the parent died at its 30-min wall,
+ * and each cycle completed 0-3 of ~85 fanned-out transcripts while the
+ * unclaimed remainder was reconciled away, also starving the brain-wide
+ * hygiene phases (embed/orphans/purge) behind it.
+ *
+ * Lives here for the same reason as CYCLE_DEADLINE_RESERVE_MS: one home
+ * for every phase. patterns.ts and inline-drain.ts consume this rather
+ * than keeping private twins of the same number.
+ */
+export const MIN_SUBAGENT_CLAIM_BUDGET_MS = 8 * 60 * 1000;
+
+/**
  * Effective relative deadline for a phase: the phase's own default, clamped
  * to the time remaining under the job's absolute deadline minus the reserve.
  * Returns 0 when the job budget is already inside the reserve — callers

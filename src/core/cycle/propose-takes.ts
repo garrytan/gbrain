@@ -579,8 +579,10 @@ export const PHASE_DEADLINE_FRACTION_OF_JOB = 0.8;
 export const PROPOSE_TAKES_FALLBACK_DEADLINE_MS = Math.floor(
   requireCycleAnchorMs() * PHASE_DEADLINE_FRACTION_OF_JOB,
 );
-/** Mirrors MIN_PATTERNS_SUBAGENT_BUDGET_MS: below this the phase cannot do
- *  useful LLM work before the job's kill switch — skip honestly instead. */
+/** Below this the phase cannot do useful LLM work before the job's kill
+ *  switch — skip honestly instead. Deliberately NOT tied to
+ *  MIN_SUBAGENT_CLAIM_BUDGET_MS: this is a cheap single-judge call, not a
+ *  full synthesize child. */
 export const MIN_PROPOSE_TAKES_BUDGET_MS = 2 * 60 * 1000;
 
 /**

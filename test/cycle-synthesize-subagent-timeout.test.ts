@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runPhaseSynthesize, TRIAGE_VERSION } from '../src/core/cycle/synthesize.ts';
+import { MIN_SUBAGENT_CLAIM_BUDGET_MS } from '../src/core/cycle/patterns.ts';
 import { TIER_DEFAULTS } from '../src/core/model-config.ts';
 
 let engine: PGLiteEngine;
@@ -103,7 +104,7 @@ describe('#4168 sibling — child budgets clamp to the remaining job deadline', 
     try {
       await engine.setConfig('dream.synthesize.enabled', 'true');
       await engine.setConfig('dream.synthesize.session_corpus_dir', corpusDir);
-      await engine.setConfig('dream.synthesize.subagent_timeout_ms', '600000'); // 10min configured
+      await engine.setConfig('dream.synthesize.subagent_timeout_ms', '720000'); // 12min configured
       await engine.setConfig('dream.synthesize.subagent_wait_timeout_ms', '1');
 
       const filePath = join(corpusDir, '2026-05-29-clamped-transcript.txt');
@@ -111,12 +112,13 @@ describe('#4168 sibling — child budgets clamp to the remaining job deadline', 
       writeFileSync(filePath, content);
       await seedWorthProcessingVerdict(filePath, content);
 
-      // ~5.5min of job budget left: after the 60s reserve the child budget is
-      // ~4.5min — under the 10min config, so the clamp must bind.
+      // ~10.5min of job budget left: after the 60s reserve the child budget is
+      // ~9.5min — under the 12min config (the clamp binds) but above the 8min
+      // claim gate (the phase must submit, not skip).
       const result = await runPhaseSynthesize(engine, {
         brainDir,
         dryRun: false,
-        deadlineAtMs: Date.now() + 5.5 * 60 * 1000,
+        deadlineAtMs: Date.now() + 10.5 * 60 * 1000,
       });
       // CDX-4 (#4217 family): the keyless child dies, and a run whose EVERY
       // child died is an honest phase failure. This test's subject — the
@@ -129,8 +131,8 @@ describe('#4168 sibling — child budgets clamp to the remaining job deadline', 
       );
       expect(jobs).toHaveLength(1);
       const clamped = Number(jobs[0]!.timeout_ms);
-      expect(clamped).toBeLessThan(600000); // pre-fix: raw 600000 submitted
-      expect(clamped).toBeGreaterThan(2 * 60 * 1000); // above the MIN floor
+      expect(clamped).toBeLessThan(720000); // pre-fix: raw 720000 submitted
+      expect(clamped).toBeGreaterThan(MIN_SUBAGENT_CLAIM_BUDGET_MS); // above the shared claim gate
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
       rmSync(corpusDir, { recursive: true, force: true });
