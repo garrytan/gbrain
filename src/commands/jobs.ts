@@ -2757,7 +2757,7 @@ export async function registerBuiltinHandlers(
   // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
+    const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY, globalMaintenanceMayStamp } = await import('../core/cycle.ts');
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
@@ -2787,9 +2787,10 @@ export async function registerBuiltinHandlers(
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
 
-    // Stamp last_global_at only on a non-failed run so a failed pass stays stale
-    // and re-dispatches next tick (self-healing retry).
-    if (report.status === 'ok' || report.status === 'clean' || report.status === 'partial') {
+    // Stamp last_global_at only when no required phase failed, so a failed OR
+    // fail-bearing-partial pass stays stale and re-dispatches next tick
+    // (self-healing retry). Warn-only partials and completed runs still stamp.
+    if (globalMaintenanceMayStamp(report)) {
       try {
         await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date().toISOString());
       } catch (e) {
