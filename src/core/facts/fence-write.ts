@@ -127,6 +127,40 @@ export interface FenceWriteResult {
   targetUnresolvable?: true;
 }
 
+/**
+ * Return the next unissued fence row number for a page.
+ *
+ * The markdown fence is the readable mirror, but the DB may retain issued
+ * row numbers after a writer rewrites the fence away. Seed from both so every
+ * fence-writing path preserves idx_facts_fence_key uniqueness.
+ */
+export async function nextFactFenceRowNum(
+  engine: BrainEngine,
+  sourceId: string,
+  slug: string,
+  body: string,
+): Promise<number> {
+  let dbMaxRowNum = 0;
+  try {
+    const rows = await engine.executeRaw<{ max_row_num: number | null }>(
+      `SELECT MAX(row_num) AS max_row_num FROM facts
+        WHERE source_id = $1 AND source_markdown_slug = $2`,
+      [sourceId, slug],
+    );
+    dbMaxRowNum = Number(rows[0]?.max_row_num ?? 0);
+  } catch {
+    // Preserve pre-v51/transient-failure behavior: the file remains a usable
+    // fallback when the DB counter hint is unavailable.
+    dbMaxRowNum = 0;
+  }
+
+  const { facts: existingFenceFacts } = parseFactsFence(body);
+  const fileMaxRowNum = existingFenceFacts.length > 0
+    ? Math.max(...existingFenceFacts.map(f => f.rowNum))
+    : 0;
+  return Math.max(fileMaxRowNum, dbMaxRowNum) + 1;
+}
+
 const FAILURE_LOG_PATH = (): string => gbrainPath('facts.write_failures.jsonl');
 
 function recordWriteFailure(slug: string, sourceId: string, warnings: string[], filePath: string): void {
@@ -406,22 +440,7 @@ export async function writeFactsToFence(
       //    (pre-v51 brain without the fence columns, or a transient DB error):
       //    a fence write must not become impossible just because the counter
       //    hint is unavailable.
-      let dbMaxRowNum = 0;
-      try {
-        const rows = await engine.executeRaw<{ max_row_num: number | null }>(
-          `SELECT MAX(row_num) AS max_row_num FROM facts
-            WHERE source_id = $1 AND source_markdown_slug = $2`,
-          [target.sourceId, target.slug],
-        );
-        dbMaxRowNum = Number(rows[0]?.max_row_num ?? 0);
-      } catch {
-        dbMaxRowNum = 0;
-      }
-      const { facts: existingFenceFacts } = parseFactsFence(body);
-      const fileMaxRowNum = existingFenceFacts.length > 0
-        ? Math.max(...existingFenceFacts.map(f => f.rowNum))
-        : 0;
-      let nextRowNum = Math.max(fileMaxRowNum, dbMaxRowNum) + 1;
+      let nextRowNum = await nextFactFenceRowNum(engine, target.sourceId, target.slug, body);
 
       const assignedRowNums: number[] = [];
       for (const f of facts) {

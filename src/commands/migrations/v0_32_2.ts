@@ -40,7 +40,13 @@ import type {
 import type { BrainEngine } from '../../core/engine.ts';
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
-import { upsertFactRow, parseFactsFence } from '../../core/facts-fence.ts';
+import {
+  upsertFactRow,
+  parseFactsFence,
+  renderFactsTable,
+  replaceOrInsertFactsFence,
+} from '../../core/facts-fence.ts';
+import { nextFactFenceRowNum } from '../../core/facts/fence-write.ts';
 
 let testEngineOverride: BrainEngine | null = null;
 export function __setTestEngineOverride(engine: BrainEngine | null): void {
@@ -274,6 +280,14 @@ async function phaseBFenceFacts(
         // source) before append to handle this.
         const existingFence = parseFactsFence(body);
         const existingKeySet = new Set(existingFence.facts.map(f => `${f.claim}\0${f.source ?? ''}`));
+        let nextRowNum = await nextFactFenceRowNum(engine, sourceId, entitySlug, body);
+        const occupiedRows = await engine.executeRaw<{ row_num: number | string }>(
+          `SELECT row_num FROM facts
+            WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL`,
+          [sourceId, entitySlug],
+        );
+        const occupiedRowNums = new Set(occupiedRows.map(r => Number(r.row_num)));
+        const claimedFenceRowNums = new Set<number>();
 
         const assignments: Array<{ id: string; row_num: number }> = [];
         for (const row of group) {
@@ -282,10 +296,23 @@ async function phaseBFenceFacts(
             // Already fenced (idempotent re-run). Find the existing
             // row_num and assign it to this DB row.
             const existing = existingFence.facts.find(f =>
-              f.claim === row.fact && (f.source ?? '') === (row.source ?? ''),
+              f.claim === row.fact &&
+              (f.source ?? '') === (row.source ?? '') &&
+              !claimedFenceRowNums.has(f.rowNum),
             );
             if (existing) {
+              // A prior partial attempt may have written this fact to the
+              // markdown fence but failed before linking its DB row. If that
+              // stranded row_num is now owned by a different DB fact, move
+              // the markdown row forward before assigning it. Reusing the
+              // stranded number would violate idx_facts_fence_key forever.
+              if (occupiedRowNums.has(existing.rowNum)) {
+                existing.rowNum = nextRowNum++;
+                body = replaceOrInsertFactsFence(body, renderFactsTable(existingFence.facts));
+              }
               assignments.push({ id: row.id, row_num: existing.rowNum });
+              claimedFenceRowNums.add(existing.rowNum);
+              occupiedRowNums.add(existing.rowNum);
               continue;
             }
           }
@@ -297,6 +324,7 @@ async function phaseBFenceFacts(
                 .toISOString().slice(0, 10)
             : undefined;
           const { body: updated, rowNum } = upsertFactRow(body, {
+            rowNum:      nextRowNum++,
             claim:      row.fact,
             kind:       row.kind,
             confidence: row.confidence,
@@ -310,6 +338,7 @@ async function phaseBFenceFacts(
           body = updated;
           existingKeySet.add(key);
           assignments.push({ id: row.id, row_num: rowNum });
+          occupiedRowNums.add(rowNum);
         }
 
         // Atomic write: .tmp + parse + rename.
