@@ -269,9 +269,12 @@ What hardening guarantees:
   rebase conflict is aborted cleanly and flagged for attention, never left
   half-applied.
 - **Push is never deferred.** `scripts/brain-commit-push.sh "<msg>" <path>`
-  commits and pushes atomically and refuses to report success without a
-  confirmed push. The post-commit hook is a best-effort background fallback;
-  the helper is the guarantee.
+  commits and pushes, and refuses to report success without a successful push
+  or confirmation that the exact destination branch at every effective origin
+  push URL contains the attempted commit. A rejected push can still succeed when another process
+  already pushed that commit; a stale local tracking ref is not confirmation.
+  The post-commit hook is a best-effort background fallback; the helper is
+  the guarantee.
 - **No silent staleness.** A 30-minute background pull keeps an idle session
   current. It runs DB-free, so it never contends with a live brain for the
   PGLite single-writer lock.
@@ -280,6 +283,12 @@ Flags: `--no-cron` skips the scheduled pull, `--no-verify` skips the push
 probe, `--dry-run` reports what would change, `--json` emits a machine
 report, `--all` hardens every source with a remote (same-account only).
 `--no-harden` on `sources add` opts out of auto-harden.
+
+After upgrading GBrain, run `gbrain sources harden <source-id>` on each machine
+with an already-hardened source to refresh its local hook and
+`scripts/brain-commit-push.sh`. Upgrading the CLI alone does not update those
+installed scripts. Existing repo-local credentials are reused; no new token
+is required when that credential still works.
 
 Security: the push automation is installed locally per machine (never
 committed into the repo), the token is wired per-repo (an existing
