@@ -119,17 +119,38 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
       writeBrainFile('b.md', validMarkdown('b'));
       writeBrainFile('c.md', validMarkdown('c'));
 
-      // Plant a v0.33.2 checkpoint that says a.md and b.md are done.
+      // Plant a v0.33.2 checkpoint that says a.md and b.md are done. The
+      // timestamp must post-date the files: a real checkpoint is written
+      // after its completedPaths were processed.
       writeFileSync(cpPath, JSON.stringify({
         dir: brainDir,
         completedPaths: ['a.md', 'b.md'],
-        timestamp: '2026-05-14T00:00:00Z',
+        timestamp: new Date().toISOString(),
       }));
 
       const result = await runImport(engine, [brainDir, '--no-embed']);
       // Only c.md should have been imported this run. The other two are
       // already in `completed` and got filtered out before processFile.
       expect(result.imported).toBe(1);
+    });
+  }, 30_000);
+
+  test('checkpoint entries older than their files are re-walked (preserved checkpoint must not skip edits)', async () => {
+    await withEnv({ GBRAIN_HOME: workspace }, async () => {
+      // A checkpoint preserved from an errored run days ago claims a.md and
+      // b.md are done — but both were (re)written after that timestamp.
+      writeFileSync(cpPath, JSON.stringify({
+        dir: brainDir,
+        completedPaths: ['a.md', 'b.md'],
+        timestamp: '2026-05-14T00:00:00Z',
+      }));
+      writeBrainFile('a.md', validMarkdown('a'));
+      writeBrainFile('b.md', validMarkdown('b'));
+      writeBrainFile('c.md', validMarkdown('c'));
+
+      const result = await runImport(engine, [brainDir, '--no-embed']);
+      // Nothing may be skipped on the strength of a stale checkpoint.
+      expect(result.imported).toBe(3);
     });
   }, 30_000);
 
