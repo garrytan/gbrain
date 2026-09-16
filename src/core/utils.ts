@@ -54,7 +54,24 @@ export function validateSlug(slug: string): string {
   if (/%2e|%2f|%5c/i.test(slug)) {
     throw new Error(`Invalid slug: "${slug}". URL-encoded path separators are not allowed in slugs.`);
   }
-  return slug.toLowerCase();
+  // Storage convention: a slug never carries the markdown extension — the
+  // write-through sink appends `<slug>.md`. A slug that already ends in
+  // `.md`/`.mdx` (a caller that pasted a filename or a slug template that
+  // baked in the extension) would otherwise land a double-extension `foo.md.md`
+  // on disk: silently written (write_through.written:true, no error) and
+  // invisible to delete_page, which resolves by the DB slug `foo.md` and never
+  // touches the mis-named file (NOE-3172). Strip every trailing markdown
+  // extension so the canonical write slug matches how `slugifyPath` derives
+  // slugs from disk paths (`/\.mdx?$/i`), keeping the DB row and the `.md` file
+  // in agreement.
+  let normalized = slug;
+  while (/\.mdx?$/i.test(normalized)) {
+    normalized = normalized.replace(/\.mdx?$/i, '');
+  }
+  if (!normalized || /\/$/.test(normalized)) {
+    throw new Error(`Invalid slug: "${slug}". Stripping the markdown extension left an empty or malformed slug.`);
+  }
+  return normalized.toLowerCase();
 }
 
 /**
