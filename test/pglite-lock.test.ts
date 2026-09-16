@@ -87,12 +87,18 @@ describe('pglite-lock', () => {
   });
 
   test('lock file preserves argv boundaries (#5072)', async () => {
-    const lock = await acquireLock(TEST_DIR);
+    const originalArgv = process.argv;
+    const argv = ['/Users/Full Name/project/src/my cli.ts', 'serve', '--label', 'two words', ''];
+    let lock: LockHandle | undefined;
     try {
+      process.argv = [process.execPath, ...argv];
+      lock = await acquireLock(TEST_DIR);
       const lockData = JSON.parse(readFileSync(join(TEST_DIR, '.gbrain-lock', 'lock'), 'utf-8'));
-      expect(lockData.argv).toEqual(process.argv.slice(1));
+      expect(lockData.argv).toEqual(argv);
+      expect(lockData.command).toBe(argv.join(' ')); // legacy display field is retained
     } finally {
-      await releaseLock(lock);
+      process.argv = originalArgv;
+      if (lock) await releaseLock(lock);
     }
   });
 
@@ -527,7 +533,7 @@ describe('pglite-lock PID-reuse detection', () => {
     ['C:\\Users\\Example User\\project\\src\\cli.ts', false],
   ] as const) {
     test.skipIf(!canProbe)(`does not reap a live holder with ${structured ? 'structured' : 'legacy'} argv path ${script} (#5072)`, async () => {
-      const holder = Bun.spawn(['bash', '-c', 'exec -a "bun run src/cli.ts serve --http" sleep 60'], {
+      const holder = Bun.spawn(['bash', '-c', 'sleep 60; exit 0', 'bun', 'run', 'src/cli.ts', 'serve', '--http'], {
         stdout: 'ignore', stderr: 'ignore',
       });
       try {
@@ -604,7 +610,7 @@ describe('pglite-lock PID-reuse detection', () => {
     // recycled PID and its lock stolen — the thief then wrote to a second
     // PGLite instance the live serve never sees. The basename veto
     // ('cli.ts' appears in the cmdline) must keep the holder alive.
-    const holder = Bun.spawn(['bash', '-c', 'sleep 60; exit 0', 'bun run src/cli.ts serve --http'], { stdout: 'ignore', stderr: 'ignore' });
+    const holder = Bun.spawn(['bash', '-c', 'sleep 60; exit 0', 'bun', 'run', 'src/cli.ts', 'serve', '--http'], { stdout: 'ignore', stderr: 'ignore' });
     try {
       await waitForExec(holder.pid, /cli\.ts/);
       writeHolderAt(TEST_DIR, holder.pid, '/home/user/checkouts/brain-project/src/cli.ts serve --http', {
