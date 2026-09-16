@@ -43,7 +43,8 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from '../core/engine.ts';
 import type { PageType } from '../core/types.ts';
-import { parseMarkdown } from '../core/markdown.ts';
+import { parseMarkdown, inferTypeFromPack } from '../core/markdown.ts';
+import type { SchemaPackManifest } from '../core/schema-pack/manifest-v1.ts';
 import {
   extractPageLinks, parseTimelineEntries, deriveTimelineAnchor, inferLinkType, makeResolver,
   extractFrontmatterLinks, isGlobalBasenameEnabled, isCrossSourceLinksEnabled, LINK_EXTRACTOR_VERSION_TS,
@@ -605,6 +606,52 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
 }
 
 /**
+ * Frontmatter plus the page's explicit `type:`. parseMarkdown lifts `type`
+ * out of the frontmatter map (it is a page column), so the explicit value is
+ * only reachable through `parsed.type` + `typeExplicit`.
+ */
+function parsePageForFs(
+  content: string, relPath: string,
+): { frontmatter: Record<string, unknown>; explicitType: string | null } {
+  try {
+    const parsed = parseMarkdown(content, relPath);
+    return { frontmatter: parsed.frontmatter, explicitType: parsed.typeExplicit ? parsed.type : null };
+  } catch {
+    return { frontmatter: {}, explicitType: null };
+  }
+}
+
+/**
+ * Pack shape the FS path accepts. `page_types` is optional so callers that
+ * pass only link rules keep working; the CLI passes the full active manifest,
+ * which carries it.
+ */
+export type FsExtractPack = LinkExtractionPack & Partial<Pick<SchemaPackManifest, 'page_types'>>;
+
+/**
+ * Page type of a file on the FS path (#5142). Same precedence as import
+ * (`parseMarkdown`): an explicit frontmatter `type:` wins, then the active
+ * pack's `path_prefixes`, then the pre-pack folder table for callers that
+ * pass no pack. Before this the FS path always used the folder table, so a
+ * pack's own types (customer, decision, ...) never reached
+ * `frontmatterLinkTypeFromPack` / `inferLinkTypeFromPack`, and pack-declared
+ * links on those pages silently became `mentions` or nothing.
+ */
+function fsPageType(
+  relPath: string, slug: string, explicitType: string | null, pack: FsExtractPack | null,
+): PageType {
+  if (explicitType) return explicitType as PageType;
+  const types = pack?.page_types;
+  if (types && types.length > 0) return inferTypeFromPack(relPath, { page_types: types });
+  const topDir = slug.split('/')[0];
+  return topDir === 'people' ? 'person'
+    : topDir === 'companies' ? 'company'
+    : topDir === 'deals' || topDir === 'deal' ? 'deal'
+    : topDir === 'meetings' ? 'meeting'
+    : 'concept';
+}
+
+/**
  * Full link extraction from a single markdown file (FS-source path).
  *
  * Async (v0.13): uses the canonical `extractFrontmatterLinks` via a
@@ -615,27 +662,23 @@ function parseFrontmatterFromContent(content: string, relPath: string): Record<s
  */
 export async function extractLinksFromFile(
   content: string, relPath: string, allSlugs: Set<string>,
-  opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; pack?: LinkExtractionPack | null },
+  opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; pack?: FsExtractPack | null },
 ): Promise<ExtractedLink[]> {
   const links: ExtractedLink[] = [];
   const slug = pathToSlug(relPath);
   const fileDir = dirname(relPath);
-  const fm = parseFrontmatterFromContent(content, relPath);
+  const { frontmatter: fm, explicitType } = parsePageForFs(content, relPath);
   // Issue #972: globalBasename routes bare `[[name]]` wikilinks through
   // basename lookup against allSlugs when the ancestor walk fails. Off
   // by default for back-compat with the v0.10.1 ancestor-only behavior.
   const globalBasename = opts?.globalBasename ?? false;
   // #3190: pack-aware typing on the FS path too. FS has no pages row, so the
-  // page type is dir-guessed (same table the frontmatter section uses); the
-  // context is name-only, so in practice pack page_type bindings (meeting →
-  // attended etc.) are what fire here. Falls through to inferTypeByDir.
+  // type is resolved from the file itself (#5142): frontmatter `type:`, then
+  // the active pack's path_prefixes, then the pre-pack folder table. The
+  // context is name-only, so pack page_type bindings (meeting -> attended
+  // etc.) and pack frontmatter_links are what fire here.
   const pack = opts?.pack ?? null;
-  const topDirForType = slug.split('/')[0];
-  const guessedPageType = topDirForType === 'people' ? 'person'
-    : topDirForType === 'companies' ? 'company'
-    : topDirForType === 'deals' || topDirForType === 'deal' ? 'deal'
-    : topDirForType === 'meetings' ? 'meeting'
-    : 'concept';
+  const guessedPageType = fsPageType(relPath, slug, explicitType, pack);
 
   // Issue #972 (codex [P2]): strip code fences before scanning so a
   // `[[name]]` inside a code block doesn't create an FS edge. Mirrors the
@@ -703,8 +746,7 @@ export async function extractLinksFromFile(
         return null;
       },
     };
-    // Guess the page type from its directory for field-map filtering
-    // (shared with the pack typing above).
+    // Field-map filtering uses the page type resolved above (#5142).
     const fm = parseFrontmatterFromContent(content, relPath);
     // #3190: thread the pack so pack-declared frontmatter_links fire on the
     // FS path too (globalBasename false here — the synthetic resolver has no

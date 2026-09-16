@@ -254,6 +254,7 @@ import {
   resolveSlugAll,
   resolveBasenameMatchesFromSlugs,
   extractLinksFromFile,
+  type FsExtractPack,
 } from '../src/commands/extract.ts';
 
 describe('extractLinksFromFile — code-fence stripping (codex P2b)', () => {
@@ -481,5 +482,37 @@ describe('issue #972 repro: bare wikilinks resolve when flag is on', () => {
     const basenameLinks = links.filter(l => l.link_type === 'wikilink_basename');
     const targets = basenameLinks.map(l => l.to_slug).sort();
     expect(targets).toEqual(['archive/struktura', 'projects/struktura']);
+  });
+});
+
+describe('issue #5142: the FS path types a file from its frontmatter or the active pack, not a fixed folder table', () => {
+  // The shape the CLI passes (the active manifest): one user-declared type
+  // under customers/ plus a frontmatter link rule bound to it.
+  const pack = {
+    page_types: [
+      { name: 'customer', primitive: 'entity', path_prefixes: ['customers/'], aliases: [], extractable: false, expert_routing: false },
+    ],
+    link_types: [],
+    frontmatter_links: [{ page_type: 'customer', fields: ['owner'], link_type: 'owned_by' }],
+  } as unknown as FsExtractPack;
+  const allSlugs = new Set(['customers/acme', 'notes/big-deal', 'people/jane-doe', 'meetings/kickoff']);
+  const edges = (links: { link_type: string; to_slug: string }[]) => links.map(l => `${l.link_type} -> ${l.to_slug}`);
+
+  test('a pack path_prefix types the file, so the pack frontmatter_link fires', async () => {
+    const acme = ['---', 'title: Acme', 'owner: "[[people/jane-doe]]"', '---', '', 'Pilot customer.'].join('\n');
+    const links = await extractLinksFromFile(acme, 'customers/acme.md', allSlugs, { includeFrontmatter: true, pack });
+    expect(edges(links)).toContain('owned_by -> people/jane-doe');
+  });
+
+  test('an explicit frontmatter type: wins over the path, as it does at import', async () => {
+    const typed = ['---', 'title: Big deal', 'type: customer', 'owner: "[[people/jane-doe]]"', '---', ''].join('\n');
+    const links = await extractLinksFromFile(typed, 'notes/big-deal.md', allSlugs, { includeFrontmatter: true, pack });
+    expect(edges(links)).toContain('owned_by -> people/jane-doe');
+  });
+
+  test('without a pack the pre-#5142 folder table still applies (meetings/ -> attended)', async () => {
+    const meeting = ['---', 'title: Kickoff', 'attendees: ["[[people/jane-doe]]"]', '---', ''].join('\n');
+    const links = await extractLinksFromFile(meeting, 'meetings/kickoff.md', allSlugs, { includeFrontmatter: true });
+    expect(edges(links)).toContain('attended -> people/jane-doe');
   });
 });
