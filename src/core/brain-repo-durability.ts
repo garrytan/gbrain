@@ -166,8 +166,22 @@ export function maintainPushLog(): void {
 // the lock wait — env-only, incident/test escape hatch.
 function renderPushRetry(lockTimeoutRc: 0 | 1): string {
   return `# --- gbrain durability push-retry (generated; one source of truth) ---
+brain_remote_contains_commit() {
+  local _remote_tip _push_url
+  git check-ref-format "refs/heads/$1" >/dev/null 2>&1 || return 1
+  [ -n "$_push_urls" ] || return 1
+  while IFS= read -r _push_url; do
+    [ -n "$_push_url" ] || return 1
+    [ "$(git ls-remote --get-url -- "$_push_url" 2>/dev/null)" = "$_push_url" ] || return 1
+    _remote_tip="$(git ls-remote --exit-code -- "$_push_url" "refs/heads/$1" 2>/dev/null)" || return 1
+    _remote_tip="\${_remote_tip%%[[:space:]]*}"
+    git fetch --quiet --no-tags --no-write-fetch-head -- "$_push_url" "$_remote_tip" >/dev/null 2>&1 &&
+      git merge-base --is-ancestor "$2" "$_remote_tip" >/dev/null 2>&1 || return 1
+  done <<<"$_push_urls"
+}
+
 brain_push() {
-  _branch="$1"
+  _branch="\${1#refs/heads/}"
   # CX2-8: GBRAIN_HOME is a PARENT dir (matches config.ts semantics — .gbrain appended)
   _log="\${GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log"
   mkdir -p "$(dirname "$_log")" 2>/dev/null || true
@@ -180,15 +194,30 @@ brain_push() {
     exec 9>"$_gd/gbrain-push.lock"
     flock -w "\${GBRAIN_PUSH_LOCK_WAIT_SECONDS:-30}" 9 || { echo "$(date -u +%FT%TZ) [push] lock-timeout $_branch" >>"$_log"; return ${lockTimeoutRc}; }
   fi
-  if git push origin "HEAD:$_branch" >>"$_log" 2>&1; then
-    echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short HEAD 2>/dev/null)" >>"$_log"; return 0
+  _head="$(git rev-parse HEAD)" || return 1
+  _push_urls="$(git remote get-url --push --all origin 2>/dev/null)" || _push_urls=""
+  if git push origin "$_head:refs/heads/$_branch" >>"$_log" 2>&1; then
+    echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short "$_head" 2>/dev/null)" >>"$_log"; return 0
   fi
-  echo "$(date -u +%FT%TZ) [push] rejected; rebase-pull $_branch" >>"$_log"
-  if git pull --rebase origin "$_branch" >>"$_log" 2>&1 && git push origin "HEAD:$_branch" >>"$_log" 2>&1; then
-    echo "$(date -u +%FT%TZ) [push] ok-after-rebase $_branch $(git rev-parse --short HEAD 2>/dev/null)" >>"$_log"; return 0
+  if brain_remote_contains_commit "$_branch" "$_head"; then
+    echo "$(date -u +%FT%TZ) [push] ok-already-on-remote $_branch $(git rev-parse --short "$_head" 2>/dev/null)" >>"$_log"; return 0
   fi
-  git rebase --abort >/dev/null 2>&1 || true
-  echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short HEAD 2>/dev/null) could not reach origin. Run: gbrain sources pull <id> && git push" >>"$_log"
+  if [ "$(git rev-parse HEAD)" = "$_head" ]; then
+    echo "$(date -u +%FT%TZ) [push] rejected; rebase-pull $_branch" >>"$_log"
+    if git pull --rebase origin "$_branch" >>"$_log" 2>&1; then
+      _head="$(git rev-parse HEAD)" || return 1
+      _push_urls="$(git remote get-url --push --all origin 2>/dev/null)" || _push_urls=""
+      if git push origin "$_head:refs/heads/$_branch" >>"$_log" 2>&1; then
+        echo "$(date -u +%FT%TZ) [push] ok-after-rebase $_branch $(git rev-parse --short "$_head" 2>/dev/null)" >>"$_log"; return 0
+      fi
+    else
+      git rebase --abort >/dev/null 2>&1 || true
+    fi
+  fi
+  if brain_remote_contains_commit "$_branch" "$_head"; then
+    echo "$(date -u +%FT%TZ) [push] ok-already-on-remote $_branch $(git rev-parse --short "$_head" 2>/dev/null)" >>"$_log"; return 0
+  fi
+  echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short "$_head" 2>/dev/null) could not reach origin. Run: gbrain sources pull <id> && git push" >>"$_log"
   return 1
 }`;
 }
@@ -480,7 +509,7 @@ export interface PushLogOutcome {
   at?: string;
 }
 
-const PUSH_LOG_OK = /^(\S+) \[push\] (?:ok|ok-after-rebase) (\S+)\b/;
+const PUSH_LOG_OK = /^(\S+) \[push\] (?:ok|ok-after-rebase|ok-already-on-remote) (\S+)\b/;
 const PUSH_LOG_LOCAL_ONLY = /^(\S+) \[push\] LOCAL-ONLY, NEEDS ATTENTION: (\S+) /;
 const PUSH_LOG_LOCK_TIMEOUT = /^(\S+) \[push\] lock-timeout (\S+)\b/;
 
