@@ -75,6 +75,7 @@ interface GoogleErrorBody {
     status?: string;
     message?: string;
     errors?: Array<{ reason?: string }>;
+    details?: Array<{ '@type'?: string; reason?: string }>;
   };
 }
 
@@ -146,6 +147,13 @@ export class GoogleApiClient {
       // 404 / 410 surface to callers — cursor-expiry handling is theirs.
       if (res.status === 404 || res.status === 410) {
         throw new GoogleCursorExpiredError(res.status, url);
+      }
+      if (res.status === 400 && apiHint === 'people' && new URL(url).searchParams.get('syncToken')) {
+        const details = body.error?.details;
+        const expired = (Array.isArray(details) && details.some(detail =>
+          detail?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' && detail.reason === 'EXPIRED_SYNC_TOKEN',
+        )) || /^Sync token (?:is )?expired\b/i.test(body.error?.message ?? '');
+        if (expired) throw new GoogleCursorExpiredError(res.status, url);
       }
       throw new CredentialError('upstream', `: HTTP ${res.status} on ${apiHint} (${body.error?.message ?? 'no detail'})`);
     }

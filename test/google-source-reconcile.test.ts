@@ -101,6 +101,7 @@ interface FakeGoogle {
   contacts: unknown[];
   contactsDelta: unknown[];
   contactsExpireSyncToken: boolean;
+  contactsExpireSyncStatus?: number;
   calendarEvents: unknown[];
   calendarDelta: unknown[];
   calendarExpireSyncToken: boolean;
@@ -213,7 +214,10 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
 
     if (u.pathname.includes('/people/me/connections')) {
       if (u.searchParams.get('syncToken')) {
-        if (fx.contactsExpireSyncToken) return json({ error: { code: 410, message: 'Sync token expired' } }, 410);
+        if (fx.contactsExpireSyncToken) {
+          const status = fx.contactsExpireSyncStatus ?? 410;
+          return json({ error: { code: status, message: 'Sync token expired' } }, status);
+        }
         return json({ connections: fx.contactsDelta, nextSyncToken: 'ppl-sync-delta' });
       }
       fx.contactsFullLists++;
@@ -838,6 +842,72 @@ describe('syncToken 410 recovery', () => {
           `SELECT slug FROM pages WHERE source_id = 'gsrc' AND deleted_at IS NULL AND slug = 'people/alice-example'`,
         );
         expect(people).toHaveLength(1);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('contacts: HTTP 400 expiry recovers without restarting Gmail or losing the contact', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppl400-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.contacts = [{
+      resourceName: 'people/c000000001',
+      names: [{ displayName: 'Alice Example', metadata: { primary: true } }],
+      emailAddresses: [{ value: 'alice@example.com' }],
+    }];
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'contacts');
+        expect(readGoogleState(dir).contacts_sync_token).toBe('ppl-sync-w1');
+        fx.contactsExpireSyncToken = true;
+        fx.contactsExpireSyncStatus = 400;
+        const result = await sweep(dir, fx, vault, {}, 'contacts');
+        expect(result.status).not.toBe('partial');
+        expect(readGoogleState(dir).contacts_sync_token).toBe('ppl-sync-w2');
+        expect(fx.contactsFullLists).toBe(2);
+        expect(fx.calls.some(call => call.includes('/people/me/connections?') && call.includes('syncToken=ppl-sync-w1'))).toBe(true);
+        expect(fx.calls.some(call => call.includes('/gmail/'))).toBe(false);
+        const rows = await engine.executeRaw<{ slug: string }>(
+          `SELECT slug FROM pages WHERE source_id = 'gsrc' AND deleted_at IS NULL AND slug = 'people/alice-example'`,
+        );
+        expect(rows).toHaveLength(1);
+        fx.contactsExpireSyncToken = false;
+        await sweep(dir, fx, vault, {}, 'contacts');
+        expect(fx.contactsFullLists).toBe(2);
+        expect(readGoogleState(dir).contacts_sync_token).toBe('ppl-sync-delta');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('contacts: HTTP 400 recovery preserves incremental Gmail in an all-services sync', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppl400-all-'));
+    const fx = emptyFx();
+    fx.contactsExpireSyncToken = true;
+    fx.contactsExpireSyncStatus = 400;
+    fx.historyResponseId = '2000';
+    try {
+      await insertGoogleSource(dir);
+      writeBackfilledState(dir);
+      const before = readGoogleState(dir);
+      writeFileSync(googleStateFile(dir), JSON.stringify({ ...before, contacts_sync_token: 'expired' }));
+      await withHome(async () => {
+        const result = await sweep(dir, fx, makeVault(), {}, 'gmail,calendar,contacts');
+        expect(result.status).not.toBe('partial');
+        expect(fx.contactsFullLists).toBe(1);
+        const after = readGoogleState(dir);
+        expect(after.contacts_sync_token).toBe('ppl-sync-w1');
+        expect(after.gmail_backfill_done).toBe(true);
+        expect(after.gmail_backfill_floor_ms).toBe(before.gmail_backfill_floor_ms);
+        expect(after.gmail_history_id).toBe('2000');
+        expect(fx.calls.filter(call => call.includes('/users/me/history'))).toEqual([
+          expect.stringContaining('startHistoryId=1000'),
+        ]);
+        expect(fx.calls.some(call => call.includes('/users/me/messages') || call.includes('/users/me/profile'))).toBe(false);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
