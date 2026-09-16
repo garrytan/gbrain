@@ -143,12 +143,15 @@ describe('import --json stdout is parseable JSON (#3637) and lists per-file fail
       expect(mixedJson.failures[0].path).toBe('broken.md');
       expect(mixedJson.failures[0].error).toContain('Invalid YAML frontmatter');
 
-      // A failed import retains its checkpoint: a normal retry only processes
-      // the failed document and reports its error again.
+      // A failed import retains its checkpoint: a normal retry rechecks content
+      // hashes and reports the failed document's error again.
       const resumed = await runCli(['import', mixedNotes, '--no-embed', '--json'], env, 120_000);
       expect(resumed.exitCode).toBe(1);
+      expect(resumed.stdout.trim().split('\n')).toHaveLength(1);
+      expect(resumed.stderr).toContain('Resuming from checkpoint: re-checking current files via content_hash (1 previously completed)');
       expect(JSON.parse(resumed.stdout)).toMatchObject({
-        status: 'partial', total_files: 2, imported: 0, skipped: 1, errors: 1, unchanged: 0,
+        status: 'partial', total_files: 2, imported: 0, skipped: 2, errors: 1, unchanged: 1,
+        failures: mixedJson.failures,
       });
 
       // A fresh re-import scans both files: the good note is a content-hash no-op and

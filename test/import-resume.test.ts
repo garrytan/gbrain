@@ -7,7 +7,7 @@
  *
  *   - Old positional checkpoints from pre-v0.33.2 brains are discarded
  *     cleanly + the migration stderr log fires.
- *   - v0.33.2 path-based checkpoints honor the completedPaths set on resume.
+ *   - Path-based checkpoints re-check content hashes on resume.
  *   - Failed files do NOT enter `completedPaths`; the next run retries them
  *     (the pre-existing P1 codex caught).
  *   - Clean completion clears the checkpoint.
@@ -19,8 +19,8 @@
  *   - PGLite via the canonical block (`beforeAll` + `resetPgliteState` +
  *     `afterAll`) per CLAUDE.md test-isolation rules R3 + R4.
  */
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync, chmodSync } from 'fs';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } from 'bun:test';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync, chmodSync, statSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -117,6 +117,9 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
     await withEnv({ GBRAIN_HOME: workspace }, async () => {
       writeBrainFile('a.md', validMarkdown('a'));
       writeBrainFile('b.md', validMarkdown('b'));
+      expect((await runImport(engine, [brainDir, '--no-embed'])).imported).toBe(2);
+      const originalChunks = await engine.getChunks('a', { sourceId: 'default' });
+      expect(originalChunks.length).toBeGreaterThan(0);
       writeBrainFile('c.md', validMarkdown('c'));
 
       // Plant a v0.33.2 checkpoint that says a.md and b.md are done.
@@ -127,9 +130,10 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
       }));
 
       const result = await runImport(engine, [brainDir, '--no-embed']);
-      // Only c.md should have been imported this run. The other two are
-      // already in `completed` and got filtered out before processFile.
       expect(result.imported).toBe(1);
+      expect(result.skipped).toBe(2);
+      expect(result.errors).toBe(0);
+      expect(await engine.getChunks('a', { sourceId: 'default' })).toEqual(originalChunks);
     });
   }, 30_000);
 
@@ -149,6 +153,114 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
       expect(existsSync(cpPath)).toBe(false);
     });
   }, 30_000);
+
+  test.each(['newer mtime', 'preserved mtime'])('preserved checkpoint rechecks edited files with %s', async (mtimeMode) => {
+    await withEnv({ GBRAIN_HOME: workspace }, async () => {
+      writeBrainFile('changed-example.md', validMarkdown('changed-example', 'Original example'));
+      writeBrainFile('stable-example.md', validMarkdown('stable-example'));
+      writeBrainFile('invalid-example.md', validMarkdown('wrong-example'));
+      const filePath = join(brainDir, 'changed-example.md');
+      const originalTime = new Date('2026-01-01T00:00:00Z');
+      utimesSync(filePath, originalTime, originalTime);
+
+      const first = await runImport(engine, [brainDir, '--no-embed']);
+      expect(first.imported).toBe(2);
+      expect(first.errors).toBe(1);
+      const checkpoint = JSON.parse(readFileSync(cpPath, 'utf8'));
+      expect(checkpoint.completedPaths).toEqual(['changed-example.md', 'stable-example.md']);
+      const stableChunks = await engine.getChunks('stable-example', { sourceId: 'default' });
+      expect(stableChunks.length).toBeGreaterThan(0);
+
+      writeBrainFile('changed-example.md', validMarkdown('changed-example', 'Modified example'));
+      const editedTime = mtimeMode === 'preserved mtime'
+        ? originalTime
+        : new Date(Date.parse(checkpoint.timestamp) + 60_000);
+      utimesSync(filePath, editedTime, editedTime);
+      expect(statSync(filePath).mtimeMs).toBe(editedTime.getTime());
+      writeBrainFile('new-example.md', validMarkdown('new-example'));
+
+      const second = await runImport(engine, [brainDir, '--no-embed']);
+      expect(second.imported).toBe(2);
+      expect(second.errors).toBe(1);
+      expect(second.failures.map(failure => failure.path)).toEqual(['invalid-example.md']);
+      expect((await engine.getPage('changed-example', { sourceId: 'default' }))?.title).toBe('Modified example');
+      expect(await engine.getPage('new-example', { sourceId: 'default' })).not.toBeNull();
+      expect(await engine.getChunks('stable-example', { sourceId: 'default' })).toEqual(stableChunks);
+      expect(JSON.parse(readFileSync(cpPath, 'utf8')).completedPaths).toEqual([
+        'changed-example.md', 'new-example.md', 'stable-example.md',
+      ]);
+    });
+  }, 60_000);
+
+  test('file edited after its database commit but before checkpoint flush is rechecked', async () => {
+    await withEnv({ GBRAIN_HOME: workspace }, async () => {
+      writeBrainFile('changed-example.md', validMarkdown('changed-example', 'Original example'));
+      writeBrainFile('invalid-example.md', validMarkdown('wrong-example'));
+      const filePath = join(brainDir, 'changed-example.md');
+      const originalTransaction = engine.transaction.bind(engine);
+      let edited = false;
+      const transaction = spyOn(engine, 'transaction').mockImplementation(async (fn) => {
+        const result = await originalTransaction(fn);
+        if (!edited && await engine.getPage('changed-example', { sourceId: 'default' })) {
+          edited = true;
+          writeBrainFile('changed-example.md', validMarkdown('changed-example', 'Modified example'));
+        }
+        return result;
+      });
+      try {
+        const first = await runImport(engine, [brainDir, '--no-embed']);
+        expect(first.imported).toBe(1);
+        expect(first.errors).toBe(1);
+      } finally {
+        transaction.mockRestore();
+      }
+      expect(edited).toBe(true);
+      expect((await engine.getPage('changed-example', { sourceId: 'default' }))?.title).toBe('Original example');
+      const checkpoint = JSON.parse(readFileSync(cpPath, 'utf8'));
+      expect(checkpoint.completedPaths).toEqual(['changed-example.md']);
+      expect(Math.floor(statSync(filePath).mtimeMs)).toBeLessThanOrEqual(Date.parse(checkpoint.timestamp));
+
+      const second = await runImport(engine, [brainDir, '--no-embed']);
+      expect(second.imported).toBe(1);
+      expect(second.errors).toBe(1);
+      expect((await engine.getPage('changed-example', { sourceId: 'default' }))?.title).toBe('Modified example');
+    });
+  }, 60_000);
+
+  test('a checkpoint from another source rechecks completed files without changing the original source', async () => {
+    await withEnv({ GBRAIN_HOME: workspace }, async () => {
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name) VALUES ('source-a-example', 'source-a-example'), ('source-b-example', 'source-b-example')`,
+      );
+      writeBrainFile('good-example.md', validMarkdown('good-example'));
+      writeBrainFile('invalid-example.md', validMarkdown('wrong-example'));
+
+      const first = await runImport(engine, [brainDir, '--no-embed', '--source-id', 'source-a-example']);
+      expect(first.imported).toBe(1);
+      expect(first.errors).toBe(1);
+      expect(first.failures.map(failure => failure.path)).toEqual(['invalid-example.md']);
+      expect(JSON.parse(readFileSync(cpPath, 'utf8')).completedPaths).toEqual(['good-example.md']);
+      const originalPage = await engine.getPage('good-example', { sourceId: 'source-a-example' });
+      const originalChunks = await engine.getChunks('good-example', { sourceId: 'source-a-example' });
+      expect(originalPage).not.toBeNull();
+      expect(originalChunks.length).toBeGreaterThan(0);
+      expect(await engine.getPage('good-example', { sourceId: 'source-b-example' })).toBeNull();
+
+      const second = await runImport(engine, [brainDir, '--no-embed', '--source-id', 'source-b-example']);
+      expect(second.imported).toBe(1);
+      expect(second.errors).toBe(1);
+      expect(second.failures).toEqual(first.failures);
+      const secondPage = await engine.getPage('good-example', { sourceId: 'source-b-example' });
+      expect(secondPage).not.toBeNull();
+      expect(secondPage?.id).not.toBe(originalPage?.id);
+      expect(secondPage?.content_hash).toBe(originalPage?.content_hash);
+      expect((await engine.getChunks('good-example', { sourceId: 'source-b-example' })).length).toBe(originalChunks.length);
+      expect(await engine.getPage('invalid-example', { sourceId: 'source-b-example' })).toBeNull();
+      expect(await engine.getPage('good-example', { sourceId: 'source-a-example' })).toEqual(originalPage);
+      expect(await engine.getChunks('good-example', { sourceId: 'source-a-example' })).toEqual(originalChunks);
+      expect(JSON.parse(readFileSync(cpPath, 'utf8')).completedPaths).toEqual(['good-example.md']);
+    });
+  }, 60_000);
 
   // skipIf: forces the error path via a chmod-000 file — unrunnable on hosts
   // that don't enforce permission bits (the read succeeds, errors stays 0,
