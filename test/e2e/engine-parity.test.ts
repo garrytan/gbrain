@@ -2114,7 +2114,7 @@ async function seedAliasOwners(eng: BrainEngine) {
       [id],
     );
   }
-  // slug_aliases is not in the e2e TRUNCATE list — clear this fixture's rows.
+  // Clear leftovers from an interrupted prior run before seeding this fixture.
   await eng.executeRaw(`DELETE FROM slug_aliases WHERE alias_slug LIKE 'par/%'`);
   await eng.executeRaw(
     `INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug, notes)
@@ -2138,6 +2138,7 @@ describeBoth('Engine parity — resolveSlugWithAliasDetailed', () => {
   }, 90_000);
 
   afterAll(async () => {
+    await pgEngine.executeRaw(`DELETE FROM slug_aliases WHERE alias_slug LIKE 'par/%'`);
     await pgliteEngine.disconnect();
     await teardownDB();
   }, 30_000);

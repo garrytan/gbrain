@@ -92,6 +92,8 @@ export interface TimelineWriteThroughOutcome {
   handled: boolean;
   /** Disk write outcome (present when handled). */
   file?: WriteThroughResult;
+  /** The canonical bullet already exists on disk, so no representation changed. */
+  duplicate?: boolean;
   /**
    * The canonical tuple. Present when handled (it was stored in
    * timeline_entries), and ALSO present alongside `error` when the bullet
@@ -377,6 +379,29 @@ export async function writeTimelineEntryThrough(
         }
 
         const beforeText = readFileSync(filePath, 'utf8');
+        const alreadyOnDisk = extractTimelineFromContent(beforeText, slug).some(
+          (e) =>
+            e.date === rendered.canonical.date &&
+            (e.source ?? '') === rendered.canonical.source &&
+            e.summary === rendered.canonical.summary,
+        );
+        if (alreadyOnDisk) {
+          // The file is canonical, but a prior interrupted write may have
+          // stopped before the structured insert. Reconcile that projection;
+          // ON CONFLICT makes an ordinary replay a no-op there too.
+          await engine.addTimelineEntry(slug, { // gbrain-allow-direct-insert: exact canonical bullet already exists; this only repairs/retains its structured projection
+            date: rendered.canonical.date,
+            source: rendered.canonical.source,
+            summary: rendered.canonical.summary,
+            detail: entry.detail || '',
+          }, { sourceId, skipExistenceCheck: true });
+          return {
+            handled: true,
+            duplicate: true,
+            file: { written: false, path: filePath },
+            entry: rendered.canonical,
+          };
+        }
         const afterText = spliceTimelineIntoFileText(beforeText, entry.date, rendered.block);
 
         // fence-write's parse-before-rename analog: the spliced text must
