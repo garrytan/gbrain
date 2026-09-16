@@ -19,6 +19,7 @@
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { parseArgs } from 'node:util';
 import {
   addAliasToType,
   addLinkTypeToPack,
@@ -727,8 +728,18 @@ async function runGraphCmd(args: string[]): Promise<void> {
 
 async function runLintCmd(args: string[]): Promise<void> {
   const { json, positional } = parseFlags(args);
-  const withDb = args.includes('--with-db');
-  const name = positional[0];
+  const { values: { 'with-db': withDb }, positionals } = parseArgs({
+    args: positional,
+    allowPositionals: true,
+    options: {
+      'with-db': { type: 'boolean' },
+    },
+  });
+  if (positionals.length > 1) {
+    console.error('Usage: gbrain schema lint [<pack>] [--with-db] [--json]');
+    process.exit(2);
+  }
+  const name = positionals[0];
   const cfg = loadConfig();
   // v0.40.6.0 Phase 5: swap basic 2-rule check for the rich 11-rule lint
   // suite from Phase 1.5. File-plane rules run by default; --with-db
