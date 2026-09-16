@@ -1802,6 +1802,8 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
           : {}),
         // #4077: a cancelled cycle tears down the in-flight judge call too.
         abortSignal: options?.signal,
+        // Judges pin model identity (D8): never thread the chat_fallback_chain.
+        allowFallback: false,
       });
 
       // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance
