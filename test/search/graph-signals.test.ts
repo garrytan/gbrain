@@ -91,6 +91,19 @@ describe('sessionPrefix (v0.40.4 narrowed scope — codex fix for entity-dir fal
   test('meetings + date → meeting-session prefix', () => {
     expect(sessionPrefix('meetings/2026-04-03/notes')).toBe('meetings/2026-04-03');
   });
+
+  test('atoms prefix with date segment → null (distinct distilled units, not sessions)', () => {
+    expect(sessionPrefix('atoms/2026-04-30/cypress-shifted-from-ai-caution-to-company-wide-embrace-in-o')).toBeNull();
+    expect(sessionPrefix('atoms/2026-04-07/prepaid-credits-solve-flexibility')).toBeNull();
+    expect(sessionPrefix('atoms/2020-04-07/a-big-discount-can-hide-a-high-spending-threshold')).toBeNull();
+  });
+
+  test('atom slug containing later chat/session-looking segments must still remain non-session', () => {
+    expect(sessionPrefix('atoms/2026-04-30/chat-discussion-on-ai-adoption')).toBeNull();
+    expect(sessionPrefix('atoms/2026-04-30/session-notes-framework')).toBeNull();
+    expect(sessionPrefix('atoms/2026-04-30/sessions/summary-takeaways')).toBeNull();
+    expect(sessionPrefix('atoms/transcripts/chat/lesson-key')).toBeNull();
+  });
 });
 
 describe('computeScoreDistribution', () => {
@@ -298,6 +311,79 @@ describe('applyGraphSignals — session diversification', () => {
     expect(results[1].score).toBe(9);
     expect(results[0].graph_session_demoted).toBeUndefined();
     expect(results[1].graph_session_demoted).toBeUndefined();
+  });
+
+  test('multiple same-date atoms incur zero session demotions', async () => {
+    const results = [
+      makeResult('atoms/2026-04-30/cypress-shifted-from-ai-caution-to-company-wide-embrace-in-o', 10, 1),
+      makeResult('atoms/2026-04-30/cypress-went-from-ai-caution-to-company-wide-enablement-in-a', 9, 2),
+      makeResult('atoms/2026-04-30/cypress-went-from-ai-caution-to-full-adoption-in-one-week', 8, 3),
+    ];
+    let capturedMeta: any;
+    await applyGraphSignals(results, ENGINE_STUB, {
+      enabled: true,
+      adjacencyFn: async () => new Map(),
+      onMeta: (m) => { capturedMeta = m; },
+    });
+    // All 3 atoms keep full scores; 0 demotions.
+    expect(results[0].score).toBe(10);
+    expect(results[1].score).toBe(9);
+    expect(results[2].score).toBe(8);
+    expect(results[0].graph_session_demoted).toBeUndefined();
+    expect(results[1].graph_session_demoted).toBeUndefined();
+    expect(results[2].graph_session_demoted).toBeUndefined();
+    expect(results[0].graph_session_prefix).toBeUndefined();
+    expect(results[1].graph_session_prefix).toBeUndefined();
+    expect(results[2].graph_session_prefix).toBeUndefined();
+    expect(capturedMeta?.session_demotions).toBe(0);
+  });
+
+  test('atom slug containing later chat/session segments incurs zero session demotions', async () => {
+    const results = [
+      makeResult('atoms/2026-04-30/chat-discussion-on-ai', 10, 1),
+      makeResult('atoms/2026-04-30/sessions-notes-summary', 9, 2),
+    ];
+    let capturedMeta: any;
+    await applyGraphSignals(results, ENGINE_STUB, {
+      enabled: true,
+      adjacencyFn: async () => new Map(),
+      onMeta: (m) => { capturedMeta = m; },
+    });
+    expect(results[0].score).toBe(10);
+    expect(results[1].score).toBe(9);
+    expect(results[0].graph_session_demoted).toBeUndefined();
+    expect(results[1].graph_session_demoted).toBeUndefined();
+    expect(capturedMeta?.session_demotions).toBe(0);
+  });
+
+  test('same-date daily and meeting pages still demote exactly as before', async () => {
+    const results = [
+      makeResult('meetings/2026-04-03/notes', 10, 1),
+      makeResult('meetings/2026-04-03/action-items', 9, 2),
+      makeResult('daily/2026-05-20/morning', 8, 3),
+      makeResult('daily/2026-05-20/evening', 7, 4),
+    ];
+    let capturedMeta: any;
+    await applyGraphSignals(results, ENGINE_STUB, {
+      enabled: true,
+      adjacencyFn: async () => new Map(),
+      onMeta: (m) => { capturedMeta = m; },
+    });
+    // Highest meeting keeps full, second demoted.
+    expect(results[0].score).toBe(10);
+    expect(results[0].graph_session_demoted).toBeUndefined();
+    expect(results[0].graph_session_prefix).toBe('meetings/2026-04-03');
+    expect(results[1].score).toBeCloseTo(9 * SESSION_DEMOTE, 5);
+    expect(results[1].graph_session_demoted).toBe(true);
+
+    // Highest daily keeps full, second demoted.
+    expect(results[2].score).toBe(8);
+    expect(results[2].graph_session_demoted).toBeUndefined();
+    expect(results[2].graph_session_prefix).toBe('daily/2026-05-20');
+    expect(results[3].score).toBeCloseTo(7 * SESSION_DEMOTE, 5);
+    expect(results[3].graph_session_demoted).toBe(true);
+
+    expect(capturedMeta?.session_demotions).toBe(2);
   });
 });
 
