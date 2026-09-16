@@ -181,6 +181,31 @@ export function lexicalArmsEnabled(cfg: GBrainConfig | null): boolean {
   return cfg?.retrieval_reflex_lexical_arms !== false;
 }
 
+/**
+ * Slug prefixes the volunteer stage must never surface. Ambient recall reaches
+ * for whatever a turn's words resolve to, which makes an imported subtree with
+ * prose-colliding aliases actively harmful: on this author's brain a flashcard
+ * vault aliased "Delivery", "Cell" and "Log" produced 96% of all alias-arm
+ * volunteers at 2.8% precision, and with only VOLUNTEER_DEFAULT_MAX_PAGES
+ * slots it crowded out every specific hit.
+ *
+ * A subtree, not a slug set: the vault's members change on every sync, so
+ * enumeration is not maintainable. Env-direct override matches
+ * volunteerEnabled/lexicalArmsEnabled so a config-less environment keeps the
+ * escape hatch; comma-separated, blanks dropped.
+ */
+export function volunteerExcludeSlugPrefixes(cfg: GBrainConfig | null): string[] {
+  const env = process.env.GBRAIN_VOLUNTEER_EXCLUDE_SLUG_PREFIXES;
+  const raw = env != null && env !== ''
+    ? env.split(',')
+    : cfg?.retrieval_reflex_volunteer_exclude_slug_prefixes;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((v): v is string => typeof v === 'string')
+    .map((v) => v.trim())
+    .filter((v) => v !== '');
+}
+
 function maxPointers(cfg: GBrainConfig | null): number {
   const n = cfg?.retrieval_reflex_max_pointers;
   return typeof n === 'number' && n > 0 ? n : DEFAULT_MAX_POINTERS;
