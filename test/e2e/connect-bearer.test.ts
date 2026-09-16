@@ -121,6 +121,81 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
     }
   }, 30_000);
 
+  async function postMcp(body: unknown, extra: Record<string, string> = {}) {
+    return fetch(MCP_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        authorization: `Bearer ${token}`,
+        ...extra,
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test('serve --http answers 2025-era initialize on the live factory', async () => {
+    expect(serverReady).toBe(true);
+    const res = await postMcp({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'dualera-e2e', version: '0.test' },
+      },
+    });
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    const dataLine = raw.split('\n').find((l) => l.startsWith('data:')) ?? raw;
+    const json = JSON.parse(dataLine.replace(/^data:\s*/, '').trim());
+    expect(json.result.protocolVersion).toMatch(/^2025-/);
+  }, 30_000);
+
+  test('serve --http answers server/discover on the live factory', async () => {
+    expect(serverReady).toBe(true);
+    const res = await postMcp({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'server/discover',
+      params: {
+        _meta: {
+          'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+          'io.modelcontextprotocol/clientCapabilities': {},
+        },
+      },
+    }, {
+      'mcp-protocol-version': '2026-07-28',
+      'mcp-method': 'server/discover',
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json() as { result?: { supportedVersions?: string[] } };
+    expect(json.result?.supportedVersions).toContain('2026-07-28');
+  }, 30_000);
+
+  test('missing Authorization is 401 for both eras (auth precedes classification)', async () => {
+    expect(serverReady).toBe(true);
+    const bodies = [
+      {
+        jsonrpc: '2.0', id: 4, method: 'initialize',
+        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'x', version: '0' } },
+      },
+      {
+        jsonrpc: '2.0', id: 5, method: 'server/discover',
+        params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} } },
+      },
+    ];
+    for (const body of bodies) {
+      const res = await fetch(MCP_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(401);
+    }
+  }, 30_000);
+
   test('wrong token classifies as auth', async () => {
     expect(serverReady).toBe(true);
     const r = await probeBrainIdentity(MCP_URL, 'gbrain_deadbeef', { timeoutMs: 15_000 });

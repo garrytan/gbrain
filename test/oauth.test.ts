@@ -12,7 +12,8 @@ import {
 } from '../src/core/oauth-provider.ts';
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
-import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
+import { InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { AuthInfo as CoreAuthInfo } from '../src/core/operations.ts';
 
 // ---------------------------------------------------------------------------
@@ -397,9 +398,12 @@ describe('verifyAccessToken', () => {
     await expect(provider.verifyAccessToken('nonexistent-token')).rejects.toThrow('Invalid token');
   });
 
-  // v0.36.1.x #935: the SDK's requireBearerAuth middleware only returns 401
-  // on InvalidTokenError; bare Error falls through to 500. Lock in the class.
-  test('verifyAccessToken throws InvalidTokenError (not bare Error) on expired token', async () => {
+  // v2 requireBearerAuth only returns 401 on a branded OAuthError(InvalidToken);
+  // a server-legacy InvalidTokenError / bare Error falls through to 500.
+  test('verifyAccessToken throws an InvalidToken OAuthError (not 500) on expired token', async () => {
+    // The v2 Resource Server (requireBearerAuth → bearerAuthChallengeResponse)
+    // maps an `instanceof` v2 OAuthError with OAuthErrorCode.InvalidToken to
+    // 401. A bare/non-branded error would surface as 500 — assert the code.
     const expiredToken = generateToken('gbrain_at_');
     const hash = hashToken(expiredToken);
     const firstClient = (await sql`SELECT client_id FROM oauth_clients LIMIT 1`)[0];
@@ -413,17 +417,19 @@ describe('verifyAccessToken', () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(InvalidTokenError);
+    expect(caught).toBeInstanceOf(OAuthError);
+    expect((caught as OAuthError).code).toBe(OAuthErrorCode.InvalidToken);
   });
 
-  test('verifyAccessToken throws InvalidTokenError (not bare Error) on unknown token', async () => {
+  test('verifyAccessToken throws an InvalidToken OAuthError on unknown token', async () => {
     let caught: unknown;
     try {
       await provider.verifyAccessToken('nonexistent-token');
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(InvalidTokenError);
+    expect(caught).toBeInstanceOf(OAuthError);
+    expect((caught as OAuthError).code).toBe(OAuthErrorCode.InvalidToken);
   });
 
   test('NULL expires_at is treated as expired (fail-closed)', async () => {

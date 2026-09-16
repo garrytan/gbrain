@@ -25,7 +25,10 @@ import type {
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { InvalidTokenError, InvalidClientMetadataError, InvalidClientError, InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidClientMetadataError, InvalidClientError, InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+// v2 requireBearerAuth maps a branded OAuthError (InvalidToken) to 401; a
+// server-legacy InvalidTokenError is not instanceof it and lands as 500.
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import {
   hasScope,
@@ -782,17 +785,17 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       for (const field of ['allowed_operations', 'grant_revision', 'grant_profile', 'grant_repair_reasons', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'delegated_slug_prefixes', 'delegated_namespace', 'bound_max_concurrent', 'budget_usd_per_day']) row[field] = currentGrant[field];
       row.client_deleted_at = currentGrant.deleted_at;
       row.grant_projection_present = 'allowed_operations' in currentGrant;
-      if (row.client_deleted_at != null || row.current_scopes == null) throw new InvalidTokenError('Client revoked or missing');
+      if (row.client_deleted_at != null || row.current_scopes == null) throw new OAuthError(OAuthErrorCode.InvalidToken, 'Client revoked or missing');
       const issuedScopes = Array.isArray(row.scopes) ? row.scopes as string[] : [];
       const effectiveScopes = intersectGrantedScopes(issuedScopes, parseScopeString(String(row.current_scopes)));
       const grantProjectionDegraded = row.grant_profile != null && (row.grant_projection_present !== true || !Array.isArray(row.allowed_operations));
-      if (grantProjectionDegraded) throw new InvalidTokenError('Client grant schema incomplete; run gbrain apply-migrations --yes');
+      if (grantProjectionDegraded) throw new OAuthError(OAuthErrorCode.InvalidToken, 'Client grant schema incomplete; run gbrain apply-migrations --yes');
       // NULL expires_at is treated as expired (fail-closed). Schema permits NULL,
       // and the SDK's bearerAuth requires `typeof expiresAt === 'number'` — we
       // throw here rather than return an undefined-bearing AuthInfo.
       const expiresAt = coerceTimestamp(row.expires_at);
       if (expiresAt === undefined || expiresAt < now) {
-        throw new InvalidTokenError('Token expired');
+        throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token expired');
       }
       // v0.34.1 (#876): federated_read normalization. SELECT returns
       // either a JS array (Postgres / PGLite text[] driver mapping) or
@@ -971,7 +974,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       } as CoreAuthInfo as SdkAuthInfo;
     }
 
-    throw new InvalidTokenError('Invalid token');
+    throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid token');
   }
 
   // -------------------------------------------------------------------------

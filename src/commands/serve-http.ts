@@ -22,12 +22,11 @@ import { isValidRepoName } from '../core/github-source.ts';
 import { createMetricsCounters, metricsTrackingMiddleware, renderPrometheusMetrics } from './serve-http-metrics.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
-import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { Server, createMcpHandler, type ListToolsResult, type CallToolResult } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/server-legacy/auth';
+import { requireBearerAuth } from '@modelcontextprotocol/express';
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
 import { mountConfidentialOAuth, mountOAuthConsent, withBearerScopeHint } from './serve-http-oauth.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
@@ -1189,11 +1188,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
   // The SDK validates expiry/scopes but leaves audience enforcement to us.
   // Legacy grants without a resource retain their existing compatibility.
+  // v2 requireBearerAuth maps a branded OAuthError (InvalidToken) to 401 —
+  // a server-legacy InvalidTokenError lands as 500 instead.
   const resourceVerifier = {
     async verifyAccessToken(token: string) {
       const auth = await oauthProvider.verifyAccessToken(token);
       if (auth.resource && auth.resource.toString() !== mcpResourceUrl.toString()) {
-        throw new InvalidTokenError('Token is bound to a different resource');
+        throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token is bound to a different resource');
       }
       return auth;
     },
@@ -2304,11 +2305,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
-  app.post('/mcp', withBearerScopeHint(
-    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read'],
-  ), async (req: Request, res: Response) => {
+  // Dual-era MCP over SDK v2: createMcpHandler serves modern per-request
+  // `_meta`/server/discover traffic AND 2025-era `initialize` via the
+  // stateless legacy fallback. Era is decided from the request body — never
+  // from MCP-Protocol-Version header presence. Auth still runs first
+  // (withBearerScopeHint + requireBearerAuth, required-scope hint `read`).
+  const mcpHandler = createMcpHandler(async (ctx): Promise<Server> => {
     const startTime = Date.now();
-    const authInfo = (req as any).auth as AuthInfo;
+    // req.auth → toNodeHandler → createMcpHandler → ctx.authInfo (pass-through,
+    // never derived from headers). Runtime object is gbrain's extended AuthInfo.
+    const authInfo = ctx.authInfo as AuthInfo;
 
     // Human-readable agent name is now threaded through AuthInfo by
     // verifyAccessToken (which JOINs oauth_clients in its existing token
@@ -2370,7 +2376,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       return { transport: authInfo.clientId.startsWith('gbrain_cl_') ? 'oauth' : 'legacy', client_id: authInfo.clientId,
         ...await resolveAuthCapabilities(authInfo, engine, config) };
     });
-    server.setRequestHandler(ListToolsRequestSchema, async () => {
+    server.setRequestHandler('tools/list', async () => {
       // WP1 honest catalog: the advertised list is exactly what THIS token
       // can call. Three per-request filters, cheapest first:
       //   1. token scope — a read-only token never sees admin/write tools;
@@ -2431,10 +2437,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: 'success',
         timestamp: new Date().toISOString(),
       });
-      return { tools };
+      return { tools } as ListToolsResult;
     });
 
-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
       const { name, arguments: params } = request.params;
       const op = mcpOperations.find(o => o.name === name);
       if (!op) {
@@ -2666,7 +2672,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           error: { code: 'op_error', message: errMsg },
           timestamp: new Date().toISOString(),
         });
-        return toolResult;
+        return toolResult as CallToolResult;
       }
 
       // WP3 (amendment 13): warn-mode observability. A success whose _meta
@@ -2692,31 +2698,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         status: successStatus,
         timestamp: new Date().toISOString(),
       });
-      return toolResult;
+      return toolResult as CallToolResult;
     });
+    return server;
+  }, { legacy: 'stateless' });
 
-    // F14: wrap transport setup + handleRequest in try/catch. Without this,
-    // an SDK-level throw (e.g., schema parse failure on a malformed request)
-    // propagates to express's default error handler, which renders an HTML
-    // error page — clients expecting JSON-RPC envelopes break. On
-    // !res.headersSent we emit a minimal JSON 500 so the client at least
-    // gets parseable JSON back.
-    try {
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
-      // #2844: per-request teardown (SDK stateless pattern) — without it every POST /mcp leaks the transport+Server pair (~3GB/day RSS). Registered BEFORE connect/handleRequest so early disconnects and handleRequest throws still clean up; best-effort catches so cleanup never surfaces an unhandledRejection.
-      res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
-    } catch (e) {
-      console.error('MCP request handler error:', e instanceof Error ? e.message : e);
-      if (!res.headersSent) {
-        res.status(500).json({
-          error: 'internal_error',
-          message: e instanceof Error ? e.message : 'Unknown error',
-        });
-      }
-    }
-  });
+  app.post('/mcp', withBearerScopeHint(
+    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read'],
+  ), toNodeHandler(mcpHandler));
 
   // ---------------------------------------------------------------------------
   // v0.38 ingestion substrate — POST /ingest (webhook source)

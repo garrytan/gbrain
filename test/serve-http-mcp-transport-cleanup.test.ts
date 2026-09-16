@@ -1,23 +1,23 @@
 /**
- * #2844: POST /mcp per-request transport/server cleanup pin.
+ * #2844: POST /mcp per-request server cleanup pin (dual-era v2 form).
  *
- * serve --http creates a fresh Server + StreamableHTTPServerTransport per
- * POST /mcp request (SDK stateless pattern). Without an explicit cleanup
- * hook, neither is ever closed — each request leaks the transport's
- * response bookkeeping plus the Server's handler closures (observed as
- * ~3GB/day RSS growth on a busy remote brain).
+ * History: serve --http used to create a fresh Server +
+ * StreamableHTTPServerTransport per POST /mcp request (the SDK v1 stateless
+ * recipe) and needed an explicit `res.on('close')` hook closing both, or
+ * each request leaked the transport's response bookkeeping plus the Server's
+ * handler closures (~3GB/day RSS on a busy remote brain). The v1 wiring this
+ * file used to pin (`new StreamableHTTPServerTransport(` + `res.on('close'`
+ * + `transport.handleRequest(` + `server.connect(transport)`) is gone by
+ * design: the dual-era migration serves POST /mcp through
+ * `createMcpHandler(factory, { legacy: 'stateless' })`, and SDK v2's
+ * stateless connector owns the per-request lifecycle.
  *
- * The SDK's documented stateless recipe is:
- *
- *   const transport = new StreamableHTTPServerTransport({ ... });
- *   res.on('close', () => { transport.close(); server.close(); });
- *   await server.connect(transport);
- *   await transport.handleRequest(req, res, req.body);
- *
- * This source-text pin asserts the res.on('close') cleanup sits BETWEEN
- * transport construction and transport.handleRequest — registered before
- * any request handling can start, so an early client disconnect (or a
- * throw inside handleRequest) still tears both objects down.
+ * This source-text pin asserts gbrain's side of that contract stays intact:
+ * exactly one `createMcpHandler` mount in `legacy: 'stateless'` mode, whose
+ * factory builds a FRESH `Server` per request (never a shared module-level
+ * instance), and NO hand-rolled per-request `new StreamableHTTPServerTransport(`
+ * that could bypass the connector's teardown. Auth still wraps the mount
+ * with `withBearerScopeHint(..., ['read'])`.
  */
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -25,32 +25,27 @@ import { readFileSync } from 'node:fs';
 describe('POST /mcp transport cleanup (#2844)', () => {
   const src = readFileSync('src/commands/serve-http.ts', 'utf8');
 
-  test('res.on(close) cleanup sits between transport construction and handleRequest', () => {
-    const constructIdx = src.indexOf('new StreamableHTTPServerTransport(');
-    expect(constructIdx).toBeGreaterThan(-1);
-    // Exactly one per-request construction site — a second one would need
-    // its own cleanup wiring and this pin extended to cover it.
-    expect(src.indexOf('new StreamableHTTPServerTransport(', constructIdx + 1)).toBe(-1);
+  test('single stateless createMcpHandler mount; factory builds a fresh Server per request', () => {
+    const mountIdx = src.indexOf('createMcpHandler(');
+    expect(mountIdx).toBeGreaterThan(-1);
+    expect(src.indexOf('createMcpHandler(', mountIdx + 1)).toBe(-1);
 
-    const handleIdx = src.indexOf('transport.handleRequest(', constructIdx);
-    expect(handleIdx).toBeGreaterThan(constructIdx);
-
-    const between = src.slice(constructIdx, handleIdx);
-
-    // Cleanup must be registered on the response's close event...
-    expect(between).toContain("res.on('close'");
-    // ...and must close BOTH per-request objects, swallowing rejections
-    // (cleanup is best-effort; it must never surface an unhandledRejection).
-    expect(between).toMatch(/transport\.close\(\)\.catch\(/);
-    expect(between).toMatch(/server\.close\(\)\.catch\(/);
+    const mount = src.slice(mountIdx, mountIdx + 4000);
+    expect(mount).toContain('legacy');
+    expect(mount).toContain('stateless');
+    expect(mount).toMatch(/new Server\(\s*\{ name: 'gbrain'/);
   });
 
-  test('cleanup registers before server.connect (early-disconnect safety)', () => {
-    const constructIdx = src.indexOf('new StreamableHTTPServerTransport(');
-    const connectIdx = src.indexOf('server.connect(transport)', constructIdx);
-    expect(connectIdx).toBeGreaterThan(constructIdx);
+  test('no hand-rolled per-request StreamableHTTPServerTransport (would bypass connector teardown)', () => {
+    expect(src.indexOf('new StreamableHTTPServerTransport(')).toBe(-1);
+  });
 
-    const beforeConnect = src.slice(constructIdx, connectIdx);
-    expect(beforeConnect).toContain("res.on('close'");
+  test('POST /mcp keeps withBearerScopeHint(..., [read]) around the v2 handler', () => {
+    const postIdx = src.indexOf("app.post('/mcp'");
+    expect(postIdx).toBeGreaterThan(-1);
+    const post = src.slice(postIdx, postIdx + 400);
+    expect(post).toContain('withBearerScopeHint');
+    expect(post).toContain("['read']");
+    expect(post).toContain('toNodeHandler(mcpHandler)');
   });
 });
