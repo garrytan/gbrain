@@ -166,9 +166,12 @@ served to remote callers with **fail-closed evidence redaction** — counts,
 counterparty, summary, due date; verbatim quotes, deep links, and the
 injectable `text` digest are trusted-local only. Remote callers also need a
 resolved source scope: an unscoped remote read is refused outright rather
-than spanning the brain, and the write ops require a single-source scope
-that matches the caller's grants (`loops_unmute` included — lifting another
-source's suppression is as much a targeted write as planting one). `open_loops` takes per-call scope params —
+than spanning the brain, and the write ops resolve to a single source that
+sits inside the caller's grants (`loops_unmute` included — lifting another
+source's suppression is as much a targeted write as planting one). A caller
+whose grant names exactly one source gets that one for free; a caller granted
+several must say which, via the `source_id` param on `loops_close` and
+`loops_mute`, and a source outside the grant is refused. `open_loops` takes per-call scope params —
 `source_id` (an MCP client whose transport is bound to another source can
 point the read at the google source, grant-checked for remote callers) and
 `all_sources` (trusted local spans the brain; remote stays in-grant).

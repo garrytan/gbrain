@@ -402,23 +402,46 @@ const loops_close: Operation = {
     id: { type: 'number', required: true, description: 'Loop id (from open_loops).' },
     status: { type: 'string', required: true, enum: ['done', 'dropped'], description: 'Terminal state.' },
     note: { type: 'string', description: 'Optional closed_by note (default: manual).' },
+    source_id: {
+      type: 'string',
+      description:
+        'Source the loop belongs to (default: routed source). A remote caller whose grant spans ' +
+        'several sources must name one, and it must sit inside the grant.',
+    },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
     const scope = sourceScopeOpts(ctx);
+    const requested = p.source_id as string | undefined;
+    if (requested) validateSourceId(requested);
     // Remote callers stay inside their granted source scope; trusted local
-    // closes across sources (null = unscoped).
-    let sourceId: string | null = null;
+    // closes across sources (null = unscoped) unless it names one.
+    let sourceId: string | null = requested ?? null;
     if (ctx.remote !== false) {
-      sourceId = scope.sourceId ?? (scope.sourceIds && scope.sourceIds.length === 1 ? scope.sourceIds[0] : null);
-      if (!sourceId) {
-        // Enumerated error envelope (dispatch classifies + request-logs it),
-        // never a success-shaped { closed:false } payload.
-        throw new OperationError(
-          'permission_denied',
-          'loops_close: remote callers need a single-source scope',
-        );
+      if (requested) {
+        // Mirrors loops_mute: an explicit source is honoured only when the
+        // grant covers it. Trusting p.source_id unchecked on a remote WRITE
+        // would let any client close loops in sources it cannot even read.
+        const granted =
+          (scope.sourceId && scope.sourceId === requested) ||
+          (scope.sourceIds?.includes(requested) ?? false);
+        if (!granted) {
+          throw new OperationError(
+            'permission_denied',
+            `loops_close: source "${requested}" is outside the caller's scope`,
+          );
+        }
+      } else {
+        sourceId = scope.sourceId ?? (scope.sourceIds && scope.sourceIds.length === 1 ? scope.sourceIds[0] : null);
+        if (!sourceId) {
+          // Enumerated error envelope (dispatch classifies + request-logs it),
+          // never a success-shaped { closed:false } payload.
+          throw new OperationError(
+            'permission_denied',
+            'loops_close: remote callers need a single-source scope, or an explicit source_id inside their grant',
+          );
+        }
       }
     }
     if (ctx.dryRun) return { dry_run: true, action: 'loops_close', id: p.id, status: p.status };
