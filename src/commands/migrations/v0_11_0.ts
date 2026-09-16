@@ -452,8 +452,26 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   // Bug 3 — Phase G (record in completed.jsonl) moved to the runner. The
   // runner in apply-migrations.ts persists the result after orchestrator
   // returns, so we just decide the status here.
-  const status: 'complete' | 'partial' = (pending_host_work > 0) ? 'partial' : 'complete';
+  // A failed phase must never record as `complete`. The runner's ledger write
+  // is what `apply-migrations` diffs against, and `statusForVersion`'s
+  // "complete wins" rule then makes the documented repair
+  // (`gbrain apply-migrations --yes`, advertised as idempotent and safe to
+  // re-run) a permanent no-op — the failed phase becomes unreachable. Phases
+  // A-D early-return on failure; E and F do not, so sweep every recorded
+  // phase here. `partial` (not `failed`) is the right verdict: the migration
+  // made real progress, `partial` is the resume-missing-phases state the
+  // runner retries, and MAX_CONSECUTIVE_PARTIALS stays the backstop against
+  // retrying forever. Matches the sweep in v0_12_0 / v0_28_0.
+  const failedPhases = phases.filter(p => p.status === 'failed');
+  const status = deriveOverallStatus(phases, pending_host_work);
   phases.push({ name: 'record', status: opts.dryRun ? 'skipped' : 'complete', detail: `status=${status} (ledger write in runner)` });
+
+  // #921 surfaces phase detail on stderr for status=failed; a
+  // partial-with-failures needs the same visibility, or the operator sees only
+  // a cheerful "finished as PARTIAL" and never learns which phase died.
+  for (const p of failedPhases) {
+    console.error(`Phase ${p.name} failed: ${p.detail ?? '(no detail)'}`);
+  }
 
   // Post-run: print pending-host-work summary if anything needs host action.
   if (pending_host_work > 0) {
@@ -479,6 +497,25 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   };
 }
 
+/**
+ * Overall status for the v0.11.0 run.
+ *
+ * `partial` when host work remains (the original rule) OR when any recorded
+ * phase failed. The second clause is load-bearing: phases A-D early-return on
+ * failure but E and F do not, so without the sweep a failed autopilot install
+ * recorded as `complete` — and `statusForVersion`'s "complete wins" rule then
+ * made the failure permanently unretryable.
+ *
+ * Exported for unit tests.
+ */
+export function deriveOverallStatus(
+  phases: OrchestratorPhaseResult[],
+  pendingHostWork: number,
+): 'complete' | 'partial' {
+  if (pendingHostWork > 0) return 'partial';
+  return phases.some(p => p.status === 'failed') ? 'partial' : 'complete';
+}
+
 export const v0_11_0: Migration = {
   version: '0.11.0',
   featurePitch: {
@@ -495,6 +532,7 @@ export const v0_11_0: Migration = {
 
 /** Exported for unit tests. */
 export const __testing = {
+  deriveOverallStatus,
   injectAgentsMdMarker,
   rewriteCronManifest,
   phaseEHost,

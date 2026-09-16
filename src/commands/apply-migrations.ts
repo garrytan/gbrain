@@ -15,7 +15,7 @@
 import { VERSION } from '../version.ts';
 import { loadConfig } from '../core/config.ts';
 import { loadCompletedMigrations, appendCompletedMigration, type CompletedMigrationEntry } from '../core/preferences.ts';
-import { migrations, compareVersions, type Migration, type OrchestratorOpts } from './migrations/index.ts';
+import { migrations, compareVersions, type Migration, type OrchestratorOpts, type OrchestratorResult } from './migrations/index.ts';
 import {
   indexCompletedEntries,
   statusForVersion as ledgerStatusForVersion,
@@ -137,6 +137,24 @@ function statusForVersion(
   idx: CompletedIndex,
 ): 'complete' | 'partial' | 'pending' | 'wedged' {
   return ledgerStatusForVersion(version, idx.byVersion);
+}
+
+/**
+ * Ledger status to record for a finished orchestrator run.
+ *
+ * Invariant: `complete` is never recorded over a failed phase.
+ * `statusForVersion`'s "complete wins" rule is deliberate, so such a row is
+ * permanently unretryable — the failed phase becomes unreachable by the
+ * documented repair (`gbrain apply-migrations --yes`) and the only evidence is
+ * a downstream symptom. Orchestrators are each expected to sweep their own
+ * phases, but several derive status without it, so the invariant is enforced
+ * at the single write site instead of at eighteen call sites.
+ *
+ * Exported for unit tests.
+ */
+export function resolveRecordStatus(result: OrchestratorResult): 'complete' | 'partial' {
+  if (result.status === 'partial') return 'partial';
+  return result.phases.some(p => p.status === 'failed') ? 'partial' : 'complete';
 }
 
 interface Plan {
@@ -527,13 +545,33 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
         break;
       }
 
+      // Class-level invariant: `complete` must never be recorded over a
+      // failed phase. `statusForVersion`'s "complete wins" rule is
+      // deliberate, so such a row is permanently unretryable — the failed
+      // phase becomes unreachable by the documented repair and the only
+      // evidence is a downstream symptom. Orchestrators are each expected to
+      // sweep their own phases (v0_12_0 / v0_28_0 do), but several derive
+      // status without it, so enforce the invariant at the single write site
+      // rather than trusting eighteen call sites to remember.
+      const failedPhases = result.phases.filter(p => p.status === 'failed');
+      const recordStatus = resolveRecordStatus(result);
+      if (recordStatus !== result.status && failedPhases.length > 0) {
+        console.error(
+          `Migration v${m.version} reported ${result.status} but ${failedPhases.length} phase(s) failed; ` +
+            `recording as partial so \`gbrain apply-migrations --yes\` retries it.`,
+        );
+        for (const p of failedPhases) {
+          console.error(`  phase ${p.name}: ${p.detail ?? '(no detail)'}`);
+        }
+      }
+
       // Persist the terminal outcome. appendCompletedMigration no-ops when
       // the last entry for this version is already 'complete' (idempotency
       // guard), so repeated clean runs don't spam the ledger.
       try {
         appendCompletedMigration({
           version: m.version,
-          status: result.status, // 'complete' | 'partial'
+          status: recordStatus, // 'complete' | 'partial'
           phases: result.phases,
           files_rewritten: result.files_rewritten,
           autopilot_installed: result.autopilot_installed,
@@ -547,7 +585,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
         break;
       }
 
-      if (result.status === 'partial') {
+      if (recordStatus === 'partial') {
         console.log(`Migration v${m.version} finished as PARTIAL. Re-run \`gbrain apply-migrations --yes\` after resolving any pending host-work items.`);
       } else {
         console.log(`Migration v${m.version} complete.`);
@@ -570,6 +608,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
 /** Exported for unit tests only. Do not use from production code. */
 export const __testing = {
   parseArgs,
+  resolveRecordStatus,
   buildPlan,
   indexCompleted,
   statusForVersion,
