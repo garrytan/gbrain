@@ -1,3 +1,4 @@
+import type { SkillPaths } from './skill-paths.ts';
 /**
  * routing-eval.ts — Check 5 of the skillify checklist.
  *
@@ -273,25 +274,28 @@ export interface LoadResult {
   malformed: { file: string; line: number; raw: string; error: string }[];
 }
 
-export function loadRoutingFixtures(skillsDir: string): LoadResult {
+export function loadRoutingFixtures(skillsDir: string, paths?: SkillPaths): LoadResult {
   const fixtures: RoutingFixture[] = [];
   const malformed: LoadResult['malformed'] = [];
-  if (!existsSync(skillsDir)) return { fixtures, malformed };
+  if (!paths && !existsSync(skillsDir)) return { fixtures, malformed };
   let entries: string[];
   try {
-    entries = readdirSync(skillsDir);
+    entries = paths ? paths.references().map(p => p.replace(/\/SKILL\.md$/, '')) : readdirSync(skillsDir);
   } catch {
     return { fixtures, malformed };
   }
   for (const entry of entries) {
     if (entry.startsWith('.') || entry.startsWith('_')) continue;
+    const body = paths?.locate(`${entry}/SKILL.md`);
+    if (paths && !body?.path) continue;
     const dir = join(skillsDir, entry);
-    try {
-      if (!statSync(dir).isDirectory()) continue;
-    } catch {
-      continue;
+    if (!paths) {
+      try { if (!statSync(dir).isDirectory()) continue; } catch { continue; }
     }
-    const fixturePath = join(dir, 'routing-eval.jsonl');
+    const fixturePath = paths
+      ? paths.locate(`${entry}/routing-eval.jsonl`, body!.root!).path
+      : join(dir, 'routing-eval.jsonl');
+    if (!fixturePath) continue;
     if (!existsSync(fixturePath)) continue;
 
     let content: string;

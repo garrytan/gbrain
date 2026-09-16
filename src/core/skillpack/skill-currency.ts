@@ -21,6 +21,8 @@
 
 import { loadBundleManifest, bundledSkillSlugs } from './bundle.ts';
 import { runReference } from './reference.ts';
+import { join } from 'path';
+import { createSkillPaths, type SkillPathOptions } from '../skill-paths.ts';
 
 export interface SkillCurrency {
   slug: string;
@@ -70,18 +72,29 @@ const STATUS_RANK: Record<SkillCurrency['status'], number> = {
  * excluded from each skill's counts so a new skill whose shared deps are
  * already on disk isn't mistaken for a drifted one.
  */
-export function computeSkillCurrency(opts: {
+export function computeSkillCurrency(opts: SkillPathOptions & {
   gbrainRoot: string;
   targetWorkspace: string;
+  /** Doctor can select a nonstandard skills directory. */
+  skillsDir?: string;
 }): CurrencyReport {
+  const paths = createSkillPaths(opts.skillsDir ?? join(opts.targetWorkspace, 'skills'), opts);
+  if (paths.errors.length) throw new Error(paths.errors.join('; '));
   const manifest = loadBundleManifest(opts.gbrainRoot);
   const slugs = bundledSkillSlugs(manifest);
 
   const skills: SkillCurrency[] = slugs.map(slug => {
+    const body = paths.locate(`${slug}/SKILL.md`);
+    if (!body.path && body.error !== 'file missing') throw new Error(`${slug}: ${body.error}`);
     const ref = runReference({
       gbrainRoot: opts.gbrainRoot,
       targetWorkspace: opts.targetWorkspace,
       skillSlug: slug,
+    }, entry => {
+      if (entry.sharedDep || !entry.relWorkspaceTarget.startsWith(`skills/${slug}/`)) return undefined;
+      const location = paths.locate(entry.relWorkspaceTarget.slice('skills/'.length), body.root ?? undefined);
+      if (!location.path && location.error !== 'file missing') throw new Error(`${slug}: ${location.error}`);
+      return location.path;
     });
     const own = ref.files.filter(f => !f.sharedDep);
     const counts = {
