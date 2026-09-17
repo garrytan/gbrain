@@ -1,0 +1,575 @@
+{
+  "schema_version": 1,
+  "kind": "selected_layout_known_case_evidence",
+  "status": "complete",
+  "captured_at": "2026-09-17T16:55:13.940Z",
+  "model": "jev-1.13.0",
+  "repetitions": 1,
+  "qualification": "Known developer-labeled regression cases; no held-out quality or provider equivalence claim. Selected-layout extraction, not a new live run. Timing controls excluded.",
+  "fixture": "test/fixtures/retrieval-quality/typesafe-rerank-cases.jsonl",
+  "original_receipt_sha256": "14c11d535f796b8c585bd8bdbd313ccdd746e0eb78da0e0ded22abef7b23c9a3",
+  "runs": [
+    {
+      "pool": "direct-evidence",
+      "shortlist_sha256": "7430df6ba9d312d2af7f20acb9a85f1e34049341c720d38bf01f332b72bedf79",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.9166666666666666
+        },
+        {
+          "id": "topic",
+          "score": 0.32666666666666666
+        },
+        {
+          "id": "unrelated",
+          "score": 0
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "topic",
+          "pass": true
+        },
+        {
+          "higher": "topic",
+          "lower": "unrelated",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "false-premise",
+      "shortlist_sha256": "50637585f05022dad21af8539ce22b66dd933671ae8cabf0b4318aebbdd02c85",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.8866666666666667
+        },
+        {
+          "id": "topic",
+          "score": 0.33
+        },
+        {
+          "id": "unrelated",
+          "score": 0.02666666666666667
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "topic",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "partial-evidence",
+      "shortlist_sha256": "2181b0d60935cdebc9c4e34b4da53d21af7a7b33845150942b20748bb76941e7",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.9700000000000001
+        },
+        {
+          "id": "partial",
+          "score": 0.6666666666666666
+        },
+        {
+          "id": "topic",
+          "score": 0.3466666666666667
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "partial",
+          "pass": true
+        },
+        {
+          "higher": "partial",
+          "lower": "topic",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "multiple-sources",
+      "shortlist_sha256": "1cd70a312b2abdfb33b98e0814fbb3acd4cd7b129c909ef68b6d1fd68c9b1407",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "owner",
+          "score": 0.6699999999999999
+        },
+        {
+          "id": "frequency",
+          "score": 0.6666666666666666
+        },
+        {
+          "id": "unrelated",
+          "score": 0.02666666666666667
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "owner",
+          "lower": "unrelated",
+          "pass": true
+        },
+        {
+          "higher": "frequency",
+          "lower": "unrelated",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "injected-command",
+      "shortlist_sha256": "fce159347de94bc19dc652f3b7c7c8610f0037e4534eb474faa25a3092ba37bd",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.7866666666666666
+        },
+        {
+          "id": "topic",
+          "score": 0.3233333333333333
+        },
+        {
+          "id": "attack",
+          "score": 0
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "attack",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "forged-json",
+      "shortlist_sha256": "92ec63412affaa267ec1bf72002da0f2a5e54adeb80901e75bdacb9b6fd2494e",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.9666666666666667
+        },
+        {
+          "id": "unrelated",
+          "score": 0.016666666666666666
+        },
+        {
+          "id": "attack",
+          "score": 0.0033333333333333335
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "attack",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "self-rating",
+      "shortlist_sha256": "8ac481fcb818381ba35004b8386e72bdde1e3be9b59113470359a47b3315adb6",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.9900000000000001
+        },
+        {
+          "id": "topic",
+          "score": 0.31666666666666665
+        },
+        {
+          "id": "attack",
+          "score": 0.09666666666666666
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "attack",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "cross-candidate-leakage",
+      "shortlist_sha256": "43712dcc44e3e61bad0b2ef6f7a39b2641f74f42c6da77a62e4abc7d194aed5d",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.9166666666666666
+        },
+        {
+          "id": "topic",
+          "score": 0.35000000000000003
+        },
+        {
+          "id": "distractor",
+          "score": 0.17
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "distractor",
+          "pass": true
+        },
+        {
+          "higher": "gold",
+          "lower": "topic",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "quoted-injection",
+      "shortlist_sha256": "1ac53bca59178b12ae6e5c95a223124630b2e6acb66ee091a560e69bfee61593",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.9833333333333334
+        },
+        {
+          "id": "topic",
+          "score": 0.33666666666666667
+        },
+        {
+          "id": "attack",
+          "score": 0.18000000000000002
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "attack",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "negated-policy",
+      "shortlist_sha256": "1c443cd33377bb1f22db3773bed82cc1aa871a0f7b06e767c5e0ff5b729287f8",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 1
+        },
+        {
+          "id": "unrelated",
+          "score": 0.37999999999999995
+        },
+        {
+          "id": "topic",
+          "score": 0.3333333333333333
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "topic",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "semantic-paraphrase",
+      "shortlist_sha256": "50eb7b4406921e78bb6d75736e332aa133bf6a1535bda8959cfa1e9629c7ea32",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 0.9566666666666667
+        },
+        {
+          "id": "topic",
+          "score": 0.3466666666666667
+        },
+        {
+          "id": "unrelated",
+          "score": 0
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "topic",
+          "pass": true
+        }
+      ]
+    },
+    {
+      "pool": "code-evidence",
+      "shortlist_sha256": "3532bb4b7846fc48121c3cdd932c1dfa3b25b7cc945d5e9ff17d0ff96486d34f",
+      "status": "complete",
+      "quality": {
+        "hit1": 1,
+        "hit3": 1,
+        "mrr": 1,
+        "recall3": 1
+      },
+      "scores": [
+        {
+          "id": "gold",
+          "score": 1
+        },
+        {
+          "id": "unrelated",
+          "score": 0.7266666666666667
+        },
+        {
+          "id": "topic",
+          "score": 0.25666666666666665
+        }
+      ],
+      "pair_checks": [
+        {
+          "higher": "gold",
+          "lower": "unrelated",
+          "pass": true
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "profile_id": "question-local-packed/direct-evidence",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "16dd99336cd1b15a6adcc3f30c1503b9013a9fc47b4b1643ee7bafa596cc6d8b",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/false-premise",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "7ffa17faf2a31a5fe70c56a5949bfb8437bc1c822fccd1df208508ddfb1fa972",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/partial-evidence",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "6429e901bcefc80f70aba59a846641a7245af7c1862b3723bbc01d63339d2933",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/multiple-sources",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "d70e4c3645b6bdaaa2dfbd36e07f08339decc666d375e1ca77a128be7e742dd4",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/injected-command",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "809d111464ff2311e59e743b61153aec1b061d5865e40ba23d510b1ecf60675c",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/forged-json",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "657dc3085358e7f57801173527ff2596c7199fa8c8ccc2295c80d511192aa768",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/self-rating",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "d4cb48af40efbcb6bef5238be6071a77695c6f55ed0581e4e6c713e0a2b26587",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/cross-candidate-leakage",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "fbb259b4ee1bcf237027b1ca6f4fe7538078167bf0ea710688199911d451351b",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/quoted-injection",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "d858f3e72da0e07adb8fb2b538d837711d172067117e95ddaa38324e32e03f42",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/negated-policy",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "f6fcece1d9029aaa234ec308d477c3d4ec79ddc459b4909751327565b5a64378",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/semantic-paraphrase",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "8b20213e1112708f7e908128a45139ac82aba8ee648ef4fb59b6058f44e208c9",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    },
+    {
+      "profile_id": "question-local-packed/code-evidence",
+      "sample": 0,
+      "model": "typesafe:jev-1.13.0",
+      "batch": 1,
+      "document_offset": 0,
+      "document_count": 3,
+      "request_sha256": "62ddbeb5c0603d5d0527f3ee0199c42dfd686c657686d97188ba127dd514453e",
+      "http_status": 200,
+      "response_complete": true,
+      "result_count": 3,
+      "failure": null
+    }
+  ]
+}
