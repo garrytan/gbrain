@@ -24,6 +24,7 @@ import {
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
 import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
+import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 import type { Check } from '../../doctor.ts';
 
 /** Local aliases; the shared warn-once memo lives in core so it can't fork per module. */
@@ -1161,6 +1162,7 @@ export async function checkSyncFreshness(
       last_commit: string | null;
       chunker_version: string | null;
       newest_content_at: Date | null;
+      config: unknown;
     };
     // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
     // doctorReportRemote never shells out to git on a DB-supplied local_path.
@@ -1169,13 +1171,19 @@ export async function checkSyncFreshness(
     let sources: FreshnessSourceRow[];
     try {
       sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
       );
     } catch {
       sources = await engine.executeRaw<FreshnessSourceRow>(
-        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
+        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at, config FROM sources WHERE local_path IS NOT NULL`,
       );
     }
+    // #4399: a source the operator has deliberately excluded from automatic
+    // sync (config.syncEnabled=false — already honored by performSync's
+    // choke point and the autopilot freshness dispatcher, #4952) must not
+    // be reported as a stale-source [FAIL]/[WARN] here either — it is
+    // working exactly as configured, not falling behind.
+    sources = sources.filter((s) => !isSyncDisabledConfig(s.config));
 
     if (sources.length === 0) {
       return {
