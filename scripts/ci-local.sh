@@ -191,12 +191,8 @@ echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TO
 if [ "$NO_SHARD" = "1" ]; then
   if [ "$DIFF" = "1" ]; then
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
-bash scripts/check-jsonb-pattern.sh
 bash scripts/check-bun-test-timeout.sh
-bash scripts/check-progress-to-stdout.sh
-bash scripts/check-trailing-newline.sh
-bash scripts/check-wasm-embedded.sh
-bun run typecheck
+bun run verify
 echo "[runner] serial tests (DATABASE_URL unset)"
 env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
 echo "[runner] slow tests (DATABASE_URL unset)"
@@ -218,12 +214,8 @@ else
 fi'
   else
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
-bash scripts/check-jsonb-pattern.sh
 bash scripts/check-bun-test-timeout.sh
-bash scripts/check-progress-to-stdout.sh
-bash scripts/check-trailing-newline.sh
-bash scripts/check-wasm-embedded.sh
-bun run typecheck
+bun run verify
 echo "[runner] serial tests (DATABASE_URL unset)"
 env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
 echo "[runner] slow tests (DATABASE_URL unset)"
@@ -253,12 +245,8 @@ fi'
     DIFF_E2E_PREP='> /tmp/e2e-selected.txt'
   fi
   RUN_PHASES_CMD="echo \"[runner] guards + typecheck (run once before sharding)\"
-bash scripts/check-jsonb-pattern.sh
 bash scripts/check-bun-test-timeout.sh
-bash scripts/check-progress-to-stdout.sh
-bash scripts/check-trailing-newline.sh
-bash scripts/check-wasm-embedded.sh
-bun run typecheck
+bun run verify
 echo \"[runner] serial tests (DATABASE_URL unset)\"
 env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
 echo \"[runner] slow tests (DATABASE_URL unset)\"

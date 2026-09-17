@@ -9,6 +9,17 @@ const source = readFileSync(join(import.meta.dir, '../../scripts/ci-local.sh'), 
 const templateStart = source.indexOf("INNER_CMD=$(cat <<'EOF'");
 const templateEnd = source.indexOf('\n# Conductor / git-worktree support:', templateStart);
 
+test('the CI admin build keeps container dependencies and Vite cache off the host', () => {
+  const compose = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../../docker-compose.ci.yml'), 'utf8')) as {
+    services: { runner: { volumes: string[] } };
+    volumes: Record<string, unknown>;
+  };
+  expect(compose.services.runner.volumes).toContain('gbrain-ci-admin-node-modules:/app/admin/node_modules');
+  expect(Object.hasOwn(compose.volumes, 'gbrain-ci-admin-node-modules')).toBe(true);
+  expect(compose.services.runner.volumes).toContain('gbrain-ci-admin-dist:/app/admin/dist');
+  expect(Object.hasOwn(compose.volumes, 'gbrain-ci-admin-dist')).toBe(true);
+});
+
 describe('ci-local command rendering', () => {
   const cases = [
     { phaseExit: 0, missingTool: '' },
@@ -83,7 +94,7 @@ function runPhases(noShard: boolean, diff: boolean, failStage = '') {
     put('bin/bun', `
 case "$*" in
   "run scripts/select-e2e.ts") printf '%s\\n' test/e2e/one.test.ts test/e2e/two.test.ts; exit 0 ;;
-  "run typecheck") stage=verify ;;
+  "run verify") stage=verify ;;
   "run test:serial") stage=serial ;;
   "run test:slow") stage=slow ;;
   *) exit 0 ;;
@@ -91,9 +102,6 @@ esac
 printf '%s:%s\\n' "$stage" "\${DATABASE_URL-unset}" >> "$TRACE"
 [ "$FAIL_STAGE" != "$stage" ] || exit 7
 `);
-    for (const script of ['check-jsonb-pattern.sh', 'check-progress-to-stdout.sh', 'check-trailing-newline.sh', 'check-wasm-embedded.sh']) {
-      put(`scripts/${script}`, 'exit 0');
-    }
     put('scripts/check-bun-test-timeout.sh', `
 printf 'timeout_guard:%s\\n' "\${DATABASE_URL-unset}" >> "$TRACE"
 [ "$FAIL_STAGE" != timeout_guard ] || exit 7

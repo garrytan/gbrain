@@ -14,10 +14,11 @@ export class PersistenceConsumer {
   private stopping = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private tickPromise: Promise<void> | undefined;
+  private wakeRequested = false;
   private active = new Set<Promise<void>>();
   private activeRoots = new Set<string>();
   private foregroundCounts = new Map<string, number>();
-  private recoveryRetryAfter = new Map<string, number>();
+  private rootRetryAfter = new Map<string, number>();
   private projectionWorker: Promise<unknown> | undefined;
   private effectsWorker: Promise<void> | undefined;
   private topologyWorker: Promise<unknown> | undefined;
@@ -32,13 +33,19 @@ export class PersistenceConsumer {
   }
   start(): void { this.stopping = false; this.abort = new AbortController(); this.schedule(0); }
   private schedule(ms: number): void {
-    if (this.stopping || this.timer) return;
+    if (this.stopping) return;
+    if (ms === 0 && this.tickPromise) { this.wakeRequested = true; return; }
+    if (this.timer && ms !== 0) return;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => { this.timer = undefined; void this.tick().finally(() => this.schedule(this.opts.pollMs ?? 250)); }, ms);
     this.timer.unref?.();
   }
   async tick(): Promise<void> {
     if (this.tickPromise) return this.tickPromise;
-    this.tickPromise = this.doTick().catch(error => { this.report(error); }).finally(() => { this.tickPromise = undefined; });
+    this.tickPromise = this.doTick().catch(error => { this.report(error); }).finally(() => {
+      this.tickPromise = undefined;
+      if (this.wakeRequested) { this.wakeRequested = false; this.schedule(0); }
+    });
     return this.tickPromise;
   }
   private async doTick(): Promise<void> {
@@ -60,8 +67,8 @@ export class PersistenceConsumer {
     // Recover only our owner roots. Kernel exclusion, not elapsed heartbeat,
     // proves that a previous process can no longer be publishing this root.
     const now = Date.now();
-    for (const [root, retryAt] of this.recoveryRetryAfter) if (retryAt <= now) this.recoveryRetryAfter.delete(root);
-    const excluded = [...this.activeRoots, ...this.recoveryRetryAfter.keys()];
+    for (const [root, retryAt] of this.rootRetryAfter) if (retryAt <= now) this.rootRetryAfter.delete(root);
+    const excluded = [...this.activeRoots, ...this.rootRetryAfter.keys()];
     const recovery = await this.engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
       JOIN persistence_worktrees w ON w.id=r.worktree_id
       WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
@@ -73,13 +80,13 @@ export class PersistenceConsumer {
       // Always skip at least the next scheduled poll for an unresolved root.
       // This preserves its FIFO head while allowing the next root into LIMIT 16.
       const delay = Math.max(1000, (this.opts.pollMs ?? 250) * 2);
-      this.recoveryRetryAfter.set(root, Date.now() + delay);
+      this.rootRetryAfter.set(root, Date.now() + delay);
       try {
         const recovered = await recoverPublication(this.engine, row.id, this.hostId);
-        if (!recovered.recovery) this.recoveryRetryAfter.delete(root);
-        else if (recovered.blocked_reason === 'unexpected_file_bytes') this.recoveryRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+        if (!recovered.recovery) this.rootRetryAfter.delete(root);
+        else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
       } catch (error) {
-        this.recoveryRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+        this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
         this.report(error);
       }
     }
@@ -92,7 +99,7 @@ export class PersistenceConsumer {
       return;
     }
     const concurrency = this.opts.concurrency ?? 2;
-    const attemptedRoots = new Set(this.activeRoots);
+    const attemptedRoots = new Set([...this.activeRoots, ...this.rootRetryAfter.keys()]);
     while (!this.stopping && this.active.size < concurrency) {
       const row = await claimNextWrite(this.engine, this.hostId, 30_000, [...attemptedRoots]);
       if (!row) break;
@@ -100,8 +107,10 @@ export class PersistenceConsumer {
       attemptedRoots.add(key);
       if (this.activeRoots.has(key)) { await releaseUnpublishedClaim(this.engine, row, 'writer_busy'); break; }
       this.activeRoots.add(key);
-      const task = this.execute(row).catch(error => this.report(error)).finally(() => {
-        this.active.delete(task); this.activeRoots.delete(key); this.schedule(0);
+      let progressed = false;
+      const task = this.execute(row).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
+        if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
+        this.active.delete(task); this.activeRoots.delete(key); this.schedule(progressed ? 0 : this.opts.pollMs ?? 250);
       });
       this.active.add(task);
     }
@@ -117,7 +126,7 @@ export class PersistenceConsumer {
     if (this.opts.onError) this.opts.onError(error);
     else process.stderr.write('[persistence] Consumer paused after a storage error; inspect writer status.\n');
   }
-  private async execute(row: WriteRequest): Promise<void> {
+  private async execute(row: WriteRequest): Promise<boolean> {
     let renewing: Promise<unknown> | undefined;
     let claimLive = true;
     let closed = false;
@@ -129,15 +138,18 @@ export class PersistenceConsumer {
     interval.unref?.();
     try {
       const prepared = await this.prepare(this.engine, row, this.config);
-      if (!claimLive || this.stopping) { await releaseUnpublishedClaim(this.engine, row, 'consumer_stopping'); return; }
+      if (!claimLive || this.stopping) { await releaseUnpublishedClaim(this.engine, row, 'consumer_stopping'); return false; }
       const done = await publishMutation(this.engine, row, prepared, this.hostId);
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }
+      return isTerminal(done);
     } catch (error) {
       const current = await getWriteRequestById(this.engine, row.id);
-      if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) await finishUnpublishedFailure(this.engine, current, error);
-      else throw error;
+      if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) {
+        return isTerminal(await finishUnpublishedFailure(this.engine, current, error));
+      }
+      throw error;
     } finally { closed = true; clearInterval(interval); await renewing; }
   }
   /** Mandatory barrier: engine.close must be sequenced AFTER this promise. */

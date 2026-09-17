@@ -41,7 +41,10 @@ Three ways to actually gate on types:
 1. `bun run verify` — runs the shell guard checks (privacy, jsonb, source-id,
    progress-to-stdout, …) plus `bun run typecheck` in parallel
    (`scripts/run-verify-parallel.sh`). Use this mid-branch.
-2. `bun run typecheck` — `tsc --noEmit` standalone. Fast (~5s on this repo).
+2. `bun run typecheck` — standalone TypeScript checking with native incremental
+   analysis in ignored `node_modules/.cache/gbrain-typecheck.tsbuildinfo`. Cold
+   checks still analyze the whole project; repeated checks reuse compiler state
+   while retaining input invalidation and diagnostics. See [Testing](TESTING.md).
 3. `bun run ci:local` — the full local CI gate from Path A.
 
 The trap is: writing a new test, running `bun test test/foo.test.ts`,
