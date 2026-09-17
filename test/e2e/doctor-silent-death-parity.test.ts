@@ -94,7 +94,7 @@ describe('wrong-root import produces content_hash_duplicates (#2250, PGLite)', (
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
     expect(c.message).toContain('widget-co <-> projects/widget-co');
-    expect(c.message).toContain('gbrain pages delete <bare-slug>');
+    expect(c.message).toContain('gbrain delete <bare-slug>');
     expect(c.message).toContain('gbrain pages purge-deleted --older-than 0');
     expect((c.details as any).pair_count).toBe(2);
   });

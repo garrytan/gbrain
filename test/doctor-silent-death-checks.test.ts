@@ -86,9 +86,30 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
-    expect(c.message).toContain('gbrain pages delete <bare-slug>');
+    expect(c.message).toContain('gbrain delete <bare-slug>');
     expect(c.message).toContain('gbrain pages purge-deleted --older-than 0');
     expect((c.details as any).pair_count).toBe(1);
+  });
+
+  // IRON-RULE regression: the remediation must name a verb that DISPATCHES.
+  // Pre-fix it read `gbrain pages delete <bare-slug>`, but `pages` is a
+  // CLI_ONLY command with exactly one subcommand (`purge-deleted`), so step 1
+  // exited 2 with `Unknown subcommand: delete`. Step 2 then had nothing
+  // soft-deleted to purge, so an operator who followed the advice to the
+  // letter saw the warn survive both commands. The canonical soft-delete verb
+  // is `gbrain delete` (delete_page's cliHints name). Behavioral on the
+  // rendered message, not on source text, so the explanatory comment in
+  // extraction-sync.ts naming the stale form cannot trip it. Same shape as the
+  // graph_coverage stale-verb guard (#376 / #536).
+  test('remediation names a verb that dispatches, not a `pages` subcommand that does not exist', async () => {
+    await addPage('people/alice-example', { hash: 'same' });
+    await addPage('alice-example', { hash: 'same' });
+    const c = await checkContentHashDuplicates(engine);
+    expect(c.message).toContain('gbrain delete <bare-slug>');
+    // Every `gbrain pages <sub>` the message names must be a real subcommand
+    // of runPages — today that set is exactly {purge-deleted}.
+    const pagesSubs = [...String(c.message).matchAll(/gbrain pages ([a-z-]+)/g)].map(m => m[1]);
+    expect(pagesSubs).toEqual(['purge-deleted']);
   });
 
   test('multiple wrong-root pairs all counted', async () => {
@@ -111,7 +132,7 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('people/alice-example == archive/people/alice-example');
-    expect(c.message).not.toContain('gbrain pages delete');
+    expect(c.message).not.toContain('gbrain delete');
     expect((c.details as any).pair_count).toBe(0);
     expect((c.details as any).distinct_slug_group_count).toBe(1);
   });
@@ -122,7 +143,7 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-copy == alice-example');
-    expect(c.message).not.toContain('gbrain pages delete');
+    expect(c.message).not.toContain('gbrain delete');
     expect((c.details as any).pair_count).toBe(0);
     expect((c.details as any).distinct_slug_group_count).toBe(1);
   });
@@ -135,7 +156,7 @@ describe('content_hash_duplicates (#2250)', () => {
     const c = await checkContentHashDuplicates(engine);
     expect(c.status).toBe('warn');
     expect(c.message).toContain('alice-example <-> people/alice-example');
-    expect(c.message).toContain('gbrain pages delete <bare-slug>');
+    expect(c.message).toContain('gbrain delete <bare-slug>');
     expect(c.message).toContain('notes/dup-a == archive/dup-a');
     expect((c.details as any).pair_count).toBe(1);
     expect((c.details as any).distinct_slug_group_count).toBe(1);
