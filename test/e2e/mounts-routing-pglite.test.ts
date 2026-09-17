@@ -280,7 +280,7 @@ describe('mounts routing journey (e2e, PGLite, real CLI spawns)', () => {
     // back to host (connectMountEngine → BrainRegistry → UnknownBrainError).
     const explicit = await gbrain(['--brain', 'mount-a', 'get', SLUG]);
     expect(explicit.exitCode).not.toBe(0);
-    expect(explicit.stdout + explicit.stderr).toMatch(/Unknown brain/i);
+    expect(explicit.stdout + explicit.stderr).toContain("Brain 'mount-a' is not an enabled mount");
     expect(explicit.stdout).not.toContain(HOST_MARKER);
 
     // Re-enable → the prefix tier routes to the mount again.

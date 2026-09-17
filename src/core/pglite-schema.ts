@@ -1,3 +1,8 @@
+import { PERSISTENCE_SCHEMA_STATEMENTS } from './persistence/schema.ts';
+import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
+import { PAGE_PROJECTION_SCHEMA_SQL } from './page-state/projection-schema.ts';
+import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
+import { PAGE_STATE_SCHEMA_SQL } from './page-state/schema.ts';
 /**
  * PGLite schema — derived from schema-embedded.ts (Postgres schema).
  *
@@ -58,8 +63,10 @@ CREATE TABLE IF NOT EXISTS sources (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Avoid firing managed BEFORE INSERT guards for an existing seed on restart.
 INSERT INTO sources (id, name, config)
-  VALUES ('default', 'default', '{"federated": true}'::jsonb)
+  SELECT 'default', 'default', '{"federated": true}'::jsonb
+  WHERE NOT EXISTS (SELECT 1 FROM sources WHERE id = 'default')
   ON CONFLICT (id) DO NOTHING;
 
 -- v0.40 Federated Sync v2: partial expression index on config->>'github_repo'
@@ -656,6 +663,7 @@ CREATE TABLE IF NOT EXISTS gbrain_cycle_locks (
   last_refreshed_at  TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_cycle_locks_ttl ON gbrain_cycle_locks(ttl_expires_at);
+${LEASE_TOKEN_SCHEMA_SQL}
 
 -- Eval capture (v0.25.0). PGLite ignores RLS — see src/schema.sql for the
 -- cross-engine spec.
@@ -1204,7 +1212,7 @@ $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
 CREATE TRIGGER trg_pages_search_vector
-  BEFORE INSERT OR UPDATE ON pages
+  BEFORE INSERT OR UPDATE OF title,timeline ON pages
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector();
 
@@ -1251,6 +1259,11 @@ CREATE INDEX IF NOT EXISTS page_aliases_lookup_idx
   ON page_aliases (source_id, alias_norm);
 CREATE INDEX IF NOT EXISTS page_aliases_slug_idx
   ON page_aliases (source_id, slug);
+${PAGE_STATE_SCHEMA_SQL}
+${PERSISTENCE_SCHEMA_STATEMENTS.join(';\n')};
+${PAGE_PROJECTION_SCHEMA_SQL}
+${PERSISTENCE_TOPOLOGY_SCHEMA_SQL}
+
 `;
 
 /**

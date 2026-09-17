@@ -284,7 +284,7 @@ describe('passing', () => {
 
     const bin = join(FROOT, 'bin');
     mkdirSync(bin);
-    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'bun']) {
+    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'tee', 'bun']) {
       const p = Bun.which(tool);
       if (p) symlinkSync(p, join(bin, tool));
     }
@@ -551,7 +551,7 @@ describe('hanging', () => { it('sleeps past the shard cap', async () => { await 
     // so the fallback branch executes even on hosts with coreutils.
     const bin = join(WROOT, 'bin');
     mkdirSync(bin);
-    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'touch', 'stat', 'bun']) {
+    for (const tool of ['bash', 'sh', 'env', 'dirname', 'basename', 'mktemp', 'date', 'sleep', 'cat', 'tail', 'head', 'rm', 'mkdir', 'pkill', 'grep', 'sed', 'awk', 'wc', 'tr', 'seq', 'find', 'sort', 'touch', 'stat', 'tee', 'bun']) {
       const p = Bun.which(tool);
       if (p) symlinkSync(p, join(bin, tool));
     }

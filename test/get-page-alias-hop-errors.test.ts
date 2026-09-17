@@ -1,15 +1,4 @@
-/**
- * get_page alias hop (#4275) — error propagation.
- *
- * The alias redirect runs only on an exact-read miss. Both engines already
- * return null from resolveSlugWithAliasDetailed on a pre-v104 brain (no
- * slug_aliases table — isUndefinedTableError), so the op layer must NOT wrap
- * the hop in a bare catch: that swallowed connection resets / timeouts and
- * degraded a transport failure into a confident `page_not_found` (or a fuzzy
- * guess). A rejecting alias lookup must reject get_page.
- *
- * Real PGLite engine behind a Proxy that fails only the alias lookup.
- */
+/** Coherent exact/alias snapshot failures propagate instead of becoming false misses. */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
@@ -43,7 +32,7 @@ afterAll(async () => {
 function failingAliasEngine(err: Error): PGLiteEngine {
   return new Proxy(engine, {
     get(target, prop) {
-      if (prop === 'resolveSlugWithAliasDetailed') {
+      if (prop === 'readPageSnapshot') {
         return async () => {
           throw err;
         };
@@ -89,22 +78,20 @@ describe('get_page alias hop error propagation', () => {
     ).rejects.toThrow('Connection terminated unexpectedly');
   });
 
-  test('a missing slug_aliases table (pre-v104 brain) still degrades gracefully to page_not_found', async () => {
-    // The ENGINE owns this tolerance (interface contract: null when the table
-    // predates v104) — a real pre-v104 shape, not a stub that throws.
+  test('a missing snapshot dependency reports a schema error instead of a false missing page', async () => {
+    // Snapshot reads require their migrated dependencies. Do not hide a
+    // damaged or unmigrated schema as a confident page-not-found result.
     let caught: unknown = null;
     try {
       await get_page.handler(ctxOf(preV104), { slug: 'people/retired-slug' });
     } catch (e) {
       caught = e;
     }
-    expect(caught instanceof OperationError).toBe(true);
-    expect((caught as OperationError).code).toBe('page_not_found');
+    expect((caught as {code:string}).code).toBe('42P01');
   });
 
-  test('a live page at the requested slug never consults the alias table (exact read wins)', async () => {
-    const eng = failingAliasEngine(new Error('must not be called'));
-    const r = (await get_page.handler(ctxOf(eng), { slug: 'people/alice-example' })) as { slug: string };
+  test('a live page resolves through the coherent snapshot (exact read wins)', async () => {
+    const r = (await get_page.handler(ctxOf(engine), { slug: 'people/alice-example' })) as { slug: string };
     expect(r.slug).toBe('people/alice-example');
   });
 });

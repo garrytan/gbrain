@@ -118,7 +118,7 @@ describe('forget survives the extract_facts reconcile (#4696)', () => {
     const imp = await importFromContent(engine, SLUG, struck, { noEmbed: true, sourceId: 'default' });
     expect(imp.status).toBe('imported');
     const chunks = await engine.getChunks(SLUG, { sourceId: 'default', requireSafeChunks: true });
-    expect(chunks.map((c) => c.chunk_text).join('\n')).toContain('~~Founded acme-example~~');
+    expect(chunks.map((c) => c.chunk_text).join('\n')).not.toContain('Founded acme-example');
   });
 
   test('legacy path (file gone): the DB body is struck, so the reconcile is a no-op', async () => {
@@ -170,7 +170,9 @@ describe('forget DB-body mirror — hash + lock discipline (wave review)', () =>
       const r = await forgetFactInFence(engine, id, { reason: 'test' });
       expect(r).toMatchObject({ ok: true, path: 'legacy_db' }); // the facts row still expires
       const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
-      expect(page.compiled_truth).not.toContain('~~'); // strike waited on the lock and gave up
+      expect(page.compiled_truth).toContain('~~Founded acme-example~~'); // Logical withdrawal reads are coherent while the physical mirror waits.
+      const [stored] = await engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE slug=$1 AND source_id=$2', [SLUG, 'default']);
+      expect(stored.compiled_truth).not.toContain('~~'); // The legacy mirror still honored the held lock.
     } finally {
       await handle!.release();
     }
@@ -200,7 +202,7 @@ describe('withdrawal survives stale imports and derived-index rebuilds', () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every(r => r.expired_at !== null)).toBe(true);
     const chunks = await engine.getChunks(renamed, { sourceId: 'default', requireSafeChunks: true });
-    expect(chunks.map(c => c.chunk_text).join('\n')).toContain('~~Founded acme-example~~');
+    expect(chunks.map(c => c.chunk_text).join('\n')).not.toContain('Founded acme-example');
     // Overlay hashing is deterministic: the same stale file is a no-op next time.
     expect((await importFromContent(engine, renamed, FILE, { noEmbed: true, sourceId: 'default' })).status).toBe('skipped');
   });

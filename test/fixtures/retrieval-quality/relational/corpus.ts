@@ -1,3 +1,4 @@
+import { installFixtureChunks } from '../../../helpers/page-projection.ts';
 /**
  * Relational benchmark corpus (v0.43).
  *
@@ -118,7 +119,7 @@ export async function seedRelationalCorpus(engine: BrainEngine): Promise<void> {
       compiled_truth: body,
       timeline: '',
     });
-    await engine.upsertChunks(slug, [{
+    await installFixtureChunks(engine, slug, [{
       chunk_index: 0,
       chunk_text: body,
       chunk_source: 'compiled_truth',

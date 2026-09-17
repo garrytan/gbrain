@@ -17,12 +17,14 @@ import { describe, test, expect } from 'bun:test';
 import {
   toRemoteMcpError,
   extractToolErrorCode,
+  extractToolErrorDetail,
   buildAbortController,
   RemoteMcpError,
   type CallRemoteToolOptions,
 } from '../src/core/mcp-client.ts';
 
 const MCP_URL = 'https://brain-host.example/mcp';
+const PENDING_WRITE = { request_id: 'd7599b95-65c2-4d54-aa4e-cb5745af90cf', state: 'queued' as const, retry_after_ms: 1000 };
 
 describe('toRemoteMcpError', () => {
   test('passes through existing RemoteMcpError unchanged', () => {
@@ -30,6 +32,13 @@ describe('toRemoteMcpError', () => {
     const out = toRemoteMcpError(original, MCP_URL);
     expect(out).toBe(original);
     expect(out.reason).toBe('auth');
+  });
+
+  test('a received write receipt survives a simultaneous transport deadline', () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    const original = new RemoteMcpError('tool_error', 'accepted', { write_request: PENDING_WRITE, write_error: 'write_pending' });
+    expect(toRemoteMcpError(original, MCP_URL, controller.signal)).toBe(original);
   });
 
   test('plain Error becomes network/unreachable', () => {
@@ -161,6 +170,30 @@ describe('extractToolErrorCode', () => {
     // "missing_scope" appears literally in the broken JSON; substring path catches it.
     const msg = '{not valid json missing_scope';
     expect(extractToolErrorCode(msg)).toBe('missing_scope');
+  });
+});
+
+describe('extractToolErrorDetail', () => {
+  test('preserves a typed pending receipt and its frozen error code', () => {
+    expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_error: 'write_pending', write_request: PENDING_WRITE })))
+      .toEqual({ code: 'unavailable', write_error: 'write_pending', write_request: PENDING_WRITE });
+  });
+
+  test('rejects malformed receipt metadata without losing the original error code', () => {
+    expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_error: 42,
+      write_request: { ...PENDING_WRITE, state: 'succeeded' } }))).toEqual({ code: 'unavailable' });
+  });
+
+  test('does not expose unknown internal journal fields', () => {
+    const parsed = extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: {
+      ...PENDING_WRITE, claim_token: 'private', payload: 'private',
+    } }));
+    expect(parsed.write_request).toEqual(PENDING_WRITE);
+  });
+
+  test('retains backward compatibility with plain text tool errors', () => {
+    expect(extractToolErrorDetail('missing scope write')).toEqual({ code: 'missing_scope' });
+    expect(extractToolErrorDetail('failed')).toEqual({});
   });
 });
 

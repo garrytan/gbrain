@@ -20,7 +20,7 @@
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
 import { privatePagesFilterFragment } from './private-visibility.ts';
-import { requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
+import { currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
 
 /**
  * Escape `%`, `_`, and `\` so a string can be used as a LIKE prefix literal.
@@ -196,7 +196,7 @@ export function buildVisibilityClause(
     ? ` AND ${privatePagesFilterFragment(pageAlias)}`
     : '';
   const chunksClause = requiresSafeChunks(opts) ? ` AND ${safeChunksFilter(pageAlias)}` : '';
-  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine}${privateClause}${chunksClause}`;
+  return `AND ${pageAlias}.deleted_at IS NULL AND ${currentTextProjectionFilter(pageAlias)} AND NOT ${sourceAlias}.archived AND ${quarantine}${privateClause}${chunksClause}`;
 }
 
 // ============================================================

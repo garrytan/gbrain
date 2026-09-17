@@ -1,3 +1,4 @@
+import { mockEmbedProjectionEngine as mockEngine, embeddingUpdates } from './helpers/embed-projection-mock.ts';
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import * as realEmbedding from '../src/core/embedding.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -60,26 +61,6 @@ const { __setEmbedTransportForTests } = await import('../src/core/ai/gateway.ts'
 __setEmbedTransportForTests(async () => ({ embeddings: [], usage: { tokens: 0 } } as any));
 
 // Proxy-based mock engine that matches test/import-file.test.ts pattern.
-function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
-  // Raw SQL the stale drain issues (the page-provenance stamp check) reads an
-  // empty result set unless a test models it — the Proxy's null default would
-  // throw on indexing and count the page as a failed embed.
-  overrides = { executeRaw: async () => [], ...overrides };
-  const calls: { method: string; args: any[] }[] = [];
-  const track = (method: string) => (...args: any[]) => {
-    calls.push({ method, args });
-    if (overrides[method]) return overrides[method](...args);
-    return Promise.resolve(null);
-  };
-  const engine = new Proxy({} as any, {
-    get(_, prop: string) {
-      if (prop === '_calls') return calls;
-      if (overrides[prop]) return overrides[prop];
-      return track(prop);
-    },
-  });
-  return engine;
-}
 
 beforeEach(() => {
   activeEmbedCalls = 0;
@@ -229,6 +210,7 @@ describe('runEmbed --all (parallel)', () => {
     const fakeLock: DbLockHandle = {
       id: 'fake-hanging-refresh',
       acquiredAt: '0',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
       release: async () => {},
       refresh: async (opts?: { signal?: AbortSignal }) => {
         refreshCalls++;
@@ -551,13 +533,12 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
         { chunk_index: 2, chunk_text: 'z', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
       ],
     };
-    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
     const engine = mockEngine({
       countStaleChunks: async () => 3,
       listStaleChunks: async () => stale,
       listPages: async () => { listPagesCalled = true; return []; },
       getChunks: async (slug: string) => fullChunks[slug] || [],
-      upsertChunks: async (slug: string, chunks: any[]) => { upsertCalls.push({ slug, chunks }); },
+      upsertChunks: async () => { throw new Error("Embedding must not replace canonical chunks"); },
     });
 
     const result = await runEmbedCore(engine, { stale: true });
@@ -569,18 +550,12 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(result.embedded).toBe(3);
     expect(result.pages_processed).toBe(2);
 
-    // page-b's upsert MUST include the fresh chunk (chunk_index=0) — otherwise
-    // it would be deleted by the upsertChunks != ALL filter. Critical regression check.
-    const pageBUpsert = upsertCalls.find(u => u.slug === 'page-b');
-    expect(pageBUpsert).toBeDefined();
-    const freshChunkInUpsert = pageBUpsert!.chunks.find((c: any) => c.chunk_index === 0);
-    expect(freshChunkInUpsert).toBeDefined();
-    // Fresh chunk has no `embedding` field (preserved via COALESCE in upsertChunks SQL).
-    expect(freshChunkInUpsert.embedding).toBeUndefined();
-    // Previously-stale chunks come through WITH a new embedding.
-    const staleChunkInUpsert = pageBUpsert!.chunks.find((c: any) => c.chunk_index === 1);
-    expect(staleChunkInUpsert.embedding).toBeDefined();
-    expect(staleChunkInUpsert.embedding).toBeInstanceOf(Float32Array);
+    const updates = embeddingUpdates(engine);
+    expect(updates).toHaveLength(3);
+    expect(updates.map((call: any) => call.args[1][5]).sort()).toEqual(['x', 'y', 'z']);
+    expect(updates.every((call: any) => JSON.parse(call.args[1][1]).length === 1536)).toBe(true);
+    expect(fullChunks['page-b'][0]).toMatchObject({ chunk_text: 'fresh', embedded_at: '2026-01-01' });
+    expect((engine as any)._calls.some((call: any) => call.method === 'upsertChunks')).toBe(false);
   });
 
   test('--stale dry-run: counts stale via countStaleChunks (no listStaleChunks call), no embedBatch or upsertChunks', async () => {
@@ -935,6 +910,8 @@ describe('#3374 — transient network retry branch', () => {
     const pageStore = new Map<string, any>();
     const tx = new Proxy({} as any, {
       get(_, prop: string) {
+        if (prop === 'getPage') return (...args: any[]) => (engine.getPage as any)(...args);
+        if (prop === 'readPageSnapshot') return (...args: any[]) => (engine.readPageSnapshot as any)(...args);
         if (prop === 'putPage') {
           return async (slug: string, page: any) => { pageStore.set(slug, page); };
         }
@@ -1148,7 +1125,7 @@ describe('runEmbed preserves code-chunk metadata across re-embed (regression for
     };
   }
 
-  test('--stale (autopilot path) carries code metadata into upsertChunks', async () => {
+  test('--stale (autopilot path) updates embeddings without rewriting code metadata', async () => {
     const stale = [{
       slug: 'code-page',
       chunk_index: 0,
@@ -1157,49 +1134,58 @@ describe('runEmbed preserves code-chunk metadata across re-embed (regression for
       model: null,
       token_count: 12,
     }];
-    let upsertChunkArgs: any[] | null = null;
+
     const engine = mockEngine({
       countStaleChunks: async () => 1,
       listStaleChunks: async () => stale,
       getChunks: async () => [fullCodeChunk],
-      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+      upsertChunks: async () => { throw new Error("Embedding must not replace canonical chunks"); },
     });
 
     await runEmbed(engine, ['--stale']);
 
-    expect(upsertChunkArgs).not.toBeNull();
-    expect(upsertChunkArgs!).toHaveLength(1);
-    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+    const updates = embeddingUpdates(engine);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].args[1][5]).toBe(fullCodeChunk.chunk_text);
+    expect(JSON.parse(updates[0].args[1][1])).toHaveLength(1536);
+    expect(metadataOf((await engine.getChunks('code-page'))[0])).toEqual(metadataOf(fullCodeChunk));
+    expect((engine as any)._calls.some((call: any) => call.method === 'upsertChunks')).toBe(false);
   });
 
-  test('--all (full re-embed) carries code metadata into upsertChunks', async () => {
-    let upsertChunkArgs: any[] | null = null;
+  test('--all (full re-embed) updates embeddings without rewriting code metadata', async () => {
+
     const engine = mockEngine({
       listPages: async () => [{ slug: 'code-page' }],
       getChunks: async () => [fullCodeChunk],
-      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+      upsertChunks: async () => { throw new Error("Embedding must not replace canonical chunks"); },
     });
 
     await runEmbed(engine, ['--all']);
 
-    expect(upsertChunkArgs).not.toBeNull();
-    expect(upsertChunkArgs!).toHaveLength(1);
-    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+    const updates = embeddingUpdates(engine);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].args[1][5]).toBe(fullCodeChunk.chunk_text);
+    expect(JSON.parse(updates[0].args[1][1])).toHaveLength(1536);
+    expect(metadataOf((await engine.getChunks('code-page'))[0])).toEqual(metadataOf(fullCodeChunk));
+    expect((engine as any)._calls.some((call: any) => call.method === 'upsertChunks')).toBe(false);
   });
 
-  test('--slugs (per-page embed) carries code metadata into upsertChunks', async () => {
-    let upsertChunkArgs: any[] | null = null;
+  test('--slugs (per-page embed) updates embeddings without rewriting code metadata', async () => {
+
     const engine = mockEngine({
       getPage: async () => ({ slug: 'code-page', compiled_truth: 'x', timeline: '' }),
       getChunks: async () => [fullCodeChunk],
-      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+      upsertChunks: async () => { throw new Error("Embedding must not replace canonical chunks"); },
     });
 
     await runEmbed(engine, ['--slugs', 'code-page']);
 
-    expect(upsertChunkArgs).not.toBeNull();
-    expect(upsertChunkArgs!).toHaveLength(1);
-    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+    const updates = embeddingUpdates(engine);
+    expect(updates).toHaveLength(1);
+    expect(updates[0].args[1][5]).toBe(fullCodeChunk.chunk_text);
+    expect(JSON.parse(updates[0].args[1][1])).toHaveLength(1536);
+    expect(metadataOf((await engine.getChunks('code-page'))[0])).toEqual(metadataOf(fullCodeChunk));
+    expect((engine as any)._calls.some((call: any) => call.method === 'upsertChunks')).toBe(false);
   });
 });
 
@@ -1488,6 +1474,7 @@ describe('#4647: heartbeat tick timeout — never-settling refresh', () => {
     const fakeLock: DbLockHandle = {
       id: 'wedged-pool-refresh',
       acquiredAt: '0',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
       release: async () => {},
       // The #4647 shape: never settles, never observes the abort signal.
       refresh: () => {

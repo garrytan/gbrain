@@ -178,10 +178,12 @@ beforeAll(async () => {
     budgetMs: 60_000,
     capabilities: KEYLESS_CAPS,
   });
-  // Session-1 sanity: the fence really reconciled in THIS connection.
-  if (report.factsReconciled < 1) {
+  // The canonical write now projects facts atomically; maintenance should
+  // preserve that row without inventing a second reconciliation event.
+  const persisted = await factsMatching(engineA, WORKSPACE_SOURCE);
+  if (persisted.length !== 1) {
     throw new Error(
-      `session 1 fence reconciliation failed (factsReconciled=${report.factsReconciled}, ` +
+      `session 1 fact projection failed (facts=${persisted.length}, factsReconciled=${report.factsReconciled}, ` +
         `skipped=${JSON.stringify(report.skipped)}) — cannot test cross-session recall`,
     );
   }

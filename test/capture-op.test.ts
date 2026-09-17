@@ -7,6 +7,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import type { AuthInfo } from '../src/core/operations.ts';
@@ -35,7 +36,8 @@ afterAll(async () => {
 describe('capture op', () => {
   test('captures a note under a stable inbox/ slug and stamps provenance server-side', async () => {
     const content = 'Decided to use PGLite as the default engine: zero-config wins.';
-    const res = await dispatchToolCall(engine, 'capture', { content }, { ...STDIO });
+    const request_id = randomUUID();
+    const res = await dispatchToolCall(engine, 'capture', { content, request_id }, { ...STDIO });
     expect(res.isError ?? false).toBe(false);
     const body = parsed(res);
     expect(body.slug).toMatch(/^inbox\/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
@@ -44,15 +46,19 @@ describe('capture op', () => {
 
     const page = await engine.getPage(body.slug);
     expect(page).toBeTruthy();
-    // CV6: remote provenance is server-stamped by the delegated put_page.
-    expect(page?.source_kind).toBe('mcp:put_page');
+    // CV6: remote provenance is frozen server-side at capture admission.
+    expect(page?.source_kind).toBe('mcp:capture');
     // Frontmatter merged as a single stamped block.
     expect(page?.frontmatter?.captured_at).toBeDefined();
 
-    // Idempotent default slug: identical normalized content → same slug.
-    const again = parsed(await dispatchToolCall(engine, 'capture', { content: `  ${content}\r\n` }, { ...STDIO }));
+    // Same-ID replay retains the accepted target and timestamp. A fresh
+    // create-only request cannot silently replace that existing target.
+    const again = parsed(await dispatchToolCall(engine, 'capture', { content, request_id }, { ...STDIO }));
     expect(again.slug).toBe(body.slug);
     expect(again.content_hash).toBe(body.content_hash);
+    const fresh = await dispatchToolCall(engine, 'capture', { content: `  ${content}\r\n` }, { ...STDIO });
+    expect(fresh.isError).toBe(true);
+    expect(parsed(fresh).write_error).toBe('revision_conflict');
   });
 
   test('type routes the default slug prefix (diary → life/diary/)', async () => {

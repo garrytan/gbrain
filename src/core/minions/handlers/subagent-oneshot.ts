@@ -31,6 +31,7 @@
  * a completed result.
  */
 
+import { retainToolWriteRequestId, assertToolWriteCommitted, isPendingToolWrite } from '../tool-write-identity.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext, SubagentHandlerData, SubagentResult, ToolDef, ContentBlock, OneshotFallbackReason } from '../types.ts';
@@ -223,11 +224,11 @@ function isAbortShaped(e: unknown): boolean {
   return isAbortError(e) || (e instanceof Error && /\babort|\btimed?[ _-]?out/i.test(e.message));
 }
 
-interface LedgerRow { tool_use_id: string; ordinal: number | null; status: string; slug: string | null; content: string | null }
+interface LedgerRow { tool_use_id: string; ordinal: number | null; status: string; slug: string | null; content: string | null; request_id: string | null }
 
 async function loadOneshotLedger(engine: BrainEngine, jobId: number): Promise<LedgerRow[]> {
   return engine.executeRaw<LedgerRow>(
-    `SELECT tool_use_id, ordinal, status, input->>'slug' AS slug, input->>'content' AS content
+    `SELECT tool_use_id, ordinal, status, input->>'slug' AS slug, input->>'content' AS content, input->>'request_id' AS request_id
        FROM subagent_tool_executions
       WHERE job_id = $1 AND tool_use_id LIKE $2
       ORDER BY id`,
@@ -255,14 +256,15 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
   const priorLedger = await loadOneshotLedger(engine, ctx.id);
   if (priorLedger.length > 0) {
     // Settle any PENDING rows first (crash between the pending bank and
-    // the settle write). The ledger stores the exact input, and put_page is
-    // an upsert, so re-executing is idempotent. Without this, a pending-only
+    // the settle write). The ledger stores the exact input and request UUID;
+    // re-executing returns the same durable receipt. Without this, a pending-only
     // ledger would finalize 'completed' with zero pages — the exact
     // completed-means-zero-pages class #4217 exists to kill (flagged
     // independently by two ship reviewers).
     for (const row of priorLedger) {
       if (row.status !== 'pending') continue;
-      const input = { slug: row.slug ?? '', content: row.content ?? '' };
+      const input = { slug: row.slug ?? '', content: row.content ?? '', ...(row.request_id ? { request_id: row.request_id } : {}) };
+      retainToolWriteRequestId(input, ctx.id, 1, row.ordinal ?? 0, row.tool_use_id, 'brain_put_page');
       if (!args.putPageTool || !input.slug || !input.content) {
         await persistToolExecFailed(engine, ctx.id, 1, row.ordinal ?? 0, row.tool_use_id, 'brain_put_page', input,
           'oneshot recovery: pending write could not be re-executed (missing tool or ledger input)');
@@ -271,6 +273,7 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
       }
       try {
         const output = await args.putPageTool.execute(input, { engine, jobId: ctx.id, remote: true, signal: ctx.signal });
+        assertToolWriteCommitted(output, 'brain_put_page');
         await persistToolExecComplete(engine, ctx.id, 1, row.ordinal ?? 0, row.tool_use_id, output);
         row.status = 'complete';
       } catch (e) {
@@ -278,7 +281,7 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
         // errors are NOT write verdicts — rethrow and leave the row pending
         // so the next retry re-executes it, instead of freezing a permanent
         // 'failed' that could dead-letter perfectly writable content.
-        if (ctx.signal?.aborted || isAbortError(e) || isRetryableConnError(e)) throw e;
+        if (ctx.signal?.aborted || isAbortError(e) || isRetryableConnError(e) || isPendingToolWrite(e)) throw e;
         await persistToolExecFailed(engine, ctx.id, 1, row.ordinal ?? 0, row.tool_use_id, 'brain_put_page', input,
           e instanceof Error ? e.message : String(e));
         row.status = 'failed';
@@ -510,7 +513,10 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
     // frontmatter was stripped at parse time (R3-1), so no body can smuggle
     // its own keys past normalization.
     const content = serializeMarkdown({}, page.body, '', { type: page.type as PageType, title: page.title, tags: [] });
-    return { toolUseId: `${ONESHOT_TOOL_USE_ID_PREFIX}${inv8}-p${i}`, input: { slug: page.slug, content } };
+    const toolUseId = `${ONESHOT_TOOL_USE_ID_PREFIX}${inv8}-p${i}`;
+    const input = { slug: page.slug, content };
+    retainToolWriteRequestId(input, ctx.id, 1, i, toolUseId, 'brain_put_page');
+    return { toolUseId, input };
   });
   // Bank the WHOLE batch as pending in ONE transaction BEFORE the first
   // write executes. Interleaved pending/execute would let a crash mid-batch
@@ -550,10 +556,11 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
         remote: true,
         signal: ctx.signal,
       });
+      assertToolWriteCommitted(output, 'brain_put_page');
     } catch (e) {
       // Abort/transient-conn errors are not write verdicts (same rule as
       // recovery): rethrow, row stays pending, retry re-executes.
-      if (ctx.signal?.aborted || isAbortError(e) || isRetryableConnError(e)) throw e;
+      if (ctx.signal?.aborted || isAbortError(e) || isRetryableConnError(e) || isPendingToolWrite(e)) throw e;
       const msg = e instanceof Error ? e.message : String(e);
       await persistToolExecFailed(engine, ctx.id, 1, i, toolUseId, 'brain_put_page', input, msg);
       writtenRefs.push({ slug: page.slug, status: 'failed' });

@@ -22,6 +22,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput, EvalCandidateInput } from '../../src/core/types.ts';
 import { buildBaselineFromInput } from '../../src/commands/bench-publish.ts';
@@ -99,7 +100,7 @@ beforeAll(async () => {
     compiled_truth: 'Alice is a fintech founder building payments infrastructure for emerging markets.',
     timeline: '2026-01-15: Met Alice at example meetup.',
   });
-  await engine.upsertChunks('people/alice-example', [
+  await installFixtureChunks(engine, 'people/alice-example', [
     {
       chunk_index: 0,
       chunk_text: 'Alice is a fintech founder building payments infrastructure for emerging markets.',
@@ -115,7 +116,7 @@ beforeAll(async () => {
     compiled_truth: 'Bob is an AI safety researcher working on alignment.',
     timeline: '2026-02-10: Bob shared alignment paper.',
   });
-  await engine.upsertChunks('people/bob-example', [
+  await installFixtureChunks(engine, 'people/bob-example', [
     {
       chunk_index: 0,
       chunk_text: 'Bob is an AI safety researcher working on alignment.',
@@ -131,7 +132,7 @@ beforeAll(async () => {
     compiled_truth: 'Widget Co manufactures industrial widgets for healthcare verticals.',
     timeline: '2026-03-01: Widget Co announced Series A.',
   });
-  await engine.upsertChunks('companies/widget-co-example', [
+  await installFixtureChunks(engine, 'companies/widget-co-example', [
     {
       chunk_index: 0,
       chunk_text: 'Widget Co manufactures industrial widgets for healthcare verticals.',

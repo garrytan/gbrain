@@ -9,8 +9,8 @@
 # the runner container, each pinned to its own postgres shard for the
 # downstream E2E phase.
 #
-# Sequential bun processes within a shard (one bun test invocation with the
-# shard's file list); parallel across shards (4 of these run concurrently).
+# One Bun process per file within a shard;
+# parallel across shards (4 of these run concurrently).
 
 set -euo pipefail
 
@@ -93,7 +93,70 @@ fi
 TEST_TIMEOUT_MS=$((60000 * MULT))
 
 echo "[unit-shard ${RUNNER_SHARD:-(unsharded)}] running ${#files[@]} files (timeout=${TEST_TIMEOUT_MS}ms)"
-if [ -n "$MAX_CONC" ]; then
-  exec bun test --max-concurrency="$MAX_CONC" --timeout="$TEST_TIMEOUT_MS" "${files[@]}"
-fi
-exec bun test --timeout="$TEST_TIMEOUT_MS" "${files[@]}"
+# Do not retain runtime/module state across file boundaries. Keep the existing
+# worker count and attempt every selected file after ordinary failures.
+GROUP_SIZE=1
+GROUPS_TOTAL=$(( (${#files[@]} + GROUP_SIZE - 1) / GROUP_SIZE ))
+GROUP_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gbrain-unit-groups.XXXXXX")
+trap 'rm -rf "$GROUP_LOG_DIR"' EXIT
+TEST_ARGS=(test)
+[ -z "$MAX_CONC" ] || TEST_ARGS+=("--max-concurrency=$MAX_CONC")
+TEST_ARGS+=("--timeout=$TEST_TIMEOUT_MS")
+TOTAL_RC=0
+TOTAL_PASS=0
+TOTAL_FAIL=0
+TOTAL_SKIP=0
+COMPLETE_GROUPS=0
+ESC=$(printf '\033')
+for ((offset=0, group=1; offset<${#files[@]}; offset+=GROUP_SIZE, group++)); do
+  group_files=("${files[@]:offset:GROUP_SIZE}")
+  log="$GROUP_LOG_DIR/$group.log"
+  printf '%s\n' "${group_files[@]}" > "$GROUP_LOG_DIR/$group.assigned"
+  echo "__gbrain_unit_group_start__ group=$group/$GROUPS_TOTAL files=${#group_files[@]}"
+  set +e
+  bun "${TEST_ARGS[@]}" "${group_files[@]}" 2>&1 | tee "$log"
+  statuses=("${PIPESTATUS[@]}")
+  set -e
+  bun_rc=${statuses[0]}
+  tee_rc=${statuses[1]}
+  sed "s/${ESC}\\[[0-9;]*[a-zA-Z]//g" "$log" > "$GROUP_LOG_DIR/$group.clean"
+  # Child tests can print their own Bun summaries. Use the final block, require
+  # its exact selected-file count, and independently check every file header.
+  read -r summary_ok pass_count fail_count skip_count missing_count < <(awk '
+    FNR == NR { expected[$0] = 1; selected++; next }
+    {
+      header = $0; sub(/^::group::/, "", header); sub(/:$/, "", header)
+      if (header in expected) seen[header] = 1
+    }
+    $1 ~ /^[0-9]+$/ && $2 == "pass" { p = $1; have_p = 1 }
+    $1 ~ /^[0-9]+$/ && $2 == "fail" { f = $1; have_f = 1 }
+    $1 ~ /^[0-9]+$/ && $2 == "skip" { s = $1 }
+    /^Ran [0-9]+ tests? across [0-9]+ files?\./ {
+      valid = have_p && have_f && $5 == selected
+      last_p = p; last_f = f; last_s = s
+      p = f = s = have_p = have_f = 0
+    }
+    END {
+      for (file in expected) if (!(file in seen)) missing++
+      ok = valid && !missing
+      print ok + 0, ok ? last_p + 0 : 0, ok ? last_f + 0 : 0, ok ? last_s + 0 : 0, missing + 0
+    }
+  ' "$GROUP_LOG_DIR/$group.assigned" "$GROUP_LOG_DIR/$group.clean")
+  group_rc=0
+  if [ "$bun_rc" -ne 0 ] || [ "$tee_rc" -ne 0 ] || [ "$summary_ok" -ne 1 ] || [ "$fail_count" -ne 0 ]; then
+    group_rc=1
+    TOTAL_RC=1
+  fi
+  if [ "$summary_ok" -eq 1 ]; then
+    COMPLETE_GROUPS=$((COMPLETE_GROUPS + 1))
+    TOTAL_PASS=$((TOTAL_PASS + pass_count))
+    TOTAL_FAIL=$((TOTAL_FAIL + fail_count))
+    TOTAL_SKIP=$((TOTAL_SKIP + skip_count))
+  else
+    echo "[unit-shard] group $group/$GROUPS_TOTAL incomplete: missing or mismatched Bun summary/file census; missing_headers=$missing_count" >&2
+  fi
+  echo "__gbrain_unit_group__ group=$group/$GROUPS_TOTAL files=${#group_files[@]} bun_rc=$bun_rc tee_rc=$tee_rc complete=$summary_ok pass=$pass_count fail=$fail_count skip=$skip_count rc=$group_rc"
+done
+# Distinct from native Bun summary syntax: consumers must not count these twice.
+echo "__gbrain_unit_shard__ groups=$GROUPS_TOTAL complete_groups=$COMPLETE_GROUPS files=${#files[@]} pass=$TOTAL_PASS fail=$TOTAL_FAIL skip=$TOTAL_SKIP rc=$TOTAL_RC"
+exit "$TOTAL_RC"

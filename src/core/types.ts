@@ -91,6 +91,12 @@ export interface Page {
   timeline: string;
   frontmatter: Record<string, unknown>;
   content_hash?: string;
+  /** Source-relative canonical file identity; snapshot reads expose it for guarded import comparisons. */
+  source_path?: string | null;
+  /** Opaque canonical state; independent of indexing and telemetry updates. */
+  knowledge_revision?: string;
+  /** Revision whose text/search chunks have been atomically installed. */
+  text_projection_revision?: string | null;
   /** v0.29 — deterministic 0..1 score; populated by the recompute_emotional_weight cycle phase. */
   emotional_weight?: number;
   created_at: Date;
@@ -166,8 +172,6 @@ export interface Page {
   ingested_via?: string | null;
   /** Server-stamped first-write audit timestamp; CV12 COALESCE-preserved across edits. */
   ingested_at?: Date | null;
-  /** Repo-relative import path (see PageInput.source_path); projected by getPage so the import skip path can compare before writing. */
-  source_path?: string | null;
   /**
    * v0.40.3.0 (renumbered from v0.40.3.0 v81 to v90 on master merge):
    * which contextual retrieval tier the page was last embedded under. One
@@ -1645,14 +1649,7 @@ export interface RawData {
   fetched_at: Date;
 }
 
-// Versions
-export interface PageVersion {
-  id: number;
-  page_id: number;
-  compiled_truth: string;
-  frontmatter: Record<string, unknown>;
-  snapshot_at: Date;
-}
+export type { PageVersion } from './page-state/version-types.ts';
 
 // Stats + Health
 export interface BrainStats {

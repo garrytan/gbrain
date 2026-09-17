@@ -1782,18 +1782,13 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
 
 // ── Dispatcher ──────────────────────────────────────────────
 
-// v0.40.6.0: my duplicate `runStatus` (line ~895 pre-resolution) was
-// removed during the v0.40.5 merge. Master's source-health.ts-backed
-// runStatus at line ~582 is a strict superset (adds lag / embed coverage
-// / failed-job count / queue depth columns). The `buildSyncStatusReport`
-// + `printSyncStatusReport` exports from src/commands/sync.ts remain
-// available as a library API for callers who want the v0.40.6.0-specific
-// shape (used by test/e2e/sync-status-pglite.test.ts as the IRON RULE
-// regression).
-
 export async function runSources(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
+  if (sub === 'writer') {
+    const { runPersistenceAdminCli } = await import('./persistence-admin.ts');
+    return runPersistenceAdminCli('writer', rest, engine);
+  }
 
   // Help guards run BEFORE the subcommand switch below (mirrors jobs.ts
   // src/commands/jobs.ts:462-471 — help checked first-position, then any
@@ -1825,6 +1820,10 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     return;
   }
 
+  if (['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(sub)) {
+    const { runConnectedSourceLifecycle } = await import('./sources-lifecycle.ts');
+    if (await runConnectedSourceLifecycle(engine, args)) return;
+  }
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
     case 'list':       return runList(engine, rest);
@@ -1879,6 +1878,7 @@ Subcommands:
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.
+  writer status|claim|activate|transfer  Inspect, activate or transfer canonical ownership (see writer --help).
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
                                     Shows impact preview. Requires --confirm-destructive

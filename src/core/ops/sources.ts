@@ -105,6 +105,8 @@ const sources_add: Operation = {
   scope: 'sources_admin',
   handler: async (ctx, p) => {
     const { addSource } = await import('../sources-ops.ts');
+    if(ctx.remote!==false&&await (await import('../persistence/ownership.ts')).managedPersistenceEnabled(ctx.engine))
+      throw new OperationError('writer_coordinator_required','Managed source lifecycle requires the verified owner CLI. An ordinary MCP grant does not confer owner administration authority.');
 
     // v0.28.1 codex finding (CRITICAL + HIGH): a `sources_admin` token over
     // HTTP MCP must not be able to plant content at arbitrary host paths.
@@ -223,6 +225,8 @@ const sources_remove: Operation = {
     // local CLI passes. sources_status keeps the READ helper.
     assertSourceInCallerWriteScope(ctx, p.id as string);
     const { removeSource } = await import('../sources-ops.ts');
+    if(ctx.remote!==false&&await (await import('../persistence/ownership.ts')).managedPersistenceEnabled(ctx.engine))
+      throw new OperationError('writer_coordinator_required','Managed source lifecycle requires the verified owner CLI. An ordinary MCP grant does not confer owner administration authority.');
     return removeSource(ctx.engine, {
       id: p.id as string,
       confirmDestructive: (p.confirm_destructive as boolean) === true,

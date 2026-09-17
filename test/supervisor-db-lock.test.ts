@@ -25,6 +25,7 @@ function snap(over: Partial<LockSnapshot>): LockSnapshot {
     id: 'gbrain-supervisor:default',
     holder_pid: 4242,
     holder_host: 'box',
+    acquisition_token: '00000000-0000-4000-8000-000000000001',
     acquired_at: new Date(),
     ttl_expires_at: new Date(),
     age_ms: 1000,
@@ -217,6 +218,7 @@ describe('#1849 refresh-failure fails safe (F1A)', () => {
     const failingLock: DbLockHandle = {
       id: 'x',
       acquiredAt: 'test-fence',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
       refresh: async () => { refreshCalls++; throw new Error('pooler down'); },
       release: async () => {},
     };
@@ -246,6 +248,7 @@ describe('#1849 refresh-failure fails safe (F1A)', () => {
     const flakyLock: DbLockHandle = {
       id: 'x',
       acquiredAt: 'test-fence',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
       refresh: async () => { if (mode === 'fail') throw new Error('blip'); return true; },
       release: async () => {},
     };
@@ -277,6 +280,7 @@ describe('#1849 refresh-failure fails safe (F1A)', () => {
     const stolenLock: DbLockHandle = {
       id: 'x',
       acquiredAt: 'test-fence',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
       refresh: async () => { refreshCalls++; return false; },
       release: async () => {},
     };

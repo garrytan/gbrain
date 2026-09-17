@@ -1,3 +1,5 @@
+import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 /**
  * Takes + think operation cluster — pure move from operations.ts (v0.46.x
  * tranche 1). Op consts stay module-private; `takesOperations` below lists
@@ -391,6 +393,8 @@ const takes_add: Operation = {
     'canonical) and mirrors to the DB. Remote callers can only write holders in their ' +
     'allow-list (stdio default: world).',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
+    local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug to attach the take to (page must exist).' },
     claim: { type: 'string', required: true, description: 'The claim text (one line).' },
     kind: { type: 'string', required: true, enum: [...TAKE_KINDS], description: 'Claim type. Base kinds only; pack-extended kinds are a filed follow-up.' },
@@ -407,23 +411,7 @@ const takes_add: Operation = {
     enforceClientSlugFence(ctx, slug, 'takes_add');
     validatePageSlug(slug); // defense-in-depth, matching put_page
     if (ctx.dryRun) return { dry_run: true, action: 'takes_add', slug };
-    const brainDir = await opBrainDir(ctx);
-    try {
-      const { rowNum, mirror } = await addTakeToPage(
-        { engine: ctx.engine, slug, brainDir, sourceId: ctx.sourceId, allowList: takesWriteAllowList(ctx), lockTimeoutMs: OP_LOCK_TIMEOUT_MS },
-        {
-          claim: p.claim as string,
-          kind: p.kind as string,
-          holder: p.holder as string,
-          weight: p.weight as number | undefined,
-          source: p.source as string | undefined,
-          sinceDate: p.since as string | undefined,
-        },
-      );
-      return { slug, row_num: rowNum, holder: p.holder, mirror_written: true, ...mirrorWarnFields(mirror) };
-    } catch (err) {
-      mapTakesWriteError(err);
-    }
+    return submitPageMutation(ctx, { operation: 'takes_add', params: p });
   },
 };
 
@@ -435,6 +423,8 @@ const takes_update: Operation = {
     'page\'s takes fence. Remote callers can only touch rows whose holder is in their ' +
     'allow-list; other rows present as not_found.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
+    local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug.' },
     row_num: { type: 'number', required: true, description: 'Take row number on the page (from takes_list).' },
     weight: { type: 'number', required: false, description: 'New confidence 0..1.' },
@@ -449,21 +439,7 @@ const takes_update: Operation = {
     enforceClientSlugFence(ctx, slug, 'takes_update');
     validatePageSlug(slug); // defense-in-depth, matching put_page
     if (ctx.dryRun) return { dry_run: true, action: 'takes_update', slug, row_num: p.row_num };
-    const brainDir = await opBrainDir(ctx);
-    try {
-      const { rowNum, mirror } = await updateTakeOnPage(
-        { engine: ctx.engine, slug, brainDir, sourceId: ctx.sourceId, allowList: takesWriteAllowList(ctx), lockTimeoutMs: OP_LOCK_TIMEOUT_MS },
-        p.row_num as number,
-        {
-          weight: p.weight as number | undefined,
-          source: p.source as string | undefined,
-          sinceDate: p.since as string | undefined,
-        },
-      );
-      return { slug, row_num: rowNum, updated: true, ...mirrorWarnFields(mirror) };
-    } catch (err) {
-      mapTakesWriteError(err);
-    }
+    return submitPageMutation(ctx, { operation: 'takes_update', params: p });
   },
 };
 
@@ -475,6 +451,8 @@ const takes_supersede: Operation = {
     'from the target row unless overridden; unset weight decays the target\'s by 0.1. ' +
     'Markdown-canonical; remote holder fencing as in takes_update.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
+    local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug.' },
     row_num: { type: 'number', required: true, description: 'Row number of the take being superseded.' },
     claim: { type: 'string', required: true, description: 'The replacement claim text.' },
@@ -492,24 +470,7 @@ const takes_supersede: Operation = {
     enforceClientSlugFence(ctx, slug, 'takes_supersede');
     validatePageSlug(slug); // defense-in-depth, matching put_page
     if (ctx.dryRun) return { dry_run: true, action: 'takes_supersede', slug, row_num: p.row_num };
-    const brainDir = await opBrainDir(ctx);
-    try {
-      const { oldRow, newRow, mirror } = await supersedeTakeOnPage(
-        { engine: ctx.engine, slug, brainDir, sourceId: ctx.sourceId, allowList: takesWriteAllowList(ctx), lockTimeoutMs: OP_LOCK_TIMEOUT_MS },
-        p.row_num as number,
-        {
-          claim: p.claim as string,
-          kind: p.kind as string | undefined,
-          holder: p.holder as string | undefined,
-          weight: p.weight as number | undefined,
-          source: p.source as string | undefined,
-          sinceDate: p.since as string | undefined,
-        },
-      );
-      return { slug, old_row: oldRow, new_row: newRow, ...mirrorWarnFields(mirror) };
-    } catch (err) {
-      mapTakesWriteError(err);
-    }
+    return submitPageMutation(ctx, { operation: 'takes_supersede', params: p });
   },
 };
 
@@ -522,6 +483,8 @@ const takes_resolve: Operation = {
     'ignored) so agent resolutions stay segregable from owner ground truth; the target row ' +
     'must be in the caller\'s holder allow-list. Markdown-canonical.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
+    local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug.' },
     row_num: { type: 'number', required: true, description: 'Take row number to resolve.' },
     quality: { type: 'string', required: true, enum: ['correct', 'incorrect', 'partial', 'unresolvable'], description: 'Resolution verdict.' },
@@ -538,36 +501,7 @@ const takes_resolve: Operation = {
     enforceClientSlugFence(ctx, slug, 'takes_resolve');
     validatePageSlug(slug); // defense-in-depth, matching put_page
     if (ctx.dryRun) return { dry_run: true, action: 'takes_resolve', slug, row_num: p.row_num };
-    const brainDir = await opBrainDir(ctx);
-    // CV6 posture: remote resolutions are provenance-stamped server-side —
-    // clamp + sanitize the client id: hostile DCR client names must not carry
-    // newlines/pipes into the markdown fence, and must not bloat the column.
-    let resolvedBy: string;
-    if (ctx.remote !== false) {
-      const id = (ctx.auth?.clientId ?? ctx.transport ?? 'remote').replace(/[^\w.:-]/g, '_').slice(0, 64);
-      resolvedBy = `mcp:${id}`;
-    } else if (typeof p.resolved_by === 'string' && p.resolved_by.length > 0) {
-      resolvedBy = p.resolved_by;
-    } else {
-      const { resolveOwnerHolder } = await import('../owner-holder.ts');
-      resolvedBy = resolveOwnerHolder({ configValue: await ctx.engine.getConfig('emotional_weight.user_holder') });
-    }
-    try {
-      const { rowNum, quality, mirror } = await resolveTakeOnPage(
-        { engine: ctx.engine, slug, brainDir, sourceId: ctx.sourceId, allowList: takesWriteAllowList(ctx), lockTimeoutMs: OP_LOCK_TIMEOUT_MS },
-        p.row_num as number,
-        {
-          quality: p.quality as 'correct' | 'incorrect' | 'partial' | 'unresolvable',
-          evidence: p.evidence as string | undefined,
-          value: p.value as number | undefined,
-          unit: p.unit as string | undefined,
-          resolvedBy,
-        },
-      );
-      return { slug, row_num: rowNum, quality, resolved_by: resolvedBy, ...mirrorWarnFields(mirror) };
-    } catch (err) {
-      mapTakesWriteError(err);
-    }
+    return submitPageMutation(ctx, { operation: 'takes_resolve', params: p });
   },
 };
 

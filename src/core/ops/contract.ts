@@ -9,6 +9,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
+import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../persistence/types.ts';
 
 // --- Types ---
 
@@ -22,6 +23,7 @@ import { MEMORY_VERBS_VERSION } from '../verbs.ts';
  * v0.31 added: 'rate_limited', 'extraction_failed', 'fact_not_found'.
  */
 export type ErrorCode =
+  | WriteErrorCode
   | 'page_not_found'
   | 'invalid_params'
   | 'embedding_failed'
@@ -55,6 +57,8 @@ export class OperationError extends Error {
    */
   public detail?: string;
   public protocolVersion?: number;
+  public writeRequest?: WriteReceipt;
+  public writeError?: WriteErrorCode;
 
   constructor(
     public code: ErrorCode,
@@ -74,6 +78,8 @@ export class OperationError extends Error {
       docs: this.docs,
       detail: this.detail,
       protocol_version: this.protocolVersion,
+      ...(this.writeRequest ? { write_request: publicWriteReceipt(this.writeRequest) } : {}),
+      ...(this.writeError ? { write_error: this.writeError } : {}),
     };
   }
 }

@@ -17,11 +17,14 @@
  * attempt is also rejected with HTTP 401, surface auth_after_refresh.
  */
 
+import { randomUUID } from 'node:crypto';
+import { isPersistenceIpcMutation } from './persistence/ipc.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { anySignal } from './abort-check.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
+import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from './persistence/types.ts';
 
 interface CachedToken {
   access_token: string;
@@ -69,6 +72,17 @@ export interface RemoteMcpErrorDetail {
   kind?: 'timeout' | 'aborted' | 'unreachable';
   /** v0.31.1: server-supplied error code on tool_error (e.g. 'missing_scope'). */
   code?: string;
+  /** An accepted mutation's receipt survives the transport's tool-error wrapper. */
+  write_request?: WriteReceipt;
+  write_error?: WriteErrorCode;
+  /** Retained even when no acknowledgment proves whether the write was accepted. */
+  request_id?: string;
+  submission_status?: 'unknown' | 'not_sent';
+  message?: string;
+  suggestion?: string;
+  protocol_version?: 1;
+  server_detail?: string;
+  docs?: string;
 }
 
 export class RemoteMcpError extends Error {
@@ -79,6 +93,26 @@ export class RemoteMcpError extends Error {
   ) {
     super(message);
     this.name = 'RemoteMcpError';
+  }
+
+  /** Mutation error output shares the CLI/IPC envelope without inventing a receipt. */
+  toJSON() {
+    const detail = this.detail;
+    const unknown = detail?.submission_status === 'unknown';
+    return {
+      error: detail?.code ?? 'unavailable',
+      message: detail?.message ?? this.message,
+      ...(detail?.request_id ? { request_id: detail.request_id } : {}),
+      ...(detail?.submission_status ? { submission_status: detail.submission_status } : {}),
+      ...(unknown ? { detail: 'delivery_unknown' } : detail?.server_detail ? { detail: detail.server_detail } : {}),
+      suggestion: detail?.suggestion ?? (detail?.request_id
+        ? `${unknown ? 'Submission state is unknown. ' : ''}Retry the same operation and arguments with request_id ${detail.request_id}; do not generate a replacement ID.`
+        : 'Inspect the remote connection before retrying.'),
+      ...(detail?.protocol_version === 1 ? { protocol_version: 1 } : {}),
+      ...(detail?.docs ? { docs: detail.docs } : {}),
+      ...(detail?.write_request ? { write_request: publicWriteReceipt(detail.write_request) } : {}),
+      ...(detail?.write_error ? { write_error: detail.write_error } : {}),
+    };
   }
 }
 
@@ -92,6 +126,9 @@ export class RemoteMcpError extends Error {
  * the callRemoteTool funnel.
  */
 export function toRemoteMcpError(e: unknown, mcpUrl: string, signal?: AbortSignal): RemoteMcpError {
+  // A received receipt is stronger evidence than a deadline that fired while
+  // unwinding the call. Losing it invites a second mutation after acceptance.
+  if (e instanceof RemoteMcpError && e.detail?.write_request) return e;
   if (signal?.aborted) {
     const kind = signal.reason instanceof Error && signal.reason.name === 'TimeoutError'
       ? 'timeout' : 'aborted';
@@ -151,6 +188,25 @@ export function extractToolErrorCode(message: string): string | undefined {
     return 'missing_scope';
   }
   return undefined;
+}
+
+/** Keep only validated public receipt fields from a tool's JSON error body. */
+export function extractToolErrorDetail(message: string): RemoteMcpErrorDetail {
+  const code = extractToolErrorCode(message);
+  const detail: RemoteMcpErrorDetail = code ? { code } : {};
+  try {
+    const body: unknown = JSON.parse(message);
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) return detail;
+    const envelope = body as Record<string, unknown>;
+    if (typeof envelope.message === 'string') detail.message = envelope.message;
+    if (typeof envelope.suggestion === 'string') detail.suggestion = envelope.suggestion;
+    if (envelope.protocol_version === 1) detail.protocol_version = 1;
+    if (typeof envelope.detail === 'string') detail.server_detail = envelope.detail;
+    if (typeof envelope.docs === 'string') detail.docs = envelope.docs;
+    if (isWriteReceipt(envelope.write_request)) detail.write_request = publicWriteReceipt(envelope.write_request);
+    if (isWriteErrorCode(envelope.write_error)) detail.write_error = envelope.write_error;
+  } catch { /* Older servers can return plain text; preserve existing code extraction. */ }
+  return detail;
 }
 
 function requireRemoteMcp(config: GBrainConfig | null): NonNullable<GBrainConfig['remote_mcp']> {
@@ -296,7 +352,8 @@ export function buildAbortController(opts: CallRemoteToolOptions): { signal: Abo
 
 /**
  * Call an MCP tool on the remote server. Handles auth refresh on 401 once.
- * Returns the parsed `result` payload from the tool response.
+ * Returns the parsed `result` payload from the tool response. Mutation calls
+ * retain a generated request_id on args for refresh and caller retries.
  *
  * Throws RemoteMcpError on:
  *   - missing remote_mcp config
@@ -312,6 +369,11 @@ export async function callRemoteTool(
   opts: CallRemoteToolOptions = {},
 ): Promise<unknown> {
   const remote = requireRemoteMcp(config);
+  // Retain on the caller's object so transport refresh and caller retries use
+  // the same durable identity. Explicit malformed IDs still reach validation.
+  if (isPersistenceIpcMutation(toolName) && args.request_id === undefined && args.dry_run !== true) args.request_id = randomUUID();
+  const requestId = isPersistenceIpcMutation(toolName) && isWriteRequestId(args.request_id) ? args.request_id : undefined;
+  let submitted = false;
 
   // v0.31.1 (CDX-4): wrap the WHOLE call in normalize-on-error so the
   // exhaustive switch on RemoteMcpError.reason at the dispatcher is sound.
@@ -330,6 +392,7 @@ export async function callRemoteTool(
       const client = await buildClient(remote.mcp_url, token, signal);
       try {
         signal.throwIfAborted();
+        submitted = true;
         const res = await client.callTool({ name: toolName, arguments: args }, undefined, { signal });
         if (res.isError) {
           const message = Array.isArray(res.content)
@@ -338,11 +401,10 @@ export async function callRemoteTool(
           // v0.31.1: extract structured error code (e.g. 'missing_scope') so
           // the dispatcher can produce a pinpoint hint instead of a generic
           // "tool error" message.
-          const code = extractToolErrorCode(message);
           throw new RemoteMcpError(
             'tool_error',
             `Remote tool ${toolName} failed: ${message}`,
-            { mcp_url: remote.mcp_url, ...(code ? { code } : {}) },
+            { mcp_url: remote.mcp_url, ...extractToolErrorDetail(message) },
           );
         }
         return res;
@@ -354,10 +416,14 @@ export async function callRemoteTool(
     try {
       return await tryCall(initialToken);
     } catch (e) {
+      // A response received before cleanup is authoritative even if closing
+      // the transport crosses the deadline. Preserve its receipt first.
+      if (e instanceof RemoteMcpError && e.detail?.write_request) throw e;
       // Application errors can contain arbitrary text (including client IDs
       // with "401"). Only a rejected HTTP request authorizes a replay.
       signal.throwIfAborted();
       if (!(e instanceof StreamableHTTPError) || e.code !== 401) throw e;
+      submitted = false; // This attempt was explicitly refused, not accepted.
       // Drop cached token and retry once with a fresh mint.
       tokenCache.delete(remote.mcp_url);
       let freshToken: string;
@@ -376,8 +442,10 @@ export async function callRemoteTool(
       try {
         return await tryCall(freshToken);
       } catch (e2) {
+        if (e2 instanceof RemoteMcpError && e2.detail?.write_request) throw e2;
         signal.throwIfAborted();
         if (e2 instanceof StreamableHTTPError && e2.code === 401) {
+          submitted = false;
           tokenCache.delete(remote.mcp_url);
           throw new RemoteMcpError(
             'auth_after_refresh',
@@ -392,7 +460,14 @@ export async function callRemoteTool(
     // CDX-4: this is the funnel. ANYTHING that escapes the inner block becomes
     // a typed RemoteMcpError. The dispatcher's exhaustive switch can rely on
     // this contract.
-    throw toRemoteMcpError(e, remote.mcp_url, signal);
+    const error = toRemoteMcpError(e, remote.mcp_url, signal);
+    if (!requestId) throw error;
+    throw new RemoteMcpError(error.reason, error.message, {
+      ...error.detail, request_id: requestId,
+      ...(!error.detail?.write_request && error.reason !== 'tool_error'
+        ? { submission_status: submitted ? 'unknown' as const : 'not_sent' as const } : {}),
+      ...(toolName === 'remember' || toolName === 'forget' ? { protocol_version: 1 as const } : {}),
+    });
   } finally {
     cleanup();
   }

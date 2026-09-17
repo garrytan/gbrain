@@ -143,7 +143,7 @@ export async function runBreakLock(
       return 1;
     }
     const { deleted, lastRefreshedAt } = await deleteLockRowIfStale(
-      engine, lockKey, snap.holder_pid, opts.maxAgeSeconds,
+      engine, lockKey, snap.holder_pid, opts.maxAgeSeconds, snap.acquisition_token,
     );
     if (opts.json) {
       console.log(JSON.stringify({
@@ -176,7 +176,7 @@ export async function runBreakLock(
 
   // Force path: skip all guards, atomic DELETE, warn.
   if (opts.force) {
-    const { deleted } = await deleteLockRow(engine, lockKey, snap.holder_pid);
+    const { deleted } = await deleteLockRow(engine, lockKey, snap.holder_pid, snap.acquisition_token);
     if (opts.json) {
       console.log(JSON.stringify({
         status: deleted ? 'force_broken' : 'race_already_cleared',
@@ -247,7 +247,7 @@ export async function runBreakLock(
     return 1;
   }
 
-  const { deleted } = await deleteLockRow(engine, lockKey, snap.holder_pid);
+  const { deleted } = await deleteLockRow(engine, lockKey, snap.holder_pid, snap.acquisition_token);
   if (opts.json) {
     console.log(JSON.stringify({
       status: deleted ? 'broken' : 'race_already_cleared',

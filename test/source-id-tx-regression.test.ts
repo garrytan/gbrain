@@ -30,11 +30,17 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv } from './helpers/with-env.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 
 let engine: PGLiteEngine;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-source-tx-'));
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -46,7 +52,8 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  if (engine) await engine.disconnect();
+  if (engine) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
+  rmSync(home, { recursive: true, force: true });
 }, 60_000);
 
 const SLUG = 'topics/source-id-regression';
@@ -455,11 +462,11 @@ describe('deletePage + updateSlug source-scoping (Data R2 CRITICAL + HIGH fix)',
     // Pre-fix: bare-slug `WHERE p.slug = $1` returned BOTH source's chunks
     // mashed together. importCodeFile uses getChunks for incremental embedding
     // reuse; pre-fix would have grabbed the wrong source's embeddings.
-    const defaultChunks = await engine.getChunks(CHUNK_SLUG, { sourceId: 'default' });
+    const defaultChunks = await engine.getChunks(CHUNK_SLUG, { sourceId: 'default', includeUnsealed: true });
     expect(defaultChunks.length).toBe(1);
     expect(defaultChunks[0].chunk_text).toBe('default chunk text');
 
-    const testsrcChunks = await engine.getChunks(CHUNK_SLUG, { sourceId: 'testsrc' });
+    const testsrcChunks = await engine.getChunks(CHUNK_SLUG, { sourceId: 'testsrc', includeUnsealed: true });
     expect(testsrcChunks.length).toBe(1);
     expect(testsrcChunks[0].chunk_text).toBe('testsrc chunk text');
   });
@@ -500,7 +507,7 @@ import type { OperationContext } from '../src/core/operations.ts';
 function makeCtx(eng: PGLiteEngine, overrides: Partial<OperationContext> = {}): OperationContext {
   return {
     engine: eng as unknown as OperationContext['engine'],
-    config: { engine: 'pglite' } as never,
+    config: { engine: 'pglite', embedding_disabled: true },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     remote: false,
@@ -512,7 +519,7 @@ function makeCtx(eng: PGLiteEngine, overrides: Partial<OperationContext> = {}): 
 function getOp(name: string) {
   const op = operations.find(o => o.name === name);
   if (!op) throw new Error(`op not registered: ${name}`);
-  return op;
+  return { ...op, handler: (ctx: OperationContext, p: Record<string, unknown>) => withEnv({ GBRAIN_HOME: home }, () => op.handler(ctx, p)) };
 }
 
 describe('v0.31.8 op-handler ctx.sourceId threading', () => {
@@ -625,7 +632,7 @@ describe('v0.31.8 op-handler ctx.sourceId threading', () => {
     await engine.putPage(DEL_SLUG, { type: 'concept', title: 'Testsrc', compiled_truth: '.' }, { sourceId: 'testsrc' });
 
     const op = getOp('delete_page');
-    await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), { slug: DEL_SLUG });
+    await op.handler(makeCtx(engine, { sourceId: 'testsrc' }), { slug: DEL_SLUG, expected_revision: (await engine.readPageSnapshot(DEL_SLUG, { sourceId: 'testsrc' }))!.revision });
 
     const rows = await engine.executeRaw<{ source_id: string; deleted_at: string | null }>(
       `SELECT source_id, deleted_at FROM pages WHERE slug = $1 ORDER BY source_id`,

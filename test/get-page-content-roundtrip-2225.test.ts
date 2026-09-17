@@ -95,7 +95,7 @@ describe('get_page content round-trip (#2225)', () => {
     // The naive client edit: take `content` verbatim (or with a body edit
     // above the sentinel) and put it straight back.
     const edited = (before.content as string).replace('42 employees', '43 employees');
-    await putPage.handler(localCtx(), { slug: 'companies/roundtrip-example', content: edited });
+    await putPage.handler(localCtx(), { slug: 'companies/roundtrip-example', content: edited, expected_revision: before.revision });
 
     const row = await engine.getPage('companies/roundtrip-example', { sourceId: 'default' });
     expect(row).not.toBeNull();
@@ -120,7 +120,7 @@ ${page.compiled_truth as string}
 
 ${page.timeline as string}
 `;
-    await putPage.handler(localCtx(), { slug: 'companies/concat-example', content: naive });
+    await putPage.handler(localCtx(), { slug: 'companies/concat-example', content: naive, expected_revision: page.revision });
 
     const row = await engine.getPage('companies/concat-example', { sourceId: 'default' });
     expect(row!.timeline ?? '').toContain('Series A closed');

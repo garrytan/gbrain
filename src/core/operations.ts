@@ -54,6 +54,7 @@ export {
 // contractual — docs/TOOL_CATALOG.md is generated from it).
 
 import { pagesOperations } from './ops/pages.ts';
+import { persistenceOperations } from './ops/persistence.ts';
 import { searchOperations } from './ops/search.ts';
 import { takesOperations } from './ops/takes.ts';
 import { tagsOperations } from './ops/tags.ts';
@@ -130,6 +131,7 @@ export const operations: Operation[] = [
   // Page CRUD (get_page, put_page, delete_page, list_pages + the v0.26.5
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
   ...pagesOperations,
+  ...persistenceOperations,
   // Search (search, query) — ops/search.ts
   ...searchOperations,
   // v0.36 Phase 2: image-as-query (search_by_image) — ops/image.ts

@@ -14,6 +14,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import {
@@ -74,7 +75,8 @@ function registryWriteScenario(name: string, getEngine: () => BrainEngine) {
               ? await invalidateStaleSignatureEmbeddingsGuarded(engine, opts)
               : await engine.invalidateStaleSignatureEmbeddings(opts);
             expect(invalidated).toBe(1);
-            const chunks = await engine.getChunks(slug);
+            // Inspect the raw write-side state before a retrieval projection is sealed.
+            const chunks = await engine.getChunks(slug, { includeUnsealed: true });
             expect(chunks.map((chunk) => chunk.embedding_is_null)).toEqual([false, true]);
             await engine.deletePage(slug);
           }
@@ -272,7 +274,7 @@ function registryStaleScenario(name: string, getEngine: () => BrainEngine) {
 
     // getChunks' embedding_is_null reports the ACTIVE column's truth (the
     // per-page `gbrain embed <slug>` filter keys on it).
-    const chunks = await engine.getChunks(SLUG);
+    const chunks = await engine.getChunks(SLUG, { includeUnsealed: true });
     expect(chunks.length).toBe(1);
     expect(chunks[0].embedding_is_null).toBe(false);
 
@@ -287,7 +289,7 @@ function registryStaleScenario(name: string, getEngine: () => BrainEngine) {
     expect(mine.length).toBe(1);
     expect(mine[0].chunk_text).toBe('stale probe v2');
     expect(await engine.sumStaleChunkChars()).toBeGreaterThanOrEqual('stale probe v2'.length);
-    expect((await engine.getChunks(SLUG))[0].embedding_is_null).toBe(true);
+    expect((await engine.getChunks(SLUG, { includeUnsealed: true }))[0].embedding_is_null).toBe(true);
   });
 
   test(`${name}: getStats/getHealth coverage keys on the registry column`, async () => {
@@ -367,8 +369,9 @@ function registryStaleScenario(name: string, getEngine: () => BrainEngine) {
 
   test(`${name}: embedStalePages targets the registry column (no re-embed loop)`, async () => {
     const engine = getEngine();
-    // Chunk is currently stale (drift invalidation above) → one embed lands
-    // in the ACTIVE column.
+    // Complete the explicitly authored text projection after the raw drift
+    // test, then prove the deferred embedder targets the ACTIVE column.
+    await installFixtureChunks(engine, SLUG, [{ chunk_index: 0, chunk_text: 'drifted text', chunk_source: 'compiled_truth' }]);
     let calls = 0;
     const embedFn = async (texts: string[]) => {
       calls += texts.length;

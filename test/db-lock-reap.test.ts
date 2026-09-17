@@ -141,13 +141,13 @@ describe('deleteLockRowExact (snapshot-matched, TOCTOU defense)', () => {
 
     // Simulate a reused-PID takeover: same id + pid, but a different (newer)
     // acquired_at than the one the reaper snapshotted → must NOT delete.
-    const wrong = new Date(snap!.acquired_at.getTime() + 3_600_000);
+    const wrong = '00000000-0000-4000-8000-000000000001';
     const miss = await deleteLockRowExact(engine, 'gbrain-sync:exact', 900040, wrong);
     expect(miss.deleted).toBe(false);
     expect(await lockIds()).toEqual(['gbrain-sync:exact']);
 
     // The matching snapshot deletes.
-    const hit = await deleteLockRowExact(engine, 'gbrain-sync:exact', 900040, snap!.acquired_at);
+    const hit = await deleteLockRowExact(engine, 'gbrain-sync:exact', 900040, snap!.acquisition_token);
     expect(hit.deleted).toBe(true);
     expect(await lockIds()).toEqual([]);
   });
@@ -155,7 +155,7 @@ describe('deleteLockRowExact (snapshot-matched, TOCTOU defense)', () => {
   test('no-op when holder_pid does not match', async () => {
     await seedLock('gbrain-sync:pidguard', 900050, LOCAL, OLD_S);
     const snap = await inspectLock(engine, 'gbrain-sync:pidguard');
-    const res = await deleteLockRowExact(engine, 'gbrain-sync:pidguard', 111111, snap!.acquired_at);
+    const res = await deleteLockRowExact(engine, 'gbrain-sync:pidguard', 111111, snap!.acquisition_token);
     expect(res.deleted).toBe(false);
     expect(await lockIds()).toEqual(['gbrain-sync:pidguard']);
   });

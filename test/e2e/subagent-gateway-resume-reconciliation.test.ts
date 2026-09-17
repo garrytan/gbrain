@@ -129,6 +129,34 @@ function assertBalanced(messages: ChatMessage[]): void {
 }
 
 describe('gateway resume reconciliation', () => {
+  it('a pending journal write stays pending and replays its UUID before another model turn', async () => {
+    let turns = 0; let pending = true; const identities: unknown[] = [];
+    __setChatTransportForTests(async () => {
+      turns++;
+      return { text: turns === 1 ? '' : 'done', blocks: turns === 1
+        ? [{ type: 'tool-call', toolCallId: 'stable-provider-call', toolName: 'brain_put_page', input: { slug: 'notes/pending-fixture', content: 'fixture' } }]
+        : [{ type: 'text', text: 'done' }], stopReason: turns === 1 ? 'tool_calls' : 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'openai:gpt-4o', providerId: 'openai' } satisfies ChatResult;
+    });
+    const { jobId, ctx } = await makeJob('persist the fixture', 'openai:gpt-4o');
+    const registry: ToolDef[] = [{ name: 'brain_put_page', description: 'p', input_schema: { type: 'object' }, idempotent: true,
+      execute: async input => {
+        const id = (input as Record<string, unknown>).request_id; identities.push(id);
+        if (typeof id !== 'string') throw new Error('Tool write identity must be persisted before execution');
+        expect(id).toMatch(/^[0-9a-f-]{36}$/);
+        const [row] = await engine.executeRaw<{ request_id: string }>("SELECT input->>'request_id' AS request_id FROM subagent_tool_executions WHERE job_id=$1", [jobId]);
+        expect(row.request_id).toBe(id);
+        return { request_id: id, state: pending ? 'queued' : 'committed', retry_after_ms: pending ? 100 : null };
+      } }];
+    await expect(buildHandler(registry)(ctx)).rejects.toMatchObject({ code: 'write_pending' });
+    expect((await engine.executeRaw<{ status: string }>('SELECT status FROM subagent_tool_executions WHERE job_id=$1', [jobId]))[0].status).toBe('pending');
+    pending = false;
+    await buildHandler(registry)(ctx);
+    expect(turns).toBe(2); expect(identities).toHaveLength(2); expect(identities[1]).toBe(identities[0]);
+    expect((await engine.executeRaw<{ status: string }>('SELECT status FROM subagent_tool_executions WHERE job_id=$1', [jobId]))[0].status).toBe('complete');
+  });
+
   it('forward-persists the tool-result user turn (idx 2) in a 2-turn flow', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {

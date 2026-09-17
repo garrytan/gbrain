@@ -1,3 +1,4 @@
+import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
  * Regression tests for `embed --stale` signature reconciliation.
  *
@@ -45,7 +46,7 @@ async function seedPage(slug: string, chunks: ChunkInput[]): Promise<void> {
     title: slug,
     compiled_truth: `# ${slug}`,
   });
-  await engine.upsertChunks(slug, chunks);
+  await installFixtureChunks(engine, slug, chunks);
 }
 
 async function pageSignature(slug: string): Promise<string | null> {

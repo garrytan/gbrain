@@ -192,6 +192,7 @@ if [ "$NO_SHARD" = "1" ]; then
   if [ "$DIFF" = "1" ]; then
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
 bash scripts/check-jsonb-pattern.sh
+bash scripts/check-bun-test-timeout.sh
 bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
@@ -209,7 +210,7 @@ if [ -z "$SELECTED" ]; then
 else
   printf "%s\n" "$SELECTED" > /tmp/e2e-selected.txt
   DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
-  GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
+  GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \
   GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
   GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
   GBRAIN_TEST_DB=1 \
@@ -218,6 +219,7 @@ fi'
   else
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
 bash scripts/check-jsonb-pattern.sh
+bash scripts/check-bun-test-timeout.sh
 bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
@@ -230,7 +232,7 @@ echo "[runner] unit (unsharded, DATABASE_URL unset)"
 env -u DATABASE_URL bash scripts/run-unit-shard.sh
 echo "[runner] e2e (unsharded)"
 DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
-GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
+GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \
 GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
 GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
 GBRAIN_TEST_DB=1 \
@@ -252,6 +254,7 @@ fi'
   fi
   RUN_PHASES_CMD="echo \"[runner] guards + typecheck (run once before sharding)\"
 bash scripts/check-jsonb-pattern.sh
+bash scripts/check-bun-test-timeout.sh
 bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
@@ -291,7 +294,7 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
   if [ -s /tmp/e2e-selected.txt ]; then
     SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
-    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
+    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
     GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
     GBRAIN_TEST_DB=1 \\
@@ -299,7 +302,7 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
   else
     SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
-    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
+    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
     GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
     GBRAIN_TEST_DB=1 \\

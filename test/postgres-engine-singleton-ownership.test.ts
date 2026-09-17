@@ -66,7 +66,10 @@ describe('postgres-engine / module-singleton ownership (#1471)', () => {
   });
 
   test('disconnect() calls db.disconnect() ONLY when this engine owns the singleton', () => {
-    const disconnect = stripComments(extractMethod(ENGINE_SRC, 'disconnect'));
+    const wrapper = stripComments(extractMethod(ENGINE_SRC, 'disconnect'));
+    expect(wrapper.includes('this.disconnectInternal()')).toBe(true);
+    expect(/db\.disconnect\s*\(/.test(wrapper)).toBe(false);
+    const disconnect = stripComments(extractMethod(ENGINE_SRC, 'disconnectInternal'));
     // The shared-singleton teardown must be guarded by the ownership flag — a
     // borrower clears its marker without nulling the owner's connection.
     const guarded = /if\s*\(\s*this\._ownsModuleSingleton\s*\)\s*\{[\s\S]*?db\.disconnect\s*\(\s*\)/.test(disconnect);
@@ -141,7 +144,7 @@ function balanceBodyFrom(source: string, headerIdx: number, what: string): strin
 
 // Class method body by name (async or not).
 function extractMethod(source: string, name: string): string {
-  const openRe = new RegExp(`^\\s+(?:async\\s+)?${name}\\s*\\(`, 'm');
+  const openRe = new RegExp(`^\\s+(?:private\\s+)?(?:async\\s+)?${name}\\s*\\(`, 'm');
   const match = openRe.exec(source);
   if (!match) throw new Error(`method ${name} not found`);
   return balanceBodyFrom(source, match.index, name);

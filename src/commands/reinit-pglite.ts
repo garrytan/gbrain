@@ -1,3 +1,5 @@
+import { backupUnmanagedPglite } from '../core/persistence/maintenance.ts';
+import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 /**
  * `gbrain reinit-pglite` — wipe-and-reinit PGLite brain in one command.
  *
@@ -18,7 +20,7 @@
  * output via `--json` for scripted callers.
  */
 
-import { existsSync, renameSync, statSync, rmSync } from 'fs';
+import { existsSync, statSync, rmSync } from 'fs';
 import { dirname } from 'path';
 import { loadConfig, loadConfigFileOnly, gbrainPath } from '../core/config.ts';
 
@@ -51,6 +53,8 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   const dbPath = opts.customPath
     || cfg.database_path
     || gbrainPath('brain.pglite');
+
+  assertManagedFilesystemWrite(dbPath);
 
   if (!existsSync(dbPath)) {
     fail(
@@ -121,7 +125,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   void existingFile; // referenced for the comment above; init.ts handles the merge
 
   try {
-    renameSync(dbPath, bakPath);
+    await backupUnmanagedPglite(dbPath, bakPath);
   // WAL-repair state travels with the OLD brain (red-team: a fresh brain at
   // the same path must not inherit the old brain's open repair episode,
   // cooldown, or reap quarantine — a stale episodeBackupPath would be reused

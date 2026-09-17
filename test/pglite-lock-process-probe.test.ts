@@ -23,8 +23,9 @@ function probe(command: string, platform: NodeJS.Platform = 'win32') {
   return { deps, calls };
 }
 
-describe('PGLite process command probes', () => {
-  test('Windows reclaims an unrelated PID using CIM, not POSIX probes (#5065)', () => {
+// Command probes preserve diagnostics only; test/pglite-lock.test.ts proves they cannot steal ownership.
+describe('PGLite process command diagnostics', () => {
+  test('Windows identifies an unrelated PID using CIM, not POSIX probes (#5065)', () => {
     const { deps, calls } = probe('C:\\Windows\\System32\\notepad.exe');
     expect(isPidReusedByOtherProgram(PID, ['C:\\bin\\cli.ts', 'serve'], null, null, deps)).toBe(true);
     expect(calls).toEqual(['powershell.exe']);

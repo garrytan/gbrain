@@ -28,3 +28,10 @@
 # removes the whole class for anyone working here.
 *.md text eol=lf
 /.gbrain-evals/eval-results.jsonl merge=union
+
+# Native source hashes and prebuilds must survive Windows checkout unchanged.
+native/locks/** text eol=lf
+native/locks/prebuilds/*.node binary
+# Preserve the vendored upstream license byte-for-byte, including indentation.
+native/locks/vendor/node-v22.15.0/LICENSE -whitespace
+scripts/native/** text eol=lf

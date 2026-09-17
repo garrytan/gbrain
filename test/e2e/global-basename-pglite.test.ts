@@ -28,6 +28,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runExtract } from '../../src/commands/extract.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import type { OperationContext } from '../../src/core/operations.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -43,6 +45,7 @@ afterAll(async () => {
 });
 
 async function truncateAll() {
+  await disposePersistenceConsumer(engine);
   for (const t of [
     'content_chunks', 'links', 'tags', 'raw_data',
     'timeline_entries', 'page_versions', 'ingest_log', 'pages',
@@ -50,6 +53,11 @@ async function truncateAll() {
   ]) {
     try { await (engine as any).db.exec(`DELETE FROM ${t}`); } catch { /* ok */ }
   }
+}
+
+function writeContext(): OperationContext {
+  return { engine, remote: false, config: { engine: 'pglite' }, dryRun: false,
+    sourceId: 'default', logger: { info() {}, warn() {}, error() {} } };
 }
 
 beforeEach(async () => {
@@ -275,7 +283,7 @@ describe('issue #972 — put_page auto-link', () => {
     const { operations } = await import('../../src/core/operations.ts');
     const putPage = operations.find(op => op.name === 'put_page')!;
     await putPage.handler(
-      { engine, remote: false } as never,
+      writeContext(),
       {
         slug: 'concepts/knowledge-graph',
         content: PUT_PAGE_MARKDOWN_WITH_WIKILINK,
@@ -299,7 +307,7 @@ describe('issue #972 — put_page auto-link', () => {
     const { operations } = await import('../../src/core/operations.ts');
     const putPage = operations.find(op => op.name === 'put_page')!;
     await putPage.handler(
-      { engine, remote: false } as never,
+      writeContext(),
       {
         slug: 'concepts/knowledge-graph',
         content: PUT_PAGE_MARKDOWN_WITH_WIKILINK,
@@ -322,15 +330,17 @@ describe('issue #972 — put_page auto-link', () => {
     const putPage = operations.find(op => op.name === 'put_page')!;
 
     // 1. Write the page WITH the wikilink → edge lands.
-    await putPage.handler({ engine, remote: false } as never, {
+    await putPage.handler(writeContext(), {
       slug: 'concepts/knowledge-graph', content: PUT_PAGE_MARKDOWN_WITH_WIKILINK,
     });
     let outLinks = await engine.getLinks('concepts/knowledge-graph');
     expect(outLinks.find(l => l.to_slug === 'projects/struktura')).toBeDefined();
 
     // 2. Re-write the page WITHOUT the wikilink → edge must be reconciled away.
-    await putPage.handler({ engine, remote: false } as never, {
+    const snapshot = await engine.readPageSnapshot('concepts/knowledge-graph');
+    await putPage.handler(writeContext(), {
       slug: 'concepts/knowledge-graph',
+      expected_revision: snapshot!.revision,
       content: '---\ntitle: Knowledge Graph\ntype: concept\n---\n\nNo links here anymore.\n',
     });
     outLinks = await engine.getLinks('concepts/knowledge-graph');

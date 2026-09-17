@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 /**
  * v0.35.5 — phantom-page redirect pass.
  *
@@ -405,6 +406,8 @@ export async function tryRedirectPhantom(
 
   // D10: dry-run preview — no FS / DB / audit writes.
   if (dryRun) return { outcome: 'redirected', canonical };
+
+  await assertUnmanagedCanonicalWriter(engine, 'phantom canonical redirect');
 
   // ─── Commit phase (codex #3/#4/#6/#7) ─────────────────────────────
   const canonicalPath = path.join(brainDir, `${canonical}.md`);

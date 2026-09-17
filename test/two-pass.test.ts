@@ -12,6 +12,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { expandAnchors, hydrateChunks } from '../src/core/search/two-pass.ts';
 import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -36,7 +37,7 @@ describe('Layer 7 (A2) — expandAnchors', () => {
       compiled_truth: 'export function a() { return b(); }',
       timeline: '',
     });
-    await engine.upsertChunks('src-a-ts', [{
+    await installFixtureChunks(engine, 'src-a-ts', [{
       chunk_index: 0,
       chunk_text: 'export function a() { return b(); }',
       chunk_source: 'compiled_truth',
@@ -51,7 +52,7 @@ describe('Layer 7 (A2) — expandAnchors', () => {
       compiled_truth: 'export function b() { return c(); }',
       timeline: '',
     });
-    await engine.upsertChunks('src-b-ts', [{
+    await installFixtureChunks(engine, 'src-b-ts', [{
       chunk_index: 0,
       chunk_text: 'export function b() { return c(); }',
       chunk_source: 'compiled_truth',
@@ -66,7 +67,7 @@ describe('Layer 7 (A2) — expandAnchors', () => {
       compiled_truth: 'export function c() { return 1; }',
       timeline: '',
     });
-    await engine.upsertChunks('src-c-ts', [{
+    await installFixtureChunks(engine, 'src-c-ts', [{
       chunk_index: 0,
       chunk_text: 'export function c() { return 1; }',
       chunk_source: 'compiled_truth',

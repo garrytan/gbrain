@@ -238,6 +238,11 @@ without writing anything"* — your agent runs `gbrain sync --dry-run`.
 
 ## Durability: keep a brain repo in sync (auto-harden)
 
+This hardening path applies to unmanaged worktrees. After activating managed
+writers, Git effects belong to the persistence outbox; generated legacy push
+helpers refuse to run rather than bypass that ownership boundary. See the
+[concurrent-write guide](concurrent-writes.md).
+
 A long-lived agent that writes to a knowledge-wiki git repo needs three
 things to never lose work: pull before it edits, push every write, and not
 go stale while it sits idle. `gbrain sources harden` installs all of that,

@@ -26,6 +26,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs'
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import {
   configureGateway,
   resetGateway,
@@ -141,7 +142,7 @@ describe('migrate embeddings — full flow on PGLite', () => {
     expect(await columnDims()).toBe(FROM_DIMS);
     for (const slug of PAGES) {
       await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}\n\ncontent for ${slug}` });
-      await engine.upsertChunks(slug, [
+      await installFixtureChunks(engine, slug, [
         { chunk_index: 0, chunk_text: `chunk text for ${slug}`, chunk_source: 'compiled_truth', token_count: 5 },
       ]);
     }

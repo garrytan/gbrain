@@ -6,6 +6,7 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,7 +92,7 @@ beforeAll(async () => {
     title: 'Alice Foo',
     compiled_truth: 'Alice Foo is a builder who ships search telemetry fixtures.',
   });
-  await engine.upsertChunks('alice-foo', [
+  await installFixtureChunks(engine, 'alice-foo', [
     { chunk_index: 0, chunk_text: 'Alice Foo is a builder who ships search telemetry fixtures.', chunk_source: 'compiled_truth' },
   ]);
   await engine.putPage('bob-bar', {
@@ -99,7 +100,7 @@ beforeAll(async () => {
     title: 'Bob Bar',
     compiled_truth: 'Bob Bar is a builder who reviews cache wiring fixtures.',
   });
-  await engine.upsertChunks('bob-bar', [
+  await installFixtureChunks(engine, 'bob-bar', [
     { chunk_index: 0, chunk_text: 'Bob Bar is a builder who reviews cache wiring fixtures.', chunk_source: 'compiled_truth' },
   ]);
 });

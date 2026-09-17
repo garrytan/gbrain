@@ -48,6 +48,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { verbOperations } from '../src/core/verbs.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { hasScope } from '../src/core/scope.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 let engine: PGLiteEngine;
 
@@ -55,13 +56,15 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-});
+}, 60_000);
 
 afterAll(async () => {
+  await disposePersistenceConsumer(engine);
   await engine.disconnect();
 });
 
 beforeEach(async () => {
+  await disposePersistenceConsumer(engine);
   await resetPgliteState(engine);
 });
 
@@ -72,7 +75,7 @@ beforeEach(async () => {
 function makeContext(overrides: Partial<OperationContext> = {}): OperationContext {
   return {
     engine: engine as any,
-    config: {} as any,
+    config: { engine: 'pglite', embedding_disabled: true },
     logger: console as any,
     dryRun: false,
     remote: true,
@@ -445,7 +448,8 @@ describe('handler invocation — historically-broken trust-boundary classes', ()
     // still reaches the handler rows — the post-filter must classify it
     // private-only via includeDeleted:true or it slips through.
     const del = operations.find(op => op.name === 'delete_page')!;
-    await del.handler(local, { slug: 'people/tb-priv-example' });
+    const beforeDelete = (await engine.readPageSnapshot('people/tb-priv-example', { sourceId: 'default' }))!;
+    await del.handler(local, { slug: beforeDelete.page.slug, expected_revision: beforeDelete.revision });
     const salienceAfterDelete = JSON.stringify(await salience.handler(remote, {}));
     expect(salienceAfterDelete).not.toContain('people/tb-priv-example');
     expect(salienceAfterDelete).not.toContain('TB_PRIVATE_TITLE_PROOF');

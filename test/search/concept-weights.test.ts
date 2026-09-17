@@ -21,6 +21,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { classifyQueryIntent } from '../../src/core/search/query-intent.ts';
@@ -50,7 +51,7 @@ beforeAll(async () => {
     compiled_truth: 'a moat that grows stronger the longer it persists, snowballing returns from early wins',
     timeline: 'a moat that grows stronger the longer it persists, snowballing returns from early wins',
   });
-  await engine.upsertChunks('concepts/durable-moat-example', [
+  await installFixtureChunks(engine, 'concepts/durable-moat-example', [
     {
       chunk_index: 0,
       chunk_text: 'a moat that grows stronger the longer it persists, snowballing returns from early wins',
@@ -68,7 +69,7 @@ beforeAll(async () => {
     compiled_truth: 'the compounding advantage idea came up in notes',
     timeline: 'the compounding advantage idea came up: compounding advantage idea',
   });
-  await engine.upsertChunks('notes/compounding-advantage-idea-notes', [
+  await installFixtureChunks(engine, 'notes/compounding-advantage-idea-notes', [
     {
       chunk_index: 0,
       chunk_text: 'the compounding advantage idea came up: compounding advantage idea',

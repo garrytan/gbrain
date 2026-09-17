@@ -15,6 +15,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
@@ -55,7 +56,7 @@ beforeAll(async () => {
     await engine.putPage(slug, {
       type: 'note', title: `Zephyrblatt ${sourceId}`, compiled_truth: `the zephyrblatt lives in ${sourceId}`,
     }, { sourceId });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: `the zephyrblatt lives in ${sourceId}`, chunk_source: 'compiled_truth' },
     ], { sourceId });
   }

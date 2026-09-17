@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from '../../persistence/filesystem-guard.ts';
 /**
  * InboxFolderSource — drop-in capture target for Shortcuts / AirDrop / Drafts.
  *
@@ -228,6 +229,7 @@ export function createInboxFolderSource(opts: InboxFolderSourceOpts): IngestionS
       },
     };
 
+    if (archiveAfterEmit) assertManagedFilesystemWrite(absPath);
     ctx.emit(ev);
 
     // Move to .archived/YYYY-MM-DD/<filename> so the user has a visible

@@ -87,6 +87,6 @@ describe('gbrain delta (CLI)', () => {
     expect(stderr).toContain('Error [invalid_params]:');
     expect(stderr).toContain('not a parseable timestamp');
     expect(stderr).toContain('Fix:');
-    expect(stdout).toBe(''); // no envelope on the error path
+    expect(JSON.parse(stdout)).toMatchObject({ error: 'invalid_params', protocol_version: 1 });
   }, 60_000);
 });

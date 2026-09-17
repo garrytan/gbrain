@@ -1,3 +1,4 @@
+import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
  * test/deep-research-fetch.test.ts — #4039.
  *
@@ -46,6 +47,7 @@ beforeEach(async () => {
   await engine.putPage('people/alice-example', {
     type: 'person', title: 'Alice Example', compiled_truth: 'Alice runs widget-co.', frontmatter: {},
   }, { sourceId: 'default' });
+  await installFixtureChunks(engine, 'people/alice-example', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Alice runs widget-co.' }]);
 });
 
 describe('fetch op (#4039 deep-research contract)', () => {

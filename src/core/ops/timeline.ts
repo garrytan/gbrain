@@ -1,3 +1,5 @@
+import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 /**
  * Timeline operation cluster — pure move from operations.ts (v0.46.x
  * tranche 1). Op consts stay module-private; `timelineOperations` below
@@ -11,21 +13,15 @@ import { readPolicyOpts } from './context.ts';
 import {
   enforceSubagentSlugFence,
   enforceClientSlugFence,
-  reclassifyMutationTimePageMiss,
-  requireWritablePage,
 } from './context.ts';
-import { PageMissingError } from '../engine-errors.ts';
-import { writeTimelineEntryThrough } from '../timeline-write-through.ts';
 
 // --- Timeline ---
 
 const add_timeline_entry: Operation = {
   name: 'add_timeline_entry',
-  // #2225 recon: entries land in the timeline_entries TABLE (the surface
-  // get_timeline reads), NOT the pages.timeline markdown blob that get_page
-  // returns — the two are reconciled by file write-through (#1856), not here.
-  description: 'Add timeline entry to a page. Writes a row to the structured timeline store read by get_timeline; it does not edit the pages.timeline markdown returned by get_page.',
+  description: 'Append an entry to the canonical Markdown timeline and structured timeline store in one committed write. Exact replay changes neither store.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: 'Slug of the page whose timeline to append to.' },
     date: { type: 'string', required: true, description: "Entry date, strict YYYY-MM-DD (e.g. '2026-04-03'). Timestamps and non-calendar dates are rejected." },
     summary: { type: 'string', required: true, description: 'One-line summary of what happened on that date.' },
@@ -58,84 +54,7 @@ const add_timeline_entry: Operation = {
     if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
       throw new Error(`Invalid calendar date "${date}"`);
     }
-    // v0.31.8 (D7): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    // #4109: source-boundary diagnostics before the write-through/insert —
-    // a page readable only from another granted source must come back as
-    // permission_denied, not the engine's exact-source "not found".
-    await requireWritablePage(ctx, p.slug as string, 'add_timeline_entry', 'page');
-    // #1856: on an FS/git-canonical brain (a disk target resolves for this
-    // page), route the entry through the page/facts write-through seam so the
-    // canonical markdown gains the bullet too — a DB-only insert stranded the
-    // entry (invisible to git and `gbrain get`, silently lost on FS→DB
-    // rebuild). Trust gating mirrors put_page: subagent-sandbox callers
-    // (viaSubagent without a trusted-workspace allow-list) stay DB-only.
-    // DB-only brains take `handled: false` and fall through to the legacy
-    // insert below, byte-identical to the pre-#1856 behavior.
-    const isSandboxSubagent = ctx.viaSubagent === true
-      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
-    const entryInput = {
-      date,
-      summary: p.summary as string,
-      source: (p.source as string) || '',
-      detail: (p.detail as string) || '',
-    };
-    let writeThrough: Awaited<ReturnType<typeof writeTimelineEntryThrough>> | undefined;
-    if (!isSandboxSubagent) {
-      writeThrough = await writeTimelineEntryThrough(
-        ctx.engine,
-        p.slug as string,
-        ctx.sourceId ?? 'default',
-        entryInput,
-        { logger: ctx.logger },
-      );
-      if (writeThrough.handled) {
-        return {
-          status: 'ok',
-          write_through: {
-            written: writeThrough.file?.written ?? false,
-            ...(writeThrough.file?.path ? { path: writeThrough.file.path } : {}),
-            ...(writeThrough.file?.skipped ? { skipped: writeThrough.file.skipped } : {}),
-            ...(writeThrough.file?.error ? { error: writeThrough.file.error } : {}),
-          },
-          ...(writeThrough.entry ? { entry: writeThrough.entry } : {}),
-        };
-      }
-    }
-
-    // When the helper failed AFTER the canonical bullet reached the on-disk
-    // file, `writeThrough.entry` carries the canonical tuple (source 'manual'
-    // default, collapsed one-line summary) that the next sync re-extracts
-    // from that bullet. The fallback MUST store that tuple — inserting the
-    // raw input tuple would recreate the duplicate class on the error path
-    // (raw row now + re-extracted canonical row later).
-    const canonical = writeThrough?.entry;
-    let inserted: boolean;
-    try {
-      inserted = await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries on DB-only brains; FS-canonical brains route through writeTimelineEntryThrough above
-        date: canonical?.date ?? date,
-        source: canonical ? canonical.source : entryInput.source,
-        summary: canonical ? canonical.summary : entryInput.summary,
-        detail: entryInput.detail,
-      }, sourceOpts);
-    } catch (error) {
-      // Page hard-deleted between preflight and insert: reclassify the typed
-      // engine miss instead of surfacing it as internal_error.
-      if (error instanceof PageMissingError) {
-        return reclassifyMutationTimePageMiss(ctx, error.slug, 'add_timeline_entry', error.endpoint);
-      }
-      throw error;
-    }
-    const writeThroughReport = {
-      written: false,
-      skipped: isSandboxSubagent ? 'subagent_sandbox' : (writeThrough?.skipped ?? 'db_only'),
-      ...(writeThrough?.error ? { error: writeThrough.error } : {}),
-    };
-    // #3827: the (page_id, date, summary, source) unique index deduplicates
-    // via ON CONFLICT DO NOTHING. Report the drop instead of lying 'ok' —
-    // an MCP caller retrying an identical entry now sees it was skipped.
-    if (!inserted) return { status: 'skipped', reason: 'duplicate', write_through: writeThroughReport };
-    return { status: 'ok', write_through: writeThroughReport };
+    return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: p });
   },
   cliHints: { name: 'timeline-add', positional: ['slug', 'date', 'summary'] },
 };

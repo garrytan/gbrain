@@ -47,6 +47,8 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   embed: ['--pace', '--pace-max-concurrency'],
   // sync shares the same pace surface via env/config plus CLI passthrough.
   sync: ['--pace', '--pace-max-concurrency'],
+  // Deferred persistence routing reaches runForget in recall.ts two levels deep.
+  forget: ['--reason', '--request-id'],
 };
 
 /**
@@ -56,7 +58,7 @@ const EXTRA_FLAGS: Record<string, string[]> = {
  * scanning the router bleeds takes/quarantine flags into jobs (whose case
  * block imports it for the `jobs stats` thin-client route).
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in

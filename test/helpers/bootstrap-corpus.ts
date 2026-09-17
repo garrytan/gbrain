@@ -10,8 +10,8 @@
  *     with a trusted-local OperationContext (remote: false). That is what
  *     fires auto-link (wikilink → graph edge), chunking, and search-vector
  *     population — bare engine.putPage would skip those post-hooks. Pages are
- *     loaded in TWO passes: pass 1 creates every row; pass 2 re-runs the
- *     idempotent auto-link reconciler now that every wikilink target exists
+ *     loaded in TWO passes: pass 1 creates identities with their frontmatter;
+ *     pass 2 publishes final bodies now that every wikilink target exists
  *     (runAutoLink filters candidates to slugs present in getAllSlugs, so a
  *     forward reference in a cyclic graph only resolves once its target row
  *     is present). Returns the loaded slugs.
@@ -26,6 +26,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { operations } from '../../src/core/operations.ts';
 import type { OperationContext, Operation } from '../../src/core/operations.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -79,8 +80,8 @@ function fileToSlug(filename: string): string {
 /**
  * Read the corpus markdown pages and write them through the put_page op
  * handler (remote: false) so auto-link, chunking, and search-vector fire.
- * Two passes: pass 1 seeds all rows, pass 2 lets the auto-link reconciler
- * resolve every [[wikilink]] now that all targets exist. Returns the slugs.
+ * Two passes: seed identities, then replace placeholder bodies using their
+ * observed revisions so every [[wikilink]] target exists. Returns the slugs.
  */
 export async function loadCorpusPages(
   engine: BrainEngine,
@@ -96,11 +97,16 @@ export async function loadCorpusPages(
     content: readFileSync(join(PAGES_DIR, f), 'utf8'),
   }));
 
-  // Pass 1: create every page row (some wikilink targets may not exist yet).
-  // Pass 2: re-run — auto-link reconciles now that every target row exists.
+  // Seed identities/frontmatter first, then publish each final body against
+  // its observed revision. Identical replacements are committed no-ops and
+  // must not be used to trigger graph reconciliation.
   for (let pass = 0; pass < 2; pass++) {
     for (const doc of docs) {
-      await put_page!.handler(ctx, { slug: doc.slug, content: doc.content });
+      const snapshot = await engine.readPageSnapshot(doc.slug, { sourceId });
+      const frontmatter = doc.content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0] ?? '';
+      await put_page!.handler(ctx, { slug: doc.slug,
+        content: pass === 0 ? `${frontmatter}\nCorpus fixture identity: ${doc.slug}.\n` : doc.content,
+        expected_revision: snapshot?.revision, request_id: randomUUID() });
     }
   }
   return docs.map((d) => d.slug);

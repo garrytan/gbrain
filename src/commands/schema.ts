@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 // `gbrain schema` CLI surface.
 //
 // The active schema pack drives type inference, link verbs, expert
@@ -574,6 +575,7 @@ async function runInitCmd(args: string[]): Promise<void> {
     console.error(`Pack \`${name}\` already exists at ${baseDir}`);
     process.exit(1);
   }
+  assertManagedFilesystemWrite(baseDir);
   mkdirSync(baseDir, { recursive: true });
   // Cast through Partial — the validate verb is the authoritative shape check.
   // The YAML written below has the minimum fields; lint/validate catch gaps.
@@ -636,6 +638,7 @@ async function runForkCmd(args: string[]): Promise<void> {
     console.error(`Pack \`${to}\` already exists at ${toDir}`);
     process.exit(1);
   }
+  assertManagedFilesystemWrite(toDir);
   mkdirSync(toDir, { recursive: true });
   const sourceManifest = loadPackFromFile(fromPath);
   const forked = { ...sourceManifest, name: to, version: '0.0.1' };

@@ -1,3 +1,4 @@
+import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../core/persistence/maintenance.ts';
 /**
  * Engine migration: transfer brain data between PGLite and Postgres.
  *
@@ -24,6 +25,7 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { autopilotPausedMarkerPath, autopilotLockPath, markerHolderAlive, MIGRATE_PAUSE_MARKER_PREFIX } from '../core/autopilot-paths.ts';
 export { MIGRATE_PAUSE_MARKER_PREFIX };
 import { listLiveLocks } from '../core/db-lock.ts';
+import { queuePageProjection } from '../core/page-state/projections.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -518,8 +520,9 @@ export async function copyPageToTarget(
     );
   }
 
-  // Copy chunks with embeddings.
-  const chunks = await source.getChunksWithEmbeddings(page.slug, sourceOpts);
+  // Migration preserves stored data even when it is not a verified search
+  // projection. The target rebuilds sanitized text under its new revision.
+  const chunks = await source.getChunksWithEmbeddings(page.slug, { ...sourceOpts, includeUnsealed: true });
   if (chunks.length > 0) {
     await target.upsertChunks(page.slug, chunks.map(c => ({
       chunk_index: c.chunk_index,
@@ -557,6 +560,8 @@ export async function copyPageToTarget(
   for (const rd of rawData) {
     await target.putRawData(page.slug, rd.source, rd.data, sourceOpts);
   }
+
+  await queuePageProjection(target, page.source_id ?? 'default', page.slug, 'engine_migration');
 
   return {
     chunks: chunks.length,
@@ -795,6 +800,8 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
 }
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
+  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
+  await assertLegacyEngineMigration(sourceEngine);
   const opts = parseArgs(args);
   const config = loadConfig();
   if (!config) {
@@ -845,6 +852,13 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const targetEngine = await createEngine(targetConfig);
   await targetEngine.connect(targetConfig);
   await targetEngine.initSchema();
+  try {
+    await assertUnmanagedCanonicalWriter(targetEngine, 'engine migration');
+    await assertLegacyEngineMigration(targetEngine);
+  } catch (error) {
+    try { await targetEngine.disconnect(); } finally { resumeAutopilot(); }
+    throw error;
+  }
 
   // Load or create manifest for resume. Checked BEFORE the non-empty-target
   // guard below: a manifest matching this exact target means the target's

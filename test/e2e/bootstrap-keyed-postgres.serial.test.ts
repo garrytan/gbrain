@@ -19,14 +19,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 
 import { addSource } from '../../src/core/sources-ops.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { loadCorpusPages } from '../helpers/bootstrap-corpus.ts';
 import { runEmbedCore } from '../../src/commands/embed.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { runSchemaTransition } from '../../src/core/retrieval-upgrade-planner.ts';
-import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { extractTakesFromPages } from '../../src/core/extract-takes-from-pages.ts';
 import {
   configureGateway,
@@ -290,6 +291,7 @@ describe.skipIf(!OPENAI && !ANTHROPIC)('keyed auto fact-extraction (LLM takes)',
 // ───────────────────────────────────────────────────────────────────────────
 describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () => {
   let engine: PostgresEngine;
+  let database: Awaited<ReturnType<typeof isolatedPersistencePostgres>> | undefined;
   let home: string;
   let root: string;
   let ws: string;
@@ -305,27 +307,23 @@ describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () =
     prevHome = process.env.GBRAIN_HOME;
     process.env.GBRAIN_HOME = root;
 
-    engine = new PostgresEngine();
-    assertSafeE2eDatabaseUrl(DATABASE_URL!);
-    await engine.connect({ database_url: DATABASE_URL! });
-    await engine.initSchema();
-    // This file runs against the shared e2e DB WITHOUT setupDB's TRUNCATE, so
-    // a prior standalone run's `workspace` source row survives and addSource
-    // (whose `force` only bypasses git validation, not the id-collision check)
-    // would throw source_id_taken. Sweep it first; the FK cascade removes any
-    // leftover pages/facts under it.
-    await engine.executeRaw(`DELETE FROM sources WHERE id = 'workspace'`, []);
+    // Source deletion retains durable owner/incarnation bindings. Give this
+    // bootstrap workspace its own brain instead of reusing the shard's owner.
+    database = await isolatedPersistencePostgres(DATABASE_URL!);
+    engine = database.engine;
     await addSource(engine, { id: 'workspace', localPath: join(ws, 'brain'), force: true });
+    await claimWorktree(engine, 'workspace', join(ws, 'brain'));
   }, 60_000);
 
   afterAll(async () => {
-    // Leave the shared DB clean for the next file / next standalone run.
-    try { await engine.executeRaw(`DELETE FROM sources WHERE id = 'workspace'`, []); } catch { /* noop */ }
-    try { await engine.disconnect(); } catch { /* noop */ }
-    if (prevHome === undefined) delete process.env.GBRAIN_HOME;
-    else process.env.GBRAIN_HOME = prevHome;
-    rmSync(root, { recursive: true, force: true });
-    rmSync(ws, { recursive: true, force: true });
+    try {
+      await database?.close();
+    } finally {
+      if (prevHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = prevHome;
+      rmSync(root, { recursive: true, force: true });
+      rmSync(ws, { recursive: true, force: true });
+    }
   });
 
   test('roundtrip + graph_floor + magic_moment pass on Postgres; probes cleaned up', async () => {
@@ -338,7 +336,7 @@ describe.skipIf(!DATABASE_URL)('Postgres bootstrap verify (real Postgres)', () =
     });
 
     // The three probes the task targets — each must pass on real Postgres.
-    for (const c of res.checks.filter((c) => c.id === 'roundtrip')) expect(c.ok).toBe(true);
+    for (const c of res.checks.filter((c) => c.id === 'roundtrip')) expect(c.ok, c.detail).toBe(true);
     const graph = res.checks.find((c) => c.id === 'graph_floor');
     expect(graph?.ok).toBe(true);
     const magic = res.checks.find((c) => c.id === 'magic_moment');

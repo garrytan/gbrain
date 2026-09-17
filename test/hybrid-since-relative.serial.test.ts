@@ -17,6 +17,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { hybridSearch, resolveDateBoundary } from '../src/core/search/hybrid.ts';
 import type { PageInput } from '../src/core/types.ts';
@@ -83,12 +84,12 @@ describe('hybridSearch since/until end-to-end (#3442)', () => {
         'Widget foundation repair follow-up: contractor quote for the pier replacement arrived yesterday.',
     });
     // putPage does not chunk; give the keyword arm content to match.
-    await engine.upsertChunks('notes/widget-old', [{
+    await installFixtureChunks(engine, 'notes/widget-old', [{
       chunk_index: 0,
       chunk_text: 'Widget foundation repair notes from the original crawlspace assessment two years back.',
       chunk_source: 'compiled_truth',
     }]);
-    await engine.upsertChunks('notes/widget-new', [{
+    await installFixtureChunks(engine, 'notes/widget-new', [{
       chunk_index: 0,
       chunk_text: 'Widget foundation repair follow-up: contractor quote for the pier replacement arrived yesterday.',
       chunk_source: 'compiled_truth',

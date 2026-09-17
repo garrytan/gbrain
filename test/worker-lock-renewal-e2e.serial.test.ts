@@ -54,7 +54,7 @@ beforeAll(async () => {
   await engine.connect({ database_url: '' });
   await engine.initSchema();
   queue = new MinionQueue(engine);
-  originalExecuteRaw = engine.executeRaw.bind(engine);
+  originalExecuteRaw = engine.executeRaw;
 });
 
 afterAll(async () => {
@@ -77,11 +77,12 @@ describe('H: gold-standard regression — worker survives renewLock throws', () 
     // enough to skip claim / completeJob / failJob / etc.
     let throwsRemaining = 50;
     let renewLockCallCount = 0;
-    (engine as { executeRaw: PGLiteEngine['executeRaw'] }).executeRaw = async (
+    (engine as { executeRaw: PGLiteEngine['executeRaw'] }).executeRaw = async function<T = Record<string, unknown>>(
+      this: PGLiteEngine,
       sql: string,
       params?: unknown[],
       opts?: { signal?: AbortSignal },
-    ) => {
+    ): Promise<T[]> {
       const isRenewLock = sql.includes('SET lock_until = now()') && sql.includes('lock_token');
       if (isRenewLock) {
         renewLockCallCount++;
@@ -90,7 +91,7 @@ describe('H: gold-standard regression — worker survives renewLock throws', () 
           throw new Error('simulated PgBouncer connection drop');
         }
       }
-      return originalExecuteRaw(sql, params, opts);
+      return originalExecuteRaw.call(this, sql, params, opts) as Promise<T[]>;
     };
 
     // Short lockDuration → 50ms timer interval, abort deadline at

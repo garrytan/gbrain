@@ -25,6 +25,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import {
@@ -73,7 +74,7 @@ async function seedTitleOnlyPage(): Promise<void> {
     title: 'Chronomancer Codex Ledger',
     compiled_truth: 'A reference document about scheduling practices and planning.',
   });
-  await engine.upsertChunks('projects/chronomancer', [
+  await installFixtureChunks(engine, 'projects/chronomancer', [
     {
       chunk_index: 0,
       chunk_text: 'A reference document about scheduling practices and planning.',
@@ -109,7 +110,7 @@ describe('searchTitles — D1 title candidate arm', () => {
       title: longTitle,
       compiled_truth: 'An annual planning artifact.',
     });
-    await engine.upsertChunks('reports/emerald-falcon', [
+    await installFixtureChunks(engine, 'reports/emerald-falcon', [
       { chunk_index: 0, chunk_text: 'An annual planning artifact.', chunk_source: 'compiled_truth' },
     ]);
 
@@ -133,7 +134,7 @@ describe('searchTitles — D1 title candidate arm', () => {
       title: 'Obsidian Waterfall Registry',
       compiled_truth: 'body text here',
     });
-    await engine.upsertChunks('notes/mixed-chunks', [
+    await installFixtureChunks(engine, 'notes/mixed-chunks', [
       { chunk_index: 0, chunk_text: 'timeline entry text', chunk_source: 'timeline' },
       { chunk_index: 1, chunk_text: 'compiled body text', chunk_source: 'compiled_truth' },
     ]);
@@ -147,7 +148,7 @@ describe('searchTitles — D1 title candidate arm', () => {
       title: 'Cobalt Meridian Atlas',
       compiled_truth: 'unrelated body',
     });
-    await engine.upsertChunks('notes/timeline-only', [
+    await installFixtureChunks(engine, 'notes/timeline-only', [
       { chunk_index: 5, chunk_text: 'later timeline', chunk_source: 'timeline' },
       { chunk_index: 2, chunk_text: 'earlier timeline', chunk_source: 'timeline' },
     ]);
@@ -178,6 +179,9 @@ describe('searchTitles — D1 title candidate arm', () => {
       title: 'Zanzibar Protocol Manifest',
       compiled_truth: 'fixture body',
     });
+    await installFixtureChunks(engine, 'test/hidden-fixture', [
+      { chunk_index: 0, chunk_text: 'fixture body', chunk_source: 'compiled_truth' },
+    ]);
     const hits = await engine.searchTitles('Zanzibar Protocol Manifest', { limit: 10 });
     expect(hits.map(r => r.slug)).not.toContain('test/hidden-fixture');
   });
@@ -190,7 +194,7 @@ describe('searchKeyword — D2 AND→OR fallback', () => {
       title: 'Quantum Notes',
       compiled_truth: 'quantum lattice harmonics resonance experiments',
     });
-    await engine.upsertChunks('notes/quantum', [
+    await installFixtureChunks(engine, 'notes/quantum', [
       {
         chunk_index: 0,
         chunk_text: 'quantum lattice harmonics resonance experiments',
@@ -224,7 +228,7 @@ describe('searchKeyword — D2 AND→OR fallback', () => {
       title: 'Partial Overlap',
       compiled_truth: 'quantum computing conference recap',
     });
-    await engine.upsertChunks('notes/partial', [
+    await installFixtureChunks(engine, 'notes/partial', [
       { chunk_index: 0, chunk_text: 'quantum computing conference recap', chunk_source: 'compiled_truth' },
     ]);
 
@@ -256,7 +260,7 @@ describe('hybridSearch — search.keywordOrFallback knob (v=25)', () => {
       title: 'Lab Journal',
       compiled_truth: 'quantum lattice harmonics resonance experiments',
     });
-    await engine.upsertChunks('notes/lab-journal', [
+    await installFixtureChunks(engine, 'notes/lab-journal', [
       {
         chunk_index: 0,
         chunk_text: 'quantum lattice harmonics resonance experiments',
@@ -340,7 +344,7 @@ describe('hybridSearch wiring — title arm reaches the fused result set', () =>
       title: longTitle,
       compiled_truth: 'An annual planning artifact.',
     });
-    await engine.upsertChunks('reports/emerald-falcon', [
+    await installFixtureChunks(engine, 'reports/emerald-falcon', [
       { chunk_index: 0, chunk_text: 'An annual planning artifact.', chunk_source: 'compiled_truth' },
     ]);
     const results = await hybridSearch(engine, longTitle, { limit: 5 });

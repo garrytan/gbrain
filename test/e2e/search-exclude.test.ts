@@ -9,6 +9,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
@@ -32,7 +33,7 @@ beforeAll(async () => {
     compiled_truth: 'widget test fixture for the test suite',
     timeline: '',
   });
-  await engine.upsertChunks('test/fixtures/widget', [
+  await installFixtureChunks(engine, 'test/fixtures/widget', [
     {
       chunk_index: 0,
       chunk_text: 'widget test fixture for the test suite',
@@ -48,7 +49,7 @@ beforeAll(async () => {
     compiled_truth: 'widget archived from 2020',
     timeline: '',
   });
-  await engine.upsertChunks('archive/old-stuff/widget-2020', [
+  await installFixtureChunks(engine, 'archive/old-stuff/widget-2020', [
     {
       chunk_index: 0,
       chunk_text: 'widget archived from 2020 — stale info about widget',
@@ -64,7 +65,7 @@ beforeAll(async () => {
     compiled_truth: 'the widget pattern is a useful design pattern',
     timeline: '',
   });
-  await engine.upsertChunks('concepts/widget-pattern', [
+  await installFixtureChunks(engine, 'concepts/widget-pattern', [
     {
       chunk_index: 0,
       chunk_text: 'the widget pattern is a useful widget design pattern',
@@ -82,7 +83,7 @@ beforeAll(async () => {
     compiled_truth: 'widget raw sidecar dump',
     timeline: '',
   });
-  await engine.upsertChunks('.raw/widget-dump', [
+  await installFixtureChunks(engine, '.raw/widget-dump', [
     {
       chunk_index: 0,
       chunk_text: 'widget raw sidecar dump noise',
@@ -100,7 +101,7 @@ beforeAll(async () => {
     compiled_truth: 'the quokkanaut project shipped in 2019',
     timeline: '',
   });
-  await engine.upsertChunks('archive/2019/quokkanaut-memo', [
+  await installFixtureChunks(engine, 'archive/2019/quokkanaut-memo', [
     {
       chunk_index: 0,
       chunk_text: 'the quokkanaut project shipped in 2019',

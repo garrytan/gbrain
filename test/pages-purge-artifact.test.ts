@@ -1,293 +1,175 @@
 /**
- * delete_page purge — the markdown artifact must be GONE before the row is.
- *
- * O4-2 (v0.50.2.0 security wave, review cycle 4): `purge: true` on a page
- * that was already soft-deleted used to skip file removal outright
- * (`{ removed: false, skipped: 'already_soft_deleted' }`) and hard-delete the
- * row. If the earlier soft-delete's unlink had FAILED (permissions, read-only
- * mount), the credential-bearing `.md` survived on disk and the next
- * `gbrain sync` re-imported it — a "purge" that resurrected the secret.
- *
- * Contract pinned here:
- *   - the tombstone path resolves the page's recorded file from the
- *     soft-deleted row itself and RETRIES the removal before dropping the row;
- *   - `write_through` reports the real outcome (`removed: true` / `removed:
- *     false, error` / `skipped: 'file_not_present'`), never a fabricated skip;
- *   - a removal ERROR fails closed: `OperationError('storage_error')` naming
- *     the path, the row stays (soft-deleted) so the operator can fix the
- *     cause and re-run — a purge that leaves the file is not a purge. This
- *     applies to the live-row purge too (the soft-delete lands, the
- *     hard-delete does not).
- *
- * Two ways to make the artifact undeletable:
- *   - `chmod 0555` on its directory (the realistic permissions case) — only
- *     bites for a caller without CAP_DAC_OVERRIDE, so those tests probe once
- *     at load and skip (with the reason in the name) for root / capability-
- *     bearing sandboxes / Windows;
- *   - a DIRECTORY sitting where the `.md` should be — `unlink(2)` on a
- *     directory fails for every uid (EISDIR/EPERM), so the fail-closed path
- *     is exercised unconditionally.
+ * A managed purge removes the recorded artifact before hard deletion and its
+ * durable receipt commit. Failed publication preserves the prior row; existing
+ * tombstones remain tombstones. Unknown bytes are never removed speculatively.
+ * Permission cases skip explicitly when chmod cannot constrain this process.
  */
-
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
 let brainDir: string;
-const delete_page = operations.find(o => o.name === 'delete_page')!;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-purge-artifact-'));
+const deletePage = operations.find(o => o.name === 'delete_page')!;
+const putPage = operations.find(o => o.name === 'put_page')!;
+const SLUG = 'secrets/leaked-key';
+const REL_PATH = 'secrets/leaked-key.md';
+const CONTENT = '---\ntitle: Leaked key\ntype: note\n---\n\n# Body\n\nAKIA-EXAMPLE-NOT-REAL\n';
 
-/** Does `chmod 0555 <dir>` actually stop THIS process from unlinking inside it? */
 function chmodBites(): boolean {
   if (process.platform === 'win32' || process.getuid?.() === 0) return false;
   const probe = mkdtempSync(join(tmpdir(), 'gbrain-chmod-probe-'));
-  const dir = join(probe, 'd');
-  const file = join(dir, 'f');
+  const dir = join(probe, 'd'), file = join(dir, 'f');
   try {
-    mkdirSync(dir);
-    writeFileSync(file, 'x');
-    chmodSync(dir, 0o555);
+    mkdirSync(dir); writeFileSync(file, 'x'); chmodSync(dir, 0o555);
     try { unlinkSync(file); return false; } catch { return true; }
   } finally {
-    try { chmodSync(dir, 0o755); } catch { /* best-effort */ }
+    try { chmodSync(dir, 0o755); } catch { /* probe may not have reached mkdir */ }
     rmSync(probe, { recursive: true, force: true });
   }
 }
 const CHMOD_BITES = chmodBites();
 const chmodTest = CHMOD_BITES ? test : test.skip;
-const CHMOD_NOTE = CHMOD_BITES ? '' : ' [skipped: chmod does not bite for this uid/capabilities/platform]';
-
-const SLUG = 'secrets/leaked-key';
-const REL_PATH = 'secrets/leaked-key.md';
-const CONTENT = '---\ntitle: Leaked key\ntype: note\n---\n\n# Body\n\nAKIA-EXAMPLE-NOT-REAL\n';
-
-function localCtx(): OperationContext {
-  return {
-    engine: engine as any,
-    config: {} as any,
-    logger: { info() {}, warn() {}, error() {} },
-    dryRun: false,
-    remote: false,
-    sourceId: 'default',
-  } as OperationContext;
+const CHMOD_NOTE = CHMOD_BITES ? '' : ' [skipped: chmod does not constrain this uid/capabilities/platform]';
+function context(): OperationContext {
+  return { engine, config: { engine: 'pglite', embedding_disabled: true },
+    logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: 'default' };
 }
-
 async function seedPageWithFile(rel = REL_PATH): Promise<string> {
   await importFromContent(engine, SLUG, CONTENT, { noEmbed: true, sourceId: 'default', sourcePath: rel });
-  const filePath = join(brainDir, rel);
-  mkdirSync(join(brainDir, rel.split('/')[0]), { recursive: true });
-  writeFileSync(filePath, CONTENT);
-  return filePath;
+  const path = join(brainDir, rel); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, CONTENT);
+  return path;
 }
-
-/** Make the artifact path undeletable for ANY uid: a non-empty directory where the file was. */
-function replaceFileWithDirectory(filePath: string): void {
-  rmSync(filePath);
-  mkdirSync(filePath);
-  writeFileSync(join(filePath, 'keep'), '');
+function replaceFileWithDirectory(path: string): void {
+  rmSync(path); mkdirSync(path); writeFileSync(join(path, 'keep'), 'preserved directory contents');
 }
-/** Undo replaceFileWithDirectory: put the markdown file back. */
-function restoreFile(filePath: string): void {
-  rmSync(filePath, { recursive: true, force: true });
-  writeFileSync(filePath, CONTENT);
+function restoreFile(path: string): void {
+  rmSync(path, { recursive: true, force: true }); writeFileSync(path, CONTENT);
 }
-
 async function rowState(): Promise<'absent' | 'live' | 'tombstone'> {
-  const rows = await engine.executeRaw<{ deleted_at: string | null }>(
-    `SELECT deleted_at FROM pages WHERE source_id = 'default' AND slug = $1`, [SLUG],
-  );
-  if (rows.length === 0) return 'absent';
-  return rows[0].deleted_at === null ? 'live' : 'tombstone';
+  const page = await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true });
+  return !page ? 'absent' : page.page.deleted_at === null ? 'live' : 'tombstone';
 }
-
-async function softDelete(): Promise<Record<string, any>> {
-  return await delete_page.handler(localCtx(), { slug: SLUG }) as Record<string, any>;
+async function parameters(extra: Record<string, unknown> = {}) {
+  const snapshot = await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true });
+  return { slug: SLUG, request_id: randomUUID(), ...(snapshot ? { expected_revision: snapshot.revision } : {}), ...extra };
 }
-async function purge(): Promise<Record<string, any>> {
-  return await delete_page.handler(localCtx(), { slug: SLUG, purge: true }) as Record<string, any>;
-}
-async function purgeError(): Promise<OperationError> {
-  try {
-    await purge();
-  } catch (e) {
-    expect(e).toBeInstanceOf(OperationError);
-    return e as OperationError;
+const invoke = (params: Record<string, unknown>) => withEnv({ GBRAIN_HOME: home },
+  () => deletePage.handler(context(), params)) as Promise<Record<string, any>>;
+async function purge() { return invoke(await parameters({ purge: true })); }
+async function failure(params: Record<string, unknown>, state: 'failed' | 'conflict' = 'failed'): Promise<OperationError> {
+  try { await invoke(params); } catch (error) {
+    expect(error).toBeInstanceOf(OperationError);
+    expect((error as OperationError).writeRequest?.state).toBe(state);
+    return error as OperationError;
   }
-  throw new Error('expected purge to throw storage_error while the file could not be removed');
+  throw new Error('Expected a terminal publication failure');
 }
 
 beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
+  engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
 }, 60_000);
-
 afterAll(async () => {
-  if (engine) await engine.disconnect();
+  await disposePersistenceConsumer(engine); await engine.disconnect(); rmSync(home, { recursive: true, force: true });
 }, 60_000);
-
 beforeEach(async () => {
-  await resetPgliteState(engine);
-  _resetWriteThroughCacheForTest();
-  tmpRoot = mkdtempSync(join(tmpdir(), 'gbrain-purge-artifact-'));
-  brainDir = join(tmpRoot, 'brain');
-  mkdirSync(brainDir, { recursive: true });
+  await disposePersistenceConsumer(engine); await resetPgliteState(engine); _resetWriteThroughCacheForTest();
+  tmpRoot = mkdtempSync(join(home, 'case-')); brainDir = join(tmpRoot, 'brain'); mkdirSync(brainDir);
   await engine.setConfig('sync.repo_path', brainDir);
 });
-
-afterEach(() => {
-  // Restore the write bit first so the temp tree can actually be removed.
-  try { chmodSync(join(brainDir, 'secrets'), 0o755); } catch { /* may not exist */ }
+afterEach(async () => {
+  await disposePersistenceConsumer(engine);
+  try { chmodSync(join(brainDir, 'secrets'), 0o755); } catch { /* no secrets directory in this case */ }
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-describe('delete_page purge — artifact retry on the tombstone path', () => {
-  test('soft-delete whose unlink FAILED (undeletable artifact), then purge: storage_error naming the path, row + file stay; once removable → purged, removed: true, file gone', async () => {
-    const filePath = await seedPageWithFile();
-    replaceFileWithDirectory(filePath);
-
-    // The earlier soft-delete is best-effort: the row tombstones, the unlink
-    // fails, the artifact survives — the setup the resurrection needs.
-    const soft = await softDelete();
-    expect(soft.status).toBe('soft_deleted');
-    expect(soft.write_through.removed).toBe(false);
-    expect(typeof soft.write_through.error).toBe('string');
-    expect(existsSync(filePath)).toBe(true);
-    expect(await rowState()).toBe('tombstone');
-
-    // Purge while the artifact still cannot be removed: fail closed. The row
-    // is NOT dropped — dropping it would orphan the file for sync to re-import.
-    const err = await purgeError();
-    expect(err.code).toBe('storage_error');
-    expect(err.message).toContain(filePath);
-    expect(String(err.suggestion)).toContain('--purge');
-    expect(await rowState()).toBe('tombstone');
-    expect(existsSync(filePath)).toBe(true);
-
-    // Operator fixes the cause and re-runs: the retry removes the real
-    // artifact and only then does the hard-delete land.
-    restoreFile(filePath);
-    const res = await purge();
-    expect(res.status).toBe('purged');
-    expect(res.write_through).toMatchObject({ removed: true, path: filePath });
-    expect(res.write_through).not.toHaveProperty('skipped');
-    expect(existsSync(filePath)).toBe(false);
-    expect(await rowState()).toBe('absent');
-    expect(String(res.residuals)).toContain('git history');
+describe('managed purge artifact and receipt boundaries', () => {
+  for (const tombstone of [false, true]) {
+    test(`${tombstone ? 'tombstone' : 'live row'}: undeletable artifact keeps row and bytes; repaired new request purges`, async () => {
+      const file = await seedPageWithFile();
+      if (tombstone) await engine.softDeletePage(SLUG, { sourceId: 'default' });
+      const before = await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true });
+      replaceFileWithDirectory(file);
+      const failedParams = await parameters({ purge: true });
+      const error = await failure(failedParams);
+      expect(error.code).toBe('storage_error');
+      expect(error.message).not.toContain(brainDir); // durable diagnostics contain no private paths
+      expect(await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true })).toEqual(before);
+      expect(readFileSync(join(file, 'keep'), 'utf8')).toBe('preserved directory contents');
+      restoreFile(file);
+      const replay = await failure(failedParams);
+      expect(replay.writeRequest).toEqual(error.writeRequest);
+      expect(readFileSync(file, 'utf8')).toBe(CONTENT);
+      const result = await purge();
+      expect(result).toMatchObject({ status: 'purged', state: 'committed', write_through: { written: true } });
+      expect(String(result.residuals)).toContain('git history');
+      expect(existsSync(file)).toBe(false); expect(await rowState()).toBe('absent');
+    });
+    chmodTest(`${tombstone ? 'tombstone' : 'live row'}: permission failure preserves prior state until a new request after repair${CHMOD_NOTE}`, async () => {
+      const file = await seedPageWithFile();
+      if (tombstone) await engine.softDeletePage(SLUG, { sourceId: 'default' });
+      const before = await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true });
+      chmodSync(dirname(file), 0o555);
+      const error = await failure(await parameters({ purge: true }));
+      expect(error.code).toBe('storage_error');
+      expect(await engine.readPageSnapshot(SLUG, { sourceId: 'default', includeDeleted: true })).toEqual(before);
+      expect(readFileSync(file, 'utf8')).toBe(CONTENT);
+      chmodSync(dirname(file), 0o755);
+      expect((await purge()).status).toBe('purged');
+      expect(existsSync(file)).toBe(false); expect(await rowState()).toBe('absent');
+    });
+  }
+  for (const absent of [false, true]) {
+    test(`tombstone uses its recorded non-slug artifact path (${absent ? 'already absent' : 'still present'})`, async () => {
+      const file = await seedPageWithFile('archive/original-secret.md');
+      await engine.softDeletePage(SLUG, { sourceId: 'default' });
+      if (absent) rmSync(file);
+      const result = await purge();
+      expect(result).toMatchObject({ status: 'purged', state: 'committed', persistence: { mode: 'filesystem' } });
+      expect(existsSync(file)).toBe(false); expect(existsSync(join(brainDir, `${SLUG}.md`))).toBe(false);
+      expect(await rowState()).toBe('absent');
+    });
+  }
+  test('same-ID committed replay survives hard deletion and never purges a recreated page', async () => {
+    const file = await seedPageWithFile();
+    const original = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!;
+    const params = await parameters({ purge: true });
+    const committed = await invoke(params);
+    expect(committed.state).toBe('committed'); expect(await rowState()).toBe('absent');
+    expect(await invoke(params)).toEqual(committed);
+    await expect(invoke({ ...params, purge: false })).rejects.toMatchObject({ code: 'idempotency_conflict' });
+    await withEnv({ GBRAIN_HOME: home }, () => putPage.handler(context(), { slug: SLUG, content: CONTENT, request_id: randomUUID() }));
+    const recreated = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!;
+    expect(recreated.page.id).not.toBe(original.page.id);
+    expect(recreated.revision).not.toBe(original.revision);
+    const bytes = readFileSync(file, 'utf8');
+    expect(await invoke(params)).toEqual(committed);
+    expect(await engine.readPageSnapshot(SLUG, { sourceId: 'default' })).toEqual(recreated);
+    expect(readFileSync(file, 'utf8')).toBe(bytes);
+    await expect(invoke({ ...params, request_id: randomUUID() })).rejects.toMatchObject({ code: 'revision_conflict' });
   });
-
-  chmodTest(`permissions case: soft-delete under a read-only directory, purge → storage_error until chmod is fixed${CHMOD_NOTE}`, async () => {
-    const filePath = await seedPageWithFile();
-    chmodSync(join(brainDir, 'secrets'), 0o555);
-
-    const soft = await softDelete();
-    expect(soft.status).toBe('soft_deleted');
-    expect(soft.write_through.removed).toBe(false);
-    expect(String(soft.write_through.error)).toMatch(/EACCES|EPERM/);
-    expect(existsSync(filePath)).toBe(true);
-
-    const err = await purgeError();
-    expect(err.code).toBe('storage_error');
-    expect(err.message).toContain(filePath);
-    expect(await rowState()).toBe('tombstone');
-    expect(existsSync(filePath)).toBe(true);
-
-    chmodSync(join(brainDir, 'secrets'), 0o755);
-    const res = await purge();
-    expect(res.status).toBe('purged');
-    expect(res.write_through).toMatchObject({ removed: true, path: filePath });
-    expect(existsSync(filePath)).toBe(false);
-    expect(await rowState()).toBe('absent');
+  test('purge preserves unknown tombstone artifact bytes even with explicit force', async () => {
+    const file = await seedPageWithFile(); await engine.softDeletePage(SLUG, { sourceId: 'default' });
+    writeFileSync(file, 'Unknown local edit must survive.');
+    const params = { slug: SLUG, purge: true, force: true, request_id: randomUUID() };
+    expect((await failure(params, 'conflict')).code).toBe('source_changed');
+    expect(readFileSync(file, 'utf8')).toBe('Unknown local edit must survive.'); expect(await rowState()).toBe('tombstone');
   });
-
-  test('tombstone whose file is STILL on disk (unlink never ran): purge removes the file, reports removed: true, never a fabricated skip', async () => {
-    const filePath = await seedPageWithFile();
-    // Soft-delete at the engine layer — no write-through ran, so the artifact
-    // is exactly what a failed/absent unlink leaves behind.
-    expect(await engine.softDeletePage(SLUG, { sourceId: 'default' })).not.toBeNull();
-    expect(existsSync(filePath)).toBe(true);
-
-    const res = await purge();
-    expect(res.status).toBe('purged');
-    expect(res.write_through).toMatchObject({ removed: true, path: filePath });
-    expect(res.write_through.skipped).toBeUndefined();
-    expect(existsSync(filePath)).toBe(false);
-    expect(await rowState()).toBe('absent');
-  });
-
-  test('tombstone whose file is already gone: purge reports the real no-op (skipped: file_not_present) and drops the row', async () => {
-    const filePath = await seedPageWithFile();
-    rmSync(filePath);
-    expect(await engine.softDeletePage(SLUG, { sourceId: 'default' })).not.toBeNull();
-
-    const res = await purge();
-    expect(res.status).toBe('purged');
-    expect(res.write_through).toEqual({ removed: false, path: filePath, skipped: 'file_not_present' });
-    expect(await rowState()).toBe('absent');
-  });
-
-  test('the tombstone retry resolves the RECORDED source_path, not a slug-derived twin', async () => {
-    // Human-authored vault layout: the on-disk name is not the slug.
-    const filePath = await seedPageWithFile('Secrets/Leaked Key.md');
-    expect(await engine.softDeletePage(SLUG, { sourceId: 'default' })).not.toBeNull();
-
-    const res = await purge();
-    expect(res.status).toBe('purged');
-    expect(res.write_through).toMatchObject({ removed: true, path: filePath });
-    expect(existsSync(filePath)).toBe(false);
-    expect(existsSync(join(brainDir, `${SLUG}.md`))).toBe(false);
-    expect(await rowState()).toBe('absent');
-  });
-});
-
-describe('delete_page purge — live-row path fails closed too', () => {
-  test('live row whose artifact cannot be removed: storage_error, the row is soft-deleted (not dropped); once removable → second purge completes', async () => {
-    const filePath = await seedPageWithFile();
-    replaceFileWithDirectory(filePath);
-
-    const err = await purgeError();
-    expect(err.code).toBe('storage_error');
-    expect(err.message).toContain(filePath);
-    // The soft-delete landed (hidden from reads, recoverable), the hard
-    // primitive did not run — a re-run resumes on the tombstone path.
-    expect(await rowState()).toBe('tombstone');
-    expect(existsSync(filePath)).toBe(true);
-
-    restoreFile(filePath);
-    const res = await purge();
-    expect(res.status).toBe('purged');
-    expect(res.write_through).toMatchObject({ removed: true, path: filePath });
-    expect(existsSync(filePath)).toBe(false);
-    expect(await rowState()).toBe('absent');
-  });
-
-  chmodTest(`permissions case: live-row purge under a read-only directory → storage_error, tombstone kept${CHMOD_NOTE}`, async () => {
-    const filePath = await seedPageWithFile();
-    chmodSync(join(brainDir, 'secrets'), 0o555);
-    const err = await purgeError();
-    expect(err.code).toBe('storage_error');
-    expect(await rowState()).toBe('tombstone');
-    expect(existsSync(filePath)).toBe(true);
-    chmodSync(join(brainDir, 'secrets'), 0o755);
-    expect((await purge()).status).toBe('purged');
-    expect(existsSync(filePath)).toBe(false);
-  });
-
-  test('a plain (non-purge) soft-delete stays best-effort: an unlink failure is reported, never thrown', async () => {
-    const filePath = await seedPageWithFile();
-    replaceFileWithDirectory(filePath);
-    const res = await softDelete();
-    expect(res.status).toBe('soft_deleted');
-    expect(res.write_through.removed).toBe(false);
-    expect(typeof res.write_through.error).toBe('string');
-    expect(existsSync(filePath)).toBe(true);
-    expect(await rowState()).toBe('tombstone');
+  test('ordinary soft-delete also rolls back when its artifact cannot be removed', async () => {
+    const file = await seedPageWithFile(); replaceFileWithDirectory(file);
+    const error = await failure(await parameters());
+    expect(error.code).toBe('storage_error'); expect(await rowState()).toBe('live');
+    expect(readFileSync(join(file, 'keep'), 'utf8')).toBe('preserved directory contents');
   });
 });

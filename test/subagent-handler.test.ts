@@ -1184,17 +1184,23 @@ describe('oneshot mode dispatch (#4216)', () => {
     // transcript). A second invocation of the SAME job (outcome write lost,
     // stall requeue) replays from the transcript — no fallback happened, so
     // stamping 'agentic_fallback' would poison the phase fallback histogram.
+    const replaySuffix = `${SUFFIX}-replay`;
+    const replayOutput = VALID.replaceAll(SUFFIX, replaySuffix);
     const client = new FakeMessagesClient([]);
-    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(VALID) });
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(replayOutput) });
     const ctx = await makeCtx({
       prompt: 'synthesize', mode: 'oneshot', require_writes: true,
-      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: replaySuffix,
     });
     const first = await handler(ctx);
     expect(first.synth_mode_used).toBe('oneshot');
+    const initialWrites = await engine.executeRaw<{ request_id: string; status: string }>(
+      "SELECT input->>'request_id' AS request_id,status FROM subagent_tool_executions WHERE job_id=$1 ORDER BY tool_use_id", [ctx.id]);
+    expect(initialWrites).toHaveLength(2);
+    expect(initialWrites.every(row => typeof row.request_id === 'string' && row.status === 'complete')).toBe(true);
 
     let chatCalls = 0;
-    const spy = (async (...args: any[]) => { chatCalls++; return chatStub(VALID)(...args); }) as any;
+    const spy = (async (...args: any[]) => { chatCalls++; return chatStub(replayOutput)(...args); }) as any;
     const handler2 = makeSubagentHandler({ engine, client, _chat: spy });
     const replayCtx: typeof ctx = { ...ctx, attempts_made: 1 };
     const replay = await handler2(replayCtx);
@@ -1204,6 +1210,9 @@ describe('oneshot mode dispatch (#4216)', () => {
     // transcript replay may return unset — either is honest; a fabricated
     // fallback is not. Either way the model is not re-called by the loop.
     expect(chatCalls).toBe(0);
+    expect(await engine.executeRaw(
+      "SELECT input->>'request_id' AS request_id,status FROM subagent_tool_executions WHERE job_id=$1 ORDER BY tool_use_id", [ctx.id]))
+      .toEqual(initialWrites);
   });
 });
 

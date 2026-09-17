@@ -118,7 +118,7 @@ describe('waitForDbLockTakeover (#2308)', () => {
         if (!swapped) {
           swapped = true;
           await eng.executeRaw(
-            `UPDATE gbrain_cycle_locks SET holder_pid = 22222 WHERE id = $1`,
+            `UPDATE gbrain_cycle_locks SET holder_pid = 22222, acquisition_token = gen_random_uuid() WHERE id = $1`,
             [LOCK_ID],
           );
         }

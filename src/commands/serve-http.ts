@@ -66,6 +66,7 @@ import {
 import { writeSurfaceChangeAudit } from '../core/surface-audit.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
+import { createPersistenceIpcProvider } from '../core/persistence/provider.ts';
 import { resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
@@ -2197,7 +2198,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
         return next();
       }
-      res.sendFile(path.join(adminDistPath, 'index.html'));
+      res.sendFile('index.html', { root: adminDistPath }); // Exclude hidden checkout ancestors from dotfile checks.
     });
   } else {
     // Embedded path. Read assets from the generated manifest. Cache the
@@ -3346,6 +3347,7 @@ ${bootstrapFromEnv
   const ipcBinding = await bindResolveIpcForServe(
     engine,
     (await resolveMcpStdioSourceScope(engine)).sourceId,
+    await createPersistenceIpcProvider(engine, config),
   );
   if (ipcBinding.socketPath) {
     console.error(`  Resolve IPC: ${ipcBinding.socketPath}`);

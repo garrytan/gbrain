@@ -17,6 +17,7 @@ import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { dataFrontmatter as matter } from '../../src/core/data-frontmatter.ts';
 import { runCapture, __testing } from '../../src/commands/capture.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+import { currentExitCode, setCliExitVerdict, _resetCliExitVerdictForTests } from '../../src/core/cli-force-exit.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
@@ -50,25 +51,22 @@ beforeEach(async () => {
   await engine.setConfig('schema_pack', 'gbrain-base');
 });
 
-/** #4655: run capture expecting a process.exit(1), capturing stderr. */
+/** Capture the CLI's owned verdict; error receipts return through normal teardown. */
 async function runCaptureExpectingExit(args: string[]): Promise<{ exitCode: number | undefined; stderr: string }> {
   const errCaptured: string[] = [];
   const origErr = console.error;
-  const origExit = process.exit;
+  const originalVerdict = currentExitCode();
+  const originalExitCode = process.exitCode;
+  _resetCliExitVerdictForTests();
   let exitCode: number | undefined;
   console.error = (...a: unknown[]) => errCaptured.push(a.map(String).join(' '));
-  (process.exit as unknown as (code?: number) => never) = ((code?: number) => {
-    exitCode = code ?? 0;
-    throw new Error('__EXIT__');
-  }) as never;
   try {
     await runCapture(engine, args);
-    throw new Error('expected capture to exit');
-  } catch (e) {
-    if (!(e instanceof Error) || e.message !== '__EXIT__') throw e;
+    exitCode = currentExitCode();
   } finally {
     console.error = origErr;
-    process.exit = origExit;
+    setCliExitVerdict(originalVerdict);
+    process.exitCode = originalExitCode;
   }
   return { exitCode, stderr: errCaptured.join('\n') };
 }

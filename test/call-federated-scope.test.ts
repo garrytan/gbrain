@@ -9,6 +9,8 @@ import { describe, test, expect } from 'bun:test';
 import { runCall } from '../src/commands/call.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
 type SourceRow = { id: string; local_path: string | null; archived: boolean; config: Record<string, unknown> };
 
@@ -48,6 +50,25 @@ function makeEngine(capture: { resolveSlugsOpts: unknown[] }): BrainEngine {
 }
 
 describe('#3874 gbrain call federated scope parity', () => {
+  test('direct call errors retain the typed receipt in delivered JSON and set a failing exit verdict', async () => {
+    await withEnv({ GBRAIN_SOURCE: undefined }, async () => {
+      const receipt = { request_id: '10000000-0000-4000-8000-000000000001', state: 'conflict' as const, retry_after_ms: null };
+      const error = new OperationError('revision_conflict', 'The observed revision is stale.');
+      error.writeRequest = receipt;
+      error.writeError = 'revision_conflict';
+      const engine = makeEngine({ resolveSlugsOpts: [] });
+      engine.resolveSlugs = async () => { throw error; };
+      const outs: string[] = [];
+      const priorExitCode = process.exitCode;
+      try {
+        await runCall(engine, ['resolve_slugs', '{"partial":"example"}'], async payload => { outs.push(payload); });
+        expect(outs).toHaveLength(1);
+        expect(JSON.parse(outs[0])).toMatchObject({ error: 'revision_conflict', write_error: 'revision_conflict', write_request: receipt });
+        expect(currentExitCode()).toBe(1);
+      } finally { _resetCliExitVerdictForTests(); process.exitCode = priorExitCode ?? 0; }
+    });
+  });
+
   test('ambient-tier resolution widens unqualified reads across federated sources', async () => {
     await withEnv({ GBRAIN_SOURCE: undefined }, async () => {
       const capture = { resolveSlugsOpts: [] as unknown[] };

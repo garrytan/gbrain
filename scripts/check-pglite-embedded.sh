@@ -36,6 +36,7 @@ GBRAIN_HOME_DIR="$BUILD_DIR/home"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts" "$GBRAIN_HOME_DIR"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+cp -R "$REPO_ROOT/native" "$BUILD_DIR/native"
 # Shared operation/queue boundaries can reach embedded bootstrap assets even
 # from an engine-only import. Keep the compiled graph's file imports available.
 cp -R "$REPO_ROOT/templates" "$BUILD_DIR/templates"

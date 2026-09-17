@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 /**
  * Patterns phase (v0.23) — cross-session theme detection.
  *
@@ -131,6 +132,7 @@ export async function runPhasePatterns(
   engine: BrainEngine,
   opts: PatternsPhaseOpts,
 ): Promise<PhaseResult> {
+  if (!opts.dryRun) await assertUnmanagedCanonicalWriter(engine, 'dream patterns');
   const start = Date.now();
   let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
   try {

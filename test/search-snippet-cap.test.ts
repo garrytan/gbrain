@@ -7,6 +7,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { applySnippetCap, buildSnippetMarker, DEFAULT_AGENT_SNIPPET_CHARS } from '../src/core/search/snippet-cap.ts';
 import type { SearchResult } from '../src/core/types.ts';
@@ -35,7 +36,7 @@ beforeAll(async () => {
   await engine.putPage('notes/walrus', {
     type: 'note', title: 'Walrus fanfare', compiled_truth: LONG_TEXT, frontmatter: {},
   });
-  await engine.upsertChunks('notes/walrus', [
+  await installFixtureChunks(engine, 'notes/walrus', [
     { chunk_index: 0, chunk_text: LONG_TEXT, chunk_source: 'compiled_truth' },
   ]);
   await engine.setConfig('search.mcp_keyword_only', 'true');

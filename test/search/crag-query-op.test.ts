@@ -9,6 +9,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import type { CragMetaBlock } from '../../src/core/search/crag.ts';
@@ -98,6 +99,9 @@ describe('query op — CRAG gate (#1663)', () => {
       type: 'note', title: 'Synthetic restricted record', compiled_truth: 'PRIVATE_CRAG_CANARY',
       frontmatter: { visibility: 'private' },
     });
+    await installFixtureChunks(engine, 'notes/private-crag', [
+      { chunk_index: 0, chunk_text: 'PRIVATE_CRAG_CANARY', chunk_source: 'compiled_truth' },
+    ]);
     await engine.upsertChunks('notes/private-crag', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Synthetic restricted record PRIVATE_CRAG_CANARY' }]);
     for (const remote of [true, undefined]) {
       const { ctx, meta } = ctxWithMeta();

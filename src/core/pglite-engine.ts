@@ -1,3 +1,12 @@
+import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
+import { trackPgliteDatabase, PgliteClosingError, notifyPgliteOpened } from './pglite-lifecycle.ts';
+import { mutatePageTag } from './page-state/tags.ts';
+import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+import { assertPageRevision } from './page-state/types.ts';
+import { lockPageKeys as acquirePageKeys } from './page-state/guards.ts';
+import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
+import { createPageVersion } from './page-state/versions.ts';
+import { composablePgliteTransaction } from './page-state/transactions.ts';
 import { GRANT_COLUMNS_SQL } from './grants/schema.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
@@ -64,7 +73,7 @@ import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defa
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
-import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkWriteInvalidation, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
+import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkWriteInvalidation, currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 // Engine-live path (#3596): static import, never a lazy `import()` in the
 // connect() catch. No cycle: pglite-repair.ts imports nothing from this file.
@@ -347,7 +356,7 @@ export function computeSnapshotSchemaHash(
       'migrate.ts', 'pglite-schema.ts', 'fts-language.ts', 'vector-index.ts', 'ai/defaults.ts',
       'timeline-dedup-repair.ts', 'pages-upsert-arbiter.ts', 'link-extraction.ts',
       'grants/schema.ts', 'grants/migration.ts', 'grants/model.ts', 'grants/service.ts', 'grants/profiles.ts',
-      'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',
+      'page-state/schema.ts', 'lease-schema.ts', 'page-state/projection-schema.ts', 'persistence/schema.ts', 'persistence/effect-schema.ts', 'persistence/writer-guard-schema.ts', 'persistence/topology-schema.ts', 'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',
     ]) {
       hash.update(`${file}\n`);
       hash.update(fs.readFileSync(new URL(`./${file}`, import.meta.url)));
@@ -698,6 +707,24 @@ export class PGLiteEngine implements BrainEngine {
   readonly kind = 'pglite' as const;
   private _db: PGLiteDB | null = null;
   private _lock: LockHandle | null = null;
+  private _dbWork: ReturnType<typeof trackPgliteDatabase<PGLiteDB>> | null = null;
+  private _connectPromise: Promise<void> | null = null;
+  private _closingWork: Promise<void> | null = null;
+  private _disconnectCall: Promise<void> | null = null;
+  private _disconnectRequested = false;
+  private _closePoison: Error | null = null;
+  private readonly _beforeDisconnect = new Set<() => Promise<void>>();
+
+  /** Mandatory resident-consumer stop barrier; runs while the datastore is usable. */
+  registerBeforeDisconnect(stop: () => Promise<void>): () => void {
+    this._beforeDisconnect.add(stop);
+    return () => { this._beforeDisconnect.delete(stop); };
+  }
+
+  private _attachDatabase(database: PGLiteDB): PGLiteDB {
+    this._dbWork = trackPgliteDatabase(database);
+    return this._dbWork.database;
+  }
   // #2034: captured at connect() so reconnect() can restore the same data dir
   // after a drop, matching PostgresEngine's _savedConfig contract.
   private _savedConfig: EngineConfig | null = null;
@@ -719,6 +746,39 @@ export class PGLiteEngine implements BrainEngine {
 
   // Lifecycle
   async connect(config: EngineConfig): Promise<void> {
+    if (this._disconnectRequested || this._closingWork || this._closePoison) throw this._closePoison ?? new PgliteClosingError();
+    if (this._db || this._connectPromise) {
+      if ((this._savedConfig?.database_path || undefined) !== (config.database_path || undefined)) {
+        throw new Error('PGLite engine is already connected or connecting to another datastore');
+      }
+      return this._connectPromise ?? undefined;
+    }
+    const opening = this._connectInternal(config).then(async () => {
+      try { await registerManagedFilesystemEngine(this, config.database_path); }
+      catch (error) {
+        try { await this._closeInternal(); }
+        catch (closeError) {
+          this._closePoison = new PgliteClosingError(`PGLite registry failure cleanup did not close; lock retained: ${String(closeError)}`);
+          throw this._closePoison;
+        }
+        throw error;
+      }
+      notifyPgliteOpened(this, config.database_path);
+    });
+    this._connectPromise = opening;
+    try { await opening; }
+    catch (error) {
+      if (!this._db && !this._closePoison && this._lock?.acquired) {
+        await releaseLock(this._lock);
+        this._lock = null;
+      }
+      throw error;
+    }
+    finally { if (this._connectPromise === opening) this._connectPromise = null; }
+  }
+
+  private async _connectInternal(config: EngineConfig): Promise<void> {
+    this._snapshotLoaded = false;
     this._savedConfig = config; // #2034: remember for reconnect()
     this.walRepairReceipt = null; // per-connect: stale receipts must not survive reconnect()
     const dataDir = config.database_path || undefined; // undefined = in-memory
@@ -755,13 +815,13 @@ export class PGLiteEngine implements BrainEngine {
     // same compiled modules. Its `extensions` replaces the stock vector/pg_trgm.
     const embedded = await getEmbeddedPgliteOptions();
     try {
-      this._db = await preservingProcessExitCode(() =>
+      this._db = this._attachDatabase(await preservingProcessExitCode(() =>
         PGlite.create({
           dataDir,
           loadDataDir,
           ...embedded,
         }),
-      );
+      ));
       // Snapshot-timezone parity: dumpDataDir bakes the BUILD process's
       // TimeZone into the restored cluster's defaults, so a snapshot-loaded
       // engine would run sessions in the build machine's zone while a
@@ -812,7 +872,7 @@ export class PGLiteEngine implements BrainEngine {
             { reaped: this._lock?.reaped },
           );
           if (attempt.status === 'repaired') {
-            this._db = attempt.db;
+            this._db = this._attachDatabase(attempt.db);
             this.walRepairReceipt = attempt.receipt;
             console.warn(buildWalRepairNotice(attempt.receipt));
             return; // success: lock stays held, normal connect contract
@@ -836,10 +896,15 @@ export class PGLiteEngine implements BrainEngine {
       }
 
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original, process.platform, ctx));
-      // Release the lock so a fresh process can try again; leaking the lock
-      // here turns a recoverable init error into a stuck-brain state.
-      if (this._lock?.acquired) {
-        try { await releaseLock(this._lock); } catch { /* ignore cleanup error */ }
+      if (this._db) {
+        try { await this._closeInternal(); }
+        catch (closeError) {
+          this._db = null;
+          this._closePoison = new PgliteClosingError(`PGLite initialization cleanup failed; lock retained: ${String(closeError)}`);
+          throw this._closePoison;
+        }
+      } else if (this._lock?.acquired) {
+        await releaseLock(this._lock);
         this._lock = null;
       }
       throw wrapped;
@@ -847,145 +912,76 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async disconnect(): Promise<void> {
-    // v0.41.8.0: snapshot + early-null up front so a concurrent
-    // `connect()` cannot observe `_db` pointing at a handle that's
-    // mid-close (partial-state race). Closes the bug class PR #1337
-    // originally surfaced.
-    //
-    // try/finally guarantees the file lock releases even if
-    // `db.close()` throws. Pre-fix, a close-throw would leak the
-    // lock and the next gbrain invocation would wedge waiting for it.
-    // The pre-fix code happened to work because the close branch
-    // ran first and the lock branch ran second only when close
-    // didn't throw — moving to the snapshot pattern made the
-    // try/finally explicitly necessary.
-    const db = this._db;
-    this._db = null;
-    const lock = this._lock;
-    this._lock = null;
-    if (!db && !lock) return; // already disconnected — nothing to drain or close
+    if (this._disconnectCall) return this._disconnectCall;
+    if (this._closePoison) throw this._closePoison;
+    this._disconnectRequested = true;
+    if (this._connectPromise) {
+      try { await this._connectPromise; } catch { /* failed open already cleans its lock */ }
+      if (this._disconnectCall) return this._disconnectCall;
+    }
+    if (!this._db && !this._lock) { this._disconnectRequested = false; return; }
+    const work = this._closeInternal();
+    this._closingWork = work;
+    // Keep the actual close alive after a caller's deadline. The engine and
+    // opaque native handle remain strongly retained until it succeeds.
+    void work.then(() => {
+      this._closingWork = null;
+      this._disconnectCall = null;
+      this._disconnectRequested = false;
+    }, error => {
+      this._closePoison = new PgliteClosingError(`PGLite shutdown failed; datastore ownership is retained until process exit: ${String(error)}`);
+      this._db = null;
+    });
+    const call = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([work, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            const error = new PgliteClosingError();
+            warnOncePerProcess('pglite-close-timeout', `[pglite] close exceeded ${pgliteCloseTimeoutMs()}ms; the kernel lock remains held. Await shutdown or terminate this process before reopening the datastore.`);
+            reject(error);
+          }, pgliteCloseTimeoutMs());
+        })]);
+      } finally { if (timer) clearTimeout(timer); }
+    })();
+    this._disconnectCall = call;
+    return call;
+  }
 
-    // #4284 — out-of-band watchdog (opt-in; see pgliteCloseWatchdogMs). Armed
-    // ONLY when a live handle exists (a lock-only teardown has no close to
-    // wedge) and BEFORE the drain so a drain-side wedge is covered too.
-    // Scope: a PGLite disconnect with a live handle — nothing else. Disposed
-    // in the outer finally below, even when the drain or releaseLock throws.
+  private async _closeInternal(): Promise<void> {
+    const db = this._db;
+    const lock = this._lock;
+    const work = this._dbWork;
     let watchdog: { dispose(): void } | null = null;
     if (db) {
       const { deadlineMs, graceMs } = pgliteCloseWatchdogMs();
       if (deadlineMs > 0) {
-        watchdog = installProcessWatchdog({
-          deadlineMs,
-          graceMs,
-          label: 'pglite-disconnect-watchdog',
-        });
-        // Keyed by the computed deadline (not once-per-process flat): in a
-        // long-lived daemon the drain-aware floor grows as sinks register, and
-        // this breadcrumb is the kill's attribution surface — it must re-fire
-        // when the effective deadline changes (#4284 red-team).
-        warnOncePerProcess(
-          `pglite-close-watchdog-armed:${deadlineMs}:${graceMs}`,
-          `[pglite] disconnect watchdog armed: SIGTERM at ${deadlineMs}ms, SIGKILL at ${deadlineMs + graceMs}ms (out-of-band worker thread — fires even if the event loop wedges; #4284).`,
-        );
+        watchdog = installProcessWatchdog({ deadlineMs, graceMs, label: 'pglite-disconnect-watchdog' });
+        warnOncePerProcess(`pglite-close-watchdog-armed:${deadlineMs}:${graceMs}`,
+          `[pglite] disconnect watchdog armed: SIGTERM at ${deadlineMs}ms, SIGKILL at ${deadlineMs + graceMs}ms (out-of-band worker thread).`);
       }
     }
-
     try {
-      // #4143: drain in-flight background work AFTER the early-null and BEFORE
-      // close(). PGLite's close() deadlocks PERMANENTLY — close's promise AND
-      // the in-flight query's promise never settle — when any statement is in
-      // flight (the trigger was the telemetry flush issuing two sequential
-      // INSERTs). Ordering is load-bearing: the early-null means no NEW
-      // statement can reach the raw handle (drainer writes fail fast with
-      // 'PGLite not connected' and are swallowed — that is intended), while
-      // statements ALREADY in flight settle against the still-open handle.
-      // Reordering the drain above the null would reopen the #1337 race.
-      // Inside the try (#4284 red-team): the drain is contractually
-      // non-throwing, but the no-leaked-armed-worker guarantee must be
-      // structural, not contractual — a throw here still reaches the
-      // finally's releaseLock + dispose.
+      // Persistence consumers are a mandatory barrier. Best-effort telemetry
+      // deadlines never authorize releasing datastore ownership.
+      for (const stop of this._beforeDisconnect) await stop();
+      this._db = null;
+      await work?.stopAndDrain();
       await drainBackgroundWorkBeforeDisconnect();
       if (db) {
-        // #3893 (reimplemented from @y2688): best-effort WAL flush BEFORE
-        // close(). A clean close() checkpoints on its own, but the #4143
-        // class below means close can time out or wedge and be abandoned —
-        // an explicit pre-close CHECKPOINT makes the data files current so
-        // an abandoned close loses no committed rows. PGLite-only by design
-        // (no postgres-engine parity twin): a server Postgres owns its own
-        // checkpointer and survives this process dying. Bounded by the same
-        // close timeout and never throwing — a slow or failed CHECKPOINT
-        // must not block teardown. Runs after the drain so it is the only
-        // statement in flight when it executes.
-        let checkpointTimer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([
-            db.query('CHECKPOINT').catch(() => undefined),
-            new Promise<void>((resolve) => {
-              checkpointTimer = setTimeout(resolve, pgliteCloseTimeoutMs());
-            }),
-          ]);
-        } finally {
-          if (checkpointTimer) clearTimeout(checkpointTimer);
-        }
-
-        // Deliberately NOT wrapped in preservingProcessExitCode: close's
-        // status write (0) is long-standing baseline behavior that test-runner
-        // processes depend on (wrapping it flipped bun test's own exit code —
-        // #2084 implementation note), and the CLI's exit verdict doesn't read
-        // process.exitCode at all — it lives in the gbrain-owned channel
-        // (setCliExitVerdict/currentExitCode in cli-force-exit.ts).
-        //
-        // #4143/#4284 in-loop bound — HONEST SCOPE: catches a close that
-        // still YIELDS (slow, or promise-deadlocked with an idle loop). It
-        // can NEVER fire against a close that wedges the event loop (#4284):
-        // the timers phase doesn't run, so no same-loop timer wins this
-        // race. That class is prevented by the drain above; the opt-in
-        // watchdog is the only observer. The timer is armed BEFORE close()
-        // is called so close's pre-first-yield work runs with the bound
-        // already ticking, and it is deliberately REF'D (no unref): in the
-        // one case this bound can catch, an unref'd timer would let Bun exit
-        // before the warn and the lock release fire (precedent:
-        // cli-force-exit.ts adversarial F3, db-pacer.ts). Deliberately NOT
-        // timeout.ts:withTimeout — it unrefs its timer and rejects; this
-        // site needs a ref'd race that resolves a flag. A close-throw still
-        // propagates (lock releases in finally, same as before). Note for
-        // reconnect(): a timed-out close leaves a zombie instance briefly
-        // coexisting with a re-opened dataDir — the WAL-repair path covers
-        // the consequence on next open.
-        const timeoutMs = pgliteCloseTimeoutMs();
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          const timedOutPromise = new Promise<boolean>((resolve) => {
-            timer = setTimeout(() => resolve(true), timeoutMs);
-          });
-          const closePromise = db.close();
-          const timedOut = await Promise.race([
-            closePromise.then(() => false),
-            timedOutPromise,
-          ]);
-          if (timedOut) {
-            warnOncePerProcess(
-              'pglite-close-timeout',
-              `[pglite] db.close() did not settle within ${timeoutMs}ms — proceeding with teardown (a statement may still be in flight; #4143). Override with GBRAIN_PGLITE_CLOSE_TIMEOUT_MS. A close that WEDGES the event loop cannot be caught by this in-loop bound — arm GBRAIN_PGLITE_CLOSE_WATCHDOG_MS for the out-of-band watchdog (#4284).`,
-            );
-            // Abandoned close may reject later — never let it become an
-            // unhandled rejection.
-            closePromise.catch(() => { /* abandoned after timeout */ });
-          }
-        } finally {
-          if (timer) clearTimeout(timer);
-        }
+        // Do not abandon a CHECKPOINT and start close concurrently. A failed
+        // settled checkpoint can still be recovered by a successful close.
+        try { await work?.checkpoint(); }
+        catch (error) { warnOncePerProcess('pglite-checkpoint-failed', `[pglite] checkpoint failed; retaining ownership through close: ${String(error)}`); }
+        await db.close();
       }
+      if (lock?.acquired) await releaseLock(lock);
+      this._lock = null;
+      this._dbWork = null;
     } finally {
-      try {
-        if (lock?.acquired) {
-          await releaseLock(lock);
-        }
-      } finally {
-        // #4284: dispose even when releaseLock throws — a leaked armed worker
-        // would SIGTERM/SIGKILL a process whose close already completed.
-        watchdog?.dispose();
-      }
+      // A slow close keeps the watchdog armed until it actually settles. On a
+      // failed close the lock is retained; callers must terminate the process.
+      watchdog?.dispose();
     }
   }
 
@@ -1046,6 +1042,7 @@ export class PGLiteEngine implements BrainEngine {
     if (applied > 0) {
       process.stderr.write(`  ${applied} migration(s) applied\n`);
     }
+    await registerManagedFilesystemEngine(this, this._savedConfig?.database_path);
   }
 
   /**
@@ -1672,61 +1669,33 @@ export class PGLiteEngine implements BrainEngine {
     return fn(conn);
   }
 
-  // NOTE: the tx-engine handed to `fn` proxies `db` to a PGLite Transaction,
-  // which has query/sql/exec but NO .transaction — so engine methods that
-  // open their own transaction (searchVector since #3613) will throw if
-  // called on the tx-engine. No current callback does; keep it that way or
-  // add pass-through nesting first.
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    return this.db.transaction(async (tx) => {
+    return this.db.transaction(async handle => {
+      const tx = composablePgliteTransaction(handle);
       const txEngine = Object.create(this) as PGLiteEngine;
       Object.defineProperty(txEngine, '_chunkWritesInTransaction', { value: true });
+      Object.defineProperty(txEngine, '_pageTransaction', { value: true });
       Object.defineProperty(txEngine, 'db', { get: () => tx });
       return fn(txEngine);
     });
   }
 
+  async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
+    return this.transaction(fn);
+  }
+
   // Pages CRUD
-  async getPage(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeDeleted?: boolean; excludePrivate?: boolean }): Promise<Page | null> {
-    // v0.26.5: hide soft-deleted by default; opt-in via opts.includeDeleted.
-    const includeDeleted = opts?.includeDeleted === true;
-    const sourceId = opts?.sourceId;
-    const sourceIds = opts?.sourceIds;
-    const where: string[] = ['slug = $1'];
-    if (opts?.excludePrivate) where.push(privatePagesFilterFragment('pages'));
-    const params: unknown[] = [slug];
-    // #1393: federated grant (sourceIds[]) wins over scalar sourceId so the
-    // exact-match read honors allowedSources, not just one source.
-    if (sourceIds && sourceIds.length > 0) {
-      params.push(sourceIds);
-      where.push(`source_id = ANY($${params.length}::text[])`);
-    } else if (sourceId) {
-      params.push(sourceId);
-      where.push(`source_id = $${params.length}`);
-    }
-    if (!includeDeleted) {
-      where.push('deleted_at IS NULL');
-    }
-    // #3931: anchor the tiebreak on sourceIds[0] (the caller's own resolved
-    // source — see localFederatedSourceIds) instead of a hardcoded 'default',
-    // so a shadowed slug resolves to the caller's own copy.
-    const anchorSourceId = sourceIds && sourceIds.length > 0 ? sourceIds[0] : 'default';
-    params.push(anchorSourceId);
-    const anchorParamIdx = params.length;
-    const { rows } = await this.db.query(
-      `SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
-              effective_date, effective_date_source,
-              source_kind, source_uri, ingested_via, ingested_at,
-              contextual_retrieval_mode, source_path
-       FROM pages WHERE ${where.join(' AND ')}
-       ORDER BY (source_id = $${anchorParamIdx}) DESC, source_id ASC
-       LIMIT 1`,
-      params
-    );
-    // Deterministic multi-source tiebreak: anchor-source-first, then stable
-    // alpha. Engine parity: postgres-engine.ts carries the identical clause.
-    if (rows.length === 0) return null;
-    return rowToPage(rows[0] as Record<string, unknown>);
+  async getPage(slug: string, opts?: PageSnapshotOptions): Promise<Page | null> {
+    return (await this.readPageSnapshot(slug, opts))?.page ?? null;
+  }
+
+  async readPageSnapshot(slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
+    return readCanonicalPageSnapshot(this.executeRaw.bind(this), slug, opts);
+  }
+
+  async lockPageKeys(keys: readonly PageKey[]): Promise<void> {
+    if (!this._pageTransaction) throw new Error('lockPageKeys requires engine.transaction()');
+    await acquirePageKeys(this, keys);
   }
 
   /**
@@ -1750,7 +1719,21 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: r.slug, id: Number(r.id) };
   }
 
-  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page> {
+  private _pageTransaction = false;
+
+  async putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
+    slug = validateSlug(slug);
+    return this.transaction(async tx => {
+      const sourceId = opts?.sourceId ?? 'default';
+      await tx.lockPageKeys([{ sourceId, slug }]);
+      if (opts?.expectedRevision !== undefined || opts?.force !== undefined) {
+        assertPageRevision(await tx.readPageSnapshot(slug, { sourceId, includeDeleted: true }), opts);
+      }
+      return (tx as PGLiteEngine)._putPage(slug, page, opts);
+    });
+  }
+
+  private async _putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
@@ -1826,7 +1809,7 @@ export class PGLiteEngine implements BrainEngine {
          source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
          ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
          ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
-       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
+       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
       [sourceId, slug, page.type, pageKind, sanitizeText(page.title), sanitizeText(page.compiled_truth), sanitizeText(page.timeline || ''), JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
     );
     // PGLite can return zero rows from INSERT ... ON CONFLICT DO UPDATE ...
@@ -3018,7 +3001,8 @@ export class PGLiteEngine implements BrainEngine {
     }
     const quotedCol = quoteIdentifier(column);
     const { rows } = await this.db.query(
-      `SELECT id, ${quotedCol} AS embedding FROM content_chunks WHERE id = ANY($1::int[]) AND ${quotedCol} IS NOT NULL`,
+      `SELECT cc.id, cc.${quotedCol} AS embedding FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
+        WHERE cc.id = ANY($1::int[]) AND cc.${quotedCol} IS NOT NULL AND ${currentTextProjectionFilter('p')}`,
       [ids]
     );
     const result = new Map<number, Float32Array>();
@@ -3077,13 +3061,13 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Chunks
-  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn } & BatchOpts): Promise<void> {
+  async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string } & BatchOpts): Promise<void> {
     if (this._chunkWritesInTransaction) return this._upsertChunksOnce(slug, chunks, opts);
     return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal,
       () => this.transaction(tx => (tx as PGLiteEngine)._upsertChunksOnce(slug, chunks, opts)), chunks.length);
   }
 
-  private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn }): Promise<void> {
+  private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string }): Promise<void> {
     // Normalize the same way putPage does — pages.slug is stored lowercased,
     // so a raw mixed-case slug here would miss the row it just wrote (#430).
     slug = validateSlug(slug);
@@ -3092,6 +3076,9 @@ export class PGLiteEngine implements BrainEngine {
     // remain untouched so malformed identifiers still reject the transaction.
     chunks = chunks.map(chunk => ({ ...chunk, chunk_text: sanitizeText(chunk.chunk_text) }));
     const sourceId = opts?.sourceId ?? 'default';
+    await this.lockPageKeys([{ sourceId, slug }]);
+    if (opts?.expectedRevision !== undefined) assertPageRevision(
+      await this.readPageSnapshot(slug, { sourceId }), { expectedRevision: opts.expectedRevision });
 
     // Source-scope the page-id lookup so duplicate slugs in different sources
     // do not return multiple rows or target the wrong page.
@@ -3311,7 +3298,7 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async getChunks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean }): Promise<Chunk[]> {
+  async getChunks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean }): Promise<Chunk[]> {
     const sourceIds = opts?.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
     const source = sourceIds ?? opts?.sourceId ?? 'default';
     // S2: embedding_is_null reports the registry-ACTIVE column's truth —
@@ -3337,6 +3324,7 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages p ON p.id = cc.page_id
        WHERE p.slug = $1 AND ${sourceIds ? 'p.source_id = ANY($2::text[])' : 'p.source_id = $2'}
          ${opts?.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : ''}
+          ${opts?.includeUnsealed ? '' : `AND ${currentTextProjectionFilter('p')}`}
           ${requiresSafeChunks(opts) ? `AND ${safeChunksFilter('p')}` : ''}
        ORDER BY cc.chunk_index`,
       [slug, source]
@@ -4504,31 +4492,11 @@ export class PGLiteEngine implements BrainEngine {
 
   // Tags
   async addTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
-    const sourceId = opts?.sourceId ?? 'default';
-    // Pre-check source-scoped page existence; ON CONFLICT only handles the
-    // already-tagged case, not missing pages.
-    const page = await this.db.query(
-      'SELECT id FROM pages WHERE slug = $1 AND source_id = $2',
-      [slug, sourceId]
-    );
-    if (page.rows.length === 0) throw new Error(`addTag failed: page "${slug}" (source=${sourceId}) not found`);
-    await this.db.query(
-      `INSERT INTO tags (page_id, tag)
-       VALUES ($1, $2)
-       ON CONFLICT (page_id, tag) DO NOTHING`,
-      [(page.rows[0] as { id: number }).id, tag]
-    );
+    return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, true);
   }
 
   async removeTag(slug: string, tag: string, opts?: { sourceId?: string }): Promise<void> {
-    const sourceId = opts?.sourceId ?? 'default';
-    // Source-qualify the page-id subquery; slugs are only unique per source.
-    await this.db.query(
-      `DELETE FROM tags
-       WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = $2)
-         AND tag = $3`,
-      [slug, sourceId, tag]
-    );
+    return mutatePageTag(this, { sourceId: opts?.sourceId ?? 'default', slug }, tag, false);
   }
 
   async getTags(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
@@ -5399,16 +5367,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Versions
   async createVersion(slug: string, opts?: { sourceId?: string }): Promise<PageVersion> {
-    const sourceId = opts?.sourceId ?? 'default';
-    const { rows } = await this.db.query(
-      `INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
-       SELECT id, compiled_truth, frontmatter
-       FROM pages WHERE slug = $1 AND source_id = $2
-       RETURNING *`,
-      [slug, sourceId]
-    );
-    if (rows.length === 0) throw new Error(`createVersion failed: page "${slug}" (source=${sourceId}) not found`);
-    return rows[0] as unknown as PageVersion;
+    return createPageVersion(this, slug, opts?.sourceId ?? 'default');
   }
 
   async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
@@ -5854,14 +5813,13 @@ export class PGLiteEngine implements BrainEngine {
 
   async setPageAliases(slug: string, sourceId: string, aliasNorms: string[]): Promise<void> {
     const uniq = Array.from(new Set(aliasNorms.filter(a => a.length > 0)));
-    await this.db.query(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2`, [sourceId, slug]);
-    if (uniq.length === 0) return;
-    await this.db.query(
-      `INSERT INTO page_aliases (source_id, alias_norm, slug)
-       SELECT $1, a, $2 FROM unnest($3::text[]) AS a
-       ON CONFLICT (source_id, alias_norm, slug) DO NOTHING`,
-      [sourceId, slug, uniq],
-    );
+    await this.transaction(async tx => {
+      await tx.lockPageKeys([{ sourceId, slug }]);
+      await tx.executeRaw('DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+      if (!uniq.length) return;
+      await tx.executeRaw(`INSERT INTO page_aliases (source_id,alias_norm,slug)
+        SELECT $1,a,$2 FROM unnest($3::text[]) AS a ON CONFLICT DO NOTHING`, [sourceId, slug, uniq]);
+    });
   }
 
   // Config
@@ -5908,20 +5866,20 @@ export class PGLiteEngine implements BrainEngine {
     await this.db.exec(sql);
   }
 
-  async getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]> {
+  async getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean }): Promise<Chunk[]> {
     const sourceId = opts?.sourceId;
     const { rows } = sourceId
       ? await this.db.query(
           `SELECT cc.* FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-           WHERE p.slug = $1 AND p.source_id = $2
+           WHERE ${opts?.includeUnsealed ? 'TRUE' : currentTextProjectionFilter('p')} AND p.slug = $1 AND p.source_id = $2
            ORDER BY cc.chunk_index`,
           [slug, sourceId]
         )
       : await this.db.query(
           `SELECT cc.* FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-           WHERE p.slug = $1
+           WHERE ${opts?.includeUnsealed ? 'TRUE' : currentTextProjectionFilter('p')} AND p.slug = $1
            ORDER BY cc.chunk_index`,
           [slug]
         );

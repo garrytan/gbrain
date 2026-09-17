@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 import { readSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
 import { currentJobSignal } from '../core/minions/submission-authority.ts';
 import { existsSync, readFileSync, writeFileSync, statSync, lstatSync, realpathSync } from 'fs';
@@ -298,7 +299,7 @@ export interface SyncResult {
    * cron operators can disambiguate timeout vs pull-timeout in monitoring.
    */
   filesImported?: number;
-  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable';
+  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable' | 'writer_pending' | 'writer_yield';
   /**
    * v0.42.x (#1794): cumulative file paths durably banked to the checkpoint
    * across THIS run + prior resumed runs. Surfaced on every partial/blocked
@@ -614,6 +615,8 @@ See also:
 export { SyncLockBusyError, runBreakLock } from '../core/sync-lock.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  const [managed] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  if (managed?.enabled) return (await import('../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
   assertSourceFilesystemActive(true);
   const jobSignal = currentJobSignal();
   if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
@@ -656,37 +659,20 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       throw err;
     }
   }
-  // v0.22.13 CODEX-2: cross-process writer lock prevents two concurrent
-  // syncs from racing on the same last_commit anchor (last writer wins,
-  // bookmark regresses, silent corruption).
-  //
-  // v0.40.5.0: per-source DB lock via `syncLockId(sourceId)`. Two sources
-  // (default + zion-brain) take distinct lock rows and don't serialize.
-  // SYNC_LOCK_ID is now a back-compat alias for syncLockId('default').
-  //
-  // v0.40.6.0 (D11 from PR #1314 review): pair the per-source lock with
-  // `withRefreshingLock` so long-running sources (media-corpus, 250K+
-  // chunks) don't lose their lock at the 30-minute TTL mid-run. Closes
-  // the bug class where a >30min sync could let a parallel acquire steal
-  // the lock and race on the final commit + bookmark write.
-  //
-  // skipLock is reserved for callers that already serialize via another
-  // mechanism (e.g. cycle.ts holds gbrain-cycle for the broader scope).
+  // Per-source leases protect the commit/bookmark window. A caller may
+  // skip this lease only when its broader scope already serializes the work.
   if (opts.skipLock) {
     return finish(await performSyncInner(engine, opts));
   }
 
   const lockKey = opts.lockId ?? syncLockId(opts.sourceId ?? 'default');
 
-  // v0.42.x (#1794): ALL non-skipLock syncs use the TTL-refreshing lock — the
-  // bare `gbrain sync` path (no --source/--lockId) included. The pre-v0.42 code
-  // gave that path a NON-refreshing tryAcquireDbLock, so a long hand-run sync
-  // (exactly what you'd run during an incident on the 204K brain) could have its
-  // lock TTL lapse and be stolen mid-run. withRefreshingLock keeps the heartbeat
-  // alive (the import loop's event-loop yields ensure the timer fires), and the
-  // heartbeat-aware takeover refuses to steal a live, refreshing holder.
+  // Renewal loss aborts the import loop and prevents a successful bookmark
+  // result, including callers that did not supply their own cancellation.
   try {
-    return finish(await withRefreshingLock(engine, lockKey, () => performSyncInner(engine, opts)));
+    return finish(await withRefreshingLock(engine, lockKey, signal => performSyncInner(engine, {
+      ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, signal]) : signal,
+    })));
   } catch (err) {
     if (err instanceof LockUnavailableError) {
       throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);
@@ -4497,7 +4483,17 @@ export {
 function manageGitignoreAtGitRoot(path: string, engineKind?: 'pglite' | 'postgres'): void {
   let root = path;
   try { root = discoverGitRoot(path); } catch { /* best-effort */ }
-  manageGitignore(root, engineKind);
+  try { manageGitignore(root, engineKind); }
+  catch (error) {
+    // Managed sync already committed through its canonical owner. Ancillary
+    // legacy housekeeping must neither write outside that journal nor turn
+    // the completed sync into a failure before its JSON acknowledgment.
+    if (error instanceof Error && 'code' in error && error.code === 'writer_coordinator_required') {
+      serr('[sync] Skipped automatic .gitignore maintenance for the managed worktree.');
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
@@ -5715,6 +5711,8 @@ export function manageGitignore(
   if (process.env.GBRAIN_NO_GITIGNORE === '1') {
     return;
   }
+
+  assertManagedFilesystemWrite(repoPath);
 
   // Submodule + worktree detection (closes #889 misclassification).
   // Both submodules and worktrees use `.git` as a FILE (not a directory), so

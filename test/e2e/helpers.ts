@@ -206,10 +206,10 @@ export function getConn() {
 
 /**
  * Import all fixture files from test/e2e/fixtures/ into the brain.
+ * An explicit engine lets a fixture own its database without shared resets.
  * Returns the list of import results.
  */
-export async function importFixtures() {
-  const e = getEngine();
+export async function importFixtures(e: PostgresEngine = getEngine()) {
   const results: Array<{ slug: string; status: string; chunks: number }> = [];
 
   const files = findMarkdownFiles(FIXTURES_DIR);

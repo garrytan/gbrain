@@ -297,12 +297,13 @@ describe('archive demote (issue #1777)', () => {
 
 // v0.26.5 — visibility clause for soft-deleted pages and archived sources.
 describe('buildVisibilityClause (v0.26.5)', () => {
-  test('emits both predicates joined by AND with a leading AND', () => {
+  test('emits visibility and current projection predicates with a leading AND', () => {
     const clause = buildVisibilityClause('p', 's');
     // Leading AND so callers can splice unconditionally.
     expect(clause.startsWith('AND ')).toBe(true);
     // Both predicates present: page-level deleted_at IS NULL + source-level NOT archived.
     expect(clause).toContain('p.deleted_at IS NULL');
+    expect(clause).toContain('p.text_projection_revision = p.knowledge_revision');
     expect(clause).toContain('NOT s.archived');
     // v0.42 (#1699): also excludes quarantined pages (flagged pages stay visible).
     expect(clause).toContain("? 'quarantine'");
@@ -310,7 +311,7 @@ describe('buildVisibilityClause (v0.26.5)', () => {
 
   test('uses the supplied aliases verbatim', () => {
     expect(buildVisibilityClause('pp', 'src')).toBe(
-      "AND pp.deleted_at IS NULL AND NOT src.archived AND NOT (COALESCE(pp.frontmatter, '{}'::jsonb) ? 'quarantine')",
+      "AND pp.deleted_at IS NULL AND pp.text_projection_revision = pp.knowledge_revision AND NOT src.archived AND NOT (COALESCE(pp.frontmatter, '{}'::jsonb) ? 'quarantine')",
     );
   });
 

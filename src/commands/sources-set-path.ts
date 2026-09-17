@@ -21,6 +21,10 @@ import type { BrainEngine } from '../core/engine.ts';
 import { assertNoOverlappingPath, SourceOpError } from '../core/sources-ops.ts';
 
 export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promise<void> {
+  if (!rawArgs.includes('--help') && !rawArgs.includes('-h')) {
+    const { runConnectedSourceLifecycle } = await import('./sources-lifecycle.ts');
+    if (await runConnectedSourceLifecycle(engine, ['set-path', ...rawArgs])) return;
+  }
   const force = rawArgs.includes('--force');
   const args = rawArgs.filter((a) => a !== '--force');
   const id = args[0];

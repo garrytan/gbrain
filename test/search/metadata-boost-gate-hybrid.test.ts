@@ -25,6 +25,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { basisEmbedding } from '../../src/eval/deterministic-embed.ts';
@@ -54,7 +55,7 @@ function leaning(cos: number, privateDim: number): Float32Array {
 
 async function putChunkPage(slug: string, type: string, title: string, text: string, embedding: Float32Array): Promise<void> {
   await engine.putPage(slug, { type, title, compiled_truth: text, timeline: text });
-  await engine.upsertChunks(slug, [{
+  await installFixtureChunks(engine, slug, [{
     chunk_index: 0,
     chunk_text: text,
     chunk_source: 'compiled_truth',
@@ -108,7 +109,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
-});
+}, 60_000);
 
 describe('metadata_boost_gate — hermetic hybridSearch (Cat 13 E3)', () => {
   test('fixture: the paraphrase has no lexical vote; the lexical query has a strict keyword hit', async () => {

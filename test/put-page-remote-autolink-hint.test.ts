@@ -80,8 +80,8 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
     expect(result.auto_links?.hint).toMatch(/stdio `gbrain serve` sweeps/);
     expect(result.auto_links?.hint).toMatch(/`gbrain serve --http` does not self-sweep/);
     expect(result.auto_links?.hint).not.toMatch(/sweep \(startup \+ idle\)/);
-    expect(result.auto_timeline?.skipped).toBe('remote');
-    expect(result.auto_timeline?.hint).toBeDefined();
+    // Canonical timeline projections commit with the page snapshot.
+    expect(result.auto_timeline?.skipped).toBeUndefined();
   }, 120000);
 
   // #4679: the brain-ops skill (shipped to the exact agents that write over

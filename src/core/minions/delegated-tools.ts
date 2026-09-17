@@ -24,7 +24,7 @@ export function guardDelegatedTools(engine: BrainEngine, config: GBrainConfig, s
       subagentId: jobId, engine, config, sourceId: effective.sourceId,
       brainId: effective.brainId ?? undefined, allowedSlugPrefixes: effective.slugPrefixes, deferEmbeds,
       delegatedAuth: { clientId: effective.clientId, scopes: effective.scopes,
-        sourceId: effective.sourceId, allowedSources: effective.readSources },
+        sourceId: effective.sourceId, allowedSources: effective.readSources, allowedOperations: effective.tools },
     }).find(candidate => candidate.name === tool.name);
     if (!current) throw new DelegationDeniedError(['delegated_tool_unavailable']);
     return current.execute(input, toolCtx);

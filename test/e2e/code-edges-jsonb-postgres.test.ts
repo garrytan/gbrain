@@ -12,6 +12,7 @@
  * convention. Pins the per-row `$n::text::jsonb` shape: every inserted
  * edge_metadata must be jsonb_typeof = 'object' and round-trip its fields.
  */
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { setupDB, teardownDB, hasDatabase } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -33,7 +34,7 @@ beforeAll(async () => {
     compiled_truth: 'export function run() { return helper(); }',
     timeline: '',
   });
-  await engine.upsertChunks('src-a-ts', [{
+  await installFixtureChunks(engine, 'src-a-ts', [{
     chunk_index: 0,
     chunk_text: 'export function run() { return helper(); }',
     chunk_source: 'compiled_truth',
@@ -49,7 +50,7 @@ beforeAll(async () => {
     compiled_truth: 'export function helper() { return 1; }',
     timeline: '',
   });
-  await engine.upsertChunks('src-b-ts', [{
+  await installFixtureChunks(engine, 'src-b-ts', [{
     chunk_index: 0,
     chunk_text: 'export function helper() { return 1; }',
     chunk_source: 'compiled_truth',

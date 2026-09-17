@@ -1676,7 +1676,7 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
     // Make the insert throw. Pre-fix, the separate-commit delete had already
     // emptied the page by the time this threw; now no delete runs outside
     // insertFacts, so the rows survive.
-    const original = engine.insertFacts.bind(engine);
+    const original = engine.insertFacts;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (engine as any).insertFacts = async () => { throw new Error('simulated insert failure'); };
     try {

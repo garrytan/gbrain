@@ -6,6 +6,7 @@
 // embedMultimodal so the test runs without a real Voyage key.
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations as OPERATIONS } from '../src/core/operations.ts';
@@ -40,7 +41,7 @@ async function seedImagePage(slug: string, vec: Float32Array) {
     compiled_truth: '',
     timeline: '',
   });
-  await engine.upsertChunks(slug, [
+  await installFixtureChunks(engine, slug, [
     {
       chunk_index: 0,
       chunk_text: slug,
@@ -100,7 +101,7 @@ describe('query op with --image (v0.27.1 follow-up)', () => {
     // 1536-dim text embedding (matches the brain's primary embedding column).
     const textVec = new Float32Array(1536);
     for (let i = 0; i < 1536; i++) textVec[i] = i / 1536;
-    await engine.upsertChunks('notes/text', [
+    await installFixtureChunks(engine, 'notes/text', [
       {
         chunk_index: 0,
         chunk_text: 'hello text',

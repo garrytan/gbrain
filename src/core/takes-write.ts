@@ -778,3 +778,6 @@ export async function resolveTakeOnPage(
     return { rowNum, quality: input.quality, mirror: { written: true, path, ...(mirrorWarning ? { mirror_warning: mirrorWarning } : {}) } };
   });
 }
+
+/** Pure fence primitives shared by durable semantic preparation and legacy callers. */
+export const takesPreparation = { assertHolderAllowed, assertSafeCellText, assertValidWeight, assertValidSinceDate, findFenceRow, assertFenceRoundTrips, replaceFence, toBatchInput };

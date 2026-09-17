@@ -179,6 +179,7 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
     `UPDATE pages p SET embedding_signature = $1
       WHERE ${sigClause}${srcClause}
         AND p.deleted_at IS NULL
+        AND p.text_projection_revision = p.knowledge_revision
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
         AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
         AND NOT EXISTS (

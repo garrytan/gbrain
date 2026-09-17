@@ -1,3 +1,5 @@
+import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
+export type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions, PageMutationPrecondition, PageWithdrawal } from './page-state/types.ts';
 import type {
   Page, PageInput, PageFilters, GetPageOpts, PageReadScope, PageReadPolicy,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
@@ -752,6 +754,10 @@ export interface BrainEngine {
   reconnect(ctx?: { error?: unknown }): Promise<void>;
   initSchema(): Promise<void>;
   transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
+  /** Short control transaction on the existing direct route; honors nested transaction scope. */
+  transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T>;
+  /** Mandatory resident-consumer stop barrier before datastore/pool shutdown. */
+  registerBeforeDisconnect(stop: () => Promise<void>): () => void;
   /**
    * Run `fn` with a dedicated connection (Postgres: reserved backend;
    * PGLite: pass-through). See `ReservedConnection` for semantics and
@@ -768,6 +774,9 @@ export interface BrainEngine {
    * by `restore_page` flow, and by operator diagnostics.
    */
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
+  readPageSnapshot(slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null>;
+  /** Hold exact page identities through commit, including absent rows. Requires a transaction. */
+  lockPageKeys(keys: readonly PageKey[]): Promise<void>;
   /**
    * Insert or update a page. When `opts.sourceId` is omitted, the row is
    * written under the schema DEFAULT ('default'). When provided, `source_id`
@@ -781,7 +790,7 @@ export interface BrainEngine {
    * `isBlankBody`). Pass it only when clearing a body is the deliberate intent;
    * deleting a page goes through `deletePage`/`softDeletePage`, not this path.
    */
-  putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page>;
+  putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page>;
   /**
    * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
    *
@@ -1129,7 +1138,7 @@ export interface BrainEngine {
    * searches — falling back to the legacy `embedding`::vector column on
    * pre-registry brains. `embedding_image` routing is unaffected.
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn } & BatchOpts): Promise<void>;
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string } & BatchOpts): Promise<void>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
@@ -1139,7 +1148,7 @@ export interface BrainEngine {
    * them away). `includeEmbedding` opts back in, and beats
    * `getChunksWithEmbeddings`, which honors neither scope precedence nor RLS.
    */
-  getChunks(slug: string, opts?: PageReadScope & { includeEmbedding?: boolean }): Promise<Chunk[]>;
+  getChunks(slug: string, opts?: PageReadScope & { includeEmbedding?: boolean; includeUnsealed?: boolean }): Promise<Chunk[]>;
   /**
    * Count chunks whose registry-ACTIVE embedding column IS NULL (S2).
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
@@ -2464,7 +2473,8 @@ export interface BrainEngine {
   // Deliberately scalar-only (no sourceIds[] widening): engine-internal with
   // zero remote-reachable callers (verified #2555 review), so the federated
   // read-scope contract doesn't apply. Widen only if an op ever exposes it.
-  getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
+  /** Raw preservation tools may include unverified chunks; retrieval leaves this false. */
+  getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean }): Promise<Chunk[]>;
 
   // Raw SQL (for Minions job queue and other internal modules)
   /**

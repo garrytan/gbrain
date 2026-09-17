@@ -1,0 +1,123 @@
+import { basename, join } from 'node:path';
+import type { BrainEngine } from '../engine.ts';
+import type { GBrainConfig } from '../config.ts';
+import type { Page } from '../types.ts';
+import { OperationError } from '../ops/contract.ts';
+import { importFromContent } from '../import-file.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { resolveSlugForPath, slugifyPath } from '../sync.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
+import { sameCanonicalImport } from '../page-state/import-guard.ts';
+import { assertPageRevision } from '../page-state/types.ts';
+import { sealPageTextProjection } from '../page-state/projections.ts';
+import { prepareCanonicalProjections } from './canonical-projections.ts';
+import { digest, sha256 } from './digest.ts';
+import { preserveProtectedTakes } from './protected-takes.ts';
+import { getWorktreeBinding } from './ownership.ts';
+import { syncRawHash } from './sync-discovery.ts';
+import { validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
+import type { PreparedContentImport } from './prepared-import.ts';
+import type { PreparedMutation } from './coordinator.ts';
+import type { WriteRequest } from './model.ts';
+
+export interface SyncIntent extends Record<string, unknown> {
+  kind: 'managed_sync_import' | 'managed_sync_delete' | 'managed_sync_checkpoint';
+  expected_revision: string | null; sourcePath: string | null; path: string | null;
+  rawHash: string | null; content: string | null; ownerEpoch: string;
+  syncAuthority: SyncAuthority; cursorKey: string; runId: string; index: number;
+  from: string | null; target: string; total: number; slugMode: 'git-root' | 'source-root';
+}
+export async function prepareManagedSyncMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
+  const p = row.intent as SyncIntent | null;
+  if (!p || !['managed_sync_import', 'managed_sync_delete', 'managed_sync_checkpoint'].includes(p.kind)) throw new OperationError('invalid_params', 'Unsupported internal sync intent.');
+  await validateSyncAuthority(engine, p.syncAuthority, row.slug);
+  const binding = await getWorktreeBinding(engine, row.source_id);
+  if (!binding?.local_path || String(binding.owner_epoch) !== p.ownerEpoch) throw new OperationError('owner_unavailable', 'The accepted sync owner changed.');
+  const root = join(binding.local_path, binding.relative_path);
+  const validate = async (tx: BrainEngine) => {
+    await validateSyncAuthority(tx, p.syncAuthority, row.slug);
+    const current = await getWorktreeBinding(tx, row.source_id);
+    if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw new OperationError('owner_unavailable', 'The accepted sync owner epoch changed.');
+    if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw new OperationError('source_changed', 'The imported file changed after sync admission.');
+  };
+  if (p.kind === 'managed_sync_checkpoint') return { sourceExclusive: true, observedRevision: null, validate, apply: async tx => {
+    const [cursor] = await tx.executeRaw<{ completed_keys: [{ runId: string; index: number; total: number }] }>(
+      "SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE", [p.cursorKey]);
+    if (!cursor || cursor.completed_keys[0].runId !== p.runId || cursor.completed_keys[0].index !== p.total || cursor.completed_keys[0].total !== p.total) {
+      throw new OperationError('revision_conflict', 'The sync cursor is not fully committed.');
+    }
+    const [manifest] = await tx.executeRaw<{ count: number }>("SELECT jsonb_array_length(completed_keys) AS count FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId]);
+    if (!manifest || Number(manifest.count) !== p.total) throw new OperationError('storage_error', 'The immutable sync manifest is incomplete.');
+    const [incomplete] = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND
+      (recovery IS NOT NULL OR (intent->>'runId'=$2 AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND state<>'committed')) LIMIT 1`,
+      [row.worktree_id, p.runId]);
+    if (incomplete) throw new OperationError('recovery_required', 'An incomplete page receipt still blocks the sync checkpoint.');
+    const changed = await tx.executeRaw(`UPDATE sources SET last_commit=$3,last_sync_at=now(),config=jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($5::text)),
+      newest_content_at=(SELECT MAX(updated_at) FROM pages WHERE source_id=$1 AND deleted_at IS NULL)
+      WHERE id=$1 AND incarnation=$2::uuid AND last_commit IS NOT DISTINCT FROM $4
+      AND (config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`, [row.source_id, row.source_incarnation, p.target, p.from, p.slugMode]);
+    if (!changed.length) throw new OperationError('revision_conflict', 'The source checkpoint changed during this sync.');
+    await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
+    return { status: 'synced', source_id: row.source_id, committed_pages: p.total };
+  } };
+  const source = { sourceId: row.source_id };
+  const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+  assertPageRevision(snapshot, p.expected_revision === null ? {} : { expectedRevision: p.expected_revision });
+  if ((snapshot?.page.id ?? null) !== row.page_id || (snapshot?.page.source_path != null && snapshot.page.source_path !== p.sourcePath)) {
+    throw new OperationError('page_identity_changed', 'The imported path no longer names the accepted page.');
+  }
+  if (p.kind === 'managed_sync_delete') return { observedRevision: snapshot?.revision ?? null, noop: !snapshot || snapshot.page.deleted_at != null,
+    validate, apply: async tx => {
+      if (snapshot && snapshot.page.deleted_at == null) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
+      return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
+    } };
+  if (typeof p.content !== 'string' || typeof p.sourcePath !== 'string' || typeof p.path !== 'string') throw new OperationError('storage_error', 'The frozen import content is missing.');
+  const parsedInput = parseMarkdown(p.content, row.slug);
+  const expectedSlug = resolveSlugForPath(p.sourcePath);
+  if (expectedSlug && parsedInput.slug !== expectedSlug && slugifyPath(parsedInput.slug) !== expectedSlug) {
+    throw new OperationError('invalid_params', 'The file frontmatter slug conflicts with its physical origin.');
+  }
+  if (snapshot && p.rawHash !== sha256(p.content) && !sameCanonicalImport(snapshot, parsedInput)) {
+    throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
+  }
+  let importContent = p.content;
+  if (row.authority.remote) {
+    const compiled_truth = preserveProtectedTakes(parsedInput.compiled_truth, snapshot?.page.compiled_truth ?? '');
+    const timeline = preserveProtectedTakes(parsedInput.timeline ?? '', snapshot?.page.timeline ?? '');
+    if (compiled_truth !== parsedInput.compiled_truth || timeline !== (parsedInput.timeline ?? '')) {
+      importContent = serializePageToMarkdown({ ...(snapshot?.page ?? { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }),
+        ...parsedInput, compiled_truth, timeline } as Page, parsedInput.tags);
+    }
+  }
+  let prepared: PreparedContentImport | undefined;
+  const result = await importFromContent(engine, row.slug, importContent, { ...source, noEmbed: true, remote: row.authority.remote,
+    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true,
+    prepare: async value => { prepared = value; return value.result; } });
+  if (!prepared) throw new OperationError('invalid_params', result.error ?? 'The sync file could not be prepared.');
+  const ready = prepared;
+  if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The page changed during sync preparation.');
+  if (ready.slug !== row.slug) {
+    // Cross-slug dedup must never advance the origin's checkpoint without a
+    // guarded proof about the other identity. Keep the cursor explicitly blocked.
+    throw new OperationError('revision_conflict', 'A different page already owns this file identity; resolve the duplicate before syncing.');
+  }
+  const parsed = parseMarkdown(p.content, row.slug);
+  const tags = [...new Set([...(snapshot?.tags ?? []), ...ready.parsedPage.tags])].sort();
+  const renderedPage = { ...(snapshot?.page ?? { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }), ...ready.parsedPage } as Page;
+  const canonical = (page: Pick<typeof parsed, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) => ({ type: page.type, title: page.title, body: page.compiled_truth,
+    timeline: page.timeline ?? '', frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() });
+  const overlay = digest(canonical(parsed, parsed.tags)) !== digest(canonical(ready.parsedPage, tags));
+  if (overlay && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
+  const project = prepareCanonicalProjections(ready.parsedPage, row.slug, row.source_id);
+  return { observedRevision: snapshot?.revision ?? null, validate,
+    ...(overlay ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
+    apply: async tx => {
+      await ready.apply(tx);
+      // Hash no-ops still repair a missing physical origin under the same guard.
+      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      if (!ready.noop) await project(tx);
+      if (!ready.noop) await sealPageTextProjection(tx, row.slug, row.source_id);
+      return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
+        chunks: result.chunks, noop: ready.noop, imported_file: true };
+    } };
+}

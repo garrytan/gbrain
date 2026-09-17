@@ -28,12 +28,17 @@ import type { Page } from './types.ts';
  */
 export async function restampIfDemotedToTitleTier(
   engine: BrainEngine,
-  page: Pick<Page, 'contextual_retrieval_mode'> | null | undefined,
+  page: Pick<Page, 'contextual_retrieval_mode' | 'knowledge_revision'> | null | undefined,
   slug: string,
   sourceId: string,
 ): Promise<void> {
-  if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
-  await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+  if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis' || !page.knowledge_revision) return;
+  await engine.transaction(async tx => {
+    await tx.lockPageKeys([{ sourceId, slug }]);
+    const current = await tx.readPageSnapshot(slug, { sourceId });
+    if (current?.revision !== page.knowledge_revision) return;
+    await tx.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+  });
 }
 
 /**

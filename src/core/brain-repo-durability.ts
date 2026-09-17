@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
 /**
  * brain-repo-durability.ts — auto-harden a brain's git working tree (v0.42.44).
  *
@@ -182,6 +183,11 @@ brain_remote_contains_commit() {
 
 brain_push() {
   _branch="\${1#refs/heads/}"
+  _managed_git="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
+  if [ -e "$_managed_git/gbrain-managed.json" ] || [ -e .gbrain-managed ]; then
+    echo "writer_coordinator_required: managed worktree git effects belong to the persistence outbox" >&2
+    return 1
+  fi
   # CX2-8: GBRAIN_HOME is a PARENT dir (matches config.ts semantics — .gbrain appended)
   _log="\${GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log"
   mkdir -p "$(dirname "$_log")" 2>/dev/null || true
@@ -257,6 +263,10 @@ set -euo pipefail
 ${renderPushRetry(1)}
 
 _branch="$(git rev-parse --abbrev-ref HEAD)"
+_managed_git="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
+if [ -e "$_managed_git/gbrain-managed.json" ] || [ -e .gbrain-managed ]; then
+  echo "writer_coordinator_required: submit managed changes through persistence" >&2; exit 1
+fi
 if [ "\${1:-}" = "--push-only" ]; then
   brain_push "\${2:-$_branch}"; exit $?
 fi
@@ -914,6 +924,7 @@ function pullDetail(o: PullOutcome): { status: StepStatus; detail: string } {
  * already-hardened repo produces all ok/skipped and NO new commit.
  */
 export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityReport> {
+  if (!opts.dryRun) assertManagedFilesystemWrite(opts.repoPath);
   const { sourceId } = opts;
   const dryRun = !!opts.dryRun;
   const installCron = opts.installCron !== false;

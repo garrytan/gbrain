@@ -1,0 +1,167 @@
+name: Durable persistence validation
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-performance:
+    name: Read latency / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [pglite, postgres]
+        bun: ['1.3.11', '1.3.13']
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: gbrain_test
+          POSTGRES_PASSWORD: gbrain_test
+          POSTGRES_DB: gbrain_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gbrain_test -d gbrain_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ matrix.bun }}
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Require three valid samples, 90 percent overlap and at most 50 percent p99 regression
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+        run: >-
+          bun --no-env-file scripts/persistence/performance.ts --engine=${{ matrix.engine }}
+          --manifest=.context/persistence-read-latency.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: persistence-read-${{ matrix.engine }}-bun-${{ matrix.bun }}
+          path: .context/persistence-read-latency.json
+          if-no-files-found: error
+
+  deployment-matrix:
+    name: PgBouncer, RLS and pool capacity / Bun ${{ matrix.bun }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ['1.3.11', '1.3.13']
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: gbrain_test
+          POSTGRES_PASSWORD: gbrain_test
+          POSTGRES_DB: gbrain_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gbrain_test -d gbrain_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      pgbouncer:
+        image: edoburu/pgbouncer:latest
+        env:
+          DB_HOST: postgres
+          DB_PORT: '5432'
+          DB_USER: gbrain_test
+          DB_PASSWORD: gbrain_test
+          POOL_MODE: transaction
+          AUTH_TYPE: plain
+          MAX_CLIENT_CONN: '200'
+          DEFAULT_POOL_SIZE: '10'
+          IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path
+        ports: ['55433:5432']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ matrix.bun }}
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Execute all 24 deployment cases and owner transfer fencing
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_PGBOUNCER_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:55433/gbrain_test
+        run: bun --no-env-file scripts/persistence/matrix.ts
+      - name: Require PostgreSQL lifecycle, projection and recovery contracts
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+        run: |
+          : "${DATABASE_URL:?PostgreSQL contract tests require the explicit test database}"
+          bun --no-env-file test --timeout=120000 \
+            test/persistence-admission-observer.test.ts \
+            test/persistence-journal.test.ts \
+            test/persistence-staging.test.ts \
+            test/persistence-effect-recovery-fairness.test.ts \
+            test/import-publication-guards.test.ts \
+            test/persistence-withdrawal-retry.test.ts \
+            test/persistence-tombstone-noop.test.ts \
+            test/persistence-version-deletion.test.ts \
+            test/version-history-privacy.test.ts \
+            test/persistence-take-receipt-authority.test.ts \
+            test/import-revision-revival.test.ts \
+            test/persistence-source-lifecycle.test.ts \
+            test/persistence-physical-root.test.ts \
+            test/persistence-topology-capacity.test.ts \
+            test/persistence-topology-quotas.test.ts \
+            test/persistence-contextual-embedding.test.ts \
+            test/page-projection-concurrency.test.ts \
+            test/persistence-migration-preservation.test.ts \
+            test/persistence-recovery-capacity.test.ts \
+            test/audit/pool-recovery-audit.test.ts \
+            test/persistence-recovery-fairness.test.ts
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: persistence-deployment-bun-${{ matrix.bun }}
+          path: .context/persistence-runtime-matrix.json
+          if-no-files-found: error
+
+  invariants:
+    name: ${{ matrix.engine }} / Bun ${{ matrix.bun }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [pglite, postgres]
+        bun: ['1.3.11', '1.3.13']
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: gbrain_test
+          POSTGRES_PASSWORD: gbrain_test
+          POSTGRES_DB: gbrain_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gbrain_test -d gbrain_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: ${{ matrix.bun }}
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Execute 1000 schedules, eight SIGKILL boundaries and 10000 process-separated writes
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+        run: >-
+          bun --no-env-file scripts/persistence/validate.ts --engine=${{ matrix.engine }}
+          --manifest=.context/persistence-manifest.json
+      - name: Upload executed-case and latency manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: persistence-${{ matrix.engine }}-bun-${{ matrix.bun }}
+          path: .context/persistence-manifest.json
+          if-no-files-found: error

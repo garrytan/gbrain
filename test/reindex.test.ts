@@ -237,14 +237,14 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
     for (let i = 0; i < 101; i++) {
       await seedLegacyPage(`atoms/after-failure-${i}`, `valid atom ${i}`, null, { type: 'atom' });
     }
-    const originalGetPage = engine.getPage.bind(engine);
+    const originalGetPage = engine.getPage;
     let failedReads = 0;
-    engine.getPage = async (slug, opts) => {
+    engine.getPage = async function(this: PGLiteEngine, slug, opts) {
       if (slug === 'atoms/fails-first') {
         failedReads++;
         throw new Error('synthetic read failure');
       }
-      return originalGetPage(slug, opts);
+      return originalGetPage.call(this, slug, opts);
     };
 
     try {
@@ -492,10 +492,10 @@ describe('gbrain reindex --markdown (v0.32.7)', () => {
   test('failed rows remain in the reported pending count', async () => {
     await seedLegacyPage('notes/fails', 'will fail');
     await seedLegacyPage('notes/succeeds', 'will succeed');
-    const originalGetPage = engine.getPage.bind(engine);
-    engine.getPage = async (slug, opts) => {
+    const originalGetPage = engine.getPage;
+    engine.getPage = async function(this: PGLiteEngine, slug, opts) {
       if (slug === 'notes/fails') throw new Error('synthetic read failure');
-      return originalGetPage(slug, opts);
+      return originalGetPage.call(this, slug, opts);
     };
 
     try {

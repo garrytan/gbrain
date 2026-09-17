@@ -264,7 +264,7 @@ echo "from a pipe" | gbrain capture --stdin
 SLUG=$(gbrain capture "..." --quiet)
 ```
 
-For a file-backed source, the page is saved to the database and canonical Markdown before optional embedding. Ordinary file-write failures roll back the database revision; this is not a crash-atomic transaction across files and the database. A source without a configured repository can hold DB-only pages, which need a database backup. See the [persistence boundary](docs/architecture/system-of-record.md#page-write-persistence-boundary). Default slug `inbox/YYYY-MM-DD-<hash8>` so captures cluster in a predictable triage location. On thin-client installs the verb routes through MCP to the server.
+Page writes return durable receipts. Replacements require the revision you read or explicit `force`; keep the request UUID when retrying. Accepted work can remain queued while its owner is unavailable, and uncertain publication has an explicit recovery state. Embedding completion is separate from canonical commitment. A source without a configured repository can hold DB-only pages, which need a database backup alongside withdrawal and receipt records. See [concurrent writes](docs/guides/concurrent-writes.md) and the [persistence boundary](docs/architecture/system-of-record.md#page-write-persistence-boundary). Default slug `inbox/YYYY-MM-DD-<hash8>` so captures cluster in a predictable triage location. On thin-client installs the verb routes through MCP to the server.
 
 **Say to your agent:** *"Remember this: ..."* — *"Save this thought to my brain"* — *"Capture this."* And to fill an empty brain from your existing life: *"Fill my brain"* (the cold-start skill walks your email, calendar, contacts, and archives one consented step at a time).
 
@@ -648,12 +648,12 @@ gbrain sync --no-schema-pack --no-pull --no-embed --yes
 shapes (`(a+)+`, `(a*)*`, …) in pack regexes, and the runtime caps
 inference-regex input length (override via `GBRAIN_MAX_REGEX_INPUT_CHARS`).
 Third, on a PGLite brain with a live `gbrain serve` (your agent's MCP
-server), `gbrain sync` delegates the run to the serve process over its
-local IPC socket — the lock owner does the work, your agent stays up,
-and Ctrl-C aborts to a checkpoint the next sync resumes from. Embeds
-defer to the serve's background sweep. See
+server), `gbrain sync` delegates through authenticated local IPC to the
+owner, whether it serves HTTP or stdio. If the client exits, accepted page
+requests can finish; repeat the same options to resume the managed sync
+cursor. Embeds defer to the owner's background work. See
 [`docs/architecture/serve-sync-concurrency.md`](docs/architecture/serve-sync-concurrency.md)
-for the limits (unsupported flags, `serve --http`) and the full triage.
+for supported flags, managed-mode limits and the full triage.
 
 **`gbrain init --migrate-only` / a schema migration fails on Windows
 with `getaddrinfo ENOTFOUND`?** Run `gbrain upgrade`. Schema bring-up

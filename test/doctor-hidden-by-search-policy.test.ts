@@ -1,3 +1,4 @@
+import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
  * hidden_by_search_policy doctor check (issue #1777)
  *
@@ -54,7 +55,7 @@ async function seed(
         token_count: 4,
       });
     }
-    await engine.upsertChunks(slug, rows);
+    await installFixtureChunks(engine, slug, rows);
   }
 }
 

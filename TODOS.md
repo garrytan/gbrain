@@ -9362,17 +9362,19 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   separate backups for DB-only knowledge. The guide is current; the historical
   banner remains documentation debt.
 
-- [ ] **P2 — durable contention queue and caller revision preconditions (#5105).**
-  The collector rejects a busy worktree before changing the page and reports
-  that the write was not queued. Add a separately reviewed acceptance/replay
-  contract and revision check before claiming queued or conflict-safe writes.
-  Preserve source authorization, cancellation, and idempotency across replay.
+- [x] **P2 — durable contention queue and caller revision preconditions (#5105).**
+  Dedicated principal-scoped requests now retain acceptance, replay and terminal
+  outcomes. Existing-page replacements require the observed revision or explicit
+  force; native contention leaves accepted work queued. Publication and receipt
+  operations recheck source authorization and cancellation under shared guards.
+  See `docs/guides/concurrent-writes.md` and `test/persistence-journal.test.ts`.
 
-- [ ] **P2 — file/database commit-failure recovery.** A crash or database commit
-  failure after atomic rename can leave canonical Markdown ahead of the index.
-  Add fault injection at that boundary and a reconciler with explicit recovery
-  semantics before claiming crash-atomic persistence. Do not treat a Markdown
-  rebuild as recovery of DB-only knowledge or operational state.
+- [x] **P2 — file/database commit-failure recovery.** Durable beforeimages and
+  fingerprints now precede publication; uncertain completion blocks its worktree
+  until receipt inspection and conditional recovery settle the outcome. Tests
+  inject actual process death at eight publication boundaries and preserve unknown
+  file bytes. Direct filesystem readers may still observe the publication
+  interval. DB-only knowledge, withdrawals and receipts need database backups.
 
 - [ ] **P2 — reviewed historical fact and stub repair (#5110, #5111).** New
   unresolved facts retain provenance without inventing an entity page, and the

@@ -77,7 +77,7 @@ describe('D24 NULL→non-NULL upsert race fix', () => {
       ],
       { sourceId: 'default' },
     );
-    const chunks = await engine.getChunks('test/race-target', { sourceId: 'default' });
+    const chunks = await engine.getChunks('test/race-target', { sourceId: 'default', includeUnsealed: true });
     expect(chunks.length).toBe(1);
     // Chunk exists with the embedding we wrote.
     expect(chunks[0].chunk_text).toBe('cold path test');

@@ -1205,12 +1205,12 @@ describe('runExtractConversationFactsCore', () => {
 
   test('insert failure leaves no terminal and retries from a clean replay', async () => {
     const engineAny = engine as any;
-    const originalInsertFacts = engineAny.insertFacts.bind(engine);
-    engineAny.insertFacts = async (facts: Array<{ source?: string }>, opts: unknown) => {
+    const originalInsertFacts = engineAny.insertFacts;
+    engineAny.insertFacts = async function(this: PGLiteEngine, facts: Array<{ source?: string }>, opts: unknown) {
       if (facts.some((fact) => fact.source === PER_SEGMENT_SOURCE_PREFIX)) {
         throw new Error('synthetic insert outage');
       }
-      return originalInsertFacts(facts, opts);
+      return originalInsertFacts.call(this, facts, opts);
     };
     try {
       await expect(
@@ -1238,12 +1238,12 @@ describe('runExtractConversationFactsCore', () => {
 
   test('terminal insert failure is reported as unfinished in bulk mode', async () => {
     const engineAny = engine as any;
-    const originalInsertFacts = engineAny.insertFacts.bind(engine);
-    engineAny.insertFacts = async (facts: Array<{ source?: string }>, opts: unknown) => {
+    const originalInsertFacts = engineAny.insertFacts;
+    engineAny.insertFacts = async function(this: PGLiteEngine, facts: Array<{ source?: string }>, opts: unknown) {
       if (facts.some((fact) => fact.source === TERMINAL_AUDIT_SOURCE)) {
         throw new Error('synthetic terminal insert outage');
       }
-      return originalInsertFacts(facts, opts);
+      return originalInsertFacts.call(this, facts, opts);
     };
     try {
       const result = await runExtractConversationFactsCore(engine, {
@@ -1272,10 +1272,10 @@ describe('runExtractConversationFactsCore', () => {
       frontmatter: {},
     });
     const engineAny = engine as any;
-    const originalExecuteRaw = engineAny.executeRaw.bind(engine);
-    engineAny.executeRaw = async (sql: string, params?: unknown[]) => {
+    const originalExecuteRaw = engineAny.executeRaw;
+    engineAny.executeRaw = async function(this: PGLiteEngine, sql: string, params?: unknown[]) {
       if (sql.includes('WITH del AS')) throw new Error('synthetic cleanup outage');
-      return originalExecuteRaw(sql, params);
+      return originalExecuteRaw.call(this, sql, params);
     };
     try {
       await expect(

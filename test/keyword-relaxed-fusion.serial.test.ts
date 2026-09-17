@@ -16,6 +16,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import * as realEmbedding from '../src/core/embedding.ts';
 
 /** Deterministic 1536d unit vector (hybrid-salvage pattern). */
@@ -77,7 +78,7 @@ beforeAll(async () => {
   const vec = `[${Array.from(fixedEmbedding()).join(',')}]`;
   for (const [slug, truth] of fixtures) {
     await engine.putPage(slug, { type: 'note', title: slug.split('/')[1], compiled_truth: truth });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: truth, chunk_source: 'compiled_truth' },
     ]);
     await engine.executeRaw(

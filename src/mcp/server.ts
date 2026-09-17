@@ -14,6 +14,7 @@ import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
+import { createPersistenceIpcProvider } from '../core/persistence/provider.ts';
 import { resolveMcpInstructions } from './instructions.ts';
 import { installCapabilitiesResource } from './capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
@@ -333,6 +334,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     ipcBinding = await bindResolveIpcForServe(
       engine,
       (await resolveMcpStdioSourceScope(engine)).sourceId,
+      await createPersistenceIpcProvider(engine, config ?? { engine: engine.kind }),
     );
 
     // v0.45.7 ambient recall: age out stale session cursors once per serve boot

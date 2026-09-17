@@ -48,7 +48,10 @@ function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
   };
 }
 
-const putPage = operations.find((o) => o.name === 'put_page')!;
+const putPage = {handler: async (ctx: OperationContext, params: Record<string,unknown>) => {
+  const snapshot=await ctx.engine.readPageSnapshot(String(params.slug),{sourceId:ctx.sourceId,includeDeleted:true});
+  return operations.find(o=>o.name==='put_page')!.handler(ctx,{...params,...(snapshot?{expected_revision:snapshot.revision}:{})});
+}};
 
 const PAGE_CONTENT = '---\ntitle: Guarded\n---\n\n# Real body\n\nContent that must survive.';
 
@@ -75,8 +78,9 @@ describe('put_page empty-overwrite guard — rejection', () => {
     const err = await expectRejected({ slug: 'inbox/guarded', content: '' });
     expect(err.code).toBe('invalid_params');
     expect(err.message).toContain('inbox/guarded');
-    expect(err.suggestion).toContain('capture --file PATH --slug SLUG');
-    expect(err.suggestion).toContain('allow_empty');
+    expect(err.message).toContain('capture --file PATH --slug SLUG');
+    expect(err.suggestion).toContain('receipt');
+    expect(err.message).toContain('allow_empty');
 
     const page = await engine.getPage('inbox/guarded', { sourceId: 'default' });
     expect(page).not.toBeNull();
@@ -109,7 +113,7 @@ describe('put_page empty-overwrite guard — rejection', () => {
     await seedPage('inbox/guarded-fm-only');
     await expect(
       putPage.handler(makeCtx(), { slug: 'inbox/guarded-fm-only', content: '---\ntitle: Guarded\n---\n\n' }),
-    ).rejects.toThrow(/refusing to overwrite non-empty page/);
+    ).rejects.toThrow(/Refusing to overwrite existing non-empty page/);
 
     const page = await engine.getPage('inbox/guarded-fm-only', { sourceId: 'default' });
     expect(page!.compiled_truth).toContain('Content that must survive.');

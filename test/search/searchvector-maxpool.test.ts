@@ -23,6 +23,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
@@ -71,7 +72,7 @@ beforeAll(async () => {
     { chunk_index: 1, chunk_text: 'hub b', chunk_source: 'compiled_truth', embedding: gradedEmb(0.98, 11), token_count: 2 },
     { chunk_index: 2, chunk_text: 'hub c', chunk_source: 'compiled_truth', embedding: gradedEmb(0.97, 12), token_count: 2 },
   ];
-  await engine.upsertChunks('notes/hub', hubChunks);
+  await installFixtureChunks(engine, 'notes/hub', hubChunks);
 
   // The page that MUST surface — one strong chunk, below hub's chunks but above fillers.
   await engine.putPage('notes/needle', {
@@ -79,23 +80,23 @@ beforeAll(async () => {
     title: 'Needle Page',
     compiled_truth: 'the needle',
   });
-  await engine.upsertChunks('notes/needle', [
+  await installFixtureChunks(engine, 'notes/needle', [
     { chunk_index: 0, chunk_text: 'the needle', chunk_source: 'compiled_truth', embedding: gradedEmb(0.95, 13), token_count: 2 },
   ]);
 
   await engine.putPage('notes/filler-a', { type: 'note', title: 'Filler A', compiled_truth: 'filler a' });
-  await engine.upsertChunks('notes/filler-a', [
+  await installFixtureChunks(engine, 'notes/filler-a', [
     { chunk_index: 0, chunk_text: 'filler a', chunk_source: 'compiled_truth', embedding: gradedEmb(0.90, 14), token_count: 2 },
   ]);
   await engine.putPage('notes/filler-b', { type: 'note', title: 'Filler B', compiled_truth: 'filler b' });
-  await engine.upsertChunks('notes/filler-b', [
+  await installFixtureChunks(engine, 'notes/filler-b', [
     { chunk_index: 0, chunk_text: 'filler b', chunk_source: 'compiled_truth', embedding: gradedEmb(0.90, 15), token_count: 2 },
   ]);
-});
+}, 60_000);
 
 afterAll(async () => {
   await engine.disconnect();
-});
+}, 60_000);
 
 describe('searchVector per-page max-pool (T1)', () => {
   test('returns DISTINCT pages — no page appears more than once', async () => {

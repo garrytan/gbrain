@@ -35,7 +35,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult, RemoteMcpError } from '../core/mcp-client.ts';
 import { computeContentHash } from '../core/ingestion/types.ts';
-import { operations } from '../core/operations.ts';
+import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
 import { resolveSourceWithTier } from '../core/source-resolver.ts';
 // Pure content helpers moved to core (shared with the capture MCP op — the
@@ -50,12 +50,12 @@ import {
   explicitCaptureType,
   mergeCaptureFrontmatter,
 } from '../core/capture-content.ts';
-import {
-  loadActivePackForWriteVocabulary,
-  packDeclaresPageType,
-  undeclaredPageTypeMessage,
-  undeclaredPageTypeSuggestion,
-} from '../core/schema-pack/write-vocabulary.ts';
+import { randomUUID } from 'node:crypto';
+import { parseMutationPrecondition } from '../core/persistence/preconditions.ts';
+import { isWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
+import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
+import { getCliOptions } from '../core/cli-options.ts';
+import { reportPersistenceCliError } from './persistence-delegate.ts';
 
 export { detectBinaryNullByte, normalizeForHash, mergeCaptureFrontmatter } from '../core/capture-content.ts';
 
@@ -68,6 +68,9 @@ interface RunOpts {
   source?: string;
   quiet?: boolean;
   json?: boolean;
+  expected_revision?: string;
+  request_id?: string;
+  force?: boolean;
   // v0.42.x — Life Chronicle (#2390): manual `--type event` frontmatter sugar.
   who?: string;    // comma-separated entity slugs
   what?: string;
@@ -85,6 +88,15 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
     if (a === '--quiet' || a === '-q') { opts.quiet = true; continue; }
     if (a === '--json') { opts.json = true; continue; }
     if (a === '--stdin') { opts.stdin = true; continue; }
+    if (a === '--force') { opts.force = true; continue; }
+    const mutationFlag = /^--(request-id|expected-revision)(?:=(.*))?$/.exec(a);
+    if (mutationFlag) {
+      const value = mutationFlag[2] ?? args[++i];
+      if (!value || value.startsWith('--')) throw new OperationError('invalid_params', `${mutationFlag[1]} requires a UUID.`);
+      if (mutationFlag[1] === 'request-id') opts.request_id = value;
+      else opts.expected_revision = value;
+      continue;
+    }
     if (a === '--file') {
       const v = args[++i];
       if (v) opts.filePath = v;
@@ -111,7 +123,7 @@ function parseArgs(args: string[]): RunOpts | { help: true; positional: string |
     if (a === '--where') { const v = args[++i]; if (v) opts.where = v; continue; }
     if (a === '--kind') { const v = args[++i]; if (v) opts.kind = v; continue; }
     if (a === '--depth') { const v = args[++i]; if (v) opts.depth = v; continue; }
-    if (a.startsWith('--')) continue; // unknown flag, ignore
+    if (a.startsWith('--')) throw new OperationError('invalid_params', `Unsupported capture option '${a}'.`);
     positional.push(a);
   }
   if (positional.length > 0) {
@@ -141,6 +153,9 @@ Options:
                        registration scopes the source).
   --quiet, -q          Print just the slug on stdout (for shell pipelines)
   --json               JSON output for agents
+  --request-id UUID     Retry the same logical capture with its original UUID
+  --expected-revision UUID  Replace only this version of an existing page
+  --force              Explicitly replace an existing page without a revision
   --help, -h           Show this help
 
 Notes:
@@ -152,9 +167,8 @@ Notes:
     before hashing). The daemon's 24h LRU dedup uses this hash.
   - source_kind in the DB is ALWAYS 'capture-cli' for invocations of this
     command. --source maps to the source_id DB column, NOT to source_kind.
-    Different --type values write to the SAME slug for the same content
-    (slug = content hash), so a later capture with a different --type
-    overwrites the prior page.
+    Replacing an existing slug requires --expected-revision or --force.
+    Keep --request-id unchanged when retrying the same capture.
 
 Examples:
   gbrain capture "remember to follow up on the X deal"
@@ -219,6 +233,8 @@ interface CaptureResult {
   path?: string;
   source_kind: string;
   captured_at: string;
+  revision?: string;
+  write_request?: WriteReceipt;
 }
 
 function printReceipt(result: CaptureResult, quiet: boolean, json: boolean): void {
@@ -238,9 +254,11 @@ function printReceipt(result: CaptureResult, quiet: boolean, json: boolean): voi
     console.log(`  file:          ${result.path}`);
   }
   console.log(`  captured_at:   ${result.captured_at}`);
+  if (result.revision) console.log(`  revision:      ${result.revision}`);
+  if (result.write_request) console.log(`  request_id:    ${result.write_request.request_id}`);
 }
 
-export async function runCapture(engine: BrainEngine | null, args: string[]): Promise<void> {
+export async function runCapture(engine: BrainEngine | null, args: string[], options: { getEngine?: () => Promise<BrainEngine> } = {}): Promise<void> {
   const parsed = parseArgs(args);
   if ('help' in parsed) {
     console.log(HELP);
@@ -336,191 +354,92 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     process.exit(1);
   }
 
-  // CV15: route source resolution through the canonical 6-tier chain
-  // (flag → env → dotfile → local_path → brain_default → seed_default).
-  // resolveSourceWithTier handles the assertSourceExists check and throws
-  // a friendly error BEFORE put_page is called if the source is missing.
-  // Only run on the LOCAL path — thin-client has no engine handle to
-  // probe the sources table; CV7 above already rejected explicit --source
-  // on thin-client. Implicit source resolution on thin-client uses
-  // 'default' (the server's auth layer scopes the actual write).
-  let resolvedSourceId = 'default';
-  if (!isThinClient(cfg) && engine) {
-    try {
-      const { source_id } = await resolveSourceWithTier(engine, parsed.source ?? null);
-      resolvedSourceId = source_id;
-    } catch (e) {
-      // assertSourceExists throws "Source 'X' not found. Available sources: ..."
-      console.error(`gbrain capture: ${e instanceof Error ? e.message : String(e)}`);
-      process.exit(1);
-    }
-  }
-
-  // #4655: fail-loud vocabulary check for an EXPLICIT page type (--type flag
-  // or a frontmatter `type:` in the input) against the active schema pack.
-  // Best-effort pack load — no resolvable pack means no check. The
-  // default-'note' path is never checked, so bare `gbrain capture` keeps
-  // working even under packs that don't declare 'note'.
-  if (!isThinClient(cfg) && engine) {
-    const explicitType = explicitCaptureType(rawBody, parsed.type);
-    if (explicitType) {
-      const activePack = await loadActivePackForWriteVocabulary({
-        engine,
-        remote: false,
-        sourceId: resolvedSourceId,
-      });
-      if (activePack && !packDeclaresPageType(activePack, explicitType)) {
-        console.error(`gbrain capture: ${undeclaredPageTypeMessage(explicitType, activePack, 'capture')}`);
-        console.error(`  ${undeclaredPageTypeSuggestion(activePack)}`);
-        process.exit(1);
-      }
-    }
-  }
-
-  // CV8 (CLI side): content_hash for the RECEIPT comes from the normalized
-  // rawBody, NOT the assembled fullContent which contains a timestamp.
-  // The daemon's 24h LRU dedup keys on this hash; identical captures must
-  // produce identical hashes. The DB content_hash (importFromContent at
-  // src/core/import-file.ts) gets the same treatment in Phase 3d.
-  const slug = parsed.slug ?? defaultSlug(normalizedBody, new Date(), parsed.type);
-  const fullContent = buildContent(rawBody, parsed);
-  const capturedAt = new Date().toISOString();
+  // Raw input and explicit options are the idempotency intent. The owner
+  // materializes its default slug and capture timestamp once after admission;
+  // retrying a CLI invocation must not produce a different digest.
   const contentHash = computeContentHash(normalizedBody);
-
-  // Thin-client install: route through put_page over MCP. The server's
-  // write-through plumbing handles disk persistence. Per CV6 trust gate,
-  // the server overrides ANY provenance params we send to `mcp:put_page`
-  // — so we deliberately do NOT thread source_kind/source_uri/ingested_via
-  // through the wire (would be discarded server-side, and we don't want
-  // to suggest the values reached the DB column when they didn't).
-  if (isThinClient(cfg)) {
-    let raw: unknown;
-    try {
-      raw = await callRemoteTool(
-        cfg!,
-        'put_page',
-        { slug, content: fullContent },
-        { timeoutMs: 30_000 },
-      );
-    } catch (e) {
-      // A2/T1: detect server-side FK violation and rewrite to friendly hint.
-      // RemoteMcpError wraps the server's error envelope; the underlying
-      // PG message is in the wrapped string.
-      const hint = maybeRewriteSourceFkError(e, parsed.source ?? resolvedSourceId);
-      if (hint) {
-        console.error(`gbrain capture: ${hint}`);
-      } else if (e instanceof RemoteMcpError) {
-        console.error(`gbrain capture: remote put_page failed: ${e.message}`);
-        console.error('Run `gbrain remote doctor` to diagnose the connection.');
-      } else {
-        console.error(
-          `gbrain capture: remote put_page failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
-        console.error('Run `gbrain remote doctor` to diagnose the connection.');
-      }
-      process.exit(1);
-    }
-    const remoteResult = unpackToolResult<{
-      slug: string;
-      status?: string;
-      chunks?: number;
-      write_through?: { written: boolean; path?: string };
-    }>(raw);
-    const result: CaptureResult = {
-      slug: remoteResult.slug,
-      status: remoteResult.status,
-      chunks: remoteResult.chunks,
-      content_hash: contentHash,
-      written: remoteResult.write_through?.written ?? false,
-      path: remoteResult.write_through?.path,
-      // CV3: source_kind ALWAYS 'capture-cli' for capture invocations,
-      // regardless of --source. --source maps to source_id (the DB FK),
-      // not the ingestion-channel taxonomy. Conflating these was the
-      // root cause of WARN-8's audit-trail labeling problem.
-      source_kind: 'capture-cli',
-      captured_at: capturedAt,
-    };
-    printReceipt(result, parsed.quiet ?? false, parsed.json ?? false);
-    return;
-  }
-
-  // Local install: route through put_page operation directly so we
-  // exercise the same write-through path the MCP server uses.
-  if (!engine) {
-    console.error('gbrain capture: engine not connected');
-    process.exit(1);
-  }
-  const putPageOp = operations.find((o) => o.name === 'put_page');
-  if (!putPageOp) {
-    console.error('gbrain capture: put_page operation missing (gbrain build issue)');
-    process.exit(1);
-  }
-  const ctx: OperationContext = {
-    engine,
-    config: cfg ?? { engine: 'pglite' as const },
-    logger: {
-      info: (msg: string) => { process.stderr.write(`[capture] ${msg}\n`); },
-      warn: (msg: string) => { process.stderr.write(`[capture] WARN: ${msg}\n`); },
-      error: (msg: string) => { process.stderr.write(`[capture] ERROR: ${msg}\n`); },
-    },
-    dryRun: false,
-    remote: false,
-    // v0.39.3.0 CV15: thread the resolved source from the canonical 6-tier
-    // chain (was `parsed.source ?? 'default'` pre-fix, which silently
-    // ignored env / dotfile / local_path / brain_default tiers — divergent
-    // from every other CLI op's behavior).
-    sourceId: resolvedSourceId,
-  };
+  const capturedAt = new Date().toISOString();
+  let resolvedSourceId = 'default';
+  let requestId: string | undefined;
   try {
-    // v0.39.3.0 WARN-8: pass provenance params to put_page. CV3 source_kind
-    // is always 'capture-cli'; ingested_via is 'put_page' (the write API),
-    // source_uri identifies the file path or stdin marker.
-    const sourceUri = parsed.filePath
-      ? `file://${parsed.filePath}`
-      : parsed.stdin
-        ? 'stdin'
-        : 'cli-positional';
-    const result = (await putPageOp.handler(ctx, {
-      slug,
-      content: fullContent,
+    const precondition = parseMutationPrecondition(parsed as unknown as Record<string, unknown>);
+    requestId = precondition.request_id ?? randomUUID();
+    const params: Record<string, unknown> = {
+      content: rawBody,
+      ...precondition,
+      request_id: requestId,
+      ...(parsed.slug ? { slug: parsed.slug } : {}),
+      ...(parsed.type ? { type: parsed.type } : {}),
+      ...(parsed.who ? { who: parsed.who } : {}),
+      ...(parsed.what ? { what: parsed.what } : {}),
+      ...(parsed.where ? { where: parsed.where } : {}),
+      ...(parsed.kind ? { kind: parsed.kind } : {}),
+      ...(parsed.depth ? { depth: parsed.depth } : {}),
       source_kind: 'capture-cli',
-      source_uri: sourceUri,
+      source_uri: parsed.filePath ? `file://${parsed.filePath}` : parsed.stdin ? 'stdin' : 'cli-positional',
       ingested_via: 'capture-cli',
-    })) as {
-      slug: string;
-      status?: string;
-      chunks?: number;
-      write_through?: { written: boolean; path?: string; skipped?: string };
     };
-    printReceipt(
-      {
-        slug: result.slug,
-        status: result.status,
-        chunks: result.chunks,
-        content_hash: contentHash,
-        written: result.write_through?.written ?? false,
-        path: result.write_through?.path,
-        // CV3: source_kind is the channel taxonomy, NOT the DB source FK.
-        source_kind: 'capture-cli',
-        captured_at: capturedAt,
-      },
-      parsed.quiet ?? false,
-      parsed.json ?? false,
-    );
-  } catch (e) {
-    // A2: detect FK violation on sources table and rewrite to friendly hint.
-    // resolveSourceWithTier above usually catches missing sources upstream,
-    // but a TOCTOU race (source deleted between pre-flight and put_page) or
-    // an explicit --source bypass would surface here.
-    const hint = maybeRewriteSourceFkError(e, parsed.source ?? resolvedSourceId);
-    if (hint) {
-      console.error(`gbrain capture: ${hint}`);
+    let result: Record<string, unknown>;
+    if (isThinClient(cfg)) {
+      const raw = await callRemoteTool(cfg!, 'capture', params, { timeoutMs: getCliOptions().timeoutMs ?? 30_000 });
+      result = unpackToolResult<Record<string, unknown>>(raw);
     } else {
-      console.error(
-        `gbrain capture: put_page failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      const cli = getCliOptions();
+      const delegated = await maybeDelegateLocalOperation('capture', params, cfg, {
+        brain: cli.brain, source: parsed.source ?? null, timeoutMs: cli.timeoutMs ?? undefined,
+      });
+      if (delegated.handled) result = delegated.result as Record<string, unknown>;
+      else {
+        if (!engine && options.getEngine) engine = await options.getEngine();
+        if (!engine) throw new OperationError('owner_unavailable', 'Capture requires a connected engine or a local persistence owner.');
+        const resolved = await resolveSourceWithTier(engine, parsed.source ?? null);
+        resolvedSourceId = resolved.source_id;
+        const captureOp = operations.find(operation => operation.name === 'capture');
+        if (!captureOp) throw new OperationError('unavailable', 'The capture operation is missing; upgrade this installation.');
+        const ctx: OperationContext = {
+          engine, config: cfg ?? { engine: 'pglite' }, sourceId: resolvedSourceId,
+          remote: false, dryRun: false,
+          logger: {
+            info: (message: string) => process.stderr.write(`[capture] ${message}\n`),
+            warn: (message: string) => process.stderr.write(`[capture] WARN: ${message}\n`),
+            error: (message: string) => process.stderr.write(`[capture] ERROR: ${message}\n`),
+          },
+        };
+        result = await captureOp.handler(ctx, params) as Record<string, unknown>;
+      }
     }
-    process.exit(1);
+    const receipt = isWriteReceipt(result.write_request) ? result.write_request : undefined;
+    if (receipt && receipt.state !== 'committed') {
+      // Accepted is a real receipt, but never a false claim that capture
+      // finished. Quiet pipelines must not receive a made-up page slug.
+      if (parsed.json) console.log(JSON.stringify(result, null, 2));
+      else console.error(`Capture ${receipt.state}; request_id ${receipt.request_id}. Retry the same request ID for its result.`);
+      return;
+    }
+    const persistence = result.persistence as { file_written?: boolean } | undefined;
+    const writeThrough = result.write_through as { written?: boolean; path?: string } | undefined;
+    printReceipt({
+      slug: result.slug as string,
+      status: result.status as string | undefined,
+      chunks: result.chunks as number | undefined,
+      content_hash: contentHash,
+      written: persistence?.file_written ?? writeThrough?.written ?? false,
+      path: writeThrough?.path,
+      source_kind: 'capture-cli',
+      captured_at: receipt?.created_at ?? capturedAt,
+      ...(receipt ? { write_request: receipt } : {}),
+      ...(typeof result.revision === 'string' ? { revision: result.revision } : {}),
+    }, parsed.quiet ?? false, parsed.json ?? false);
+  } catch (error) {
+    if (await reportPersistenceCliError(error, parsed.json ?? false)) return;
+    const hint = maybeRewriteSourceFkError(error, parsed.source ?? resolvedSourceId);
+    console.error(`gbrain capture: ${hint ?? (error instanceof Error ? error.message : String(error))}`);
+    if (requestId) console.error(`Retry the same capture with --request-id ${requestId}.`);
+    if (parsed.json && error instanceof RemoteMcpError && error.detail?.write_request) {
+      console.log(JSON.stringify({ ...error.detail, request_id: requestId }, null, 2));
+    }
+    const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+    setCliExitVerdict(1);
   }
 }
 

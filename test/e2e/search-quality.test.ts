@@ -9,6 +9,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 
@@ -51,7 +52,7 @@ beforeAll(async () => {
       token_count: 18,
     },
   ];
-  await engine.upsertChunks('people/pedro', pedroChunks);
+  await installFixtureChunks(engine, 'people/pedro', pedroChunks);
 
   await engine.putPage('companies/variant', {
     type: 'company',
@@ -76,7 +77,7 @@ beforeAll(async () => {
       token_count: 12,
     },
   ];
-  await engine.upsertChunks('companies/variant', variantChunks);
+  await installFixtureChunks(engine, 'companies/variant', variantChunks);
 
   await engine.putPage('concepts/ai-philosophy', {
     type: 'concept',
@@ -101,7 +102,7 @@ beforeAll(async () => {
       token_count: 15,
     },
   ];
-  await engine.upsertChunks('concepts/ai-philosophy', aiChunks);
+  await installFixtureChunks(engine, 'concepts/ai-philosophy', aiChunks);
 }, 60_000);
 
 afterAll(async () => {

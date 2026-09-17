@@ -2542,8 +2542,10 @@ export async function registerBuiltinHandlers(
     const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
     if (!slug) throw new Error('facts-absorb job requires data.slug');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
-    const page = await engine.getPage(slug, { sourceId });
-    if (!page) return { skipped: 'page_missing', slug, sourceId };
+    const { readFactsBackstopJobPage } = await import('../core/persistence/effect-facts.ts');
+    const input = await readFactsBackstopJobPage(engine, job.data);
+    if ('skipped' in input) return { skipped: input.skipped, slug, sourceId };
+    const page = input.page;
     const { runFactsBackstop, coerceNotabilityFilter } = await import('../core/facts/backstop.ts');
     const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import', 'hook:writeback'] as const;
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)

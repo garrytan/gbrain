@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.51.1.0] - 2026-09-16
+## [0.51.2.0] - 2026-09-17
 
 **Import retries pick up edited files, contacts recover from expired sync tokens, and published skills work without extra tool annotations.** This release also filters machine-authored transcript entries and makes lock, push, and health checks report the right outcome.
 
@@ -17,8 +17,59 @@ All notable changes to GBrain will be documented in this file.
 - **Google contacts recover from HTTP 400 sync-token expiry.** A documented expiry reason or recognized expiry message triggers a full contacts refresh and stores a new token. Other bad requests still fail instead of silently resetting sync state.
 - **The local CI gate no longer mistakes passing PgBouncer tests for skipped tests.** Its execution check reads the completed log directly, avoiding a SIGPIPE race while preserving rejection of runs with no passing pooler tests.
 
-### To take advantage of v0.51.1.0
-Run `gbrain upgrade` and restart long-running GBrain processes. Retry a partly failed import normally; deleting its checkpoint is no longer necessary to pick up edits. The next contacts sync recovers an expired token automatically. For existing hardened brain repositories, run `gbrain sources harden <source-id>` to refresh the generated push helper and local hook. No new credentials, permission grants, or automatic-capture consent are needed.
+### To take advantage of v0.51.2.0
+If upgrading from before v0.51.0.0, first follow the [coordinated writer upgrade guide](skills/migrations/v0.51.0.0.md). From v0.51.0.0, run `gbrain upgrade` and restart long-running GBrain processes. Retry a partly failed import normally; deleting its checkpoint is no longer necessary to pick up edits. The next contacts sync recovers an expired token automatically. For existing hardened, unmanaged brain repositories, run `gbrain sources harden <source-id>` to refresh the generated push helper and local hook; managed worktrees retain the persistence outbox as their Git writer. This patch adds no migration, credentials, permission grants, or automatic-capture requirement beyond v0.51.0.0.
+
+## [0.51.0.0] - 2026-09-16
+
+**Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**
+
+Several agents can save to the same brain without silently replacing a newer edit. Read a page, keep its revision, and submit that revision with your replacement. An intentional overwrite requires an explicit force option. Creating a missing page still works without reading it first.
+
+Every accepted write has a request ID and a receipt. If a response is lost or the publishing host is offline, keep that ID and repeat the original request. Queued work survives restarts, and a completed retry returns its original result. A busy folder no longer turns an accepted request into an ambiguous failure.
+
+A successful canonical receipt means the page and its required database state are durable. If publication is interrupted, recovery checks the recorded file bytes before proceeding. An unexpected local edit pauses the affected worktree for repair while unrelated worktrees can continue. Page reads return content, tags and withdrawal state from the same revision.
+
+### What changes in practice
+
+| Situation | Result |
+|---|---|
+| Two callers replace the same revision | One commits; the stale replacement receives a conflict. |
+| A publishing host is unavailable | Accepted work stays queued without expiring. |
+| The same request is sent again | Its retained receipt returns; terminal work does not run twice. |
+| A fact is withdrawn while its file owner is offline | Active memory honors withdrawal immediately; the file mirror follows later. |
+| Delayed embedding, healing or rebuilding finishes after its projection or context changed | It rejects the obsolete result; newer chunks, vectors and contextual state remain intact. |
+| A local purge cannot remove its recorded file | The prior page state remains; replaying a completed purge cannot remove a recreated page. |
+| An identical timeline entry is replayed | Markdown, history and structured rows stay unchanged. |
+
+### Things to watch
+
+This is a coordinated writer upgrade. Back up both canonical files and the database, stop older writers on every host, and follow the activation guide. Each worktree has one designated owner; this release does not automatically fail over to another host. Direct filesystem readers can observe the file/database publication interval. Search embeddings and Git completion may lag, with their own status. Some maintenance writers refuse under managed ownership until a supported coordinator path is available. Existing access grants are preserved.
+
+## To take advantage of v0.51.0.0
+
+Follow [the coordinated upgrade guide](skills/migrations/v0.51.0.0.md). After quiescing and upgrading all writers, apply migrations, verify native locking, register owners and inspect the activation preview:
+
+```bash
+gbrain apply-migrations --yes
+gbrain sources writer status --probe --json
+gbrain sources writer activate --confirm-quiesced --dry-run --json
+```
+
+Activate only after verifying the preview and all upgraded writers. Once managed requests have been accepted, use forward repair or a fully drained, verified downgrade. Agents must keep original request IDs and revision tokens across retries. Receipt helpers require an explicit, version-checked regrant for older operation grants; no upgrade silently widens access.
+
+**Say to your agent:** "Upgrade GBrain using the concurrent-write migration guide. Check every writer and backup first, preserve my access and capture settings, and verify a saved page through its receipt and revision."
+
+### Itemized changes
+
+- Add canonical revisions, coherent exact/alias/fuzzy page snapshots, complete version history and revision-safe delete, restore, capture and revert. Preserve legacy snapshot fields, tombstone state and hidden facts.
+- Add principal-scoped durable mutation admission, seven receipt states, cancellation, permanent replay identities, configurable atomic quotas, bounded compaction and reserved publication recovery space.
+- Coordinate page, fact, take, tag and timeline mutations, including local purge with retained receipts and file-removal rollback; retain exact timeline replay semantics (#5067). Protect page and source identity across deletion and recreation, and fence unsupported canonical writers after activation.
+- Add designated worktree ownership, epoch/physical-root checks, verified transfer, resumable source lifecycle and managed sync with bounded batches and foreground-write fairness.
+- Ship eight bundled native lock prebuilds, retained kernel ownership through PGLite shutdown, authenticated resident HTTP/stdio ingress and private CLI/stdio registrations. Preserve IDs and typed pending/conflict outcomes through local IPC and thin clients.
+- Commit withdrawal to its authoritative database ledger, gate stale retrieval projections, rebuild sanitized snapshots and condition delayed embeddings, healing and rebuilds on their captured page identity, chunk set, text seal and indexing context. Keep vector/provenance/context completion atomic, compare stored contextual generations, and reject stale contextual reindex results without replacing canonical chunks. Keep vectors in the exact embedding column validated before installation, and remove private/withdrawn fact rows before splitting either body column into chunks. Keep Git and mirror effects independent of canonical commitment.
+- Add explicit activation, writer/queue/recovery diagnostics and a narrow receipt-grant migration. Keep intentional DB-only knowledge and withdrawal/receipt records in the backup contract.
+- Exercise deterministic competing writers, real process-crash recovery, separate-process soak, deployment topology and read/write overlap, plus native and published-executable smoke matrices.
 
 ## [0.50.5.0] - 2026-09-16
 

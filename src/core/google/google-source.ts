@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 /**
  * google-source — Gmail/Calendar/Contacts sync for the `google` source kind.
  *
@@ -959,6 +960,7 @@ export async function runGoogleSync(
   fetchImpl?: FetchImpl,
   vaultOverride?: CredentialVault,
 ): Promise<SyncResult> {
+  await assertUnmanagedCanonicalWriter(engine, 'Google source sync');
   if (!cfg.account) {
     throw new Error(
       `Google source "${sourceId}" has no account configured. Re-add it: gbrain sources add ${sourceId} --kind google --account <email>`,

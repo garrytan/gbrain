@@ -10,8 +10,9 @@ import type { BrainEngine } from '../engine.ts';
 import { LockStolenError, LockUnavailableError, withRefreshingLock } from '../db-lock.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { authorityDigest, currentRemoteJobAuthority, currentJobSignal } from './submission-authority.ts';
+import { assertLegacyFilesystemWriter, assertManagedFilesystemWrite } from '../persistence/filesystem-guard.ts';
 
-const heldRoots = new AsyncLocalStorage<ReadonlySet<string>>();
+const heldRoots = new AsyncLocalStorage<ReadonlyArray<{ root: string; active: boolean }>>();
 const filesystemSignal = new AsyncLocalStorage<AbortSignal>();
 const filesystemLeases = new AsyncLocalStorage<Array<{ key: string; lost: boolean }>>();
 export function currentSourceFilesystemSignal(): AbortSignal | undefined {
@@ -19,6 +20,7 @@ export function currentSourceFilesystemSignal(): AbortSignal | undefined {
   return local && job && local !== job ? AbortSignal.any([local, job]) : local ?? job;
 }
 export function assertSourceFilesystemActive(allowCallerAbort = false): void {
+  if (heldRoots.getStore()?.some(held => !held.active)) throw new LockStolenError('released-worktree-context');
   // Lease ownership is independent of caller cancellation: a timeout racing a
   // later lease loss must never hide the loss behind a resumable partial result.
   for (const lease of filesystemLeases.getStore() ?? []) if (lease.lost) throw new LockStolenError(lease.key);
@@ -39,7 +41,7 @@ function encloses(root: string, path: string): boolean {
 }
 export function hasSourceFilesystemLock(path: string): boolean {
   const canonical = lockRoot(path);
-  return [...heldRoots.getStore() ?? []].some(root => encloses(root, canonical));
+  return [...heldRoots.getStore() ?? []].some(held => held.active && encloses(held.root, canonical));
 }
 async function registeredLockRoot(engine: BrainEngine, path: string): Promise<string> {
   let root = lockRoot(path);
@@ -54,11 +56,12 @@ async function registeredLockRoot(engine: BrainEngine, path: string): Promise<st
   return root;
 }
 export async function withSourceFilesystemLock<T>(engine: BrainEngine, path: string, fn: () => Promise<T>, opts: { signal?: AbortSignal; waitMs?: number } = {}): Promise<T> {
+  await assertLegacyFilesystemWriter(engine, path);
   assertSourceFilesystemActive();
   if (hasSourceFilesystemLock(path)) return fn();
   const root = await registeredLockRoot(engine, path);
-  const held = new Set(heldRoots.getStore() ?? []);
-  held.add(root);
+  const rootContext = { root, active: true };
+  const held = [...heldRoots.getStore() ?? [], rootContext];
   const key = `gbrain-fs:${authorityDigest(root)}`;
   const inheritedSignal = currentSourceFilesystemSignal();
   const signal = opts.signal && inheritedSignal ? AbortSignal.any([opts.signal, inheritedSignal]) : opts.signal ?? inheritedSignal;
@@ -74,9 +77,11 @@ export async function withSourceFilesystemLock<T>(engine: BrainEngine, path: str
         entered = true;
         return heldRoots.run(held, () => filesystemLeases.run([...(filesystemLeases.getStore() ?? []), lease], () => filesystemSignal.run(activeSignal, async () => {
           assertSourceFilesystemActive();
-          const result = await fn();
-          assertSourceFilesystemActive();
-          return result;
+          try {
+            const result = await fn();
+            assertSourceFilesystemActive();
+            return result;
+          } finally { rootContext.active = false; }
         })));
       }, { onLockLost: reason => { lease.lost = true; lost.abort(reason); } });
     } catch (err) {
@@ -129,6 +134,7 @@ export function readSourceFileSync(path: string, encoding?: BufferEncoding): Buf
   finally { closeSync(fd); }
 }
 export function writeSourceFileSync(path: string, content: string): void {
+  assertManagedFilesystemWrite(path);
   assertSourceFilesystemActive();
   if (!currentRemoteJobAuthority()) { writeFileSync(path, content); return; }
   const fd = openSourceFile(path, true);

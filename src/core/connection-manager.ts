@@ -303,9 +303,13 @@ export class ConnectionManager {
     }
   }
 
-  /** Whether dual-pool routing is active (false on non-Supabase or kill-switch). */
+  /** Known poolers derive their route; other deployments require a valid explicit override. */
   isDualPoolActive(): boolean {
-    return this._isSupabase && !this._killSwitch && !!this._directUrl;
+    if (this._killSwitch || !this._directUrl) return false;
+    if (this._isSupabase) return true;
+    if (this._directUrlAutoDerived) return false;
+    try { return ['postgres:', 'postgresql:'].includes(new URL(this._directUrl).protocol); }
+    catch { return false; }
   }
 
   isSupabase(): boolean { return this._isSupabase; }
@@ -367,8 +371,8 @@ export class ConnectionManager {
   }
 
   /**
-   * Acquire (and lazy-init) the direct DDL pool. When kill-switch is active
-   * or non-Supabase, returns the read pool (single-pool fallback).
+   * Acquire (and lazy-init) the direct DDL pool. The kill switch or an
+   * unconfigured direct route returns the read pool (single-pool fallback).
    *
    * A1: lazy init wraps in a cached Promise<Sql> so concurrent first-callers
    * await the same init instead of racing two pool constructions.
@@ -584,10 +588,10 @@ export class ConnectionManager {
     direct_pool_size: number;
   } {
     let mode: 'split' | 'single (kill-switch)' | 'single (non-supabase)' | 'single (no-direct-url)';
-    if (!this._isSupabase) mode = 'single (non-supabase)';
-    else if (this._killSwitch) mode = 'single (kill-switch)';
-    else if (!this._directUrl) mode = 'single (no-direct-url)';
-    else mode = 'split';
+    if (this.isDualPoolActive()) mode = 'split';
+    else if (this._killSwitch && (this._isSupabase || this._directUrl)) mode = 'single (kill-switch)';
+    else if (!this._isSupabase) mode = 'single (non-supabase)';
+    else mode = 'single (no-direct-url)';
     return {
       mode,
       direct_host: this._directUrl ? this.hostOnly(this._directUrl) : undefined,

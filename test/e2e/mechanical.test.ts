@@ -20,6 +20,9 @@ import { operationsByName, operations } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
+import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
+import { cliDiagnostic, fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
 
 // Skip all E2E tests if no database is configured
 const skip = !hasDatabase();
@@ -142,7 +145,8 @@ describeE2E('E2E: Page CRUD', () => {
   });
 
   test('delete_page removes page and others survive', async () => {
-    await callOp('delete_page', { slug: 'sources/crustdata-sarah-chen' });
+    const current = await callOp('get_page', { slug: 'sources/crustdata-sarah-chen' }) as any;
+    await callOp('delete_page', { slug: current.slug, expected_revision: current.revision });
     const stats = await callOp('get_stats') as any;
     expect(stats.page_count).toBe(15);
 
@@ -503,7 +507,9 @@ describeE2E('E2E: Versions', () => {
 
     // Revert to first version
     const firstVersion = versions[versions.length - 1];
-    await callOp('revert_version', { slug: 'people/sarah-chen', version_id: firstVersion.id });
+    const current = await callOp('get_page', { slug: 'people/sarah-chen' }) as any;
+    await callOp('revert_version', { slug: current.slug, version_id: firstVersion.id,
+      expected_revision: current.revision });
 
     const reverted = await callOp('get_page', { slug: 'people/sarah-chen' }) as any;
     expect(reverted.compiled_truth).not.toContain('(Modified)');
@@ -1345,52 +1351,56 @@ describeE2E('E2E: Doctor Command', () => {
   // entries from in-flight workspaces (e.g. v0.31.x santiago) would make the
   // minions_migration check fail and exit 1, masking real DB-health failures.
   let gbrainHome: string;
+  let doctorDatabase: Awaited<ReturnType<typeof isolatedPersistencePostgres>> | undefined;
+  let doctorUrl: string;
 
   beforeAll(async () => {
-    await setupLegacyEmbeddingDB();
-    await importFixtures();
+    // The shared reset preserves OAuth clients and other durable state. The
+    // delegated-grant fixture deliberately leaves an empty confidential hash,
+    // which doctor correctly rejects. A healthy-brain assertion owns its DB.
+    configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+    doctorDatabase = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+    const [{ name }] = await doctorDatabase.engine.executeRaw<{ name: string }>('SELECT current_database() AS name');
+    const url = new URL(process.env.DATABASE_URL!);
+    url.pathname = `/${name}`;
+    doctorUrl = url.toString();
+    await importFixtures(doctorDatabase.engine);
     // Isolate GBRAIN_HOME to a per-block tempdir so the developer's
     // ~/.gbrain/migrations/completed.jsonl ledger doesn't leak in. Without
     // this, doctor reads the dev machine state — partial v0.21/v0.22.4/v0.28.0
     // migration entries from in-flight workspaces — and surfaces them as the
     // 'minions_migration' [FAIL] check, exiting with code 1.
     gbrainHome = mkdtempSync(join(tmpdir(), 'gbrain-doctor-e2e-'));
-    // Cross-file isolation: prior E2E files can leave non-default `sources`
-    // rows (e.g. 'delta' from autopilot/sources tests). Doctor's
-    // sync_freshness + cycle_freshness checks then FAIL on those orphans,
-    // exit 1, breaking 'doctor exits 0 on healthy DB'. setupDB TRUNCATEs
-    // sources but schema.sql re-seeds 'default' via initSchema; clean any
-    // other rows so the doctor sees a clean single-source brain.
-    const conn = getConn();
-    await conn`DELETE FROM sources WHERE id != 'default'`;
   }, 30_000);
   afterAll(async () => {
-    await teardownDB();
+    await doctorDatabase?.close();
     if (gbrainHome) rmSync(gbrainHome, { recursive: true, force: true });
   });
 
   const cliCwd = join(import.meta.dir, '../..');
   const cliEnv = () => ({
     ...process.env,
-    DATABASE_URL: process.env.DATABASE_URL!,
-    GBRAIN_DATABASE_URL: process.env.DATABASE_URL!,
+    DATABASE_URL: doctorUrl,
+    GBRAIN_DATABASE_URL: doctorUrl,
+    GBRAIN_DIRECT_DATABASE_URL: doctorUrl,
     GBRAIN_HOME: gbrainHome,
   });
 
   test('gbrain doctor exits 0 on healthy DB', () => {
     // Init first so config exists for CLI. Pin --embedding-model explicitly
     // so the spawned doctor doesn't pick a different default (e.g. ZE-1280d
-    // when ZEROENTROPY_API_KEY is in env) that mismatches the 1536d schema
-    // setupDB initialized, producing a WARN-status embedding_width_consistency
-    // check and exit 1. Mirrors the same pattern in 'Setup Journey'.
+    // when ZEROENTROPY_API_KEY is in env) that mismatches the fixture's
+    // 1536d schema. Mirrors the same pattern in 'Setup Journey'.
     const init = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive',
-            '--url', process.env.DATABASE_URL!,
+            '--url', doctorUrl,
             '--embedding-model', LEGACY_EMBEDDING_CONFIG.embedding_model,
             '--embedding-dimensions', String(LEGACY_EMBEDDING_CONFIG.embedding_dimensions)],
       cwd: cliCwd, env: cliEnv(), timeout: 15_000,
     });
-    expect(init.exitCode, new TextDecoder().decode(init.stderr)).toBe(0);
+    expect(init.exitCode, cliDiagnostic('doctor fixture init', {
+      exitCode: init.exitCode, stdout: new TextDecoder().decode(init.stdout), stderr: new TextDecoder().decode(init.stderr),
+    }, [doctorUrl])).toBe(0);
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'doctor'],
       cwd: cliCwd,
@@ -1400,8 +1410,9 @@ describeE2E('E2E: Doctor Command', () => {
     if (result.exitCode !== 0) {
       const stdout = new TextDecoder().decode(result.stdout);
       const stderr = new TextDecoder().decode(result.stderr);
-      console.error('doctor stdout:', stdout.slice(-2000));
-      console.error('doctor stderr:', stderr.slice(-1000));
+      const failedChecks = stdout.split('\n').filter(line => /^\s*\[FAIL\]/.test(line));
+      console.error(fixtureDiagnostic('doctor failed checks', failedChecks.join('\n') || '(none rendered)', [doctorUrl]));
+      console.error(cliDiagnostic('doctor', { exitCode: result.exitCode, stdout, stderr }, [doctorUrl]));
     }
     expect(result.exitCode).toBe(0);
   }, 60_000);
@@ -1418,6 +1429,11 @@ describeE2E('E2E: Doctor Command', () => {
     expect(parsed.status).toBeDefined();
     expect(Array.isArray(parsed.checks)).toBe(true);
     expect(parsed.checks.length).toBeGreaterThan(0);
+    expect(result.exitCode, cliDiagnostic('doctor --json', {
+      exitCode: result.exitCode, stdout, stderr: new TextDecoder().decode(result.stderr),
+    }, [doctorUrl])).toBe(0);
+    expect(parsed.checks.filter((check: { status: string }) => check.status === 'fail')).toEqual([]);
+    expect(parsed.checks.find((check: { name: string }) => check.name === 'oauth_confidential_client_health')?.status).toBe('ok');
     for (const check of parsed.checks) {
       expect(['ok', 'warn', 'fail']).toContain(check.status);
       expect(typeof check.name).toBe('string');

@@ -21,7 +21,7 @@ function aggregate(workflow: Workflow, name: string, event: string, results: Rec
 }
 
 describe('CI execution evidence', () => {
-  test('gitleaks and verify run independently for every change, with no pass-marker cache', () => {
+  test('default gitleaks and verify run independently for every change, with no pass-marker cache', () => {
     for (const [name, workflow] of [['test.yml', unit], ['e2e.yml', e2e]] as const) {
       const source = readFileSync(join(root, '.github/workflows', name), 'utf8');
       expect(source).not.toMatch(/(?:ci|e2e)-pass-|cache-check|cache-write/);
@@ -31,17 +31,17 @@ describe('CI execution evidence', () => {
     }
     for (const name of ['gitleaks', 'verify']) {
       expect(unit.jobs[name].needs).toBeUndefined();
-      expect(unit.jobs[name].if).toBeUndefined();
+      expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}");
     }
     expect(e2e.jobs.tier2.needs).toBe('jsonb-parity');
     expect(e2e.jobs.tier2.if).toBeUndefined();
   });
 
   test('unit aggregate rejects failed, cancelled or skipped required jobs', () => {
-    expect(unit.jobs['test-status'].if).toBe('always()');
+    expect(unit.jobs['test-status'].if).toBe("${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}");
     expect(unit.jobs['test-status'].needs).toEqual([
       'gitleaks', 'security-regressions', 'dependency-audit', 'verify', 'serial-tests', 'slow-eval-longmemeval',
-      'slow-entity-resolve-perf', 'slow-brainbench-e2e', 'brainbench', 'test',
+      'slow-entity-resolve-perf', 'slow-brainbench-e2e', 'brainbench', 'test', 'native-locks', 'persistence-validation',
     ]);
     expect(aggregate(unit, 'test-status', 'pull_request', {})).toBe(0);
     for (const job of unit.jobs['test-status'].needs as string[]) {

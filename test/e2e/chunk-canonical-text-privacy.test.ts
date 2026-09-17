@@ -112,7 +112,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       await engine.upsertChunks(slug, [{ ...input[0], chunk_text: `${poison} changed` }], { sourceId: SOURCE });
       expect(await version(slug)).toBeLessThan(0);
       expect(await engine.getChunks(slug, { sourceId: SOURCE, requireSafeChunks: true })).toEqual([]);
-      const [changed] = await engine.getChunks(slug, { sourceId: SOURCE });
+      const [changed] = await engine.getChunks(slug, { sourceId: SOURCE, includeUnsealed: true });
       expect(changed.chunk_text).toBe(`${before[0].chunk_text} changed`);
       [hash] = await hashes();
       expect(hash.stored).toBe(hash.recomputed);
@@ -189,7 +189,9 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const page = (await engine.getPage(slug, { sourceId: SOURCE }))!;
         expect(page.compiled_truth).toContain(TAKES_FENCE_BEGIN);
         expect(page.compiled_truth).not.toContain(NUL);
-        const [chunk] = await engine.getChunks(slug, { sourceId: SOURCE });
+        // OCR imports remain unavailable to normal retrieval until their complete projection is sealed.
+        expect(await engine.getChunks(slug, { sourceId: SOURCE })).toEqual([]);
+        const [chunk] = await engine.getChunks(slug, { sourceId: SOURCE, includeUnsealed: true });
         expect(chunk.chunk_text).toContain('Public OCR.');
         expect(chunk.chunk_text).not.toContain(PRIVATE);
       } finally {

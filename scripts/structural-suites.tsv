@@ -48,6 +48,7 @@ test/brainstorm-timeout.test.ts	orchestrator entry-point wrap (CV11 single-point
 test/build-llms.test.ts	CLAUDE.md restructure content contracts	5	readFileSync
 test/build-llms.test.ts	build-llms generator	7	readFileSync
 test/canonical-migration-command.test.ts	canonical migration command (single home: ai/defaults.ts)	5	doctor-source-helper
+test/canonical-writer-inventory.test.ts	(file-level)	2	readFileSync
 test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source guard)	2	readFileSync
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	10	readFileSync
 test/check-bootstrap-guards.test.ts	check-opencode-pin.sh	6	readFileSync
@@ -262,6 +263,7 @@ test/scripts/classify-tests.test.ts	classify-tests detectors	18	bun-file,doctor-
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
 test/scripts/e2e-wiring.test.ts	e2e file claim ratchet	5	readFileSync
 test/scripts/e2e-wiring.test.ts	selected-e2e job wiring	6	readFileSync
+test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	6	readFileSync

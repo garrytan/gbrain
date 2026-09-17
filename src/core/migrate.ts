@@ -1,3 +1,10 @@
+import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
+import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
+import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL } from './persistence/schema.ts';
+import { PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
+import { PAGE_PROJECTION_SCHEMA_SQL, PAGE_PROJECTION_ACTIVATION_SQL } from './page-state/projection-schema.ts';
+import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
+import { PAGE_STATE_SCHEMA_SQL, PAGE_VERSION_DELETION_SCHEMA_SQL } from './page-state/schema.ts';
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
 import { getFtsLanguage } from './fts-language.ts';
@@ -6552,6 +6559,16 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
   FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
     `,
   },
+  { version: 150, name: 'canonical_page_revisions_and_guards', idempotent: true, sql: PAGE_STATE_SCHEMA_SQL },
+  { version: 151, name: 'durable_concurrent_persistence', idempotent: true, sql: PERSISTENCE_SCHEMA_STATEMENTS.join(';\n') + ';' },
+  { version: 152, name: 'unique_lock_acquisition_tokens', idempotent: true, sql: LEASE_TOKEN_SCHEMA_SQL },
+  { version: 153, name: 'verified_text_projection_activation', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL + PAGE_PROJECTION_ACTIVATION_SQL },
+  { version: 154, name: 'preserve_sanitized_page_search_vectors', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL },
+  { version: 155, name: 'recoverable_postcommit_persistence_effects', idempotent: true, sql: PERSISTENCE_EFFECT_SCHEMA_SQL },
+  { version: 156, name: 'managed_alias_and_source_checkpoint_guards', idempotent: true, sql: MANAGED_WRITER_GUARD_SQL },
+  { version: 157, name: 'recoverable_source_topology', idempotent: true, sql: PERSISTENCE_TOPOLOGY_SCHEMA_SQL },
+  { version: 158, name: 'canonical_version_deletion_state', idempotent: true, sql: PAGE_VERSION_DELETION_SCHEMA_SQL },
+  { version: 159, name: 'index_retained_publication_recovery', idempotent: true, sql: PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL + ';' },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -99,7 +99,6 @@ test/e2e/onboard-full-flow.test.ts
 test/e2e/openclaw-reference-compat.test.ts
 test/e2e/openrouter-anthropic-subagent-replay.live.test.ts
 test/e2e/orphan-reduction.test.ts
-test/e2e/pgbouncer-teardown.test.ts
 test/e2e/pglite-cli-exit.serial.test.ts
 test/e2e/phantom-redirect.test.ts
 test/e2e/postgres-engine-disconnect-idempotency.test.ts

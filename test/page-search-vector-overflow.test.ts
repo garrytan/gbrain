@@ -12,6 +12,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
@@ -73,7 +74,7 @@ describe('#2704: oversized page body no longer overflows pages.search_vector', (
       chunk_text: c.text,
       chunk_source: 'compiled_truth' as const,
     }));
-    await engine.upsertChunks('oversized-searchable', chunks);
+    await installFixtureChunks(engine, 'oversized-searchable', chunks);
 
     const results = await engine.searchKeyword('zzdistinctivetoken2704');
     expect(results.some((r) => r.slug === 'oversized-searchable')).toBe(true);

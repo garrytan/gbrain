@@ -1,3 +1,6 @@
+import { sanitizeRemoteBody } from '../core/remote-body.ts';
+import { readProjectionSnapshot, installPageProjection, installPageEmbeddings } from '../core/page-state/projections.ts';
+import { PageRevisionConflictError } from '../core/page-state/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { currentEmbeddingSignature } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
@@ -978,26 +981,31 @@ async function embedPage(
   quiet?: boolean,
 ) {
   const opts = sourceId ? { sourceId } : undefined;
-  const page = await engine.getPage(slug, opts);
-  if (!page) {
+  const initial = await engine.readPageSnapshot(slug, opts);
+  if (!initial) {
     throw new Error(`Page not found: ${slug}`);
   }
+  const origin = await readProjectionSnapshot(engine, slug, initial.page.source_id, { allowUnsealed: true });
+  if (!origin || origin.snapshot.revision !== initial.revision || origin.snapshot.page.id !== initial.page.id
+    || origin.snapshot.sourceIncarnation !== initial.sourceIncarnation) return;
+  const snapshot = origin.snapshot;
+  const page = snapshot.page;
 
   // Get existing chunks or create new ones.
   // In dryRun, we still chunk the text locally to count what WOULD be
   // embedded — but we never write chunks or call the embedding model.
-  let chunks = await engine.getChunks(slug, opts);
+  let chunks = page.text_projection_revision === snapshot.revision ? origin.chunks : [];
   if (chunks.length === 0) {
     const inputs: ChunkInput[] = [];
     // #4530: respect the active embedding model's per-input token limit.
-    const chunkOpts = { maxTokens: resolveMaxChunkTokens() };
+    const chunkOpts = { maxTokens: origin.maxChunkTokens };
     if (page.compiled_truth.trim()) {
-      for (const c of chunkText(page.compiled_truth, chunkOpts)) {
+      for (const c of chunkText(sanitizeRemoteBody(page.compiled_truth), chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (page.timeline.trim()) {
-      for (const c of chunkText(page.timeline, chunkOpts)) {
+      for (const c of chunkText(sanitizeRemoteBody(page.timeline), chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
@@ -1011,14 +1019,19 @@ async function embedPage(
     }
 
     if (inputs.length > 0) {
-      await engine.upsertChunks(slug, inputs, opts);
-      chunks = await engine.getChunks(slug, opts);
+      try {
+        await installPageProjection(engine, origin, inputs, { seal: true });
+      } catch (error) {
+        if (!(error instanceof PageRevisionConflictError)) throw error;
+        return;
+      }
+      chunks = await engine.getChunks(slug, { sourceId: page.source_id });
     }
   } else if (!dryRun) {
     // SUP-3874: legacy chunks may predate the model input-cap. Split them
     // before the embed call so one oversized row can't fail the page/sweep.
     const healed = await healOversizedPageChunks(engine, slug, {
-      sourceId,
+      sourceId: page.source_id,
       onSplit: (n) => serr(`  ${slug}: split ${n} oversized chunk(s) to fit embedding input limit`),
     });
     if (healed.changed) chunks = healed.chunks;
@@ -1056,12 +1069,14 @@ async function embedPage(
   // swallowed: the page stays NULL exactly as before, but the run now
   // reports it (result.failures → non-zero exit) instead of pretending
   // success. Abort (shutdown) still propagates.
+  const prepared = await readProjectionSnapshot(engine, slug, page.source_id);
+  if (!prepared || prepared.snapshot.revision !== snapshot!.revision || prepared.chunks.some((chunk, i) => chunk.id !== chunks[i]?.id || chunk.chunk_text !== chunks[i]?.chunk_text)) return;
   let embeddings: (Float32Array | null)[];
   let failed = 0;
   let firstError: unknown;
   try {
     ({ embeddings, failed, firstError } = await embedPageTexts(
-      wrapChunkTextsForStoredMode(page, toEmbed),
+      wrapChunkTextsForStoredMode(prepared.snapshot.page, toEmbed),
       signal ? { abortSignal: signal } : {},
     ));
   } catch (e: unknown) {
@@ -1084,26 +1099,15 @@ async function embedPage(
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
-  await engine.upsertChunks(slug, updated, opts);
-  // v0.41.31: stamp provenance so a later model/dims swap is detectable as
-  // stale. embedPage is the per-slug path used by `gbrain embed <slug>` AND
-  // by `gbrain sync`'s post-import embed step (runEmbedCore({slugs})).
-  // Guard: only stamp when EVERY chunk was (re)embedded this pass. If some
-  // chunks were preserved from a prior embed (unknown/old provenance), the
-  // page is mixed — don't claim it's current. `embed --all` fully re-embeds
-  // such a page and then stamps it. #3037: a partial failure leaves failed
-  // chunks NULL, so don't stamp then either.
-  if (failed === 0 && toEmbed.length === chunks.length) {
-    // D9 honesty: no stamp when the gateway is unconfigured — a wrong
-    // signature is worse than none (NULL = unknown provenance).
-    const stampSig = currentEmbeddingSignature();
-    if (stampSig) {
-      await engine.setPageEmbeddingSignature(slug, { sourceId, signature: stampSig });
-    }
-    // #3507: a fully re-embedded per_chunk_synopsis page landed at the
-    // title tier — keep the stamped mode honest.
-    await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
-  }
+  const fullyEmbedded = failed === 0 && toEmbed.length === chunks.length;
+  // Vectors and their completion stamps share the page guard. A later
+  // contextual rebuild must not be relabeled by this attempt's restamp.
+  if (!await engine.transaction(async tx => {
+    if (!await installPageEmbeddings(tx, prepared, updated,
+      fullyEmbedded ? currentEmbeddingSignature() ?? undefined : undefined)) return false;
+    if (fullyEmbedded) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, page.source_id);
+    return true;
+  })) return;
   result.embedded += toEmbed.length - failed;
   if (failed > 0) {
     recordFailure(result, failed, slug, firstError);
@@ -1226,7 +1230,10 @@ async function embedAll(
     // target the correct (source_id, slug) row, not the 'default' source.
     const pageSourceId = page.source_id;
     const pageOpts = pageSourceId ? { sourceId: pageSourceId } : undefined;
-    const chunks = await observed(pacer, () => engine.getChunks(page.slug, pageOpts));
+    const prepared = await observed(pacer, () => readProjectionSnapshot(engine, page.slug, pageSourceId));
+    if (!prepared) return;
+    page = prepared.snapshot.page;
+    const chunks = prepared.chunks;
     const toEmbed = chunks; // staleOnly path handled above via embedAllStale
 
     result.total_chunks += chunks.length;
@@ -1272,26 +1279,13 @@ async function embedAll(
         embedding: embeddingMap.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await observed(pacer, () => engine.upsertChunks(page.slug, updated, pageOpts));
-      // v0.41.31: stamp embedding provenance so a later model swap is
-      // detectable as stale. #3037: not on partial failure — failed chunks
-      // stay NULL under unknown provenance. D9: no stamp without a gateway
-      // (signature undefined) — a wrong stamp is worse than none.
-      if (failed === 0) {
-        if (signature) {
-          await observed(pacer, () =>
-            engine.setPageEmbeddingSignature(page.slug, { sourceId: pageSourceId, signature }),
-          );
-        }
-        // #3507: --all fully re-embeds; a per_chunk_synopsis page landed at
-        // the title tier — keep the stamped mode honest. #3037: gated on
-        // failed === 0 — a partially-failed page was NOT fully re-embedded,
-        // so restamping would make contextual_retrieval_mode lie again
-        // (the exact #3461 bug).
-        await observed(pacer, () =>
-          restampIfDemotedToTitleTier(engine, page, page.slug, pageSourceId),
-        );
-      }
+      // Partial failures retain their old context; a full completion stamps
+      // its vectors and title-tier convention in the same guarded transaction.
+      if (!await observed(pacer, () => engine.transaction(async tx => {
+        if (!await installPageEmbeddings(tx, prepared, updated, failed === 0 ? signature : undefined)) return false;
+        if (failed === 0) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, page.slug, pageSourceId);
+        return true;
+      }))) return;
       result.embedded += toEmbed.length - failed;
       if (failed > 0) {
         recordFailure(result, failed, page.slug, firstError);
@@ -1362,39 +1356,11 @@ async function embedAll(
  * contract (including `pages_processed`, which embedPage's own dry-run
  * branch increments for exactly this "examined, didn't write" case).
  *
- * Race note (review catch, three rounds — ACCEPTED RESIDUAL RISK, not
- * fully closed): between listing a page and writing its chunks, a
- * concurrent writer (sync, another `put_page`) could change or chunk the
- * SAME page. Two mitigations, both bounded — full atomicity (a
- * transaction/version-guarded conditional write inside `upsertChunks`)
- * would need a new engine primitive shared by every `upsertChunks` caller,
- * which is out of scope for a chunkless-page safety net:
- *   1. Immediately before writing, re-fetch the LIVE page via `getPage`
- *      and build `inputs` from ITS CURRENT content, not the batch-list
- *      snapshot — closes the "content changed but still chunkless"
- *      sub-case, not just the "chunks appeared" one.
- *   2. Re-check `getChunks` right after that same fetch — skip (don't
- *      overwrite) if chunks now exist AT THE TIME OF THE CHECK.
- * What this does NOT close: a writer that inserts chunks in the gap
- * BETWEEN step 2's check and the `upsertChunks` call immediately below it
- * (no intervening `await` other than that one call, but `upsertChunks`
- * itself is not conditioned on the check — this is still check-then-write,
- * not compare-and-swap) can still have its chunks overwritten — HONESTLY:
- * `upsertChunks` treats its input as the full desired chunk set for that
- * page and deletes any existing chunk_index absent from it, so a
- * concurrent writer's chunks landing in that exact gap CAN be replaced
- * with this sweep's stale-content chunks (embedding NULL). This is the
- * SAME check-then-write window `embedPage`'s existing single-page
- * chunkless branch already ships with today (that branch doesn't even
- * have step 2's re-check) — no new race CLASS is introduced, and the
- * window here is a single sequential getPage+getChunks+upsertChunks
- * instead of spanning a whole batch. The blast radius is bounded: the
- * page is NOT deleted or corrupted, just re-chunked from a stale
- * snapshot, and the NEXT write to that page (sync, another edit) that
- * actually chunks it restores correct content — this sweep's own
- * predicate is idempotent and doesn't compound the drift. Closing this
- * fully (true atomicity) is tracked as a follow-up, not blocking this
- * safety net.
+ * Capture the live canonical page, complete unsealed chunk set and indexing
+ * context under one short page guard, then chunk outside the transaction.
+ * Installation compares that originating snapshot under the same guard before
+ * changing any row. A newer canonical edit, completed projection or changed
+ * chunking context supersedes this attempt without counting it as healed.
  *
  * Per-page failure isolation (review catch): one malformed/oversized
  * chunkless page must not abort the sweep and, with it, the entire
@@ -1441,17 +1407,17 @@ async function healChunklessPages(
   let pagesHealed = 0;
   let budgetExceeded = false;
 
-  const buildInputs = (compiledTruth: string, timeline: string): ChunkInput[] => {
+  const buildInputs = (compiledTruth: string, timeline: string, maxTokens = resolveMaxChunkTokens()): ChunkInput[] => {
     const inputs: ChunkInput[] = [];
     // #4530: respect the active embedding model's per-input token limit.
-    const chunkOpts = { maxTokens: resolveMaxChunkTokens() };
+    const chunkOpts = { maxTokens };
     if (compiledTruth.trim()) {
-      for (const c of chunkText(compiledTruth, chunkOpts)) {
+      for (const c of chunkText(sanitizeRemoteBody(compiledTruth), chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (timeline.trim()) {
-      for (const c of chunkText(timeline, chunkOpts)) {
+      for (const c of chunkText(sanitizeRemoteBody(timeline), chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
@@ -1493,20 +1459,13 @@ async function healChunklessPages(
           continue;
         }
 
-        // Re-fetch the LIVE page + re-check chunks immediately before
-        // writing (see race note above): chunk CURRENT content, and skip
-        // rather than clobber if a concurrent writer already chunked this
-        // page since we listed it.
-        const [livePage, stillChunkless] = await Promise.all([
-          observed(activePacer, () => engine.getPage(page.slug, { sourceId: page.source_id })),
-          observed(activePacer, () => engine.getChunks(page.slug, { sourceId: page.source_id })),
-        ]);
-        if (!livePage || stillChunkless.length > 0) continue;
-        const inputs = buildInputs(livePage.compiled_truth, livePage.timeline);
+        const prepared = await observed(activePacer, () => readProjectionSnapshot(engine, page.slug, page.source_id, { allowUnsealed: true }));
+        if (!prepared || prepared.chunks.length > 0) continue;
+        const inputs = buildInputs(prepared.snapshot.page.compiled_truth, prepared.snapshot.page.timeline, prepared.maxChunkTokens);
         if (inputs.length === 0) continue;
 
         await observed(activePacer, () =>
-          engine.upsertChunks(page.slug, inputs, { sourceId: page.source_id }),
+          installPageProjection(engine, prepared, inputs, { seal: true }),
         );
         pagesHealed++;
         try {
@@ -1515,6 +1474,7 @@ async function healChunklessPages(
           if (!(e instanceof AbortError)) throw e;
         }
       } catch (e) {
+        if (e instanceof PageRevisionConflictError) continue;
         if (isAborted(signal)) break;
         recordFailure(result, 1, page.slug, e);
         serr(`\n  [embed] chunkless-page heal failed for ${page.slug}: ${e instanceof Error ? e.message : e}`);
@@ -1947,16 +1907,16 @@ async function embedAllStale(
           // silently stripping contextual prefixes — `embed --stale` is the
           // NORMAL post-model-migration path, so raw-text embedding here
           // quietly converted whole corpora to the unwrapped convention.
-          const pageRow = await observed(pacer, () => engine.getPage(slug, { sourceId: keySourceId }));
-          // #3037: per-chunk failure isolation — one bad chunk costs one
-          // chunk, not the whole page's siblings. The wrapped texts feed the
-          // fan-out too, so an isolation retry never strips the prefixes.
+          const prepared = await observed(pacer, () => readProjectionSnapshot(engine, slug, keySourceId));
+          if (!prepared) return;
+          const selected = new Map(stale.map(c => [c.chunk_index, c]));
+          const existing = prepared.chunks;
+          stale = existing.filter(c => selected.get(c.chunk_index)?.chunk_text === c.chunk_text)
+            .map(c => ({ ...selected.get(c.chunk_index)!, ...c }));
+          if (!stale.length) return;
+          const pageRow = prepared.snapshot.page;
           const { embeddings, failed, firstError } = await embedPageTexts(
-            wrapChunkTextsForStoredMode(pageRow, stale),
-            { abortSignal: effectiveSignal },
-          );
-          // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
-          const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
+            wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: effectiveSignal });
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             const emb = embeddings[j];
@@ -1972,26 +1932,17 @@ async function embedAllStale(
             embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
-          await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
-          // Stamp provenance from DB state, not this batch (#4825): the keyset
-          // drain has no page alignment, so a page straddling a batch boundary
-          // is never wholly in one batch — the batch that lands its last chunk
-          // stamps it. Preserved chunks of other provenance keep the page
-          // unstamped; #3037: failed chunks stay NULL, so skip the round trip.
-          if (stamp && failed === 0) {
-            await observed(pacer, () => stampIfPageProvenanceComplete(engine, slug, keySourceId, stamp));
-          }
-          // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
-          // title tier — keep the stamped mode honest. Partially-stale pages
-          // stay stamped as-is (mixed provenance; reindex sweeps fix them).
-          // #3037: `failed === 0` is part of "fully re-embedded" — if the
-          // per-chunk isolation left some chunks NULL, restamping would make
-          // contextual_retrieval_mode lie again (the exact #3461 bug).
-          if (failed === 0 && stale.length === existing.length) {
-            await observed(pacer, () =>
-              restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
-            );
-          }
+          // The last batch stamps from complete DB provenance (#4825).
+          // Keep both stamps with vector installation so later contextual
+          // work cannot commit between installation and title-tier demotion.
+          if (!await observed(pacer, () => engine.transaction(async tx => {
+            if (!await installPageEmbeddings(tx, prepared, merged)) return false;
+            if (stamp && failed === 0) await stampIfPageProvenanceComplete(tx, slug, keySourceId, stamp);
+            if (failed === 0 && stale.length === existing.length) {
+              await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, keySourceId);
+            }
+            return true;
+          }))) return;
           result.embedded += stale.length - failed;
           if (failed > 0) {
             recordFailure(result, failed, slug, firstError);

@@ -114,6 +114,11 @@ jobs:
       # release on ambient-env tests (run 30698650484). The build job's gate
       # is the artifact itself: compile, then smoke-test the binary.
       - run: bun build --compile --no-compile-autoload-bunfig --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts
+      - name: Verify embedded native writer locks and compiled process exclusion
+        run: bun scripts/native/verify.ts && bun scripts/native/compiled-smoke.ts --binary bin/${{ matrix.artifact }}
+      - name: Verify persistent writes with the actual release executable
+        timeout-minutes: 8
+        run: bun scripts/native/cli-persistence-smoke.ts --binary bin/${{ matrix.artifact }}
       - name: Smoke-test the compiled binary
         run: |
           chmod +x bin/${{ matrix.artifact }}

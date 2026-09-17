@@ -44,6 +44,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { LEGACY_DEFAULT_RERANKER_MODEL as ZE_RERANKER } from '../src/core/ai/defaults.ts';
 import {
   configureGateway,
@@ -188,7 +189,7 @@ describe('poisonable skip is dead', () => {
     // Seed two pages embedded at the FROM provider.
     for (const slug of ['skip-1', 'skip-2']) {
       await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}\n\nbody` });
-      await engine.upsertChunks(slug, [
+      await installFixtureChunks(engine, slug, [
         { chunk_index: 0, chunk_text: `chunk of ${slug}`, chunk_source: 'compiled_truth', token_count: 4 },
       ]);
     }
@@ -286,6 +287,7 @@ describe('locks + schema honesty', () => {
     const fakeLock: DbLockHandle = {
       id: 'fake-held-lock',
       acquiredAt: '0',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
       release: async () => {},
       refresh: async () => false,
     };
@@ -817,7 +819,7 @@ describe('independent dim-pinned repair + same-width guards', () => {
       // explicitly so the same-width guard is what's under test.
       await runSchemaTransition(e3, ZE_TARGET_EMBEDDING_DIM);
       await e3.putPage('rw-1', { type: 'note', title: 'rw-1', compiled_truth: '# rw\n\nbody' });
-      await e3.upsertChunks('rw-1', [
+      await installFixtureChunks(e3, 'rw-1', [
         { chunk_index: 0, chunk_text: 'resume width guard chunk', chunk_source: 'compiled_truth', token_count: 4 },
       ]);
       const vec = '[' + new Array(ZE_TARGET_EMBEDDING_DIM).fill(0.002).join(',') + ']';
@@ -946,12 +948,12 @@ describe('smoke-check miss + heartbeat resilience', () => {
       for (let i = 0; i < 11; i++) {
         const slug = `srm-decoy-${String(i).padStart(2, '0')}`;
         await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}\n\ndecoy body` });
-        await engine.upsertChunks(slug, [
+        await installFixtureChunks(engine, slug, [
           { chunk_index: 0, chunk_text: `decoy chunk ${i}`, chunk_source: 'compiled_truth', token_count: 4 },
         ]);
       }
       await engine.putPage('srm-victim', { type: 'note', title: 'srm-victim', compiled_truth: '# victim\n\nbody' });
-      await engine.upsertChunks('srm-victim', [
+      await installFixtureChunks(engine, 'srm-victim', [
         { chunk_index: 0, chunk_text: canary, chunk_source: 'compiled_truth', token_count: 4 },
       ]);
 
@@ -997,6 +999,7 @@ describe('smoke-check miss + heartbeat resilience', () => {
       const alwaysThrows: DbLockHandle = {
         id: 'fake-throwing-lock',
         acquiredAt: '0',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
         release: async () => {},
         refresh: async () => {
           throwCalls += 1;
@@ -1022,6 +1025,7 @@ describe('smoke-check miss + heartbeat resilience', () => {
       const flaky: DbLockHandle = {
         id: 'fake-flaky-lock',
         acquiredAt: '0',
+      acquisitionToken: '00000000-0000-4000-8000-000000000001',
         release: async () => {},
         refresh: async () => {
           flakyCalls += 1;

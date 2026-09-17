@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from '../src/core/embedding-invalidation.ts';
+import { sealPageTextProjection } from '../src/core/page-state/projections.ts';
 import { stampIfPageProvenanceComplete } from '../src/core/embed-stale.ts';
 
 let engine: PGLiteEngine;
@@ -102,8 +103,25 @@ describe('embedding_signature stale semantics', () => {
     })).toBe(1);
   });
 
+  test('interrupted-drain completion stamps require a current text projection', async () => {
+    const slug = 'unsealed-completion';
+    const signature = `target:model:${colDim}`;
+    await seedEmbedded(slug, 'text', 'old:model:1');
+    await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
+    expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature })).toBe(0);
+    const readSignature = async () => (await engine.executeRaw<{ embedding_signature: string }>(
+      'SELECT embedding_signature FROM pages WHERE source_id=$1 AND slug=$2', ['default', slug]))[0].embedding_signature;
+    expect(await readSignature()).toBe('old:model:1');
+    expect(await stampIfPageProvenanceComplete(engine, slug, 'default', { signature, column: 'embedding' })).toBe(false);
+    await sealPageTextProjection(engine, slug, 'default');
+    expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature })).toBe(0);
+    expect(await readSignature()).toBe(signature);
+    expect(await stampIfPageProvenanceComplete(engine, slug, 'default', { signature, column: 'embedding' })).toBe(true);
+  });
+
   test('completion stamps require matching vector width (#5051)', async () => {
     await seedEmbedded('wrong-width-stamp', 'text', 'old:model:1');
+    await sealPageTextProjection(engine, 'wrong-width-stamp', 'default');
     await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
     expect(await stampIfPageProvenanceComplete(engine, 'wrong-width-stamp', 'default', {
       signature: `target:model:${colDim + 1}`, column: 'embedding',

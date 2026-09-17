@@ -178,7 +178,8 @@ describe('Layer 6 (A3) — parent_symbol_path round-trips through upsertChunks',
   }, 30_000);
 
   test('parent_symbol_path persists as text[] and survives round-trip', async () => {
-    const chunks = await engine.getChunks('src-brain-ts');
+    // This case inspects raw chunk metadata before projection publication.
+    const chunks = await engine.getChunks('src-brain-ts', { includeUnsealed: true });
     expect(chunks.length).toBe(2);
     const method = chunks.find(c => c.symbol_name === 'search');
     expect(method).toBeDefined();

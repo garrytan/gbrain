@@ -147,7 +147,14 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Agent-job scope fences over real Postgres.
   "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
+  "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
+  "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
+  "src/core/persistence/**": ["test/e2e/persistence-chaos.test.ts", "test/e2e/persistence-runtime-matrix.test.ts"],
+  "src/core/pool-budget.ts": ["test/e2e/persistence-runtime-matrix.test.ts"],
+  "src/core/connection-manager.ts": ["test/e2e/persistence-runtime-matrix.test.ts", "test/e2e/pgbouncer-teardown.test.ts"],
   "src/core/postgres-engine.ts": [
+    "test/e2e/persistence-chaos.test.ts",
+    "test/e2e/db-lock-acquisition-token.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
@@ -165,6 +172,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
+    "test/e2e/persistence-chaos.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",

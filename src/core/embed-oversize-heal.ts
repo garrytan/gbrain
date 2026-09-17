@@ -1,3 +1,5 @@
+import { PageRevisionConflictError } from './page-state/types.ts';
+import { readProjectionSnapshot, installPageProjection } from './page-state/projections.ts';
 /**
  * SUP-3874 — heal already-stored chunks that exceed the active embedding
  * model's per-input token limit.
@@ -167,7 +169,7 @@ export function healedChunksToStaleRows(
  * and re-load. No-op when every chunk already fits.
  */
 export async function healOversizedPageChunks(
-  engine: Pick<BrainEngine, 'getChunks' | 'upsertChunks'>,
+  engine: BrainEngine,
   slug: string,
   opts: {
     sourceId?: string;
@@ -175,28 +177,23 @@ export async function healOversizedPageChunks(
     onSplit?: (splitCount: number) => void;
   } = {},
 ): Promise<{ changed: boolean; splitCount: number; chunks: Chunk[] }> {
-  const getOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
-  const existing = await engine.getChunks(slug, getOpts);
-  const healed = healOversizedChunks(existing, opts.maxTokens ?? resolveMaxChunkTokens());
+  const sourceId = opts.sourceId ?? 'default';
+  const getOpts = { sourceId };
+  const prepared = await readProjectionSnapshot(engine, slug, sourceId, { maxChunkTokens: opts.maxTokens });
+  if (!prepared) return { changed: false, splitCount: 0, chunks: [] };
+  const existing = prepared.chunks;
+  const healed = healOversizedChunks(existing, prepared.maxChunkTokens);
   if (!healed.changed) {
     return { changed: false, splitCount: 0, chunks: existing };
   }
-  // Freshness guard: the embed single-flight lock does not exclude sync
-  // (different lock keys), so a concurrent import may rewrite this page
-  // between our read and this write — clobbering it with pre-sync splits
-  // would silently desync chunk_text from the page content until the next
-  // edit. Re-read and skip on drift; the next drain pass heals the fresh
-  // rows. (Window shrinks to one query; the upsert itself is keyed on
-  // (chunk_index, chunk_text) so an exact-tie write is content-identical.)
-  const recheck = await engine.getChunks(slug, getOpts);
-  const drifted =
-    recheck.length !== existing.length ||
-    recheck.some((c, i) => c.chunk_index !== existing[i].chunk_index || c.chunk_text !== existing[i].chunk_text);
-  if (drifted) {
-    return { changed: false, splitCount: 0, chunks: recheck };
+  // The final compare and replacement share the same page guard.
+  try {
+    await installPageProjection(engine, prepared, healed.chunks, { seal: true, preserveEmbeddings: true });
+  } catch (error) {
+    if (!(error instanceof PageRevisionConflictError)) throw error;
+    return { changed: false, splitCount: 0, chunks: await engine.getChunks(slug, getOpts) };
   }
   opts.onSplit?.(healed.splitCount);
-  await engine.upsertChunks(slug, healed.chunks, getOpts);
   const refreshed = await engine.getChunks(slug, getOpts);
   return { changed: true, splitCount: healed.splitCount, chunks: refreshed };
 }

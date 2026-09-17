@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,7 +64,7 @@ beforeAll(async () => {
     const slug = `widgets/${type}-${i}`;
     const truth = `${KEYWORD} entry number ${i}, a ${type} about widgets.`;
     await engine.putPage(slug, { type, title: `Widget ${i}`, compiled_truth: truth });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: truth, chunk_source: 'compiled_truth' },
     ]);
   }

@@ -132,7 +132,7 @@ describe('deleteLockRow', () => {
   test('deletes the row + RETURNING returns it when (id, pid) matches', async () => {
     const handle = await tryAcquireDbLock(engine, 'gbrain-sync:to-delete');
     expect(handle).not.toBeNull();
-    const result = await deleteLockRow(engine, 'gbrain-sync:to-delete', process.pid);
+    const result = await deleteLockRow(engine, 'gbrain-sync:to-delete', process.pid, handle!.acquisitionToken);
     expect(result.deleted).toBe(true);
     // Row should be gone.
     const snap = await inspectLock(engine, 'gbrain-sync:to-delete');
@@ -152,7 +152,7 @@ describe('deleteLockRow', () => {
       `DELETE FROM gbrain_cycle_locks WHERE id = $1`,
       ['gbrain-sync:race-target'],
     );
-    const result = await deleteLockRow(engine, 'gbrain-sync:race-target', 11111);
+    const result = await deleteLockRow(engine, 'gbrain-sync:race-target', 11111, '00000000-0000-4000-8000-000000000001');
     expect(result.deleted).toBe(false);
   });
 
@@ -162,7 +162,7 @@ describe('deleteLockRow', () => {
        VALUES ($1, $2, $3, NOW(), NOW() + INTERVAL '30 minutes')`,
       ['gbrain-sync:wrong-pid', 11111, 'h1'],
     );
-    const result = await deleteLockRow(engine, 'gbrain-sync:wrong-pid', 22222);
+    const result = await deleteLockRow(engine, 'gbrain-sync:wrong-pid', 22222, (await inspectLock(engine, 'gbrain-sync:wrong-pid'))!.acquisition_token);
     expect(result.deleted).toBe(false);
     // Row should still exist.
     const snap = await inspectLock(engine, 'gbrain-sync:wrong-pid');
@@ -177,10 +177,10 @@ describe('deleteLockRow', () => {
     // DELETE...RETURNING into a SELECT-check + DELETE later.
     const handle = await tryAcquireDbLock(engine, 'gbrain-sync:atomic-test');
     expect(handle).not.toBeNull();
-    const r = await deleteLockRow(engine, 'gbrain-sync:atomic-test', process.pid);
+    const r = await deleteLockRow(engine, 'gbrain-sync:atomic-test', process.pid, handle!.acquisitionToken);
     expect(r.deleted).toBe(true);
     // Calling again is a no-op (idempotent).
-    const r2 = await deleteLockRow(engine, 'gbrain-sync:atomic-test', process.pid);
+    const r2 = await deleteLockRow(engine, 'gbrain-sync:atomic-test', process.pid, handle!.acquisitionToken);
     expect(r2.deleted).toBe(false);
     await handle!.release();
   });

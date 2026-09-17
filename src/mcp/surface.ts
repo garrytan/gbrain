@@ -96,6 +96,7 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   // starter connect lanes retire the "unknown tool: capture" FAQ, which only
   // works if the starter surface actually lists it.
   'capture',
+  'get_write_request', 'list_write_requests', 'cancel_write_request',
 ]);
 
 /**
@@ -116,6 +117,7 @@ export const ALWAYS_INCLUDED_STARTER_OPS: ReadonlySet<string> = new Set([
   // points agents at it) — usage-driven re-derivation must never propose
   // evicting it as a zero-usage newcomer.
   'capture',
+  'get_write_request', 'list_write_requests', 'cancel_write_request',
 ]);
 
 /** Strict flag parser — unknown values reject loudly (parseStdioIdleTimeout pattern). */

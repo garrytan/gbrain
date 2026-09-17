@@ -23,6 +23,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { basisEmbedding } from '../../src/eval/deterministic-embed.ts';
@@ -59,7 +60,7 @@ beforeAll(async () => {
     compiled_truth: conceptText,
     timeline: conceptText,
   });
-  await engine.upsertChunks(CONCEPT, [{
+  await installFixtureChunks(engine, CONCEPT, [{
     chunk_index: 0,
     chunk_text: conceptText,
     chunk_source: 'compiled_truth',
@@ -76,7 +77,7 @@ beforeAll(async () => {
       compiled_truth: DECOY_TEXT,
       timeline: DECOY_TEXT,
     });
-    await engine.upsertChunks(slug, [{
+    await installFixtureChunks(engine, slug, [{
       chunk_index: 0,
       chunk_text: DECOY_TEXT,
       chunk_source: 'compiled_truth',

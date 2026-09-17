@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from '../persistence/filesystem-guard.ts';
 // v0.40.6.0 Schema Cathedral v3 — pack mutation primitives.
 //
 //                  ┌──────────────────────────────────────────────────────┐
@@ -318,6 +319,7 @@ function writePackManifest(
   manifest: SchemaPackManifest,
   format: PackFileFormat,
 ): void {
+  assertManagedFilesystemWrite(path);
   // Validate the manifest shape BEFORE write so an invalid manifest can never
   // hit disk (the in-memory manifest must round-trip cleanly first).
   parseSchemaPackManifest(manifest, { path });

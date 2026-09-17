@@ -105,8 +105,9 @@ function runsDestructiveSql(src: string): boolean {
 }
 
 /**
- * Guarded either by the shared helper, by setupDB()/setupLegacyEmbeddingDB()
- * (which call it), or by an
+ * Guarded by the shared helper, setupDB()/setupLegacyEmbeddingDB(),
+ * isolatedPersistencePostgres() (which checks the admin URL before creating a
+ * dedicated test database), or an
  * inline db-name floor. schema-drift.test.ts uses the last form: its pattern is
  * deliberately different from the shared one (it also accepts *_e2e), so it is
  * recognized rather than rewritten.
@@ -118,7 +119,7 @@ function runsDestructiveSql(src: string): boolean {
  */
 function isGuarded(src: string): boolean {
   for (const line of codeLines(src)) {
-    if (/\b(assertSafeE2eDatabaseUrl|setupDB|setupLegacyEmbeddingDB)\s*\(/.test(line)) return true;
+    if (/\b(assertSafeE2eDatabaseUrl|setupDB|setupLegacyEmbeddingDB|isolatedPersistencePostgres)\s*\(/.test(line)) return true;
     if (/looksLikeTestDb/.test(line)) return true;
   }
   return false;

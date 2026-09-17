@@ -94,7 +94,7 @@ services:
   # pooled :6543) behind three consecutive pooler-teardown waves
   # (#1972 → #2015 → #2084) that CI could never reproduce.
   # test/e2e/pgbouncer-teardown.test.ts uses a DEDICATED database
-  # (gbrain_pgbouncer) on postgres-1 so it never races shard 1's
+  # (gbrain_pgbouncer_test) on postgres-1 so it never races shard 1's
   # TRUNCATE-based fixtures; pgbouncer's wildcard [databases] section
   # forwards any dbname to DB_HOST.
   pgbouncer:

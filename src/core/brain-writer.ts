@@ -1,3 +1,4 @@
+import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
 /**
  * brain-writer — frontmatter validation/audit/auto-fix orchestrator.
  *
@@ -359,6 +360,7 @@ export function writeBrainPage(
   content: string,
   opts: { sourcePath: string; autoFix?: boolean; backupRoot?: string; backupRunId?: string },
 ): { fixes: AuditFix[]; backupPath?: string } {
+  assertManagedFilesystemWrite(filePath);
   const resolvedSource = resolve(opts.sourcePath);
   const resolvedTarget = resolve(filePath);
   if (resolvedTarget !== resolvedSource && !resolvedTarget.startsWith(resolvedSource + '/')) {

@@ -1,3 +1,4 @@
+import { mockEmbedProjectionEngine as mockEngine, embeddingUpdates } from './helpers/embed-projection-mock.ts';
 /**
  * Embed failure quarantine (--stale path). Reimplemented from PR #3622
  * (drdeebtech).
@@ -51,25 +52,6 @@ const { runEmbedCore, _resetEmbedQuarantineForTest } = await import('../src/comm
 const { __setEmbedTransportForTests } = await import('../src/core/ai/gateway.ts');
 __setEmbedTransportForTests(async () => ({ embeddings: [], usage: { tokens: 0 } } as any));
 
-function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
-  // Raw SQL the stale drain issues (the page-provenance stamp check) reads an
-  // empty result set unless a test models it — the Proxy's null default would
-  // throw on indexing and count the page as a failed embed.
-  overrides = { executeRaw: async () => [], ...overrides };
-  const calls: { method: string; args: any[] }[] = [];
-  const track = (method: string) => (...args: any[]) => {
-    calls.push({ method, args });
-    if (overrides[method]) return overrides[method](...args);
-    return Promise.resolve(null);
-  };
-  return new Proxy({} as any, {
-    get(_, prop: string) {
-      if (prop === '_calls') return calls;
-      if (overrides[prop]) return overrides[prop];
-      return track(prop);
-    },
-  });
-}
 
 // ONE chunk on purpose: a single-text batch never fans out (#3037 isolation
 // needs >1 text), so each attempted run costs exactly one embedBatch call —

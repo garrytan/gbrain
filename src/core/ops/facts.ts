@@ -1,3 +1,4 @@
+import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { readHolders } from './context.ts';
 /**
  * Hot-memory (facts) operation cluster — pure move from operations.ts
@@ -835,6 +836,7 @@ const forget_fact: Operation = {
   name: 'forget_fact',
   description: 'Forget a fact by recording a durable withdrawal in its source and visibility. Strikes the Markdown facts fence when writable; otherwise keeps the withdrawal in the database. Stale imports cannot reactivate the same normalized claim. This retracts memory; original prose, files and backups may retain the text. Idempotent on already-expired or unknown ids.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     id: { type: 'number', required: true, description: 'Fact id to forget.' },
     reason: { type: 'string', required: false, description: 'Optional reason; written to the fence row\'s context cell as "forgotten: <reason>". Default: "forgotten".' },
   },
@@ -842,21 +844,8 @@ const forget_fact: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'forget_fact', id: p.id };
-    const id = p.id as number;
-    const reason = typeof p.reason === 'string' ? p.reason : undefined;
-    const { forgetFactInFence } = await import('../facts/forget.ts');
-    const result = await forgetFactInFence(ctx.engine, id, {
-      reason,
-      sourceId: ctx.sourceId ?? 'default',
-      worldOnly: ctx.remote !== false,
-    });
-    if (!result.ok && result.path === 'not_found') {
-      throw new OperationError('fact_not_found', `Fact id ${id} not found.`);
-    }
-    if (!result.ok && result.path === 'already_expired') {
-      throw new OperationError('fact_already_expired', `Fact id ${id} already expired.`);
-    }
-    return { id, expired: true, path: result.path, reason: result.reason };
+    const { submitForgetMutation } = await import('../persistence/memory-mutations.ts');
+    return submitForgetMutation(ctx, 'forget_fact', p);
   },
 };
 

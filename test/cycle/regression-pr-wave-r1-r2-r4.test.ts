@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { operations, OperationError } from '../../src/core/operations.ts';
 import type { OperationContext, Operation } from '../../src/core/operations.ts';
-import type { BrainEngine } from '../../src/core/engine.ts';
+import type { BrainEngine, PageSnapshot } from '../../src/core/engine.ts';
 
 const get_page = operations.find(o => o.name === 'get_page') as Operation;
 const put_page = operations.find(o => o.name === 'put_page') as Operation;
@@ -32,25 +32,30 @@ if (!get_page) throw new Error('get_page op missing');
 if (!put_page) throw new Error('put_page op missing');
 
 function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
-  const engine = {
-    getPage: async (_slug: string) => ({
+  const snapshot: PageSnapshot = {
+    page: {
       id: 1,
-      slug: 'people/alice',
+      slug: 'people/alice-example',
       type: 'person',
-      title: 'Alice',
+      title: 'Example person',
       compiled_truth: 'stub',
       timeline: '',
-      tags: [],
+      frontmatter: {},
       created_at: new Date('2026-05-24'),
       updated_at: new Date('2026-05-24'),
       content_hash: 'sha-stub',
       source_id: 'default',
       effective_date: null,
       deleted_at: null,
-    }),
-    getTags: async () => [],
-    resolveSlugs: async () => [],
-    putPage: async () => ({ slug: 'stub', id: 1, created: true }),
+    },
+    tags: ['fixture-tag'],
+    revision: '10000000-0000-4000-8000-000000000001',
+    sourceIncarnation: '10000000-0000-4000-8000-000000000002',
+    withdrawals: [],
+  };
+  const engine = {
+    readPageSnapshot: async (_slug: string) => snapshot,
+    executeRaw: async () => [], // best-effort read telemetry
   } as unknown as BrainEngine;
   return {
     engine,
@@ -69,8 +74,9 @@ describe('R1 — get_page handler accepts calls without content param', () => {
     // If PR #1365's broken handler-block lived in get_page, this call would
     // throw OperationError('invalid_request', 'put_page requires either content
     // or file parameter'). The pin: get_page MUST NOT require content.
-    const result = await get_page.handler(ctx, { slug: 'people/alice' });
-    expect(result).toBeDefined();
+    const result = await get_page.handler(ctx, { slug: 'people/alice-example' });
+    expect(result).toMatchObject({ slug: 'people/alice-example', tags: ['fixture-tag'],
+      revision: '10000000-0000-4000-8000-000000000001', compiled_truth: 'stub' });
   });
 
   test('R1 corollary: get_page schema has no `content` param (read op)', () => {

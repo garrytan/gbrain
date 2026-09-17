@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { credentialAccessToken, type HarnessCredentials } from './credentials.ts';
@@ -49,6 +49,8 @@ export async function verifyHarnessConnection(c: HarnessCredentials, options: Ve
   const timer = setTimeout(() => controller.abort(), timeout);
   const fixture = `gbrain-verification-${randomBytes(10).toString('hex')}`;
   let cleanupSlug: string | undefined;
+  let cleanupRevision: string | undefined;
+  const writeRequestId = randomUUID(); const cleanupRequestId = randomUUID();
   let factId: string | undefined;
   let factAttempted = false;
   let mutationAttempted = false;
@@ -88,17 +90,19 @@ export async function verifyHarnessConnection(c: HarnessCredentials, options: Ve
       const wrote = await stage('write', async () => {
         mutationAttempted = true;
         const saved = await active.call(pageMode ? 'put_page' : 'remember', pageMode
-          ? { slug: cleanupSlug, title: 'Connection check', content: `# Connection check\n\n${fixture}\n` }
-          : { fact: fixture, entity: fixture, provenance: 'GBrain randomized connection verification', visibility: 'world' });
+          ? { request_id: writeRequestId, slug: cleanupSlug, title: 'Connection check', content: `# Connection check\n\n${fixture}\n` }
+          : { request_id: writeRequestId, fact: fixture, entity: fixture, provenance: 'GBrain randomized connection verification', visibility: 'world' });
+        if (saved.state !== undefined && saved.state !== 'committed') throw new Error('write_not_committed');
         if (!pageMode) factId = String(saved.id ?? '');
         mutationConfirmed = true;
       });
       // A lost response is reconciled by reading the unique fixture, never by
       // repeating a mutation. Both the write and its readback are observed.
       const readBack = await stage('write_readback', async () => {
-        const found = await active.call(pageMode ? 'get_page' : 'recall', pageMode ? { slug: cleanupSlug } : { entity: fixture, grep: fixture });
+        const found = await active.call(pageMode ? 'get_page' : 'recall', pageMode ? { slug: cleanupSlug, include_content: true } : { entity: fixture, grep: fixture });
         if (!JSON.stringify(found).includes(fixture)) throw new Error('fixture_missing');
         mutationConfirmed = true;
+        if (pageMode && typeof found.revision === 'string') cleanupRevision = found.revision;
         if (!pageMode) factId = String(found.facts?.find((f: any) => JSON.stringify(f).includes(fixture))?.fact_id ?? factId ?? '');
       });
       if (!wrote && readBack) Object.assign(stages.find(s => s.name === 'write')!, { status: 'passed', reason: 'lost_response_reconciled_by_readback' });
@@ -161,7 +165,8 @@ export async function verifyHarnessConnection(c: HarnessCredentials, options: Ve
         // The delete response can be lost after commit. Read the recoverable
         // row once, without repeating the mutation; an acknowledgement or a
         // failed lookup alone never proves that the page was withdrawn.
-        try { await peer!.call('delete_page', target); } catch { /* reconcile below */ }
+        if (!cleanupRevision) throw new Error('cleanup_revision_unavailable');
+        try { await peer!.call('delete_page', { ...target, expected_revision: cleanupRevision, request_id: cleanupRequestId }); } catch { /* reconcile below */ }
         const after = await peer!.call('get_page', { ...target, include_deleted: true });
         if (after?.slug !== cleanupSlug || typeof after.deleted_at !== 'string'
           || !Number.isFinite(Date.parse(after.deleted_at))
@@ -173,7 +178,7 @@ export async function verifyHarnessConnection(c: HarnessCredentials, options: Ve
         factId = String(found.facts?.find((f: any) => JSON.stringify(f).includes(fixture))?.fact_id ?? '');
         if (factId) mutationConfirmed = true;
       }
-      if (factId) await peer!.call('forget', { id: factId, reason: 'connection verification cleanup' });
+      if (factId) await peer!.call('forget', { id: factId, reason: 'connection verification cleanup', request_id: cleanupRequestId });
       const after = await peer!.call('recall', { entity: fixture, grep: fixture });
       if (JSON.stringify(after.facts ?? []).includes(fixture)) throw new Error('cleanup_incomplete');
     }, signal);

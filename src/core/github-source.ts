@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 /**
  * github-source — GitHub issues/PR sync for the `github` source kind.
  *
@@ -1160,6 +1161,7 @@ export async function runGitHubSync(
   opts: SyncOpts,
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
+  await assertUnmanagedCanonicalWriter(engine, 'GitHub source sync');
   // Credential source: a GitHub App (auto-minted hourly installation tokens)
   // wins when configured; otherwise cfg.tokenEnv is the single source of
   // truth (the default is GH_TOKEN; a custom --token-env that is unset fails

@@ -1,329 +1,223 @@
-/**
- * Serve-delegated sync — end-to-end pins (the whole arc, real processes).
- *
- * A REAL `gbrain serve` subprocess owns a temp PGLite brain's single-writer
- * lock while REAL `gbrain sync` subprocesses run against the same brain:
- *
- *   Pin 1 — delegation happy path: `gbrain sync --no-pull --yes` under the
- *           live serve exits 0 via the delegation banner, and the job's
- *           sync_status (queried over the real socket with the on-disk
- *           secret) reports done with the seeded pages imported.
- *   Pin 2 — default-deny refusal: `gbrain sync --repo <dir>` under the live
- *           serve exits 1 with the named-flag remediation, no stack trace.
- *   Pin 3 — chaos: SIGKILL the serve mid-delegated-sync → the client exits 1
- *           with the checkpoint-resume hint (and the 60s lock-grace note).
- *   Pin 4 — resume: `sync --force-break-lock` clears the dead holder's row,
- *           then a DIRECT `gbrain sync` (dead PGLite lock reaped by
- *           acquireLock — the ladder's rung-2 regression) completes from the
- *           checkpoint and the pages are really in the brain.
- *
- * Serial + e2e: spawns subprocesses, cold PGLite init, one brain shared
- * across ordered pins. The serve child is SIGKILLed in afterAll no matter
- * what. PGLite-only — this file must run WITHOUT DATABASE_URL (the env strip
- * below also guards against a CI-injected one).
- */
+/** Real CLI → resident owner import, SIGKILL, and same-cursor recovery. */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-
-import { ipcSecretPath, readIpcSecret, requestSyncStatus, resolveSocketPath } from '../../src/core/context/resolve-ipc.ts';
-import type { SyncStatusResponse } from '../../src/core/context/sync-ipc.ts';
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { addSource } from '../../src/core/sources-ops.ts';
+import { inspectLockHolder } from '../../src/core/pglite-lock.ts';
+import { persistenceSocketPathForConfig, requestPersistenceCapabilities,
+  requestPersistenceAdministration, requestPersistenceOperation,
+  type PersistenceIpcCapabilities, type PersistenceIpcOperation } from '../../src/core/persistence/ipc.ts';
+import type { PersistenceAdminOperation } from '../../src/core/persistence/admin-contract.ts';
+import { readPersistenceCliRegistration } from '../../src/core/persistence/local-client.ts';
+import { keylessBrainEnv } from '../helpers/provider-env.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
-
 const SAVED_ENV: Record<string, string | undefined> = {};
-const ENV_KEYS = [
-  'GBRAIN_HOME', 'GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_BRAIN_ID',
-  'GBRAIN_SOURCE', 'GBRAIN_HOOKS', 'GBRAIN_SWEEP', 'GBRAIN_SYNC_NO_DELEGATE',
-];
-
-// Short prefix — the IPC unix socket lives under database_path and socket
-// paths cap out around 104 bytes on macOS.
-let tmpParent: string;
-let home: string;
-let dbDir: string;
-let repo: string;
-let serveProc: ReturnType<typeof Bun.spawn> | null = null;
-const serveStderr: string[] = [];
+const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_BRAIN_ID',
+  'GBRAIN_SOURCE', 'GBRAIN_HOOKS', 'GBRAIN_SWEEP', 'GBRAIN_SYNC_NO_DELEGATE'];
+let tmpParent: string, dbDir: string, repo: string;
+let serveProc: ReturnType<typeof Bun.spawn> | undefined;
+let serveStderr = '';
+const serveReaders: Promise<void>[] = [];
+let capabilities: PersistenceIpcCapabilities;
+let initialCommit: string, bulkCommit: string;
+let interruptedRun: string;
+let pendingRequestId: string | undefined;
+let savedRequests: { request_id: string; slug: string; state: string }[] = [];
+const resumeArgs = ['--no-pull', '--yes', '--no-embed', '--no-hard-deadline', '--json'];
+const config = () => ({ engine: 'pglite' as const, database_path: dbDir });
+const socket = () => persistenceSocketPathForConfig(config())!;
 
 function childEnv(): Record<string, string> {
-  return {
-    ...process.env,
-    GBRAIN_HOME: tmpParent,
-    HOME: tmpParent,
-    GBRAIN_SOURCE: 'workspace',
-    GBRAIN_SWEEP: '0',
-  } as Record<string, string>;
-}
-
-async function runSyncChild(
-  args: string[],
-  opts: { onStderrLine?: (line: string, kill: () => void) => void; timeoutMs?: number } = {},
-): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn(['bun', 'run', join(REPO_ROOT, 'src', 'cli.ts'), 'sync', ...args], {
-    cwd: REPO_ROOT,
-    env: childEnv(),
-    stdin: 'ignore',
-    stdout: 'pipe',
-    stderr: 'pipe',
+  return keylessBrainEnv(process.env, tmpParent, {
+    DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_DIRECT_DATABASE_URL: undefined,
+    GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: 'workspace', GBRAIN_SWEEP: '0',
+    GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS: '300',
   });
-  const decoder = new TextDecoder();
-  let out = '';
-  let err = '';
-  const kill = () => { try { serveProc?.kill('SIGKILL'); } catch { /* dead */ } };
-  const outDone = (async () => {
-    const r = (proc.stdout as ReadableStream<Uint8Array>).getReader();
-    for (;;) { const { value, done } = await r.read(); if (done) break; out += decoder.decode(value, { stream: true }); }
-  })();
-  const errDone = (async () => {
-    const r = (proc.stderr as ReadableStream<Uint8Array>).getReader();
-    for (;;) {
-      const { value, done } = await r.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      err += chunk;
-      if (opts.onStderrLine) for (const line of chunk.split('\n')) opts.onStderrLine(line, kill);
-    }
-  })();
-  const timeout = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* dead */ } }, opts.timeoutMs ?? 120_000);
-  const code = await proc.exited;
-  clearTimeout(timeout);
-  await Promise.all([outDone, errDone]);
-  return { code, out, err };
 }
-
-function gitCommitAll(msg: string): void {
-  execSync(`git add -A && git commit -m "${msg}"`, { cwd: repo, stdio: 'pipe', shell: '/bin/bash' as never });
+async function read(stream: ReadableStream<Uint8Array>, append: (value: string) => void): Promise<void> {
+  const decoder = new TextDecoder(), reader = stream.getReader();
+  try { for (;;) { const { value, done } = await reader.read(); if (done) return; append(decoder.decode(value, { stream: true })); } }
+  finally { reader.releaseLock(); }
 }
-
+async function runSyncChild(args: string[], timeoutMs = 180_000): Promise<{ code: number; out: string; err: string }> {
+  const proc = Bun.spawn([process.execPath, join(REPO_ROOT, 'src/cli.ts'), 'sync', ...args], {
+    cwd: REPO_ROOT, env: childEnv(), stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
+  });
+  const timeout = setTimeout(() => proc.kill('SIGKILL'), timeoutMs);
+  try {
+    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { code, out, err };
+  } finally { clearTimeout(timeout); }
+}
+function assertSuccess(result: { code: number; out: string; err: string }): void {
+  if (result.code !== 0) throw new Error(`sync exited ${result.code}\nclient stderr:\n${result.err}\nstdout:\n${result.out}\nserve stderr:\n${serveStderr}`);
+}
+async function until(check: () => boolean | Promise<boolean>, label: string, timeoutMs = 120_000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    if (await check()) return;
+    if (serveProc?.exitCode !== null && serveProc?.exitCode !== undefined) throw new Error(`serve exited while waiting for ${label}: ${serveStderr}`);
+    await Bun.sleep(25);
+  }
+  throw new Error(`timed out waiting for ${label}: ${serveStderr}`);
+}
+function gitCommitAll(message: string): string {
+  execFileSync('git', ['add', '-A'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', message], { cwd: repo });
+  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+}
 function writeNotes(from: number, to: number): void {
-  for (let i = from; i < to; i++) {
-    writeFileSync(
-      join(repo, 'topics', `note-${String(i).padStart(4, '0')}.md`),
-      `---\ntype: concept\ntitle: Note ${i} Example\n---\n\nBody for note ${i}.\n`,
-    );
-  }
+  for (let i = from; i < to; i++) writeFileSync(join(repo, 'topics', `note-${String(i).padStart(4, '0')}.md`),
+    `---\ntype: concept\ntitle: Note ${i} Example\n---\n\nBody for note ${i}.\n`);
 }
-
-async function pollFor(pred: () => boolean, deadlineMs: number, label: string): Promise<void> {
-  const deadline = Date.now() + deadlineMs;
-  while (Date.now() < deadline) {
-    if (pred()) return;
-    if (serveProc && serveProc.exitCode !== null) {
-      throw new Error(`serve exited early (code ${serveProc.exitCode}) while waiting for ${label}\nstderr:\n${serveStderr.join('')}`);
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  throw new Error(`timed out waiting for ${label}\nserve stderr:\n${serveStderr.join('')}`);
+async function administer(operation: PersistenceAdminOperation, params: Record<string, unknown>) {
+  return requestPersistenceAdministration(socket(), { version: 1, kind: 'administration',
+    brain_id: capabilities.brain_id, operation, params, registration: readPersistenceCliRegistration(capabilities.brain_id) });
+}
+async function operation(name: PersistenceIpcOperation, params: Record<string, unknown>): Promise<unknown> {
+  return requestPersistenceOperation(socket(), { version: 1, kind: 'operation', brain_id: capabilities.brain_id,
+    operation: name, params, registration: readPersistenceCliRegistration(capabilities.brain_id),
+    routing: { source: 'workspace', cwd: repo } });
 }
 
 beforeAll(async () => {
-  for (const k of ENV_KEYS) SAVED_ENV[k] = process.env[k];
-  // A dev/CI DATABASE_URL must not flip the sandboxed brain to Postgres.
-  delete process.env.GBRAIN_DATABASE_URL;
-  delete process.env.DATABASE_URL;
-  delete process.env.GBRAIN_BRAIN_ID;
-  delete process.env.GBRAIN_HOOKS;
-  delete process.env.GBRAIN_SYNC_NO_DELEGATE;
-
+  for (const key of ENV_KEYS) SAVED_ENV[key] = process.env[key];
+  delete process.env.GBRAIN_DATABASE_URL; delete process.env.DATABASE_URL;
+  delete process.env.GBRAIN_HOOKS; delete process.env.GBRAIN_SYNC_NO_DELEGATE;
   tmpParent = mkdtempSync(join(tmpdir(), 'gb-sds-'));
-  home = join(tmpParent, '.gbrain');
-  mkdirSync(home, { recursive: true });
+  mkdirSync(join(tmpParent, '.gbrain'));
   dbDir = join(tmpParent, 'db');
   process.env.GBRAIN_HOME = tmpParent;
-  process.env.GBRAIN_SOURCE = 'workspace';
-
-  writeFileSync(
-    join(home, 'config.json'),
-    JSON.stringify({ engine: 'pglite', database_path: dbDir, embedding_dimensions: 1536 }, null, 2),
-  );
-
-  // Real git repo the source syncs from.
+  process.env.GBRAIN_SOURCE = 'workspace'; process.env.GBRAIN_BRAIN_ID = 'host';
+  // Keep embedding enabled but remove every provider key: delegated imports
+  // must bypass inline paid work and leave the existing owner drain pending.
+  writeFileSync(join(tmpParent, '.gbrain/config.json'), JSON.stringify({ ...config(), embedding_dimensions: 1536 }));
   repo = mkdtempSync(join(tmpdir(), 'gb-sds-repo-'));
-  execSync('git init && git config user.email t@t.co && git config user.name T', {
-    cwd: repo, stdio: 'pipe', shell: '/bin/bash' as never,
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'example@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Example'], { cwd: repo });
+  mkdirSync(join(repo, 'topics'));
+  writeNotes(0, 2); initialCommit = gitCommitAll('initial');
+  const engine = await createEngine(config());
+  try {
+    await engine.connect(config()); await engine.initSchema();
+    await addSource(engine, { id: 'workspace', localPath: repo, force: true });
+  } finally { await engine.disconnect(); }
+  // First exercise the unactivated compatibility route before opting into
+  // managed ownership for the crash/recovery pins.
+  serveProc = Bun.spawn([process.execPath, join(REPO_ROOT, 'src/cli.ts'), 'serve'], {
+    cwd: REPO_ROOT, env: childEnv(), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
   });
-  mkdirSync(join(repo, 'topics'), { recursive: true });
-  writeNotes(0, 2);
-  gitCommitAll('initial');
-
-  // Pre-init the brain in-process (schema + source) so the serve boots fast.
-  const engineConfig = { engine: 'pglite' as const, database_path: dbDir };
-  const engine = await createEngine(engineConfig);
-  await engine.connect(engineConfig);
-  await engine.initSchema();
-  await addSource(engine, { id: 'workspace', localPath: repo, force: true });
-  await engine.disconnect();
-
-  serveProc = Bun.spawn(['bun', 'run', join(REPO_ROOT, 'src', 'cli.ts'), 'serve'], {
-    cwd: REPO_ROOT,
-    env: {
-      ...childEnv(),
-      GBRAIN_SKIP_STARTUP_HOOKS: '1',
-      GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS: '300',
-    },
-    stdin: 'pipe',
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  void (async () => {
-    const reader = (serveProc!.stderr as ReadableStream<Uint8Array>).getReader();
-    const decoder = new TextDecoder();
-    try {
-      for (;;) { const { value, done } = await reader.read(); if (done) break; serveStderr.push(decoder.decode(value, { stream: true })); }
-    } catch { /* child gone */ }
-  })();
-
-  await pollFor(
-    () => existsSync(resolveSocketPath(dbDir)) && existsSync(ipcSecretPath(dbDir)),
-    120_000,
-    'IPC socket + secret',
-  );
+  serveReaders.push(read(serveProc.stdout as ReadableStream<Uint8Array>, () => {}),
+    read(serveProc.stderr as ReadableStream<Uint8Array>, value => { serveStderr += value; }));
+  await until(async () => {
+    try { capabilities = await requestPersistenceCapabilities(socket(), 250); return true; } catch { return false; }
+  }, 'authenticated persistence listener');
 }, 240_000);
 
 afterAll(async () => {
-  if (serveProc && serveProc.exitCode === null) {
-    try { serveProc.kill('SIGKILL'); await serveProc.exited; } catch { /* dead */ }
+  if (serveProc?.exitCode === null) { serveProc.kill('SIGKILL'); await serveProc.exited; }
+  await Promise.allSettled(serveReaders);
+  for (const key of ENV_KEYS) {
+    if (SAVED_ENV[key] === undefined) delete process.env[key]; else process.env[key] = SAVED_ENV[key];
   }
-  for (const k of ENV_KEYS) {
-    if (SAVED_ENV[k] === undefined) delete process.env[k];
-    else process.env[k] = SAVED_ENV[k];
-  }
-  for (const dir of [tmpParent, repo]) {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
-  }
+  for (const dir of [tmpParent, repo]) if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
 describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
-  test('Pin 1 — sync under a live serve delegates and completes', async () => {
-    const r = await runSyncChild(['--no-pull', '--yes']);
-    expect(r.err).toContain('delegating the sync through it (job ');
-    expect(r.code).toBe(0);
-
-    // The job's result is queryable over the real socket with the real secret.
-    const jobId = /\(job ([0-9a-f-]+)/.exec(r.err)?.[1];
-    expect(jobId).toBeTruthy();
-    const secret = readIpcSecret(dbDir)!;
-    const s = await requestSyncStatus(resolveSocketPath(dbDir), { secret, jobId: jobId! });
-    const status = s as SyncStatusResponse;
-    expect(status.ok).toBe(true);
-    expect(status.state).toBe('done');
-    expect(status.result!.added).toBe(2);
-    // Embeds are deferred, never claimed.
-    expect(status.result!.embedded).toBe(0);
-    expect(r.err).toContain('embeds deferred');
-    // Serve survived the whole thing.
-    expect(serveProc!.exitCode).toBeNull();
+  test('Pin 1 — keyless unactivated sync delegates and defers paid embedding', async () => {
+    const result = await runSyncChild(['--no-pull', '--yes', '--no-hard-deadline']);
+    assertSuccess(result);
+    expect(result.err).toContain('Delegating to the registered PGLite owner.');
+    expect(result.err).toContain('embeds deferred');
+    expect(await operation('get_page', { slug: 'topics/note-0000', source_id: 'workspace' }))
+      .toMatchObject({ compiled_truth: expect.stringContaining('Body for note 0.') });
+    expect(await operation('get_page', { slug: 'topics/note-0001', source_id: 'workspace' }))
+      .toMatchObject({ compiled_truth: expect.stringContaining('Body for note 1.') });
+    expect(serveStderr).not.toContain('requires ZEROENTROPY_API_KEY');
+    expect(inspectLockHolder(dbDir).pid).toBe(serveProc!.pid);
   }, 120_000);
 
-  test('Pin 2 — unsupported flag refuses by name with remediation, exit 1, no stack', async () => {
-    const r = await runSyncChild(['--repo', repo]);
-    expect(r.code).toBe(1);
-    expect(r.err).toContain('`--repo` isn\'t supported through serve-delegated sync');
-    expect(r.err).toContain('--no-delegate');
-    expect(r.err).not.toContain('LiveServeLockError');
-    expect(serveProc!.exitCode).toBeNull();
+  test('Pin 2 — runtime authority flags refuse by name without falling through', async () => {
+    const result = await runSyncChild(['--force-break-lock', '--yes', '--no-hard-deadline']);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('Unsupported owner-delegated sync option: --force-break-lock.');
+    expect(result.err).not.toContain('LockTimeout');
+    expect(inspectLockHolder(dbDir).pid).toBe(serveProc!.pid);
   }, 60_000);
 
-  test('Pin 3 — SIGKILL the serve mid-delegated-sync → resume hint, exit 1', async () => {
-    // Enough new files that the job is still importing when the kill lands.
-    writeNotes(2, 302);
-    gitCommitAll('bulk notes');
-    let killed = false;
-    const r = await runSyncChild(['--no-pull', '--yes'], {
-      timeoutMs: 180_000,
-      onStderrLine: (line, kill) => {
-        if (!killed && line.includes('delegating the sync through it')) {
-          killed = true;
-          kill();
+  test('Pin 3 — kill after a durable page receipt; acknowledgment is pending', async () => {
+    await administer('writer_claim', { source_id: 'workspace', path: repo });
+    expect(await administer('writer_activate', { confirm_quiesced: true })).toMatchObject({ enabled: true });
+    writeNotes(2, 302); bulkCommit = gitCommitAll('bulk notes');
+    let clientFinished = false;
+    const client = runSyncChild(resumeArgs).finally(() => { clientFinished = true; });
+    let observed: { request_id: string; state: string }[] = [];
+    try {
+      await until(async () => {
+        if (clientFinished) {
+          const result = await client;
+          throw new Error(`sync stopped before a committed receipt: ${result.err}\n${result.out}\n${serveStderr}`);
         }
-      },
-    });
-    expect(killed).toBe(true);
-    expect(r.code).toBe(1);
-    expect(r.err).toMatch(/died mid-sync|stopped answering|restarted mid-sync/);
-    expect(r.err).toContain('progress is checkpointed');
-    expect(r.err).toContain('--break-lock');
+        const result = await operation('list_write_requests', { source_id: 'workspace', limit: 25 }) as { requests: typeof observed };
+        observed = result.requests;
+        return observed.some(row => row.state === 'committed');
+      }, 'a committed sync page receipt');
+    } finally { serveProc!.kill('SIGKILL'); await serveProc!.exited; }
+    const result = await client;
+    expect(result.code).toBe(1);
+    expect(result.err).toContain('Delegating to the registered PGLite owner.');
+    expect(JSON.parse(result.out)).toMatchObject({ error: 'write_pending', suggestion: expect.stringContaining('same sync options') });
+    expect(inspectLockHolder(dbDir).held).toBe(false);
+
+    // Only open another engine after the actual owner has exited. No force
+    // break, guessed timeout or PID-file deletion authorizes this handoff.
+    const engine = await createEngine(config());
+    try {
+      await engine.connect(config());
+      const [cursor] = await engine.executeRaw<{ value: { runId: string; index: number; done?: boolean; pending?: { requestId: string } } }>(
+        "SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op='managed-sync'");
+      expect(cursor.value.done).not.toBe(true);
+      interruptedRun = cursor.value.runId;
+      savedRequests = await engine.executeRaw("SELECT request_id,slug,state FROM persistence_requests WHERE intent->>'runId'=$1", [interruptedRun]);
+      expect(savedRequests.length).toBeGreaterThan(0);
+      expect(savedRequests.length).toBeLessThan(301);
+      for (const receipt of observed) expect(savedRequests.some(row => row.request_id === receipt.request_id)).toBe(true);
+      // The next ID may have been flushed just before its admission. Resume
+      // must use that frozen ID too, whether or not its receipt exists yet.
+      pendingRequestId = cursor.value.pending?.requestId;
+      const [source] = await engine.executeRaw<{ last_commit: string }>("SELECT last_commit FROM sources WHERE id='workspace'");
+      expect(source.last_commit).toBe(initialCommit);
+    } finally { await engine.disconnect(); }
   }, 200_000);
 
-  test('Pin 4 — dead serve: row lock force-broken, DIRECT sync resumes from checkpoint', async () => {
-    // The dead serve's PGLite data-dir lock is reaped by acquireLock (dead
-    // PID), so the delegation ladder returns false and sync runs directly —
-    // the rung-2 regression pin. The gbrain-sync ROW lock is dead-held for
-    // the 60s takeover grace, so break it explicitly first.
-    const br = await runSyncChild(['--force-break-lock', '--yes'], { timeoutMs: 120_000 });
-    if (br.code !== 0) {
-      throw new Error(`--force-break-lock exited ${br.code}\nstderr:\n${br.err}\nstdout:\n${br.out}`);
-    }
-
-    // #4492: settle between the break-lock child and the direct run. CI run
-    // 32556210838 flaked here — the direct sync exited 1 and the bare
-    // `expect(r.code).toBe(0)` dropped the stderr that would have pinned the
-    // race (residual PGLite data-dir lock release vs the next spawn, or a
-    // not-yet-cleared gbrain-sync row). Open the brain in-process (connect
-    // reaps dead data-dir lock holders) and poll the sync row-lock free,
-    // then release BEFORE spawning the direct child.
-    const engineConfig = { engine: 'pglite' as const, database_path: dbDir };
-    {
-      const settleDeadline = Date.now() + 60_000;
-      let settleEngine = null as Awaited<ReturnType<typeof createEngine>> | null;
-      for (;;) {
-        try {
-          settleEngine = await createEngine(engineConfig);
-          await settleEngine.connect(engineConfig);
-          break;
-        } catch (e) {
-          settleEngine = null;
-          if (Date.now() > settleDeadline) {
-            throw new Error(`settle: brain not openable after force-break: ${(e as Error).message}`);
-          }
-          await new Promise((res) => setTimeout(res, 500));
-        }
-      }
-      try {
-        for (;;) {
-          const held = await settleEngine!.executeRaw<{ n: number }>(
-            `SELECT count(*)::int AS n FROM gbrain_cycle_locks WHERE id LIKE 'gbrain-sync:%'`,
-          );
-          if (held[0]!.n === 0) break;
-          if (Date.now() > settleDeadline) {
-            throw new Error(`settle: gbrain-sync lock row still held after force-break (${held[0]!.n} row(s))`);
-          }
-          await new Promise((res) => setTimeout(res, 500));
-        }
-      } finally {
-        await settleEngine!.disconnect();
-      }
-    }
-
-    // Retry-once: a first direct attempt can still lose a residual startup
-    // race with the just-released data-dir lock; a second attempt (with the
-    // first failure's stderr surfaced) separates a flaky settle from a real
-    // regression.
-    let r = await runSyncChild(['--no-pull', '--yes', '--no-embed'], { timeoutMs: 180_000 });
-    if (r.code !== 0) {
-      process.stderr.write(
-        `[pin4] first direct sync attempt exited ${r.code}; retrying once.\n` +
-        `[pin4] first-attempt stderr:\n${r.err}\n`,
-      );
-      r = await runSyncChild(['--no-pull', '--yes', '--no-embed'], { timeoutMs: 180_000 });
-    }
-    expect(r.err).not.toContain('delegating the sync');
-    if (r.code !== 0) {
-      throw new Error(`direct sync exited ${r.code}\nstderr:\n${r.err}\nstdout:\n${r.out}`);
-    }
-
-    // The pages are really in the brain (direct engine open works now).
-    const engine = await createEngine(engineConfig);
-    await engine.connect(engineConfig);
-    const rows = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pages WHERE source_id = 'workspace' AND deleted_at IS NULL`,
-    );
-    await engine.disconnect();
-    expect(rows[0].n).toBeGreaterThanOrEqual(302);
-  }, 240_000);
+  test('Pin 4 — direct sync resumes the same run and IDs without a manual lock break', async () => {
+    const result = await runSyncChild(resumeArgs, 240_000);
+    assertSuccess(result);
+    expect(result.err).not.toContain('Delegating');
+    expect(JSON.parse(result.out)).toMatchObject({ schema_version: 1, source_id: 'workspace', sync_status: 'synced', added: 300, embedded: 0 });
+    const engine = await createEngine(config());
+    try {
+      await engine.connect(config());
+      const [source] = await engine.executeRaw<{ last_commit: string }>("SELECT last_commit FROM sources WHERE id='workspace'");
+      expect(source.last_commit).toBe(bulkCommit);
+      const [pages] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pages WHERE source_id='workspace' AND deleted_at IS NULL");
+      expect(pages.n).toBe(302);
+      const requests = await engine.executeRaw<{ request_id: string; slug: string; state: string }>(
+        "SELECT request_id,slug,state FROM persistence_requests WHERE intent->>'runId'=$1", [interruptedRun]);
+      expect(requests.length).toBe(301); // 300 pages and the final source checkpoint.
+      expect(new Set(requests.map(row => row.slug)).size).toBe(301);
+      expect(requests.every(row => row.state === 'committed')).toBe(true);
+      for (const original of savedRequests) expect(requests.find(row => row.request_id === original.request_id))
+        .toMatchObject({ slug: original.slug, state: 'committed' });
+      if (pendingRequestId) expect(requests.find(row => row.request_id === pendingRequestId)?.state).toBe('committed');
+      const [cursor] = await engine.executeRaw<{ value: { runId: string; done: boolean; index: number } }>(
+        "SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op='managed-sync'");
+      expect(cursor.value).toMatchObject({ runId: interruptedRun, done: true, index: 300 });
+    } finally { await engine.disconnect(); }
+  }, 270_000);
 });

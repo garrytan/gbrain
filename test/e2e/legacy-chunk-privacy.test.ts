@@ -161,9 +161,12 @@ for (const kind of ['pglite', 'postgres'] as const) {
       await engine.executeRaw('UPDATE content_chunks SET embedding = $1::vector WHERE page_id = ANY($2::int[])', [`[${Array.from(cleanVector)}]`, [cleanA, cleanB]]);
       await engine.executeRaw('UPDATE content_chunks SET embedding = $1::vector WHERE page_id = $2', [`[${Array.from(vector)}]`, unsafe]);
       await engine.executeRaw('UPDATE content_chunks SET embedding = $1::vector WHERE page_id = $2', [`[${Array.from(markerFreeVector)}]`, markerFree]);
-      expect(JSON.stringify(await call(context(false), 'get_chunks', { slug }))).toContain(PRIVATE);
-      expect(JSON.stringify(await call(context(false), 'get_chunks', { slug: 'notes/legacy-marker-free' }))).toContain(`${PRIVATE}_NO_MARKERS`);
-      expect(JSON.stringify(await call(context(false), 'get_chunks', { slug: 'notes/legacy-public' }))).toContain('OLD_PUBLIC_CHUNK');
+      // All public readers require a complete projection, including trusted local
+      // callers. Raw inspection still proves the unsafe fixture bytes exist.
+      for (const [legacySlug, canary] of [[slug, PRIVATE], ['notes/legacy-marker-free', `${PRIVATE}_NO_MARKERS`], ['notes/legacy-public', 'OLD_PUBLIC_CHUNK']]) {
+        expect(await call(context(false), 'get_chunks', { slug: legacySlug })).toEqual([]);
+        expect(JSON.stringify(await engine.getChunks(legacySlug, { sourceId: A, includeUnsealed: true }))).toContain(canary);
+      }
 
       for (const exposePrivatePages of [false, true]) {
         if (exposePrivatePages) await engine.setConfig('search.remote_private_pages', 'visible');
@@ -208,7 +211,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       await engine.executeRaw('UPDATE content_chunks SET chunk_text = $1 WHERE page_id = $2', [`${QUERY} `.repeat(100) + PRIVATE, unsafe]);
       const after = await engine.searchVector(vector, { ...policy, limit: 1 });
       expect(after.map(row => [row.page_id, row.score])).toEqual(before.map(row => [row.page_id, row.score]));
-      expect((await engine.searchVector(vector, { sourceId: A, limit: 1 }))[0].page_id).toBe(unsafe);
+      expect((await engine.searchVector(vector, { sourceId: A, limit: 1 }))[0].page_id).toBe(cleanA);
     }, 60_000);
 
     test('a remote read emptied by the safe-chunk fence reports safe_index_pending, never a clean miss (#5004)', async () => {
@@ -224,9 +227,10 @@ for (const kind of ['pglite', 'postgres'] as const) {
           const block = buildEmptyRetrievalBlock(meta.retrieval) ?? '';
           expect(block).toContain('safe_index_pending');
           expect(block).not.toContain('clean miss');
-          // Trusted local reads still see the legacy page and carry no stamp.
+          // Trusted local reads also withhold unsealed projections; the rebuild
+          // diagnostic is emitted only for remote callers.
           meta = {};
-          expect((await call(context(false), name, { query: QUERY, expand: false, limit: 5 }) as SearchResult[]).length).toBeGreaterThan(0);
+          expect(await call(context(false), name, { query: QUERY, expand: false, limit: 5 })).toEqual([]);
           expect(degradedStages()).not.toContain('safe_index_pending');
           // A scope holding only sealed pages is a genuine miss: the probe is source-scoped.
           meta = {};
@@ -245,7 +249,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
           frontmatter: { visibility: 'world' }, chunker_version: MARKDOWN_CHUNKER_VERSION,
         }, { sourceId: A });
         expect((await engine.getPage(slug, { sourceId: A }))?.compiled_truth).toBe(body);
-        expect(JSON.stringify(await engine.getChunks(slug, { sourceId: A }))).toContain(PRIVATE);
+        expect(JSON.stringify(await engine.getChunks(slug, { sourceId: A, includeUnsealed: true }))).toContain(PRIVATE);
         for (const remote of [true, undefined]) {
           expect(await call(context(remote), 'get_chunks', { slug })).toEqual([]);
           expect(await call(context(remote), 'search', { query: QUERY, limit: 1 })).toEqual([]);
@@ -266,7 +270,8 @@ for (const kind of ['pglite', 'postgres'] as const) {
     test('failed import rolls back partial chunk replacement and cannot mark legacy material safe', async () => {
       const slug = 'notes/partial-chunk-failure';
       const id = await legacy(slug, A, `Original public context.\n${takes(PRIVATE)}`, `${QUERY} ${PRIVATE}`);
-      const originalChunks = await engine.getChunks(slug, { sourceId: A });
+      const originalChunks = await engine.getChunks(slug, { sourceId: A, includeUnsealed: true });
+      expect(JSON.stringify(originalChunks)).toContain(PRIVATE);
       const [originalVersion] = await engine.executeRaw<{ chunker_version: number }>('SELECT chunker_version FROM pages WHERE id = $1', [id]);
       let wrotePartialChunks = false;
       // Inject one failure at the storage boundary after a real chunk write.
@@ -292,7 +297,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         'Public replacement timeline.', { type: TYPE, title: 'Repaired synthetic document', tags: [] });
       await expect(importFromContent(failingEngine, slug, content, { sourceId: A, noEmbed: true, forceRechunk: true })).rejects.toThrow('synthetic chunk storage failure');
       expect(wrotePartialChunks).toBe(true);
-      expect(await engine.getChunks(slug, { sourceId: A })).toEqual(originalChunks);
+      expect(await engine.getChunks(slug, { sourceId: A, includeUnsealed: true })).toEqual(originalChunks);
       expect((await engine.executeRaw('SELECT chunker_version FROM pages WHERE id = $1', [id]))[0]).toEqual(originalVersion);
       for (const remote of [true, undefined]) {
         expect(await call(context(remote), 'get_chunks', { slug })).toEqual([]);
@@ -331,7 +336,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         vector[0] = 1;
         await engine.executeRaw(`UPDATE content_chunks SET "${column.name}" = $1::${column.type} WHERE page_id = $2`, [`[${vector}]`, id]);
       }
-      expect(JSON.stringify(await engine.getChunks(slug, { sourceId: A }))).toContain(PRIVATE);
+      expect(JSON.stringify(await engine.getChunks(slug, { sourceId: A, includeUnsealed: true }))).toContain(PRIVATE);
       expect(await call(context(true), 'get_chunks', { slug })).toEqual([]);
 
       expect(await runReindex(engine, ['--markdown', '--no-embed', '--type', TYPE])).toMatchObject({ reindexed: 1, failed: 0, pendingAfter: 0 });

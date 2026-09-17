@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 /**
  * Synthesize phase (v0.23; #4152 two-stage cascade) — conversation-to-brain
  * pipeline. Cheap-model triage gates frontier-model synthesis:
@@ -360,6 +361,7 @@ export async function runPhaseSynthesize(
   engine: BrainEngine,
   opts: SynthesizePhaseOpts,
 ): Promise<PhaseResult> {
+  if (!opts.dryRun) await assertUnmanagedCanonicalWriter(engine, 'dream synthesize');
   // F6 spend attribution: triage-judge + orchestrator gateway calls inside
   // this phase land in chat_usage_log as phase:synthesize. Child subagent
   // calls keep their own job:* tag — the innermost AsyncLocalStorage phase

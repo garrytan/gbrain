@@ -21,6 +21,7 @@ import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { contentHash } from '../utils.ts';
 import { recordFactWithdrawal } from './withdrawal.ts';
+import { withdrawnFact } from './withdrawal-overlay.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -67,13 +68,9 @@ function strikeFenceRow(body: string, rowNum: number, reason: string, today: str
   const parsed = parseFactsFence(body);
   const target = parsed.facts.find(f => f.rowNum === rowNum);
   if (!target) return null;
-  const existingContext = target.context?.trim() ?? '';
-  const newContext = existingContext
-    ? `${existingContext} | forgotten: ${reason}`
-    : `forgotten: ${reason}`;
   const updated: ParsedFact[] = parsed.facts.map(f =>
     f.rowNum === rowNum
-      ? { ...f, active: false, validUntil: today, context: newContext, forgotten: true }
+      ? withdrawnFact(f, today, reason)
       : f,
   );
   const begin = body.indexOf(FENCE_BEGIN);
@@ -138,6 +135,9 @@ export async function forgetFactInFence(
     return { ok: false, path: 'not_found', reason };
   }
   const row = rows[0];
+
+  const { assertCoordinatedWrite } = await import('../persistence/context.ts');
+  await assertCoordinatedWrite(engine, row.source_id);
 
   // A stale source file or rebuilt index must not silently restore an exact
   // withdrawn claim. Intent commits independently of filesystem availability.
