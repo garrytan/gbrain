@@ -340,7 +340,10 @@ describe('runThink — calibration-mode trajectory placement', () => {
 describe('runThink — resolution_source != fallback_slugify gate', () => {
   test('candidate that only matches via fallback_slugify is NOT trajectory-queried', async () => {
     // The test brain has people/marco-example seeded — questions about
-    // "marco" resolve via fuzzy_match → people/marco-example.
+    // "marco" resolve via prefix_expansion → people/marco-example (a bare
+    // single-token name; see entity-resolve.test.ts for the fuzzy_match
+    // vs. prefix_expansion split). The gate only excludes fallback_slugify,
+    // so behavior here is unchanged either way.
     // A question about an unseeded name ("zelda") would resolve via
     // fallback_slugify → "zelda". Pin: no trajectory block fires for
     // that candidate (even though there might happen to be facts under
