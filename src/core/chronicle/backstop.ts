@@ -23,7 +23,11 @@ export async function runChronicleBackstop(
 ): Promise<ChronicleBackstopResult> {
   const dreamGenerated = page.frontmatter?.dream_generated === true;
   const elig = isChronicleEligible({
-    type: page.type, slug: page.slug, body: page.compiled_truth, dreamGenerated,
+    type: page.type,
+    slug: page.slug,
+    body: page.compiled_truth,
+    dreamGenerated,
+    frontmatter: page.frontmatter,
   });
   if (!elig.ok) return { enqueued: false, skipped: elig.reason };
   if (!(await isAutoChronicleEnabled(ctx.engine))) return { enqueued: false, skipped: 'auto_chronicle_off' };

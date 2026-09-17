@@ -16,6 +16,7 @@ import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
 import { isPrivatePage } from './search/private-visibility.ts';
+import { classifyCalendarEvent } from './calendar-horizon.ts';
 
 export interface ExtractTimelineFromMeetingsOpts {
   dryRun?: boolean;
@@ -167,6 +168,15 @@ export async function extractTimelineFromMeetings(
     // unique index allows one row per event, not one per attendee), so the
     // remote private-event filter could never hide it. Fail closed: skip.
     if (isPrivatePage(frontmatter)) { privateSkipped++; continue; }
+
+    const cal = classifyCalendarEvent({
+      slug: meeting.slug,
+      type: 'meeting',
+      frontmatter,
+    });
+    if (cal.isCalendar && (cal.beyondFutureHorizon || !cal.valid)) {
+      continue;
+    }
     // put_page-written pages never get effective_date computed (column stays
     // NULL); derive it exactly as `gbrain backfill effective_date` would —
     // same filename recipe (import_filename, else the slug tail) — so a later

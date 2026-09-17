@@ -409,11 +409,11 @@ export function applyRecencyBoost(
   const prefixes = Object.keys(decayMap).sort((a, b) => b.length - a.length);
 
   for (const r of results) {
-    if (!Number.isFinite(r.score)) continue;
-    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
-    const key = `${r.source_id ?? 'default'}::${r.slug}`;
-    const d = dates.get(key);
+    if (!Number.isFinite(r.score) || (floorThreshold !== undefined && r.score < floorThreshold)) continue;
+    const d = dates.get(`${r.source_id ?? 'default'}::${r.slug}`);
     if (!d) continue;
+    // Future dates receive neutral factor 1.0 (no negative days_old or distortion).
+    if (d.getTime() > nowMs) { r.recency_boost = 1.0; continue; }
     const daysOld = Math.max(0, (nowMs - d.getTime()) / 86_400_000);
 
     // Find first matching prefix.

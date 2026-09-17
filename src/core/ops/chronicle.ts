@@ -288,7 +288,13 @@ const chronicle_backfill: Operation = {
       for (const page of pages) {
         scanned++;
         const dreamGenerated = (page.frontmatter as Record<string, unknown> | undefined)?.dream_generated === true;
-        const elig = isChronicleEligible({ type: page.type, slug: page.slug, body: page.compiled_truth, dreamGenerated });
+        const elig = isChronicleEligible({
+          type: page.type,
+          slug: page.slug,
+          body: page.compiled_truth,
+          dreamGenerated,
+          frontmatter: page.frontmatter as Record<string, unknown> | undefined,
+        });
         if (!elig.ok) continue;
         eligible++;
         if (dryRun || !queue) continue;
