@@ -118,6 +118,24 @@ export function getEmbeddingModelName(): string {
   return gatewayGetModel().split(':').slice(1).join(':') || 'text-embedding-3-large';
 }
 
+/**
+ * True when the configured embedding model is served by a local Ollama
+ * (`embedding_model` starts with `ollama:`).
+ */
+export function isOllamaEmbeddingProvider(): boolean {
+  return gatewayGetModel().startsWith('ollama:');
+}
+
+/**
+ * Ollama serves embeddings from a single llama-server context slot: large
+ * payloads (up to ~48 chunks / ~15k tokens) in flight exhaust the slot and
+ * parallel big requests wedge the server. Clamp embedding worker counts for
+ * `ollama:` providers to 4 (empirically safe; 8+ wedges llama-server).
+ */
+export function clampEmbedConcurrency(candidate: number): number {
+  return isOllamaEmbeddingProvider() && candidate > 4 ? 4 : candidate;
+}
+
 /** Currently-configured embedding dimensions. */
 export function getEmbeddingDimensions(): number {
   return gatewayGetDims();

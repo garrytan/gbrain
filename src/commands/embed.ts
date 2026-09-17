@@ -2,7 +2,7 @@ import { sanitizeRemoteBody } from '../core/remote-body.ts';
 import { readProjectionSnapshot, installPageProjection, installPageEmbeddings } from '../core/page-state/projections.ts';
 import { PageRevisionConflictError } from '../core/page-state/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import { currentEmbeddingSignature } from '../core/embedding.ts';
+import { currentEmbeddingSignature, clampEmbedConcurrency } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder, resolveProvenanceStamp, stampIfPageProvenanceComplete } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
@@ -1219,9 +1219,11 @@ async function embedAll(
   // starvation); unpaced keeps the env/default 20. Codex P2: only ever LOWER —
   // never raise above an operator's existing env cap.
   const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
-  const CONCURRENCY = staleOpts?.paceMaxConcurrency
-    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
-    : BASE_CONCURRENCY;
+  const CONCURRENCY = clampEmbedConcurrency(
+    staleOpts?.paceMaxConcurrency
+      ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
+      : BASE_CONCURRENCY,
+  );
 
   async function embedOnePage(page: typeof pages[number]) {
     // #1737: bail before doing any work for this page if the run was aborted.
@@ -1721,9 +1723,11 @@ async function embedAllStale(
   // lever on this single pool, no separate permit). Codex P2: pacing only ever
   // LOWERS concurrency — never raise above an operator's existing env cap.
   const BASE_CONCURRENCY = parseInt(process.env.GBRAIN_EMBED_CONCURRENCY || '20', 10);
-  const CONCURRENCY = staleOpts?.paceMaxConcurrency
-    ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
-    : BASE_CONCURRENCY;
+  const CONCURRENCY = clampEmbedConcurrency(
+    staleOpts?.paceMaxConcurrency
+      ? Math.min(BASE_CONCURRENCY, staleOpts.paceMaxConcurrency)
+      : BASE_CONCURRENCY,
+  );
   const pacer = staleOpts?.pacer ?? createNoopPacer();
 
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.
