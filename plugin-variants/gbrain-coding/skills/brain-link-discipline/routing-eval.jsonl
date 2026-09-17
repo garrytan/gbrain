@@ -1,0 +1,11 @@
+// Routing eval fixtures for skills/brain-link-discipline. Each positive
+// intent includes at least one trigger string as substring.
+{"intent": "you committed the brain page — give me the link in the same message next time", "expected_skill": "brain-link-discipline"}
+{"intent": "where is the page you just pushed? I shouldn't have to ask", "expected_skill": "brain-link-discipline"}
+{"intent": "why does this link 404 right after you said you pushed the page", "expected_skill": "brain-link-discipline"}
+{"intent": "rewrite subagent paths into clickable links before relaying the result", "expected_skill": "brain-link-discipline"}
+{"intent": "apply brain link discipline when you report the pages you created", "expected_skill": "brain-link-discipline"}
+// Negative case: creating a graph edge between pages is the `gbrain link` op, not message-link formatting.
+{"intent": "add a typed link between the alice-example page and the acme-example page", "expected_skill": null, "ambiguous_with": []}
+// Ambiguous vs publish: sharing outside the repo means generating the shareable artifact, not message-link discipline.
+{"intent": "share this page as a link someone outside the repo can open", "expected_skill": "publish", "ambiguous_with": ["brain-link-discipline"]}

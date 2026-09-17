@@ -1,0 +1,12 @@
+// Staged routing-eval additions for skills/briefing (v1.3.0 backport of the
+// donor pre-briefing context pulls: salience scan, anomaly detection,
+// personal recall, hot memory pulse). New trigger phrases exercised:
+// "brain pulse", "pre-briefing pull".
+{"intent":"Give me the brain pulse before my first meeting — what changed overnight","expected_skill":"briefing"}
+{"intent":"Run the pre-briefing pull: salience, anomalies, and recall before you compose today's briefing","expected_skill":"briefing"}
+{"intent":"Morning briefing please, and lead with anything high-salience or anomalous in the brain","expected_skill":"briefing"}
+// Ambiguous: raw salience ranking is a bare CLI ask, but folded into a daily
+// digest it belongs to briefing.
+{"intent":"What's happening today across my meetings and hot topics","expected_skill":"briefing","ambiguous_with":["daily-task-prep"]}
+// Negative: a standalone anomaly investigation of one page is not a briefing.
+{"intent":"Why did the page for acme-example suddenly spike in edits last Tuesday — dig into the cause","expected_skill":null}
