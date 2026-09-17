@@ -1,0 +1,16 @@
+{
+  "frozen_before_final_capture": true,
+  "native_layout": "query-state/candidate-per-Score-question",
+  "sources": {
+    "src/core/ai/rerank-typesafe.ts": "e14da5195c7265bbf31a95b543cc55773ebdb16baa9ec3395e2b213f641b22e2",
+    "src/core/ai/rerank-response.ts": "5a761415c19ce8287aff89f82cce3f5551099101f0069a0389366781d4533e3b",
+    "src/core/ai/gateway.ts": "eb22dc6b7c3598b1f6b7fae68e819cfc9723c7ca60a895a99bba4954745f03bd",
+    "src/core/ai/recipes/typesafe.ts": "54b550851da39bbc3990a7d0cf72b0663988a3e92233c11031a9d4f6b121dcb4",
+    "scripts/typesafe-rerank-ab.ts": "be54907c014cc75fef5e14f0e3d2f81f610f5334610d3056e96e24139fac9482",
+    "scripts/lib/rerank-batch-plan.ts": "16608dd60ab7cfeb967d0f40597795928d507b154181f066520b4f1cfe6e21af",
+    "scripts/lib/rerank-quota.ts": "a637c5d9e2e947593e43ef598309b05f2db719d24b900120ec55b075a84a527e",
+    "scripts/lib/rerank-concurrent.ts": "65bfb6f40535aa5e8d661ebb7f5fe2b1145ccd88de06da0ca180bb8c7d2e57a9",
+    "scripts/lib/rerank-request-telemetry.ts": "a56f6c85b985290674271161c521d8c6a403c9f94c7d7a6aa20570fd7aa6181b",
+    ".context/typesafe-provider-budget-pools.jsonl": "58191803401a1e251d68065435061e1c5cbf7ff6a2c824c17378acaa912a6112"
+  }
+}

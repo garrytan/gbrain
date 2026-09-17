@@ -31,6 +31,7 @@ import { moonshot } from './moonshot.ts';
 import { mistral } from './mistral.ts';
 import { nvidia } from './nvidia.ts';
 import { perplexity } from './perplexity.ts';
+import { typesafe } from './typesafe.ts';
 
 const ALL: Recipe[] = [
   openai,
@@ -58,6 +59,7 @@ const ALL: Recipe[] = [
   mistral,
   nvidia,
   perplexity,
+  typesafe,
 ];
 
 /** Map from `provider:id` key to recipe. */

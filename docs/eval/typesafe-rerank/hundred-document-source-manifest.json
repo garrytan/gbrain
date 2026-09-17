@@ -1,0 +1,224 @@
+{
+  "base_commit": "d13aa742fd68b71bfd6c98be3dda5813791f1d6c",
+  "branch": "feat/typesafe-reranker",
+  "uncommitted": true,
+  "shortlist_sha256": "7716c3d4d7219dfbd2b0719993ff49ed95f255f4ea4752e69bc52605158d37e2",
+  "sources": {
+    "src/core/ai/gateway.ts": "8b5231fc80996ec32027c54d8c96fee86fb564cde8bf5f4f627ae807e2eceb21",
+    "src/core/ai/rerank-typesafe-gateway.ts": "afe0143865b4c2d41164ddf4bd1f9144cfc49f71333dee2f186419251eac1ea5",
+    "src/core/ai/rerank-typesafe.ts": "e14da5195c7265bbf31a95b543cc55773ebdb16baa9ec3395e2b213f641b22e2",
+    "src/core/ai/recipes/typesafe.ts": "54b550851da39bbc3990a7d0cf72b0663988a3e92233c11031a9d4f6b121dcb4",
+    "scripts/typesafe-rerank-ab.ts": "be54907c014cc75fef5e14f0e3d2f81f610f5334610d3056e96e24139fac9482",
+    "scripts/lib/rerank-batch-plan.ts": "16608dd60ab7cfeb967d0f40597795928d507b154181f066520b4f1cfe6e21af",
+    "scripts/lib/rerank-request-telemetry.ts": "a56f6c85b985290674271161c521d8c6a403c9f94c7d7a6aa20570fd7aa6181b",
+    "scripts/lib/rerank-quota.ts": "a637c5d9e2e947593e43ef598309b05f2db719d24b900120ec55b075a84a527e",
+    "scripts/lib/rerank-concurrent.ts": "65bfb6f40535aa5e8d661ebb7f5fe2b1145ccd88de06da0ca180bb8c7d2e57a9",
+    ".context/typesafe-100-doc-workloads.py": "aaa2e7f3e5234ddcf70fa4b17078b2a216ff6bc91055195026f1a197282cd955",
+    ".context/typesafe-100-doc-pools.jsonl": "7bd0e3e7d02ca7280308ef554da2fef641a35c3d020349a12573a67a9261947e"
+  },
+  "protocol": {
+    "baseline_concurrency": 3,
+    "baseline_token_margin": 1.8,
+    "baseline_isolate_profiles": true,
+    "baseline_max_input_tokens": 9040,
+    "baseline_quota": {
+      "rpm": 3,
+      "tpm": 10000,
+      "window_ms": 61000,
+      "basis": "Conservative estimated input reserved before each call, settled to provider-reported usage; adaptively packs remaining window budget. Account admission estimation may differ."
+    },
+    "repeats": 1,
+    "timeout_ms": 5000,
+    "max_usd": 0.03,
+    "token_planning": {
+      "basis": "cl100k_base with a 2x margin and individual-digit floor; not the provider tokenizer; Voyage margin is independently configurable and recorded.",
+      "typesafe": {
+        "state_plus_longest_question": 32000,
+        "state_plus_all_questions": 64000,
+        "headroom": 2048
+      },
+      "voyage": {
+        "query": 8000,
+        "query_document_pair": 32000,
+        "max_documents": 1000,
+        "cl100k_margin": 1.8,
+        "aggregate_evaluation_ceiling": 9040
+      },
+      "plans": [
+        {
+          "id": "profile-100x1000",
+          "providers": {
+            "voyage:rerank-3": [
+              {
+                "offset": 0,
+                "count": 28,
+                "inputTokens": 8932
+              },
+              {
+                "offset": 28,
+                "count": 28,
+                "inputTokens": 8932
+              },
+              {
+                "offset": 56,
+                "count": 28,
+                "inputTokens": 8932
+              },
+              {
+                "offset": 84,
+                "count": 16,
+                "inputTokens": 5102
+              }
+            ],
+            "typesafe:jev-1.13.0": [
+              {
+                "offset": 0,
+                "count": 100,
+                "inputTokens": 50674
+              }
+            ]
+          }
+        },
+        {
+          "id": "profile-100x6000",
+          "providers": {
+            "voyage:rerank-3": [
+              {
+                "offset": 0,
+                "count": 4,
+                "inputTokens": 7236
+              },
+              {
+                "offset": 4,
+                "count": 4,
+                "inputTokens": 7236
+              },
+              {
+                "offset": 8,
+                "count": 4,
+                "inputTokens": 7234
+              },
+              {
+                "offset": 12,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 17,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 22,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 27,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 32,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 37,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 42,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 47,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 52,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 57,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 62,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 67,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 72,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 77,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 82,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 87,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 92,
+                "count": 5,
+                "inputTokens": 9040
+              },
+              {
+                "offset": 97,
+                "count": 3,
+                "inputTokens": 5420
+              }
+            ],
+            "typesafe:jev-1.13.0": [
+              {
+                "offset": 0,
+                "count": 28,
+                "inputTokens": 62016
+              },
+              {
+                "offset": 28,
+                "count": 28,
+                "inputTokens": 61996
+              },
+              {
+                "offset": 56,
+                "count": 28,
+                "inputTokens": 61996
+              },
+              {
+                "offset": 84,
+                "count": 16,
+                "inputTokens": 36312
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "prices_usd_per_million_input": {
+    "voyage:rerank-3": 0.05,
+    "typesafe:jev-1.13.0": 0.042
+  },
+  "purpose": "One-repeat extension of the completed synthetic Atlas pilot to 100 candidates at each of two lengths. Same provider-specific packing and free-account controls. Not held-out quality or maximum throughput evidence."
+}
