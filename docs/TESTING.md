@@ -549,8 +549,13 @@ once replaced a live autopilot wrapper with a fixture one, and no test went
 red) — and set `HOME` too when the code under test resolves the plist, unit or
 start-script path. `GBRAIN_TEST_ALLOW_REAL_HOME_WRITES=1` disarms it for a
 deliberate real-install run (one-shot on the command line; it prints a
-DISARMED notice). Mechanism, attribution wording, per-file remediation and the
-deliberate exclusions (ctime, `config.json`) live in the file's header;
+DISARMED notice). `GBRAIN_DEBUG_PRELOAD=1` prints the guarded paths at preload
+time. Absent files are fingerprinted too, so a test that creates one of them
+fails in CI (where no install exists) as well as on a dev box; where
+`os.homedir()` is unavailable (a uid with no passwd entry) the guard prints
+INACTIVE and stands down instead of failing the run. Mechanism, attribution
+wording, per-file remediation and the deliberate exclusions (ctime,
+`config.json`) live in the file's header;
 `test/real-home-guard-preload.test.ts` self-tests it against a scratch `HOME`
 and pins the guarded names against the installer source.
 

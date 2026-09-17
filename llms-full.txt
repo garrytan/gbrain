@@ -959,8 +959,8 @@ unset) and tears down. Use `bun run ci:local:diff` for the
 diff-aware subset during fast iteration on a focused branch. Requires Docker
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
-Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
-up the test Postgres container, run `bun run test:e2e`, tear it down).
+Manual path: `bun test` plus the E2E lifecycle described in `./docs/TESTING.md`
+(spin up the test Postgres container, run `bun run test:e2e`, tear it down).
 
 Ship via the `/ship` skill, not by hand. The full release + contributor process
 (CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
