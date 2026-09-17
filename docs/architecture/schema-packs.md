@@ -192,9 +192,58 @@ link_types: []
 takes_kinds: [fact, take, bet, hunch]
 borrow_from: []
 frontmatter_links: []
+identifier_links: []
 enrichable_types: []
 filing_rules: []
 ```
+
+## Identifier links
+
+`frontmatter_links` turns a structured field into an edge; `link_types[].inference.regex`
+turns a verb phrase in prose into an edge. Neither catches a corpus that cites
+by **bare identifier** — `DECISION-073`, `ADR-0047`, `SPA-2442`, a JIRA-style
+key — with no slug-shaped text and no frontmatter field anywhere near it.
+`identifier_links` closes that gap: a rule matches an identifier pattern in
+the page body and resolves it against the brain's live slug set.
+
+```yaml
+identifier_links:
+  - name: decision-citation
+    # One capture group. Matched case-insensitively, so `DECISION-073`,
+    # `decision-073`, and `Decision-073` in prose all match the same rule.
+    pattern: 'DECISION-(\d+)'
+    # $1 is the pattern's first capture, lowercased before matching. A
+    # trailing `*` makes this a PREFIX match — the real slug also carries a
+    # title suffix (`decision-073-some-title`) this pattern can't predict.
+    # Resolves only when exactly one live slug has this prefix; zero matches
+    # or more than one both skip (never guessed).
+    target: "platform/decisions/decision-$1-*"
+    link_type: cites
+
+  - name: spa-ticket
+    pattern: 'SPA-(\d+)'
+    # No trailing `*` here — this pack's ticket slugs are exact, so an
+    # exact-match template is preferable (unambiguous by construction).
+    target: "tickets/spa-$1"
+    link_type: mentions   # default when link_type is omitted
+```
+
+Rule fields:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | Rule label, surfaced in diagnostics. |
+| `pattern` | yes | Regex source (no delimiters/flags), ≥1 capture group. |
+| `target` | yes | Slug template (`$1`, `$2`, …). Trailing `*` = prefix match. |
+| `link_type` | no | Edge type stamped on the candidate. Defaults to `mentions`. |
+| `source_scope` | no | Reserved for a future per-source scoping filter; not yet consumed. |
+
+Resolution runs under the same per-page ReDoS budget as `link_types[].inference.regex`
+(`src/core/schema-pack/redos-guard.ts`) — a pathological pattern degrades to
+"no matches" for the rest of the page rather than blocking extraction.
+Matching requires the caller to supply the live slug set (`extract links`,
+`extract --stale`, both DB-source); `put_page`'s single-page auto-link and the
+recency sweep don't have a cheap full-slug picture and skip this step.
 
 ## Merge contract (`extends` + `borrow_from`)
 
@@ -203,10 +252,11 @@ This section is the single home for the merge rules (other docs link here).
 `borrow_from` targets) into the `resolved.manifest` every consumer reads.
 The rules:
 
-- **Six fields inherit, child-wins:** `page_types`, `link_types`,
-  `frontmatter_links`, `enrichable_types`, `filing_rules`, and `takes_kinds`.
-  A child value with the same key (type name, link name, etc.) overrides the
-  parent's; keys the child doesn't declare come through from the parent.
+- **Seven fields inherit, child-wins:** `page_types`, `link_types`,
+  `frontmatter_links`, `identifier_links`, `enrichable_types`, `filing_rules`,
+  and `takes_kinds`. A child value with the same key (type name, link name,
+  identifier-rule name, etc.) overrides the parent's; keys the child doesn't
+  declare come through from the parent.
 - **`page_types` ordering:** overrides of a base type keep the base's declared
   position (base's `inferType` prefix priority is authoritative); a genuinely
   new type — from the child, a `borrow_from`, or a middle pack in the chain —

@@ -1865,6 +1865,15 @@ async function extractLinksFromDB(
     list.push(ref.source_id);
     slugToSources.set(ref.slug, list);
   }
+  // Precomputed ONCE (not per-page) — extractPageLinks's bare-slug
+  // prose-noise gate + identifier_links resolution both consult this;
+  // see the opts doc comments on extractPageLinks for why deriving it
+  // per-page from allSlugs would be O(pages * slugs).
+  const knownTopLevelDirs = new Set<string>();
+  for (const s of allSlugs) {
+    const slashIdx = s.indexOf('/');
+    if (slashIdx > 0) knownTopLevelDirs.add(s.slice(0, slashIdx));
+  }
   // #4304: --since prunes the walk at the ref level (updated_at comes back
   // from listAllPageRefs) instead of a getPage round-trip per corpus page.
   // The resolver maps above are built from the UNFILTERED refs — link
@@ -1925,7 +1934,7 @@ async function extractLinksFromDB(
     // basename lookup; off by default for back-compat.
     const extracted = await extractPageLinks(
       slug, fullContent, page.frontmatter, page.type, resolver,
-      { skipFrontmatter: !includeFrontmatter, globalBasename, pack },
+      { skipFrontmatter: !includeFrontmatter, globalBasename, pack, liveSlugs: allSlugs, knownTopLevelDirs },
     );
     unresolved.push(...extracted.unresolved);
 
@@ -2218,6 +2227,12 @@ export async function extractStaleFromDB(
     list.push(ref.source_id);
     slugToSources.set(ref.slug, list);
   }
+  // Precomputed ONCE — see the matching comment in extractLinksFromDB above.
+  const knownTopLevelDirs = new Set<string>();
+  for (const s of allSlugs) {
+    const slashIdx = s.indexOf('/');
+    if (slashIdx > 0) knownTopLevelDirs.add(s.slice(0, slashIdx));
+  }
   // #3478: mirrors extractLinksFromDB — only federated sources keep the
   // cross-source 'default' fallback; absent/archived rows fail closed.
   const federatedSourceIds = new Set(
@@ -2255,7 +2270,7 @@ export async function extractStaleFromDB(
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
         page.slug, fullContent, page.frontmatter, page.type, resolver,
-        { skipFrontmatter: !includeFrontmatter, globalBasename, pack },
+        { skipFrontmatter: !includeFrontmatter, globalBasename, pack, liveSlugs: allSlugs, knownTopLevelDirs },
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(

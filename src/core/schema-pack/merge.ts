@@ -9,9 +9,12 @@
 //
 // Precedence, highest → lowest:  child  →  borrowed  →  nearest parent … base.
 //
-// Scope — the SIX ingest/query-shaping fields inherit:
-//   page_types, link_types, frontmatter_links, enrichable_types,
-//   filing_rules, takes_kinds.
+// Scope — the SEVEN ingest/query-shaping fields inherit:
+//   page_types, link_types, frontmatter_links, identifier_links,
+//   enrichable_types, filing_rules, takes_kinds.
+// identifier_links follows the exact same keyed-merge shape as link_types
+// (mergeByKey on the rule's `name`) — a child pack can override a parent's
+// identifier rule by re-declaring the same name, or add new ones freely.
 // `phases` and `calibration_domains` are deliberately NOT inherited — they
 // gate real cycle execution (cycle.ts `packDeclaresPhase`) and the manifest
 // contract says each pack declares its own participation explicitly. They
@@ -163,6 +166,10 @@ export function mergeInheritedManifest(
   const ancestorsHighToLow = [...ancestorsBaseFirst].reverse();
   const ancLink = ancestorsHighToLow.map(a => a.link_types);
   const ancFront = ancestorsHighToLow.map(a => a.frontmatter_links);
+  // identifier_links is a v0.51 field — pre-upgrade ancestor manifests
+  // parsed before it existed still get it via the schema's `.default([])`,
+  // so every ancestor here is guaranteed an array (never undefined).
+  const ancIdent = ancestorsHighToLow.map(a => a.identifier_links);
   const ancEnrich = ancestorsHighToLow.map(a => a.enrichable_types);
   const ancFiling = ancestorsHighToLow.map(a => a.filing_rules);
   const ancTakes = ancestorsHighToLow.map(a => a.takes_kinds);
@@ -180,6 +187,7 @@ export function mergeInheritedManifest(
       // strings, so a space-join would collide {"a b","c"} with {"a","b c"}.
       fl => `${fl.page_type}\x00${fl.link_type}`,
     ),
+    identifier_links: mergeByKey([child.identifier_links, ...ancIdent], il => il.name),
     enrichable_types: mergeByKey([child.enrichable_types, ...ancEnrich], et => et.type),
     filing_rules: mergeByKey([child.filing_rules, ...ancFiling], fr => fr.kind),
     takes_kinds: mergeUnion([child.takes_kinds, ...ancTakes]),

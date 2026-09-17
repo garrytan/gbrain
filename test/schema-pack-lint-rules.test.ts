@@ -33,6 +33,7 @@ function mk(opts: Partial<SchemaPackManifest>): SchemaPackManifest {
     page_types: baseTypes,
     link_types: opts.link_types ?? [],
     frontmatter_links: opts.frontmatter_links ?? [],
+    identifier_links: opts.identifier_links ?? [],
     takes_kinds: ['fact', 'take', 'bet', 'hunch'],
     enrichable_types: opts.enrichable_types ?? [],
     filing_rules: [],

@@ -149,6 +149,47 @@ const FrontmatterLinkSchema = z.object({
   link_type: z.string(),
 }).strict();
 
+/**
+ * Identifier link rule — turns a bare-identifier citation (DECISION-073,
+ * ADR-0047, SPA-2442, a JIRA-style key) into a graph edge. Corpora that cite
+ * by identifier rather than by slug/wikilink get NO edges from the
+ * markdown/wikilink/bare-slug passes in `link-extraction.ts` (all three
+ * require slug-shaped text); `by-mention.ts`'s gazetteer is hardcoded to
+ * person/company/organization/entity titles and has no notion of an
+ * identifier token. This rule type closes that gap without touching either
+ * of those mechanisms.
+ *
+ * `pattern` is a plain regex source string (no delimiters/flags — same
+ * convention as `LinkInferenceSchema.regex`) with at least one capture
+ * group. `target` is a slug TEMPLATE: `$1`, `$2`, … are substituted with
+ * the pattern's captures (lowercased, since every stored slug is
+ * lowercase). A template ending in `*` is a PREFIX match against the live
+ * slug set instead of an exact one — for identifiers whose slug embeds a
+ * title suffix the pattern can't predict (`decision-073-some-title`).
+ * See `resolveIdentifierLinksFromPack` (link-inference.ts) for the
+ * resolution algorithm and `docs/architecture/schema-packs.md` for the
+ * authoring guide.
+ */
+const IdentifierLinkRuleSchema = z.object({
+  /** Rule label. Surfaced in diagnostics; not a link_type name by itself. */
+  name: z.string().min(1),
+  /** Regex source (no delimiters/flags) with >=1 capture group. Matched
+   * case-insensitively against the page body (code blocks stripped). */
+  pattern: z.string().min(1),
+  /** Slug template using `$1`/`$2`/… capture references. A trailing `*`
+   * makes it a prefix match, resolved only when exactly one live slug
+   * matches (ambiguous prefix matches are skipped, not guessed). */
+  target: z.string().min(1),
+  /** Edge type stamped on the resulting candidate. Defaults to 'mentions'
+   * — the same default every unclassified reference gets elsewhere in
+   * link-extraction.ts. */
+  link_type: z.string().min(1).default('mentions'),
+  /** Reserved for a future per-source scoping filter (federated brains).
+   * Not yet consumed by the resolver; validated + carried through so a
+   * pack author can declare intent ahead of the runtime support landing. */
+  source_scope: z.string().optional(),
+}).strict();
+
 const EnrichableSchema = z.object({
   type: z.string(),
   rubric: z.string().optional(),
@@ -339,6 +380,12 @@ export const SchemaPackManifestSchema = z.object({
   page_types: z.array(PageTypeSchema).default([]),
   link_types: z.array(LinkTypeSchema).default([]),
   frontmatter_links: z.array(FrontmatterLinkSchema).default([]),
+  /**
+   * Pack-declared identifier-to-slug link rules. See IdentifierLinkRuleSchema
+   * above. Inherited on the same child-wins basis as frontmatter_links (see
+   * merge.ts) — keyed by rule `name`.
+   */
+  identifier_links: z.array(IdentifierLinkRuleSchema).default([]),
   takes_kinds: z.array(z.string()).default(['fact', 'take', 'bet', 'hunch']),
   enrichable_types: z.array(EnrichableSchema).default([]),
   filing_rules: z.array(FilingRuleSchema).default([]),
@@ -391,6 +438,7 @@ export const SchemaPackManifestSchema = z.object({
 export type SchemaPackManifest = z.infer<typeof SchemaPackManifestSchema>;
 export type PackPageType = z.infer<typeof PageTypeSchema>;
 export type PackLinkType = z.infer<typeof LinkTypeSchema>;
+export type PackIdentifierLinkRule = z.infer<typeof IdentifierLinkRuleSchema>;
 
 /**
  * Validation error envelope. Mirrors `StructuredAgentError` shape from

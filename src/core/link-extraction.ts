@@ -22,16 +22,21 @@ import { foldNonDecomposingLatin } from './latin-fold.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
 import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
-import { inferLinkTypeFromPack, frontmatterLinkTypeFromPack } from './schema-pack/link-inference.ts';
+import {
+  inferLinkTypeFromPack,
+  frontmatterLinkTypeFromPack,
+  resolveIdentifierLinksFromPack,
+} from './schema-pack/link-inference.ts';
 import { PageRegexBudget } from './schema-pack/redos-guard.ts';
 
 /**
  * #3190: the slice of a schema-pack manifest link extraction consumes.
  * Callers thread the ACTIVE pack's manifest (loadActivePackForLocalEngine /
  * loadActivePackBestEffort → `.manifest`); null/undefined keeps the legacy
- * in-code inference exactly as before.
+ * in-code inference exactly as before. `identifier_links` added for the
+ * pack-declared identifier-link rules (see resolveIdentifierLinksFromPack).
  */
-export type LinkExtractionPack = Pick<SchemaPackManifest, 'link_types' | 'frontmatter_links'>;
+export type LinkExtractionPack = Pick<SchemaPackManifest, 'link_types' | 'frontmatter_links' | 'identifier_links'>;
 
 export { stripCodeBlocks } from './markdown-code.ts';
 export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidate } from './timeline-citations.ts';
@@ -76,7 +81,12 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-09-09T00:00:00Z';
+// 2026-09-16: bumped for the identifier_links feature + two DB-path
+// resolution fixes — a page whose only references were bare identifiers
+// (DECISION-073), a dir-prefixed link needing the new ancestor-walk
+// fallback, or bare-slug prose noise (`pass/fail`) wrongly kept as a
+// candidate pre-fix must re-extract to pick these up / drop them.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-09-16T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -558,6 +568,46 @@ function resolveRelativeSlug(pageSlug: string, ref: EntityRef): string {
   return [...dirSegs.slice(0, keep), ref.slug].join('/');
 }
 
+/**
+ * DB-path ancestor-walk fallback, mirroring `commands/extract.ts`'s
+ * FS-path `resolveSlug`. `resolveRelativeSlug` above only reconstructs
+ * depth when the original markdown link carried an explicit `../`
+ * (`ref.upLevels > 0`); a dir-prefixed link with NO `../`
+ * (`[x](decisions/foo.md)`) is treated as already root-relative. That's
+ * right most of the time, but wrong for a page nested under a subtree
+ * whose author wrote a wiki-root-relative path instead of one relative to
+ * the real page tree — e.g. `platform/archive/platform_roadmap` linking
+ * `decisions/decision-001-architecture-commitment.md` when the real page
+ * lives at `platform/decisions/decision-001-architecture-commitment`. The
+ * FS walker's `resolveSlug` already retries this via an ancestor walk
+ * (immediate parent directory first, then up to the root); this is the
+ * same retry for the DB-source extraction path (`extract --stale` /
+ * `extract links --source db`), gated on the caller supplying
+ * `opts.liveSlugs` — unavailable to `put_page`'s single-page write or the
+ * recency sweep, so direct resolution is unchanged there (matching
+ * pre-existing behavior exactly).
+ *
+ * Only retries when the direct target ISN'T live; a target that already
+ * resolves is returned unchanged, so this can only ADD matches, never
+ * redirect an already-valid one.
+ */
+function resolveWithAncestorFallback(
+  pageSlug: string,
+  directTarget: string,
+  liveSlugs: ReadonlySet<string> | undefined,
+): string {
+  if (!liveSlugs || liveSlugs.has(directTarget)) return directTarget;
+  const dirSegs = pageSlug.includes('/') ? pageSlug.split('/').slice(0, -1) : [];
+  // Immediate parent directory first, walking up to the root — same order
+  // as the FS path's resolveSlug ancestor loop.
+  for (let strip = 1; strip <= dirSegs.length; strip++) {
+    const ancestor = dirSegs.slice(0, dirSegs.length - strip).join('/');
+    const candidate = ancestor ? `${ancestor}/${directTarget}` : directTarget;
+    if (liveSlugs.has(candidate)) return candidate;
+  }
+  return directTarget;
+}
+
 // ─── Link candidates (richer than EntityRef) ────────────────────
 
 export interface LinkCandidate {
@@ -627,7 +677,35 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; pack?: LinkExtractionPack | null } = {},
+  opts: {
+    globalBasename?: boolean;
+    skipFrontmatter?: boolean;
+    pack?: LinkExtractionPack | null;
+    /**
+     * The caller's full live slug set (all pages, not just this page's
+     * source). Optional and opt-in — batch DB callers (`extract links`,
+     * `extract --stale`) already build this set once per run
+     * (`allSlugs`) before looping pages, so passing it here is free; it
+     * powers three things when present: the DB-path ancestor-walk
+     * fallback (`resolveWithAncestorFallback`), pack `identifier_links`
+     * resolution (`resolveIdentifierLinksFromPack`), and — combined with
+     * `knownTopLevelDirs` below — the bare-slug prose-noise gate. Callers
+     * without a cheap full-slug picture (`put_page`'s single-page write,
+     * the recency sweep) omit it and get the pre-existing permissive
+     * behavior unchanged.
+     */
+    liveSlugs?: ReadonlySet<string>;
+    /**
+     * Top-level directory segments that exist in `liveSlugs` (e.g. `ops`
+     * from `ops/runbook-x`), precomputed ONCE by the caller from the same
+     * `liveSlugs` set — deriving it per-page here would be
+     * O(pages * slugs) on a large brain. When supplied, gates pass 2's
+     * bare-slug prose regex (see the call site below); when omitted, pass
+     * 2 keeps its pre-#2576-parity permissive behavior (matches ANY
+     * dir-shaped path).
+     */
+    knownTopLevelDirs?: ReadonlySet<string>;
+  } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -804,7 +882,11 @@ export async function extractPageLinks(
     // refs) — validateSlug stores every slug lowercase on both engines, so a
     // mixed-case candidate could never resolve. NOT slugifyPath: it strips
     // characters validateSlug permits and would mangle a legit put_page slug.
-    const targetSlug = resolveRelativeSlug(slug, ref).toLowerCase();
+    const directTargetSlug = resolveRelativeSlug(slug, ref).toLowerCase();
+    // DB-path ancestor-walk fallback — only engages when opts.liveSlugs is
+    // supplied AND the direct (root-relative) target isn't live; otherwise
+    // returns directTargetSlug unchanged.
+    const targetSlug = resolveWithAncestorFallback(slug, directTargetSlug, opts.liveSlugs);
     candidates.push({
       targetSlug,
       linkType: typeFor(context, targetSlug, idx),
@@ -838,6 +920,23 @@ export async function extractPageLinks(
     if (charBefore === '/' || charBefore === '(') continue;
     // #2576: never emit a self-loop for a page mentioning its own slug.
     if (m[1] === slug) continue;
+    // Prose-noise gate. #2576 deliberately widened this pass from the
+    // DIR_PATTERN whitelist to ANY_DIR_SEGMENT so a brain's own custom
+    // directories (ops/, notes/) stop being silently dropped — but
+    // ANY_DIR_SEGMENT also matches ordinary prose that merely LOOKS
+    // dir-shaped (`pass/fail`, `staging/prod`, `7/21/30/weekly`), which on
+    // a large brain vastly outnumbers real references. When the caller
+    // supplies opts.knownTopLevelDirs (the live slug set's top-level
+    // directories, precomputed once — see the option's doc comment), only
+    // accept a candidate whose first segment is one of them: `ops/...`
+    // still matches when `ops/` genuinely exists (preserving #2576's fix
+    // intact), `pass/fail` doesn't because nothing files under `pass/`.
+    // Omitted entirely, pass 2 keeps its pre-existing fully permissive
+    // behavior (put_page's single-page write, the recency sweep).
+    if (opts.knownTopLevelDirs) {
+      const firstSeg = m[1].slice(0, m[1].indexOf('/'));
+      if (!opts.knownTopLevelDirs.has(firstSeg)) continue;
+    }
     const context = excerpt(strippedContent, m.index, 240);
     candidates.push({
       targetSlug: m[1],
@@ -845,6 +944,30 @@ export async function extractPageLinks(
       context,
       linkSource: 'markdown',
     });
+  }
+
+  // 2.5. Pack-declared identifier links (identifier_links[]). Corpora that
+  // cite by bare identifier (DECISION-073, ADR-0047, SPA-2442, a JIRA-style
+  // key) produce no candidates from passes 1/2 above — those all require
+  // slug-shaped text. Runs on the same code-stripped text as pass 2 (an
+  // identifier inside a fenced code sample is not a real reference) and
+  // shares pass 2's opt-in shape: a no-op unless the active pack declares
+  // rules AND the caller supplied opts.liveSlugs to resolve against. See
+  // resolveIdentifierLinksFromPack for the full resolution algorithm.
+  if (pack && pack.identifier_links.length > 0) {
+    const { candidates: idMatches } = resolveIdentifierLinksFromPack(
+      pack, strippedContent, opts.liveSlugs, packBudget,
+    );
+    for (const idm of idMatches) {
+      if (idm.targetSlug === slug) continue; // self-loop guard, matches passes 1/2
+      const context = excerpt(strippedContent, idm.index, 240);
+      candidates.push({
+        targetSlug: idm.targetSlug,
+        linkType: idm.linkType,
+        context,
+        linkSource: 'identifier',
+      });
+    }
   }
 
   // 3. Frontmatter-derived edges (v0.13). Includes the legacy `source:`

@@ -11,6 +11,17 @@ bun test
 
 Requires Bun 1.3.11 or newer, matching `package.json`.
 
+**If you already have `gbrain` installed and on PATH**, know before you run
+`bun install` in a clone: the `postinstall` hook (`scripts/postinstall.ts`)
+resolves `gbrain` via PATH and runs `apply-migrations --yes --non-interactive`
+against whatever it finds — which is your existing live install and its
+database, not this clone. It also runs any pending migration's own
+first-run side effects (one ships a crontab entry for `gbrain autopilot`).
+This is intentional for a fresh global install (so `gbrain` is immediately
+usable) but is very likely NOT what you want while hacking on a clone
+alongside a real install. Use `bun install --ignore-scripts` instead — it
+skips the postinstall hook entirely, so your live install is never touched.
+
 ### Windows
 
 `bun run test`, `verify`, `ci:local` and `test:e2e` all dispatch through bash, so

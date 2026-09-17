@@ -45,6 +45,7 @@ function mk(name: string, over: Partial<SchemaPackManifest> = {}): SchemaPackMan
     page_types: [],
     link_types: [],
     frontmatter_links: [],
+    identifier_links: [],
     takes_kinds: ['fact', 'take', 'bet', 'hunch'],
     enrichable_types: [],
     filing_rules: [],

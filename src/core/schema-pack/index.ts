@@ -11,6 +11,7 @@ export {
   type SchemaPackManifest,
   type PackPageType,
   type PackLinkType,
+  type PackIdentifierLinkRule,
   type ExtractableSpec,
   SchemaPackManifestSchema,
   SchemaPackManifestError,
@@ -72,10 +73,12 @@ export {
 export {
   LINK_EXTRACTION_TOTAL_BUDGET_MS,
   PER_REGEX_TIMEOUT_MS,
+  MAX_IDENTIFIER_MATCHES_PER_RULE,
   RegexTimeoutError,
   PageBudgetExceededError,
   PageRegexBudget,
   runRegexBounded,
+  runRegexBoundedAll,
 } from './redos-guard.ts';
 
 export {
@@ -116,6 +119,9 @@ export {
 export {
   inferLinkTypeFromPack,
   frontmatterLinkTypeFromPack,
+  resolveIdentifierLinksFromPack,
+  type IdentifierLinkMatch,
+  type IdentifierLinkResolution,
 } from './link-inference.ts';
 
 export {
