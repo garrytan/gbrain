@@ -4,7 +4,7 @@
  * Proves the complete pipeline delivers for CJK users:
  *   1. Import a CJK-named markdown file (slugify CJK preservation).
  *   2. Chunk the body (countCJKAwareWords + CJK delimiters + maxChars cap).
- *   3. Search via the PGLite CJK keyword fallback (ILIKE + bigram count).
+ *   3. Search via the PGLite CJK keyword fallback (LIKE/ILIKE + bigram count).
  *   4. Assert the page is findable by a CJK substring.
  *
  * Vector path requires OPENAI_API_KEY; skipped gracefully when absent.
@@ -105,6 +105,18 @@ title: Mixed
 The system uses 测试 framework for validation.`, { noEmbed: true });
     const hits = await engine.searchKeyword('测试');
     expect(hits.some(h => h.slug === 'originals/mixed-roundtrip')).toBe(true);
+  });
+
+  test('Korean + Latin mixed query preserves case-insensitive Latin matching', async () => {
+    await importFromContent(engine, 'originals/korean-latin-roundtrip', `---
+type: note
+title: Korean Latin Mixed
+---
+
+앨범 paseo 기획 문서입니다.`, { noEmbed: true });
+
+    const hits = await engine.searchKeyword('앨범 Paseo 기획');
+    expect(hits.some(h => h.slug === 'originals/korean-latin-roundtrip')).toBe(true);
   });
 
   test('vector path skip-gracefully without OPENAI_API_KEY', () => {
