@@ -430,6 +430,23 @@ const list_pages: Operation = {
       type: 'string',
       description: 'ISO date (YYYY-MM-DD) or full timestamp. Returns pages with updated_at > value.',
     },
+    // Same move as updated_after above: effective_after/effective_before have
+    // been on PageFilters and implemented in both engines since v0.46.25.0
+    // (055ac6c75, 2026-08-21), with
+    // an index on COALESCE(effective_date, updated_at) put there for them, but
+    // were never surfaced on this tool. An agent could therefore ask when a
+    // page CHANGED but not when its subject HAPPENS, so answering "what is on
+    // next week" meant listing pages and reading each one to find out.
+    effective_after: {
+      type: 'string',
+      description:
+        'ISO date (YYYY-MM-DD) or full timestamp. Returns pages whose subject falls on or after this — the date the thing happens, not the date the page changed. Works for periods in the future. Pages with no effective date never match.',
+    },
+    effective_before: {
+      type: 'string',
+      description:
+        'ISO date (YYYY-MM-DD) or full timestamp. Returns pages whose subject falls on or before this. Pair with effective_after for a window, e.g. the coming week.',
+    },
     sort: {
       type: 'string',
       enum: [...LIST_PAGES_SORT_VALUES],
@@ -516,6 +533,8 @@ const list_pages: Operation = {
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
+      effective_after: typeof p.effective_after === 'string' ? p.effective_after : undefined,
+      effective_before: typeof p.effective_before === 'string' ? p.effective_before : undefined,
       sort,
       excludePrivate,
       ...scope,
@@ -543,6 +562,10 @@ const list_pages: Operation = {
       type: pg.type,
       title: pg.title,
       updated_at: pg.updated_at,
+      // Returned when set, like deleted_at above. A caller that asked for a
+      // window needs to know WHICH day each row falls on; without it the
+      // coming-week answer is a list of titles in no particular order.
+      ...(pg.effective_date ? { effective_date: pg.effective_date } : {}),
       ...(pg.deleted_at ? { deleted_at: pg.deleted_at } : {}),
     }));
   },
