@@ -533,6 +533,32 @@ discipline as the database-URL vars — so a dev shell configured for a real
 brain can't ride through. `GBRAIN_DEBUG_PRELOAD=1` prints the allocated
 scratch home for debugging.
 
+**Real-home write guard preload.** `test/helpers/real-home-guard-preload.ts`
+(bunfig `[test]` preload) is the enforcement behind the isolation above: it
+fingerprints every file `gbrain autopilot --install` writes into the
+operator's real home (`~/.gbrain/autopilot-run.sh`, `~/.gbrain/env`,
+`~/.gbrain/start-autopilot.sh`, the launchd plist and the systemd unit) before
+any test file loads, re-checks around every test, and fails the test whose run
+changed one — or, for a change that predates the test (another file's
+`afterAll`, another test process, an operator command), says so instead of
+blaming it. The rule it enforces: in a hook, SET `GBRAIN_HOME` (a non-blank
+absolute path) to a tmp dir, never `delete` it — Bun's `os.homedir()` ignores a
+runtime `HOME` mutation, so a deleted override sends `configDir()` straight
+back to the real home (that exact shape in `test/autopilot-install.test.ts`
+once replaced a live autopilot wrapper with a fixture one, and no test went
+red) — and set `HOME` too when the code under test resolves the plist, unit or
+start-script path. `GBRAIN_TEST_ALLOW_REAL_HOME_WRITES=1` disarms it for a
+deliberate real-install run (one-shot on the command line; it prints a
+DISARMED notice). `GBRAIN_DEBUG_PRELOAD=1` prints the guarded paths at preload
+time. Absent files are fingerprinted too, so a test that creates one of them
+fails in CI (where no install exists) as well as on a dev box; where
+`os.homedir()` is unavailable (a uid with no passwd entry) the guard prints
+INACTIVE and stands down instead of failing the run. Mechanism, attribution
+wording, per-file remediation and the deliberate exclusions (ctime,
+`config.json`) live in the file's header;
+`test/real-home-guard-preload.test.ts` self-tests it against a scratch `HOME`
+and pins the guarded names against the installer source.
+
 **Provider-key strip preload.** `test/helpers/provider-keys-preload.ts` (bunfig
 `[test]` preload) strips the ambient provider credentials the canonical fold
 recognizes, using the explicit `test/helpers/provider-env.ts` list checked

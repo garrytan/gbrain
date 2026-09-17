@@ -2,6 +2,31 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.1.0] - 2026-09-17
+
+### For contributors
+
+**A local `bun test` run can no longer replace your live autopilot install.** The `gbrain autopilot --install` unit suite wrote its generated wrapper and env template into the operator's real `~/.gbrain` instead of a scratch directory. On a developer machine with autopilot installed, one green test run left launchd re-running a fixture wrapper (pointing at a temp-dir repo and a fake CLI) every minute while the real daemon never started — and no test went red. Every write in that suite now lands under a per-test `GBRAIN_HOME`, and a new suite-wide guard fails the test whose run touches any real install artefact.
+
+#### Fixed
+- **`test/autopilot-install.test.ts` keeps its writes in scratch.** Its `beforeEach` used to `delete process.env.GBRAIN_HOME`, undoing the suite-wide isolation from `test/helpers/gbrain-home-preload.ts`; because Bun's `os.homedir()` ignores a runtime `HOME` mutation, `configDir()` fell back to the real home. The hook now sets `GBRAIN_HOME` to the per-test tmp dir, every assertion that names a gbrain-home path derives it from that override, and a new case pins that the wrapper and env template land under `<GBRAIN_HOME>/.gbrain`. No assertion was weakened.
+
+#### Added
+- **Real-home write guard (`test/helpers/real-home-guard-preload.ts`).** A bunfig `[test]` preload fingerprints (size, mtime, inode) every file `gbrain autopilot --install` writes into the real home — the wrapper, the env file, the ephemeral start script, the launchd plist and the systemd unit — before any test file loads and re-checks around every test. A change is attributed to the test that just ran, or reported as pre-existing (another file's `afterAll`, another test process, an operator command) so nobody chases the wrong test, and each report names the exact remediation (a reinstall regenerates the wrapper, plist and unit but never rewrites an existing env file). `GBRAIN_TEST_ALLOW_REAL_HOME_WRITES=1` disarms it for a deliberate real-install run and says so. Self-tested by `test/real-home-guard-preload.test.ts` against a scratch `HOME` (every probe write refuses to run unless the child's home is that scratch home), which also pins the guarded names against the installer source.
+- **`docs/TESTING.md`** documents the rule the guard enforces: in a test hook, set `GBRAIN_HOME` (and `HOME`, for the install paths) to a tmp dir, never delete it.
+
+### To take advantage of v0.51.1.0
+
+No user-facing change; nothing to run after `gbrain upgrade`. If you develop gbrain on a machine where autopilot is installed and you ran the unit suite on 0.50.5.0 or earlier, check the wrapper once:
+
+```bash
+grep -q gbrain-install-test ~/.gbrain/autopilot-run.sh && echo "fixture wrapper — reinstall" || echo "wrapper OK"
+```
+
+If it says reinstall, run `gbrain autopilot --install --repo <your-brain-repo>` (this regenerates the wrapper and reloads the launchd/systemd job). If `~/.gbrain/env` contains a `GBRAIN_TEST_MARKER_2608` line, that file was overwritten by the same test — restore it from a backup or re-enter your keys, then re-run the install.
+
+**Say to your agent:** *"reinstall autopilot for my brain repo"* — your agent runs `gbrain autopilot --install --repo <your-brain-repo>`.
+
 ## [0.50.5.0] - 2026-09-16
 
 **Security hardening pass across the remote OAuth surface, transcript ingest, and environment handling.** This wave closes the critical- and high-severity items from privately reported advisories. Fresh installs and existing brains are on the same footing after upgrade; where an operator kept a security-relevant setting in a project directory's `.env`, gbrain now says so and names the fix. Thanks to the reporters credited below.

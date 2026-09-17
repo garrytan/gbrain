@@ -165,6 +165,14 @@ no direct `process.env` mutation (use `withEnv()` from
 and every `new PGLiteEngine(` goes inside the canonical `beforeAll` block with
 a paired `afterAll(disconnect)`.
 
+A runtime guard adds a fifth layer at `bun test` time:
+`test/helpers/real-home-guard-preload.ts` fails any test whose run touches the
+operator's real autopilot install files (`~/.gbrain/autopilot-run.sh`, `env`,
+`start-autopilot.sh`, the launchd plist, the systemd unit). In a hook, SET
+`GBRAIN_HOME` — and `HOME`, when the code under test resolves those paths — to
+a tmp dir; never `delete` it. Bun's `os.homedir()` ignores a runtime `HOME`
+change, so a deleted override sends every gbrain-home write to your real home.
+
 **The full rules, the canonical PGLite block, the `withEnv` pattern, and the
 `*.serial.test.ts` quarantine policy live in
 [`docs/TESTING.md`](docs/TESTING.md#test-isolation-lint-and-helpers)

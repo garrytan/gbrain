@@ -236,6 +236,7 @@ test/postgres-engine.test.ts	postgres-engine / search date filtering	1	readFileS
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
 test/readme-hero-anchors.test.ts	README hero anchors (D9 regression guard)	5	readFileSync
+test/real-home-guard-preload.test.ts	real-home-guard-preload	43	readFileSync
 test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structural)	2	readFileSync
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
