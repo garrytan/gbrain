@@ -533,6 +533,28 @@ discipline as the database-URL vars — so a dev shell configured for a real
 brain can't ride through. `GBRAIN_DEBUG_PRELOAD=1` prints the allocated
 scratch home for debugging.
 
+**Real-home write guard preload.** `test/helpers/real-home-guard-preload.ts`
+(bunfig `[test]` preload) is the enforcement behind the isolation above. It
+fingerprints the operator's real `~/.gbrain/autopilot-run.sh` and
+`~/.gbrain/env` at preload time — before any test file can touch `HOME` or
+`GBRAIN_HOME` — and re-checks after every test, plus once at the end of the
+run. A change fails the test that made it (Bun attributes the `afterEach`
+throw to that test by name) and re-baselines, so one leak is one failure, not
+a cascade. Only these two files are guarded: both are written solely by
+`gbrain autopilot --install`, never by the running daemon, so a change during
+a test run is a leak by construction (`config.json` is deliberately excluded —
+the live daemon and sibling workspaces legitimately rewrite it). Inert where no
+real `~/.gbrain` exists (CI), except that a test CREATING either file is caught
+too. The rule it enforces: in a hook, SET `GBRAIN_HOME` to a tmp dir, never
+`delete` it — Bun's `os.homedir()` ignores a runtime `HOME` mutation, so a
+deleted override sends `configDir()` straight back to the real home (that
+exact shape in `test/autopilot-install.test.ts` once replaced a live autopilot
+wrapper with a fixture one, and no test went red). It is a separate file from
+`gbrain-home-preload.ts` because `test/cli-import-no-signal-handlers.test.ts`
+imports that helper via `bun -e`, and registering a `bun:test` hook outside the
+runner throws. Self-tested by `test/real-home-guard-preload.test.ts`, which
+spawns `bun test --preload` on generated probes under a scratch `HOME`.
+
 **Provider-key strip preload.** `test/helpers/provider-keys-preload.ts` (bunfig
 `[test]` preload) strips the ambient provider credentials the canonical fold
 recognizes, using the explicit `test/helpers/provider-env.ts` list checked

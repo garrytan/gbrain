@@ -13,13 +13,18 @@
  * Regression guards:
  *   - macOS launchd plist still writes the same shape it always did.
  *   - Linux crontab still writes the same every-5-min line.
+ *
+ * Isolation: every wrapper / env-template write lands under a per-test
+ * GBRAIN_HOME (see beforeEach). Never `delete process.env.GBRAIN_HOME` in a
+ * hook here — Bun's os.homedir() ignores a mutated $HOME, so a deleted
+ * override sends writeWrapperScript() to the operator's REAL ~/.gbrain.
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 
 import { detectInstallTarget, writeWrapperScript, chatBootWarning } from '../src/commands/autopilot.ts';
 import { gbrainPath } from '../src/core/config.ts';
@@ -35,8 +40,19 @@ beforeEach(() => {
   for (const k of envKeys()) envSnapshot[k] = process.env[k];
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-install-test-'));
   process.env.HOME = tmp;
+  // Scope every gbrain-home write to this test's tmp dir. This used to be
+  // `delete process.env.GBRAIN_HOME`, which undid the suite-wide isolation
+  // from test/helpers/gbrain-home-preload.ts: Bun's os.homedir() ignores a
+  // mutated $HOME, so configDir() fell back to the operator's REAL ~/.gbrain
+  // and every writeWrapperScript() call below regenerated the live
+  // autopilot-run.sh with a fixture repo path + a fake CLI path (launchd then
+  // re-ran that broken wrapper every minute until a manual reinstall), and
+  // the env-file suite wrote its marker into the real ~/.gbrain/env.
+  // GBRAIN_HOME is read at call time, so setting it here is enough; afterEach
+  // restores the preload's value. test/helpers/real-home-guard-preload.ts
+  // fails any test that regresses this.
+  process.env.GBRAIN_HOME = tmp;
   // Start each test with a clean slate for ephemeral env vars.
-  delete process.env.GBRAIN_HOME;
   delete process.env.RENDER;
   delete process.env.RAILWAY_ENVIRONMENT;
   delete process.env.FLY_APP_NAME;
@@ -193,6 +209,30 @@ describe('autopilot wrapper script — key sourcing (#2608)', () => {
   });
 });
 
+// Isolation pin: the wrapper and the env template must land under the
+// per-test GBRAIN_HOME, never under the real home. The pre-fix shape of this
+// file (`delete process.env.GBRAIN_HOME` in beforeEach) sent both writes to
+// the operator's live ~/.gbrain — a green run that silently replaced a
+// production autopilot wrapper with a fixture one.
+describe('autopilot install — writes stay under the per-test GBRAIN_HOME', () => {
+  test('wrapper + env template land in <GBRAIN_HOME>/.gbrain, not the real home', () => {
+    const fakeBin = makeFakeGbrainOnPath();
+    try {
+      const repoDir = join(tmp, 'repo-isolated');
+      mkdirSync(repoDir, { recursive: true });
+      const wrapperPath = writeWrapperScript(repoDir, 'linux-cron');
+      expect(wrapperPath).toBe(join(tmp, '.gbrain', 'autopilot-run.sh'));
+      expect(existsSync(join(tmp, '.gbrain', 'env'))).toBe(true);
+      // The baked export points the daemon at the same scratch home, so the
+      // generated wrapper is self-consistent with where it was written.
+      expect(readFileSync(wrapperPath, 'utf8')).toContain(`export GBRAIN_HOME='${tmp}'`);
+      expect(wrapperPath.startsWith(join(homedir(), '.gbrain'))).toBe(false);
+    } finally {
+      fakeBin.restore();
+    }
+  });
+});
+
 // #2608: the wrapper's ONLY env channel was the shell rc files (zshenv,
 // zshrc, bashrc). Non-interactive daemon shells (launchd/systemd/cron) never
 // run zshrc-only exports, and the stock Debian ~/.bashrc non-interactive
@@ -287,7 +327,8 @@ describe('autopilot wrapper script — gbrain-owned env file (#2608)', () => {
         timeout: 15_000,
       });
 
-      // Absent case: no ~/.gbrain/env yet. Must be a clean no-op — exit 0,
+      // Absent case: writeWrapperScript() just created the 0600 template at
+      // <GBRAIN_HOME>/.gbrain/env — remove it. Must be a clean no-op — exit 0,
       // marker stays unset (not an error, not a partial/garbled sourcing).
       rmSync(envFilePath, { force: true });
       const absent = runPreamble();

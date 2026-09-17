@@ -45,6 +45,15 @@ timeout = 60_000
 # red on dev boxes while CI stayed green. Respects a pre-set GBRAIN_HOME
 # (the e2e wrapper sets its own). See test/helpers/gbrain-home-preload.ts.
 #
+# real-home-guard-preload: the enforcement behind gbrain-home-preload. A test
+# that deletes GBRAIN_HOME in a hook (Bun's os.homedir() ignores a mutated
+# $HOME) sends every gbrain-home write to the operator's REAL ~/.gbrain — one
+# such file regenerated the live autopilot-run.sh with a fixture repo path and
+# launchd re-ran the broken wrapper every minute, with no failing test
+# anywhere. The guard fingerprints the real ~/.gbrain/autopilot-run.sh + env
+# at preload time and fails the exact test that changes either. See
+# test/helpers/real-home-guard-preload.ts.
+#
 # git-hermetic-preload: inject commit.gpgsign=false/tag.gpgsign=false via
 # GIT_CONFIG_COUNT env config so a dev box's global signing config can't
 # route test-repo commits through gpg-agent (which intermittently fails
@@ -57,4 +66,4 @@ timeout = 60_000
 # 183 failures + 15-minute retry hangs on an OPENAI-only shell). The e2e
 # wrapper sets GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 to opt back in. See
 # test/helpers/provider-keys-preload.ts.
-preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/operator-env-preload.ts", "./test/helpers/provider-keys-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]
+preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/operator-env-preload.ts", "./test/helpers/provider-keys-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/real-home-guard-preload.ts", "./test/helpers/git-hermetic-preload.ts"]
