@@ -15,6 +15,7 @@ All notable changes to GBrain will be documented in this file.
 - **Sync health checks respect `syncEnabled: false`.** Deliberately disabled sources no longer raise stale-sync warnings. Their scheduled non-sync maintenance still runs and remains covered by cycle-health checks.
 - **Published MCP skills can omit optional `tools:` metadata.** Valid skills without that field inherit the caller's available brain tools. Explicit tool lists still narrow the inventory, `tools: []` stays empty, and invalid metadata does not receive the fallback. Server authorization is unchanged.
 - **Google contacts recover from HTTP 400 sync-token expiry.** A documented expiry reason or recognized expiry message triggers a full contacts refresh and stores a new token. Other bad requests still fail instead of silently resetting sync state.
+- **The local CI gate no longer mistakes passing PgBouncer tests for skipped tests.** Its execution check reads the completed log directly, avoiding a SIGPIPE race while preserving rejection of runs with no passing pooler tests.
 
 ### To take advantage of v0.51.1.0
 Run `gbrain upgrade` and restart long-running GBrain processes. Retry a partly failed import normally; deleting its checkpoint is no longer necessary to pick up edits. The next contacts sync recovers an expired token automatically. For existing hardened brain repositories, run `gbrain sources harden <source-id>` to refresh the generated push helper and local hook. No new credentials, permission grants, or automatic-capture consent are needed.
