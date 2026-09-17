@@ -226,6 +226,7 @@ describe('takes_resolve', () => {
     // Raw, an msys-recorded local_path join-resolves to a phantom
     // C:\c\Users\... on Windows — the take file lands nowhere real.
     const msysEngine = {
+      getConfig: async () => null,
       executeRaw: async () => [{ local_path: '/c/Users/Tiger/Vault', source_path: null, source_uri: null }],
     } as unknown as PGLiteEngine;
     const originalPlatform = process.platform;
@@ -244,6 +245,7 @@ describe('takes_resolve', () => {
 
   test('#2955: identity on POSIX — a legitimate /c/... directory name is preserved', async () => {
     const posixEngine = {
+      getConfig: async () => null,
       executeRaw: async () => [{ local_path: '/c/legit-posix-dir', source_path: null, source_uri: null }],
     } as unknown as PGLiteEngine;
     const { writeRoot } = await __takesWriteTesting.resolveTakesFilePath(

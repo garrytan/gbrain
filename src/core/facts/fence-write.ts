@@ -285,7 +285,7 @@ export async function writeFactsToFence(
   // choice: no fence file, no stub entity page, no git commit. Same
   // legacyFallback contract as a missing local_path — the caller's DB-only
   // path still records the facts.
-  if (await isWriteThroughDisabled(engine)) {
+  if (await isWriteThroughDisabled(engine, target.sourceId)) {
     return { inserted: 0, ids: [], legacyFallback: true };
   }
 

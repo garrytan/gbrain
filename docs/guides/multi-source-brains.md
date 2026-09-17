@@ -212,6 +212,17 @@ citations keep working.
 
 ## Writing to a specific source
 
+To keep several sources searchable while allowing GBrain-authored page and
+fact files in only one source repo, set `gbrain config set sync.write_source_id
+<id>`. Other sources still sync into the index, but page write-through to their
+checkouts is disabled. Run `gbrain config unset sync.write_source_id` to restore
+the usual per-source writes.
+`gbrain sync` can still pull those repositories to keep the index current.
+This controls GBrain's automatic Markdown write-through on the host. For an
+OAuth client that may read several sources but write only one, also bind its
+write source with `--source` and its reads with `--federated-read` as shown in
+[the hosted topology guide](../architecture/topologies.md#setup).
+
 ```bash
 # Pass --source explicitly
 gbrain put topics/ai ... --source wiki

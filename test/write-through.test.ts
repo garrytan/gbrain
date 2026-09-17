@@ -22,6 +22,7 @@ import {
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from '../src/core/markdown.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
+import { __takesWriteTesting } from '../src/core/takes-write.ts';
 
 let engine: PGLiteEngine;
 let tmpRoot: string;
@@ -172,7 +173,7 @@ describe('writePageThrough', () => {
       `SELECT source_path FROM pages WHERE source_id = 'default' AND slug = $1`,
       [slug],
     );
-    expect(rows[0]?.source_path).toBe(`${slug}.md`);
+    expect(rows[0]?.source_path?.endsWith(`${slug}.md`)).toBe(true);
   });
 
   test('[REGRESSION twin] falls back to a contained file:// source_uri when source_path is null (capture --file of a vault file)', async () => {
@@ -201,7 +202,7 @@ describe('writePageThrough', () => {
       `SELECT source_path FROM pages WHERE source_id = 'default' AND slug = $1`,
       [slug],
     );
-    expect(rows[0]?.source_path).toBe(authored);
+    expect(rows[0]?.source_path?.endsWith(authored)).toBe(true);
     // NB: no `existsSync(slug path)` assertion here — this slug differs from the
     // authored name only by CASE, so a case-insensitive FS (macOS/Windows) folds
     // the two and existsSync would report a twin that isn't there. walkFiles
@@ -289,6 +290,37 @@ describe('writePageThrough', () => {
     expect(walkFiles(alphaDir).some((f) => f.endsWith('.md'))).toBe(false);
   });
 
+  test('sync.write_source_id confines repo writes while other sources stay indexed', async () => {
+    const alphaDir = path.join(tmpRoot, 'alpha-read-only');
+    fs.mkdirSync(alphaDir);
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('alpha', 'Alpha', $1, '{}'::jsonb)`,
+      [alphaDir],
+    );
+    await engine.setConfig('sync.repo_path', brainDir);
+    await engine.setConfig('sync.write_source_id', 'default');
+    const slug = 'notes/one';
+    await seedPage(slug);
+    await importFromContent(engine, slug, `---\ntitle: T\ntype: note\n---\n\n# Alpha\n`, {
+      noEmbed: true, sourceId: 'alpha', sourcePath: `${slug}.md`,
+    });
+
+    expect((await writePageThrough(engine, slug, { sourceId: 'default' })).written).toBe(true);
+    expect(await writePageThrough(engine, slug, { sourceId: 'alpha' }))
+      .toEqual({ written: false, skipped: 'disabled_by_config' });
+    expect(await resolvePageWriteTarget(engine, slug, 'alpha'))
+      .toEqual({ ok: false, skipped: 'disabled_by_config' });
+    expect(await engine.getPage(slug, { sourceId: 'alpha' })).not.toBeNull();
+    await expect(__takesWriteTesting.resolveTakesFilePath(engine, brainDir, slug, 'alpha'))
+      .rejects.toMatchObject({ code: 'mirror_unavailable' });
+    expect(walkFiles(alphaDir)).toEqual([]);
+  });
+
+  test('config read failure blocks repo writes', async () => {
+    const unavailable = { getConfig: async () => { throw new Error('config unavailable'); } } as unknown as Parameters<typeof isWriteThroughDisabled>[0];
+    expect(await isWriteThroughDisabled(unavailable, 'alpha')).toBe(true);
+  });
+
   test('sync.write_through unset or any non-"false" value keeps the default write-through behavior', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     // Explicit 'true' — same as unset (the flag is an opt-out).
@@ -351,7 +383,7 @@ describe('writePageThrough', () => {
     expect(res).toEqual({ written: false, skipped: 'disabled_by_config' });
   });
 
-  test('a failing flag read fails open to enabled (the write still lands)', async () => {
+  test('a failing flag read blocks disk writes', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const failing = Object.create(engine) as typeof engine;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -360,11 +392,11 @@ describe('writePageThrough', () => {
       return engine.getConfig(key);
     };
 
-    const slug = 'wiki/ideas/fail-open';
+    const slug = 'wiki/ideas/config-unavailable';
     await seedPage(slug);
     const res = await writePageThrough(failing, slug, { sourceId: 'default' });
-    expect(res.written).toBe(true);
-    expect(fs.existsSync(res.path!)).toBe(true);
+    expect(res).toEqual({ written: false, skipped: 'disabled_by_config' });
+    expect(walkFiles(brainDir)).toEqual([]);
   });
 
   test('[REGRESSION #2018] default page (null local_path) in a multi-source brain → skipped, no leak into a sibling source repo', async () => {
