@@ -197,11 +197,11 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
       writeBrainFile('changed-example.md', validMarkdown('changed-example', 'Original example'));
       writeBrainFile('invalid-example.md', validMarkdown('wrong-example'));
       const filePath = join(brainDir, 'changed-example.md');
-      const originalTransaction = engine.transaction.bind(engine);
+      const originalTransaction = engine.transaction;
       let edited = false;
-      const transaction = spyOn(engine, 'transaction').mockImplementation(async (fn) => {
-        const result = await originalTransaction(fn);
-        if (!edited && await engine.getPage('changed-example', { sourceId: 'default' })) {
+      const transaction = spyOn(engine, 'transaction').mockImplementation(async function (this: PGLiteEngine, fn) {
+        const result = await originalTransaction.bind(this)(fn);
+        if (this === engine && !edited && await engine.getPage('changed-example', { sourceId: 'default' })) {
           edited = true;
           writeBrainFile('changed-example.md', validMarkdown('changed-example', 'Modified example'));
         }
