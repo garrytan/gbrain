@@ -540,6 +540,8 @@ async function runJudgeChunk(
     // (judge truncation at default 36-96 idea batches).
     maxTokens: computeJudgeMaxTokens(ideas.length, options.modelOverride),
     abortSignal: options.abortSignal,
+    // Judges pin model identity (D8): never thread the chat_fallback_chain.
+    allowFallback: false,
   });
 
   const parsed = parseJudgeJSON(result.text);

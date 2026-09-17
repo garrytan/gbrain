@@ -3520,6 +3520,15 @@ export interface ChatOpts {
    * validating it themselves (see `jsonSchemaOutput`).
    */
   responseSchema?: { name: string; description?: string; schema: Record<string, unknown> };
+  /**
+   * `chat()` fallback (chatWithFallback, vNext). Default true:
+   * when `chat_fallback_chain` is configured and this call fails with a
+   * transient/provider error, OR completes with a D8 structural signal
+   * (stopReason 'refusal' / 'content_filter'), the chain is consulted in
+   * order. Set false in flows that must pin the exact model identity
+   * (judges, synthesizers, critics — per D8).
+   */
+  allowFallback?: boolean;
 }
 
 /**
@@ -3883,7 +3892,64 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
   }, {} as Record<string, any>);
 }
 
+/**
+ * `chatWithFallback`: the public `chat()` entry consults
+ * the configured `chat_fallback_chain` when the primary model errors or
+ * completes with a D8 structural signal (`stopReason` 'refusal' |
+ * 'content_filter'), consulted BEFORE any regex heuristic (per D8).
+ *
+ * Fallback policy:
+ *  - Policy errors (`isAIInvocationPolicyError`: budget, caps, no_pricing)
+ *    are NEVER fallback-eligible — they describe gbrain's own accounting,
+ *    not the provider.
+ *  - Any other thrown error (rate limit, 5xx, auth, timeout, model_not_found)
+ *    falls through to the next chain entry.
+ *  - A successful call whose stopReason is 'refusal' / 'content_filter'
+ *    falls through too (silent-refusal fallback per D8) when entries remain.
+ *  - Chain entries duplicate-prone ids are deduplicated; the primary model
+ *    itself is never re-run from the chain.
+ *  - `opts.allowFallback: false` skips the chain entirely (judges,
+ *    synthesizers, critics pin model identity per D8).
+ *
+ * The per-attempt provider resolution, budget accounting and usage ledger
+ * all live in `chatOnce` below, so every attempt charges/records against
+ * the model that actually ran.
+ */
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
+  const chain = opts.allowFallback === false ? [] : getChatFallbackChain();
+  if (chain.length === 0) return chatOnce(opts);
+
+  const primary = opts.model ?? getChatModel();
+  const attempts: string[] = [primary];
+  for (const m of chain) {
+    if (!attempts.includes(m)) attempts.push(m);
+  }
+
+  let lastErr: unknown = new Error('chat_fallback_chain exhausted without a successful attempt');
+  for (let i = 0; i < attempts.length; i++) {
+    const modelStr = attempts[i]!;
+    const attemptOpts = modelStr === primary ? opts : { ...opts, model: modelStr };
+    try {
+      const res = await chatOnce(attemptOpts);
+      // D8: structural-signal consultation, before any regex heuristic.
+      if ((res.stopReason === 'refusal' || res.stopReason === 'content_filter') && i < attempts.length - 1) {
+        lastErr = new Error(`[ai.gateway] ${res.model} stopReason=${res.stopReason}; trying next in chat_fallback_chain`);
+        console.warn((lastErr as Error)?.message ?? String(lastErr));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (isAIInvocationPolicyError(err)) throw err;
+      lastErr = err;
+      if (i < attempts.length - 1) {
+        console.warn(`[ai.gateway] chat() ${modelStr} failed (${(err as Error)?.message?.slice(0, 140)}); trying next in chat_fallback_chain`);
+      }
+    }
+  }
+  throw normalizeAIError(lastErr, `chat() fallback chain exhausted (${attempts.join(' -> ')})`);
+}
+
+async function chatOnce(opts: ChatOpts): Promise<ChatResult> {
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
 
