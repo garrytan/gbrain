@@ -8,8 +8,8 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { execFileSync, spawn } from 'child_process';
-import { hardenBrainRepo, unhardenBrainRepo } from '../src/core/brain-repo-durability.ts';
+import { execFileSync, spawn, spawnSync } from 'child_process';
+import { getLastPushOutcome, hardenBrainRepo, unhardenBrainRepo } from '../src/core/brain-repo-durability.ts';
 import { crontabAvailable } from './helpers/fs-perms.ts';
 import { runPull } from '../src/commands/sources-harden.ts';
 
@@ -154,6 +154,319 @@ describe('brain-commit-push.sh (D13 guarantee)', () => {
     expect(subjects).toContain('remote change');
     // Working tree is clean — the modification was committed, not stranded.
     expect(git(work, 'status', '--porcelain', 'README.md')).toBe('');
+  });
+});
+
+describe('durability push remote confirmation (#5138)', () => {
+  let intendedHead: string;
+
+  beforeEach(() => {
+    rmSync(join(work, '.git', 'hooks', 'post-commit'));
+    writeFileSync(join(work, 'pending.md'), 'pending\n');
+    git(work, 'add', 'pending.md');
+    git(work, 'commit', '-qm', 'pending');
+    intendedHead = git(work, 'rev-parse', 'HEAD');
+  });
+
+  function interceptGit(script: string): NodeJS.ProcessEnv {
+    const bin = join(root, 'intercept-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'git'), `#!/usr/bin/env bash
+set -eu
+${script}
+exec "$GBRAIN_TEST_REAL_GIT" "$@"
+`, { mode: 0o755 });
+    return {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      GBRAIN_TEST_REAL_GIT: Bun.which('git')!,
+      GBRAIN_TEST_PUSH_MARKER: join(root, 'push-attempted'),
+    };
+  }
+
+  function pushOnly(env = process.env) {
+    return spawnSync('bash', [join(work, 'scripts', 'brain-commit-push.sh'), '--push-only', 'main'], {
+      cwd: work, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', env,
+    });
+  }
+
+  function advanceRemote(path = 'remote.md'): string {
+    const other = join(root, 'other-worktree');
+    git(work, 'worktree', 'add', '--detach', other, 'origin/main');
+    writeFileSync(join(other, path), 'remote edit\n');
+    git(other, 'add', path);
+    git(other, 'commit', '-qm', 'remote advance');
+    git(other, 'push', '-q', 'origin', 'HEAD:main');
+    return originHead(bare);
+  }
+
+  function clonePushTarget(name: string): string {
+    const target = join(root, `${name}.git`);
+    git(work, 'clone', '--bare', '-q', bare, target);
+    return target;
+  }
+
+  test('does not confirm a rejecting push target from the fetch repository', () => {
+    const target = clonePushTarget('push target');
+    const originalTargetHead = originHead(target);
+    git(work, 'push', '-q', 'origin', 'HEAD:main');
+    git(work, 'remote', 'set-url', '--push', 'origin', target);
+    writeFileSync(join(target, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+
+    const result = pushOnly();
+
+    expect(originHead(bare)).toBe(intendedHead);
+    expect(originHead(target)).toBe(originalTargetHead);
+    expect(result.status).not.toBe(0);
+    expect(getLastPushOutcome('main').status).toBe('needs_attention');
+  });
+
+  test('fails closed when a push path would resolve as a different remote alias', () => {
+    const targetName = 'push-target';
+    const target = join(work, targetName);
+    git(work, 'clone', '--bare', '-q', bare, target);
+    const originalTargetHead = originHead(target);
+    git(work, 'push', '-q', 'origin', 'HEAD:main');
+    git(work, 'remote', 'add', targetName, bare);
+    git(work, 'remote', 'set-url', '--push', 'origin', targetName);
+    writeFileSync(join(target, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+
+    const result = pushOnly();
+
+    expect(originHead(bare)).toBe(intendedHead);
+    expect(originHead(target)).toBe(originalTargetHead);
+    expect(result.status).not.toBe(0);
+  });
+
+  test.each(['pushurl', 'pushInsteadOf'])('confirms the effective %s destination without logging probe diagnostics', (configuration) => {
+    const target = clonePushTarget('push target');
+    if (configuration === 'pushurl') git(work, 'remote', 'set-url', '--push', 'origin', target);
+    else git(work, 'config', `url.${target}.pushInsteadOf`, bare);
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+    const env = interceptGit(`if [ "$1" = push ]; then
+  "$GBRAIN_TEST_REAL_GIT" "$@"
+  exit 1
+fi
+if [ "$1" = ls-remote ] || [ "$1" = fetch ]; then
+  echo "synthetic-destination-credential" >&2
+fi`);
+
+    const result = pushOnly(env);
+
+    expect(result.status).toBe(0);
+    expect(originHead(target)).toBe(intendedHead);
+    expect(originHead(bare)).not.toBe(intendedHead);
+    const log = readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8');
+    expect(log).toContain('ok-already-on-remote main');
+    expect(log).not.toContain('synthetic-destination-credential');
+  });
+
+  test.each(['first', 'last', 'neither'])('requires every push URL to contain the commit when %s target rejects', (rejecting) => {
+    const targets = [clonePushTarget('first push target'), clonePushTarget('last push target')];
+    git(work, 'push', '-q', 'origin', 'HEAD:main');
+    for (const target of targets) git(work, 'config', '--add', 'remote.origin.pushurl', target);
+    const rejected = rejecting === 'first' ? 0 : rejecting === 'last' ? 1 : -1;
+    if (rejected !== -1) {
+      writeFileSync(join(targets[rejected], 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    }
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+    const env = interceptGit(`if [ "$1" = push ]; then
+  "$GBRAIN_TEST_REAL_GIT" "$@" || true
+  exit 1
+fi`);
+
+    const result = pushOnly(env);
+
+    expect(result.status === 0).toBe(rejected === -1);
+    for (const [index, target] of targets.entries()) {
+      expect(originHead(target) === intendedHead).toBe(index !== rejected);
+    }
+    expect(getLastPushOutcome('main').status).toBe(rejected === -1 ? 'ok' : 'needs_attention');
+  });
+
+  test.each(['initial', 'retry'])('pushes the captured SHA when HEAD moves during the %s push', (attempt) => {
+    if (attempt === 'retry') advanceRemote();
+    const env = interceptGit(`if [ "$1" = push ]; then
+  if [ "$GBRAIN_TEST_PUSH_ATTEMPT" = initial ] || [ -e "$GBRAIN_TEST_PUSH_MARKER" ]; then
+    "$GBRAIN_TEST_REAL_GIT" rev-parse HEAD >"$GBRAIN_TEST_PUSH_MARKER"
+    "$GBRAIN_TEST_REAL_GIT" reset --hard HEAD^ >/dev/null
+    "$GBRAIN_TEST_REAL_GIT" "$@"
+    exit 1
+  fi
+  : >"$GBRAIN_TEST_PUSH_MARKER"
+fi`);
+    env.GBRAIN_TEST_PUSH_ATTEMPT = attempt;
+
+    const result = pushOnly(env);
+
+    const captured = readFileSync(env.GBRAIN_TEST_PUSH_MARKER!, 'utf8').trim();
+    expect(result.status).toBe(0);
+    expect(originHead(bare)).toBe(captured);
+    expect(git(work, 'rev-parse', 'HEAD')).not.toBe(captured);
+    expect(git(bare, 'show', 'main:pending.md')).toBe('pending');
+  });
+
+  test.each(['initial', 'retry'])('does not confirm a moved HEAD ancestor when the captured %s commit is absent', (attempt) => {
+    if (attempt === 'retry') advanceRemote();
+    const remoteHead = originHead(bare);
+    const env = interceptGit(`if [ "$1" = push ]; then
+  if [ "$GBRAIN_TEST_PUSH_ATTEMPT" = initial ] || [ -e "$GBRAIN_TEST_PUSH_MARKER" ]; then
+    "$GBRAIN_TEST_REAL_GIT" rev-parse HEAD >"$GBRAIN_TEST_PUSH_MARKER"
+    "$GBRAIN_TEST_REAL_GIT" reset --hard "$GBRAIN_TEST_REMOTE_HEAD" >/dev/null
+    exit 1
+  fi
+  : >"$GBRAIN_TEST_PUSH_MARKER"
+fi`);
+    env.GBRAIN_TEST_PUSH_ATTEMPT = attempt;
+    env.GBRAIN_TEST_REMOTE_HEAD = remoteHead;
+
+    const result = pushOnly(env);
+
+    expect(result.status).not.toBe(0);
+    expect(originHead(bare)).toBe(remoteHead);
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(remoteHead);
+    expect(getLastPushOutcome('main').status).toBe('needs_attention');
+  });
+
+  test.each(['new-example', 'refs/heads/new-example'])('preserves pushes to a new branch: %s', (branch) => {
+    const result = spawnSync('bash', [join(work, 'scripts', 'brain-commit-push.sh'), '--push-only', branch], {
+      cwd: work, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', env: process.env,
+    });
+
+    expect(result.status).toBe(0);
+    expect(git(bare, 'rev-parse', 'refs/heads/new-example')).toBe(intendedHead);
+  });
+
+  test('does not treat a wildcard branch argument as exact remote confirmation', () => {
+    git(work, 'push', '-q', 'origin', 'HEAD:main');
+    const result = spawnSync('bash', [join(work, 'scripts', 'brain-commit-push.sh'), '--push-only', '*'], {
+      cwd: work, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', env: process.env,
+    });
+
+    expect(result.status).not.toBe(0);
+  });
+
+  test.each(['same commit', 'descendant'])('accepts a rejected push after a concurrent pusher lands the %s', (remoteShape) => {
+    const remoteHead = remoteShape === 'same commit' ? intendedHead
+      : git(work, 'commit-tree', 'HEAD^{tree}', '-p', intendedHead, '-m', 'remote descendant');
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+    const env = interceptGit(`if [ "$1" = push ]; then
+  "$GBRAIN_TEST_REAL_GIT" push origin "$GBRAIN_TEST_REMOTE_HEAD:refs/heads/main"
+  echo "simulated stale expected-ref rejection" >&2
+  exit 1
+fi`);
+    env.GBRAIN_TEST_REMOTE_HEAD = remoteHead;
+
+    const result = pushOnly(env);
+
+    expect(result.status).toBe(0);
+    expect(originHead(bare)).toBe(remoteHead);
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(intendedHead);
+    expect(readFileSync(join(work, 'README.md'), 'utf8')).toBe('unrelated dirty edit\n');
+    const log = readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8');
+    expect(log).toContain('ok-already-on-remote main');
+    expect(log).not.toContain('rebase-pull');
+    expect(log).not.toContain('LOCAL-ONLY');
+    expect(getLastPushOutcome('main').status).toBe('ok');
+  });
+
+  test('confirms the rebased commit when the retry push lands but reports failure', () => {
+    const remoteHead = advanceRemote();
+    const env = interceptGit(`if [ "$1" = push ]; then
+  if [ ! -e "$GBRAIN_TEST_PUSH_MARKER" ]; then
+    : >"$GBRAIN_TEST_PUSH_MARKER"
+  else
+    "$GBRAIN_TEST_REAL_GIT" "$@"
+    echo "simulated lost push acknowledgement" >&2
+    exit 1
+  fi
+fi`);
+
+    const result = pushOnly(env);
+
+    expect(result.status).toBe(0);
+    expect(originHead(bare)).toBe(git(work, 'rev-parse', 'HEAD'));
+    expect(originHead(bare)).not.toBe(intendedHead);
+    expect(git(work, 'merge-base', '--is-ancestor', remoteHead, 'HEAD')).toBe('');
+    expect(git(bare, 'show', 'main:pending.md')).toBe('pending');
+    expect(readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8')).toContain('ok-already-on-remote main');
+  });
+
+  test('checks again after recovery fails while another pusher lands the commit', () => {
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+    const env = interceptGit(`if [ "$1" = push ]; then exit 1; fi
+if [ "$1" = pull ]; then
+  "$GBRAIN_TEST_REAL_GIT" push origin HEAD:refs/heads/main
+  exit 1
+fi`);
+
+    const result = pushOnly(env);
+
+    expect(result.status).toBe(0);
+    expect(originHead(bare)).toBe(intendedHead);
+    expect(readFileSync(join(work, 'README.md'), 'utf8')).toBe('unrelated dirty edit\n');
+  });
+
+  test('does not trust stale remote evidence when origin is unreachable', () => {
+    git(work, 'push', '-q', 'origin', 'HEAD:main');
+    git(work, 'fetch', '-q', 'origin', 'main');
+    expect(git(work, 'rev-parse', 'FETCH_HEAD')).toBe(intendedHead);
+    expect(git(work, 'rev-parse', 'origin/main')).toBe(intendedHead);
+    git(work, 'remote', 'set-url', 'origin', join(root, 'gone.git'));
+
+    const result = pushOnly();
+
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION');
+  });
+
+  test('does not accept containment on another remote branch', () => {
+    git(work, 'push', '-q', 'origin', 'HEAD:other');
+    git(work, 'fetch', '-q', 'origin', 'other');
+    expect(git(work, 'rev-parse', 'FETCH_HEAD')).toBe(intendedHead);
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+    const env = interceptGit('if [ "$1" = push ]; then exit 1; fi');
+
+    const result = pushOnly(env);
+
+    expect(result.status).not.toBe(0);
+    expect(originHead(bare)).not.toBe(intendedHead);
+    expect(readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION');
+  });
+
+  test('keeps exit 4 and the failure message when the remote rejects every push', () => {
+    const remoteHead = originHead(bare);
+    writeFileSync(join(bare, 'hooks', 'pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    writeFileSync(join(work, 'pending.md'), 'updated pending\n');
+
+    const result = spawnSync('bash', [join(work, 'scripts', 'brain-commit-push.sh'), 'update pending', 'pending.md'], {
+      cwd: work, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', env: process.env,
+    });
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain('PUSH FAILED');
+    expect(originHead(bare)).toBe(remoteHead);
+    expect(git(work, 'show', 'HEAD:pending.md')).toBe('updated pending');
+    expect(getLastPushOutcome('main').status).toBe('needs_attention');
+  });
+
+  test('does not confirm the temporary remote HEAD of a conflicted rebase', () => {
+    writeFileSync(join(work, 'README.md'), 'local edit\n');
+    git(work, 'add', 'README.md');
+    git(work, 'commit', '--amend', '--no-edit', '-q');
+    const localHead = git(work, 'rev-parse', 'HEAD');
+    const remoteHead = advanceRemote('README.md');
+
+    const result = pushOnly();
+
+    expect(result.status).not.toBe(0);
+    expect(originHead(bare)).toBe(remoteHead);
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(localHead);
+    expect(readFileSync(join(work, 'README.md'), 'utf8')).toBe('local edit\n');
+    expect(existsSync(join(work, '.git', 'rebase-merge'))).toBe(false);
+    expect(readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION');
   });
 });
 

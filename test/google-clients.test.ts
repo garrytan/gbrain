@@ -899,6 +899,41 @@ describe('CalendarClient', () => {
 // ── PeopleClient ─────────────────────────────────────────────────────────────
 
 describe('PeopleClient', () => {
+  test.each([null, {}, [null], ['invalid'], []])('malformed expiry details preserve typed errors: %j', async details => {
+    for (const expired of [true, false]) {
+      const h = makeHarness(() => json({ error: {
+        code: 400,
+        message: expired ? 'Sync token is expired.' : 'Invalid personFields',
+        details,
+      } }, 400));
+      const people = new PeopleClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+      await expect(people.listConnections({ syncToken: 'stale' })).rejects.toBeInstanceOf(
+        expired ? GoogleCursorExpiredError : CredentialError,
+      );
+    }
+  });
+
+  test.each([
+    { message: 'Sync token is expired. Clear local cache and retry call without the sync token.' },
+    { details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'EXPIRED_SYNC_TOKEN' }] },
+  ])('HTTP 400 expired sync tokens surface cursor expiry: %j', async error => {
+    const h = makeHarness(() => json({ error: { code: 400, ...error } }, 400));
+    const people = new PeopleClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await expect(people.listConnections({ syncToken: 'stale' })).rejects.toBeInstanceOf(GoogleCursorExpiredError);
+  });
+
+  test.each([
+    ['people', 'https://people.googleapis.com/v1/people/me/connections?syncToken=stale', { message: 'Invalid personFields' }],
+    ['people', 'https://people.googleapis.com/v1/people/me/connections', { message: 'Sync token is expired.' }],
+    ['gmail', 'https://gmail.googleapis.com/gmail/v1/users/me/history?syncToken=stale', { message: 'Sync token is expired.' }],
+    ['calendar-json', 'https://www.googleapis.com/calendar/v3/calendars/primary/events?syncToken=stale', { message: 'Sync token is expired.' }],
+    ['people', 'https://people.googleapis.com/v1/people/me/connections?syncToken=stale', { details: [{ reason: 'INVALID_ARGUMENT' }] }],
+  ] as const)('other HTTP 400 errors remain upstream failures: %s %s', async (api, url, error) => {
+    const h = makeHarness(() => json({ error: { code: 400, ...error } }, 400));
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await expect(client.fetchJSON(url, api)).rejects.toBeInstanceOf(CredentialError);
+  });
+
   test('listConnections requests personFields and normalizes contacts', async () => {
     const h = makeHarness((u) => {
       expect(u.searchParams.get('personFields')).toBe('names,emailAddresses,organizations');

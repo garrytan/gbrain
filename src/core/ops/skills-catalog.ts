@@ -37,7 +37,7 @@ const list_skills: Operation = {
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir, source } = sc.resolveSkillsDir(ctx, override);
     const section = typeof p.section === 'string' ? p.section : undefined;
-    return sc.buildSkillCatalog(ctx, dir, source, { section });
+    return sc.buildSkillCatalog(ctx, dir, source, { section, gateDisabled: await sc.readSkillToolGates(ctx) });
   },
   scope: 'read',
   cliHints: { name: 'skills', positional: [] },
@@ -74,7 +74,7 @@ const get_skill: Operation = {
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir } = sc.resolveSkillsDir(ctx, override);
     const name = typeof p.name === 'string' ? p.name : '';
-    return sc.getSkillDetail(ctx, dir, name);
+    return sc.getSkillDetail(ctx, dir, name, { gateDisabled: await sc.readSkillToolGates(ctx) });
   },
   scope: 'read',
   cliHints: { name: 'skill', positional: ['name'] },
