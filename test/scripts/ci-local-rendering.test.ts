@@ -208,14 +208,16 @@ describe('ci-local execution coverage', () => {
 });
 
 describe('required PgBouncer execution through run-e2e', () => {
-  for (const [required, passes, testExit, expectedExit, parentCoverageExists] of [
+  for (const [required, passes, testExit, expectedExit, parentCoverageExists, trailingLines = 0] of [
     [true, 2, 0, 0, false],
     [true, 0, 0, 1, false],
     [true, 0, 3, 1, false],
     [false, 0, 0, 0, false],
     [true, 2, 0, 0, true],
+    [true, 2, 0, 0, false, 10_000],
+    [true, 0, 0, 1, false, 10_000],
   ] as const) {
-    test(`required=${required}, executed=${passes}, Bun exit=${testExit}, parent coverage exists=${parentCoverageExists}`, () => {
+    test(`required=${required}, executed=${passes}, Bun exit=${testExit}, parent coverage exists=${parentCoverageExists}${trailingLines ? ', with oversized trailing output' : ''}`, () => {
       const home = mkdtempSync(join(tmpdir(), 'gbrain-ci-pooler-'));
       try {
         const bin = join(home, 'bin');
@@ -228,6 +230,11 @@ describe('required PgBouncer execution through run-e2e', () => {
         writeFileSync(join(bin, 'bun'), `#!/bin/sh
 printf '%s\\n' "$GBRAIN_PGBOUNCER_URL" "$GBRAIN_PGBOUNCER_DIRECT_URL" "$GBRAIN_CI_REQUIRE_PGBOUNCER" "$GBRAIN_TEST_DB" "\${GBRAIN_SOURCE-unset}" "\${COVERAGE_DIR:-disabled}" > "$ENV_REPORT"
 printf ' %s pass\\n 0 fail\\n' "$FAKE_PASSES"
+i=0
+while [ "$i" -lt "${trailingLines}" ]; do
+  printf 'diagnostic after summary\\n'
+  i=$((i + 1))
+done
 exit "$FAKE_EXIT"
 `, { mode: 0o755 });
         const report = join(home, 'environment');
