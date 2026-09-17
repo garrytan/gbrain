@@ -15,9 +15,12 @@
  *   - Linux crontab still writes the same every-5-min line.
  *
  * Isolation: every wrapper / env-template write lands under a per-test
- * GBRAIN_HOME (see beforeEach). Never `delete process.env.GBRAIN_HOME` in a
- * hook here — Bun's os.homedir() ignores a mutated $HOME, so a deleted
- * override sends writeWrapperScript() to the operator's REAL ~/.gbrain.
+ * GBRAIN_HOME, and the plist / systemd-unit paths (which the installer resolves
+ * from $HOME) under a per-test HOME — see beforeEach. Never `delete
+ * process.env.GBRAIN_HOME` in a hook here: Bun's os.homedir() ignores a
+ * mutated $HOME, so a deleted override sends writeWrapperScript() to the
+ * operator's REAL ~/.gbrain. test/helpers/real-home-guard-preload.ts fails
+ * any test that regresses this.
  */
 
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
@@ -40,17 +43,8 @@ beforeEach(() => {
   for (const k of envKeys()) envSnapshot[k] = process.env[k];
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-install-test-'));
   process.env.HOME = tmp;
-  // Scope every gbrain-home write to this test's tmp dir. This used to be
-  // `delete process.env.GBRAIN_HOME`, which undid the suite-wide isolation
-  // from test/helpers/gbrain-home-preload.ts: Bun's os.homedir() ignores a
-  // mutated $HOME, so configDir() fell back to the operator's REAL ~/.gbrain
-  // and every writeWrapperScript() call below regenerated the live
-  // autopilot-run.sh with a fixture repo path + a fake CLI path (launchd then
-  // re-ran that broken wrapper every minute until a manual reinstall), and
-  // the env-file suite wrote its marker into the real ~/.gbrain/env.
-  // GBRAIN_HOME is read at call time, so setting it here is enough; afterEach
-  // restores the preload's value. test/helpers/real-home-guard-preload.ts
-  // fails any test that regresses this.
+  // SET GBRAIN_HOME per test, never delete it — see the header. It is read at
+  // call time, so this is enough; afterEach restores the preload's value.
   process.env.GBRAIN_HOME = tmp;
   // Start each test with a clean slate for ephemeral env vars.
   delete process.env.RENDER;
@@ -209,11 +203,8 @@ describe('autopilot wrapper script — key sourcing (#2608)', () => {
   });
 });
 
-// Isolation pin: the wrapper and the env template must land under the
-// per-test GBRAIN_HOME, never under the real home. The pre-fix shape of this
-// file (`delete process.env.GBRAIN_HOME` in beforeEach) sent both writes to
-// the operator's live ~/.gbrain — a green run that silently replaced a
-// production autopilot wrapper with a fixture one.
+// Isolation pin for the header's rule: both install writes land under the
+// per-test GBRAIN_HOME, never under the real home.
 describe('autopilot install — writes stay under the per-test GBRAIN_HOME', () => {
   test('wrapper + env template land in <GBRAIN_HOME>/.gbrain, not the real home', () => {
     const fakeBin = makeFakeGbrainOnPath();

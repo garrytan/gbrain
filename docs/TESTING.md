@@ -534,26 +534,25 @@ brain can't ride through. `GBRAIN_DEBUG_PRELOAD=1` prints the allocated
 scratch home for debugging.
 
 **Real-home write guard preload.** `test/helpers/real-home-guard-preload.ts`
-(bunfig `[test]` preload) is the enforcement behind the isolation above. It
-fingerprints the operator's real `~/.gbrain/autopilot-run.sh` and
-`~/.gbrain/env` at preload time — before any test file can touch `HOME` or
-`GBRAIN_HOME` — and re-checks after every test, plus once at the end of the
-run. A change fails the test that made it (Bun attributes the `afterEach`
-throw to that test by name) and re-baselines, so one leak is one failure, not
-a cascade. Only these two files are guarded: both are written solely by
-`gbrain autopilot --install`, never by the running daemon, so a change during
-a test run is a leak by construction (`config.json` is deliberately excluded —
-the live daemon and sibling workspaces legitimately rewrite it). Inert where no
-real `~/.gbrain` exists (CI), except that a test CREATING either file is caught
-too. The rule it enforces: in a hook, SET `GBRAIN_HOME` to a tmp dir, never
-`delete` it — Bun's `os.homedir()` ignores a runtime `HOME` mutation, so a
-deleted override sends `configDir()` straight back to the real home (that
-exact shape in `test/autopilot-install.test.ts` once replaced a live autopilot
-wrapper with a fixture one, and no test went red). It is a separate file from
-`gbrain-home-preload.ts` because `test/cli-import-no-signal-handlers.test.ts`
-imports that helper via `bun -e`, and registering a `bun:test` hook outside the
-runner throws. Self-tested by `test/real-home-guard-preload.test.ts`, which
-spawns `bun test --preload` on generated probes under a scratch `HOME`.
+(bunfig `[test]` preload) is the enforcement behind the isolation above: it
+fingerprints every file `gbrain autopilot --install` writes into the
+operator's real home (`~/.gbrain/autopilot-run.sh`, `~/.gbrain/env`,
+`~/.gbrain/start-autopilot.sh`, the launchd plist and the systemd unit) before
+any test file loads, re-checks around every test, and fails the test whose run
+changed one — or, for a change that predates the test (another file's
+`afterAll`, another test process, an operator command), says so instead of
+blaming it. The rule it enforces: in a hook, SET `GBRAIN_HOME` (a non-blank
+absolute path) to a tmp dir, never `delete` it — Bun's `os.homedir()` ignores a
+runtime `HOME` mutation, so a deleted override sends `configDir()` straight
+back to the real home (that exact shape in `test/autopilot-install.test.ts`
+once replaced a live autopilot wrapper with a fixture one, and no test went
+red) — and set `HOME` too when the code under test resolves the plist, unit or
+start-script path. `GBRAIN_TEST_ALLOW_REAL_HOME_WRITES=1` disarms it for a
+deliberate real-install run (one-shot on the command line; it prints a
+DISARMED notice). Mechanism, attribution wording, per-file remediation and the
+deliberate exclusions (ctime, `config.json`) live in the file's header;
+`test/real-home-guard-preload.test.ts` self-tests it against a scratch `HOME`
+and pins the guarded names against the installer source.
 
 **Provider-key strip preload.** `test/helpers/provider-keys-preload.ts` (bunfig
 `[test]` preload) strips the ambient provider credentials the canonical fold

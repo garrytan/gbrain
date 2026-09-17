@@ -50,8 +50,10 @@ timeout = 60_000
 # $HOME) sends every gbrain-home write to the operator's REAL ~/.gbrain — one
 # such file regenerated the live autopilot-run.sh with a fixture repo path and
 # launchd re-ran the broken wrapper every minute, with no failing test
-# anywhere. The guard fingerprints the real ~/.gbrain/autopilot-run.sh + env
-# at preload time and fails the exact test that changes either. See
+# anywhere. The guard fingerprints the real install artefacts (the wrapper,
+# env file, start script, launchd plist and systemd unit) at preload time and fails the test
+# whose run changes any of them; GBRAIN_TEST_ALLOW_REAL_HOME_WRITES=1 disarms
+# it for a deliberate real-install run. See
 # test/helpers/real-home-guard-preload.ts.
 #
 # git-hermetic-preload: inject commit.gpgsign=false/tag.gpgsign=false via
