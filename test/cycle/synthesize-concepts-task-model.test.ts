@@ -40,9 +40,12 @@ beforeEach(async () => {
  * Five atoms on one concept clears TIER_T2_MIN, which is the threshold that
  * routes a group through chat() rather than deterministicNarrative().
  */
-function t2Atoms() {
+// `prefix` varies group membership between runs: an unchanged group is not
+// re-synthesized (member-fingerprint change detection), so a second run must
+// see different members to exercise the narrative call again.
+function t2Atoms(prefix = 'a') {
   return Array.from({ length: 5 }, (_, i) => ({
-    slug: `atoms/a${i}`,
+    slug: `atoms/${prefix}${i}`,
     concept_refs: ['concepts/x'],
     body: `body ${i}`,
     title: `A${i}`,
@@ -101,7 +104,7 @@ describe('synthesize_concepts task-model routing', () => {
 
     await engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
     const second: Array<string | undefined> = [];
-    await runPhaseSynthesizeConcepts(engine, { _atoms: t2Atoms(), _chat: capturingChat(second) });
+    await runPhaseSynthesizeConcepts(engine, { _atoms: t2Atoms('b'), _chat: capturingChat(second) });
 
     expect(new Set(first)).toEqual(new Set(['anthropic:claude-haiku-4-5']));
     expect(new Set(second)).toEqual(new Set(['anthropic:claude-sonnet-4-6']));
