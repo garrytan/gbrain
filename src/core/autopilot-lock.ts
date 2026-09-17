@@ -82,8 +82,8 @@ export function looksLikeGbrainAutopilotCommand(command: string): boolean {
   if (!/(^|\s)autopilot(\s|$)/i.test(normalized)) return false;
   // Win32_Process.CommandLine quotes executables under paths with spaces: `"C:/Program Files/gbrain/gbrain.exe" autopilot`.
   if (/(^|[\/\s])"?gbrain(?:\.exe)?"?(\s|$)/i.test(normalized)) return true;
-  return /(^|\s)(?:\S+\/)?(?:\.{1,2}\/)?(?:src\/)?cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized)
-    || /(^|\s)\S*\/src\/cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized);
+  // Match the basename so quoted paths and space-joined /proc argv both work.
+  return /(^|[\/\s])["']?cli\.(?:ts|js|mjs)["']?(\s|$)/i.test(normalized);
 }
 
 export function classifyAutopilotLockHolder(
