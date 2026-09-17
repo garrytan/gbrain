@@ -176,8 +176,8 @@ function isOffValue(v: string): boolean {
 
 // ~30s per-engine cache: writePageThrough and the facts fence lane run once
 // per page in bulk loops (sync, embed catch-up, dream cycle); a config SELECT
-// per page for a value that changes at human speed is pure overhead.
-type WriteThroughCacheEntry = { at: number; disabled: boolean };
+// per page for values that change at human speed is pure overhead.
+type WriteThroughCacheEntry = { at: number; disabled: boolean; writeSourceId: string | null };
 let writeThroughCache = new WeakMap<BrainEngine, WriteThroughCacheEntry>();
 const WRITE_THROUGH_CACHE_MS = 30_000;
 
@@ -187,24 +187,30 @@ export function _resetWriteThroughCacheForTest(): void {
 }
 
 /**
- * True when `sync.write_through` is set to an off value — the operator chose
- * a DB-only brain (no `.md` artifacts, no fence files, no write-through
- * commits). Fail-open to enabled: a config read error must never silently
- * turn the disk sink off. Shared by writePageThrough and the facts fence
+ * True when write-through is off or `sync.write_source_id` names a different
+ * source. The latter keeps other sources indexed without writing their repos.
+ * A disabled source uses the existing DB-only behavior (no `.md` artifacts,
+ * no fence files, no write-through commits). Config read errors skip disk
+ * writes so they cannot bypass the source restriction. Shared by writePageThrough and the facts fence
  * lane (fence-write.ts) so both disk sinks honor one flag.
  */
-export async function isWriteThroughDisabled(engine: BrainEngine): Promise<boolean> {
+export async function isWriteThroughDisabled(engine: BrainEngine, sourceId = 'default'): Promise<boolean> {
   const cached = writeThroughCache.get(engine);
-  if (cached && Date.now() - cached.at < WRITE_THROUGH_CACHE_MS) return cached.disabled;
+  if (cached && Date.now() - cached.at < WRITE_THROUGH_CACHE_MS) {
+    return cached.disabled || (cached.writeSourceId !== null && cached.writeSourceId !== sourceId);
+  }
   let disabled = false;
+  let writeSourceId: string | null = null;
   try {
     const v = await engine.getConfig('sync.write_through');
     disabled = v != null && isOffValue(v);
+    writeSourceId = await engine.getConfig('sync.write_source_id');
   } catch {
-    disabled = false;
+    // A transient config error must not turn an established write restriction off.
+    disabled = true;
   }
-  writeThroughCache.set(engine, { at: Date.now(), disabled });
-  return disabled;
+  writeThroughCache.set(engine, { at: Date.now(), disabled, writeSourceId });
+  return disabled || (writeSourceId !== null && writeSourceId !== sourceId);
 }
 
 /** Resolved disk target for a page's canonical markdown artifact. */
@@ -222,7 +228,7 @@ export type PageWriteTarget =
        */
       sourcePathToBind: string;
     }
-  | { ok: false; skipped: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' };
+  | { ok: false; skipped: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' };
 
 /**
  * Scanner-convention `pages.source_path` for a file under `scanRoot` (the
@@ -300,6 +306,9 @@ export async function resolvePageWriteTarget(
   sourceId: string,
   opts: { includeDeleted?: boolean } = {},
 ): Promise<PageWriteTarget> {
+  if (await isWriteThroughDisabled(engine, sourceId)) {
+    return { ok: false, skipped: 'disabled_by_config' };
+  }
   let filePath: string;
   let writeRoot: string;
   let scanRoot: string;
@@ -387,7 +396,7 @@ export async function writePageThrough(
     // working tree where per-page `.md` artifacts are unwanted. Unset or any
     // other value keeps the default. Memoized per engine (~30s TTL) so bulk
     // loops don't pay one config SELECT per page.
-    if (await isWriteThroughDisabled(engine)) {
+    if (await isWriteThroughDisabled(engine, sourceId)) {
       return { written: false, skipped: 'disabled_by_config' };
     }
     const target = await resolvePageWriteTarget(engine, slug, sourceId);
@@ -541,7 +550,7 @@ export async function deletePageThrough(
   try {
     // `sync.write_through=false` means the operator opted this brain out of
     // the disk sink entirely — never unlink files gbrain does not own.
-    if (await isWriteThroughDisabled(engine)) {
+    if (await isWriteThroughDisabled(engine, sourceId)) {
       return { removed: false, skipped: 'disabled_by_config' };
     }
     const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);

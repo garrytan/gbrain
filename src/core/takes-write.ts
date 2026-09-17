@@ -52,7 +52,7 @@ import {
 } from './takes-fence.ts';
 import { withPageLock } from './page-lock.ts';
 import { resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
-import { sanitizeRecordedSourcePath, recordedPathFromFileUri } from './write-through.ts';
+import { sanitizeRecordedSourcePath, recordedPathFromFileUri, isWriteThroughDisabled } from './write-through.ts';
 import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
 import { atomicWriteFileSync } from './atomic-write.ts';
 
@@ -150,6 +150,9 @@ async function resolveTakesFilePath(
   sourceId?: string,
 ): Promise<{ path: string; writeRoot: string }> {
   const src = sourceId ?? 'default';
+  if (await isWriteThroughDisabled(engine, src)) {
+    throw new TakesWriteError('mirror_unavailable', `Disk writes are disabled for source '${src}'.`);
+  }
   const rows = await engine.executeRaw<
     { local_path: string | null; source_path: string | null; source_uri: string | null }
   >(
