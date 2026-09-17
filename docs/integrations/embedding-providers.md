@@ -69,7 +69,7 @@ The doctor distinguishes two repair paths:
 - **Cost-sensitive, English-only**: Ollama (free, local) or Voyage (paid, best quality per dollar).
 - **Quality-first**: Voyage `voyage-4-large` (1024-2048 dims, ~3-4× more dense tokens than OpenAI tiktoken).
 - **Code-heavy brain (gstack per-worktree, source repos)**: Voyage `voyage-code-3` (1024 default; supports 256/512/1024/2048), or `voyage-code-4` (hosted, flexible dims, $0.12/M). Tuned on programming languages. Voyage publishes head-to-head numbers showing it outperforms their general flagships on code retrieval ([voyageai.com/blog](https://voyageai.com/blog)). For gstack's per-worktree pglite-backed code brain, this is the right default — see Topology 3 in `docs/architecture/topologies.md`.
-- **Reranking pair**: Voyage `rerank-2.5` ($0.05/M; `rerank-2.5-lite` at $0.02/M for cost-sensitive setups) is the mode-bundle default and rides the same `VOYAGE_API_KEY` as embeddings. Voyage's preview `rerank-3` / `rerank-3-lite` pair is also allowlisted — opt in with `gbrain config set search.reranker.model voyage:rerank-3` (the default stays on `rerank-2.5` so upgrades never move you); without the key search fails open in fusion order and `gbrain search modes` says so. ZeroEntropy `zerank-2` is deprecated (hosted API ends 2026-09-04); an explicitly configured `zeroentropyai:zerank-*` short-circuits past that date (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)).
+- **Reranking pair**: Voyage `rerank-2.5` ($0.05/M; `rerank-2.5-lite` at $0.02/M for cost-sensitive setups) is the mode-bundle default and rides the same `VOYAGE_API_KEY` as embeddings. The same two Voyage models are also supported through OpenRouter when one consolidated provider key is preferred. Voyage's preview `rerank-3` / `rerank-3-lite` pair is also allowlisted — opt in with `gbrain config set search.reranker.model voyage:rerank-3` (the default stays on `rerank-2.5` so upgrades never move you); without the key search fails open in fusion order and `gbrain search modes` says so. ZeroEntropy `zerank-2` is deprecated (hosted API ends 2026-09-04); an explicitly configured `zeroentropyai:zerank-*` short-circuits past that date (see [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)).
 - **Local reranking (no API spend)**: `llama-server-reranker` recipe — point gbrain at your own `llama-server --reranking` instance running Qwen3-Reranker or self-hosted ZeroEntropy weights. Same `gateway.rerank()` seam, $0 per call. Walkthrough in [`docs/ai-providers/llama-server-reranker.md`](../ai-providers/llama-server-reranker.md).
 - **One key for many hosted models**: OpenRouter. Set `OPENROUTER_API_KEY` and use `openrouter:<provider>/<model>` for chat against GPT-5.2, Claude 4.x, Gemini 3, DeepSeek, and dozens more without juggling per-provider keys. Embedding catalog includes OpenAI, Google, Qwen, BGE-M3.
 - **Enterprise compliance**: Azure OpenAI (data residency + private endpoints) or self-hosted via llama-server / Ollama.
@@ -125,6 +125,16 @@ Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek,
 **Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). The recipe carries verified per-model native dims for its catalog — `openai/text-embedding-3-large` (3072), `qwen/qwen3-embedding-8b` (4096), `bge-m3` (1024) — so opting in via `--embedding-model openrouter:<id>` plans the right column width automatically. Any id NOT in that list (including `google/gemini-embedding-2-preview`, whose width is unverified) has no silent default: you must pass explicit dimensions (`--embedding-dimensions <N>` or `embedding_dimensions` config) or the command errors with the fix. Pricing matches the upstream provider (OR adds a small markup).
 
 **Chat**: every chat model OR proxies works through `/v1/chat/completions`. The recipe lists 8 curated entry points (GPT-5.2 family, Claude 4.5/4.6/4.7, Gemini 3 Flash Preview, DeepSeek); any other OR catalog ID also works. Tool-calling envelope is supported by the OR endpoint, but per-model capability varies — check https://openrouter.ai/models before counting on tools for a specific slug.
+
+**Reranking**: GBrain's strict reranker allowlist includes Cohere Rerank 3.5 / 4, NVIDIA Nemotron's free route, and Voyage `rerank-2.5-lite` / `rerank-2.5`. OpenRouter normalizes those models to GBrain's existing `/rerank` request and response contract, so no separate Voyage key is required. To opt into the lower-cost Voyage model:
+
+```bash
+gbrain config set search.reranker.model openrouter:voyageai/rerank-2.5-lite
+gbrain config set search.reranker.enabled true
+gbrain models doctor --json
+```
+
+Use `openrouter:voyageai/rerank-2.5` in the first command for the quality-first model. Pricing is metered from the selected model, and Voyage's query-per-document billing formula is reflected in the budget estimate.
 
 **Optional env**:
 - `OPENROUTER_BASE_URL` — point at a self-hosted OR-compatible proxy.
