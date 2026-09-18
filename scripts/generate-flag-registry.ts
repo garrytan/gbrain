@@ -122,9 +122,6 @@ function facadeExpansion(p: string): string[] {
     }
     return out;
   };
-  // auth delegates rescope-client parsing to grants/cli.ts. Its safety-flag
-  // consumption belongs to auth's surface, just like an in-file parser.
-  if (rel === 'src/commands/auth.ts') return [join(ROOT, 'src/core/grants/cli.ts')];
   if (rel === 'src/core/operations.ts') return collect(join(ROOT, 'src/core/ops'));
   if (rel === 'src/commands/doctor.ts') return collect(join(ROOT, 'src/commands/doctor'));
   if (rel === 'src/commands/skillpack.ts') return collect(join(ROOT, 'src/commands/skillpack'));
@@ -353,6 +350,14 @@ export function buildFlagRegistry(): Record<string, string[]> {
         for (const dep of relativeImports(sfSrc, dirname(sfPath))) {
           for (const f of flagsInText(stripComments(readSrc(dep)))) flags.add(f);
         }
+      }
+    }
+
+    // auth owns these delegated parsers. Count their consumption evidence
+    // only for auth, without expanding unrelated commands that import auth.
+    if (command === 'auth') {
+      for (const parser of ['src/core/grants/cli.ts', 'src/commands/persistence-admin.ts']) {
+        depthZeroText += stripComments(readSrc(join(ROOT, parser)));
       }
     }
 
