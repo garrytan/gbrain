@@ -17,6 +17,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { setupDB, teardownDB, hasDatabase } from './helpers.ts';
 import {
   runPhaseProposeTakes,
+  __testing,
   EMPTY_EXTRACTION_TOMBSTONE_TEXT,
   type ProposeTakesExtractor,
 } from '../../src/core/cycle/propose-takes.ts';
@@ -75,6 +76,23 @@ beforeAll(async () => {
 afterAll(async () => {
   if (skip) return;
   await teardownDB();
+});
+
+describeIfDB('propose_takes candidate filtering — Postgres', () => {
+  test('dream output cannot consume the candidate limit (#5212)', async () => {
+    for (const [name, marker] of [['human', false], ['generated', true], ['legacy-generated', 'true']] as const) {
+      await engine.putPage(`takes/${name}`, {
+        title: name, type: 'analysis', compiled_truth: 'Example claim.', timeline: '',
+        frontmatter: { dream_generated: marker },
+      });
+    }
+    const candidates = await __testing.listCandidatePages(engine, { sourceId: 'default' }, 1);
+    expect(candidates.map(page => page.slug)).toEqual(['takes/human']);
+    // Keep this fixture out of the phase-level JSONB test below.
+    for (const name of ['human', 'generated', 'legacy-generated']) {
+      await engine.deletePage(`takes/${name}`, { sourceId: 'default' });
+    }
+  });
 });
 
 describeIfDB('propose_takes dedup_against_fence_rows JSONB — Postgres regression (D3)', () => {

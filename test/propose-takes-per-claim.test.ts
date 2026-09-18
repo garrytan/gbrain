@@ -84,6 +84,30 @@ describe('#2138 per-claim proposal idempotency', () => {
     expect((result.details as Record<string, unknown>).pages_scanned).toBe(1);
   });
 
+  test('excludes dream output before the page limit while retaining human pages (#5212)', async () => {
+    await putThesis();
+    for (const [name, marker] of [['human', false], ['generated', true], ['legacy-generated', 'true']] as const) {
+      await engine.putPage(`notes/${name}`, {
+        title: name,
+        type: 'analysis',
+        compiled_truth: 'A claim that could otherwise be extracted.',
+        frontmatter: { dream_generated: marker },
+        timeline: '',
+      });
+    }
+    const scannedPages: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      scannedPages.push(pagePath);
+      return [{ claim_text: 'An example claim', kind: 'take', holder: 'brain', weight: 0.6 }];
+    };
+    const result = await runPhaseProposeTakes(context(), { extractor, pageLimit: 2 });
+    expect(result.status).toBe('ok');
+    expect(scannedPages.sort()).toEqual(['notes/human', 'wiki/essays/thesis']);
+    expect(result.details.pages_scanned).toBe(2);
+    expect(await countProposals('notes/generated')).toBe(0);
+    expect(await countProposals('notes/legacy-generated')).toBe(0);
+  });
+
   test('keeps distinct claims, drops repeated claim, then page-cache hits', async () => {
     await putThesis();
     const result = await runPhaseProposeTakes(context(), { extractor: proposals });
