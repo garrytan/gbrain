@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.2.1] - 2026-09-18
+
+### Fixed
+
+- Preview OAuth client grant changes and local writer registrations with `--dry-run` without the CLI rejecting the documented flag.
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**

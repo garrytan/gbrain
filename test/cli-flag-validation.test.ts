@@ -107,6 +107,19 @@ describe('#2185 acceptance — real usage stays legal', () => {
     expect(validateCommandFlags('sync', ['--full'])).toBeNull();
   });
 
+  test('auth grant previews pass the dispatch gate and retain dry-run intent (#5039, #5189)', async () => {
+    const { parseRescopeGrantArgs } = await import('../src/core/grants/cli.ts');
+    const { parsePersistenceAdminArgs } = await import('../src/commands/persistence-admin.ts');
+    const rescope = ['--dry-run', '--json', '--if-version', '1', '--scopes', 'read'];
+    expect(validateCommandFlags('auth', ['rescope-client', 'example-client', ...rescope])).toBeNull();
+    expect(parseRescopeGrantArgs(rescope).dryRun).toBe(true);
+    const localWriter = ['register', 'stdio', '--scopes', 'read', '--source-ids', 'default', '--dry-run', '--json'];
+    expect(validateCommandFlags('auth', ['local-writer', ...localWriter])).toBeNull();
+    expect(parsePersistenceAdminArgs('local-writer', localWriter).params.dry_run).toBe(true);
+    expect(buildFlagRegistry().auth).toContain('--dry-run');
+    expect(validateCommandFlags('auth', ['rescope-client', 'example-client', '--dry-rnu'])).toBe('--dry-rnu');
+  });
+
   test('scope flags require direct consumption on upgrade surfaces', () => {
     expect(validateCommandFlags('reindex', ['--markdown', '--type', 'atom'])).toBeNull();
     expect(validateCommandFlags('upgrade', ['--type', 'atom'])).toBe('--type');

@@ -353,6 +353,14 @@ export function buildFlagRegistry(): Record<string, string[]> {
       }
     }
 
+    // auth owns these delegated parsers. Count their consumption evidence
+    // only for auth, without expanding unrelated commands that import auth.
+    if (command === 'auth') {
+      for (const parser of ['src/core/grants/cli.ts', 'src/commands/persistence-admin.ts']) {
+        depthZeroText += stripComments(readSrc(join(ROOT, parser)));
+      }
+    }
+
     for (const f of EXTRA_FLAGS[command] ?? []) { flags.add(f); depthZero.add(f); }
     for (const f of SAFETY_FLAGS) {
       if (flags.has(f) && !consumes(depthZeroText, f)) flags.delete(f);
