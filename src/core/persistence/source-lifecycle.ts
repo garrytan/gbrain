@@ -96,9 +96,23 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     // Hash canonical bytes while holding native exclusion, without a database
     // connection checked out. The final transaction rejects new pending mirrors.
     const manifests=new Map<string,ReturnType<typeof worktreeManifest>>();
+    // #5200: byte-identity manifests verify canonical bytes on transfer/compare
+    // paths; registry retirements (archive/remove/purge) transfer no bytes and
+    // their only manifest consumer is the .has-guarded refresh below. Requiring
+    // a full symlink-free walk merely to mutate lifecycle state wedges any
+    // source whose tree holds a legitimate symlink — so retirements proceed
+    // best-effort without a refreshed manifest when the walk hits symlinks.
+    // Transfer/compare ops (add/claim/rebind/restore/reclone) keep the hard
+    // failure, and the stored-manifest refresh still runs wherever the walk
+    // succeeds (clone recovery keeps its verified checkpoint).
+    const retirementOp=['archive','remove','purge'].includes(input.operation);
     for(const path of new Set([...bindings.map(binding=>binding.local_path!).filter(Boolean),...(root?[root.worktree]:[])])) {
       if(!existsSync(path)) {if(input.operation==='add'&&input.createDirectory&&path===root?.worktree)continue;throw new OperationError('recovery_required','The canonical checkout is missing; restore its verified manifest first.');}
-      const manifest=worktreeManifest(path);
+      let manifest:ReturnType<typeof worktreeManifest>|undefined;
+      try{manifest=worktreeManifest(path);}catch(error){
+        if(!retirementOp||(error as {code?:string}|undefined)?.code!=='writer_manifest_unsafe') throw error;
+        continue;
+      }
       if(Buffer.byteLength(JSON.stringify(manifest))>1_048_576) throw new OperationError('request_too_large','The verified source manifest exceeds the 1 MiB administration metadata bound.');
       manifests.set(path,manifest);
     }
