@@ -122,6 +122,9 @@ function facadeExpansion(p: string): string[] {
     }
     return out;
   };
+  // auth delegates rescope-client parsing to grants/cli.ts. Its safety-flag
+  // consumption belongs to auth's surface, just like an in-file parser.
+  if (rel === 'src/commands/auth.ts') return [join(ROOT, 'src/core/grants/cli.ts')];
   if (rel === 'src/core/operations.ts') return collect(join(ROOT, 'src/core/ops'));
   if (rel === 'src/commands/doctor.ts') return collect(join(ROOT, 'src/commands/doctor'));
   if (rel === 'src/commands/skillpack.ts') return collect(join(ROOT, 'src/commands/skillpack'));
