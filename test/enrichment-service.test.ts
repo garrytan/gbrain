@@ -51,6 +51,16 @@ describe('enrichment-service', () => {
       expect(names).toContain('Sarah Connor');
     });
 
+    test('extracts capitalized multi-word names in other scripts', () => {
+      // Was ASCII-only ([A-Z][a-z]+): every non-Latin name-shaped token was
+      // invisible to the extractor, so extract_entities found zero entities
+      // in non-Latin text regardless of how well-formed the names were.
+      const entities = extractEntities('Вчера встретился с Иван Петров и Анна Смирнова.');
+      const names = entities.map(e => e.name);
+      expect(names).toContain('Иван Петров');
+      expect(names).toContain('Анна Смирнова');
+    });
+
     test('classifies company names with Corp/Inc/Labs', () => {
       const entities = extractEntities('We visited Acme Corp and Beta Labs.');
       const acme = entities.find(e => e.name.includes('Acme'));

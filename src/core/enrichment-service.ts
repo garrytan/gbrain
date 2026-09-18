@@ -362,7 +362,7 @@ export function extractEntities(text: string): Array<{ name: string; type: 'pers
   // and the Unicode line/paragraph separators (U+2028/U+2029) -- while
   // retaining horizontal whitespace (spaces, tabs, NBSP, other Unicode
   // space separators), unlike a plain `[ \t]+`.
-  const namePattern = /\b([A-Z][a-z]+(?:[^\S\r\n\v\f\u2028\u2029]+[A-Z][a-z]+){1,3})\b/g;
+  const namePattern = /(?<!\p{L})(\p{Lu}[\p{Ll}\p{M}]+(?:[^\S\r\n\v\f\u2028\u2029]+\p{Lu}[\p{Ll}\p{M}]+){1,3})(?!\p{L})/gu;
   let match;
   while ((match = namePattern.exec(text)) !== null) {
     const name = match[1];
