@@ -208,3 +208,32 @@ high-ceiling retrieval re-run with `expansion=true` (one LLM multi-query call)
 per weak-graded query and IS reachable by remote MCP callers once the operator
 enables it — attacker-shaped weak queries drive that spend. Both respect
 `spend.posture`; leave them off unless you accept per-weak-query LLM cost.
+
+## LongMemEval resume-noop receipts
+
+The external `scripts/eval-spend-guard.sh` reservation is separate from
+`spend.posture`. A LongMemEval resume with no remaining questions **and** no judge
+backfill calls no providers and writes this invocation-only receipt to
+`GBRAIN_EVAL_ACTUAL_COST_FILE`, if set:
+
+```json
+{"schema_version":1,"scope":"invocation","complete":true,"reason":"resume_noop","cost_usd":0}
+```
+
+The runner writes a temporary sibling and atomically renames it. Historical
+`judge_cost_usd` / cumulative QA totals are not copied into this receipt. A
+quality-gate failure may still produce a nonzero command exit; that does not
+change the no-op invocation's zero provider spend.
+
+Only this canonical v1 shape and key order qualify for zero reconciliation
+(JSON whitespace between tokens is allowed). The shell guard does not add a
+JSON-parser dependency. Missing/duplicate/extra fields, partial receipts, bare
+`0`, legacy `{"cost_usd":0}`, and other zero formats retain the estimate. Existing
+positive-cost formats retain their previous behavior.
+
+Zero receipts require a path that did not exist when the guard started. The
+guard's default temporary path satisfies this automatically; when overriding
+`GBRAIN_EVAL_ACTUAL_COST_FILE`, use a fresh path per invocation. A pre-existing
+receipt must not clear another run's reservation. Receipt write failure leaves
+the estimate in place. This is not total-cost accounting for paid evaluations;
+normal reader, embedding, judge, retry, and cache pricing remain unchanged.

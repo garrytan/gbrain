@@ -536,6 +536,49 @@ describe('eval-spend-guard.sh', () => {
     expect(doneRows()[0].cost_usd).toBe(0.5);
   });
 
+  test('accepts only the complete canonical invocation resume-noop zero receipt', () => {
+    const receipt = { schema_version: 1, scope: 'invocation', complete: true, reason: 'resume_noop', cost_usd: 0 };
+    const cases: Array<[string, number]> = [
+      [JSON.stringify(receipt), 0],
+      [JSON.stringify(receipt, null, 2), 0],
+      [JSON.stringify({ ...receipt, complete: false }), 3],
+      [JSON.stringify({ ...receipt, schema_version: 2 }), 3],
+      [JSON.stringify({ ...receipt, scope: 'cumulative' }), 3],
+      [JSON.stringify({ ...receipt, reason: 'resume_ noop' }), 3],
+      [JSON.stringify({ ...receipt, cost_usd: '0' }), 3],
+      [JSON.stringify(receipt).slice(0, -1), 3],
+      [JSON.stringify(receipt).replace(':1,', ':1,\v'), 3],
+      [JSON.stringify(receipt).replace('"complete":true,', ''), 3],
+      [JSON.stringify(receipt).replace('"complete":true,', '"complete":false,"complete":true,'), 3],
+      ['0', 3],
+      ['{"cost_usd":0}', 3],
+      ['0.25', 0.25],
+      ['{"cost_usd":0.25}', 0.25],
+    ];
+    for (const [payload, cost] of cases) {
+      writeFileSync(ledger, '');
+      const r = run(['75', '3', '--', 'sh', '-c', 'printf "%s" "$RECEIPT" > "$GBRAIN_EVAL_ACTUAL_COST_FILE"'], { RECEIPT: payload });
+      expect(r.status, payload).toBe(0);
+      expect(doneRows()[0].cost_usd, payload).toBe(cost);
+    }
+  });
+
+  test('rejects NUL bytes rather than letting shell substitution erase them', () => {
+    const file = join(dir, 'malformed.json');
+    writeFileSync(file, '{"schema_version":1,"scope":"invoca\0tion","complete":true,"reason":"resume_noop","cost_usd":0}');
+    const r = run(['75', '3', '--', 'sh', '-c', 'cat "$SOURCE" > "$GBRAIN_EVAL_ACTUAL_COST_FILE"'], { SOURCE: file });
+    expect(r.status).toBe(0);
+    expect(doneRows()[0].cost_usd).toBe(3);
+  });
+
+  test('never credits a pre-existing zero receipt to a new invocation', () => {
+    const file = join(dir, 'stale-zero.json');
+    writeFileSync(file, JSON.stringify({ schema_version: 1, scope: 'invocation', complete: true, reason: 'resume_noop', cost_usd: 0 }));
+    const r = run(['75', '3', '--', 'true'], { GBRAIN_EVAL_ACTUAL_COST_FILE: file });
+    expect(r.status).toBe(0);
+    expect(doneRows()[0].cost_usd).toBe(3);
+  });
+
   test('a negative, signed, zero, or string-typed actual cost falls back to the estimate', () => {
     const cases: Array<[string, string]> = [
       ['-2', 'unreadable'], // signed bare number: rejected by is_number, not parsed as -2
