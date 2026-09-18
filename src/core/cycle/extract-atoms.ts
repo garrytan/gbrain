@@ -1475,11 +1475,56 @@ export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
 const MAX_ARRAY_ANCHOR_CANDIDATES = 64;
 
 /**
- * Parse the JSON array anchored at ONE `[` offset, reproducing the historical
- * two-step exactly: whole-slice parse, then a trim-back to the last `]` to
- * recover from trailing prose. Split out of parseAtomsOutcomeInner so the
- * anchor scan can try successive offsets without duplicating the reason
- * strings — those are asserted by tests and ride the drain's `last_error`.
+ * Find the index (within `s`, which starts with the array's opening `[`) of
+ * the `]` that closes it, tracking bracket depth so a `[`/`]` embedded in
+ * trailing prose can't be mistaken for the array's own boundary — e.g. an
+ * otherwise-valid array followed by `\nSee [Source: X].` used to have its
+ * citation's `]` picked up by a naive `lastIndexOf(']')` instead of the
+ * array's real terminator, corrupting an otherwise-recoverable parse (the
+ * slice-to-that-point then spans past the array into the citation text and
+ * fails to parse at all). Brackets inside JSON string literals (honoring `\"`
+ * escapes) are skipped so they don't perturb the depth count either. Returns
+ * -1 if the array is never closed within `s`.
+ */
+function findArrayCloseIndex(s: string): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '[') {
+      depth++;
+    } else if (ch === ']') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Parse the JSON array anchored at ONE `[` offset: whole-slice parse first,
+ * then — on failure — a trim-back to the array's true closing bracket (via
+ * `findArrayCloseIndex`, not a naive last-`]` scan) to recover from trailing
+ * prose. Split out of parseAtomsOutcomeInner so the anchor scan can try
+ * successive offsets without duplicating the reason strings — those are
+ * asserted by tests and ride the drain's `last_error`.
+ *
+ * NOTE on precedence: because this now finds the FIRST offset's own array
+ * boundary correctly instead of occasionally over-running into later text, a
+ * response embedding two complete top-level atoms arrays (e.g. a "draft,
+ * then corrected" reply — not a documented or prompted output shape) has this
+ * function succeed on the FIRST array. That is consistent with the anchor
+ * scan's already-stated first-candidate-wins policy (see the comment above
+ * MAX_ARRAY_ANCHOR_CANDIDATES's usage) — it is not a new precedence rule.
  */
 function parseArrayAtOffset(
   cleaned: string,
@@ -1490,8 +1535,9 @@ function parseArrayAtOffset(
   try {
     parsed = JSON.parse(slice);
   } catch {
-    // Try trimming back from the end to recover from trailing prose.
-    const arrayEnd = slice.lastIndexOf(']');
+    // Try trimming back to the array's real closing bracket to recover from
+    // trailing prose.
+    const arrayEnd = findArrayCloseIndex(slice);
     if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
     try {
       parsed = JSON.parse(slice.slice(0, arrayEnd + 1));
