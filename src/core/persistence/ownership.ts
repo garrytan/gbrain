@@ -181,6 +181,15 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
       await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path)
         VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO UPDATE SET local_path=EXCLUDED.local_path,coordination_path=EXCLUDED.coordination_path`, [binding.worktree_id, hostId, root, coordination]);
       await tx.executeRaw(`UPDATE persistence_worktrees SET owner_host_id=$2::uuid,owner_epoch=owner_epoch+1,state='active',heartbeat_at=now() WHERE id=$1::uuid`, [binding.worktree_id, hostId]);
+      // Bound sources follow their canonical checkout: `sources list`, `sync --all`
+      // and doctor read sources.local_path, which would otherwise keep naming the
+      // drained predecessor that the reservation registry now fences.
+      const bound = await tx.executeRaw<{ source_id: string; relative_path: string }>(
+        'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid', [binding.worktree_id]);
+      if (bound.length) await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+      for (const row of bound) {
+        await tx.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1 AND local_path IS NOT NULL', [row.source_id, join(root, row.relative_path)]);
+      }
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
     });
   } finally { await lock.release(); }
