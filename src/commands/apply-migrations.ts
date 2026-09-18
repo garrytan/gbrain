@@ -79,6 +79,10 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
   };
 }
 
+function forceActionsEnabled(cli: ApplyMigrationsArgs): boolean {
+  return !cli.dryRun;
+}
+
 function printHelp(): void {
   console.log(`gbrain apply-migrations — run pending migration orchestrators.
 
@@ -323,7 +327,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   // Bug 3 — --force-retry: write an explicit reset marker for a wedged
   // migration, then return. User re-runs `gbrain apply-migrations --yes`
   // to actually re-attempt.
-  if (cli.forceRetry) {
+  if (forceActionsEnabled(cli) && cli.forceRetry) {
     const target = migrations.find(m => m.version === cli.forceRetry);
     if (!target) {
       console.error(`No migration registered with version "${cli.forceRetry}". Run \`gbrain apply-migrations --list\`.`);
@@ -337,7 +341,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   // v0.30.1 (codex T5): --force-orchestrator OR --force-all writes a 'retry'
   // marker for EVERY wedged orchestrator migration in one shot. User re-runs
   // `gbrain apply-migrations --yes` to actually re-attempt.
-  if (cli.forceOrchestrator || cli.forceAll) {
+  if (forceActionsEnabled(cli) && (cli.forceOrchestrator || cli.forceAll)) {
     const completed = loadCompletedMigrations();
     const idx = indexCompleted(completed);
     let resetCount = 0;
@@ -361,7 +365,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   // drift by re-running runMigrations(). When the actual DDL state diverges
   // from config.version (the brain_config incident), this is the manual
   // recovery path.
-  if (cli.forceSchema || cli.forceAll) {
+  if (forceActionsEnabled(cli) && (cli.forceSchema || cli.forceAll)) {
     try {
       const { runMigrations } = await import('../core/migrate.ts');
       const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
@@ -570,6 +574,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
 /** Exported for unit tests only. Do not use from production code. */
 export const __testing = {
   parseArgs,
+  forceActionsEnabled,
   buildPlan,
   indexCompleted,
   statusForVersion,
