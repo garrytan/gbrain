@@ -78,8 +78,11 @@ export function validateUploadPath(filePath: string, root: string, strict = true
 }
 
 /**
- * Op-boundary page-slug segment (#4665): cjk.ts's PAGE_SLUG_SEG shape widened
- * LOCALLY so `.` and `_` are allowed as segment-CONTINUATION characters. The
+ * Op-boundary page-slug segment (#4665/#5032): cjk.ts's PAGE_SLUG_SEG shape
+ * widened LOCALLY so `.` and `_` are allowed as part-CONTINUATION characters.
+ * Colon separates individually valid parts inside a path segment, preserving
+ * existing integration slugs such as `calendar:event-id` without admitting
+ * empty or dot-led parts (`calendar:../x` remains invalid). The
  * sync slugifier deliberately preserves both (`notes/v1.0.0`,
  * `people/my_file_name` — see slugifySegment in src/core/sync.ts), so the
  * put_page boundary must round-trip every slug sync can produce. The lead
@@ -94,13 +97,14 @@ export function validateUploadPath(filePath: string, root: string, strict = true
 // underscores (`_index.md` → `_index`, the Hugo convention), so rejecting
 // them recreates the un-updatable-synced-page class this widen closes.
 // Dot stays continuation-only — `..` traversal remains impossible.
-const OP_PAGE_SLUG_SEG = `[${SLUG_WORD_CHARS}_][${SLUG_WORD_CHARS}._\\-]*`;
+const OP_PAGE_SLUG_PART = `[${SLUG_WORD_CHARS}_][${SLUG_WORD_CHARS}._\\-]*`;
+const OP_PAGE_SLUG_SEG = `${OP_PAGE_SLUG_PART}(?::${OP_PAGE_SLUG_PART})*`;
 
 /**
  * Allowlist validator for page slugs. Rejects URL-encoded traversal, backslashes,
  * control chars, RTL overrides, Unicode lookalikes — anything outside the allowlist.
- * Format: lowercase alphanumeric segments (dot/underscore/hyphen continuation
- * allowed) separated by single forward slashes.
+ * Format: alphanumeric parts (dot/underscore/hyphen continuation allowed),
+ * optionally colon-separated within segments; segments use single forward slashes.
  */
 export function validatePageSlug(slug: string): void {
   if (typeof slug !== 'string' || slug.length === 0) {
@@ -113,7 +117,7 @@ export function validatePageSlug(slug: string): void {
   // for the \p{...} classes in OP_PAGE_SLUG_SEG). Shape rules (word-char lead,
   // dot/underscore/hyphen continuation) preserved.
   if (!new RegExp(`^${OP_PAGE_SLUG_SEG}(\\/${OP_PAGE_SLUG_SEG})*$`, 'iu').test(slug)) {
-    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: letters/numbers in any script, with '.', '_', '-' after the first character of a segment, forward-slash separated segments)`);
+    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: letters/numbers in any script, with '.', '_', '-' after the first character of a part, optional colon-separated namespace parts, and forward-slash separated segments)`);
   }
 }
 
