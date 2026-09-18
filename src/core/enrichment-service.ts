@@ -16,6 +16,7 @@
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
+import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 // #3994: created stubs route through serializeMarkdown + importFromContent
 // (the same parse→chunk→embed pipeline put_page uses) instead of a bare
 // engine.putPage, so fresh entity pages land in the retrieval surface
@@ -78,12 +79,31 @@ export interface EnrichmentResult {
 // Entity naming utilities
 // ---------------------------------------------------------------------------
 
-/** Convert an entity name to a URL-safe slug. */
+// Keep-set mirrors sync.ts:slugifySegment (single grammar, see cjk.ts
+// docstring) so an entity minted here and a file synced under brain/people/
+// never diverge on what counts as a slug character.
+const SLUGIFY_ENTITY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}]`, 'gu');
+
+/**
+ * Convert an entity name to a URL-safe slug.
+ *
+ * Was ASCII-only ([a-z0-9]), which silently dropped every non-Latin
+ * character — Cyrillic/CJK/Arabic/etc. names slugified to '' or a bare
+ * '-', producing empty or colliding people/companies slugs. Now mirrors
+ * sync.ts:slugifySegment's Unicode-aware keep-set: strip Latin accents to
+ * their base letter (fold, don't drop), keep every script's own letters
+ * as-is (Cyrillic, CJK, Devanagari, …).
+ */
 export function slugifyEntity(name: string, type: 'person' | 'company'): string {
   const slug = name
+    .replace(/['‘’]/g, '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .normalize('NFC')
+    .replace(SLUG_VARIATION_SELECTORS_RE, '')
     .toLowerCase()
-    .replace(/['']/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(SLUGIFY_ENTITY_KEEP_RE, '-')
+    .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
 
   const prefix = type === 'person' ? 'people' : 'companies';
@@ -342,7 +362,7 @@ export function extractEntities(text: string): Array<{ name: string; type: 'pers
   // and the Unicode line/paragraph separators (U+2028/U+2029) -- while
   // retaining horizontal whitespace (spaces, tabs, NBSP, other Unicode
   // space separators), unlike a plain `[ \t]+`.
-  const namePattern = /\b([A-Z][a-z]+(?:[^\S\r\n\v\f\u2028\u2029]+[A-Z][a-z]+){1,3})\b/g;
+  const namePattern = /(?<!\p{L})(\p{Lu}[\p{Ll}\p{M}]+(?:[^\S\r\n\v\f\u2028\u2029]+\p{Lu}[\p{Ll}\p{M}]+){1,3})(?!\p{L})/gu;
   let match;
   while ((match = namePattern.exec(text)) !== null) {
     const name = match[1];
