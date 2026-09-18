@@ -9,7 +9,8 @@
  *
  * Each retriever returns a ranked list with normalized scores. We fuse them
  * via RRF (k=60, same constant as src/core/search/hybrid.ts). The final
- * merged set is capped at gather_limit and dedup'd by `(slug, row_num?)`.
+ * merged set is capped at gather_limit; pages use `(source_id, slug)` identity
+ * and takes use `(page_slug, row_num)` identity.
  *
  * The page hits and take hits are returned as separate lists so the synth
  * step can render them into distinct <pages> / <takes> blocks for the prompt.
@@ -140,6 +141,8 @@ export async function runGather(
       : {};
   const pageScope = { ...sourceScope, excludePrivate: opts.excludePrivate, requireSafeChunks: opts.remote !== false, takesHoldersAllowList: opts.takesHoldersAllowList };
   const visibleBody = (body: string) => opts.remote === false ? body : sanitizeRemoteBody(body);
+  const pageIdentity = (page: Pick<SearchResult, 'slug' | 'source_id'>) =>
+    `${page.source_id ?? 'default'}\0${page.slug}`;
 
   // Sanitize the question for any path that includes it in an LLM prompt.
   // (Direct DB search is fine — those are parameterized queries.)
@@ -192,14 +195,35 @@ export async function runGather(
       ...(window.startMs !== null ? { effective_after: new Date(window.startMs).toISOString() } : {}),
       ...(window.endMs !== null ? { effective_before: new Date(window.endMs).toISOString() } : {}),
       limit: 50, ...pageScope,
-    }).then(pages => pages.map(toSearchResult)).catch((e) => {
+    }).then(async pages => {
+      // listPages returns stored rows, while getPage returns the canonical
+      // withdrawal-aware snapshot. Rehydrate each bounded floor row so a
+      // durable fact retraction cannot be resurrected from stale raw body
+      // text. The revision check rejects a page changed between enumeration
+      // and hydration (including withdrawal-driven projection invalidation).
+      const hydrated = await Promise.all(pages.map(async (page, rank) => {
+        const current = await engine.getPage(page.slug, {
+          sourceId: page.source_id ?? 'default',
+          excludePrivate: opts.excludePrivate,
+          requireSafeChunks: opts.remote !== false,
+        });
+        if (!current || current.id !== page.id
+          || current.knowledge_revision !== page.knowledge_revision
+          || current.text_projection_revision !== page.text_projection_revision) return null;
+        return toSearchResult(current, rank);
+      }));
+      return hydrated.filter((page): page is SearchResult => page !== null);
+    }).catch((e) => {
       warnings.push('GATHER_WINDOW_FLOOR_FAILED');
       process.stderr.write(`[think.gather] window floor failed: ${(e as Error).message}\n`);
       return [] as SearchResult[];
     }),
   ]).then(([hybrid, floor]) => {
     const seen = new Set<string>();
-    const combined = [...hybrid, ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
+    const combined = [...hybrid, ...floor].filter(page => {
+      const identity = pageIdentity(page);
+      return !seen.has(identity) && !!seen.add(identity);
+    });
     const filtered = filterPagesToWindow(combined, window);
     windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
     // Reserved-slot merge (see WINDOW_FLOOR_RESERVED_SHARE). `filtered.kept`
@@ -207,9 +231,9 @@ export async function runGather(
     // each side's own rank order; only the cut point between them moves. The
     // floor tail takes every slot the head left, so a short hybrid leg still
     // fills the gather exactly as it did before.
-    const hybridSlugs = new Set(hybrid.map(page => page.slug));
-    const fromHybrid = filtered.kept.filter(page => hybridSlugs.has(page.slug));
-    const fromFloor = filtered.kept.filter(page => !hybridSlugs.has(page.slug));
+    const hybridPages = new Set(hybrid.map(pageIdentity));
+    const fromHybrid = filtered.kept.filter(page => hybridPages.has(pageIdentity(page)));
+    const fromFloor = filtered.kept.filter(page => !hybridPages.has(pageIdentity(page)));
     const reserved = Math.min(fromFloor.length, Math.floor(gatherLimit * WINDOW_FLOOR_RESERVED_SHARE));
     const head = fromHybrid.slice(0, Math.max(0, gatherLimit - reserved));
     return [...head, ...fromFloor.slice(0, gatherLimit - head.length)];

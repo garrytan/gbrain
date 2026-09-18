@@ -146,6 +146,50 @@ beforeAll(async () => {
     ].join('\n'),
     day: 17,
   });
+  // In-window but deliberately unsealed: listPages can enumerate it, while
+  // untrusted search must not expose its canonical body until a safe text
+  // projection has been installed.
+  await engine.putPage('work-mail/unsealed-thread', {
+    type: 'note', title: 'unsealed receipt',
+    compiled_truth: 'UNSEALED-CANONICAL-PAYLOAD', timeline: '', frontmatter: {},
+  }, { sourceId: 'default' });
+  await engine.executeRaw(
+    `UPDATE pages SET effective_date = $3::timestamptz, effective_date_source = 'event_date'
+     WHERE slug = $1 AND source_id = $2`,
+    ['work-mail/unsealed-thread', 'default', '2026-04-18T12:00:00.000Z'],
+  );
+
+  // Same slugs in different sources are distinct canonical pages. The
+  // trusted-local federated window must retain both identities.
+  await seed({
+    slug: 'shared/window-collision', title: 'default collision record',
+    body: 'default-source-collision-token', day: 19,
+  });
+  await seed({
+    slug: 'shared/window-collision', title: 'neighbor collision record',
+    body: 'neighbor-source-collision-token', day: 20, sourceId: 'neighbor',
+  });
+
+  // The raw row deliberately retains an active claim while the durable
+  // withdrawal ledger makes the canonical snapshot forgotten. Re-seal the
+  // projection from that canonical snapshot: a remote temporal floor must
+  // never bypass the overlay and resurrect the raw claim.
+  const withdrawnClaim = 'withdrawn-sentinel prefers obsolete-widget';
+  const withdrawnBody = `Public introduction.\n\n${FACTS_FENCE_BEGIN}\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | ${withdrawnClaim} | fact | 1.0 | world | medium | 2026-01-01 | | test | |\n${FACTS_FENCE_END}`;
+  await seed({
+    slug: 'work-mail/withdrawn-thread', title: 'withdrawn receipt',
+    body: withdrawnBody, day: 21,
+  });
+  await engine.executeRaw(
+    `INSERT INTO fact_withdrawals(source_id,visibility,fact_hash)
+     VALUES ('default','world',gbrain_fact_fingerprint($1)) ON CONFLICT DO NOTHING`,
+    [withdrawnClaim],
+  );
+  const canonical = await engine.getPage('work-mail/withdrawn-thread', { sourceId: 'default' });
+  expect(canonical).not.toBeNull();
+  await installFixtureChunks(engine, 'work-mail/withdrawn-thread', [
+    { chunk_index: 0, chunk_text: canonical!.compiled_truth, chunk_source: 'compiled_truth' },
+  ], { sourceId: 'default' });
 }, 300_000);
 
 afterAll(async () => {
@@ -231,6 +275,26 @@ describe('think gather keeps structured evidence', () => {
     expect(fenced).toBeDefined();
     expect(fenced!.chunk_text).not.toContain('PROTECTED-FENCE-PAYLOAD');
     expect(fenced!.chunk_text).toContain('Attachment archived above the protected fence.');
+    expect(gather.pages.some(page => page.slug === 'work-mail/unsealed-thread')).toBe(false);
+    expect(gather.pages.some(page => page.chunk_text.includes('UNSEALED-CANONICAL-PAYLOAD'))).toBe(false);
+    const withdrawn = gather.pages.find(page => page.slug === 'work-mail/withdrawn-thread');
+    expect(withdrawn).toBeDefined();
+    expect(withdrawn!.chunk_text).not.toContain('withdrawn-sentinel prefers obsolete-widget');
+  }, 120_000);
+
+  test('windowed federated gather keeps same-slug pages from distinct sources', async () => {
+    const gather = await runGather(engine, {
+      question: 'source-collision-token',
+      window: WINDOW,
+      sourceIds: ['default', 'neighbor'],
+      remote: false,
+    });
+
+    const collisions = gather.pages
+      .filter(page => page.slug === 'shared/window-collision')
+      .map(page => page.source_id)
+      .sort();
+    expect(collisions).toEqual(['default', 'neighbor']);
   }, 120_000);
 });
 

@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as realThink from '../src/core/think/index.ts';
 import * as realEmbedding from '../src/core/embedding.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 const embedQueryCalls: string[] = [];
 let capturedOpts: Record<string, unknown> | null = null;
@@ -83,4 +84,31 @@ describe('#3734 — CRAG think escalation wires embedQuestion (source pin)', () 
     const runThinkBlock = callSite.slice(callSite.indexOf('runThink(ctx.engine'), callSite.indexOf('});'));
     expect(runThinkBlock).toContain('embedQuestion');
   });
+
+  test('an explicit query source remains narrow in trusted-local CRAG think', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    try {
+      await engine.executeRaw(
+        `INSERT INTO sources (id,name,config) VALUES ('work-mail','work-mail','{}'::jsonb)
+         ON CONFLICT (id) DO NOTHING`, [],
+      );
+      await engine.setConfig('search.crag_think', 'true');
+      const { operationsByName } = await import('../src/core/operations.ts');
+      capturedOpts = null;
+      await operationsByName.query.handler({
+        engine, remote: false, sourceId: 'default',
+        localFederatedSourceIds: ['default', 'work-mail'],
+        emitResponseMeta: () => {},
+      } as never, { query: 'zxqv nonexistent quux', source_id: 'work-mail' });
+
+      expect(capturedOpts).not.toBeNull();
+      const opts = capturedOpts as unknown as Record<string, unknown>;
+      expect(opts.sourceId).toBe('work-mail');
+      expect(opts.allowedSources).toBeUndefined();
+    } finally {
+      await engine.disconnect();
+    }
+  }, 120_000);
 });

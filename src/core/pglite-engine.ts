@@ -2096,6 +2096,15 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.excludePrivate === true) {
       where.push(privatePagesFilterFragment('p'));
     }
+    // Opt-in search visibility for canonical bodies in untrusted responses;
+    // generic administrative listPages calls retain existing behavior.
+    const safeVisibilityJoin = filters?.requireSafeChunks === true ? 'JOIN sources s ON s.id = p.source_id' : '';
+    if (filters?.requireSafeChunks === true) {
+      // buildVisibilityClause starts with AND because search appends it after
+      // a WHERE predicate; strip that fixed prefix for this condition array.
+      where.push(buildVisibilityClause('p', 's', { excludePrivate: filters.excludePrivate, requireSafeChunks: true })
+        .replace(/^AND\s+/, ''));
+    }
     if (filters?.effective_after) {
       params.push(filters.effective_after);
       where.push(`p.effective_date >= $${params.length}::timestamptz`);
@@ -2114,7 +2123,7 @@ export class PGLiteEngine implements BrainEngine {
     const orderBy = PAGE_SORT_SQL[sortKey];
 
     const { rows } = await this.db.query(
-      `SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p ${tagJoin} ${whereSql}
+      `SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p ${tagJoin} ${safeVisibilityJoin} ${whereSql}
        ORDER BY ${orderBy} ${limitSql}`,
       params
     );

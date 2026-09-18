@@ -36,7 +36,6 @@ import {
   stampDeepResearchIds,
   stampEvidenceSafe,
   maybeCaptureSearch,
-  thinkSourceScopeOpts,
 } from './context.ts';
 
 /**
@@ -688,7 +687,15 @@ const query: Operation = {
           try {
             const { runThink } = await import('../think/index.ts');
             const { embedQuery } = await import('../embedding.ts');
-            const thinkScope = thinkSourceScopeOpts(ctx);
+            // Reuse the scope already resolved from this query's per-call
+            // source_id. Re-resolving from ctx alone loses that explicit
+            // narrowing and can widen a trusted-local CRAG think escalation
+            // to the ambient federated set.
+            const thinkScope = querySourceScope.sourceIds !== undefined
+              ? { allowedSources: querySourceScope.sourceIds }
+              : querySourceScope.sourceId !== undefined
+                ? { sourceId: querySourceScope.sourceId }
+                : {};
             const t = await runThink(ctx.engine, {
               question: queryText,
               since: typeof p.since === 'string' ? p.since : undefined,
