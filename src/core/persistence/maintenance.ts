@@ -11,6 +11,16 @@ export async function isManagedBrain(engine: SqlEngine): Promise<boolean> {
   return rows?.[0]?.enabled === true;
 }
 
+/**
+ * #5175 #5180 #5203: a legacy maintenance writer on a managed brain reports the
+ * phase as `skipped` (reason `writer_coordinator_required`) instead of failing
+ * the lane. Returns null when the phase may run; callers pass their own summary.
+ */
+export async function managedBrainPhaseSkip<P extends string>(engine: SqlEngine, phase: P, summary: string) {
+  if (!(await isManagedBrain(engine))) return null;
+  return { phase, status: 'skipped' as const, duration_ms: 0, summary, details: { reason: 'writer_coordinator_required' } };
+}
+
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
 export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string): Promise<void> {
   if (await isManagedBrain(engine)) throw new OperationError('writer_coordinator_required',

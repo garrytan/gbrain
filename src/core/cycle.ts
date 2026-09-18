@@ -51,7 +51,7 @@ import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { assertValidSourceId } from './source-id.ts';
-import { isManagedBrain } from './persistence/maintenance.ts';
+import { managedBrainPhaseSkip } from './persistence/maintenance.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts';
 
@@ -1048,19 +1048,9 @@ function checkAborted(signal?: AbortSignal): void {
 // going through runCycle's full setup cost.
 export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null, signal?: AbortSignal): Promise<PhaseResult> {
   try {
-    // #5180: `lint --fix` writes through the legacy filesystem path, which a
-    // managed brain refuses. Report `skipped` with the reason so a healthy
-    // per-source cycle stays `ok` instead of `partial` forever; the dry-run
-    // lane still reports issues without writing.
-    if (!dryRun && engine && await isManagedBrain(engine)) {
-      return {
-        phase: 'lint',
-        status: 'skipped',
-        duration_ms: 0,
-        summary: 'lint --fix skipped: a managed brain does not accept legacy filesystem writes',
-        details: { reason: 'writer_coordinator_required' },
-      };
-    }
+    // #5180: `lint --fix` writes through the legacy filesystem path a managed brain refuses; skip with the reason (dry-run still reports).
+    const managedSkip = !dryRun && engine ? await managedBrainPhaseSkip(engine, 'lint', 'lint --fix skipped: a managed brain does not accept legacy filesystem writes') : null;
+    if (managedSkip) return managedSkip;
     const { runLintCore } = await import('../commands/lint.ts');
     // issue #1678: pass the cycle's live engine so lint's content-sanity
     // DB-plane lift REUSES it instead of creating + disconnecting a
@@ -1474,21 +1464,9 @@ async function runPhaseExtractFacts(
   signal?: AbortSignal,
 ): Promise<PhaseResult> {
   try {
-    // #5203 (phase half): the legacy fence reconcile inserts/deletes `facts`
-    // rows outside the persistence coordinator, which the managed-writer guard
-    // trigger refuses (P0001 writer_coordinator_required), failing every
-    // per-source cycle. On a managed brain the coordinated import path already
-    // indexes `## Facts` fence rows at write time (put_page, managed sync), so
-    // the reconcile has nothing safe to add — report `skipped` with the reason.
-    if (!dryRun && await isManagedBrain(engine)) {
-      return {
-        phase: 'extract_facts',
-        status: 'skipped',
-        duration_ms: 0,
-        summary: 'extract_facts skipped: fence rows are indexed by the coordinated import path on a managed brain',
-        details: { reason: 'writer_coordinator_required' },
-      };
-    }
+    // #5203: the legacy fence reconcile writes `facts` outside the coordinator (guard trigger P0001); the coordinated import path already indexes fences on a managed brain.
+    const managedSkip = dryRun ? null : await managedBrainPhaseSkip(engine, 'extract_facts', 'extract_facts skipped: fence rows are indexed by the coordinated import path on a managed brain');
+    if (managedSkip) return managedSkip;
     const { runExtractFacts } = await import('./cycle/extract-facts.ts');
     const result = await runExtractFacts(engine, {
       slugs: changedSlugs,

@@ -821,12 +821,9 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   const jsonMode = !!opts.jsonMode;
   const quiet = !!opts.quiet;
   const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
-  // Managed brain (post `sources writer activate`): structured timeline rows are
-  // a canonical mutation the guard trigger refuses outside the coordinator, and
-  // the coordinated import path (put_page, managed sync) already derives them
-  // at write time. Keep the links pass — `links` is not a guarded table and the
-  // stale-link backfill is still useful — and skip the timeline pass with a
-  // reason instead of failing the whole phase.
+  // Managed brain: timeline_entries is guard-triggered outside the coordinator and
+  // the coordinated import path already derives those rows; keep the (unguarded)
+  // links pass, skip the timeline pass with a reason instead of failing the phase.
   if (!dryRun && opts.mode !== 'links' && await isManagedBrain(engine)) {
     result.timeline_skipped_reason = 'writer_coordinator_required';
     if (opts.mode === 'timeline') return result;
@@ -2327,8 +2324,7 @@ export async function extractStaleFromDB(
     for (let i = 0; i < linkRows.length; i += BATCH_SIZE) {
       linksCreated += await engine.addLinksBatch(linkRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' }); // gbrain-allow-direct-insert: gbrain extract --stale — canonical link reconciliation from markdown body
     }
-    // Managed brain: timeline_entries is guard-triggered outside the coordinator
-    // and the coordinated import already derived these rows; links only.
+    // Managed brain: guarded timeline rows come from the coordinated import; links only.
     if (!(await isManagedBrain(engine))) {
       for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
         timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });

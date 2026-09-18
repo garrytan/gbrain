@@ -361,13 +361,10 @@ export async function runPhaseSynthesize(
   engine: BrainEngine,
   opts: SynthesizePhaseOpts,
 ): Promise<PhaseResult> {
-  // #5175: on a managed brain the legacy synthesize writer cannot run. Report the
-  // phase as skipped (with the reason) instead of throwing, so the brain-wide
-  // maintenance lane — embed, orphans, purge, grade_takes, ... — still runs and
-  // the autopilot stamps `last_global_at` rather than re-dispatching every tick.
+  // #5175: skip (with reason) instead of throwing, so the rest of the brain-wide
+  // lane still runs and the autopilot stamps `last_global_at` instead of re-dispatching.
   if (!opts.dryRun && await isManagedBrain(engine)) {
-    return skipped('writer_coordinator_required',
-      'dream synthesize cannot mutate a managed brain through the legacy writer; skipped');
+    return skipped('writer_coordinator_required', 'dream synthesize cannot mutate a managed brain through the legacy writer; skipped');
   }
   // F6 spend attribution: triage-judge + orchestrator gateway calls inside
   // this phase land in chat_usage_log as phase:synthesize. Child subagent
