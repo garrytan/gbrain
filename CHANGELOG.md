@@ -2,6 +2,21 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Fixes
+
+- **`gbrain sources writer status/claim/transfer` no longer crash with
+  "JSON.stringify cannot serialize BigInt" on Postgres.** int8 columns
+  (`persistence_worktrees.owner_epoch`,
+  `persistence_source_bindings.topology_generation`) now leave the binding
+  queries as `::text`, so both engines emit the same deterministic string
+  shape (postgres.js always decodes raw int8 as BigInt; PGlite does for
+  values past `Number.MAX_SAFE_INTEGER`), and the two admin CLI renderers
+  serialize through `bigintToStringReplacer` as a backstop. The upgrade
+  runbook's `sources writer status --probe --json` step works again on
+  Postgres brains. (#5177)
+
 ## [0.51.6.0] - 2026-09-21
 
 **A temporary brain gets one safe second chance to start.**
