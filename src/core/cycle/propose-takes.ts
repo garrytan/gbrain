@@ -255,6 +255,7 @@ async function listCandidatePages(
   const where = [
     'deleted_at IS NULL',
     "type IS DISTINCT FROM 'extract_receipt'",
+    "COALESCE(frontmatter->>'dream_generated', '') <> 'true'",
   ];
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {

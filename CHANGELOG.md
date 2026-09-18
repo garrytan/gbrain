@@ -2,6 +2,12 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.2.2] - 2026-09-18
+
+### Fixed
+
+- Dream take extraction skips pages marked `dream_generated: true` before applying its page limit, preventing generated notes and reflections from feeding back into the proposal queue.
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**
