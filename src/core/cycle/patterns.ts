@@ -1,4 +1,4 @@
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { isManagedBrain } from '../persistence/maintenance.ts';
 /**
  * Patterns phase (v0.23) — cross-session theme detection.
  *
@@ -132,7 +132,12 @@ export async function runPhasePatterns(
   engine: BrainEngine,
   opts: PatternsPhaseOpts,
 ): Promise<PhaseResult> {
-  if (!opts.dryRun) await assertUnmanagedCanonicalWriter(engine, 'dream patterns');
+  // #5175: same as synthesize — a managed brain skips the legacy patterns writer
+  // with a reason instead of killing the whole maintenance lane.
+  if (!opts.dryRun && await isManagedBrain(engine)) {
+    return skipped('writer_coordinator_required',
+      'dream patterns cannot mutate a managed brain through the legacy writer; skipped');
+  }
   const start = Date.now();
   let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
   try {

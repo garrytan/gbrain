@@ -5,10 +5,25 @@ import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
 
+/** True once `sources writer activate` has committed managed persistence for this brain. */
+export async function isManagedBrain(engine: SqlEngine): Promise<boolean> {
+  const rows = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  return rows?.[0]?.enabled === true;
+}
+
+/**
+ * #5175 #5180 #5203: a legacy maintenance writer on a managed brain reports the
+ * phase as `skipped` (reason `writer_coordinator_required`) instead of failing
+ * the lane. Returns null when the phase may run; callers pass their own summary.
+ */
+export async function managedBrainPhaseSkip<P extends string>(engine: SqlEngine, phase: P, summary: string) {
+  if (!(await isManagedBrain(engine))) return null;
+  return { phase, status: 'skipped' as const, duration_ms: 0, summary, details: { reason: 'writer_coordinator_required' } };
+}
+
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
 export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string): Promise<void> {
-  const rows = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (rows?.[0]?.enabled) throw new OperationError('writer_coordinator_required',
+  if (await isManagedBrain(engine)) throw new OperationError('writer_coordinator_required',
     `${operation} cannot mutate a managed brain through the legacy writer.`,
     'Use supported persistence operations. Source topology and maintenance require a verified drain before migration.');
 }

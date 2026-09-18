@@ -1,4 +1,4 @@
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { isManagedBrain } from '../persistence/maintenance.ts';
 /**
  * Synthesize phase (v0.23; #4152 two-stage cascade) — conversation-to-brain
  * pipeline. Cheap-model triage gates frontier-model synthesis:
@@ -361,7 +361,11 @@ export async function runPhaseSynthesize(
   engine: BrainEngine,
   opts: SynthesizePhaseOpts,
 ): Promise<PhaseResult> {
-  if (!opts.dryRun) await assertUnmanagedCanonicalWriter(engine, 'dream synthesize');
+  // #5175: skip (with reason) instead of throwing, so the rest of the brain-wide
+  // lane still runs and the autopilot stamps `last_global_at` instead of re-dispatching.
+  if (!opts.dryRun && await isManagedBrain(engine)) {
+    return skipped('writer_coordinator_required', 'dream synthesize cannot mutate a managed brain through the legacy writer; skipped');
+  }
   // F6 spend attribution: triage-judge + orchestrator gateway calls inside
   // this phase land in chat_usage_log as phase:synthesize. Child subagent
   // calls keep their own job:* tag — the innermost AsyncLocalStorage phase

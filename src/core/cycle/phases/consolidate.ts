@@ -26,6 +26,7 @@ import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
 import { isAborted } from '../../abort-check.ts';
+import { managedBrainPhaseSkip } from '../../persistence/maintenance.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -50,6 +51,11 @@ export async function runPhaseConsolidate(
   opts: ConsolidatePhaseOpts = {},
 ): Promise<PhaseResult> {
   const dryRun = opts.dryRun === true;
+  // Managed brain: consolidate promotes facts into `takes` and stamps `facts` —
+  // guard-triggered outside the coordinator (P0001) — so skip with the reason
+  // until a coordinated consolidation path exists.
+  const managedSkip = dryRun ? null : await managedBrainPhaseSkip(engine, 'consolidate', 'consolidate skipped: a managed brain does not accept legacy takes/facts writes');
+  if (managedSkip) return managedSkip;
   const threshold = opts.clusterThreshold ?? 0.85;
   const minPerBucket = opts.minFactsPerBucket ?? 3;
   const minOldestAgeMs = opts.minOldestAgeMs ?? 24 * 60 * 60 * 1000;
