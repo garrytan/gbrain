@@ -67,6 +67,7 @@ import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
 import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationGuard, isAIInvocationPolicyError } from './invocation-guard.ts';
 import { createGuardedGeneration, chatInvocation } from './guarded-generation.ts';
+import { resolveEmbedMaxChars } from './embed-env.ts';
 const guardedGeneration = createGuardedGeneration(() => DEFAULT_MAX_OUTPUT_TOKENS);
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
@@ -105,7 +106,6 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
 
-const MAX_CHARS = 8000;
 // v0.46.3 SPLIT-DEFAULT: DEFAULT_EMBEDDING_MODEL / DEFAULT_EMBEDDING_DIMENSIONS
 // are now the LEGACY CONFIGLESS RUNTIME FALLBACK only (brains with no
 // `embedding_model` in file config, whose stored vectors live in ZE's 1280d
@@ -1823,14 +1823,14 @@ const MIN_SUB_BATCH = 1;
 export const NO_BATCH_CAP_SUB_BATCH_ITEMS = 16;
 
 /**
- * Embed many texts. Truncates to MAX_CHARS, then dispatches based on whether
- * the recipe declares a per-batch token budget.
+ * Embed many texts. Truncates to MAX_CHARS (8000; overridable via GBRAIN_EMBED_MAX_CHARS),
+ * then dispatches based on the recipe's per-batch token budget declaration.
  *
  * Flow:
  * ```
  * embed(texts)
  *   ├─ resolve recipe + model
- *   ├─ truncate each text to MAX_CHARS (8000)
+ *   ├─ truncate each text to MAX_CHARS (8000, or GBRAIN_EMBED_MAX_CHARS)
  *   ├─ read recipe.touchpoints.embedding.{max_batch_tokens, chars_per_token, safety_factor}
  *   │
  *   ├─ if max_batch_tokens declared (Voyage path):
@@ -1926,7 +1926,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => truncateUtf8(t ?? '', MAX_CHARS));
+  const truncated = texts.map(t => truncateUtf8(t ?? '', resolveEmbedMaxChars(cfg)));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
