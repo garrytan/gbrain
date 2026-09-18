@@ -5,10 +5,15 @@ import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
 
+/** True once `sources writer activate` has committed managed persistence for this brain. */
+export async function isManagedBrain(engine: SqlEngine): Promise<boolean> {
+  const rows = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  return rows?.[0]?.enabled === true;
+}
+
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
 export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string): Promise<void> {
-  const rows = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (rows?.[0]?.enabled) throw new OperationError('writer_coordinator_required',
+  if (await isManagedBrain(engine)) throw new OperationError('writer_coordinator_required',
     `${operation} cannot mutate a managed brain through the legacy writer.`,
     'Use supported persistence operations. Source topology and maintenance require a verified drain before migration.');
 }
