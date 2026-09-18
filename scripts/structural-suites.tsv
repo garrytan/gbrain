@@ -6,6 +6,7 @@ test/agent-install.test.ts	(file-level)	10	readFileSync
 test/agent-register.test.ts	PGLite integration (pre-flight → tx → audit → exchange)	3	readFileSync
 test/agent-register.test.ts	resolvePreset	7	readFileSync
 test/agent-register.test.ts	structural guards	2	readFileSync
+test/apply-migrations.test.ts	--force-schema dry-run safety (#5164)	2	readFileSync
 test/apply-migrations.test.ts	failed migration prints phase detail (#921)	1	readFileSync
 test/apply-migrations.test.ts	resolveSchemaBehind (#1530)	5	readFileSync
 test/apply-migrations.test.ts	runApplyMigrations exit codes (v0.36.1.x #1062)	1	readFileSync
