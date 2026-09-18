@@ -33,7 +33,20 @@ export async function managedPersistenceEnabled(engine: SqlEngine): Promise<bool
   return row?.enabled === true;
 }
 export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId = localHostId()): Promise<WorktreeBinding | null> {
-  const [row] = await engine.executeRaw<WorktreeBinding>(`SELECT s.*,w.owner_host_id,w.owner_epoch,w.state,
+  // int8 boundary contract: owner_epoch/topology_generation leave SQL as ::text
+  // so BOTH engines emit the same string shape (WorktreeBinding declares
+  // string | number only as a legacy transition type). Raw int8 decodes as a
+  // JS BigInt on postgres.js always, and on PGlite for values past
+  // Number.MAX_SAFE_INTEGER (pglite 0.4.3 decodes adaptively) — this binding
+  // is returned verbatim by `writer_claim` and the transfer operations, so a
+  // raw column here crashed `JSON.stringify` in the CLI renderer exactly when
+  // the operator needs the output (#5177). Leaving the columns uncast made
+  // the output shape engine- AND value-dependent; every internal consumer
+  // already compares through String(...) (ownership.ts guardOwnership,
+  // sync-prepare, topology-locks).
+  const [row] = await engine.executeRaw<WorktreeBinding>(`SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path,
+    s.topology_generation::text AS topology_generation,
+    w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,
     h.local_path,h.coordination_path FROM persistence_source_bindings s
     JOIN persistence_worktrees w ON w.id=s.worktree_id
     LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid
