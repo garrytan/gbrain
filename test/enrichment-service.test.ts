@@ -15,8 +15,16 @@ describe('enrichment-service', () => {
       expect(slugifyEntity("O'Brien", 'person')).toBe('people/obrien');
     });
 
-    test('handles special characters', () => {
-      expect(slugifyEntity('José García', 'person')).toBe('people/jos-garc-a');
+    test('folds Latin accents to their base letter', () => {
+      expect(slugifyEntity('José García', 'person')).toBe('people/jose-garcia');
+    });
+
+    test('preserves non-Latin scripts instead of dropping them', () => {
+      // Was ASCII-only ([a-z0-9]): Cyrillic names slugified to '' or a bare
+      // '-', so every non-Latin person/company collided on the same empty
+      // slug. Assert parsed structure (exact slug), not just non-emptiness.
+      expect(slugifyEntity('Иван Петров', 'person')).toBe('people/иван-петров');
+      expect(slugifyEntity('Тестовая Компания', 'company')).toBe('companies/тестовая-компания');
     });
 
     test('trims leading/trailing hyphens', () => {
