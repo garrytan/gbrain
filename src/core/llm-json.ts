@@ -45,6 +45,51 @@ export function stripReasoningBlocks(raw: string): string {
     .trim();
 }
 
+/**
+ * Find the index of the bracket that closes the JSON array or object opened
+ * at `s[0]`, tracking nesting depth so a `[`/`]`/`{`/`}` embedded in trailing
+ * prose (or a nested structure) can't be mistaken for the top-level closer.
+ * Brackets inside JSON string literals (honoring `\"` escapes) are skipped so
+ * they don't perturb the depth count either. `s[0]` must be `[` or `{`;
+ * returns -1 for any other first character or if the structure never closes
+ * within `s`.
+ *
+ * A naive `lastIndexOf(closeChar)` recovery — the pre-fix shape this mirrors
+ * in `extract-atoms.ts` (#5064) — picks up a bracket from trailing prose
+ * instead of the real terminator when a response embeds a citation AFTER an
+ * otherwise well-formed array/object, e.g. `[{"a":1}]\nSee [Source: X].`: the
+ * citation's `]` is the last one in the string, so the naive recovery slice
+ * spans past the real array into the dangling citation text and fails to
+ * parse at all. This function finds the array/object's OWN closing bracket
+ * regardless of what brackets appear after it.
+ */
+export function findJsonCloseIndex(s: string): number {
+  const open = s[0];
+  const close = open === '[' ? ']' : open === '{' ? '}' : null;
+  if (close === null) return -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === open) {
+      depth++;
+    } else if (ch === close) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 export function parseLlmJson<T>(raw: string, opts: { array?: boolean } = {}): T | null {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   const direct = parseLlmJsonInner<T>(raw, opts);

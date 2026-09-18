@@ -250,6 +250,37 @@ describe('parseExtractorOutput', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.claim_text).toBe('Z');
   });
+
+  // A naive `lastIndexOf(']')`/`lastIndexOf('}')` recovery (the pre-fix
+  // shape here) picks up a bracket from prose AFTER the JSON instead of the
+  // JSON's own closing bracket, so an otherwise well-formed response is
+  // reported unparseable. Mirrors the fix in `extract-atoms.ts`
+  // (`findArrayCloseIndex`, #5064), now shared via `findJsonCloseIndex` in
+  // `llm-json.ts`.
+  test('recovers the array when a [Source: X] citation follows it', () => {
+    const raw = '[{"claim_text":"Cities send messages","kind":"take","holder":"brain","weight":0.65}]\n' +
+      'See [Source: alice-example].';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('Cities send messages');
+  });
+
+  test('recovers a single object when a [[wikilink]] backlink follows it', () => {
+    const raw = '{"claim_text":"Y","kind":"hunch","holder":"brain","weight":0.4}\nRelated: [[people/alice-example]].';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('Y');
+  });
+
+  test('a bracket inside a quoted string field does not confuse the depth count', () => {
+    // claim_text's own value contains a literal `]`; a depth counter that
+    // doesn't skip string-literal contents would close the array early.
+    const raw = '[{"claim_text":"see [note] for context","kind":"take","holder":"brain","weight":0.5}]\n' +
+      'See [Source: X].';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('see [note] for context');
+  });
 });
 
 // ─── isWellFormedEmptyExtraction ────────────────────────────────────
