@@ -71,6 +71,20 @@ export interface ThinkGatherResult {
   };
 }
 
+/**
+ * Share of the gather budget reserved for the temporal-window date floor.
+ *
+ * The floor (`engine.listPages` bounded by the window) exists so a windowed
+ * gather cannot miss an in-window page that hybrid's ranking never surfaced.
+ * It was appended BEHIND up to `gatherLimit * 4` hybrid rows and then cut at
+ * `gatherLimit`, so it only ever delivered anything when hybrid happened to
+ * under-return — i.e. it was a backfill, not a floor. Reserving slots makes
+ * it one: hybrid keeps the large majority of the budget, and up to this share
+ * goes to in-window pages hybrid missed. When the floor has nothing to add
+ * the reservation is 0 and the merge is byte-identical to appending.
+ */
+const WINDOW_FLOOR_RESERVED_SHARE = 0.25;
+
 const RRF_K = 60;
 
 /** Reciprocal-rank fusion: 1/(k+rank). Stable, parameter-light, matches search/hybrid.ts k. */
@@ -151,11 +165,27 @@ export async function runGather(
   // gather sized for breadth (default 40) could collapse to minKeep=1 and
   // starve synthesis. Same breadth reason as the CRAG escalation re-run in
   // ops/search.ts; precision trimming is the synth prompt's job here.
+  //
+  // tokenBudget: 0 on both legs — the same bug class as autocut, one stage
+  // later. `enforceTokenBudget` runs AFTER the limit slice and the mode
+  // bundles set it (conservative 4K, balanced 12K, and balanced is the
+  // fallback), so a gather that asked for 40 pages silently returned however
+  // many happened to fit. It is a greedy TOP-DOWN packer, so the cost falls
+  // entirely on the tail: long, lexically rich pages (meeting notes, chat
+  // transcripts) both rank first and cost the most, exhaust the budget, and
+  // the cheap terse rows behind them — calendar events, mail threads, any
+  // structured evidence — are dropped whole. Synthesis then reports those as
+  // absent. The gather already re-budgets its own prompt block in CHARACTERS
+  // (pagesBlockExcerptLen: 12K total, 2.4K/page ceiling, 600/page floor), so
+  // a second search-layer trim in tokens buys no context-window safety and
+  // costs whole pages. 0 is the documented no-op for the packer (<= 0) and
+  // per-call wins over config + bundle in resolveSearchMode.
   const pagesPromise = (window ? Promise.all([
     hybridSearch(engine, opts.question, {
       limit: Math.min(gatherLimit * 4, 200),
       expansion: false,
       autocut: false,
+      tokenBudget: 0,
       ...pageScope,
     }),
     engine.listPages({
@@ -172,11 +202,22 @@ export async function runGather(
     const combined = [...hybrid, ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
     const filtered = filterPagesToWindow(combined, window);
     windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
-    return filtered.kept.slice(0, gatherLimit);
+    // Reserved-slot merge (see WINDOW_FLOOR_RESERVED_SHARE). `filtered.kept`
+    // is still hybrid-first, so partitioning on the hybrid slug set preserves
+    // each side's own rank order; only the cut point between them moves. The
+    // floor tail takes every slot the head left, so a short hybrid leg still
+    // fills the gather exactly as it did before.
+    const hybridSlugs = new Set(hybrid.map(page => page.slug));
+    const fromHybrid = filtered.kept.filter(page => hybridSlugs.has(page.slug));
+    const fromFloor = filtered.kept.filter(page => !hybridSlugs.has(page.slug));
+    const reserved = Math.min(fromFloor.length, Math.floor(gatherLimit * WINDOW_FLOOR_RESERVED_SHARE));
+    const head = fromHybrid.slice(0, Math.max(0, gatherLimit - reserved));
+    return [...head, ...fromFloor.slice(0, gatherLimit - head.length)];
   }) : hybridSearch(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,
     autocut: false,
+    tokenBudget: 0,
     ...pageScope,
   })).catch((e) => {
     warnings.push('GATHER_HYBRID_FAILED');

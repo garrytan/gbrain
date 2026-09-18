@@ -13,6 +13,7 @@ import {
   resolveRequestedScope,
   resolveCodeIntelScope,
   thinkSourceScopeOpts,
+  federatedSearchScope,
   OperationError,
   type OperationContext,
 } from '../src/core/operations.ts';
@@ -71,6 +72,59 @@ describe('think operation → runThink scope propagation', () => {
       auth: { allowedSources: ['tenant-a', 'tenant-b'] } as OperationContext['auth'],
     });
     expect(thinkSourceScopeOpts(ctx)).toEqual({ allowedSources: ['tenant-a', 'tenant-b'] });
+  });
+});
+
+describe('think/synthesize scope — trusted-local parity with search/query (#3242)', () => {
+  // The transport-computed federated set an unqualified local read spans.
+  // Only trusted context builders populate it, and only when the source came
+  // from an ambient tier (never --source / GBRAIN_SOURCE / a dotfile, never an
+  // isolated anchor) — see OperationContext.localFederatedSourceIds.
+  const FEDERATED = ['default', 'work-mail', 'personal-mail'];
+
+  test('an unqualified trusted-local call spans the same sources search does', () => {
+    const ctx = ctxOf({ remote: false, sourceId: 'default', localFederatedSourceIds: FEDERATED });
+    // Pre-fix: { sourceId: 'default' } — think/synthesize silently skipped the
+    // mail and calendar sources that an ordinary query searches.
+    expect(thinkSourceScopeOpts(ctx)).toEqual({ allowedSources: FEDERATED });
+    expect(thinkSourceScopeOpts(ctx).allowedSources).toEqual(federatedSearchScope(ctx).sourceIds);
+  });
+
+  test('remote callers keep the canonical ladder, even with a federated set present', () => {
+    const ctx = ctxOf({ remote: true, sourceId: 'default', localFederatedSourceIds: FEDERATED });
+    expect(thinkSourceScopeOpts(ctx)).toEqual({ sourceId: 'default' });
+  });
+
+  test('an explicit grant governs a trusted-local call and never widens', () => {
+    const ctx = ctxOf({
+      remote: false,
+      sourceId: 'default',
+      localFederatedSourceIds: FEDERATED,
+      auth: { allowedSources: ['default'] } as OperationContext['auth'],
+    });
+    expect(thinkSourceScopeOpts(ctx)).toEqual({ allowedSources: ['default'] });
+  });
+
+  test('an empty grant does not widen a trusted-local call', () => {
+    const ctx = ctxOf({
+      remote: false,
+      sourceId: 'default',
+      localFederatedSourceIds: FEDERATED,
+      auth: { allowedSources: [] } as unknown as OperationContext['auth'],
+    });
+    expect(thinkSourceScopeOpts(ctx)).toEqual({ sourceId: 'default' });
+  });
+
+  test('an explicit or isolated source (no federated set) stays scalar', () => {
+    expect(thinkSourceScopeOpts(ctxOf({ remote: false, sourceId: 'work-mail' })))
+      .toEqual({ sourceId: 'work-mail' });
+    expect(thinkSourceScopeOpts(ctxOf({ remote: false, sourceId: 'default', localFederatedSourceIds: ['default'] })))
+      .toEqual({ sourceId: 'default' });
+  });
+
+  test('the trusted-local __all__ sentinel stays brain-wide', () => {
+    expect(thinkSourceScopeOpts(ctxOf({ remote: false, sourceId: '__all__', localFederatedSourceIds: FEDERATED })))
+      .toEqual({});
   });
 });
 

@@ -544,12 +544,22 @@ export async function readPolicyOpts(
   };
 }
 
-/** Map the operation-layer scope names onto runThink's public options. */
+/**
+ * Map the operation-layer scope names onto runThink's public options.
+ *
+ * Trusted-local callers resolve through `federatedSearchScope`, so an
+ * unqualified local think/synthesize spans the same transport-computed
+ * federated set that `search`/`query` already do (#3242) — the op-path twin
+ * of the CLI `gbrain think` fix (#4652). Every guard is `federatedSearchScope`'s:
+ * a grant, an explicit source (no `localFederatedSourceIds`), an isolated
+ * anchor, and `__all__` all resolve exactly as `sourceScopeOpts` does.
+ * Remote callers keep the canonical `sourceScopeOpts` ladder unchanged.
+ */
 export function thinkSourceScopeOpts(ctx: OperationContext): {
   sourceId?: string;
   allowedSources?: string[];
 } {
-  const scope = sourceScopeOpts(ctx);
+  const scope = ctx.remote === false ? federatedSearchScope(ctx) : sourceScopeOpts(ctx);
   return scope.sourceIds !== undefined
     ? { allowedSources: scope.sourceIds }
     : scope.sourceId !== undefined
