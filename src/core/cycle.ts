@@ -1048,8 +1048,8 @@ function checkAborted(signal?: AbortSignal): void {
 // going through runCycle's full setup cost.
 export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null, signal?: AbortSignal): Promise<PhaseResult> {
   try {
-    // #5180: `lint --fix` writes through the legacy filesystem path a managed brain refuses; skip with the reason (dry-run still reports).
-    const managedSkip = !dryRun && engine ? await managedBrainPhaseSkip(engine, 'lint', 'lint --fix skipped: a managed brain does not accept legacy filesystem writes') : null;
+    // #5180: lint in fix mode writes through the legacy filesystem path a managed brain refuses; skip with the reason (dry-run still reports).
+    const managedSkip = !dryRun && engine ? await managedBrainPhaseSkip(engine, 'lint', 'lint fix skipped: a managed brain does not accept legacy filesystem writes') : null;
     if (managedSkip) return managedSkip;
     const { runLintCore } = await import('../commands/lint.ts');
     // issue #1678: pass the cycle's live engine so lint's content-sanity
