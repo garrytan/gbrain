@@ -32,6 +32,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runGather } from '../src/core/think/gather.ts';
+import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../src/core/facts-fence.ts';
@@ -108,11 +109,28 @@ beforeAll(async () => {
 
   // --- Case 2 corpus: enough cheap in-window matches to fill the gather on
   // their own, so the date floor has to be reserved slots to deliver at all.
-  for (let i = 0; i < 45; i++) {
+  for (let i = 0; i < 34; i++) {
     await seed({
       slug: `syncs/note-${i + 1}`,
       title: `widget-co planning sync ${i + 1}`,
       body: `widget-co planning sync agenda item ${i + 1}.`,
+      day: (i % 28) + 1,
+    });
+  }
+  // In the temporal floor AND hybrid, but deliberately much less relevant
+  // than the 45 full matches above. The reservation must retain this ranked
+  // overlap before choosing a floor-only row by update recency.
+  await seed({
+    slug: 'work-mail/hybrid-tail-thread',
+    title: 'historical receipt archive',
+    body: `widget-co planning sync agenda item. ${'unrelated archive padding '.repeat(400)}`,
+    day: 13,
+  });
+  for (let i = 34; i < 45; i++) {
+    await seed({
+      slug: `syncs/note-${i + 1}`,
+      title: `historical widget archive ${i + 1}`,
+      body: `widget-co planning sync agenda item ${i + 1}. ${'lower-rank padding '.repeat(800)}`,
       day: (i % 28) + 1,
     });
   }
@@ -207,6 +225,12 @@ beforeAll(async () => {
   await installFixtureChunks(engine, 'work-mail/withdrawn-thread', [
     { chunk_index: 0, chunk_text: canonical!.compiled_truth, chunk_source: 'compiled_truth' },
   ], { sourceId: 'default' });
+  // Keep the true hybrid miss at the front of listPages' floor-only order so
+  // the balanced reservation proves it retains both candidate classes.
+  await engine.executeRaw(
+    `UPDATE pages SET updated_at = NOW() + INTERVAL '1 minute'
+     WHERE slug = 'work-mail/quiet-thread' AND source_id = 'default'`, [],
+  );
 }, 300_000);
 
 afterAll(async () => {
@@ -245,6 +269,25 @@ describe('think gather keeps structured evidence', () => {
     // Hybrid still owns the large majority of the budget.
     expect(gather.pages.filter(page => page.slug.startsWith('syncs/')).length)
       .toBeGreaterThanOrEqual(30);
+  }, 120_000);
+
+  test('the temporal reservation keeps a floor page ranked below the hybrid head', async () => {
+    const hybrid = await hybridSearch(engine, 'widget-co planning sync', {
+      limit: 200, expansion: false, autocut: false, tokenBudget: 0,
+      sourceIds: ['default'],
+    });
+    const tailRank = hybrid.findIndex(page => page.slug === 'work-mail/hybrid-tail-thread');
+    expect(tailRank).toBeGreaterThanOrEqual(30);
+    expect(tailRank).toBeLessThan(35);
+
+    const gather = await runGather(engine, {
+      question: 'widget-co planning sync',
+      window: WINDOW,
+      sourceIds: ['default'],
+      remote: false,
+    });
+
+    expect(gather.pages.some(page => page.slug === 'work-mail/hybrid-tail-thread')).toBe(true);
   }, 120_000);
 
   test('an under-returning hybrid leg still fills the gather from the floor', async () => {

@@ -243,11 +243,49 @@ export async function runGather(
     // floor tail takes every slot the head left, so a short hybrid leg still
     // fills the gather exactly as it did before.
     const hybridPages = new Set(hybrid.map(pageIdentity));
+    const floorPages = new Set(floor.map(pageIdentity));
     const fromHybrid = filtered.kept.filter(page => hybridPages.has(pageIdentity(page)));
     const fromFloor = filtered.kept.filter(page => !hybridPages.has(pageIdentity(page)));
-    const reserved = Math.min(fromFloor.length, Math.floor(gatherLimit * WINDOW_FLOOR_RESERVED_SHARE));
-    const head = fromHybrid.slice(0, Math.max(0, gatherLimit - reserved));
-    return [...head, ...fromFloor.slice(0, gatherLimit - head.length)];
+    const reserveCapacity = Math.floor(gatherLimit * WINDOW_FLOOR_RESERVED_SHARE);
+    const head = fromHybrid.slice(0, Math.max(0, gatherLimit - reserveCapacity));
+    const selected = new Set(head.map(pageIdentity));
+
+    // A page can belong to BOTH streams: hybrid may find it, but below the
+    // ordinary gather cut. Those rows are better temporal-floor candidates
+    // than an unranked row selected only by listPages' updated-desc order.
+    // Preserve hybrid rank for the overlap, then use floor-only rows. This is
+    // also why the membership test uses the full floor set rather than the
+    // already de-duplicated `fromFloor` tail.
+    const rankedFloorCandidates = fromHybrid.slice(head.length)
+      .filter(page => floorPages.has(pageIdentity(page)));
+    const reserveCandidates: SearchResult[] = [];
+    let rankedIdx = 0;
+    let floorOnlyIdx = 0;
+    // Balance relevance-ranked temporal rows with true hybrid misses. Starting
+    // with the ranked side fixes the old arbitrary-recency displacement;
+    // alternating preserves the date floor's reason to exist when both sides
+    // have enough candidates to fill the reservation.
+    while (reserveCandidates.length < reserveCapacity
+      && (rankedIdx < rankedFloorCandidates.length || floorOnlyIdx < fromFloor.length)) {
+      if (rankedIdx < rankedFloorCandidates.length) reserveCandidates.push(rankedFloorCandidates[rankedIdx++]);
+      if (reserveCandidates.length < reserveCapacity && floorOnlyIdx < fromFloor.length) {
+        reserveCandidates.push(fromFloor[floorOnlyIdx++]);
+      }
+    }
+    for (const page of reserveCandidates.slice(0, reserveCapacity)) selected.add(pageIdentity(page));
+
+    // If either leg under-returned, consume every remaining slot rather than
+    // leaving a synthetic reservation empty. Hybrid stays relevance-ordered;
+    // the floor fills only what hybrid cannot.
+    for (const page of fromHybrid) {
+      if (selected.size >= gatherLimit) break;
+      selected.add(pageIdentity(page));
+    }
+    for (const page of fromFloor) {
+      if (selected.size >= gatherLimit) break;
+      selected.add(pageIdentity(page));
+    }
+    return filtered.kept.filter(page => selected.has(pageIdentity(page))).slice(0, gatherLimit);
   }) : hybridSearch(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,
