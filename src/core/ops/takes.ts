@@ -205,11 +205,9 @@ const think: Operation = {
     // Codex P1 #7 + privacy: remote callers cannot persist via MCP.
     const safeSave = remote ? false : Boolean(p.save);
     const safeTake = remote ? false : Boolean(p.take);
-    // v0.40.2.0: thread source-scope scalars + remote flag for trajectory
-    // injection. `sourceScopeOpts(ctx)` returns the federated array (when
-    // present) OR the scalar; we pass both through to runThink which
-    // forwards to findTrajectory. CLI callers don't go through this op
-    // and get default scope + remote=false from runThink's CLI path.
+    // Thread synthesis scope + remote posture through retrieval and trajectory.
+    // Trusted-local calls use the computed federated search set; remote calls
+    // keep the canonical grant ladder. CLI callers do not go through this op.
     const thinkScope = thinkSourceScopeOpts(ctx);
     const { runThink, persistSynthesis } = await import('../think/index.ts');
     const result = await runThink(ctx.engine, {

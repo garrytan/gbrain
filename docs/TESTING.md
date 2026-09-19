@@ -589,6 +589,8 @@ The quarantine has grown to dozens of files — treat it as debt: every addition
 
 `bun test` runs all tests without a database. E2E tests skip gracefully when `DATABASE_URL` is not set.
 
+- `test/think-gather-structured-sources.test.ts` + `test/source-scope-resolver.test.ts` + `test/think-embed-question-wiring.serial.test.ts` — synthesis evidence regressions: search token packing cannot discard terse structured pages; temporal floors reserve in-window slots, preserve same-slug pages from different sources, hydrate current snapshots with revision checks at a bounded concurrency, isolate failed reads, and exclude non-search-visible remote pages. Scope cases pin trusted-local federation, unchanged remote grants, explicit query-source preservation through CRAG escalation, and the `synthesize` verb's federated gather.
+
 **GBRAIN_HOME isolation preload.** `test/helpers/gbrain-home-preload.ts` (bunfig
 `[test]` preload) points `GBRAIN_HOME` at a per-run scratch dir when it isn't
 already set, so unit tests never read — or clobber — the operator's real
