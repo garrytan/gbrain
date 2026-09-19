@@ -117,9 +117,9 @@ beforeAll(async () => {
       day: (i % 28) + 1,
     });
   }
-  // In the temporal floor AND hybrid, but deliberately much less relevant
-  // than the 45 full matches above. The reservation must retain this ranked
-  // overlap before choosing a floor-only row by update recency.
+  // In the temporal floor AND hybrid, but deliberately less relevant than the
+  // 34 strong matches above. The reservation must retain this dated tail row
+  // alongside its floor-only share.
   await seed({
     slug: 'work-mail/hybrid-tail-thread',
     title: 'historical receipt archive',

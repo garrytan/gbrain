@@ -239,10 +239,9 @@ export async function runGather(
     const filtered = filterPagesToWindow(combined, window);
     windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
     // Reserved-slot merge (see WINDOW_FLOOR_RESERVED_SHARE). `filtered.kept`
-    // is still hybrid-first, so partitioning on the hybrid slug set preserves
-    // each side's own rank order; only the cut point between them moves. The
-    // floor tail takes every slot the head left, so a short hybrid leg still
-    // fills the gather exactly as it did before.
+    // is hybrid-first, so partitioning preserves each side's rank order. The
+    // selection below deliberately promotes dated hybrid-tail evidence and
+    // floor-only misses; a short hybrid leg still fills from the floor.
     const hybridPages = new Set(hybrid.map(pageIdentity));
     const fromHybrid = filtered.kept.filter(page => hybridPages.has(pageIdentity(page)));
     const fromFloor = filtered.kept.filter(page => !hybridPages.has(pageIdentity(page)));
