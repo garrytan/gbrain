@@ -1071,13 +1071,14 @@ export class PostgresEngine implements BrainEngine {
     // Internal untrusted enumerations must see the same live projection that
     // search exposes. listPages normally remains an administrative primitive;
     // this opt-in is used when canonical page bodies enter a remote response.
-    const safeVisibilityJoin = filters?.requireSafeChunks === true
+    const requireVisibility = filters?.requireLiveVisibility === true || filters?.requireSafeChunks === true;
+    const safeVisibilityJoin = requireVisibility
       ? sql`JOIN sources s ON s.id = p.source_id`
       : sql``;
-    const safeVisibilityCondition = filters?.requireSafeChunks === true
+    const safeVisibilityCondition = requireVisibility
       ? sql.unsafe(buildVisibilityClause('p', 's', {
           excludePrivate: filters.excludePrivate,
-          requireSafeChunks: true,
+          requireSafeChunks: filters.requireSafeChunks === true,
         }))
       : sql``;
     const effectiveAfterCondition = filters?.effective_after

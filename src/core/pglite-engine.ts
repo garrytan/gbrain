@@ -2096,13 +2096,14 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.excludePrivate === true) {
       where.push(privatePagesFilterFragment('p'));
     }
-    // Opt-in search visibility for canonical bodies in untrusted responses;
-    // generic administrative listPages calls retain existing behavior.
-    const safeVisibilityJoin = filters?.requireSafeChunks === true ? 'JOIN sources s ON s.id = p.source_id' : '';
-    if (filters?.requireSafeChunks === true) {
+    // Opt-in search visibility for canonical bodies; administrative listPages calls retain existing behavior.
+    const safeVisibilityJoin = filters?.requireLiveVisibility === true || filters?.requireSafeChunks === true
+      ? 'JOIN sources s ON s.id = p.source_id' : '';
+    if (safeVisibilityJoin) {
       // buildVisibilityClause starts with AND because search appends it after
       // a WHERE predicate; strip that fixed prefix for this condition array.
-      where.push(buildVisibilityClause('p', 's', { excludePrivate: filters.excludePrivate, requireSafeChunks: true })
+      where.push(buildVisibilityClause('p', 's', { excludePrivate: filters?.excludePrivate,
+        requireSafeChunks: filters?.requireSafeChunks === true })
         .replace(/^AND\s+/, ''));
     }
     if (filters?.effective_after) {

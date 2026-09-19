@@ -81,7 +81,9 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   await engine.executeRaw(
-    `INSERT INTO sources (id, name, config) VALUES ('neighbor', 'neighbor', '{}'::jsonb)
+    `INSERT INTO sources (id, name, config) VALUES
+       ('neighbor', 'neighbor', '{}'::jsonb),
+       ('archived-neighbor', 'archived-neighbor', '{}'::jsonb)
      ON CONFLICT (id) DO NOTHING`, [],
   );
 
@@ -146,6 +148,21 @@ beforeAll(async () => {
     ].join('\n'),
     day: 17,
   });
+  await seed({
+    slug: 'work-mail/quarantined-thread',
+    title: 'quarantined receipt',
+    body: 'QUARANTINED-FLOOR-PAYLOAD',
+    day: 22, frontmatter: { quarantine: true },
+  });
+  await seed({
+    slug: 'work-mail/archived-thread',
+    title: 'archived source receipt',
+    body: 'ARCHIVED-FLOOR-PAYLOAD',
+    day: 23, sourceId: 'archived-neighbor',
+  });
+  await engine.executeRaw(
+    `UPDATE sources SET archived = true, archived_at = NOW() WHERE id = 'archived-neighbor'`, [],
+  );
   // In-window but deliberately unsealed: listPages can enumerate it, while
   // untrusted search must not expose its canonical body until a safe text
   // projection has been installed.
@@ -255,6 +272,20 @@ describe('think gather keeps structured evidence', () => {
     expect(gather.pages.some(page => page.slug === 'work-mail/quiet-thread')).toBe(true);
     expect(gather.pages.some(page => page.slug === 'work-mail/other-source-thread')).toBe(false);
     expect(gather.pages.every(page => (page.source_id ?? 'default') === 'default')).toBe(true);
+  }, 120_000);
+
+  test('trusted-local floor rows keep search live-visibility rules', async () => {
+    const gather = await runGather(engine, {
+      question: 'widget-co planning sync',
+      window: WINDOW,
+      sourceIds: ['default', 'archived-neighbor'],
+      remote: false,
+    });
+
+    expect(gather.pages.some(page => page.slug === 'work-mail/quarantined-thread')).toBe(false);
+    expect(gather.pages.some(page => page.slug === 'work-mail/archived-thread')).toBe(false);
+    expect(gather.pages.some(page => page.chunk_text.includes('QUARANTINED-FLOOR-PAYLOAD'))).toBe(false);
+    expect(gather.pages.some(page => page.chunk_text.includes('ARCHIVED-FLOOR-PAYLOAD'))).toBe(false);
   }, 120_000);
 
   test('reserved floor rows stay private-filtered and fence-sanitized for remote callers', async () => {

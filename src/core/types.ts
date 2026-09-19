@@ -376,6 +376,12 @@ export interface PageFilters {
    */
   excludePrivate?: boolean;
   /**
+   * Apply the search-visible live-page predicates (current projection,
+   * unarchived source, and non-quarantined page) without a safe chunk gate.
+   * Used by trusted canonical-body reads matching search visibility without chunk readiness.
+   */
+  requireLiveVisibility?: boolean;
+  /**
    * Restrict enumeration to the same live, current, safely indexed page set
    * exposed by untrusted search. Intended for internal read paths that need
    * canonical page bodies (for example think's temporal floor) rather than
