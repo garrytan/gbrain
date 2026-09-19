@@ -236,8 +236,9 @@ beforeAll(async () => {
   await installFixtureChunks(engine, 'work-mail/withdrawn-thread', [
     { chunk_index: 0, chunk_text: canonical!.compiled_truth, chunk_source: 'compiled_truth' },
   ], { sourceId: 'default' });
-  // Keep the true hybrid miss at the front of listPages' floor-only order so
-  // the balanced reservation proves it retains both candidate classes.
+  // Keep the true hybrid miss plus the fenced/withdrawn safety fixtures at
+  // the front of listPages' floor-only order. The remote test needs those
+  // safety rows inside the five floor-only reservation slots.
   await engine.executeRaw(
     `UPDATE pages SET updated_at = CASE slug
        WHEN 'work-mail/quiet-thread' THEN NOW() + INTERVAL '3 minutes'
@@ -287,7 +288,7 @@ describe('think gather keeps structured evidence', () => {
       .toBeGreaterThanOrEqual(30);
   }, 120_000);
 
-  test('the temporal reservation keeps a floor page ranked below the hybrid head', async () => {
+  test('the temporal reservation keeps a dated hybrid row below the ordinary head', async () => {
     const hybrid = await hybridSearch(engine, 'widget-co planning sync', {
       limit: 200, expansion: false, autocut: false, tokenBudget: 0,
       sourceIds: ['default'],

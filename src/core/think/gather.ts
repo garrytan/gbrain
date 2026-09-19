@@ -257,16 +257,18 @@ export async function runGather(
     // window-filtered hybrid result, not listPages' bounded 50-row sample, so
     // a busy month cannot erase rank evidence merely because a page was not
     // among the 50 most recently updated rows.
-    const rankedFloorCandidates = fromHybrid.slice(head.length)
+    // For a temporal query, dated hybrid-tail evidence deliberately outranks
+    // otherwise higher undated tail rows whenever the canonical floor found a
+    // true hybrid miss. With no such miss, the fast path above preserves pure
+    // hybrid order byte-for-byte.
+    const datedHybridTail = fromHybrid.slice(head.length)
       .filter(page => resolvePageDateMs(page) !== null);
     const floorOnlyCount = Math.min(fromFloor.length, Math.ceil(reserveCapacity / 2));
-    const rankedCount = Math.min(rankedFloorCandidates.length, reserveCapacity - floorOnlyCount);
-    let remaining = reserveCapacity - floorOnlyCount - rankedCount;
-    const extraRanked = Math.min(remaining, rankedFloorCandidates.length - rankedCount);
-    remaining -= extraRanked;
+    const rankedCount = Math.min(datedHybridTail.length, reserveCapacity - floorOnlyCount);
+    const remaining = reserveCapacity - floorOnlyCount - rankedCount;
     const extraFloorOnly = Math.min(remaining, fromFloor.length - floorOnlyCount);
     const reserveCandidates = [
-      ...rankedFloorCandidates.slice(0, rankedCount + extraRanked),
+      ...datedHybridTail.slice(0, rankedCount),
       ...fromFloor.slice(0, floorOnlyCount + extraFloorOnly),
     ];
     for (const page of reserveCandidates) selected.add(pageIdentity(page));
