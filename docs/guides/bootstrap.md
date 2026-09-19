@@ -202,8 +202,10 @@ mode wires them in one command, with no `agent.json` and no interview:
   Each home stamps a
   per-home marker (`bootstrap-harness-v1:<hash of the canonical home>`), so two
   homes own DISJOINT project lists safely: a second home trying to wire a
-  project another home already owns is refused before the file is touched;
-  if a project install predates a user-scope install, the user hook yields all
+  project another home already owns is refused before any token is minted or
+  settings file is touched. Wire project-scoped homes first: `--project` refuses
+  while any harness hooks sit in the user-scope settings (or that file cannot be
+  read). When a project install predates a user-scope install, the user hook yields all
   events to the project policy at runtime (including when that project disables
   capture), so company transcripts never fall through to a personal user-scope
   hook. A home's own re-runs stay
