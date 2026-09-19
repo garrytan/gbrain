@@ -31,6 +31,8 @@ const TEMPORAL_RX = new RegExp(
     '\\blast\\s+(time|met|saw|spoke|visited)\\b',
     '\\b(is\\s+)?still\\b',
     '\\bcurrent(?:ly)?\\b',
+    '\\b(?:lately|recently)\\b',
+    "\\bwhat(?:'s|\\s+has)\\s+been\\s+(?:going\\s+on|happening)\\b",
     '\\bnow\\b',
     // Temporal prepositions with date-shaped context
     '\\bbefore\\s+(I|we|the|that)\\b',
