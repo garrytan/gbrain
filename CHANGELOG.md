@@ -2,6 +2,22 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.3.1] - 2026-09-20
+
+**The skill coverage test can capture large reports from fresh checkouts.**
+
+A fresh checkout can make the recent-file report larger than the test helper's default output buffer. The test now captures the complete report before checking its JSON.
+
+## To take advantage of v0.51.3.1
+
+This is a contributor test fix. No migration or configuration change is needed.
+
+### Itemized changes
+
+### For contributors
+
+- Increase the `skillify-check` test helper's capture buffer to 10 MiB, matching the other helper in the same file. CLI behavior and existing assertions are unchanged.
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**
