@@ -387,9 +387,11 @@ describe('think gather keeps structured evidence', () => {
 
   test('a temporal floor row changed after enumeration is dropped', async () => {
     const originalGetPage = engine.getPage.bind(engine);
+    let changedReads = 0;
     engine.getPage = (async (...args: Parameters<typeof engine.getPage>) => {
       const page = await originalGetPage(...args);
       if (args[0] !== 'work-mail/quiet-thread' || page === null) return page;
+      changedReads++;
       return { ...page, knowledge_revision: `${page.knowledge_revision ?? 'missing'}-changed` };
     }) as typeof engine.getPage;
 
@@ -405,6 +407,7 @@ describe('think gather keeps structured evidence', () => {
       engine.getPage = originalGetPage;
     }
 
+    expect(changedReads).toBeGreaterThan(0);
     expect(gather!.pages.some(page => page.slug === 'work-mail/quiet-thread')).toBe(false);
     expect(gather!.warnings).not.toContain('GATHER_WINDOW_FLOOR_PARTIAL_FAILED');
   }, 120_000);
