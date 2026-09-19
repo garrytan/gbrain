@@ -2,6 +2,28 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.4.0] - 2026-09-20
+
+**Think and synthesize now keep the short calendar, mail, and other structured evidence that answers time-sensitive questions.**
+
+Long notes and transcripts could consume the retrieval budget before smaller records reached the answer. A broad search could also crowd pages from the requested date range out of the final evidence set. Synthesis now owns one evidence budget and reserves part of it for in-window pages, balancing hybrid-ranked tail rows with pages hybrid missed.
+
+Time-windowed synthesis applies the same visibility and forget rules as search and reads each page's current version. If a page changes during the read, or one page cannot be read, that page is omitted without failing the whole answer. Local `think` and `synthesize` also search the same connected sources as local search, while explicit source choices and remote access grants stay narrow.
+
+## To take advantage of v0.51.4.0
+
+Upgrade normally. No schema migration or new setting is required. Re-run a time-windowed synthesis that previously omitted calendar, mail, or other terse evidence.
+
+**Say to your agent:** "Upgrade GBrain, then retry my time-windowed synthesis and confirm the answer cites the relevant calendar or mail evidence."
+
+### Itemized changes
+
+- Disable search-layer token packing inside synthesis gather; the synthesis prompt keeps its existing character budget.
+- Reserve up to 25% of `gather_limit` for in-window evidence beyond hybrid search's ordinary gather cut, split between dated hybrid-ranked rows and canonical floor-only rows from a bounded 50-page scan, and deduplicate page identity by `(source_id, slug)`.
+- Hydrate temporal-floor rows through current page snapshots with revision checks and bounded concurrency; `GATHER_WINDOW_FLOOR_PARTIAL_FAILED` reports isolated read failures.
+- Add opt-in `PageFilters.requireLiveVisibility` and `requireSafeChunks` enumeration filters with matching PGLite and Postgres implementations.
+- Route trusted-local `think` and `synthesize` through the computed federated search scope, and retain an explicit query source during CRAG escalation.
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**

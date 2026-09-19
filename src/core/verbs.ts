@@ -16,7 +16,7 @@
  * Import-cycle note: operations.ts spreads these into its `operations` array
  * at MODULE-EVAL time, so this file must be a RUNTIME LEAF — it may import
  * operations.ts types (erased) but never its values statically. Handlers load
- * verbError/parseTtlParam/sourceScopeOpts via dynamic import (the file's
+ * verbError/parseTtlParam/thinkSourceScopeOpts via dynamic import (the file's
  * existing style), which resolves after both modules finish evaluating.
  * MEMORY_VERBS_VERSION lives HERE (operations.ts imports it from us) for the
  * same reason. Violating this reintroduces the TDZ crash on whichever module
@@ -236,7 +236,7 @@ const synthesize: Operation = {
   verb: true,
   annotations: { title: 'synthesize (slow, costly — LLM-backed)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const { verbError, sourceScopeOpts } = await import('./operations.ts');
+    const { verbError, thinkSourceScopeOpts } = await import('./operations.ts');
     const question = typeof p.question === 'string' ? p.question.trim() : '';
     if (!question) {
       throw verbError(
@@ -245,7 +245,9 @@ const synthesize: Operation = {
         'Pass the question to synthesize an answer for, e.g. question: "what is our payments strategy?".',
       );
     }
-    const scope = sourceScopeOpts(ctx);
+    // Same helper as the think op, so a trusted-local synthesize spans the
+    // federated set search/query use; remote callers keep the canonical ladder.
+    const scope = thinkSourceScopeOpts(ctx);
     const { runThink } = await import('./think/index.ts');
     const { embedQuery } = await import('./embedding.ts');
     // Remote-safe delegation: save/take are NEVER offered through this verb,
@@ -255,8 +257,7 @@ const synthesize: Operation = {
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
-      ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
-      ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
+      ...scope,
       // Fail-closed: only a context that explicitly says local gets local.
       remote: ctx.remote !== false,
       // #3734: activate takes' vector retrieval arm for the synthesize verb.

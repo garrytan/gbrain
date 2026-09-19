@@ -1068,6 +1068,19 @@ export class PostgresEngine implements BrainEngine {
     const privateCondition = filters?.excludePrivate === true
       ? sql.unsafe(`AND ${privatePagesFilterFragment('p')}`)
       : sql``;
+    // Internal untrusted enumerations must see the same live projection that
+    // search exposes. listPages normally remains an administrative primitive;
+    // this opt-in is used when canonical page bodies enter a remote response.
+    const requireVisibility = filters?.requireLiveVisibility === true || filters?.requireSafeChunks === true;
+    const safeVisibilityJoin = requireVisibility
+      ? sql`JOIN sources s ON s.id = p.source_id`
+      : sql``;
+    const safeVisibilityCondition = requireVisibility
+      ? sql.unsafe(buildVisibilityClause('p', 's', {
+          excludePrivate: filters.excludePrivate,
+          requireSafeChunks: filters.requireSafeChunks === true,
+        }))
+      : sql``;
     const effectiveAfterCondition = filters?.effective_after
       ? sql`AND p.effective_date >= ${filters.effective_after}::timestamptz`
       : sql``;
@@ -1086,8 +1099,8 @@ export class PostgresEngine implements BrainEngine {
     return await this.withScopedReadTransaction(filters?.sourceIds, filters?.sourceId, async (tx) => {
       const rows = await tx`
         SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
-        ${tagJoin}
-        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
+        ${tagJoin} ${safeVisibilityJoin}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${safeVisibilityCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
       `;
       return rows.map(rowToPage);
