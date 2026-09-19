@@ -19,7 +19,7 @@ Upgrade normally. No schema migration or new setting is required. Re-run a time-
 ### Itemized changes
 
 - Disable search-layer token packing inside synthesis gather; the synthesis prompt keeps its existing character budget.
-- Reserve up to 25% of `gather_limit` for in-window canonical pages beyond hybrid search's ordinary gather cut, balancing hybrid-ranked rows with floor-only rows, and deduplicate page identity by `(source_id, slug)`.
+- Reserve up to 25% of `gather_limit` for in-window evidence beyond hybrid search's ordinary gather cut, split between dated hybrid-ranked rows and canonical floor-only rows from a bounded 50-page scan, and deduplicate page identity by `(source_id, slug)`.
 - Hydrate temporal-floor rows through current page snapshots with revision checks and bounded concurrency; `GATHER_WINDOW_FLOOR_PARTIAL_FAILED` reports isolated read failures.
 - Add opt-in `PageFilters.requireLiveVisibility` and `requireSafeChunks` enumeration filters with matching PGLite and Postgres implementations.
 - Route trusted-local `think` and `synthesize` through the computed federated search scope, and retain an explicit query source during CRAG escalation.

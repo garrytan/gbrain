@@ -20,7 +20,7 @@ import type { BrainEngine, TakeHit, Take } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { Page, SearchResult } from '../types.ts';
-import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
+import { filterPagesToWindow, resolvePageDateMs, type TemporalWindow } from './temporal-window.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
@@ -82,8 +82,9 @@ export interface ThinkGatherResult {
  * `gatherLimit`, so it only ever delivered anything when hybrid happened to
  * under-return — i.e. it was a backfill, not a floor. Reserving slots makes
  * it one: hybrid keeps the large majority of the budget, and up to this share
- * goes to in-window pages hybrid missed. When the floor has nothing to add
- * the reservation is 0 and the merge is byte-identical to appending.
+ * is shared between dated hybrid-tail rows and pages hybrid missed. When the
+ * floor has nothing to add, the merge stays byte-identical to the old hybrid
+ * cut instead of reordering rows merely because they carry a date.
  */
 const WINDOW_FLOOR_RESERVED_SHARE = 0.25;
 const WINDOW_FLOOR_HYDRATE_CONCURRENCY = 8;
@@ -243,36 +244,32 @@ export async function runGather(
     // floor tail takes every slot the head left, so a short hybrid leg still
     // fills the gather exactly as it did before.
     const hybridPages = new Set(hybrid.map(pageIdentity));
-    const floorPages = new Set(floor.map(pageIdentity));
     const fromHybrid = filtered.kept.filter(page => hybridPages.has(pageIdentity(page)));
     const fromFloor = filtered.kept.filter(page => !hybridPages.has(pageIdentity(page)));
+    if (fromFloor.length === 0) return fromHybrid.slice(0, gatherLimit);
+
     const reserveCapacity = Math.floor(gatherLimit * WINDOW_FLOOR_RESERVED_SHARE);
     const head = fromHybrid.slice(0, Math.max(0, gatherLimit - reserveCapacity));
     const selected = new Set(head.map(pageIdentity));
 
     // A page can belong to BOTH streams: hybrid may find it, but below the
-    // ordinary gather cut. Those rows are better temporal-floor candidates
-    // than an unranked row selected only by listPages' updated-desc order.
-    // Preserve hybrid rank for the overlap, then use floor-only rows. This is
-    // also why the membership test uses the full floor set rather than the
-    // already de-duplicated `fromFloor` tail.
+    // ordinary gather cut. Dated tail eligibility comes from the already
+    // window-filtered hybrid result, not listPages' bounded 50-row sample, so
+    // a busy month cannot erase rank evidence merely because a page was not
+    // among the 50 most recently updated rows.
     const rankedFloorCandidates = fromHybrid.slice(head.length)
-      .filter(page => floorPages.has(pageIdentity(page)));
-    const reserveCandidates: SearchResult[] = [];
-    let rankedIdx = 0;
-    let floorOnlyIdx = 0;
-    // Balance relevance-ranked temporal rows with true hybrid misses. Starting
-    // with the ranked side fixes the old arbitrary-recency displacement;
-    // alternating preserves the date floor's reason to exist when both sides
-    // have enough candidates to fill the reservation.
-    while (reserveCandidates.length < reserveCapacity
-      && (rankedIdx < rankedFloorCandidates.length || floorOnlyIdx < fromFloor.length)) {
-      if (rankedIdx < rankedFloorCandidates.length) reserveCandidates.push(rankedFloorCandidates[rankedIdx++]);
-      if (reserveCandidates.length < reserveCapacity && floorOnlyIdx < fromFloor.length) {
-        reserveCandidates.push(fromFloor[floorOnlyIdx++]);
-      }
-    }
-    for (const page of reserveCandidates.slice(0, reserveCapacity)) selected.add(pageIdentity(page));
+      .filter(page => resolvePageDateMs(page) !== null);
+    const floorOnlyCount = Math.min(fromFloor.length, Math.ceil(reserveCapacity / 2));
+    const rankedCount = Math.min(rankedFloorCandidates.length, reserveCapacity - floorOnlyCount);
+    let remaining = reserveCapacity - floorOnlyCount - rankedCount;
+    const extraRanked = Math.min(remaining, rankedFloorCandidates.length - rankedCount);
+    remaining -= extraRanked;
+    const extraFloorOnly = Math.min(remaining, fromFloor.length - floorOnlyCount);
+    const reserveCandidates = [
+      ...rankedFloorCandidates.slice(0, rankedCount + extraRanked),
+      ...fromFloor.slice(0, floorOnlyCount + extraFloorOnly),
+    ];
+    for (const page of reserveCandidates) selected.add(pageIdentity(page));
 
     // If either leg under-returned, consume every remaining slot rather than
     // leaving a synthetic reservation empty. Hybrid stays relevance-ordered;

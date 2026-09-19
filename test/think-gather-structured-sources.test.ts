@@ -107,8 +107,8 @@ beforeAll(async () => {
     });
   }
 
-  // --- Case 2 corpus: enough cheap in-window matches to fill the gather on
-  // their own, so the date floor has to be reserved slots to deliver at all.
+  // --- Case 2 corpus: 34 strong and 11 weaker cheap in-window matches fill
+  // the gather, so the date floor has to reserve slots to deliver at all.
   for (let i = 0; i < 34; i++) {
     await seed({
       slug: `syncs/note-${i + 1}`,
@@ -142,6 +142,17 @@ beforeAll(async () => {
     body: 'Attachment archived for the finance folder.',
     day: 14,
   });
+  // More than one full reservation of true hybrid misses. On the old merge
+  // these ten rows forced the hybrid head down to 30, which drops the ranked
+  // tail fixture above; the regression test below therefore fails pre-fix.
+  for (let i = 0; i < 10; i++) {
+    await seed({
+      slug: `work-mail/floor-only-${i + 1}`,
+      title: `temporal archive ${i + 1}`,
+      body: `unmatched temporal archive record ${i + 1}.`,
+      day: (i % 10) + 1,
+    });
+  }
   // Scope controls, all in-window and all unreachable by the question.
   await seed({
     slug: 'work-mail/other-source-thread',
@@ -228,8 +239,13 @@ beforeAll(async () => {
   // Keep the true hybrid miss at the front of listPages' floor-only order so
   // the balanced reservation proves it retains both candidate classes.
   await engine.executeRaw(
-    `UPDATE pages SET updated_at = NOW() + INTERVAL '1 minute'
-     WHERE slug = 'work-mail/quiet-thread' AND source_id = 'default'`, [],
+    `UPDATE pages SET updated_at = CASE slug
+       WHEN 'work-mail/quiet-thread' THEN NOW() + INTERVAL '3 minutes'
+       WHEN 'work-mail/fenced-thread' THEN NOW() + INTERVAL '2 minutes'
+       WHEN 'work-mail/withdrawn-thread' THEN NOW() + INTERVAL '1 minute'
+       ELSE updated_at END
+     WHERE slug IN ('work-mail/quiet-thread','work-mail/fenced-thread','work-mail/withdrawn-thread')
+       AND source_id = 'default'`, [],
   );
 }, 300_000);
 
