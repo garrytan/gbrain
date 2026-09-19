@@ -56,6 +56,10 @@ ownership is converged in the safe order. This release adds no schema migration
 and does not authorize paid enrichment, broader grants, data deletion or a new
 capture policy.
 
+**Say to your agent:** "Upgrade each brain home to v0.51.3.0, preserve its
+existing harness hosts, projects, source, endpoint and capture choice, converge
+project-scoped hooks before user-scoped hooks, then verify each brain separately."
+
 ### Itemized changes
 
 ### Fixed
