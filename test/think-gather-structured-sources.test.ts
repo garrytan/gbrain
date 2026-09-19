@@ -327,6 +327,87 @@ describe('think gather keeps structured evidence', () => {
       .sort();
     expect(collisions).toEqual(['default', 'neighbor']);
   }, 120_000);
+
+  test('temporal floor snapshot hydration is bounded to eight concurrent reads', async () => {
+    const originalGetPage = engine.getPage.bind(engine);
+    let active = 0;
+    let peak = 0;
+    let reads = 0;
+    engine.getPage = (async (...args: Parameters<typeof engine.getPage>) => {
+      reads++;
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        await Bun.sleep(10);
+        return await originalGetPage(...args);
+      } finally {
+        active--;
+      }
+    }) as typeof engine.getPage;
+
+    try {
+      await runGather(engine, {
+        question: 'nonexistent-hydration-concurrency-token',
+        window: WINDOW,
+        sourceIds: ['default'],
+        remote: false,
+      });
+    } finally {
+      engine.getPage = originalGetPage;
+    }
+
+    expect(reads).toBeGreaterThan(8);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(8);
+  }, 120_000);
+
+  test('one failed temporal snapshot read is dropped without failing the gather', async () => {
+    const originalGetPage = engine.getPage.bind(engine);
+    engine.getPage = (async (...args: Parameters<typeof engine.getPage>) => {
+      if (args[0] === 'work-mail/quiet-thread') throw new Error('fixture snapshot failure');
+      return await originalGetPage(...args);
+    }) as typeof engine.getPage;
+
+    let gather: Awaited<ReturnType<typeof runGather>>;
+    try {
+      gather = await runGather(engine, {
+        question: 'nonexistent-partial-failure-token',
+        window: WINDOW,
+        sourceIds: ['default'],
+        remote: false,
+      });
+    } finally {
+      engine.getPage = originalGetPage;
+    }
+
+    expect(gather!.warnings).toContain('GATHER_WINDOW_FLOOR_PARTIAL_FAILED');
+    expect(gather!.pages.some(page => page.slug === 'work-mail/quiet-thread')).toBe(false);
+    expect(gather!.pages.length).toBeGreaterThan(0);
+  }, 120_000);
+
+  test('a temporal floor row changed after enumeration is dropped', async () => {
+    const originalGetPage = engine.getPage.bind(engine);
+    engine.getPage = (async (...args: Parameters<typeof engine.getPage>) => {
+      const page = await originalGetPage(...args);
+      if (args[0] !== 'work-mail/quiet-thread' || page === null) return page;
+      return { ...page, knowledge_revision: `${page.knowledge_revision ?? 'missing'}-changed` };
+    }) as typeof engine.getPage;
+
+    let gather: Awaited<ReturnType<typeof runGather>>;
+    try {
+      gather = await runGather(engine, {
+        question: 'nonexistent-revision-race-token',
+        window: WINDOW,
+        sourceIds: ['default'],
+        remote: false,
+      });
+    } finally {
+      engine.getPage = originalGetPage;
+    }
+
+    expect(gather!.pages.some(page => page.slug === 'work-mail/quiet-thread')).toBe(false);
+    expect(gather!.warnings).not.toContain('GATHER_WINDOW_FLOOR_PARTIAL_FAILED');
+  }, 120_000);
 });
 
 describe('synthesize gathers from the trusted-local federated set', () => {
