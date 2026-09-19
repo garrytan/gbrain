@@ -17,6 +17,7 @@ import {
   addPermissionsAllowEntry,
   removePermissionsAllowEntry,
   removeClaudeHooksAt,
+  settingsContainHarnessHooks,
   writeClaudeHooksAt,
 } from '../src/core/bootstrap/hooks.ts';
 import {
@@ -24,6 +25,8 @@ import {
   GBRAIN_HARNESS_MARKER_VALUE,
   GBRAIN_HOOK_MARKER_KEY,
   GBRAIN_HOOK_MARKER_VALUE,
+  harnessMarkerForHome,
+  isHarnessMarkerValue,
   claudeProjectsDir,
   codexConfigPath,
   mcpPermissionEntry,
@@ -360,5 +363,85 @@ describe('claudeProjectsDir honors CLAUDE_CONFIG_DIR', () => {
     await withEnv({ CLAUDE_CONFIG_DIR: configDir, HOME: tmp() }, async () => {
       expect(claudeProjectsDir()).toBe(join(configDir, 'projects'));
     });
+  });
+});
+
+describe('per-home marker + legacy adoption + namespace', () => {
+  const H = GBRAIN_HARNESS_MARKER_VALUE;
+
+  test('isHarnessMarkerValue matches legacy + per-home namespace, rejects others', () => {
+    expect(isHarnessMarkerValue(H)).toBe(true);
+    expect(isHarnessMarkerValue(`${H}:abc123def456`)).toBe(true);
+    expect(isHarnessMarkerValue(GBRAIN_HOOK_MARKER_VALUE)).toBe(false);
+    expect(isHarnessMarkerValue('bootstrap-harness-v1x')).toBe(false);
+    expect(isHarnessMarkerValue(undefined)).toBe(false);
+  });
+
+  test('settingsContainHarnessHooks is structural and rejects unparseable settings', () => {
+    expect(settingsContainHarnessHooks(JSON.stringify({ note: `${H}:not-a-hook` }))).toBe(false);
+    expect(() => settingsContainHarnessHooks('{"hooks":')).toThrow();
+  });
+
+  test('harnessMarkerForHome is symlink-stable and throws on an unresolvable home', () => {
+    const dir = tmp();
+    const home = join(dir, 'home');
+    mkdirSync(home);
+    const link = join(dir, 'home-link');
+    symlinkSync(home, link);
+    const m1 = harnessMarkerForHome(home);
+    const m2 = harnessMarkerForHome(link);
+    expect(m1).toBe(m2); // one identity for the same canonical home
+    expect(isHarnessMarkerValue(m1)).toBe(true);
+    expect(m1).not.toBe(H); // per-home value, not the shared legacy value
+    expect(() => harnessMarkerForHome(join(dir, 'does-not-exist'))).toThrow(); // unresolvable → clear throw, never a silent 2nd identity
+  });
+
+  test('adoptMarkers migrates a legacy entry to the per-home marker in ONE write', () => {
+    const path = join(tmp(), 'settings.local.json');
+    const home = tmp();
+    const marker = harnessMarkerForHome(home);
+    // seed a legacy shared-marker install
+    writeClaudeHooksAt(path, { gbrainBin: BIN, env: { GBRAIN_SOURCE: 's', GBRAIN_HOME: home }, marker: H });
+    expect(markerEntries(readJson(path), H)).toBe(CLAUDE_HOOK_EVENTS.length);
+    // one write under the per-home marker, adopting the legacy one
+    const r = writeClaudeHooksAt(path, {
+      gbrainBin: BIN,
+      env: { GBRAIN_SOURCE: 's', GBRAIN_HOME: home },
+      marker,
+      adoptMarkers: [H],
+      refuseOnForeignGbrainMarker: true,
+    });
+    const s = readJson(path);
+    expect(markerEntries(s, H)).toBe(0); // legacy gone
+    expect(markerEntries(s, marker)).toBe(CLAUDE_HOOK_EVENTS.length); // exactly one new entry per event
+    expect(r.installed.length).toBe(CLAUDE_HOOK_EVENTS.length);
+  });
+
+  test('a legacy entry is foreign WITHOUT adoption → refuses byte-identically', () => {
+    const path = join(tmp(), 'settings.local.json');
+    const home = tmp();
+    const marker = harnessMarkerForHome(home);
+    writeClaudeHooksAt(path, { gbrainBin: BIN, env: { GBRAIN_SOURCE: 's' }, marker: H });
+    const before = readFileSync(path, 'utf8');
+    expect(() =>
+      writeClaudeHooksAt(path, {
+        gbrainBin: BIN,
+        env: { GBRAIN_SOURCE: 's', GBRAIN_HOME: home },
+        marker,
+        refuseOnForeignGbrainMarker: true, // NO adoptMarkers → legacy stays foreign
+      }),
+    ).toThrow();
+    expect(readFileSync(path, 'utf8')).toBe(before); // byte-identical, no mutation
+  });
+
+  test('the local hook command carries the explicit GBRAIN_HOME', () => {
+    const path = join(tmp(), 'settings.local.json');
+    const home = tmp();
+    const r = writeClaudeHooksAt(path, {
+      gbrainBin: BIN,
+      env: { GBRAIN_SOURCE: 's', GBRAIN_HOME: home },
+      marker: harnessMarkerForHome(home),
+    });
+    expect(r.installed[0]!.command).toContain(`GBRAIN_HOME=${home}`);
   });
 });

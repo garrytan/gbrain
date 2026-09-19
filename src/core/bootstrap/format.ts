@@ -247,6 +247,8 @@ export interface HarnessTarget {
   entry?: string;
   /** Hook marker value (hooks targets). */
   marker?: string;
+  /** Receipt-proven legacy markers this pending target may adopt atomically. */
+  adopt_markers?: string[];
   /** Write mechanism note, e.g. 'toml-block' vs 'claude-cli'. */
   mechanism?: string;
   /** One-line failure reason when state === 'failed'. */

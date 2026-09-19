@@ -2,6 +2,79 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.3.0] - 2026-09-20
+
+**Claude can now use a personal brain and a company brain on the same machine without mixing their project context.**
+
+Each local Claude hook now carries the exact brain home that installed it. A
+company project can stay bound to the company brain while personal sessions use
+the personal brain, even when both installs share one operating-system account.
+If two brains try to own the same project, the second install stops before it
+mints a token or changes settings.
+
+Existing local settings remain portable. Machine-specific paths stay in ignored
+or user-level files, never in a committed project settings file. A user-level
+hook also yields every event when a project has its own brain policy, including
+projects that intentionally disabled transcript capture, so company transcripts
+do not fall through into personal memory.
+
+### What changes in practice
+
+| Situation | Result |
+|---|---|
+| Personal user hooks plus company project hooks | The project policy wins inside the company project. |
+| Two homes claim the same project | The second claim is refused before token or settings mutation. |
+| A brain home or its parent uses a symlink | Hook identity stays stable and `GBRAIN_HOME` still resolves to the correct config directory. |
+| An older harness owns hooks under the shared marker | A confirmed receipt allows one atomic migration to the per-home marker. |
+| A migration write fails | The working legacy hooks remain available for a safe retry. |
+
+### Things to watch
+
+Two homes still require separate running brain services and protected database
+credentials. Project-scoped wiring must exist before a user-scoped harness is
+added on the same machine. Keep the original host list, project list, capture
+choice, source and endpoint when converging an existing receipt. A foreign or
+unreceipted legacy marker is intentionally left untouched.
+
+## To take advantage of v0.51.3.0
+
+Upgrade each brain host, inspect its existing receipt, then re-run the same
+harness command with the same `--harness`, `--project`, `--no-capture`, source
+and endpoint options. Do not replace a project-scoped install with a bare
+user-scoped command.
+
+```bash
+gbrain upgrade
+gbrain bootstrap harness --status --json
+# Re-run the original harness command and options, adding --yes.
+gbrain doctor
+```
+
+For a two-brain machine, follow
+[`skills/migrations/v0.51.3.0.md`](skills/migrations/v0.51.3.0.md) so project
+ownership is converged in the safe order. This release adds no schema migration
+and does not authorize paid enrichment, broader grants, data deletion or a new
+capture policy.
+
+**Say to your agent:** "Upgrade each brain home to v0.51.3.0, preserve its
+existing harness hosts, projects, source, endpoint and capture choice, converge
+project-scoped hooks before user-scoped hooks, then verify each brain separately."
+
+### Itemized changes
+
+### Fixed
+
+- Give every harness home a canonical, symlink-stable ownership marker and put
+  the parent directory expected by `GBRAIN_HOME` into local Claude commands.
+- Preflight cross-home ownership before receipt, token or settings mutation,
+  while preserving same-home idempotence and removal.
+- Migrate only receipt-proven legacy hook markers, retain adoption evidence
+  across interrupted runs, and clean up both old and new markers safely.
+- Prevent committed harness-looking markers from suppressing user hooks and
+  yield user-scope capture to any project-owned policy across all events.
+- Keep Codex, opencode, registrar and `--no-hooks` paths independent of Claude
+  hook identity validation.
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**

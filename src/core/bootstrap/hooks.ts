@@ -35,8 +35,12 @@ import {
   CLAUDE_SETTINGS_FILE_RELPATH,
   GBRAIN_HOOK_MARKER_KEY,
   GBRAIN_HOOK_MARKER_VALUE,
+  GBRAIN_HARNESS_MARKER_VALUE,
+  harnessIdentityForConfigDir,
+  isHarnessMarkerValue,
   type ClaudeHookEvent,
 } from './host-specs.ts';
+import type { HarnessTarget } from './format.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +54,8 @@ export interface ClaudeHookEnv {
   GBRAIN_SOURCE?: string;
   /** Set only for --isolated installs (PARENT dir; config appends `.gbrain`). */
   GBRAIN_HOME?: string;
+  /** Harness ownership tier. User-scope hooks yield to project harness hooks. */
+  GBRAIN_HOOK_SCOPE?: 'user' | 'project';
   /**
    * 'harness' on #4043 harness-mode wiring: `gbrain hook` yields when the
    * lane is harness AND the cwd carries a workspace bootstrap install, so
@@ -92,6 +98,16 @@ export interface WriteClaudeHooksOpts {
    * same hook twice per event) [C6].
    */
   refuseOnForeignGbrainMarker?: boolean;
+  /**
+   * Legacy/foreign marker VALUEs to ADOPT as ours for this one write: entries
+   * carrying them are not treated as foreign, are stripped by the same pass,
+   * and are re-written under the new `marker` in the SAME atomic settings
+   * rewrite (one-pass migration, no intermediate unwired state). The caller
+   * passes this only when a prior receipt proves this home already owned the
+   * legacy marker at this exact path/scope; an UNADOPTED legacy marker stays
+   * foreign and (with refuseOnForeignGbrainMarker) refuses before any write.
+   */
+  adoptMarkers?: string[];
   /**
    * Mode for a FRESHLY-CREATED settings file (existing files keep their mode
    * via the atomic writer). Harness user-scope writes pass 0o600 to match
@@ -163,6 +179,7 @@ export function buildClaudeHookCommand(
   if (env.GBRAIN_SOURCE !== undefined) assignments.push(`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`);
   if (env.GBRAIN_HOME) assignments.push(`GBRAIN_HOME=${env.GBRAIN_HOME}`);
   if (env.GBRAIN_HOOK_LANE) assignments.push(`GBRAIN_HOOK_LANE=${env.GBRAIN_HOOK_LANE}`);
+  if (env.GBRAIN_HOOK_SCOPE) assignments.push(`GBRAIN_HOOK_SCOPE=${env.GBRAIN_HOOK_SCOPE}`);
   const parts = ['env', ...assignments, gbrainBin, 'hook', CLAUDE_HOOK_SUBCOMMAND[event]];
   return parts.map(shellQuote).join(' ');
 }
@@ -181,8 +198,14 @@ export function buildPortableClaudeHookCommand(event: ClaudeHookEvent, env: Clau
   if (env.GBRAIN_SOURCE === undefined) {
     throw new Error('the committed hook carrier must be source-scoped [G1] — GBRAIN_SOURCE is required');
   }
+  if (env.GBRAIN_HOME) {
+    throw new Error('GBRAIN_HOME is machine-specific and cannot be embedded in a committed hook carrier');
+  }
+  // The COMMITTED carrier is portable across machines, so it never embeds a
+  // machine-specific GBRAIN_HOME — an isolated home rides only the LOCAL
+  // command (buildClaudeHookCommand). writeCommittedClaudeHooks also refuses
+  // env.GBRAIN_HOME outright; this is the second layer.
   const assignments: string[] = [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`];
-  if (env.GBRAIN_HOME) assignments.push(`GBRAIN_HOME=${env.GBRAIN_HOME}`);
   const invoke = ['env', ...assignments, 'gbrain', 'hook', CLAUDE_HOOK_SUBCOMMAND[event]]
     .map(shellQuote)
     .join(' ');
@@ -238,19 +261,72 @@ export function committedHookEvents(workspaceDir: string): Set<ClaudeHookEvent> 
   return carried;
 }
 
-function isOurs(entry: unknown, marker: string = GBRAIN_HOOK_MARKER_VALUE): boolean {
-  return (
-    typeof entry === 'object' &&
-    entry !== null &&
-    (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY] === marker
-  );
+/** Marker(s) this call treats as OWNED. A single value or a set (the write
+ * path passes {new marker} ∪ adoptMarkers so adopted legacy entries count as
+ * ours for stripping/refusal in one pass). */
+type OwnedMarkers = string | ReadonlySet<string>;
+function ownsMarker(owned: OwnedMarkers, v: string): boolean {
+  return typeof owned === 'string' ? owned === v : owned.has(v);
 }
 
-/** True when the entry carries the gbrain marker KEY with any OTHER value. */
-function isForeignGbrainMarked(entry: unknown, marker: string): boolean {
+/** Structurally detect legacy or per-home harness markers in settings JSON. */
+export function settingsContainHarnessHooks(raw: string): boolean {
+  if (!raw.trim()) return false;
+  const parsed = JSON.parse(raw) as { hooks?: Record<string, unknown> };
+  if (!parsed.hooks || typeof parsed.hooks !== 'object') return false;
+  for (const groups of Object.values(parsed.hooks)) {
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      const entries = (group as { hooks?: unknown[] })?.hooks;
+      if (!Array.isArray(entries)) continue;
+      if (entries.some((entry) => {
+        if (typeof entry !== 'object' || entry === null) return false;
+        return isHarnessMarkerValue((entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY]);
+      })) return true;
+    }
+  }
+  return false;
+}
+
+function isOurs(entry: unknown, owned: OwnedMarkers = GBRAIN_HOOK_MARKER_VALUE): boolean {
   if (typeof entry !== 'object' || entry === null) return false;
   const v = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
-  return typeof v === 'string' && v !== marker;
+  return typeof v === 'string' && ownsMarker(owned, v);
+}
+
+/** True when the entry carries the gbrain marker KEY with a value we do NOT
+ * own (a different, non-adopted marker). */
+function isForeignGbrainMarked(entry: unknown, owned: OwnedMarkers): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const v = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
+  return typeof v === 'string' && !ownsMarker(owned, v);
+}
+
+function assertNoForeignGbrainMarkers(
+  settingsPath: string,
+  settings: SettingsObject,
+  events: readonly ClaudeHookEvent[],
+  owned: OwnedMarkers,
+): void {
+  const hooks = settings.hooks;
+  if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks)) return;
+  for (const event of events) {
+    const groups = (hooks as Record<string, unknown>)[event];
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      const entries = (group as HookMatcherGroup)?.hooks;
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (!isForeignGbrainMarked(entry, owned)) continue;
+        const foreign = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
+        throw new Error(
+          `${settingsPath} already wires hooks.${event} under gbrain marker "${String(foreign)}" — ` +
+            `refusing to double-wire the same hook (both entries would fire every event). ` +
+            `Remove the other install first (gbrain bootstrap harness --remove, or gbrain bootstrap uninstall).`,
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -261,7 +337,7 @@ function isForeignGbrainMarked(entry: unknown, marker: string): boolean {
  * filter emptied a previously non-empty group, so it can never drop a group a
  * different marker still owns.
  */
-function stripOurEntries(groups: unknown[], marker: string = GBRAIN_HOOK_MARKER_VALUE): { kept: unknown[]; removed: number } {
+function stripOurEntries(groups: unknown[], owned: OwnedMarkers = GBRAIN_HOOK_MARKER_VALUE): { kept: unknown[]; removed: number } {
   const kept: unknown[] = [];
   let removed = 0;
   for (const group of groups) {
@@ -271,7 +347,7 @@ function stripOurEntries(groups: unknown[], marker: string = GBRAIN_HOOK_MARKER_
     }
     const g = group as HookMatcherGroup;
     const before = g.hooks!.length;
-    const filtered = g.hooks!.filter((h) => !isOurs(h, marker));
+    const filtered = g.hooks!.filter((h) => !isOurs(h, owned));
     removed += before - filtered.length;
     if (filtered.length === 0 && before > 0 && filtered.length !== before) {
       continue; // we emptied it → drop the husk
@@ -351,6 +427,52 @@ function loadSettings(path: string): LoadedSettings {
   }
 }
 
+/** Read-only ownership preflight for callers that must refuse before minting
+ * credentials or mutating any other host configuration. The writer repeats
+ * the same check on its freshly-loaded snapshot before the atomic write. */
+function assertClaudeHooksWritableAt(
+  settingsPath: string,
+  opts: Pick<WriteClaudeHooksOpts, 'events' | 'marker' | 'adoptMarkers'>,
+): void {
+  const marker = opts.marker ?? GBRAIN_HOOK_MARKER_VALUE;
+  const owned = new Set<string>([marker, ...(opts.adoptMarkers ?? [])]);
+  const { settings } = loadSettings(settingsPath);
+  assertNoForeignGbrainMarkers(settingsPath, settings, opts.events ?? CLAUDE_HOOK_EVENTS, owned);
+}
+
+function assertClaudeHookPlansWritable(
+  plans: Array<Pick<WriteClaudeHooksOpts, 'events' | 'marker' | 'adoptMarkers'> & { settingsPath: string }>,
+): void {
+  for (const { settingsPath, ...opts } of plans) assertClaudeHooksWritableAt(settingsPath, opts);
+}
+
+export function planClaudeHarnessHooks(opts: {
+  configDir: string;
+  priorTargets: HarnessTarget[];
+  destinations: Array<{ path: string; scope: string }>;
+  capture: boolean;
+}): { envHome: string; marker: string; events: ClaudeHookEvent[]; targets: HarnessTarget[] } {
+  const { envHome, marker } = harnessIdentityForConfigDir(opts.configDir);
+  const events = opts.capture
+    ? [...CLAUDE_HOOK_EVENTS]
+    : [...CLAUDE_HOOK_EVENTS].filter((event) => event !== 'Stop' && event !== 'SessionEnd');
+  const targets = opts.destinations.map(({ path, scope }): HarnessTarget => {
+    const mayAdoptLegacy = opts.priorTargets.some((target) =>
+      target.kind === 'hooks' && target.path === path && target.scope === scope &&
+      ((target.state === 'confirmed' && target.marker === GBRAIN_HARNESS_MARKER_VALUE) ||
+        (target.marker === marker && target.adopt_markers?.includes(GBRAIN_HARNESS_MARKER_VALUE))));
+    return {
+      host: 'claude-code', kind: 'hooks', state: 'pending', scope, path, marker,
+      ...(mayAdoptLegacy ? { adopt_markers: [GBRAIN_HARNESS_MARKER_VALUE] } : {}),
+    };
+  });
+  assertClaudeHookPlansWritable(targets.map((target) => ({
+    settingsPath: target.path!, events, marker,
+    ...(target.adopt_markers?.length ? { adoptMarkers: target.adopt_markers } : {}),
+  })));
+  return { envHome, marker, events, targets };
+}
+
 // ── Writers [G5, CX2-17] ────────────────────────────────────────────────────
 
 /**
@@ -374,6 +496,10 @@ export function writeClaudeHooksAt(
     }
   }
   const marker = opts.marker ?? GBRAIN_HOOK_MARKER_VALUE;
+  // Markers this write owns: the new marker plus any adopted legacy markers.
+  // New entries are always stamped with `marker`; adopted ones are stripped
+  // and replaced in the same atomic write (one-pass legacy migration).
+  const owned: ReadonlySet<string> = new Set<string>([marker, ...(opts.adoptMarkers ?? [])]);
   const backupStrategy = opts.backupStrategy ?? 'fixed';
 
   const { settings, existed, brokenBackupPath, notes } = loadSettings(settingsPath);
@@ -397,24 +523,7 @@ export function writeClaudeHooksAt(
   // DIFFERENT marker already wires one of our target events in this file —
   // Claude Code would run both.
   if (opts.refuseOnForeignGbrainMarker) {
-    for (const event of events) {
-      const groups = hooks[event];
-      if (!Array.isArray(groups)) continue;
-      for (const group of groups) {
-        const g = group as HookMatcherGroup;
-        if (!Array.isArray(g?.hooks)) continue;
-        for (const entry of g.hooks) {
-          if (isForeignGbrainMarked(entry, marker)) {
-            const foreign = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
-            throw new Error(
-              `${settingsPath} already wires hooks.${event} under gbrain marker "${String(foreign)}" — ` +
-                `refusing to double-wire the same hook (both entries would fire every event). ` +
-                `Remove the other install first (gbrain bootstrap harness --remove, or gbrain bootstrap uninstall).`,
-            );
-          }
-        }
-      }
-    }
+    assertNoForeignGbrainMarkers(settingsPath, settings, events, owned);
   }
 
   // [D12] Dedupe invariant: an event carried by the COMMITTED settings file
@@ -433,7 +542,7 @@ export function writeClaudeHooksAt(
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue; // structurally foreign — never touch
-    const { kept, removed } = stripOurEntries(groups, marker);
+    const { kept, removed } = stripOurEntries(groups, owned);
     removedPrior += removed;
     if (removed === 0) continue;
     if (kept.length === 0) {
@@ -591,7 +700,7 @@ export function writeCommittedClaudeHooks(
  */
 export function removeClaudeHooksAt(
   settingsPath: string,
-  marker: string = GBRAIN_HOOK_MARKER_VALUE,
+  marker: OwnedMarkers = GBRAIN_HOOK_MARKER_VALUE,
 ): RemoveClaudeHooksResult {
   const notes: string[] = [];
   if (!existsSync(settingsPath)) {

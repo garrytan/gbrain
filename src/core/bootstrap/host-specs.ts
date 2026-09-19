@@ -19,9 +19,10 @@
  * gbrain code.
  */
 
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 // ── Spec-target registry [ENG-7] ────────────────────────────────────────────
 
@@ -237,6 +238,73 @@ export const GBRAIN_HOOK_MARKER_VALUE = 'bootstrap-v1';
  * — each removal path strips only its own entries.
  */
 export const GBRAIN_HARNESS_MARKER_VALUE = 'bootstrap-harness-v1';
+
+/**
+ * Per-home harness marker VALUE, so two brain homes own DISJOINT hook entries
+ * in the same settings file instead of colliding on the shared value: each
+ * home stamps `bootstrap-harness-v1:<12-hex of sha256(realpath(home))>`, and
+ * the structural writer then treats another home's entries as foreign
+ * (refuse-before-write) while a home's own re-runs/removals stay scoped.
+ *
+ * The path is CANONICALIZED (`realpathSync`) first, so a symlinked spelling of
+ * the same existing home yields the SAME marker — one home is never split into
+ * two identities. If the home cannot be canonicalized (missing / unreadable),
+ * this THROWS rather than fall back to the raw string, because a silent
+ * fallback could mint a second identity for the same home.
+ */
+export function canonicalizeHome(home: string): string {
+  try {
+    return realpathSync(home);
+  } catch (e) {
+    throw new Error(
+      `cannot canonicalize GBRAIN_HOME ${JSON.stringify(home)} for a per-home hook identity ` +
+        `(${e instanceof Error ? e.message : String(e)}) — refusing to mint an ambiguous hook identity`,
+    );
+  }
+}
+
+/** Per-home marker from an ALREADY-canonical home (pure). The marker and the
+ * home embedded in the hook command MUST derive from the same canonical path,
+ * or a retargeted symlink leaves the marker/receipt claiming one brain while
+ * the command executes against another. */
+export function harnessMarkerForCanonicalHome(canonicalHome: string): string {
+  const hash = createHash('sha256').update(canonicalHome).digest('hex').slice(0, 12);
+  return `${GBRAIN_HARNESS_MARKER_VALUE}:${hash}`;
+}
+
+export function harnessMarkerForHome(home: string): string {
+  return harnessMarkerForCanonicalHome(canonicalizeHome(home));
+}
+
+/** Resolve the config directory identity and the parent value GBRAIN_HOME expects. */
+export function harnessIdentityForConfigDir(home: string): {
+  canonicalConfigDir: string;
+  envHome: string;
+  marker: string;
+} {
+  const configDirPath = resolve(home);
+  if (basename(configDirPath) !== '.gbrain') {
+    throw new Error(
+      `harness gbrain home must be a .gbrain config directory; got ${JSON.stringify(configDirPath)}`,
+    );
+  }
+  const canonicalConfigDir = canonicalizeHome(configDirPath);
+  const envHome = realpathSync(dirname(configDirPath));
+  if (realpathSync(join(envHome, '.gbrain')) !== canonicalConfigDir) {
+    throw new Error(`GBRAIN_HOME ${JSON.stringify(envHome)} does not resolve back to ${JSON.stringify(canonicalConfigDir)}`);
+  }
+  return { canonicalConfigDir, envHome, marker: harnessMarkerForCanonicalHome(canonicalConfigDir) };
+}
+
+/**
+ * True for any harness marker VALUE — the legacy shared value OR a per-home
+ * `bootstrap-harness-v1:<hash>`. Structural scans (e.g. the user-scope
+ * cross-home guard) use this on the `_gbrain` marker property; never match the
+ * raw file text, which would hit comments or unrelated strings.
+ */
+export function isHarnessMarkerValue(v: unknown): v is string {
+  return typeof v === 'string' && (v === GBRAIN_HARNESS_MARKER_VALUE || v.startsWith(`${GBRAIN_HARNESS_MARKER_VALUE}:`));
+}
 
 /**
  * User-scope Claude Code settings file (harness-mode hook + permissions

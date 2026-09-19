@@ -194,6 +194,29 @@ mode wires them in one command, with no `agent.json` and no interview:
   exactly the dirs you pass with repeatable `--project` (never both; the two
   would double-fire every event). `--no-capture` wires context injection only
   and skips the transcript-capture events.
+- Two brain homes on one machine (e.g. a company and a personal brain): the
+  local hook command carries the canonical parent value that `GBRAIN_HOME`
+  expects, so each hook contacts THAT brain's serve/socket instead of the
+  ambient default. The home rides only a local/user settings command — never
+  the committed project `.claude/settings.json` carrier (which stays portable).
+  Each home stamps a
+  per-home marker (`bootstrap-harness-v1:<hash of the canonical home>`), so two
+  homes own DISJOINT project lists safely: a second home trying to wire a
+  project another home already owns is refused before any token is minted or
+  settings file is touched. Wire project-scoped homes first: `--project` refuses
+  while any harness hooks sit in the user-scope settings (or that file cannot be
+  read). When a project install predates a user-scope install, the user hook yields all
+  events to the project policy at runtime (including when that project disables
+  capture), so company transcripts never fall through to a personal user-scope
+  hook. A home's own re-runs stay
+  idempotent, and `--remove` strips only
+  that home's entries (foreign and other-home hooks are preserved). A pre-existing
+  legacy shared-marker install under the same home is migrated to its per-home
+  marker in one atomic write only when that home's receipt proves prior ownership;
+  an unreceipted legacy marker is treated as foreign and refused. Because Postgres
+  hooks key their socket off the connection URL, two homes require one running
+  local serve per brain, each with its own protected home and DB credential — the
+  offline wiring is safe on its own, but a hook is not "live" until its serve is up.
 - Codex: one managed `[mcp_servers.gbrain]` block with the bearer token
   INLINE in the codex config (0600) — framework-spawned codex inherits no
   shell profile, so the env-var lane the `connect` path uses would never
