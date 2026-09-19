@@ -538,6 +538,15 @@ function printHuman(report: CycleReport) {
         console.log(`      ✗ ${source ?? concept ?? '?'}: ${error ?? 'unknown error'}`);
       }
     }
+    const warnings = Array.isArray(details?.warnings)
+      ? details.warnings.filter((warning): warning is string => typeof warning === 'string')
+      : [];
+    for (const warning of warnings.slice(0, 5)) {
+      console.log(`      ! ${warning}`);
+    }
+    if (warnings.length > 5) {
+      console.log(`      … ${warnings.length - 5} more warning(s); use --json for all details.`);
+    }
     if (p.error) {
       const hint = p.error.hint ? ` (${p.error.hint})` : '';
       console.log(`      [${p.error.class}/${p.error.code}] ${p.error.message}${hint}`);

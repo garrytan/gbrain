@@ -205,3 +205,41 @@ describe('printHuman — synthesize_concepts failures are named', () => {
     expect(failLine!).toContain('wiki');
   });
 });
+
+
+describe('printHuman — phase warning details', () => {
+  function warningPhase(details: Record<string, unknown> = {}): PhaseResult {
+    return {
+      phase: 'propose_takes',
+      status: 'fail',
+      duration_ms: 100,
+      summary: 'aborted on auth error after 1 page(s) (1 warning(s))',
+      details,
+    };
+  }
+
+  test('a partial cycle prints the extractor error behind the auth summary', () => {
+    const warning = 'aborting phase at page 1/10: auth error (extractor failed on notes/example: provider credentials not configured)';
+    const r = report([synthesizePhase({}, 'no transcripts to process'), warningPhase({ warnings: [warning] })], emptyTotals());
+    expect(r.status).toBe('partial');
+    const lines = captureLog(() => printHuman(r));
+    expect(lines).toContain(`      ! ${warning}`);
+    expect(lines.some(line => line.includes('aborted on auth error'))).toBe(true);
+  });
+
+  test('large warning lists show five details and direct operators to the complete JSON', () => {
+    const warnings = Array.from({ length: 7 }, (_, i) => `extractor failure ${i + 1}`);
+    const lines = captureLog(() => printHuman(report([warningPhase({ warnings })], emptyTotals())));
+    for (const warning of warnings.slice(0, 5)) expect(lines).toContain(`      ! ${warning}`);
+    expect(lines.join('\n')).not.toContain('extractor failure 6');
+    expect(lines.join('\n')).not.toContain('extractor failure 7');
+    expect(lines).toContain('      … 2 more warning(s); use --json for all details.');
+  });
+
+  test('absent, empty, or non-string warning details do not add output', () => {
+    for (const details of [{}, { warnings: [] }, { warnings: 'not an array' }, { warnings: [null, {}] }]) {
+      const lines = captureLog(() => printHuman(report([warningPhase(details)], emptyTotals())));
+      expect(lines).toHaveLength(2);
+    }
+  });
+});

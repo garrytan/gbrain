@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.2.3] - 2026-09-20
+
+**Dream reports now show the warning details behind a phase's summary.**
+
+When a maintenance phase stops with an authentication error, the terminal report now includes the retained warning text that can explain the stop. Each phase shows up to five warnings; longer lists include an omitted count and point to `gbrain dream --json` for the complete details.
+
+### Itemized changes
+
+- Show existing string warnings beneath each phase in the normal human Dream report.
+- Keep the JSON report, cycle status, and exit codes unchanged.
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**
