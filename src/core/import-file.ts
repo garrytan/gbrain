@@ -7,9 +7,8 @@ import { createHash } from 'crypto';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { classifyStoredType } from './schema-pack/type-usage.ts';
-import { chunkText } from './chunkers/recursive.ts';
-import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
-import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
+import { prepareMarkdownChunks } from './markdown-chunks.ts';
+import { chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, readProjectionSnapshot, sealPageTextProjection, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
@@ -32,13 +31,12 @@ import { resolveContextualRetrievalMode } from './contextual-retrieval-resolver.
 import { assessContentSanity, ContentSanityBlockError } from './content-sanity.ts';
 import { loadOperatorLiterals } from './content-sanity-literals.ts';
 import { logContentSanityAssessment } from './audit/content-sanity-audit.ts';
-import { isEmbedSkipped, buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
+import { buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
 import {
   QUARANTINE_KEY,
   CONTENT_FLAG_KEY,
   buildQuarantineMarker,
   buildContentFlagMarker,
-  isQuarantined,
 } from './quarantine.ts';
 import { loadConfig, loadConfigWithEngine } from './config.ts';
 import {
@@ -56,66 +54,6 @@ import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-s
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
-import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
-
-/**
- * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
- *
- * Roughly 40% of gbrain's brain is docs/guides/architecture notes with
- * substantial inline code. In v0.19.0 those fenced code blocks chunk as
- * prose, so querying "how do we import from engine" ranks paragraphs
- * ABOUT the import above the actual import example. D2 scans the body for
- * fenced code blocks (linear line scanner as of #2862 — formerly a
- * marked.lexer walk, which was quadratic on autolink-dense text), extracts
- * each fence with a known language tag, chunks the content via the code
- * chunker (so a TS fence gets TS-aware chunking), and persists those as
- * extra chunks on the parent markdown page with `chunk_source='fenced_code'`.
- *
- * Fence tag → pseudo-extension map. We don't need a full file extension
- * because chunkCodeText only calls detectCodeLanguage to pick a grammar;
- * a recognized extension gets the right grammar loaded, that's all.
- * Unknown tags return null → fence is skipped (no synthetic chunk).
- */
-const FENCE_TAG_TO_PSEUDO_PATH: Record<string, string> = {
-  ts: 'fence.ts', typescript: 'fence.ts',
-  tsx: 'fence.tsx',
-  js: 'fence.js', javascript: 'fence.js',
-  jsx: 'fence.jsx',
-  py: 'fence.py', python: 'fence.py',
-  rb: 'fence.rb', ruby: 'fence.rb',
-  go: 'fence.go', golang: 'fence.go',
-  rs: 'fence.rs', rust: 'fence.rs',
-  java: 'fence.java',
-  'c#': 'fence.cs', cs: 'fence.cs', csharp: 'fence.cs',
-  cpp: 'fence.cpp', 'c++': 'fence.cpp',
-  c: 'fence.c',
-  php: 'fence.php',
-  swift: 'fence.swift',
-  kt: 'fence.kt', kotlin: 'fence.kt',
-  scala: 'fence.scala',
-  lua: 'fence.lua',
-  ex: 'fence.ex', elixir: 'fence.ex',
-  elm: 'fence.elm',
-  ml: 'fence.ml', ocaml: 'fence.ml',
-  dart: 'fence.dart',
-  zig: 'fence.zig',
-  sol: 'fence.sol', solidity: 'fence.sol',
-  sh: 'fence.sh', bash: 'fence.sh', shell: 'fence.sh', zsh: 'fence.sh',
-  css: 'fence.css',
-  html: 'fence.html',
-  vue: 'fence.vue',
-  json: 'fence.json',
-  yaml: 'fence.yaml', yml: 'fence.yaml',
-  toml: 'fence.toml',
-};
-
-function fenceTagToPseudoPath(lang: string | undefined): string | null {
-  if (!lang) return null;
-  return FENCE_TAG_TO_PSEUDO_PATH[lang.toLowerCase().trim()] ?? null;
-}
-
-// MAX_FENCES_PER_PAGE (fence-bomb DOS cap, GBRAIN_MAX_FENCES_PER_PAGE env
-// override) moved to fence-scan.ts with the #2862 linear scanner.
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -157,67 +95,6 @@ function mergeHiddenFactRowsIntoBody(
   const gapWarning = factsGapWarning(slug, incomingFacts, existingFacts, false);
   if (gapWarning) console.warn(gapWarning);
   return incomingBody;
-}
-
-/**
- * Extract recognizable code fences via the linear scanner in fence-scan.ts
- * (#2862 — formerly a `marked.lexer` walk, which was quadratic on
- * autolink-dense text under bun). Returns one ChunkInput per fence whose
- * language tag maps to a grammar the chunker understands. Unknown tags +
- * empty fences are skipped. Per-fence try/catch: one malformed fence doesn't
- * abort the page import.
- */
-async function extractFencedChunks(
-  markdown: string,
-  startChunkIndex: number,
-): Promise<ChunkInput[]> {
-  markdown = sanitizeRemoteBody(markdown);
-  const out: ChunkInput[] = [];
-  // Fast path: most pages (prose, tables, converted docs) contain no code
-  // fence at all, so there is nothing for this function to extract — skip
-  // even the line split when no fence marker (``` or ~~~) is present.
-  // The `\r` in the line-start class mirrors the scanner's `\r\n|\r → \n`
-  // line splitting, so CR/CRLF-only documents don't lose a real fence.
-  if (!/(^|[\r\n])[ \t]{0,3}(```|~~~)/.test(markdown)) return out;
-
-  const { fences, capped } = scanFencedBlocks(markdown);
-  if (capped) {
-    console.warn(
-      `[gbrain] markdown fence cap hit (${MAX_FENCES_PER_PAGE} fences/page); skipping additional fences. ` +
-      `Override via GBRAIN_MAX_FENCES_PER_PAGE env var.`,
-    );
-  }
-
-  let indexOffset = 0;
-  for (const fence of fences) {
-    const text = fence.text.trim();
-    if (!text) continue;
-    const pseudoPath = fenceTagToPseudoPath(fence.lang);
-    if (!pseudoPath) continue; // unknown or missing lang tag → prose fallback
-    const lang = detectCodeLanguage(pseudoPath);
-    if (!lang) continue;
-    try {
-      const chunks = await chunkCodeText(text, pseudoPath);
-      for (const c of chunks) {
-        out.push({
-          chunk_index: startChunkIndex + indexOffset++,
-          chunk_text: c.text,
-          chunk_source: 'fenced_code',
-          language: c.metadata.language,
-          symbol_name: c.metadata.symbolName || undefined,
-          symbol_type: c.metadata.symbolType,
-          start_line: c.metadata.startLine,
-          end_line: c.metadata.endLine,
-        });
-      }
-    } catch (e: unknown) {
-      // One fence failing shouldn't sink the page. Log + continue.
-      console.warn(
-        `[gbrain] fence extraction failed for lang=${fence.lang}: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-  return out;
 }
 
 /**
@@ -880,43 +757,9 @@ export async function importFromContent(
     }
   }
 
-  // Chunk compiled_truth and timeline.
-  // v0.41 content-sanity soft-block: if the gate marked this page as
-  // embed-skipped (oversize without junk-pattern), skip chunking
-  // entirely. The empty-chunks branch in the transaction below
-  // triggers tx.deleteChunks(slug) which purges any pre-existing
-  // chunks (D9 transition invariant: embed_skip means no live chunks).
-  const chunks: ChunkInput[] = [];
-  // Skip chunking for embed-skip (oversize) OR quarantine (junk hidden).
-  // Both → zero chunks → the empty-chunks branch in the transaction fires
-  // tx.deleteChunks(slug) to purge any pre-existing chunks. (Flag/markup_heavy
-  // is NOT here — flagged pages chunk + embed normally, they just carry a
-  // warning marker.)
-  const embedSkipped = isEmbedSkipped(parsed.frontmatter) || isQuarantined(parsed.frontmatter);
-  if (!embedSkipped) {
-    // #4530: cap chunk tokens at the ACTIVE embedding model's per-input
-    // limit (recipe max_input_tokens x safety; default unchanged) so strict
-    // encoders like nvidia/nv-embedqa-e5-v5 (512) never see an unembeddable
-    // chunk. Split, not truncated.
-    const chunkOpts = { maxTokens: resolveMaxChunkTokens() };
-    if (parsed.compiled_truth.trim()) {
-      for (const c of chunkText(parsed.compiled_truth, chunkOpts)) {
-        chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
-      }
-    }
-    if (parsed.timeline?.trim()) {
-      for (const c of chunkText(parsed.timeline, chunkOpts)) {
-        chunks.push({ chunk_index: chunks.length, chunk_text: c.text, chunk_source: 'timeline' });
-      }
-    }
-
-    // v0.20.0 Cathedral II Layer 8 D2 — extract fenced code blocks from
-    // compiled_truth as first-class code chunks.
-    if (parsed.compiled_truth.trim()) {
-      const fenceChunks = await extractFencedChunks(parsed.compiled_truth, chunks.length);
-      chunks.push(...fenceChunks);
-    }
-  }
+  // Preserve the importer projection (including fenced code and zero-chunk
+  // dispositions) in the provider-free path used by background rebuilds too.
+  const chunks = await prepareMarkdownChunks(parsed);
 
   // Embedding failures propagate unless onPostCommitEmbedding lets the caller
   // report enrichment separately from the already-persisted content.
