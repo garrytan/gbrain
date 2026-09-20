@@ -2,6 +2,14 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.0.1] - 2026-09-20
+
+**A one-off WebAssembly startup failure no longer takes down a scratch brain.**
+
+An in-memory brain — the engine behind test runs, `gbrain doctor`'s scratch probe, and any session without a data directory — could fail to start with a transient WASM runtime trap on an otherwise healthy machine. Nothing was corrupt and the next attempt would have worked, but the failure was final.
+
+An engine with no data directory has nothing to repair and nothing to lose, so gbrain now retries that start once. When the retry succeeds it prints the first error as a warning so the trap stays visible. A second failure surfaces the same actionable error as before, and brains with a data directory are untouched: their in-place WAL repair still owns that path.
+
 ## [0.51.0.0] - 2026-09-16
 
 **Concurrent edits now have durable outcomes, safe retries, and one coherent page revision.**

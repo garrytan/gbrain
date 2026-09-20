@@ -850,6 +850,30 @@ export class PGLiteEngine implements BrainEngine {
       const verdict = classifyPgliteInitError(original);
       let ctx: PgliteInitRepairContext = { repair: 'not-attempted' };
 
+      // An in-memory engine has no data dir to repair — and none to corrupt
+      // either, so unlike the persistent path a plain retry is always safe
+      // here, whatever the verdict. Create-time failures on a fresh in-memory
+      // engine are transient WASM-runtime traps (CI: "access to a null
+      // reference (evaluating 'getWasmTableEntry(e)(t, r, a)')", which reads
+      // as 'unknown', not 'wasm-abort'), and one test file that draws one reds
+      // a whole suite. Retry ONCE cold: the snapshot blob is the single
+      // create-time input that can itself abort, so the retry drops it and
+      // lets initSchema replay the schema instead.
+      if (!dataDir) {
+        let retried: PGLiteDB | null = null;
+        try {
+          retried = await preservingProcessExitCode(() =>
+            PGlite.create({ ...embedded }),
+          );
+        } catch { /* fall through to the normal error path below */ }
+        if (retried) {
+          this._db = this._attachDatabase(retried);
+          this._snapshotLoaded = false;
+          console.warn(`[pglite] in-memory init failed and was retried cold — recovered. First error: ${original}`);
+          return; // success: lock stays held, normal connect contract
+        }
+      }
+
       // WAL-repair wave (#223/#1670/#2575): a wasm-abort on a PERSISTENT data
       // dir is almost always torn WAL/checkpoint state from an unclean
       // shutdown — repairable in place. The seam NEVER throws (its failure
