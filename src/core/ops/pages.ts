@@ -264,6 +264,19 @@ const fetch_page: Operation = {
   cliHints: { name: 'fetch', positional: ['id'] },
 };
 
+// Shrink guard thresholds - see the guard in put_page's handler.
+// FLOOR keeps short pages (stubs, one-line captures) out of it entirely;
+// RATIO is deliberately loose, since the real incidents were 8% and 11%.
+const PUT_PAGE_SHRINK_FLOOR = 500;
+const PUT_PAGE_SHRINK_RATIO = 0.5;
+
+/** Body of a markdown document with any leading YAML frontmatter removed. */
+function stripFrontmatter(content: string): string {
+  if (!content.startsWith('---')) return content;
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(content);
+  return m ? content.slice(m[0].length) : content;
+}
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Replace a complete canonical Markdown page. Read get_page with include_content:true and pass its revision as expected_revision; force explicitly overwrites the current revision. Omitting both permits creation only. Retain a UUID request_id and repeat identical arguments after transport failure or a pending receipt. Content, tags, sanitized text projections, versions and the committed receipt publish together; embedding and optional Git effects have separate status. Remote callers preserve protected facts/takes fences; automatic graph links are skipped for untrusted writes. A stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` or use trusted local capture/put_page for inline link extraction. Remote callers receive write_through.warning when no repo is configured. For file input use gbrain capture --file PATH --slug SLUG.',
@@ -272,6 +285,7 @@ const put_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Complete markdown content with YAML frontmatter. REPLACES the entire page; this is not a partial edit. Read the canonical page first with `get_page include_content:true` before modifying it.' },
     allow_empty: { type: 'boolean', required: false, description: 'Allow overwriting an existing non-empty page with empty/whitespace-only content (default: false). Without it, put_page rejects the empty overwrite — the empty-stdin failure class.' },
+    allow_shrink: { type: 'boolean', required: false, description: 'Allow replacing an existing page with content less than half its length (default: false). Without it, put_page rejects the drastic shrink — the read-modify-write clobber failure class. put_page replaces the page; to add to one, send the full merged content.' },
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with
@@ -294,6 +308,44 @@ const put_page: Operation = {
       }
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
+
+    const slug = String(p.slug);
+
+    // Shrink guard (2026-09-06). put_page REPLACES a page; it does not merge.
+    // An agent told to "add today's entry" performs a read-modify-write, and
+    // when the read is missing, stale, or aimed at the wrong slug it writes
+    // only the new fragment - silently destroying everything else on the page.
+    // Twice:
+    //   2026-09-03  projects/muse.md        19,486 -> 1,515 chars
+    //   2026-09-06  health/2026-09-04-log    2,920 ->   327 chars
+    // Both carried real content, so the empty-overwrite guard (which only
+    // fires on a zero-length body) let them straight through, and both were
+    // found days later by hand.
+    //
+    // Remote callers only: the local pipelines (import, export, dream cycle,
+    // book-mirror, enrich) legitimately rewrite pages wholesale and are not
+    // the failure mode.
+    if (ctx.remote !== false && p.allow_shrink !== true && String(p.content).trim() !== '') {
+      const existing = await ctx.engine.getPage(slug, { sourceId: ctx.sourceId ?? 'default' });
+      const priorBody = existing
+        ? `${existing.compiled_truth ?? ''}\n${existing.timeline ?? ''}`.trim()
+        : '';
+      // Compare bodies, not raw payloads: the incoming content carries YAML
+      // frontmatter that compiled_truth does not, which would otherwise mask
+      // a shrink on small pages.
+      const incomingBody = stripFrontmatter(String(p.content)).trim();
+      if (
+        priorBody.length >= PUT_PAGE_SHRINK_FLOOR &&
+        incomingBody.length < priorBody.length * PUT_PAGE_SHRINK_RATIO
+      ) {
+        throw new OperationError(
+          'invalid_params',
+          `Refusing to shrink '${slug}' from ${priorBody.length} to ${incomingBody.length} characters.`,
+          'put_page REPLACES the page. Read it with `get_page include_content:true`, merge your change into the full content, and send that. To intentionally replace it with something much shorter, pass allow_shrink: true.',
+        );
+      }
+    }
+
     return submitPageMutation(ctx, { operation: 'put_page', params: p });
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
