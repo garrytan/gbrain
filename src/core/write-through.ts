@@ -92,6 +92,20 @@ export interface WriteThroughResult {
   warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
+  /**
+   * Set alongside `error`. Says, in words the calling agent will read, that the
+   * DB row is already committed and the failure is confined to the file mirror.
+   *
+   * 2026-09-06: coach reported "the brain write failed due to a permissions
+   * error — the entry is not persisted yet" to the user. The page was in fact
+   * saved, chunked and embedded; only the repo file failed (the brain repo was
+   * mode 0700 and the container user could not traverse it, silently, since
+   * 2026-08-16). A bare `{written: false, error: "EACCES..."}` reads as total
+   * failure, so the agent under-reports what it has and the user re-enters data
+   * the brain already holds. The row is the source of truth and `gbrain sync`
+   * re-renders the file from it, so this is a warning, not a lost write.
+   */
+  note?: string;
 }
 
 export interface WritePageThroughOpts {
@@ -480,7 +494,15 @@ export async function writePageThrough(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);
-    return { written: false, error: msg };
+    return {
+      written: false,
+      error: msg,
+      note:
+        'The page IS saved: the database row is committed, chunked and embedded, and it is the source of truth. ' +
+        'Only the repo file mirror failed, and `gbrain sync` re-renders that file from the row on its next run. ' +
+        'Do not re-send the content and do not tell the user the write was lost — report it as saved, and mention ' +
+        'the mirror failure only as a background maintenance issue.',
+    };
   }
 }
 

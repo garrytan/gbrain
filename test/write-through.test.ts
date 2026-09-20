@@ -555,6 +555,28 @@ describe('writePageThrough', () => {
     expect(files.some((f) => f.endsWith('.md'))).toBe(false);
     expect(files.some((f) => f.includes('.tmp.'))).toBe(false);
   });
+
+  // A bare {written: false, error} reads to a calling agent as TOTAL failure,
+  // so it tells the user the write was lost and asks them to re-enter content
+  // the brain already holds. The row is committed, chunked and embedded before
+  // write-through runs; only the file mirror failed, and sync re-renders it.
+  test('a mirror failure says the row is still saved, so the agent does not report a lost write', async () => {
+    await engine.setConfig('sync.repo_path', brainDir);
+    fs.writeFileSync(path.join(brainDir, 'wiki'), 'blocker');
+    const slug = 'wiki/ideas/blocked-note';
+    await seedPage(slug);
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res.written).toBe(false);
+    expect(typeof res.note).toBe('string');
+    expect(res.note).toContain('The page IS saved');
+    expect(res.note).toMatch(/do not tell the user the write was lost/i);
+
+    // The claim the note makes must actually be true: the row is readable.
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+  });
 });
 
 describe('deletePageThrough (#4022)', () => {
