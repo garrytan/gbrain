@@ -9,6 +9,7 @@ import { writeStdoutFinal, setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../core/persistence/local-client.ts';
 import { runPersistenceAdministration } from '../core/persistence/administration.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { bigintToStringReplacer } from '../core/utils.ts';
 import { assertTopologyCommitted } from '../core/persistence/managed-sources.ts';
 import { parseSourceLifecycleArgs, type ParsedSourceLifecycle } from './sources-lifecycle-args.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
@@ -40,7 +41,13 @@ export async function executeSourceLifecycle(engine: BrainEngine, parsed: Parsed
 }
 
 async function render(result: Record<string, unknown>): Promise<void> {
-  await writeStdoutFinal(JSON.stringify(result, null, 2) + '\n');
+  // bigintToStringReplacer backstop (see #5177): committed lifecycle receipts
+  // are jsonb and dry-run results are plain op returns — this keeps any
+  // future non-jsonb payload carrying a raw int8 from crashing the renderer
+  // instead of degrading to string. (A committed receipt carrying a BigInt
+  // would already throw inside recordTopologyChange's size accounting, before
+  // render runs.)
+  await writeStdoutFinal(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   if (result.dry_run !== true) {
     try { assertTopologyCommitted(result); }
     catch { setCliExitVerdict(1); }

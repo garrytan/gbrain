@@ -7,6 +7,7 @@ import { isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { loadMounts } from '../core/brain-registry.ts';
 import { OperationError } from '../core/ops/contract.ts';
+import { bigintToStringReplacer } from '../core/utils.ts';
 import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../core/persistence/local-client.ts';
 import { runPersistenceAdministration } from '../core/persistence/administration.ts';
 import type { PersistenceAdminOperation } from '../core/persistence/admin-contract.ts';
@@ -125,7 +126,12 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
       }
       result = await runPersistenceAdministration(connected ?? owned!, parsed.operation, parsed.params);
     }
-    await writeStdoutFinal(JSON.stringify(result, null, 2) + '\n');
+    // bigintToStringReplacer as the engine-parity backstop (see #5177): any
+    // int8 value an administration op returns degrades to its string form
+    // instead of crashing the renderer. The SQL casts in the persistence layer
+    // are the primary fix; this mirrors the defense-in-depth pattern the
+    // extract-explain BigInt fix established.
+    await writeStdoutFinal(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   } catch (error) {
     if (!await reportPersistenceCliError(error, args.includes('--json'))) {
       console.error(error instanceof Error ? error.message : String(error));
