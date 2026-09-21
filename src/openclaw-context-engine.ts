@@ -64,7 +64,13 @@ interface PluginCtx {
 }
 
 export function register(api: PluginApi) {
-  api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx) => {
+  // OpenClaw (through v2026.9.4) invokes context-engine factories with zero
+  // arguments (`await entry.factory()`), leaving `ctx` undefined — the
+  // un-guarded `ctx.resolveEntities` read then crashed every assembled turn
+  // (TypeError: Cannot read properties of undefined (reading
+  // 'resolveEntities')). Default to an empty ctx so the documented
+  // "older hosts keep working unchanged" fallback ladder applies.
+  api.registerContextEngine(ENGINE_ID, (ctx: PluginCtx = { workspaceDir: '' } as PluginCtx) => {
     const hostResolver =
       typeof ctx.resolveEntities === 'function'
         ? ctx.resolveEntities
