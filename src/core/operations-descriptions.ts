@@ -226,6 +226,8 @@ export const SKILL_CATALOG_INSTRUCTIONS = {
       "correspondingly-named MCP tool on THIS server (e.g. search, query, put_page).",
     "Only call tools in this skill's `usable_tools`; tools in `unavailable_tools` " +
       "are not callable by you on this server.",
+    "Declared `tools` narrow the skill's usable tools. Valid frontmatter that omits " +
+      "`tools` inherits your available brain tools; explicit `tools: []` permits none.",
   ],
 } as const;
 
@@ -241,6 +243,8 @@ export const SKILL_CLIENT_GUIDANCE = {
     "When the prose names a brain operation (search, store, link, look up), call " +
       "the MCP tool of that name on THIS server.",
     "Do not invent tools — only the tools in `usable_tools` are callable by you.",
+    "Declared `tools` narrow this list. Valid frontmatter that omits `tools` inherits " +
+      "your available brain tools; explicit `tools: []` permits none.",
     "If `mutating` is true, this skill writes to the brain; confirm before doing so " +
       "if the user hasn't clearly asked for a write.",
   ],

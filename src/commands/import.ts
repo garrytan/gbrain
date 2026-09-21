@@ -26,7 +26,6 @@ import {
   saveCheckpoint,
   clearCheckpoint,
   resolveImportTargetDir,
-  resumeFilter,
 } from '../core/import-checkpoint.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
@@ -517,19 +516,15 @@ export async function runImport(
   // See src/core/sort-newest-first.ts for the policy.
   sortNewestFirst(allFiles);
 
-  // Resume from checkpoint if available. v0.33.2: path-based resume —
-  // see src/core/import-checkpoint.ts for the bug-class this fixes
-  // (parallel-import silent-skip and failed-file no-retry).
   const checkpointPath = gbrainPath('import-checkpoint.json');
   const completed = new Set<string>();
   if (!fresh) {
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
-      for (const p of cp.completedPaths) completed.add(p);
-      info(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
+      info(`Resuming from checkpoint: re-checking current files via content_hash (${cp.completedPaths.length} previously completed)`);
     }
   }
-  const files = resumeFilter(allFiles, dir, completed);
+  const files = allFiles;
 
   // Determine actual worker count. Import owns the same per-worker Postgres
   // pools as sync, so it must honor the shared opt-in connection budget too
@@ -613,7 +608,7 @@ export async function runImport(
     // #753/#774: slug + source_path base. When performFullSync syncs a
     // monorepo subdir, slugRoot is the git root so slugs stay git-root-
     // relative (matching the incremental path's git-diff paths). The
-    // checkpoint (`completed`) stays dir-relative — resumeFilter's contract.
+    // checkpoint (`completed`) stays dir-relative.
     const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relativePath;
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking

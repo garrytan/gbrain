@@ -38,6 +38,7 @@
 
 import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { basename, join, relative, resolve } from 'path';
+import { FAILSAFE_SCHEMA, safeLoad } from 'js-yaml';
 import {
   autoDetectSkillsDir,
   autoDetectSkillsDirReadOnly,
@@ -49,7 +50,8 @@ import { loadOrDeriveManifest, type ManifestEntry } from './skill-manifest.ts';
 import { loadSkillTriggerIndex, FRONTMATTER_SECTION } from './skill-trigger-index.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 import { hasScope } from './scope.ts';
-import { operations, OperationError, type Operation, type OperationContext } from './operations.ts';
+import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
+import { operations, OperationError, opAllowedForBoundClient, type Operation, type OperationContext } from './operations.ts';
 import {
   SKILL_CATALOG_INSTRUCTIONS,
   SKILL_CLIENT_GUIDANCE,
@@ -292,9 +294,11 @@ export function confineManifestPath(skillsDir: string, entry: ManifestEntry): st
 // ---------------------------------------------------------------------------
 
 /** Can THIS caller call THIS op on THIS server? Local owns everything. */
-function opCallableByCaller(op: Operation, ctx: OperationContext): boolean {
+function opCallableByCaller(op: Operation, ctx: OperationContext, gateDisabled?: ReadonlySet<string>): boolean {
   if (ctx.remote === false) return true; // local CLI — OS is the trust boundary
   if (op.localOnly) return false; // not reachable over a remote transport
+  if (!opAllowedForBoundClient(ctx.auth, op)) return false;
+  if (op.publishGateKey && (!gateDisabled || gateDisabled.has(op.name))) return false;
   if (ctx.transport === 'stdio') return true; // auth-less local pipe — dispatch enforces no scopes
   return hasScope(ctx.auth?.scopes ?? [], op.scope ?? 'read');
 }
@@ -307,20 +311,42 @@ function opCallableByCaller(op: Operation, ctx: OperationContext): boolean {
 export function crossReferenceTools(
   declared: string[],
   ctx: OperationContext,
+  gateDisabled?: ReadonlySet<string>,
 ): { usable_tools: string[]; unavailable_tools: string[] } {
   const usable: string[] = [];
   const unavailable: string[] = [];
   for (const tool of declared) {
     const op = operations.find(o => o.name === tool);
-    if (op && opCallableByCaller(op, ctx)) usable.push(tool);
+    if (op && opCallableByCaller(op, ctx, gateDisabled)) usable.push(tool);
     else unavailable.push(tool);
   }
   return { usable_tools: usable, unavailable_tools: unavailable };
 }
 
 /** Every server tool this caller can call — the envelope's "what you can use". */
-function availableBrainTools(ctx: OperationContext): string[] {
-  return operations.filter(op => opCallableByCaller(op, ctx)).map(op => op.name).sort();
+function availableBrainTools(ctx: OperationContext, gateDisabled?: ReadonlySet<string>): string[] {
+  return operations.filter(op => opCallableByCaller(op, ctx, gateDisabled)).map(op => op.name).sort();
+}
+
+export async function readSkillToolGates(ctx: OperationContext): Promise<ReadonlySet<string> | undefined> {
+  return ctx.remote === false ? undefined : disabledOpsForPublishGates(ctx.engine, ctx.config);
+}
+
+function resolveSkillTools(
+  parsed: ReturnType<typeof parseSkillFrontmatter>,
+  ctx: OperationContext,
+  gateDisabled?: ReadonlySet<string>,
+): { usable_tools: string[]; unavailable_tools: string[] } {
+  if (parsed?.tools !== undefined) return crossReferenceTools(parsed.tools, ctx, gateDisabled);
+  if (parsed) {
+    try {
+      const data = safeLoad(parsed.raw, { schema: FAILSAFE_SCHEMA });
+      if (data && typeof data === 'object' && !Array.isArray(data) && !Object.hasOwn(data, 'tools')) {
+        return { usable_tools: availableBrainTools(ctx, gateDisabled), unavailable_tools: [] };
+      }
+    } catch {}
+  }
+  return { usable_tools: [], unavailable_tools: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +465,7 @@ export function buildSkillCatalog(
   ctx: OperationContext,
   skillsDir: string,
   source: ResolvedSkillsDirSource,
-  opts: { section?: string } = {},
+  opts: { section?: string; gateDisabled?: ReadonlySet<string> } = {},
 ): ListSkillsResult {
   const { skills: manifest } = loadOrDeriveManifest(skillsDir);
   const triggerMap = buildTriggerMap(skillsDir);
@@ -472,7 +498,7 @@ export function buildSkillCatalog(
     if (sectionFilter && section !== sectionFilter) continue;
 
     const tools = parsed?.tools ?? [];
-    const { usable_tools, unavailable_tools } = crossReferenceTools(tools, ctx);
+    const { usable_tools, unavailable_tools } = resolveSkillTools(parsed, ctx, opts.gateDisabled);
     skills.push({
       name: entry.name,
       description: oneLineDescription(raw, body),
@@ -496,7 +522,7 @@ export function buildSkillCatalog(
     instructions: {
       summary: SKILL_CATALOG_INSTRUCTIONS.summary,
       how_to_use: [...SKILL_CATALOG_INSTRUCTIONS.how_to_use],
-      available_brain_tools: availableBrainTools(ctx),
+      available_brain_tools: availableBrainTools(ctx, opts.gateDisabled),
       fetch_op: 'get_skill',
     },
   };
@@ -507,6 +533,7 @@ export function getSkillDetail(
   ctx: OperationContext,
   skillsDir: string,
   name: string,
+  opts: { gateDisabled?: ReadonlySet<string> } = {},
 ): GetSkillResult {
   const path = resolveSkillMdPath(skillsDir, name);
 
@@ -526,8 +553,7 @@ export function getSkillDetail(
   const parsed = parseSkillFrontmatter(content);
   const raw = parsed?.raw ?? '';
   const body = stripFrontmatterFence(content);
-  const tools = parsed?.tools ?? [];
-  const { usable_tools, unavailable_tools } = crossReferenceTools(tools, ctx);
+  const { usable_tools, unavailable_tools } = resolveSkillTools(parsed, ctx, opts.gateDisabled);
   const mutating = parsed?.mutating ?? false;
 
   return {
@@ -547,7 +573,7 @@ export function getSkillDetail(
     client_guidance: {
       nature: SKILL_CLIENT_GUIDANCE.nature,
       protocol: [...SKILL_CLIENT_GUIDANCE.protocol],
-      available_brain_tools: availableBrainTools(ctx),
+      available_brain_tools: availableBrainTools(ctx, opts.gateDisabled),
       mutating,
     },
   };
