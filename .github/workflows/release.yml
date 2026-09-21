@@ -90,7 +90,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.bun/install/cache
@@ -122,6 +122,12 @@ jobs:
       - name: Smoke-test the compiled binary
         run: |
           chmod +x bin/${{ matrix.artifact }}
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # macOS 27 SIGKILLs at exec a binary whose signature does not
+            # validate. This runner is macOS 26, which tolerates one, so the
+            # --version run below cannot see that failure; codesign can.
+            codesign --verify --verbose=1 "bin/${{ matrix.artifact }}"
+          fi
           out="$(./bin/${{ matrix.artifact }} --version)"
           echo "binary reports: $out"
           v="$(tr -d '[:space:]' < VERSION)"
@@ -230,7 +236,7 @@ jobs:
       - if: steps.gate.outputs.publish == 'true'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - if: steps.gate.outputs.publish == 'true'
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
@@ -303,7 +309,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
-          bun-version: 1.3.13
+          bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - name: Drift gate — committed plugin tree matches the generator
         run: bash scripts/check-plugin-tree.sh
