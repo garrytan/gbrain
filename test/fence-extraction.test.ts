@@ -40,8 +40,13 @@ More prose.`;
     await importFromContent(engine, 'guides/fence-ts', md, { noEmbed: true });
     const chunks = await engine.getChunks('guides/fence-ts');
     const fenceChunks = chunks.filter(c => c.chunk_source === 'fenced_code');
-    expect(fenceChunks.length).toBeGreaterThan(0);
-    expect(fenceChunks[0]!.language).toBe('typescript');
+    expect(fenceChunks).toHaveLength(1);
+    expect(fenceChunks[0]).toMatchObject({ language: 'typescript', symbol_name: 'hello', start_line: 1, end_line: 3, modality: 'text' });
+    expect(fenceChunks[0].symbol_type).toMatch(/function|export/);
+    expect(fenceChunks[0].chunk_text).toContain('fence.ts:1-3');
+    expect(fenceChunks[0].chunk_text).toContain('return `Hello, ${name}`;');
+    expect(chunks.map(c => c.chunk_index)).toEqual(chunks.map((_, i) => i));
+    expect(chunks.at(-1)?.chunk_source).toBe('fenced_code');
   });
 
   test('Python fence → language=python, chunk_text contains the def', async () => {
@@ -195,8 +200,10 @@ echo hi
     // Structural pin: the quadratic-lexer class of bug can only come back if
     // someone re-imports marked into the import hot path.
     const { readFileSync } = await import('fs');
-    const src = readFileSync(new URL('../src/core/import-file.ts', import.meta.url), 'utf8');
-    expect(src).not.toMatch(/from ['"]marked['"]/);
+    for (const path of ['import-file.ts', 'markdown-chunks.ts']) {
+      const src = readFileSync(new URL(`../src/core/${path}`, import.meta.url), 'utf8');
+      expect(src).not.toMatch(/from ['"]marked['"]/);
+    }
   });
 
   // #2862 — linear-scanner parity edges the marked walk used to handle.

@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Chunk, ChunkInput, ResolvedColumn } from '../types.ts';
-import { chunkText, MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
+import { prepareMarkdownChunks } from '../markdown-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
 import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -170,12 +171,9 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
       return readProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
     });
     if (!prepared) { superseded++; continue; }
-    const chunks: ChunkInput[] = [];
-    for (const field of ['compiled_truth', 'timeline'] as const) {
-      for (const chunk of chunkText(sanitizeRemoteBody(prepared.snapshot.page[field]), { maxTokens: prepared.maxChunkTokens })) {
-        chunks.push({ chunk_index: chunks.length, chunk_text: chunk.text, chunk_source: field });
-      }
-    }
+    // The snapshot includes withdrawal overlays. Share the importer's full
+    // projection without reimporting canonical fields or changing CR policy.
+    const chunks = await prepareMarkdownChunks(prepared.snapshot.page, prepared.maxChunkTokens);
     try {
       await installPageProjection(engine, prepared, chunks, { seal: true });
       rebuilt++;
