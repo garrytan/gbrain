@@ -36,6 +36,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `lmstudio` | (none — runs locally) | user-set | 0 | yes | no |
 | `litellm` | `LITELLM_API_KEY` (optional) | user-set | varies | yes (proxy) | yes (backend permitting) |
 | `together` | `TOGETHER_API_KEY` | 768 | varies | no | no |
+| [`nous`](../ai-providers/nous.md) | `NOUS_API_KEY` | per-model (1536 for `openai/text-embedding-3-small`; unlisted ids require explicit dims) | 0.02 | no | model-dependent |
 | `anthropic` | (no embedding model — chat only) | — | — | — | — |
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
 | `groq` | (no embedding model — chat only) | — | — | — | — |

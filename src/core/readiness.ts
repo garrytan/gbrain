@@ -158,7 +158,7 @@ function providerLabel(recipe: Recipe): string {
 /** Provider keys `gbrain config set` stores on the file plane (src/commands/config.ts FILE_PLANE_API_KEYS). */
 const FILE_PLANE_KEY_ENVS: ReadonlySet<string> = new Set([
   'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'VOYAGE_API_KEY', 'DASHSCOPE_API_KEY',
-  'DEEPSEEK_API_KEY', 'LITELLM_API_KEY', 'TOGETHER_API_KEY', 'GOOGLE_API_KEY', 'AZURE_OPENAI_API_KEY',
+  'DEEPSEEK_API_KEY', 'LITELLM_API_KEY', 'TOGETHER_API_KEY', 'NOUS_API_KEY', 'GOOGLE_API_KEY', 'AZURE_OPENAI_API_KEY',
 ]);
 
 function keyHow(name: string): string {

@@ -2492,7 +2492,7 @@
         "kind": "variable",
         "name": "DB_MERGED_PROVIDER_KEY_FIELDS",
         "signature": [
-          "readonly [\"openai_api_key\", \"anthropic_api_key\", \"openrouter_api_key\", \"voyage_api_key\", \"dashscope_api_key\", \"deepseek_api_key\", \"litellm_api_key\", \"together_api_key\", \"google_api_key\", \"azure_openai_api_key\"]"
+          "readonly [\"openai_api_key\", \"anthropic_api_key\", \"openrouter_api_key\", \"voyage_api_key\", \"dashscope_api_key\", \"deepseek_api_key\", \"litellm_api_key\", \"together_api_key\", \"nous_api_key\", \"google_api_key\", \"azure_openai_api_key\"]"
         ]
       },
       {
@@ -2543,6 +2543,7 @@
           "mcp_surface?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "memory?: { auto_writeback?: string; auto_writeback_transient_ttl?: string; visibility_posture?: string; } | undefined",
           "migrate?: { graduation?: boolean; } | undefined",
+          "nous_api_key?: string | undefined",
           "openai_api_key?: string | undefined",
           "openrouter_api_key?: string | undefined",
           "persistence?: { write_wait_ms?: number | string; } | undefined",

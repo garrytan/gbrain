@@ -47,6 +47,7 @@ export const CONFIG_API_KEY_ENV = [
   // way voyage's #2662 did).
   ['litellm_api_key', 'LITELLM_API_KEY'],
   ['together_api_key', 'TOGETHER_API_KEY'],
+  ['nous_api_key', 'NOUS_API_KEY'],
   ['google_api_key', 'GOOGLE_GENERATIVE_AI_API_KEY'],
   // #4031: the Azure key was the only member of the group below left unfolded,
   // so a config.json-only setup failed every embed from keyless shells

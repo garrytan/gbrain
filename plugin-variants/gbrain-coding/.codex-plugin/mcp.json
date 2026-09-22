@@ -61,6 +61,8 @@
         "MISTRAL_API_KEY",
         "MOONSHOT_API_KEY",
         "NAN_API_KEY",
+        "NOUS_API_KEY",
+        "NOUS_INFERENCE_BASE_URL",
         "NVIDIA_API_KEY",
         "OLLAMA_API_KEY",
         "OLLAMA_BASE_URL",

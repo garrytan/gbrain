@@ -893,6 +893,40 @@ describe('write accounting (#4217)', () => {
     }
   });
 
+  test('a Nous subagent tier needs agent.use_gateway_loop: refused without it, runs through the gateway with it', async () => {
+    // docs/ai-providers/nous.md setup: models.tier.subagent nous:<id> plus
+    // agent.use_gateway_loop true. The recipe's supports_subagent_loop passes
+    // the capability gate; only the gateway path can speak the Portal.
+    const { configureGateway, resetGateway, __setChatTransportForTests } = await import('../src/core/ai/gateway.ts');
+    configureGateway({ env: {} });
+    const models: string[] = [];
+    __setChatTransportForTests(async (opts) => {
+      models.push(String(opts.model));
+      return {
+        model: 'nous:z-ai/glm-5.3-flash', providerId: 'nous', text: 'synthetic answer',
+        blocks: [{ type: 'text', text: 'synthetic answer' }], stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      };
+    });
+    await engine.setConfig('models.tier.subagent', 'nous:z-ai/glm-5.3-flash');
+    try {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      await expect(handler(await makeCtx({ prompt: 'hi' }))).rejects.toThrow('gbrain config set agent.use_gateway_loop true');
+      expect(models).toEqual([]);
+      await engine.setConfig('agent.use_gateway_loop', 'true');
+      const result = await handler(await makeCtx({ prompt: 'hi' }));
+      expect(result.result).toBe('synthetic answer');
+      expect(models).toEqual(['nous:z-ai/glm-5.3-flash']);
+      expect(client.calls.length).toBe(0); // never the Anthropic-direct client
+    } finally {
+      __setChatTransportForTests(null);
+      resetGateway();
+      await engine.unsetConfig('models.tier.subagent');
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+
   function makePutPageTool(behavior: 'ok' | 'fail' | ((input: unknown) => 'ok' | 'fail')): ToolDef {
     return {
       name: 'brain_put_page',
