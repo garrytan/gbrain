@@ -3,8 +3,10 @@
  *
  * `websearch_to_tsquery` with an ASCII-stemming FTS config ('english', …)
  * can't tokenize CJK, so FTS keyword recall is zero for Chinese / Japanese /
- * Korean queries. Both engines fall back to a term-by-term ILIKE match with
- * term-frequency ranking (v0.32.7 on PGLite; ported to Postgres by #3986).
+ * Korean queries. Both engines fall back to a term-by-term LIKE/ILIKE match
+ * with term-frequency ranking (v0.32.7 on PGLite; ported to Postgres by
+ * #3986). Terms without case variants use LIKE to avoid unnecessary
+ * multibyte case folding; terms with case variants retain ILIKE semantics.
  * The SQL is built ONCE here with $N positional params so the two engines
  * cannot drift; each engine supplies only its own executor.
  *
@@ -17,7 +19,7 @@
  *   - LIKE parameters are individually escaped with escapeLikePattern and
  *     wrapped with %.
  *   - Raw terms and raw query are bound unescaped for ranking arithmetic.
- *   - Explicit `ESCAPE '\'` on ILIKE clauses.
+ *   - Explicit `ESCAPE '\'` on LIKE/ILIKE clauses.
  *   - Empty-query guard returns null without binding SQL.
  */
 import type { SearchOpts } from '../types.ts';
@@ -134,7 +136,11 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
   }
 
   const whereLikeClause = likeParamIndices
-    .map(idx => `cc.chunk_text ILIKE $${idx} ESCAPE '\\'`)
+    .map((idx, termIndex) => {
+      const term = terms[termIndex];
+      const operator = term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE';
+      return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
+    })
     .join(' AND ');
 
   const termFreqExpr = rawTermIndices
