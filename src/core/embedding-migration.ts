@@ -944,13 +944,28 @@ export async function verifySearchRoundTrip(
       return { status: 'skipped', samples: [], reason_code: 'gateway_unconfigured' };
     }
     const n = Math.max(1, Math.min(10, opts.samples ?? 3));
-    const rows = await engine.executeRaw<{ page_id: number; source_id: string; chunk_text: string }>(
-      `SELECT cc.page_id, p.source_id, cc.chunk_text
-         FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NOT NULL AND p.deleted_at IS NULL
-          AND (cc.modality IS NULL OR cc.modality = 'text')
-        ORDER BY cc.id DESC
+    const rows = await engine.executeRaw<{
+      page_id: number;
+      source_id: string;
+      title: string | null;
+      chunk_text: string;
+    }>(
+      `WITH page_candidates AS (
+         SELECT cc.page_id, p.source_id, p.title, cc.chunk_text,
+                MAX(cc.id) OVER (PARTITION BY cc.page_id) AS newest_chunk_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY cc.page_id
+                  ORDER BY LENGTH(cc.chunk_text) DESC, cc.id DESC
+                ) AS page_rank
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE cc.embedding IS NOT NULL AND p.deleted_at IS NULL
+            AND (cc.modality IS NULL OR cc.modality = 'text')
+       )
+       SELECT page_id, source_id, title, chunk_text
+         FROM page_candidates
+        WHERE page_rank = 1
+        ORDER BY newest_chunk_id DESC
         LIMIT $1`,
       [n],
     );
@@ -960,7 +975,11 @@ export async function verifySearchRoundTrip(
     const samples: VerifySearchOutcome['samples'] = [];
     for (const row of rows) {
       try {
-        const query = row.chunk_text.slice(0, 160);
+        // Page diversity is enforced in SQL. Prefixing the page title and
+        // using a wider body window prevents repeated review/import boilerplate
+        // from turning several otherwise healthy pages into the same canary.
+        const title = row.title?.trim();
+        const query = `${title ? `${title}\n` : ''}${row.chunk_text.slice(0, 512)}`;
         const vec = await embedQuery(query);
         const results = await engine.searchVector(vec, {
           limit: 10,

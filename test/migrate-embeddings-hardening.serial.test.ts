@@ -938,6 +938,49 @@ describe('marker integrity across surfaces', () => {
 });
 
 describe('smoke-check miss + heartbeat resilience', () => {
+  test('verifySearchRoundTrip samples distinct pages, not adjacent chunks from one page', async () => {
+    const slugs = ['srm-diverse-a', 'srm-diverse-b', 'srm-diverse-c'];
+    try {
+      for (const [pageIndex, slug] of slugs.entries()) {
+        await engine.putPage(slug, {
+          type: 'note',
+          title: `Distinct canary ${pageIndex}`,
+          compiled_truth: `# Distinct canary ${pageIndex}\n\nbody`,
+        });
+        await engine.upsertChunks(slug, [0, 1, 2].map((chunkIndex) => ({
+          chunk_index: chunkIndex,
+          chunk_text: `${'Recommendation: review this imported evidence. '.repeat(4)}distinct page ${pageIndex} chunk ${chunkIndex} durable retrieval evidence`,
+          chunk_source: 'compiled_truth',
+          token_count: 30,
+        })));
+      }
+
+      // The fake transport returns this deterministic vector for every input.
+      const vector = new Array(TO_DIMS).fill(0).map((_, i) => Math.sin(i) * 0.01 + 0.001);
+      await engine.executeRaw(
+        `UPDATE content_chunks SET embedding = $1::vector
+          WHERE page_id IN (SELECT id FROM pages WHERE slug LIKE 'srm-diverse-%')`,
+        ['[' + vector.join(',') + ']'],
+      );
+
+      embeddedTexts = [];
+      const outcome = await verifySearchRoundTrip(engine, { samples: 3 });
+      expect(outcome.samples).toHaveLength(3);
+      expect(new Set(outcome.samples.map((sample) => sample.page_id)).size).toBe(3);
+      expect(embeddedTexts).toHaveLength(3);
+      for (const pageIndex of [0, 1, 2]) {
+        expect(embeddedTexts.some(text => text.startsWith(`Distinct canary ${pageIndex}\n`)
+          && text.includes(`distinct page ${pageIndex}`))).toBe(true);
+      }
+    } finally {
+      await engine.executeRaw(
+        `DELETE FROM content_chunks WHERE page_id IN (SELECT id FROM pages WHERE slug LIKE 'srm-diverse-%')`,
+      );
+      await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'srm-diverse-%'`);
+      embeddedTexts = [];
+    }
+  }, 60000);
+
   test('verifySearchRoundTrip reports warn/self_retrieval_miss with content-free samples', async () => {
     const canary = 'sealed-privacy-canary-text';
     try {
