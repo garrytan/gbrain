@@ -3,9 +3,9 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page } from '../types.ts';
 import { OperationError } from '../ops/contract.ts';
-import { importFromContent } from '../import-file.ts';
+import { importFromContent, importCodeFile } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
-import { resolveSlugForPath, slugifyPath } from '../sync.ts';
+import { resolveSlugForPath, slugifyPath, isCodeFilePath } from '../sync.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { sameCanonicalImport } from '../page-state/import-guard.ts';
 import { assertPageRevision } from '../page-state/types.ts';
@@ -72,6 +72,22 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
     } };
   if (typeof p.content !== 'string' || typeof p.sourcePath !== 'string' || typeof p.path !== 'string') throw new OperationError('storage_error', 'The frozen import content is missing.');
+  if (isCodeFilePath(p.sourcePath)) {
+    if (snapshot && p.rawHash !== sha256(p.content) && snapshot.page.compiled_truth !== p.content) {
+      throw new OperationError('source_changed', 'Newer code file bytes disagree with the pinned import.');
+    }
+    let prepared: PreparedContentImport | undefined;
+    const result = await importCodeFile(engine, p.sourcePath, p.content, { ...source, noEmbed: true,
+      prepare: async value => { prepared = value; return value.result; } });
+    if (!prepared || prepared.slug !== row.slug) throw new OperationError('invalid_params', result.error ?? 'The code file identity could not be prepared.');
+    const ready = prepared;
+    if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The code page changed during preparation.');
+    return { observedRevision: ready.observedRevision, validate, noop: ready.noop, deferEmbedding: true, apply: async tx => {
+      await ready.apply(tx);
+      return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
+        chunks: result.chunks, noop: ready.noop, imported_file: true };
+    } };
+  }
   const parsedInput = parseMarkdown(p.content, row.slug);
   const expectedSlug = resolveSlugForPath(p.sourcePath);
   if (expectedSlug && parsedInput.slug !== expectedSlug && slugifyPath(parsedInput.slug) !== expectedSlug) {

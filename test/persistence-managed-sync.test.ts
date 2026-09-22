@@ -180,8 +180,10 @@ test('subpath exclusions and unsupported code/pull paths refuse before canonical
     expect(await engine.getPage('a',{sourceId:f.id})).not.toBeNull(); expect(await engine.getPage('private/b',{sourceId:f.id})).toBeNull();
     await expect(performManagedSync(engine,{sourceId:f.id})).rejects.toMatchObject({code:'writer_coordinator_required'});
     const c=await fixture(engine,{'a.md':'Normal page source observation.\n','code.ts':'export const example = 1;\n'});
-    await expect(performManagedSync(engine,{sourceId:c.id,noPull:true,strategy:'auto'})).rejects.toMatchObject({code:'writer_coordinator_required'});
-    expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1',[c.id])).toHaveLength(0);
+    expect(await performManagedSync(engine,{sourceId:c.id,noPull:true,strategy:'auto',noEmbed:true})).toMatchObject({added:2});
+    expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1',[c.id])).toHaveLength(2);
+    expect(await engine.executeRaw("SELECT page_kind FROM pages WHERE source_id=$1 AND slug='code-ts'",[c.id])).toEqual([{page_kind:'code'}]);
+    expect((await engine.getChunks('code-ts',{sourceId:c.id})).some(chunk=>chunk.symbol_name==='example')).toBe(true);
   }
 }),120_000);
 

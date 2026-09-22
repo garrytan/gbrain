@@ -7,6 +7,7 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   // throw on indexing and count the page as a failed embed.
   const revision = '00000000-0000-4000-8000-000000000001';
   const pages = new Map<string, number>();
+  const pageKinds = new Map<number, string>();
   overrides = {
     executeRaw: async () => [],
     getConfigKeys: async () => [],
@@ -15,6 +16,7 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
       const page = overrides.getPage ? await overrides.getPage(slug, opts) : { slug, compiled_truth: 'Fixture body', timeline: '' };
       if (!page) return null;
       if (!pages.has(slug)) pages.set(slug, pages.size + 1);
+      pageKinds.set(pages.get(slug)!, page.page_kind ?? (page.type === 'code' ? 'code' : 'markdown'));
       return { revision, sourceIncarnation: revision, tags: [], withdrawals: [], page: {
         id: pages.get(slug), slug, source_id: opts?.sourceId ?? 'default', title: slug,
         knowledge_revision: revision, text_projection_revision: revision, ...page,
@@ -22,6 +24,10 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     },
     ...overrides,
   };
+  const executeRaw = overrides.executeRaw;
+  overrides.executeRaw = async (sql: string, params?: unknown[]) => sql.startsWith('SELECT page_kind FROM pages WHERE id=')
+    ? [{ page_kind: pageKinds.get(Number(params?.[0])) ?? 'markdown' }]
+    : executeRaw(sql, params);
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });

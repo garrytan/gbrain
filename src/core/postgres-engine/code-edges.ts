@@ -4,6 +4,7 @@
  * never the whole engine class.
  */
 import type postgres from 'postgres';
+import { currentCodeEdgeFilter } from '../code-intel/read-scope.ts';
 
 type PgSql = ReturnType<typeof postgres>;
 
@@ -95,12 +96,14 @@ export async function getCallersOf(
              edge_type, edge_metadata, source_id, true as resolved
         FROM code_edges_chunk
         WHERE to_symbol_qualified = ${qualifiedName}
+        AND ${sql.unsafe(currentCodeEdgeFilter('code_edges_chunk', true))}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       UNION ALL
       SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, false as resolved
         FROM code_edges_symbol
         WHERE to_symbol_qualified = ${qualifiedName}
+        AND ${sql.unsafe(currentCodeEdgeFilter('code_edges_symbol', false))}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       LIMIT ${limit}
     `;
@@ -121,12 +124,14 @@ export async function getCalleesOf(
              edge_type, edge_metadata, source_id, true as resolved
         FROM code_edges_chunk
         WHERE ${fromPredicate}
+        AND ${sql.unsafe(currentCodeEdgeFilter('code_edges_chunk', true))}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       UNION ALL
       SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
              edge_type, edge_metadata, source_id, false as resolved
         FROM code_edges_symbol
         WHERE ${fromPredicate}
+        AND ${sql.unsafe(currentCodeEdgeFilter('code_edges_symbol', false))}
         ${scopedSource ? sql`AND source_id = ${scopedSource}` : sql``}
       LIMIT ${limit}
     `;

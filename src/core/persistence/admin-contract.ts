@@ -1,6 +1,6 @@
 /** Local administration is deliberately absent from the public operation registry. */
 export const PERSISTENCE_ADMIN_OPERATIONS = [
-  'writer_status', 'writer_sync', 'writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept',
+  'writer_status', 'writer_sync', 'writer_reindex_code', 'writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept',
   'local_writer_list', 'local_writer_register', 'local_writer_revoke',
   'source_lifecycle', 'source_add',
 ] as const;

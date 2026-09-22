@@ -248,7 +248,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "skills/migrations/",
         description:
-          "Per-version agent-executable migration instructions (latest: v0.49.0.0 — isolated agent setup, hosted grant migration, and verification).",
+          "Per-version agent-executable migration instructions and post-upgrade verification.",
         path: "skills/migrations/",
       },
       {

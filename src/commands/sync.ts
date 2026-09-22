@@ -5,6 +5,7 @@ import { existsSync, readFileSync, writeFileSync, statSync, lstatSync, realpathS
 import { join, relative, resolve as pathResolve } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
+import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importFile, importImageFile, isImageFilePath as isImageImportPath, MAX_FILE_SIZE } from '../core/import-file.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import { validateSlug } from '../core/utils.ts';
@@ -620,9 +621,12 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   assertSourceFilesystemActive(true);
   const jobSignal = currentJobSignal();
   if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
-  const finish = (result: SyncResult): SyncResult => {
+  const finish = async (result: SyncResult, refresh = false): Promise<SyncResult> => {
     assertSourceFilesystemActive(true);
     if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
+    if (refresh && (result.pagesAffected.length > 0 || result.deleted > 0)) {
+      await refreshProjectionStatistics(engine);
+    }
     return result;
   };
   const inheritedSignal = currentSourceFilesystemSignal();
@@ -662,7 +666,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   // Per-source leases protect the commit/bookmark window. A caller may
   // skip this lease only when its broader scope already serializes the work.
   if (opts.skipLock) {
-    return finish(await performSyncInner(engine, opts));
+    return finish(await performSyncInner(engine, opts), true);
   }
 
   const lockKey = opts.lockId ?? syncLockId(opts.sourceId ?? 'default');
@@ -672,7 +676,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
   try {
     return finish(await withRefreshingLock(engine, lockKey, signal => performSyncInner(engine, {
       ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, signal]) : signal,
-    })));
+    })), true);
   } catch (err) {
     if (err instanceof LockUnavailableError) {
       throw new SyncLockBusyError(await formatLockBusyMessage(engine, lockKey), lockKey);

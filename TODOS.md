@@ -303,7 +303,8 @@
   retrieval-gate path were deferred. Triage records (verdict, evidence, fix
   sketch, key files per issue) live in the wave workspace
   `.context/wave/triage/issue/` + `.context/wave/refute/issue/` (gitignored
-  wave working state, not repo content). Deferred: #4381 #4576 #4578 #4603 #4616 #4622 #4649 #4772 #4921 (of the 0.48.5.0 wave's 26 deferrals, 17 shipped in 0.48.6.0: #4558 #4586 #4588 #4600 #4605 #4613 #4653 #4670 #4684 #4741 #4761 #4766 #4795 #4797 #4852 #4879 #4910).
+  wave working state, not repo content). Deferred: #4381 #4576 #4578 #4616 #4622 #4649 #4772 #4921 (of the 0.48.5.0 wave's 26 deferrals, 17 shipped in 0.48.6.0: #4558 #4586 #4588 #4600 #4605 #4613 #4653 #4670 #4684 #4741 #4761 #4766 #4795 #4797 #4852 #4879 #4910).
+  #4603 is completed by the v0.51.7.0 search reliability wave.
   Of the 0.48.1.0 wave's 27 deferrals, ten shipped in 0.48.5.0 (#4744 via
   #4933, #4729 via #4865, #4728, #4696, #4652, #4620, #4606, #4597, #4589,
   #4563), five were re-classified on verification (#4738 and #4732

@@ -6,7 +6,7 @@ import type { SyncOpts } from '../../commands/sync.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
-import { isSyncable, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
+import { isSyncable, isCodeFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
 import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -101,7 +101,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     for (const rename of dirty.renamed) { put(rename.from, 'delete', true); put(rename.to, 'import', true); }
   }
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
-  if (selected.some(e => !/\.mdx?$/i.test(e.path))) throw new OperationError('writer_coordinator_required', 'Managed code/image sync requires a prepared importer; this sync was refused before any page write.');
+  if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
   if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw new OperationError('request_too_large', 'Sync discovery exceeds the bounded cursor size.');
   const discovered: SyncDiscovery = { binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode };
   // Freeze all logical identities in one database statement, before yielding

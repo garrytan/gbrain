@@ -38,6 +38,20 @@ publication is in progress, a reader may see the prior committed snapshot.
 Separate calls can observe different committed revisions. Search ranking,
 embeddings, and direct filesystem reads are outside this snapshot guarantee.
 
+Search reports `projection_pending` while visible canonical revisions still
+need a derived-text rebuild, including when other pages already produce hits.
+The resident owner rebuilds queued Markdown and code using revision-checked
+snapshots. `gbrain reindex-code --force --no-embed` repairs code metadata through
+that owner without changing canonical files or revisions. Exact compatible
+vectors survive; missing vectors remain explicitly stale, not silently ready.
+Rebuilt outgoing code edges are marked for resolution again, while incoming
+edges to unchanged target chunks are preserved. These read diagnostics do not
+start repairs or authorize provider spending.
+
+Edge resolution uses a transaction and the same ordered page guards as
+projection publication. Candidate chunks are revalidated after locking, so a
+resolver cannot certify replacement edges from an older read of their IDs.
+
 Do not regenerate a request ID because the response was lost or a waiter timed
 out. Repeat the same operation, arguments, source, and UUID. A committed replay
 returns its original result; a terminal conflict/failure is not executed again.

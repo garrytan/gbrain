@@ -54,7 +54,7 @@ Repo: https://github.com/garrytan/gbrain
 ## Migrations
 
 - [docs/UPGRADING_DOWNSTREAM_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md): Patches for downstream agent skill forks. One section per release.
-- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions (latest: v0.49.0.0 — isolated agent setup, hosted grant migration, and verification).
+- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions and post-upgrade verification.
 - [CHANGELOG.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md): Release-summary voice + itemized changes + self-repair block per version.
 
 ## Contributing

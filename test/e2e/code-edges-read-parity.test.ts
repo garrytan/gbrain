@@ -109,6 +109,7 @@ async function seedCodeEdges(eng: BrainEngine): Promise<CeFixture> {
   const first = await eng.addCodeEdges(edges);
   // Idempotency parity: full replay conflicts away on both engines.
   const replay = await eng.addCodeEdges(edges);
+  await eng.executeRaw("UPDATE pages SET text_projection_revision=knowledge_revision WHERE slug IN ('code/ce-main','code/ce-lib','code/ce-alt')");
 
   const rev = new Map<number, string>([[main, 'main'], [helper, 'helper'], [lib, 'lib'], [alt, 'alt']]);
   return { main, helper, lib, alt, rev, insertCounts: [first, replay] };

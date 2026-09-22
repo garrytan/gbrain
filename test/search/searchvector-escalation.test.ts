@@ -7,11 +7,10 @@
  * candidate pool, so the PAGE result came back underfilled — sparse pages
  * behind the dense one were unreachable at any limit.
  *
- * The fix: escalate innerLimit ×4 (≤3 times, hard-capped at the HNSW
- * ef_search substrate ceiling of 1000) while the page set is short but the
- * pre-collapse candidate pool was FULL. A short page with a non-full pool is
- * a genuine final page — no retry. Exhaustion at the cap emits
- * onVectorPoolMeta (visible, not silent).
+ * The fix: escalate the SQL pool independently of the HNSW ef_search
+ * ceiling, with bounded iterative work. A short ANN pool needs scoped
+ * exhaustion evidence before it can be reported as a genuine final page.
+ * Positive incomplete coverage lives in vector-candidate-safety.test.ts.
  *
  * PGLite side of the engine-parity pair; the postgres side is pinned by
  * test/e2e/engine-parity.test.ts.
@@ -134,13 +133,7 @@ describe('searchVector bounded escalation', () => {
 // touch its schema.
 // ============================================================
 
-describe('searchVector escalation — fire-at-cap positive (HNSW lane)', () => {
-  // hnswIndexExpected('vector', <=2000 dims) → innerCap = HNSW_EF_SEARCH_MAX
-  // (1000). Two dense pages carry 1120 embedded chunks between them, so the
-  // pre-DISTINCT chunk pull stays FULL at every escalation rung
-  // (100 → 400 → 1000) while the PAGE set stays at 2. The loop must stop at
-  // the substrate ceiling AND report the exhaustion — the positive twin of
-  // the two negative paths pinned above.
+describe('searchVector escalation — dense corpus beyond the old HNSW cap', () => {
   let capEngine: PGLiteEngine;
   const CAP_DIM = 8; // small dims: 1120-chunk fixture stays fast; cap policy keys on type, not size
 
@@ -192,18 +185,16 @@ describe('searchVector escalation — fire-at-cap positive (HNSW lane)', () => {
     expect(idx.length).toBe(1);
   });
 
-  test('exhaustion at the ef_search cap EMITS the underfill event', async () => {
+  test('exhaustion beyond the old ef_search cap is proved without a false underfill event', async () => {
     const events: Array<{ underfilled: boolean; escalations: number; innerLimit: number }> = [];
     const results = await capEngine.searchVector(capEmb(1), {
       limit: 10,
       detail: 'high',
       onVectorPoolMeta: (m) => events.push(m),
     });
-    // Page set is genuinely short (2 dense pages < limit 10) but the chunk
-    // pool was full at the cap — visible, not silent.
     expect(results.length).toBe(2);
     expect(new Set(results.map((r) => r.slug))).toEqual(new Set(['notes/dense-a', 'notes/dense-b']));
-    expect(events).toEqual([{ underfilled: true, escalations: 2, innerLimit: 1000 }]);
+    expect(events).toEqual([]);
   });
 });
 
@@ -288,12 +279,7 @@ describe('searchVector escalation — exact-scan lane (>2000-dim column, cap key
     expect(events).toHaveLength(0);
   });
 
-  test('contrast: an HNSW-shaped descriptor caps the same deep offset at the substrate ceiling', async () => {
-    // The cap keys on the DESCRIPTOR (hnswIndexExpected), not the physical
-    // index: the default legacy descriptor claims vector/1536 → cap 1000 →
-    // the inner pool can never reach row 1041. Production callers on a
-    // >2000-dim brain always get the real descriptor from the registry
-    // resolver; this pins the seam the R2-10 policy hangs off.
+  test('an HNSW-shaped descriptor no longer caps SQL output at the ef_search ceiling', async () => {
     const events: unknown[] = [];
     const results = await exactEngine.searchVector(exactEmb(), {
       limit: 10,
@@ -301,9 +287,10 @@ describe('searchVector escalation — exact-scan lane (>2000-dim column, cap key
       detail: 'high',
       onVectorPoolMeta: (m) => events.push(m),
     });
-    expect(results.length).toBe(0);
-    // Zero rows at offset>0 → pool unknowable → no event (the negative
-    // deep-pagination contract pinned above holds here too).
+    expect(results.length).toBe(10);
+    expect(results.map(r => r.slug)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `deep/page-${String(1040 + i).padStart(4, '0')}`),
+    );
     expect(events).toHaveLength(0);
   });
 });

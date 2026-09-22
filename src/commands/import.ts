@@ -30,6 +30,7 @@ import {
 } from '../core/import-checkpoint.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
+import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -1078,6 +1079,7 @@ export async function runImport(
     slog(`  ${chunksCreated} chunks created`);
   }
 
+  if (imported > 0 && !opts.managedBookmark) await refreshProjectionStatistics(engine);
   return {
     imported, skipped, errors, chunksCreated, failures,
     ...(totalMalformed > 0 ? { malformedSkipped: totalMalformed } : {}),

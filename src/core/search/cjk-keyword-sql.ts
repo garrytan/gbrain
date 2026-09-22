@@ -3,7 +3,7 @@
  *
  * `websearch_to_tsquery` with an ASCII-stemming FTS config ('english', …)
  * can't tokenize CJK, so FTS keyword recall is zero for Chinese / Japanese /
- * Korean queries. Both engines fall back to a term-by-term ILIKE match with
+ * Korean queries. Both engines fall back to a term-by-term LIKE/ILIKE match with
  * term-frequency ranking (v0.32.7 on PGLite; ported to Postgres by #3986).
  * The SQL is built ONCE here with $N positional params so the two engines
  * cannot drift; each engine supplies only its own executor.
@@ -17,7 +17,7 @@
  *   - LIKE parameters are individually escaped with escapeLikePattern and
  *     wrapped with %.
  *   - Raw terms and raw query are bound unescaped for ranking arithmetic.
- *   - Explicit `ESCAPE '\'` on ILIKE clauses.
+ *   - Explicit `ESCAPE '\'` on LIKE/ILIKE clauses; caseless terms use LIKE.
  *   - Empty-query guard returns null without binding SQL.
  */
 import type { SearchOpts } from '../types.ts';
@@ -118,11 +118,11 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
   }
   if (opts?.afterDate) {
     params.push(opts.afterDate);
-    extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+    extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
   }
   if (opts?.beforeDate) {
     params.push(opts.beforeDate);
-    extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+    extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
   }
   // v0.34.1 (#861 — P0 leak seal): source-isolation on the CJK fallback path.
   if (opts?.sourceIds && opts.sourceIds.length > 0) {
@@ -134,7 +134,11 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
   }
 
   const whereLikeClause = likeParamIndices
-    .map(idx => `cc.chunk_text ILIKE $${idx} ESCAPE '\\'`)
+    .map((idx, termIndex) => {
+      const term = terms[termIndex];
+      const operator = term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE';
+      return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
+    })
     .join(' AND ');
 
   const termFreqExpr = rawTermIndices
@@ -177,7 +181,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
            JOIN sources s ON s.id = p.source_id
            WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
              AND cc.modality = 'text'
-           ORDER BY score DESC
+           ORDER BY score DESC, page_id ASC, chunk_id ASC
            LIMIT $${innerLimitIndex}
          ),
          ${buildBestPerPagePoolCte('ranked')}
@@ -204,7 +208,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
          WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY score DESC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
     params,
   };

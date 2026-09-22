@@ -24,6 +24,8 @@ import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../version.ts';
 import { schemaVersionHealth } from '../core/schema-version-health.ts';
 import { zeroTotalContradictionsCheck } from '../core/eval-contradictions/run-health.ts';
+import { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
+export { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
 // Peeled doctor modules (containment sprint): each is a verbatim move out of
 // this file. doctor.ts re-exports every moved public symbol under its
 // original name so existing importers (tests, scripts/live-brain-first-check.ts,
@@ -1934,6 +1936,7 @@ export async function buildChecks(
   // page write fails brain-wide and the version counter can't see the drift.
   progress.heartbeat('pages_upsert_arbiter');
   checks.push(await pagesUpsertArbiterCheck(engine));
+  checks.push(await checkProjectionReadiness(engine));
 
   // 4a-ter. #4613: links_link_source_check shape — a ledger-current brain
   // whose CHECK reverted to the pre-v114 allowlist rejects every kebab

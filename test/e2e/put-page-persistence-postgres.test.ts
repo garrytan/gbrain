@@ -93,7 +93,7 @@ d('Postgres put_page persistence', () => {
     const disk = readFileSync(join(root, `${slug}.md`), 'utf8');
     const binding = await getWorktreeBinding(engine, 'default');
     expect(binding).not.toBeNull();
-    const holder = await acquireWorktree(binding!);
+    const holder = await acquireWorktree(binding!, 5000);
     expect(holder).not.toBeNull();
     let accepted: Awaited<ReturnType<typeof put>>;
     try {

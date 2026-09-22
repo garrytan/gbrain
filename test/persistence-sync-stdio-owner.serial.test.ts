@@ -10,6 +10,8 @@ import { inspectLockHolder } from '../src/core/pglite-lock.ts';
 import { persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceAdministration } from '../src/core/persistence/ipc.ts';
 import { readPersistenceCliRegistration } from '../src/core/persistence/local-client.ts';
 import { parsePersistenceSyncArgs } from '../src/commands/sync-persistence-delegate.ts';
+import { importCodeFile } from '../src/core/import-file.ts';
+import { parseReindexCodeDelegateArgs } from '../src/commands/reindex-code-delegate.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const home=mkdtempSync(join(tmpdir(),'gbrain-stdio-sync-'));
@@ -46,7 +48,11 @@ beforeAll(async()=>{
   setup=new PGLiteEngine();
   await withEnv(env,async()=>{
     await setup.connect(config);await setup.initSchema();
+    await setup.setConfig('search.mcp_keyword_only','true');
     await setup.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES('workspace','workspace',$1,'{}')",[root]);
+    const code = 'export function residentExample() { return 4; }\n';
+    writeFileSync(join(root,'example.ts'),code);
+    await importCodeFile(setup,'example.ts',code,{sourceId:'workspace',noEmbed:true});
     await claimWorktree(setup,'workspace',root);await registerLocalWriter(setup,'cli');await registerLocalWriter(setup,'stdio');
     await setup.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');await setup.disconnect();
   });
@@ -83,6 +89,36 @@ test('strict sync parsing retains filtering options and rejects runtime authorit
   });
 });
 
+test('actual code recovery CLI delegates to the resident owner without a legacy writer or paid provider',async()=>{
+  const before=await cli(['call','get_page',JSON.stringify({slug:'example-ts',source_id:'workspace'})]);
+  const current=JSON.parse(before.out);
+  for(const args of [['reindex-code','--force'],['reindex-code','--force']]) {
+    const result=await cli([...args,'--source','workspace','--no-embed','--json']);
+    expect({code:result.code,err:result.err}).toMatchObject({code:0});
+    expect(JSON.parse(result.out)).toMatchObject({reindexed:1,failed:0});
+    expect(result.err).not.toContain('writer_coordinator_required');
+  }
+  const after=await cli(['call','get_page',JSON.stringify({slug:'example-ts',source_id:'workspace'})]);
+  expect(JSON.parse(after.out).revision).toBe(current.revision);
+  expect(JSON.parse(after.out).compiled_truth).toBe(current.compiled_truth);
+  (owner!.stdin as {write:(value:string)=>unknown}).write(JSON.stringify({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'search',arguments:{query:'residentExample',source_id:'workspace'}}})+'\n');
+  await until(()=>stdout.split('\n').some(line=>{try{return JSON.parse(line).id===2;}catch{return false;}}));
+  const search=stdout.split('\n').map(line=>{try{return JSON.parse(line);}catch{return null;}}).find(value=>value?.id===2);
+  expect(search.result.isError).not.toBe(true);
+  expect(JSON.stringify(search.result)).toContain('residentExample');
+  expect(inspectLockHolder(databasePath).pid).toBe(owner!.pid);
+  expect(parseReindexCodeDelegateArgs(['--force','--no-embed','--source','workspace'])).toEqual({force:true,noEmbed:true,sourceId:'workspace'});
+  expect(()=>parseReindexCodeDelegateArgs(['--remote','false'])).toThrow();
+},90000);
+
+test('remote stdio credentials cannot request trusted code reindex',async()=>{
+  const socket=persistenceSocketPathForConfig(config)!,cap=await requestPersistenceCapabilities(socket);
+  const registration=JSON.parse(readFileSync(join(home,'.gbrain','persistence',`${cap.brain_id}.stdio.json`),'utf8'));
+  await expect(requestPersistenceAdministration(socket,{version:1,kind:'administration',brain_id:cap.brain_id,
+    operation:'writer_reindex_code',params:{options:{sourceId:'workspace',force:true,noEmbed:true}},registration:{...registration,lane:'cli'}}))
+    .rejects.toMatchObject({code:'permission_denied'});
+});
+
 test('the remote stdio credential cannot enter the trusted CLI sync lane',async()=>{
   const socket=persistenceSocketPathForConfig(config)!,cap=await requestPersistenceCapabilities(socket);
   const registration=JSON.parse(readFileSync(join(home,'.gbrain','persistence',`${cap.brain_id}.stdio.json`),'utf8'));
@@ -108,4 +144,11 @@ test('a revoked CLI cannot fall through to a competing database open',async()=>{
   const denied=await cli(['sync','--source','workspace','--no-pull','--json','--no-hard-deadline']);
   expect(denied.code).toBe(1);expect(denied.err).toContain('permission_denied');expect(denied.err).not.toContain('LockTimeout');
   expect(inspectLockHolder(databasePath).pid).toBe(owner!.pid);
+},60000);
+
+test('the recovered code remains searchable from the CLI after resident shutdown',async()=>{
+  owner!.kill('SIGTERM');await owner!.exited;
+  const result=await cli(['search','residentExample','--source','workspace','--json']);
+  expect({code:result.code,err:result.err}).toMatchObject({code:0});
+  expect(result.out).toContain('example-ts');
 },60000);

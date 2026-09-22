@@ -49,6 +49,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
   "src/core/search/**": [
+    "test/e2e/projection-statistics-postgres.test.ts",
+    "test/e2e/search-query-contract-postgres.test.ts",
+    "test/e2e/vector-candidate-safety-postgres.test.ts",
+    "test/e2e/search-readiness-http.test.ts",
+    "test/e2e/projection-readiness-currency.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
@@ -56,6 +61,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/search-exclude.test.ts",
     "test/e2e/search-swamp.test.ts",
   ],
+  "src/core/page-state/**": ["test/e2e/projection-recovery-parity.test.ts", "test/e2e/projection-readiness-currency.test.ts"],
+  "src/core/code-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
+  "src/core/markdown-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
   // Tree-sitter chunkers feed code-indexing E2E.
   "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   // OpenClaw context-engine plugin: engine + entry feed the plugin-shape E2E

@@ -73,11 +73,14 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   in `sql-ranking.ts`. The vector side returns N distinct pages by best chunk,
   not N chunks that collapse to fewer pages downstream. When one dense page's
   chunks fill the inner candidate pool, the engines escalate the pool in a
-  bounded loop (×4 per step, at most 3 escalations; HNSW-backed columns
-  additionally cap at the `ef_search` ceiling) until the page count is honest;
-  a loop that ends still underfilled surfaces `vector_pool_underfilled` on the
-  hybrid layer's `HybridSearchMeta` (the op-layer capture channel) instead of
-  silently returning a short page.
+  bounded loop (×4 per step, at most 3 escalations). SQL candidate limits and
+  offsets are independent of `ef_search`; supported pgvector versions use
+  strict iterative scans with bounded visits. A filtered short pool is not
+  proof that the corpus is exhausted. Postgres may make one exact fallback
+  inside the remaining eight-second arm budget; PGLite does not pretend that
+  a JavaScript timeout can cancel its WASM work. Unresolved shortfalls appear
+  as `vector_candidates_incomplete` in `degraded`, with scoped
+  `vector_pool_underfilled` details in the public retrieval metadata.
 - **Title-phrase boost** — when the normalized query is a contiguous token-run
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
@@ -367,6 +370,22 @@ take-holder permissions.
 
 ## Chunk rebuilds after upgrading
 
+**Say to your agent:** *"Check whether my search index is ready, and repair
+code metadata without spending on embeddings."* Search and query now report
+`projection_readiness` for empty and nonempty results. `projection_pending`
+means visible pages lack a current revision seal; `projection_status_unknown`
+means the diagnostic could not establish readiness. Neither is a clean miss.
+The CLI names these states; `--json` retains its result-array format and sends
+incompleteness notices to stderr. MCP carries them in `_meta.retrieval`.
+
+The upgraded resident `gbrain serve` drains queued Markdown and code rebuilds
+without provider calls. Code repair can also run through the current owner:
+`gbrain reindex-code --force --no-embed`. Rebuilds preserve only exact,
+provenance-compatible vectors; remaining NULL vectors still need an explicitly
+authorized `gbrain embed --stale` run. A text-ready index is not a promise that
+every page has a vector. Diagnostics do not disclose private or foreign-source
+pending pages and never start repair themselves.
+
 Markdown chunk creation applies the strict protected-body sanitizer before
 splitting text. For remote reads, all existing chunks are withheld until a
 successful rebuild records the current chunker version. Public pages require
@@ -385,8 +404,15 @@ previous vectors; use `gbrain embed --stale` later to restore semantic retrieval
 when provider usage is authorized. The regular reindex path rebuilds and embeds.
 Code pages use `gbrain reindex-code --force --no-embed`. Existing image indexes
 require reimporting the source files; images whose OCR contains protected
-sections remain unavailable to remote chunk retrieval. No schema migration is
-required.
+sections remain unavailable to remote chunk retrieval. Schema migrations 160
+and 161 install projection statistics and the pending-projection lookup index;
+they do not rebuild vector indexes or call an embedding provider.
+
+`query --since` includes its exact lower boundary. An exact `--until` timestamp
+is inclusive without losing fractional precision; a date-only upper bound
+includes the entire day, implemented as an exclusive next-midnight boundary.
+Legacy direct engine `afterDate` and `beforeDate` bounds remain strict unless
+their explicit inclusivity flags are set.
 
 
 Optional code-graph expansion is omitted from remote search. The six dedicated

@@ -2,6 +2,46 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.7.0] - 2026-09-21
+
+**Search can find your pages without quietly mistaking an unfinished index for an empty brain.** Large brains no longer rely on a misleading estimate that made vector search scan every chunk. Filtered searches can look beyond their first batch of candidates, and they tell you when their work limit still leaves the answer incomplete. Keyword results stay stable between repeated requests and adjacent pages.
+
+Code and Markdown recovery now use the same guarded preparation as normal indexing. Code metadata can be repaired while the resident writer owns the database, without changing your original files or paying to embed them again. Existing vectors survive only when their content and model provenance still match. Search and doctor distinguish pending projections from a genuine miss, even when some results are already available.
+
+**Say to your agent:** *"Check whether my search index is ready, and repair code metadata without spending on embeddings."*
+
+### How to use it
+
+Upgrade normally, then run `gbrain doctor`. Keep the upgraded resident `gbrain serve` running to drain queued projection rebuilds. For code metadata repair, use `gbrain reindex-code --force --no-embed`; use `--source <id>` to restrict the work. Authorize `gbrain embed --stale` separately if vectors are still missing.
+
+| Situation | What you can now see |
+|---|---|
+| A filtered vector scan reaches its work limit | `vector_candidates_incomplete`, not a false clean miss. |
+| Some visible pages still need a current text projection | `projection_pending`, including alongside nonempty results. |
+| The readiness probe cannot run | `projection_status_unknown`, rather than an unsupported claim that everything is ready. |
+| A query starts or ends at an exact date boundary | Inclusive public bounds, including the final microseconds of a date-only upper bound. |
+
+### Things to watch
+
+HNSW remains approximate. Postgres can use a server-cancelled exact fallback within its remaining search budget; PGLite reports an unresolved shortfall rather than pretending a timer stopped its database work. A text-ready page may still need embeddings. CLI JSON keeps its result-array format and sends incompleteness notices to stderr; MCP exposes retrieval metadata in its response envelope.
+
+## To take advantage of v0.51.7.0
+
+`gbrain upgrade` should apply the schema changes automatically. If schema maintenance failed, run `gbrain apply-migrations --yes` with an authorized database maintenance role, then run `gbrain doctor`. Statistics hidden by row-security policy are not treated as absent. Your agent can follow `skills/migrations/v0.51.7.0.md`; no global planner settings, vector-index rebuild, provider change or automatic embedding spend is required.
+
+### Itemized changes
+
+- Schema migrations 160 and 161 add verified current-projection expression statistics and the pending-projection lookup index. Bulk import, sync, reindex and drained recovery refresh statistics outside page locks.
+- Both engines separate candidate, iterative-scan and pagination limits; preserve scope and visibility filters; and surface incomplete candidate pools through hybrid search, CLI and MCP.
+- Postgres relaxed keyword retries prefer index access locally. Keyword candidate and result ordering are deterministic; caseless CJK terms use LIKE while case-sensitive alphabets retain ILIKE.
+- Public `since`/`until` comparisons preserve inclusivity and timestamp precision. Independent atoms no longer receive transcript-session demotions.
+- Managed-safe code reindexing and shared Markdown/code preparation preserve fenced metadata, valid vectors and incoming graph edges; rebuilt outgoing edges become eligible for resolution again. Resolver batches and projection replacement share ordered guards, so a concurrent old resolver cannot certify new edges. Code reads enforce current live projections, and recursive operations do not reuse stale traversal caches.
+- Contributed by @time-attack (#5126, keyword ordering), @morven-ai (#5169, CJK operator selection), @Laochaleun (#5245, Markdown projection preparation), and @tarush1989 (#5085, atom diversification). Thanks to the issue reporters for the planner and retrieval reproductions.
+
+### For contributors
+
+- Required PgBouncer execution checks no longer misclassify passing output when the summary reader exits early. Native-lock contention fixtures wait for setup ownership before asserting write exclusion, without changing the contention assertions.
+
 ## [0.51.6.0] - 2026-09-21
 
 **A temporary brain gets one safe second chance to start.**

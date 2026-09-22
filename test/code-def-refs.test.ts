@@ -349,6 +349,7 @@ describe('probeFilteredSymbolTypes (#3789)', () => {
        VALUES ($1, 0, 'exotic fixture chunk body', 'ExoticFixtureSymbol', 'exotic gizmo kind', 'typescript')`,
       [rows[0]!.id],
     );
+    await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [rows[0]!.id]);
   }, 30000);
 
   test('returns the allowlist-filtered symbol types for a name', async () => {

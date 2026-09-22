@@ -196,6 +196,7 @@ describe('runCycle — A7 deriveStatus counts resolved edges as work', () => {
       [caller[0]!.id],
     );
 
+    await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [pageId]);
     const report = await runCycle(engine, { brainDir: null, phases: ['resolve_symbol_edges'] });
     expect(report.totals.edges_resolved).toBe(1);
     expect(report.status).toBe('ok'); // pre-A7 this was 'clean'

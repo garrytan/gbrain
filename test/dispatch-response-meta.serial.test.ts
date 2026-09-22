@@ -37,7 +37,7 @@ const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 
 const engineStub = {
   getConfig: async () => null,
-  executeRaw: async () => [],
+  executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
 } as unknown as BrainEngine;
 
 const DEGRADED_META = {

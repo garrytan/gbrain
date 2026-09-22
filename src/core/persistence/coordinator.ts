@@ -26,6 +26,7 @@ export interface PreparedMutation {
   additionalPageKeys?: readonly {sourceId:string;slug:string}[];
   file?: { path: string; root: string; content: string | Uint8Array | null; expectedBeforeHash?: string | null };
   noop?: boolean;
+  deferEmbedding?: boolean;
   /** Must perform only transaction-composable database work. */
   apply(tx: BrainEngine): Promise<Record<string, unknown>>;
   validate?(tx: BrainEngine): Promise<void>;

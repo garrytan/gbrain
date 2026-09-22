@@ -35,6 +35,9 @@ mock.module('../src/core/search/hybrid.ts', () => ({
   ...realHybrid,
   hybridSearchCached: async () => nextResults,
 }));
+mock.module('../src/core/search/projection-readiness.ts', () => ({
+  probeProjectionReadiness: async () => ({ status: 'ready', ready: true }),
+}));
 
 const { dispatchToolCall, __resetBackupNoticeForTests } = await import('../src/mcp/dispatch.ts');
 const {

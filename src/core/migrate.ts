@@ -21,6 +21,7 @@ import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './lin
 import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
 import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL } from './facts/withdrawal-schema.ts';
 import { repairLegacyClientGrants } from './grants/migration.ts';
+import { PROJECTION_STATISTICS_SQL, verifyProjectionStatistics } from './search/projection-statistics.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -6569,6 +6570,28 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
   { version: 157, name: 'recoverable_source_topology', idempotent: true, sql: PERSISTENCE_TOPOLOGY_SCHEMA_SQL },
   { version: 158, name: 'canonical_version_deletion_state', idempotent: true, sql: PAGE_VERSION_DELETION_SCHEMA_SQL },
   { version: 159, name: 'index_retained_publication_recovery', idempotent: true, sql: PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL + ';' },
+  {
+    version: 160,
+    name: 'current_text_projection_planner_statistics',
+    idempotent: true,
+    sql: PROJECTION_STATISTICS_SQL,
+    sqlFor: { postgres: "SET LOCAL statement_timeout = '30s'; SET LOCAL lock_timeout = '2s';" + PROJECTION_STATISTICS_SQL },
+    handler: verifyProjectionStatistics,
+  },
+  {
+    version: 161,
+    name: 'index_pending_text_projections',
+    idempotent: true,
+    sql: `CREATE INDEX IF NOT EXISTS idx_pages_projection_pending
+      ON pages(source_id, page_kind, slug)
+      WHERE deleted_at IS NULL AND text_projection_revision IS DISTINCT FROM knowledge_revision;`,
+    sqlFor: {
+      postgres: `SET LOCAL statement_timeout = '30s'; SET LOCAL lock_timeout = '2s';
+        CREATE INDEX IF NOT EXISTS idx_pages_projection_pending
+        ON pages(source_id, page_kind, slug)
+        WHERE deleted_at IS NULL AND text_projection_revision IS DISTINCT FROM knowledge_revision;`,
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

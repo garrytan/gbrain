@@ -250,6 +250,11 @@ gbrain think "who's working on AI agents at portfolio companies?"
 
 **`gbrain search`** returns the top retrieved pages, ranked by hybrid scoring (vector + keyword + RRF + source-tier boost + reranker). Use it when you want raw material to skim: agent context windows, citation lookups, finding a specific quote.
 
+Search also tells you when its results are incomplete because projections are
+still rebuilding or a bounded vector scan ran short. Ask your agent *"Check
+whether my search index is ready"*; see [search readiness and recovery](docs/architecture/RETRIEVAL.md#chunk-rebuilds-after-upgrading)
+before treating an empty result as proof that a page is missing.
+
 **`gbrain think`** runs the same retrieval, then composes a synthesized answer across the results with explicit citations to the source pages AND an honest note on what the brain doesn't know yet. The gap analysis is the differentiator: the answer tells you when a page is stale, when a claim is uncited, when two pages contradict each other, when there's a hole you should fill.
 
 **Say to your agent:** *"What do we know about acme-example?"* — *"Tell me about alice-example before my meeting tomorrow"* — *"Search for who's working on AI agents."* Your agent routes these to the brain automatically; you never type the commands yourself.

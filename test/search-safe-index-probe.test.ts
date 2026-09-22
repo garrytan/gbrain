@@ -66,7 +66,7 @@ describe('safe_index_pending probe stays sargable (#5004)', () => {
 
     const probe = captured.find(c => c.sql.includes("page_kind = 'markdown'") && /LIMIT 1/.test(c.sql));
     expect(probe).toBeDefined();
-    expect(probe!.sql).not.toContain('COALESCE');
+    expect(probe!.sql).not.toContain('COALESCE(p.chunker_version');
     expect(probe!.sql).toContain(`p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION}`);
 
     await engine.executeRaw('SET enable_seqscan = off');

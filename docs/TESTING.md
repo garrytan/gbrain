@@ -3,6 +3,20 @@
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only.
 
+Search reliability has real-planner and transport regressions in
+`test/e2e/vector-candidate-safety-postgres.test.ts`,
+`test/e2e/search-query-contract-postgres.test.ts`,
+`test/e2e/projection-statistics-postgres.test.ts`, and
+`test/e2e/search-readiness-http.test.ts`. The statistics tests include owner,
+restricted-reader and FORCE-RLS roles; the candidate tests distinguish natural
+plans from forced-HNSW controls and prove server cancellation of exact fallback.
+`test/e2e/projection-recovery-parity.test.ts` runs the shared Markdown/code
+recovery, graph-edge preservation and migration-origin contracts against both
+engines. PGLite work caps never count a Promise race as cancellation evidence.
+The recovery parity entry also runs `symbol-resolver-projection-race.test.ts`:
+paused resolver/rebuild ordering, atomic rollback, candidate revalidation, and
+a real PostgreSQL lock-wait receipt before releasing the competing writer.
+
 `test/pglite-in-memory-create-retry.serial.test.ts` injects create failures while
 using real PGLite instances and a validated schema snapshot. It pins one cold
 retry only before an in-memory database has opened, both failure diagnostics,

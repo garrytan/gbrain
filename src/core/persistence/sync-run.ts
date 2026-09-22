@@ -10,6 +10,7 @@ import { assertPersistenceAccepting, foregroundWriteCompletions, startPersistenc
 import { discoverManagedSync, resolveManagedSyncContext, readSyncContent, syncRawHash, type SyncDiscovery } from './sync-discovery.ts';
 import { managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, type SyncAuthority } from './sync-authority.ts';
 import type { SyncIntent } from './sync-prepare.ts';
+import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 
 interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; }
 interface Cursor extends SyncDiscovery { runId: string; index: number; authority: SyncAuthority; pending?: Pending; done?: boolean;
@@ -154,6 +155,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     if (pending.intent.kind === 'managed_sync_checkpoint') {
       cursor = (await readCursor(engine, key))!;
       if (!cursor?.done) throw new OperationError('storage_error', 'Committed sync checkpoint lost its cursor.');
+      if (cursor.counts.added + cursor.counts.modified + cursor.counts.deleted > 0) await refreshProjectionStatistics(engine);
       return result(cursor, cursor.from === null ? 'first_sync' : 'synced');
     }
     // The frozen manifest is shared; only the cursor header changes per page.

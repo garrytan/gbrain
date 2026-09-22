@@ -16,6 +16,8 @@ import { loadCompletedMigrations } from '../../core/preferences.ts';
 import { compareVersions } from '../migrations/index.ts';
 import { resolveHoursEnv } from '../../core/env-number.ts';
 import { schemaVersionHealth } from '../../core/schema-version-health.ts';
+import { checkProjectionReadiness } from './checks/projection-readiness.ts';
+import { resolveExcludePrivatePages } from '../../core/search/private-visibility.ts';
 import {
   type Check,
   type DoctorReport,
@@ -66,7 +68,7 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
 
 export async function doctorReportRemote(
   engine: BrainEngine,
-  opts: { sourceIds?: string[] } = {},
+  opts: { sourceIds?: string[]; remote?: boolean } = {},
 ): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -453,6 +455,10 @@ export async function doctorReportRemote(
   //   - contextual_retrieval_mode IS NULL (mode never evaluated)
   //   - synopsis-failures audit JSONL entries from the last 7 days
   checks.push(await checkContextualRetrievalCoverage(engine, { sourceIds: opts.sourceIds }));
+  checks.push(await checkProjectionReadiness(engine, {
+    sourceIds: opts.sourceIds,
+    excludePrivate: await resolveExcludePrivatePages(engine, opts.remote),
+  }));
 
   // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
   // search by the hard-exclude prefix policy. Pure SQL COUNT, safe on the
