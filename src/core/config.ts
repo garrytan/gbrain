@@ -107,6 +107,15 @@ export interface GBrainConfig {
    */
   together_api_key?: string;
   /**
+   * Zhipu AI (BigModel / Z.AI) API key. File-plane slot folded into the
+   * gateway env as ZHIPUAI_API_KEY (required by the zhipu recipe, which
+   * serves both embeddings and GLM chat/subagent). Same fold pattern (and
+   * same DB-plane caveat) as voyage_api_key above. Without this slot the key
+   * only reached processes whose launcher happened to export the variable —
+   * daemon/launchd/MCP contexts ran keyless while `config show` looked complete.
+   */
+  zhipu_api_key?: string;
+  /**
    * Google Gemini API key (#3500). File-plane slot folded into the gateway
    * env as GOOGLE_GENERATIVE_AI_API_KEY (the name the google recipe reads).
    * buildGatewayConfig also accepts process-env GEMINI_API_KEY — the name
@@ -1205,6 +1214,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'deepseek_api_key',
   'litellm_api_key',
   'together_api_key',
+  'zhipu_api_key',
   'google_api_key',
   'azure_openai_api_key',
   'azure_openai_endpoint',
