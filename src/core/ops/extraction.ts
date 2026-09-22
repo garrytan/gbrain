@@ -212,31 +212,31 @@ const extraction_review: Operation = {
         const title = typeof page.title === 'string' ? page.title.trim() : '';
         const aliases = [...new Set(title ? [...declared, title] : declared)];
 
-        // ORDER MATTERS. These are two independent transactions
-        // (setPageAliases opens its own), so one can commit without the other.
-        // The index write goes FIRST and the status flip second, because the
-        // status flip is what makes the page ineligible for a retry:
-        // isUnverifiedExtraction gates this branch, so a page that reads
-        // `verified` reports `not_unverified` forever after. Flip-then-index
-        // would therefore strand a failure as a verified page with no alias —
-        // silently missing from tryAliasExact, unfixable through this surface.
-        // Index-then-flip strands it as a still-quarantined page instead, and
-        // re-running the SAME command converges. Same reasoning for a throw
-        // mid-batch: earlier slugs are fully promoted, the failing one stays
-        // retryable, and re-running the batch is safe (already-promoted slugs
-        // report `not_unverified`).
+        // ONE COMMIT for both writes, same shape as the alias projection in
+        // import-file.ts ("Alias projection and readback share the page
+        // commit"). Split across two transactions, either half could land
+        // alone, and BOTH orderings are wrong in their own way:
+        //   flip-then-index — a verified page with no alias row. Invisible to
+        //     tryAliasExact, and unfixable through this surface, because
+        //     isUnverifiedExtraction gates the branch: a `verified` page
+        //     reports `not_unverified` forever.
+        //   index-then-flip — converges on retry, but leaks the other way: an
+        //     UNVERIFIED page whose name already votes in tryAliasExact,
+        //     exact-lookup and hybrid search. That is exactly what the
+        //     quarantine gate exists to prevent.
+        // Sharing the commit removes both, and makes the order inside
+        // irrelevant. A failure leaves the page fully quarantined, so
+        // re-running the SAME command converges; a throw mid-batch leaves
+        // earlier slugs cleanly promoted and the rest untouched.
         //
         // The stub has no file on disk (importFromContent wrote it straight to
         // the DB from generated markdown), so no later sync re-import would
-        // project this for us — the index write has to happen right here.
-        // Skip both when there is nothing to claim: setPageAliases with an
-        // empty set is a DELETE with no INSERT, which would wipe rows the page
+        // project the alias for us — the index write has to happen right here.
+        // Skip it when there is nothing to claim: setPageAliases with an empty
+        // set is a DELETE with no INSERT, which would wipe rows the page
         // already had (unreachable for a stub, which always has a title, but
         // the branch is reachable in principle).
-        if (aliases.length) {
-          await ctx.engine.setPageAliases(slug, page.source_id, normalizeAliasList(aliases));
-        }
-
+        //
         // Frontmatter merge — NOT putPage, whose upsert would reset
         // non-carried columns (page_kind → 'markdown', content_hash, …) for a
         // change that only touches frontmatter keys. provenance stays
@@ -247,13 +247,18 @@ const extraction_review: Operation = {
         // ::jsonb. Identical on both engines.
         const patch: Record<string, unknown> = { [EXTRACTION_STATUS_KEY]: STATUS_VERIFIED };
         if (aliases.length) patch.aliases = aliases;
-        await ctx.engine.executeRaw(
-          `UPDATE pages
-           SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $1::text::jsonb,
-               updated_at = now()
-           WHERE slug = $2 AND source_id = $3`,
-          [JSON.stringify(patch), slug, page.source_id],
-        );
+        await ctx.engine.transaction(async (tx) => {
+          if (aliases.length) {
+            await tx.setPageAliases(slug, page.source_id, normalizeAliasList(aliases));
+          }
+          await tx.executeRaw(
+            `UPDATE pages
+             SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $1::text::jsonb,
+                 updated_at = now()
+             WHERE slug = $2 AND source_id = $3`,
+            [JSON.stringify(patch), slug, page.source_id],
+          );
+        });
         results.push({ slug, status: 'promoted' });
       } else {
         await ctx.engine.softDeletePage(slug, { sourceId: page.source_id });
