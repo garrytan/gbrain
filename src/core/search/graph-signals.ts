@@ -199,6 +199,11 @@ const SESSION_MARKERS = new Set(['chat', 'session', 'sessions']);
 
 export function sessionPrefix(slug: string): string | null {
   if (!slug.includes('/')) return null;
+  // Atoms are distinct, distilled factual units (lessons, quotes, insights), NOT
+  // conversation sessions. They must never be grouped or demoted by date or marker,
+  // even if an atom slug contains later chat/session-looking segments.
+  if (slug.startsWith('atoms/')) return null;
+
   const segments = slug.split('/');
   // Strategy: walk segments left-to-right. Find the first segment that's
   // either a session marker (chat/session/sessions) OR a date prefix.
