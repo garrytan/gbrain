@@ -13,6 +13,51 @@ interface Service { consumer: PersistenceConsumer; stopping: boolean; unregister
 const services = new WeakMap<BrainEngine, Service>();
 const preparers = new Map<string, PrepareMutation>();
 export function registerMutationPreparer(operation: string, prepare: PrepareMutation): void { preparers.set(operation, prepare); }
+/**
+ * Idle-poll interval for the consumer loop, in milliseconds. Env-only
+ * incident escape hatch in the `GBRAIN_POOL_SIZE` mould: the 250ms default
+ * issues four queries per tick (brain gate, request scan, claim update,
+ * projection drain), which a resident `serve` keeps paying on a managed
+ * Postgres even when the brain has persistence disabled and the queue is
+ * empty. Raising it trades write-pickup latency for egress.
+ *
+ * The bounds are load-bearing, not decoration.
+ *
+ * The value must be a WHOLE integer string: `parseInt` would read `60s` as 60,
+ * turning an operator who meant "60 seconds" into a 60ms poll — four times
+ * BUSIER than the default, the exact opposite of the intent.
+ *
+ * The ceiling is tied to `waitForWrite`'s budget below, NOT chosen for taste.
+ * Nothing wakes this consumer on admission — no LISTEN/NOTIFY, and
+ * `startPersistenceConsumer` returns the running service without ticking — so
+ * in a resident `serve` a synchronous write is picked up only by the next idle
+ * poll. A poll interval at or above that budget makes the first write after a
+ * quiet stretch miss its deadline and fail `write_pending`, which would break
+ * put_page/capture/remember rather than merely slow them. MAX stays a safe
+ * margin under it. A ceiling is also what keeps a hostile value harmless: past
+ * the 32-bit timer range Bun clamps the timeout to 1ms (the same footgun
+ * inverted), and a near-infinite one poisons consumer.ts's `pollMs * 2`
+ * recovery backoff into `Infinity`, stranding a root in its retry-exclusion
+ * map. Anything outside the window is refused (warn once, keep the built-in
+ * default) rather than silently reinterpreted.
+ */
+const MIN_CONSUMER_POLL_MS = 50;
+const MAX_CONSUMER_POLL_MS = 3_000;
+let warnedBadConsumerPollMs = false;
+export function resolveConsumerPollMs(): number | undefined {
+  const raw = process.env.GBRAIN_PERSISTENCE_POLL_MS?.trim();
+  if (!raw) return undefined;
+  const parsed = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (Number.isSafeInteger(parsed) && parsed >= MIN_CONSUMER_POLL_MS && parsed <= MAX_CONSUMER_POLL_MS) return parsed;
+  if (!warnedBadConsumerPollMs) {
+    warnedBadConsumerPollMs = true;
+    process.stderr.write(`[gbrain] ignoring GBRAIN_PERSISTENCE_POLL_MS=${raw}: expected a whole number of milliseconds `
+      + `between ${MIN_CONSUMER_POLL_MS} and ${MAX_CONSUMER_POLL_MS}; keeping the built-in default.\n`);
+  }
+  return undefined;
+}
+/** Test-only: reset the warn-once latch. */
+export function resetConsumerPollMsWarning(): void { warnedBadConsumerPollMs = false; }
 export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {
   const prior = services.get(engine);
   if (prior) {
@@ -26,7 +71,7 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg);
     if (['takes_add','takes_update','takes_supersede','takes_resolve'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
     return (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation) ? prepareSemanticPageMutation : preparePageMutation)(e, row, cfg);
-  });
+  }, { pollMs: resolveConsumerPollMs() });
   const service: Service = { consumer, stopping: false };
   services.set(engine, service);
   const lifecycle = engine as BrainEngine & { registerBeforeDisconnect?: (run: () => Promise<void>) => unknown };

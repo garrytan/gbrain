@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { resetConsumerPollMsWarning, resolveConsumerPollMs } from '../src/core/persistence/service.ts';
 import { admitWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { acquireWorktree } from '../src/core/persistence/ownership.ts';
@@ -210,3 +211,49 @@ test('a retryable root becomes eligible again after its backoff expires', async 
     await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
   }
 }), 15_000);
+
+// GBRAIN_PERSISTENCE_POLL_MS — idle-poll interval override
+//
+// doTick issues several queries per tick, so the 250ms default is a standing
+// query cost a resident serve pays even with an empty queue. An operator on a
+// metered Postgres must be able to widen the interval without patching source.
+// The rejection cases are the point of the guard, not padding: a lenient parse
+// of "60s" yields 60ms — BUSIER than the default and the exact inverse of the
+// operator's intent — a value past the 32-bit timer range wraps to 1ms in Bun,
+// and a near-infinite one turns consumer.ts's `pollMs * 2` recovery backoff
+// into Infinity, stranding a root in the retry-exclusion map. The ceiling also
+// stays under waitForWrite's 5000ms budget, because nothing wakes the consumer
+// on admission: a longer interval would fail synchronous writes outright
+// rather than merely delay them. Everything outside the window must leave the
+// built-in default untouched.
+test('resolveConsumerPollMs accepts only whole milliseconds inside the supported window', async () => {
+  await withEnv({ GBRAIN_PERSISTENCE_POLL_MS: undefined }, () => {
+    expect(resolveConsumerPollMs()).toBeUndefined();
+  });
+
+  for (const [value, expected] of [['50', 50], ['1500', 1_500], ['3000', 3_000], [' 2000 ', 2_000]] as const) {
+    await withEnv({ GBRAIN_PERSISTENCE_POLL_MS: value }, () => {
+      expect(resolveConsumerPollMs()).toBe(expected);
+    });
+  }
+
+  const rejected = [
+    '49',                 // below the floor
+    '0', '-1', '',        // nonsense
+    'not-a-number',
+    '60s',                // "60 seconds" must NOT become a 60ms poll
+    '30000garbage',       // trailing garbage is not a number
+    '1500.5',             // fractional is not a whole millisecond
+    '3001',               // just past the ceiling
+    '30000',              // over waitForWrite's budget: would fail writes, not slow them
+    '2147483648',         // 32-bit timer overflow: Bun clamps this to 1ms
+    '1'.padEnd(309, '9'), // poisons the `pollMs * 2` recovery backoff to Infinity
+  ];
+  for (const value of rejected) {
+    resetConsumerPollMsWarning();
+    await withEnv({ GBRAIN_PERSISTENCE_POLL_MS: value }, () => {
+      expect(resolveConsumerPollMs()).toBeUndefined();
+    });
+  }
+  resetConsumerPollMsWarning();
+});
