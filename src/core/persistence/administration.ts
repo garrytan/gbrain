@@ -87,8 +87,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     keys(params, ['source_id', 'probe']);
     if (params.probe !== undefined && typeof params.probe !== 'boolean') throw invalid('probe must be a boolean.');
     const diagnostics = await writerDiagnostics(engine);
-    const bindings = await engine.executeRaw(`SELECT b.source_id,b.source_incarnation,b.worktree_id,b.relative_path,b.topology_generation,
-      w.owner_host_id,w.owner_epoch,w.state,w.manifest->>'digest' AS manifest_digest,h.local_path FROM persistence_source_bindings b
+    // owner_epoch / topology_generation are BIGINT: the Postgres driver hands
+    // them back as BigInt, which JSON.stringify refuses. Cast to text like the
+    // worktree diagnostics query does (PGLite returns numbers, so this only
+    // crashed on Postgres brains).
+    const bindings = await engine.executeRaw(`SELECT b.source_id,b.source_incarnation,b.worktree_id,b.relative_path,b.topology_generation::text AS topology_generation,
+      w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,w.manifest->>'digest' AS manifest_digest,h.local_path FROM persistence_source_bindings b
       JOIN persistence_worktrees w ON w.id=b.worktree_id
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
       WHERE ($2::text IS NULL OR b.source_id=$2) ORDER BY b.source_id`, [localHostId(), params.source_id === undefined ? null : source(params.source_id)]);
