@@ -22,7 +22,7 @@
  */
 import type { SearchOpts } from '../types.ts';
 import { buildBestPerPagePoolCte } from './sql-ranking.ts';
-import { escapeLikePattern, splitCJKQueryTerms } from '../cjk.ts';
+import { escapeLikePattern, splitCJKQueryTerms, koreanTermVariants } from '../cjk.ts';
 
 /** Query-shape context shared by both engines' CJK fallback call sites. */
 export interface CjkKeywordCtx {
@@ -51,19 +51,31 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
   const terms = splitCJKQueryTerms(qRaw);
   if (terms.length === 0) return null;
 
+  // Korean-particle expansion: each term becomes [original] or
+  // [original, stem]. Variants are ORed within a term and ANDed across
+  // terms (see whereLikeClause), so a stem can only widen recall.
+  const variantGroups = terms.map(t => koreanTermVariants(t));
+
   const params: unknown[] = [];
 
-  // LIKE parameters: $1 .. $N (each escaped and wrapped with %)
-  const likeParamIndices: number[] = [];
-  for (const term of terms) {
-    params.push(`%${escapeLikePattern(term)}%`);
-    likeParamIndices.push(params.length);
+  // LIKE parameters, grouped per term (each escaped and wrapped with %).
+  const likeGroups: number[][] = [];
+  for (const group of variantGroups) {
+    const indices: number[] = [];
+    for (const variant of group) {
+      params.push(`%${escapeLikePattern(variant)}%`);
+      indices.push(params.length);
+    }
+    likeGroups.push(indices);
   }
 
-  // Raw term parameters for term-frequency scoring: $N+1 .. $2N
+  // Raw term parameters for term-frequency scoring: ONE representative per
+  // group — the stem when the term was expanded. The stem is a prefix of the
+  // inflected form, so scoring both would count the same occurrence twice and
+  // inflate inflected queries against uninflected ones.
   const rawTermIndices: number[] = [];
-  for (const term of terms) {
-    params.push(term);
+  for (const group of variantGroups) {
+    params.push(group[group.length - 1]!);
     rawTermIndices.push(params.length);
   }
 
@@ -133,8 +145,10 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
     extraFilter += ` AND p.source_id = $${params.length}`;
   }
 
-  const whereLikeClause = likeParamIndices
-    .map(idx => `cc.chunk_text ILIKE $${idx} ESCAPE '\\'`)
+  // OR within a term's variants, AND across terms: every term must match in
+  // SOME form, and the inflected original stays a valid way to match.
+  const whereLikeClause = likeGroups
+    .map(group => `(${group.map(idx => `cc.chunk_text ILIKE $${idx} ESCAPE '\\'`).join(' OR ')})`)
     .join(' AND ');
 
   const termFreqExpr = rawTermIndices
