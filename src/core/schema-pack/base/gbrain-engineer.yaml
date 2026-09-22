@@ -111,3 +111,21 @@ filing_rules:
       - learnings/2026-05/orbstack-port-8080-conflict
       - learnings/2026-05/django-form-cleaned-data-defaults-empty
     description: "Engineering learnings bridged from gstack's ~/.gstack/projects/{repo}/learnings.jsonl. Per-month subdirectories. Frontmatter carries the original JSONL fields verbatim: learning_type (one of: pattern, pitfall, preference, architecture, tool, operational, investigation), confidence (1-10), source (one of: observed, user-stated, inferred, cross-model), files (paths), skill (originating gstack skill name)."
+
+# identifier_links (v0.51+) — NOT declared here. D8-C keeps this pack
+# bridge-only (see the header comment: no ADR / postmortem type, because
+# gstack's investigate/retro skills already capture those inline). If a
+# team DOES track architecture decisions as first-class pages elsewhere in
+# the brain (a `decision` page type from another pack in the extends
+# chain, slugged `decisions/decision-NNN-title`), a downstream pack could
+# turn bare `DECISION-NNN` citations inside `learning` bodies into real
+# edges without inventing a decision type of its own:
+#
+# identifier_links:
+#   - name: decision-citation
+#     pattern: 'DECISION-(\d+)'
+#     target: "decisions/decision-$1-*"   # prefix match — title suffix varies
+#     link_type: cites
+#
+# See docs/architecture/schema-packs.md#identifier-links for the full field
+# reference and the resolution algorithm (exact vs. prefix, ambiguous-skip).

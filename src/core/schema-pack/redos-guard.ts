@@ -159,10 +159,98 @@ export class PageRegexBudget {
     return match;
   }
 
+  /**
+   * v0.51 identifier-link scan: multi-match variant of `runBounded`.
+   * `link_types[].inference.regex` only ever needs to TEST one short
+   * context string (single match, `runBounded`); a pack-declared
+   * `identifier_links[].pattern` needs every occurrence of an identifier
+   * across a full page body. Same budget accounting and degrade contract
+   * as `runBounded` — undefined once the page budget is exhausted.
+   */
+  runBoundedAll(name: string, pattern: string, text: string, maxMatches?: number): RegExpMatchArray[] | undefined {
+    if (this.exhausted) {
+      return undefined;
+    }
+    const start = performance.now();
+    let matches: RegExpMatchArray[];
+    try {
+      matches = runRegexBoundedAll(pattern, text, maxMatches);
+    } catch {
+      this.cumulativeMs += PER_REGEX_TIMEOUT_MS;
+      if (this.cumulativeMs >= LINK_EXTRACTION_TOTAL_BUDGET_MS) {
+        this.exhausted = true;
+      }
+      return [];
+    }
+    const elapsed = performance.now() - start;
+    this.cumulativeMs += elapsed;
+    if (this.cumulativeMs >= LINK_EXTRACTION_TOTAL_BUDGET_MS) {
+      this.exhausted = true;
+    }
+    return matches;
+  }
+
   /** Diagnostic getter for tests + doctor metrics. */
   getCumulativeMs(): number { return this.cumulativeMs; }
   /** Whether the budget has been exhausted (subsequent calls return undefined). */
   isExhausted(): boolean { return this.exhausted; }
+}
+
+/**
+ * v0.51: hard cap on matches returned per identifier_links rule per page.
+ * A pattern that legitimately matches thousands of times (e.g. a bare `\d+`
+ * against a page full of numbers) is still bounded per-match CPU by the
+ * guards below, but turning each into a LinkCandidate has its own cost;
+ * this keeps that linear and predictable. Community packs are expected to
+ * write specific identifier patterns (`DECISION-(\d+)`, not `(\d+)`), so
+ * this should rarely bind in practice.
+ */
+export const MAX_IDENTIFIER_MATCHES_PER_RULE = 200 as const;
+
+/**
+ * Multi-match bounded regex execution for `identifier_links[].pattern`.
+ * Same structural bounds as `runRegexBounded` (input-length cap,
+ * catastrophic-shape refusal — see that function's header for why there is
+ * no preemptive per-match timeout), plus:
+ *   - always case-insensitive (`i` flag) — identifiers are commonly written
+ *     in prose with different casing than their slug (`DECISION-073` vs.
+ *     the stored slug's `decision-073`);
+ *   - always global (`g` flag) — the whole point is finding every
+ *     occurrence, not testing one;
+ *   - `maxMatches` cap (default `MAX_IDENTIFIER_MATCHES_PER_RULE`).
+ *
+ * Returns `[]` (not a throw) for zero matches; throws the same tagged
+ * errors as `runRegexBounded` for an oversize input, a catastrophic-shape
+ * pattern, or a malformed pattern — callers already treat those as
+ * degrade-to-skip via `PageRegexBudget.runBoundedAll`'s catch.
+ */
+export function runRegexBoundedAll(
+  pattern: string,
+  text: string,
+  maxMatches: number = MAX_IDENTIFIER_MATCHES_PER_RULE,
+): RegExpMatchArray[] {
+  if (text.length > MAX_REGEX_INPUT_CHARS) {
+    throw new RegexInputTooLargeError(text.length);
+  }
+  if (NESTED_QUANTIFIER_RE.test(pattern)) {
+    throw new RegexCatastrophicPatternError(pattern);
+  }
+  let re: RegExp;
+  try {
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- same bounded-exec chokepoint as runRegexBounded above: input capped at MAX_REGEX_INPUT_CHARS and nested-quantifier shapes refused BEFORE compile; 'gi' is fixed by this function, not pack-controlled
+    re = new RegExp(pattern, 'gi');
+  } catch {
+    throw new RegexTimeoutError('<unknown-verb>', pattern);
+  }
+  const matches: RegExpMatchArray[] = [];
+  let m: RegExpExecArray | null;
+  while (matches.length < maxMatches && (m = re.exec(text)) !== null) {
+    matches.push(m);
+    // Zero-length match guard (e.g. a pattern with an all-optional group):
+    // exec() would otherwise return the same index forever.
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return matches;
 }
 
 /**

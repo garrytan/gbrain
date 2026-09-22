@@ -39,7 +39,7 @@
 // universe.
 
 import type { SchemaPackManifest } from './manifest-v1.ts';
-import { PageRegexBudget, runRegexBounded } from './redos-guard.ts';
+import { PageRegexBudget, runRegexBounded, runRegexBoundedAll } from './redos-guard.ts';
 
 /**
  * Try to resolve a link verb from the active pack's declared
@@ -115,4 +115,141 @@ export function frontmatterLinkTypeFromPack(
     if (fl.fields.includes(fieldName)) return fl.link_type;
   }
   return null;
+}
+
+/**
+ * One resolved edge produced by a pack-declared `identifier_links[]` rule.
+ * `index`/`matchText` let the caller (link-extraction.ts) build the same
+ * excerpt-context window every other candidate gets.
+ */
+export interface IdentifierLinkMatch {
+  targetSlug: string;
+  linkType: string;
+  matchText: string;
+  index: number;
+  ruleName: string;
+}
+
+export interface IdentifierLinkResolution {
+  candidates: IdentifierLinkMatch[];
+  /**
+   * Count of matches whose resolved target template ended in `*` and
+   * matched MORE THAN ONE live slug — skipped rather than guessed. Exposed
+   * so tests (and, eventually, an extract-summary counter) can observe the
+   * gap instead of it silently vanishing, same spirit as extract.ts's
+   * `skippedMissingTarget`.
+   */
+  ambiguousCount: number;
+}
+
+/**
+ * Resolve every pack-declared `identifier_links[]` rule against a page
+ * body, producing graph-edge candidates for bare-identifier citations
+ * (DECISION-073, ADR-0047, SPA-2442) that the markdown/wikilink/bare-slug
+ * passes in link-extraction.ts never catch — those all require slug-shaped
+ * text, and by-mention.ts's gazetteer only knows person/company/
+ * organization/entity titles.
+ *
+ * Requires `liveSlugs` — the caller's live slug set — to turn a matched
+ * identifier into a real page reference; a pack with rules but no
+ * `liveSlugs` supplied (put_page's single-page write, the recency sweep —
+ * neither has a full live-slug picture available cheaply) is a no-op,
+ * mirroring how those same callers already skip the DB-path ancestor-walk
+ * fallback below. Batch callers (`extract links|--stale --source db`)
+ * build the live slug set once already (`allSlugs`), so passing it here is
+ * free.
+ *
+ * Resolution per match:
+ *   - substitute the pattern's captures into `rule.target` (`$1`, `$2`, …),
+ *     lowercased (every stored slug is lowercase);
+ *   - a template with no trailing `*` must equal a live slug EXACTLY;
+ *   - a template ending in `*` is a prefix match: resolves only when
+ *     exactly one live slug has that prefix (0 matches → skip silently,
+ *     ≥2 → skip + count as ambiguous, never guess).
+ *
+ * Runs under the shared per-page `PageRegexBudget` when supplied (the same
+ * budget `inferLinkTypeFromPack` degrades against), so a pathological
+ * pack can't blow the page's cumulative ReDoS budget via this path either.
+ */
+export function resolveIdentifierLinksFromPack(
+  pack: Pick<SchemaPackManifest, 'identifier_links'>,
+  text: string,
+  liveSlugs: ReadonlySet<string> | undefined,
+  budget?: PageRegexBudget,
+): IdentifierLinkResolution {
+  const candidates: IdentifierLinkMatch[] = [];
+  let ambiguousCount = 0;
+  if (!liveSlugs || pack.identifier_links.length === 0) {
+    return { candidates, ambiguousCount };
+  }
+
+  for (const rule of pack.identifier_links) {
+    let matches: RegExpMatchArray[];
+    if (budget) {
+      const result = budget.runBoundedAll(rule.name, rule.pattern, text);
+      if (result === undefined) break; // page budget exhausted — stop, like inferLinkTypeFromPack does
+      matches = result;
+    } else {
+      // No budget provided (test contexts) — still route through the
+      // bounded executor, mirroring inferLinkTypeFromPack's no-budget
+      // branch: the input-length cap + catastrophic-shape refusal apply.
+      try {
+        matches = runRegexBoundedAll(rule.pattern, text);
+      } catch {
+        continue; // malformed/oversize/catastrophic pattern — skip this rule
+      }
+    }
+    for (const m of matches) {
+      if (m.index === undefined) continue;
+      const target = substituteCaptures(rule.target, m).toLowerCase();
+      const resolved = resolveIdentifierTarget(target, liveSlugs);
+      if (resolved === 'ambiguous') { ambiguousCount++; continue; }
+      if (resolved === null) continue;
+      candidates.push({
+        targetSlug: resolved,
+        linkType: rule.link_type,
+        matchText: m[0],
+        index: m.index,
+        ruleName: rule.name,
+      });
+    }
+  }
+  return { candidates, ambiguousCount };
+}
+
+/**
+ * `$1`, `$2`, … substitution — same semantics as `String.prototype.replace`'s
+ * numbered-group form. Named capture groups (`(?<year>\d+)`) are not yet
+ * interpolated (`$<year>`); numbered groups cover the documented use cases
+ * (DECISION-$1, SPA-$1). A future rule can add `$<name>` support without a
+ * breaking change to this function's contract.
+ */
+function substituteCaptures(template: string, match: RegExpMatchArray): string {
+  return template.replace(/\$(\d+)/g, (_full, n: string) => match[Number(n)] ?? '');
+}
+
+/**
+ * Resolve one substituted target template against the live slug set.
+ * Linear scan on the prefix (`*`) branch — acceptable for the identifier
+ * volumes these rules are meant for (a page cites a handful of decisions,
+ * not thousands); a brain wanting to lean on this heavily with a very
+ * large slug set is a candidate for a maintained prefix index, not
+ * implemented here.
+ */
+function resolveIdentifierTarget(
+  target: string,
+  liveSlugs: ReadonlySet<string>,
+): string | 'ambiguous' | null {
+  if (!target.endsWith('*')) {
+    return liveSlugs.has(target) ? target : null;
+  }
+  const prefix = target.slice(0, -1);
+  if (prefix.length === 0) return null; // refuse to "resolve" against every slug in the brain
+  let found: string | null = null;
+  for (const slug of liveSlugs) {
+    if (!slug.startsWith(prefix)) continue;
+    if (found !== null) return 'ambiguous';
+    found = slug;
+  }
+  return found;
 }

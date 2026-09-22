@@ -30,6 +30,7 @@ function makeManifest(name: string, extendsName: string | null = null): SchemaPa
     page_types: [],
     link_types: [],
     frontmatter_links: [],
+    identifier_links: [],
     takes_kinds: ['fact', 'take', 'bet', 'hunch'],
     enrichable_types: [],
     filing_rules: [],
