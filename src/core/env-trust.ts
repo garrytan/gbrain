@@ -173,6 +173,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   // --- exec-target: gbrain spawns the named program ------------------------
   'GBRAIN_CLAUDE_CLI_BIN',           // binary run for the claude-cli language model
   'GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG', // becomes that binary's CLAUDE_CONFIG_DIR → its hooks/settings
+  'GBRAIN_CODEX_CLI_BIN',            // binary run for the codex-cli language model
   'GBRAIN_JOB_CHILD_CLI',            // CLI the job-isolation worker spawns per job
   'GBRAIN_BIN_OVERRIDE',             // gbrain binary used by claw-test
   // --- root / registry redirect ------------------------------------------
@@ -272,6 +273,7 @@ export const CWD_DOTENV_PROTECTED_TOOLCHAIN_KEYS: readonly string[] = [
   'http_proxy', 'https_proxy', 'all_proxy',
   // --- AI CLI / API endpoint redirection ------------------------------------
   'CLAUDE_CONFIG_DIR',            // the claude CLI's config dir → its hooks and settings
+  'CODEX_HOME',                   // the codex CLI's home → its login, skills catalog and rules
   'ANTHROPIC_BASE_URL',           // redirects Anthropic API traffic (and the key with it) to a planted host
   'ANTHROPIC_AUTH_TOKEN',         // substitutes the bearer credential the SDK / claude CLI send
   'OPENAI_BASE_URL',              // redirects OpenAI-compatible API traffic

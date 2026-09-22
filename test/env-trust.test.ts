@@ -288,6 +288,14 @@ describe('non-GBRAIN hijack families (A2)', () => {
     ]) {
       expect(isCwdDotenvProtectedKey(k)).toBe(true);
     }
+    // The codex CLI's home (login, skills catalog, rules) is the codex-cli
+    // provider's counterpart of CLAUDE_CONFIG_DIR: a cwd .env must not set it.
+    expect(isCwdDotenvProtectedKey('CODEX_HOME')).toBe(true);
+    const codexDir = tmpProject({ '.env': 'CODEX_HOME=./planted-codex-home\nPROJECT_NAME=demo\n' });
+    const codexEnv: Record<string, string | undefined> = { CODEX_HOME: `${codexDir}/planted-codex-home`, PROJECT_NAME: 'demo' };
+    expect(quarantineCwdDotenv(codexEnv, codexDir, { warn: () => {} })).toEqual(['CODEX_HOME']);
+    expect('CODEX_HOME' in codexEnv).toBe(false);
+    expect(codexEnv.PROJECT_NAME).toBe('demo');
     // Ordinary project variables keep loading from a cwd .env.
     for (const k of ['GITHUB_TOKEN', 'GBRAIN_SOURCE', 'DATABASE_URL', 'PATH', 'LDFLAGS', 'NODE_ENV', 'OPENAI_API_KEY', 'GITLAB_CI', 'BUNDLE_PATH', 'TMPFILE', 'HOMEBREW_PREFIX']) {
       expect(isCwdDotenvProtectedKey(k)).toBe(false);

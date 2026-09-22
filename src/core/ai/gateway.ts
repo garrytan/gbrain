@@ -1426,6 +1426,10 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `claude-cli has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'codex-cli':
+      throw new AIConfigError(
+        `codex-cli has no embedding model. Use openai or google for embeddings.`,
+      );
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -2320,6 +2324,12 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
     }
+    case 'codex-cli': {
+      // Same subprocess shape as claude-cli, driving `codex exec` under the
+      // CLI's ChatGPT login. See providers/codex-cli-language-model.ts.
+      const { CodexCliLanguageModel } = require('./providers/codex-cli-language-model.ts');
+      return new CodexCliLanguageModel(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2464,9 +2474,11 @@ export async function expand(query: string): Promise<string[]> {
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
-    if (recipe.implementation === 'claude-cli') {
-      // claude-cli is NOT structured-output capable, despite being a 'native'
-      // tier recipe. ClaudeCliLanguageModel.doGenerate ignores
+    if (recipe.implementation === 'claude-cli' || recipe.implementation === 'codex-cli') {
+      // The CLI subprocess recipes (claude-cli, codex-cli) are NOT
+      // structured-output capable, despite being 'native' tier recipes.
+      // codex-cli shares the transport shape exactly (rendered prompt →
+      // `codex exec` → text). ClaudeCliLanguageModel.doGenerate ignores
       // `options.responseFormat` entirely (it renders prompt → `claude
       // --print` subprocess → text), so generateObject's json_schema request
       // is dropped on the floor and the CLI answers with markdown-fenced
@@ -3220,6 +3232,12 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       // openai-compatible path below. No env-var switch, no global flag.
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
+    }
+    case 'codex-cli': {
+      // ChatGPT-login OpenAI models through `codex exec`; per-call routing
+      // identical to claude-cli. `codex-cli:gpt-5.6-luna@low` lands here.
+      const { CodexCliLanguageModel } = require('./providers/codex-cli-language-model.ts');
+      return new CodexCliLanguageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
