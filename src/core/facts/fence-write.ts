@@ -48,7 +48,7 @@ import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesy
 import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
-import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
+import { upsertFactRow, parseFactsFence, renderFenceInstantCell } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
@@ -437,7 +437,9 @@ export async function writeFactsToFence(
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.
-          validUntil:  f.validUntil ? f.validUntil.toISOString().slice(0, 10) : undefined,
+          // Keeps the time of day: a sub-day ttl truncated to a date expires at
+          // midnight, which is BEHIND the write, so the fact is born lapsed.
+          validUntil:  f.validUntil ? renderFenceInstantCell(f.validUntil) : undefined,
           source:      f.source,
           context:     f.context ?? undefined,
         });
