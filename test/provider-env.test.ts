@@ -19,6 +19,7 @@ describe('mergedProviderEnv', () => {
       openai_api_key: 'sk-o', anthropic_api_key: 'sk-a', voyage_api_key: 'pa-v',
       openrouter_api_key: 'or', dashscope_api_key: 'ds',
       deepseek_api_key: 'sk-deepseek',
+      zhipu_api_key: 'zp-secret',
       google_api_key: 'gg',
       azure_openai_api_key: 'az-secret',
       azure_openai_endpoint: 'https://x.openai.azure.com',
@@ -31,6 +32,9 @@ describe('mergedProviderEnv', () => {
     expect(env.OPENROUTER_API_KEY).toBe('or');
     expect(env.DASHSCOPE_API_KEY).toBe('ds');
     expect(env.DEEPSEEK_API_KEY).toBe('sk-deepseek');
+    // zhipu was the last chat-capable recipe without a file-plane slot; the
+    // recipe requires ZHIPUAI_API_KEY so keyless launchers failed GLM calls.
+    expect(env.ZHIPUAI_API_KEY).toBe('zp-secret');
     expect(env.GOOGLE_GENERATIVE_AI_API_KEY).toBe('gg');
     // #4031: the key was the only member of the Azure group left unfolded —
     // config.json looked complete while every keyless-shell embed failed auth.
