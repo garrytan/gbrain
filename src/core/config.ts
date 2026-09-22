@@ -107,6 +107,12 @@ export interface GBrainConfig {
    */
   together_api_key?: string;
   /**
+   * Nous Research Portal inference API key (`sk-nous-…`). File-plane slot
+   * folded into the gateway env as NOUS_API_KEY (required by the nous
+   * recipe). Same fold pattern (and same DB-plane caveat) as voyage_api_key.
+   */
+  nous_api_key?: string;
+  /**
    * Google Gemini API key (#3500). File-plane slot folded into the gateway
    * env as GOOGLE_GENERATIVE_AI_API_KEY (the name the google recipe reads).
    * buildGatewayConfig also accepts process-env GEMINI_API_KEY — the name
@@ -1205,6 +1211,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'deepseek_api_key',
   'litellm_api_key',
   'together_api_key',
+  'nous_api_key',
   'google_api_key',
   'azure_openai_api_key',
   'azure_openai_endpoint',
