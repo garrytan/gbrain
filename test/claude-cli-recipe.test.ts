@@ -341,15 +341,23 @@ describe('claude-cli LanguageModel — tool use', () => {
     // asking the model for "a unique id" is structurally unsatisfiable — a
     // fresh subprocess replayed from an id-stripped transcript cannot avoid
     // repeats, which is exactly what collided real dream jobs to death.
-    const src = readFileSync(
+    // The protocol template and the mint live in the shared CLI protocol
+    // module (cli-tool-protocol.ts, also used by codex-cli); the adapter only
+    // supplies its historical id prefix.
+    const protocol = readFileSync(
+      new URL('../src/core/ai/providers/cli-tool-protocol.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    const adapter = readFileSync(
       new URL('../src/core/ai/providers/claude-cli-language-model.ts', import.meta.url).pathname,
       'utf-8',
     );
-    expect(src).toContain('{"name": "<tool name>", "input":');
-    expect(src).not.toContain('unique tool call id');
-    expect(src).not.toContain('toolu_01ABC');
+    expect(protocol).toContain('{"name": "<tool name>", "input":');
+    expect(protocol).not.toContain('unique tool call id');
+    expect(protocol).not.toContain('toolu_01ABC');
     // The unconditional mint is present and model ids are never trusted.
-    expect(src).toMatch(/const id = `toolu_claude_cli_\$\{randomUUIDv7\(\)\}`/);
+    expect(protocol).toMatch(/const id = `\$\{idPrefix\}\$\{randomUUIDv7\(\)\}`/);
+    expect(adapter).toContain("const TOOL_CALL_ID_PREFIX = 'toolu_claude_cli_'");
   });
 
   test('parses multiple parallel tool calls in a single block', async () => {

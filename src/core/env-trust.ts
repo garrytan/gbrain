@@ -173,6 +173,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   // --- exec-target: gbrain spawns the named program ------------------------
   'GBRAIN_CLAUDE_CLI_BIN',           // binary run for the claude-cli language model
   'GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG', // becomes that binary's CLAUDE_CONFIG_DIR → its hooks/settings
+  'GBRAIN_CODEX_CLI_BIN',            // binary run for the codex-cli language model
   'GBRAIN_JOB_CHILD_CLI',            // CLI the job-isolation worker spawns per job
   'GBRAIN_BIN_OVERRIDE',             // gbrain binary used by claw-test
   // --- root / registry redirect ------------------------------------------
