@@ -11,6 +11,12 @@ import type { StorageBackend, StorageConfig } from '../storage.ts';
 /**
  * S3-compatible storage — works with AWS S3, Cloudflare R2, MinIO, etc.
  * Uses @aws-sdk/client-s3 for proper authentication and request signing.
+ *
+ * Credentials: when `accessKeyId` and `secretAccessKey` are both present in
+ * config they are used as static credentials (R2, MinIO, IAM-user setups).
+ * When both are absent the SDK's default credential provider chain resolves
+ * them (env vars, shared config/SSO, EC2/ECS/Lambda roles), so a hosted brain
+ * can run on a task role with no long-lived secret in config.json.
  */
 export class S3Storage implements StorageBackend {
   private client: S3Client;
@@ -28,8 +34,16 @@ export class S3Storage implements StorageBackend {
 
     const region = config.region || 'us-east-1';
 
-    if (!config.accessKeyId || !config.secretAccessKey) {
-      throw new Error('S3 storage requires accessKeyId and secretAccessKey in config');
+    const hasKeyId = Boolean(config.accessKeyId);
+    const hasSecret = Boolean(config.secretAccessKey);
+    // Exactly one of the pair is a misconfiguration, not a request for the
+    // default chain — fail loud instead of silently ignoring the given half.
+    if (hasKeyId !== hasSecret) {
+      throw new Error(
+        'S3 storage: accessKeyId and secretAccessKey must be set together. ' +
+        'Omit both to use the AWS SDK default credential provider chain ' +
+        '(environment variables, shared config/SSO, EC2/ECS/Lambda roles).',
+      );
     }
 
     this.client = new S3Client({
@@ -38,10 +52,14 @@ export class S3Storage implements StorageBackend {
         endpoint: config.endpoint,
         forcePathStyle: true, // Required for R2, MinIO, and custom endpoints
       } : {}),
-      credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
-      },
+      // Static keys only when the caller supplied them; otherwise leave
+      // `credentials` unset so the SDK default provider chain applies.
+      ...(hasKeyId && hasSecret ? {
+        credentials: {
+          accessKeyId: config.accessKeyId!,
+          secretAccessKey: config.secretAccessKey!,
+        },
+      } : {}),
     });
   }
 
