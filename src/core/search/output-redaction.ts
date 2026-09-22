@@ -32,9 +32,12 @@ const CREDENTIAL_PATTERNS: ReadonlyArray<CredentialPattern> = [
   // header lines, then a run of base64 — so a document that merely QUOTES the
   // marker string is not erased from that point on. Runs first, so the complete
   // block below cannot leave a half-matched remainder.
+  // NL matches a real line break OR the two-character `\n` escape, because a key
+  // embedded in a JSON value (a service-account blob, an MCP config) carries the
+  // escape rather than the break, and requiring a real one let those through.
   {
     kind: 'pem_private_key',
-    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[ \t]*\r?\n(?:[A-Za-z][A-Za-z0-9-]*:[^\r\n]*\r?\n)*\s*[A-Za-z0-9+/=]{16,}(?:(?!-----(?:BEGIN|END) )[\s\S])*(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)?/g,
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[ \t]*(?:\r?\n|\\n)(?:[A-Za-z][A-Za-z0-9-]*:[^\r\n]*(?:\r?\n|\\n))*(?:[ \t\r\n]|\\n)*[A-Za-z0-9+/=]{16,}(?:(?!-----(?:BEGIN|END) )[\s\S])*(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)?/g,
   },
   // Certificates and public keys keep END as mandatory: truncating one leaks
   // nothing secret, so there is no reason to erase text on a partial match.
@@ -69,17 +72,31 @@ const CREDENTIAL_PATTERNS: ReadonlyArray<CredentialPattern> = [
     kind: 'ssh_public_key',
     pattern: /\b(?:ssh-(?:rsa|ed25519)|ecdsa-sha2-nistp(?:256|384|521))\s+[A-Za-z0-9+/=]{40,}/g,
   },
-  // The value is any run of non-space, non-quote characters: a password may start
-  // with, or contain, punctuation — including `<`. Unbounded, so a long value
-  // leaves no tail. The one thing it will not consume is a marker an earlier
-  // pattern already wrote (`<REDACTED:`), which is what keeps redaction
-  // idempotent; excluding every `<` for that purpose leaked the rest of any
-  // password containing one.
+  // The value is every non-space, non-quote character to the end of the run: a
+  // password may start with, or contain, any punctuation, and nothing inside it
+  // terminates the match early. Two earlier attempts to protect idempotence from
+  // inside the value both cost coverage — excluding `<` leaked the tail of any
+  // password containing one, and refusing to cross a `<REDACTED:` marker left
+  // everything after that marker in place (reachable in practice, since a
+  // vendor-prefixed token inside the value is replaced by a marker first). The
+  // value therefore consumes markers too, and idempotence comes from the marker
+  // text itself not being a NAME=VALUE assignment: `<REDACTED:kind>` has no
+  // `[:=]` after a qualifying name, and the kinds that end in `_secret` /
+  // `_api_key` have a word character before them, so `\b` never opens there.
+  // Pinned by the idempotence tests rather than argued.
   {
     kind: 'assigned_secret',
-    pattern: /["']?\b(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)|token|secret|password|api[_-]?key|private[_-]?key)\b["']?\s*[:=]\s*["']?(?:(?!<REDACTED:)[^\s"'`]){8,}["']?/gi,
+    pattern: /["']?\b(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)|token|secret|password|api[_-]?key|private[_-]?key)\b["']?\s*[:=]\s*["']?[^\s"'`]{8,}["']?/gi,
   },
-  { kind: 'url_credentials', pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/gi },
+  // The scheme is length-bounded. Unbounded, it was quadratic: every word start
+  // is a candidate, `[a-z0-9+.-]*` runs to the end of a long in-class run, and
+  // the missing `://` then makes it back off character by character — measured
+  // at 6.3 s on 32k repetitions of an in-class fragment. RFC 3986 schemes are
+  // short, so 32 characters costs nothing real and caps the work per start.
+  {
+    kind: 'url_credentials',
+    pattern: /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/gi,
+  },
 ];
 
 export function redactCredentialLikeText(text: string): string {

@@ -331,3 +331,65 @@ describe('search output redaction — adversarial inputs and quoting', () => {
     expect(out.startsWith('notes\n')).toBe(true);
   });
 });
+
+describe('search output redaction — no value survives its own marker, and no input is a DoS', () => {
+  const fill = (n: number, c: string) => c.repeat(n);
+  const fence = '-'.repeat(5);
+
+  test('an assignment consumes a marker inside its value, and everything after it', () => {
+    // Two earlier shapes of idempotence protection each left a tail behind: the
+    // value must not stop at a marker an earlier pattern wrote.
+    const tail = `tail-secret-${fill(12, 'z')}`;
+    const literal = redactCredentialLikeText(`password="abcdefgh<REDACTED:literal>${tail}"`);
+    expect(literal).not.toContain(tail);
+
+    // The reachable route: a vendor token inside the value is replaced first, so
+    // the value the assignment then sees already contains a marker.
+    const token = ['ghp', fill(36, 'A')].join('_');
+    const withToken = redactCredentialLikeText(`password=${token}!tail-secret-${fill(12, 'y')}`);
+    expect(withToken).not.toContain('tail-secret');
+    expect(withToken).not.toContain(token);
+  });
+
+  test('redaction is idempotent over text that already contains markers', () => {
+    for (const input of [
+      `password=${['ghp', fill(36, 'B')].join('_')}`,
+      `API_KEY=${fill(30, 'c')}`,
+      'Authorization: Basic dTpw',
+      'x <REDACTED:assigned_secret> y <REDACTED:google_api_key> z',
+    ]) {
+      const once = redactCredentialLikeText(input);
+      expect(redactCredentialLikeText(once), input).toBe(once);
+    }
+  });
+
+  test('a private key serialized into JSON, with escaped newlines, is redacted', () => {
+    const body = fill(64, 'k');
+    const json = `{"private_key":"${fence}BEGIN PRIVATE KEY${fence}\\n${body}\\n${fence}END PRIVATE KEY${fence}\\n"}`;
+    const out = redactCredentialLikeText(json);
+    expect(out).not.toContain(body);
+    // Deliberately not asserting WHICH marker: the PEM rule removes the key, and
+    // the surrounding `"private_key": "<marker>"` is then itself an assignment,
+    // so the assignment rule legitimately consumes the marker. What matters is
+    // that the key material is gone and something marks the spot.
+    expect(out).toContain('<REDACTED:');
+  });
+
+  test('known super-linear vectors stay linear', () => {
+    // Search output is page content, so its shape is attacker-chosen and the
+    // redactor runs synchronously before the snippet cap. Both vectors below were
+    // measured quadratic and are now bounded; the limit sits far above the linear
+    // cost and far below the quadratic one, so it discriminates without flaking.
+    const vectors: [string, string][] = [
+      ['unterminated PEM fences', `${fence}BEGIN PUBLIC KEY${fence}\n`.repeat(20_000)],
+      ['scheme-shaped run with no "://"', `${'a-'.repeat(20_000)}!`],
+      ['in-class run with no "://"', `${'eyJa.'.repeat(20_000)}"`],
+    ];
+    for (const [name, input] of vectors) {
+      const t0 = performance.now();
+      redactCredentialLikeText(input);
+      const ms = performance.now() - t0;
+      expect(ms, `${name}: ${ms.toFixed(0)} ms`).toBeLessThan(1000);
+    }
+  });
+});
