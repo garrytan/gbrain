@@ -567,6 +567,15 @@ export async function importFromContent(
         : undefined,
     });
 
+    // A trusted export can carry an old size-gate marker. Reassess only
+    // that known reason; preserve manual/future skip reasons and bypasses.
+    const priorSkip = parsed.frontmatter[EMBED_SKIP_KEY] as { reason?: string } | undefined;
+    if (!sanityDisabled && !sanityResult.shouldQuarantine && sanityResult.flag_reason !== 'oversized' && priorSkip?.reason === 'oversized') {
+      delete parsed.frontmatter[EMBED_SKIP_KEY];
+      const priorFlag = parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: string } | undefined;
+      if (priorFlag?.reason === 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];
+    }
+
     if (sanityDisabled) {
       // Kill-switch active: loud stderr per offending ingest. Operator
       // explicitly opted into the bypass and gets noisy feedback every
@@ -784,7 +793,10 @@ export async function importFromContent(
 
   // Rebuild stale projections without granting --force-rechunk's external-ID dedup override.
   const needsProjectionRebuild = !opts.prepare && existing && existing.text_projection_revision !== existing.knowledge_revision;
-  if (existing?.content_hash === hash && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && (!opts.prepare || sameCanonicalImport(existingSnapshot, parsedPage))) {
+  // Gate markers are excluded from content_hash: a threshold change must
+  // still rebuild (or remove) chunks even when the source body is identical.
+  const embedSkipChanged = existing && isEmbedSkipped(existing.frontmatter) !== isEmbedSkipped(parsed.frontmatter);
+  if (existing?.content_hash === hash && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged && (!opts.prepare || sameCanonicalImport(existingSnapshot, parsedPage))) {
     if (opts.prepare) {
       const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
       return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
@@ -799,7 +811,7 @@ export async function importFromContent(
   // the content is unchanged — stamp the canonical hash via the narrow
   // refreshPageBody UPDATE (no chunk churn, no re-embed, no version snapshot)
   // and skip. The next import then hits the fast path above.
-  if (existing && !existing.deleted_at && !opts.prepare && !opts.forceRechunk && !needsProjectionRebuild && typeof engine.refreshPageBody === 'function') {
+  if (existing && !existing.deleted_at && !opts.prepare && !opts.forceRechunk && !needsProjectionRebuild && !embedSkipChanged && typeof engine.refreshPageBody === 'function') {
     const legacyHash = contentHashLegacy({
       title: parsed.title,
       type: parsed.type,
