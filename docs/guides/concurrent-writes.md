@@ -92,6 +92,29 @@ Admission retries confirmed database lock/serialization aborts for up to five
 seconds using the same UUID. Persistent contention returns a storage error with
 that UUID and no fabricated queued receipt. Keep the ID for the next attempt.
 
+### Write-pickup interval on a resident server
+
+Nothing wakes a resident server when a write is admitted; it picks accepted work
+up on an idle poll. That poll runs every 250ms by default and costs four queries
+per tick whether or not the queue holds anything, so a `gbrain serve` on a
+metered database keeps paying for an empty queue. `GBRAIN_PERSISTENCE_POLL_MS`
+in the serve process's environment widens the interval, trading write-pickup
+latency for query volume:
+
+```bash
+export GBRAIN_PERSISTENCE_POLL_MS=3000
+```
+
+It accepts a whole number of milliseconds between 50 and 3000. The ceiling stays
+under the five-second synchronous wait described above: a wider interval would
+make the first write after a quiet stretch return `write_pending` rather than
+commit. Any other value, including a suffixed one like `60s`, is refused with a
+single warning and the 250ms default is kept.
+
+**Say to your agent:** *"make the brain server poll my database less often"* —
+no skill backs this one, so your agent sets `GBRAIN_PERSISTENCE_POLL_MS` on the
+environment your `gbrain serve` runs in.
+
 ## Frozen memory verbs
 
 `remember` and `forget` accept optional `request_id`. Their frozen success enums
