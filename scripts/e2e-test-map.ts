@@ -15,6 +15,8 @@
 // No brace expansion, no ?, no [ ].
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  // Import-file remains fail-closed (all E2E); marker helpers also own this regression.
+  "src/core/embed-skip.ts": ["test/e2e/import-embed-skip-recovery.test.ts"],
   "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
   "src/core/harness/**": ["test/e2e/harness-access.test.ts"],
   "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
