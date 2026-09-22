@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, rea
 import { basename, join, dirname, resolve } from 'path';
 import { parseSemver, semverGt } from '../core/semver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { fetchLatestRelease, type LatestReleaseResult } from './check-update.ts';
 import { VERSION } from '../version.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
@@ -24,6 +25,13 @@ export function assessUpgradeOutcome(
   const o = parseSemver(observed.trim());
   if (!t || !o) return 'unverified';
   return semverGt(t, o) ? 'mismatch' : 'ok';
+}
+
+export function resolveUpgradeTarget(
+  targetVersion: string | undefined,
+  release: LatestReleaseResult | null,
+): string | undefined {
+  return targetVersion ?? (release?.ok ? release.tag : undefined);
 }
 
 export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
@@ -153,7 +161,11 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     // (exact-tag Git pins make `bun update` a successful no-op). Fail loudly
     // and return BEFORE the breadcrumb/cache bookkeeping below, so the
     // pending-upgrade marker survives and keeps nagging.
-    const target = opts.targetVersion;
+    // Bare `upgrade` has no caller-provided target. Resolve the current
+    // release too, so an exact-tag Bun pin cannot convert a successful
+    // `bun update` exit into a false upgrade confirmation.
+    const release = opts.targetVersion ? null : await fetchLatestRelease();
+    const target = resolveUpgradeTarget(opts.targetVersion, release);
     if (target && assessUpgradeOutcome(target, newVersion) === 'mismatch') {
       console.error(`Upgrade did not take effect: still running ${newVersion}, expected ${target}.`);
       console.error('Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');

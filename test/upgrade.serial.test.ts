@@ -376,6 +376,22 @@ describe('runUpgrade target verification (#4366)', () => {
     }
   });
 
+  test('bare upgrade uses the resolved release target and preserves an explicit target', () => {
+    expect(upgradeModule.resolveUpgradeTarget(undefined, {
+      ok: true,
+      tag: TARGET,
+      published_at: '',
+      url: '',
+    })).toBe(TARGET);
+    expect(upgradeModule.resolveUpgradeTarget('0.50.0.0', {
+      ok: true,
+      tag: TARGET,
+      published_at: '',
+      url: '',
+    })).toBe('0.50.0.0');
+    expect(upgradeModule.resolveUpgradeTarget(undefined, { ok: false, reason: 'network_error' })).toBeUndefined();
+  });
+
   // A failed binary swap must still name the release it attempted. With no
   // caller target (plain `gbrain upgrade`), to_version comes from the release
   // tag runBinarySelfUpdate resolved — never '' — so doctor can say which
