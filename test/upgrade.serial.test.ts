@@ -363,14 +363,16 @@ describe('runUpgrade target verification (#4366)', () => {
     }
   });
 
-  test('no target (legacy caller) preserves prior behavior even when the version is stale', async () => {
+  test('no target resolves the release and rejects a stale version', async () => {
     const { home, exitCode } = await runUpgradeAgainstFakeInstall({
       observedVersion: OLD,
     });
     try {
-      expect(exitCode).toBe(0);
-      expect(existsSync(join(home, '.gbrain', 'last-update-check'))).toBe(false);
-      expect(existsSync(join(home, '.gbrain', 'just-upgraded-from'))).toBe(true);
+      expect(exitCode).toBe(1);
+      // Bare upgrades now resolve the current release, so a pinned stale
+      // install must retain its pending-update marker rather than false-success.
+      expect(existsSync(join(home, '.gbrain', 'last-update-check'))).toBe(true);
+      expect(existsSync(join(home, '.gbrain', 'just-upgraded-from'))).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
