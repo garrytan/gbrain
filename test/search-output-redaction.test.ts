@@ -268,3 +268,66 @@ describe('search output redaction — shapes that must not slip through', () => 
     expect(out.endsWith(' tail')).toBe(true);
   });
 });
+
+describe('search output redaction — adversarial inputs and quoting', () => {
+  const fill = (n: number, c: string) => c.repeat(n);
+  const fence = '-'.repeat(5);
+
+  test('many unterminated PEM fences are handled in linear time', () => {
+    // Search output is page content, so its shape is attacker-chosen. A lazy
+    // scan for the END fence made each BEGIN scan to the end of the text and
+    // fail, and the unanchored search then retried from the next BEGIN:
+    // quadratic. 20k fences took several seconds that way. The bound is set
+    // far above the linear cost (single-digit milliseconds here) and far below
+    // the quadratic one, so it discriminates without being timing-flaky.
+    for (const kind of ['PUBLIC KEY', 'CERTIFICATE', 'PRIVATE KEY']) {
+      const input = `${fence}BEGIN ${kind}${fence}\n`.repeat(20_000);
+      const t0 = performance.now();
+      redactCredentialLikeText(input);
+      const ms = performance.now() - t0;
+      expect(ms, `${kind}: ${ms.toFixed(0)} ms`).toBeLessThan(1000);
+    }
+  });
+
+  test('a password containing "<" is redacted in full', () => {
+    const rest = fill(20, 'z');
+    const out = redactCredentialLikeText(`password="!abcdefghi<${rest}"`);
+    expect(out).not.toContain(rest);
+    expect(out).toContain('<REDACTED:assigned_secret>');
+  });
+
+  test('a value that is already a marker is not re-consumed (idempotence without excluding "<")', () => {
+    const token = ['ghp', fill(36, 'A')].join('_');
+    const once = redactCredentialLikeText(`password=${token}`);
+    expect(once).not.toContain(token);
+    expect(redactCredentialLikeText(once)).toBe(once);
+  });
+
+  test('short Basic credentials inside an Authorization header are redacted', () => {
+    // base64("u:p") is "dTpw" — valid credentials can be four characters long.
+    const out = redactCredentialLikeText('Authorization: Basic dTpw');
+    expect(out).not.toContain('dTpw');
+    expect(out).toContain('<REDACTED:authorization_credentials>');
+  });
+
+  test('a document that quotes the private-key marker keeps the rest of its text', () => {
+    // Fail-closed for a truncated key must not become "erase from the first
+    // mention of the marker": without key material after the fence, it is prose.
+    const doc = `To find leaks, search for the string ${fence}BEGIN PRIVATE KEY${fence} in your repo, then rotate.`;
+    expect(redactCredentialLikeText(doc)).toBe(doc);
+  });
+
+  test('an encrypted legacy private key with RFC 1421 headers is still redacted', () => {
+    const key = [
+      `${fence}BEGIN RSA PRIVATE KEY${fence}`,
+      'Proc-Type: 4,ENCRYPTED',
+      'DEK-Info: AES-128-CBC,0123456789ABCDEF0123456789ABCDEF',
+      '',
+      fill(64, 'm'),
+      fill(64, 'n'),
+    ].join('\n');
+    const out = redactCredentialLikeText(`notes\n${key}`);
+    expect(out).not.toContain(fill(64, 'm'));
+    expect(out.startsWith('notes\n')).toBe(true);
+  });
+});

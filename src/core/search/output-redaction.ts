@@ -19,18 +19,28 @@ interface CredentialPattern {
 // truncate a longer token — it makes the whole match fail, so a token one
 // character past the cap was printed in full.
 const CREDENTIAL_PATTERNS: ReadonlyArray<CredentialPattern> = [
+  // PEM bodies are matched as "anything that does not start another fence",
+  // never as a lazy scan for the END fence. The lazy form was quadratic: a text
+  // of N BEGIN fences with no END made each one scan to the end of the text and
+  // fail, and the unanchored search then retried from the next one. This body
+  // stops at the next BEGIN or END, so the total work is linear in the text.
+  //
   // An excerpt can cut a private key before its END fence, and truncation is
-  // ordinary here (snippet caps, exact-lookup excerpts). A private-key BEGIN
-  // with no END in view is therefore redacted to the end of the text, so the
-  // key material after the fence never survives. It runs first so the complete
+  // ordinary here (snippet caps, exact-lookup excerpts), so END is optional for
+  // a private key: the key material is removed up to the next fence or the end
+  // of the text. It must be preceded by actual key material — optional RFC 1421
+  // header lines, then a run of base64 — so a document that merely QUOTES the
+  // marker string is not erased from that point on. Runs first, so the complete
   // block below cannot leave a half-matched remainder.
   {
     kind: 'pem_private_key',
-    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)/g,
+    pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[ \t]*\r?\n(?:[A-Za-z][A-Za-z0-9-]*:[^\r\n]*\r?\n)*\s*[A-Za-z0-9+/=]{16,}(?:(?!-----(?:BEGIN|END) )[\s\S])*(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)?/g,
   },
+  // Certificates and public keys keep END as mandatory: truncating one leaks
+  // nothing secret, so there is no reason to erase text on a partial match.
   {
     kind: 'pem_key_material',
-    pattern: /-----BEGIN [A-Z0-9 ]*(?:PUBLIC KEY|CERTIFICATE|PGP PUBLIC KEY BLOCK)-----[\s\S]*?-----END [A-Z0-9 ]*(?:PUBLIC KEY|CERTIFICATE|PGP PUBLIC KEY BLOCK)-----/g,
+    pattern: /-----BEGIN [A-Z0-9 ]*(?:PUBLIC KEY|CERTIFICATE|PGP PUBLIC KEY BLOCK)-----(?:(?!-----(?:BEGIN|END) )[\s\S])*-----END [A-Z0-9 ]*(?:PUBLIC KEY|CERTIFICATE|PGP PUBLIC KEY BLOCK)-----/g,
   },
   { kind: 'github_token', pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
   { kind: 'github_fine_grained_token', pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/g },
@@ -46,7 +56,12 @@ const CREDENTIAL_PATTERNS: ReadonlyArray<CredentialPattern> = [
   { kind: 'sendgrid_api_key', pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g },
   { kind: 'digitalocean_token', pattern: /\bdo[pro]_v1_[a-f0-9]{64}\b/g },
   { kind: 'jwt', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
-  // `Basic` carries base64 credentials exactly as `Bearer` carries a token.
+  // `Basic` carries base64 credentials exactly as `Bearer` carries a token, and
+  // valid ones can be short (`u:p` is `dTpw`). Inside an actual Authorization
+  // header the scheme is unambiguous, so four characters suffice there; the bare
+  // `Basic x` / `Bearer x` form keeps a 16-character floor so prose such as
+  // "Basic concepts" or "Bearer of bad news" is left alone.
+  { kind: 'authorization_credentials', pattern: /\bAuthorization:[ \t]*(?:Bearer|Basic)[ \t]+[A-Za-z0-9._~+/=-]{4,}/gi },
   { kind: 'authorization_credentials', pattern: /\b(?:Bearer|Basic)[ \t]+[A-Za-z0-9._~+/=-]{16,}/gi },
   // Only the key material. What follows it on the line is a free-form comment,
   // and in one-line JSON "the rest of the line" is every unrelated field after it.
@@ -55,12 +70,14 @@ const CREDENTIAL_PATTERNS: ReadonlyArray<CredentialPattern> = [
     pattern: /\b(?:ssh-(?:rsa|ed25519)|ecdsa-sha2-nistp(?:256|384|521))\s+[A-Za-z0-9+/=]{40,}/g,
   },
   // The value is any run of non-space, non-quote characters: a password may start
-  // with, or contain, punctuation. Unbounded, so a long value leaves no tail.
-  // `<`/`>` are excluded so a marker written by an earlier pattern is never
-  // consumed again, which keeps redaction idempotent.
+  // with, or contain, punctuation — including `<`. Unbounded, so a long value
+  // leaves no tail. The one thing it will not consume is a marker an earlier
+  // pattern already wrote (`<REDACTED:`), which is what keeps redaction
+  // idempotent; excluding every `<` for that purpose leaked the rest of any
+  // password containing one.
   {
     kind: 'assigned_secret',
-    pattern: /["']?\b(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)|token|secret|password|api[_-]?key|private[_-]?key)\b["']?\s*[:=]\s*["']?[^\s"'`<>]{8,}["']?/gi,
+    pattern: /["']?\b(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)|token|secret|password|api[_-]?key|private[_-]?key)\b["']?\s*[:=]\s*["']?(?:(?!<REDACTED:)[^\s"'`]){8,}["']?/gi,
   },
   { kind: 'url_credentials', pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+/gi },
 ];
