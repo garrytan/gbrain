@@ -19,7 +19,8 @@ import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
 import { loadConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
-import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
+import { buildChunkTokenLimitMarker, filterOutEmbedSkipped } from '../core/embed-skip.ts';
+import { describeOversizedInput, isEmbedInputOversized, partitionEmbedInputs } from '../core/embed-input-guard.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted, anySignal, AbortError } from '../core/abort-check.ts';
 import { type DbPacer, createDbPacer, createNoopPacer, observed } from '../core/db-pacer.ts';
@@ -31,7 +32,7 @@ import {
 } from '../core/pace-mode.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
-import { AITransientError } from '../core/ai/errors.ts';
+import { AITransientError, isInputTooLargeError } from '../core/ai/errors.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import {
   restampIfDemotedToTitleTier,
@@ -270,6 +271,21 @@ export interface EmbedResult {
    */
   failure_samples: string[];
   /**
+   * Chunks this run refused to keep retrying because they exceed the
+   * embedder's context window. Deliberately NOT counted on `failures`: a
+   * failure means "try again", and these can never succeed as chunked, so
+   * folding them in would hold the run's exit code red forever and drown the
+   * genuinely retryable failures in a permanent alarm. The page carrying them
+   * is marked `embed_skip` so the next run doesn't re-select it. Additive
+   * field — 0 on a healthy brain.
+   */
+  parked: number;
+  /**
+   * Up to 10 `slug: reason` samples of what was parked, mirroring
+   * `failure_samples`. Additive field.
+   */
+  parked_samples: string[];
+  /**
    * SUP-3874 heals performed this run (oversized chunks split in place).
    * Also feeds the stall watchdog's progress key: a mass-heal prelude is
    * real forward progress, so it must not read as a stall. Additive field.
@@ -430,6 +446,8 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     pages_processed: 0,
     failures: 0,
     failure_samples: [],
+    parked: 0,
+    parked_samples: [],
     dryRun: !!opts.dryRun,
     chunkless_pages_healed: 0,
   };
@@ -842,7 +860,7 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     );
     return {
       embedded: 0, skipped: 0, would_embed: 0, total_chunks: 0,
-      pages_processed: 0, failures: 0, failure_samples: [], dryRun: false,
+      pages_processed: 0, failures: 0, failure_samples: [], parked: 0, parked_samples: [], dryRun: false,
       chunkless_pages_healed: 0,
     };
   }
@@ -940,6 +958,25 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
     // non-zero exit verdict.
     if (result.failures > 0) {
       serr(`[embed] ${result.failures} chunk(s) failed to embed. First error: ${result.failure_samples[0] ?? 'unknown'}`);
+    }
+    // Parked chunks are stated once, on their own line, and pointedly NOT as
+    // failures — the operator's next move is to re-chunk those pages, not to
+    // re-run embed.
+    //
+    // The message names the two commands but not their flags. Flag tokens in
+    // this module's text are harvested by scripts/generate-flag-registry.ts and
+    // would be attributed to `embed` (and to every command sharing its scan
+    // surface), so a flag spelled out here lands in the registry as an embed
+    // flag it is not. Each command's own --help is the truthful home for them.
+    if (result.parked > 0) {
+      serr(
+        `[embed] ${result.parked} chunk(s) exceed the embedder's context window and were parked; `
+        + `their pages are marked embed_skip (chunk_token_limit) and will not be retried. `
+        + `To index that content, re-chunk the pages with the current chunker: `
+        + `\`gbrain reindex-code\` for code pages, \`gbrain reindex\` for markdown pages. `
+        + `A re-import rewrites frontmatter, which clears the marker. `
+        + `First: ${result.parked_samples[0] ?? 'unknown'}`,
+      );
     }
     // #4599 (X6): the stall watchdog returns an error RESULT from core; ONLY
     // this CLI wrapper maps it to a hard non-zero process exit. Hard exit on
@@ -1071,14 +1108,12 @@ async function embedPage(
   // success. Abort (shutdown) still propagates.
   const prepared = await readProjectionSnapshot(engine, slug, page.source_id);
   if (!prepared || prepared.snapshot.revision !== snapshot!.revision || prepared.chunks.some((chunk, i) => chunk.id !== chunks[i]?.id || chunk.chunk_text !== chunks[i]?.chunk_text)) return;
-  let embeddings: (Float32Array | null)[];
-  let failed = 0;
-  let firstError: unknown;
+  let outcome: PageEmbedOutcome;
   try {
-    ({ embeddings, failed, firstError } = await embedPageTexts(
+    outcome = await embedPageTexts(
       wrapChunkTextsForStoredMode(prepared.snapshot.page, toEmbed),
       signal ? { abortSignal: signal } : {},
-    ));
+    );
   } catch (e: unknown) {
     if (isAborted(signal)) throw e;
     recordFailure(result, toEmbed.length, slug, e);
@@ -1086,6 +1121,7 @@ async function embedPage(
     serr(`  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
     return;
   }
+  const { embeddings, failed, firstError } = outcome;
   const embeddingMap = new Map<number, Float32Array>();
   for (let j = 0; j < toEmbed.length; j++) {
     const emb = embeddings[j];
@@ -1099,22 +1135,31 @@ async function embedPage(
     token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
   }));
 
-  const fullyEmbedded = failed === 0 && toEmbed.length === chunks.length;
+  // v0.41.31: stamp provenance so a later model/dims swap is detectable as
+  // stale. Guard: only stamp when EVERY chunk was (re)embedded this pass
+  // (#3037: failed chunks stay NULL). A parked chunk leaves the page as
+  // incompletely embedded as a failed one does, so it blocks the stamp too.
+  const fullyEmbedded = failed === 0 && outcome.parked === 0 && toEmbed.length === chunks.length;
   // Vectors and their completion stamps share the page guard. A later
   // contextual rebuild must not be relabeled by this attempt's restamp.
+  // D9 honesty: no stamp when the gateway is unconfigured (signature undefined).
   if (!await engine.transaction(async tx => {
     if (!await installPageEmbeddings(tx, prepared, updated,
       fullyEmbedded ? currentEmbeddingSignature() ?? undefined : undefined)) return false;
     if (fullyEmbedded) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, page.source_id);
     return true;
   })) return;
-  result.embedded += toEmbed.length - failed;
+  result.embedded += toEmbed.length - failed - outcome.parked;
   if (failed > 0) {
     recordFailure(result, failed, slug, firstError);
     serr(`  ${slug}: ${failed} chunk(s) failed to embed; embedded the other ${toEmbed.length - failed}`);
   }
+  await settleParkedChunks(engine, result, slug, sourceId, outcome, toEmbed.length, failed);
   result.pages_processed++;
-  if (!quiet) slog(`${slug}: embedded ${toEmbed.length - failed} chunks`);
+  // Parked chunks are subtracted for the same reason failed ones are: this
+  // line reports what actually landed, and `result.embedded` above already
+  // counts it that way.
+  if (!quiet) slog(`${slug}: embedded ${toEmbed.length - failed - outcome.parked} chunks`);
 }
 
 /**
@@ -1259,10 +1304,11 @@ async function embedAll(
       // #3037: per-chunk failure isolation — one bad chunk costs one chunk,
       // not the whole page's siblings. The wrapped texts feed the fan-out
       // too, so an isolation retry never strips the contextual prefixes.
-      const { embeddings, failed, firstError } = await embedPageTexts(
+      const outcome = await embedPageTexts(
         wrapChunkTextsForStoredMode(page, toEmbed),
         signal ? { abortSignal: signal } : {},
       );
+      const { embeddings, failed, firstError } = outcome;
       // Build a map of new embeddings by chunk_index
       const embeddingMap = new Map<number, Float32Array>();
       for (let j = 0; j < toEmbed.length; j++) {
@@ -1281,16 +1327,20 @@ async function embedAll(
       }));
       // Partial failures retain their old context; a full completion stamps
       // its vectors and title-tier convention in the same guarded transaction.
+      // `parked` blocks the stamp for the same reason `failed` does — the page
+      // was not fully re-embedded.
+      const fullyEmbedded = failed === 0 && outcome.parked === 0;
       if (!await observed(pacer, () => engine.transaction(async tx => {
-        if (!await installPageEmbeddings(tx, prepared, updated, failed === 0 ? signature : undefined)) return false;
-        if (failed === 0) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, page.slug, pageSourceId);
+        if (!await installPageEmbeddings(tx, prepared, updated, fullyEmbedded ? signature : undefined)) return false;
+        if (fullyEmbedded) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, page.slug, pageSourceId);
         return true;
       }))) return;
-      result.embedded += toEmbed.length - failed;
+      result.embedded += toEmbed.length - failed - outcome.parked;
       if (failed > 0) {
         recordFailure(result, failed, page.slug, firstError);
         serr(`\n  ${page.slug}: ${failed} chunk(s) failed to embed; embedded the other ${toEmbed.length - failed}`);
       }
+      await settleParkedChunks(engine, result, page.slug, pageSourceId, outcome, toEmbed.length, failed);
     } catch (e: unknown) {
       // #3037: count the darkened page so the run can't exit 0 (abort is a
       // shutdown, not a failure).
@@ -1812,6 +1862,11 @@ async function embedAllStale(
   const stamp = await resolveProvenanceStamp(engine, signature); // column resolved once per drain, not per page
   try {
     // eslint-disable-next-line no-constant-condition
+    // Provider park verdicts, remembered per page for the whole
+    // drain — two provider-rejected chunks of one page landing in different
+    // keyset batches must not each treat the other as "still embeddable"
+    // (that would defer the embed_skip marker forever across runs).
+    const providerParkedByPage = new Map<string, Set<number>>();
     while (true) {
       if (effectiveSignal.aborted) {
         if (!budgetExitNotified) {
@@ -1915,8 +1970,12 @@ async function embedAllStale(
             .map(c => ({ ...selected.get(c.chunk_index)!, ...c }));
           if (!stale.length) return;
           const pageRow = prepared.snapshot.page;
-          const { embeddings, failed, firstError } = await embedPageTexts(
+          // #3037: per-chunk failure isolation — one bad chunk costs one
+          // chunk, not the whole page's siblings. The outcome also carries
+          // parked chunks (provider can never accept them).
+          const outcome = await embedPageTexts(
             wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: effectiveSignal });
+          const { embeddings, failed, firstError } = outcome;
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             const emb = embeddings[j];
@@ -1935,18 +1994,60 @@ async function embedAllStale(
           // The last batch stamps from complete DB provenance (#4825).
           // Keep both stamps with vector installation so later contextual
           // work cannot commit between installation and title-tier demotion.
+          // `parked` blocks both stamps for the same reason `failed` does —
+          // the page was not fully re-embedded this pass.
+          const cleanPass = failed === 0 && outcome.parked === 0;
           if (!await observed(pacer, () => engine.transaction(async tx => {
             if (!await installPageEmbeddings(tx, prepared, merged)) return false;
-            if (stamp && failed === 0) await stampIfPageProvenanceComplete(tx, slug, keySourceId, stamp);
-            if (failed === 0 && stale.length === existing.length) {
+            if (stamp && cleanPass) await stampIfPageProvenanceComplete(tx, slug, keySourceId, stamp);
+            if (cleanPass && stale.length === existing.length) {
               await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, keySourceId);
             }
             return true;
           }))) return;
-          result.embedded += stale.length - failed;
+          result.embedded += stale.length - failed - outcome.parked;
           if (failed > 0) {
             recordFailure(result, failed, slug, firstError);
             serr(`\n  ${slug}: ${failed} chunk(s) failed to embed; embedded the other ${stale.length - failed}`);
+          }
+          // The keyset drain has no page alignment (#4825) — a
+          // page straddling a batch boundary can still have embeddable stale
+          // chunks waiting in a LATER batch. Writing the embed_skip marker now
+          // would hide the page from stale selection and orphan those healthy
+          // chunks unembedded. Park only when nothing embeddable remains
+          // outside this batch. "Embeddable" is judged on the ACTIVE vector
+          // state (embedding IS NULL), not embedded_at — a schema restore can
+          // leave a stamped row with no vector; and chunks the PROVIDER
+          // already rejected earlier in this drain are excluded via the
+          // remembered verdicts, so two parked chunks in different batches
+          // cannot defer each other forever.
+          if (outcome.parked > 0) {
+            const known = providerParkedByPage.get(key) ?? new Set<number>();
+            for (const idx of outcome.parkedIndexes) {
+              const row = stale[idx];
+              if (row) known.add(row.chunk_index);
+            }
+            providerParkedByPage.set(key, known);
+            const staleIdxThisBatch = new Set(stale.map((c) => c.chunk_index));
+            const fresh = await observed(pacer, () =>
+              engine.getChunks(slug, { sourceId: keySourceId, includeEmbedding: true }));
+            const embeddableElsewhere = fresh.some((c) =>
+              !staleIdxThisBatch.has(c.chunk_index)
+              && !known.has(c.chunk_index)
+              && c.embedding == null
+              && !isEmbedInputOversized(c.chunk_text));
+            if (!embeddableElsewhere) {
+              await settleParkedChunks(engine, result, slug, keySourceId, outcome, stale.length, failed);
+            } else {
+              result.parked += outcome.parked;
+              if (result.parked_samples.length < FAILURE_SAMPLE_CAP) {
+                result.parked_samples.push(`${slug}: ${outcome.firstParkedDetail ?? 'exceeds the embedder context'}`);
+              }
+              serr(
+                `\n  ${slug}: ${outcome.parked}/${stale.length} chunk(s) exceed the embedder's context window — `
+                + `embed_skip deferred: the page still has embeddable chunk(s) pending in a later batch.`,
+              );
+            }
           }
           // #3622: reaching here means at least one chunk persisted (a total
           // embed failure throws) — progress, so the quarantine counter resets.
@@ -2060,37 +2161,153 @@ function statusFromCause(e: unknown): number | undefined {
  * the pre-#3037 single batch call). Returns `null` at the index of each
  * failed chunk otherwise.
  */
+interface PageEmbedOutcome {
+  embeddings: (Float32Array | null)[];
+  /** Chunks that failed for a reason a later run could still resolve. */
+  failed: number;
+  /**
+   * Chunks that exceed the embedder's context window. Kept apart from `failed`
+   * because the caller's response differs — a failure is retried, a parked
+   * chunk is recorded and the page taken out of the embed rotation. Both leave
+   * the chunk's embedding NULL.
+   */
+  parked: number;
+  /** Longest parked chunk, in characters — what the skip marker records. */
+  parkedBytes: number;
+  /** First parked chunk's reason, for the operator-facing sample. */
+  firstParkedDetail?: string;
+  /**
+   * Positions (in the caller's input array) of every parked chunk — the
+   * caller maps them to chunk_index rows to carry provider verdicts across
+   * keyset batches.
+   */
+  parkedIndexes: number[];
+  firstError?: unknown;
+}
+
 async function embedPageTexts(
   texts: string[],
   opts: EmbedBatchWithBackoffOpts = {},
-): Promise<{ embeddings: (Float32Array | null)[]; failed: number; firstError?: unknown }> {
+): Promise<PageEmbedOutcome> {
+  const embeddings: (Float32Array | null)[] = new Array(texts.length).fill(null);
+  let parked = 0;
+  let parkedBytes = 0;
+  let firstParkedDetail: string | undefined;
+  const parkedIndexes: number[] = [];
+  const park = (detail: string, chars: number, index: number) => {
+    parked++;
+    parkedBytes = Math.max(parkedBytes, chars);
+    firstParkedDetail ??= detail;
+    parkedIndexes.push(index);
+  };
+
+  // First line of defense: never spend a provider call on a text that already
+  // breaches gbrain's own chunk budget. Catches chunks left behind by an
+  // older chunker version, which no re-chunk sweep has reached yet.
+  const { sendable, sendableIndexes, oversized } = partitionEmbedInputs(texts);
+  for (const o of oversized) park(describeOversizedInput(o), o.chars, o.index);
+  if (sendable.length === 0) {
+    return { embeddings, failed: 0, parked, parkedBytes, firstParkedDetail, parkedIndexes };
+  }
+  const scatter = (vectors: (Float32Array | null | undefined)[]) => {
+    for (let i = 0; i < sendableIndexes.length; i++) {
+      embeddings[sendableIndexes[i]] = vectors[i] ?? null;
+    }
+  };
+
   try {
-    return { embeddings: await embedBatchWithBackoff(texts, opts), failed: 0 };
+    scatter(await embedBatchWithBackoff(sendable, opts));
+    return { embeddings, failed: 0, parked, parkedBytes, firstParkedDetail, parkedIndexes };
   } catch (e: unknown) {
     if (opts.abortSignal?.aborted) throw e; // shutdown, not a chunk problem
-    if (texts.length <= 1) throw e; // nothing to isolate
-    // #3374 — network-transient exhaustion isn't chunk-specific either:
-    // fanning out during an outage multiplies failing calls per page.
-    if (isEmbedRetriableError(e) || isTransientNetworkEmbedError(e) || e instanceof AITransientError) throw e;
-    const status = statusFromCause(e);
-    if (status === 401 || status === 403) throw e;
+    // Second line of defense: an over-context rejection is about ONE input, so
+    // isolation is the only way to learn which. It fires even for a
+    // single-text batch — the catch-up pass reaches a poisoned page with just
+    // that one chunk left, and the pre-fix `texts.length <= 1` bail was what
+    // turned it into an unbounded retry: rethrow, count a failure, exit
+    // non-zero, come back tomorrow and rethrow the identical bytes.
+    if (!isInputTooLargeError(e)) {
+      if (sendable.length <= 1) throw e; // nothing to isolate
+      // #3374 — network-transient exhaustion isn't chunk-specific either:
+      // fanning out during an outage multiplies failing calls per page.
+      if (isEmbedRetriableError(e) || isTransientNetworkEmbedError(e) || e instanceof AITransientError) throw e;
+      const status = statusFromCause(e);
+      if (status === 401 || status === 403) throw e;
+    }
 
-    const embeddings: (Float32Array | null)[] = [];
     let failed = 0;
     let firstError: unknown;
-    for (const t of texts) {
+    for (let i = 0; i < sendable.length; i++) {
+      const t = sendable[i];
       try {
         const single = await embedBatchWithBackoff([t], opts);
-        embeddings.push(single[0] ?? null);
+        embeddings[sendableIndexes[i]] = single[0] ?? null;
         if (single[0] === undefined) { failed++; firstError ??= e; }
       } catch (chunkErr: unknown) {
         if (opts.abortSignal?.aborted) throw chunkErr;
-        embeddings.push(null);
+        if (isInputTooLargeError(chunkErr)) {
+          park(chunkErr instanceof Error ? chunkErr.message : String(chunkErr), t.length, sendableIndexes[i]);
+          continue;
+        }
         failed++;
         firstError ??= chunkErr;
       }
     }
-    if (failed === texts.length) throw firstError ?? e; // total failure: pre-#3037 contract
-    return { embeddings, failed, firstError };
+    // Total RETRYABLE failure keeps the pre-#3037 throw contract. A page whose
+    // every chunk was parked is not a failure — it is a settled verdict, and
+    // the caller records it as such.
+    if (failed > 0 && failed === sendable.length) throw firstError ?? e;
+    return { embeddings, failed, parked, parkedBytes, firstParkedDetail, parkedIndexes, firstError };
+  }
+}
+
+/**
+ * Record a page's parked chunks once and take the page out of the embed
+ * rotation, so "this chunk cannot be embedded" is stated a single time instead
+ * of re-discovered on every run forever.
+ *
+ * Call AFTER the page's successful embeddings have been written — the marker
+ * hides the page from later stale selection, so anything not persisted by
+ * then stays unpersisted.
+ */
+async function settleParkedChunks(
+  engine: BrainEngine,
+  result: EmbedResult,
+  slug: string,
+  sourceId: string | undefined,
+  outcome: PageEmbedOutcome,
+  totalChunks: number,
+  unresolvedFailures = 0,
+): Promise<void> {
+  if (outcome.parked === 0) return;
+  result.parked += outcome.parked;
+  if (result.parked_samples.length < FAILURE_SAMPLE_CAP) {
+    result.parked_samples.push(`${slug}: ${outcome.firstParkedDetail ?? 'exceeds the embedder context'}`);
+  }
+  // A transiently-failed sibling still needs the next stale run
+  // to see this page — the marker would hide it. Count the parked chunks but
+  // defer the marker until a pass with no unresolved failures.
+  if (unresolvedFailures > 0) {
+    serr(
+      `\n  ${slug}: ${outcome.parked}/${totalChunks} chunk(s) exceed the embedder's context window — `
+      + `embed_skip deferred: ${unresolvedFailures} sibling chunk(s) failed transiently and must stay retryable.`,
+    );
+    return;
+  }
+  serr(
+    `\n  ${slug}: ${outcome.parked}/${totalChunks} chunk(s) exceed the embedder's context window — `
+    + `parking the page (embed_skip: chunk_token_limit). Re-chunk it to index that content.`,
+  );
+  try {
+    await engine.markEmbedSkip(slug, {
+      sourceId,
+      marker: buildChunkTokenLimitMarker(outcome.parkedBytes),
+    });
+  } catch (e: unknown) {
+    // The marker is an optimization, not the guarantee: without it the next
+    // run re-skips these chunks locally anyway (pre-guard) or re-learns the
+    // verdict for one provider call. A failed write must not turn an
+    // otherwise clean run red.
+    serr(`  ${slug}: could not persist the embed-skip marker: ${e instanceof Error ? e.message : e}`);
   }
 }

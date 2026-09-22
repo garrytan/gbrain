@@ -105,7 +105,7 @@ import { PageMissingError } from './engine-errors.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
-import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
+import { EMBED_SKIP_FILTER_FRAGMENT, EMBED_SKIP_KEY, type EmbedSkipMarker } from './embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT, quarantineFilterFragment } from './quarantine.ts';
 import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
 import { applyPostgresForwardReferenceBootstrap } from './postgres-engine/forward-reference-bootstrap.ts';
@@ -2621,6 +2621,18 @@ export class PostgresEngine implements BrainEngine {
     await sql`
       UPDATE pages SET embedding_signature = ${opts.signature}
       WHERE slug = ${slug} AND source_id = ${opts.sourceId ?? 'default'}
+    `;
+  }
+
+  /** Persist a source-scoped marker for a chunk the embedder can never accept. */
+  async markEmbedSkip(slug: string, opts: { sourceId?: string; marker: EmbedSkipMarker }): Promise<void> {
+    const sql = this.sql;
+    const patch = { [EMBED_SKIP_KEY]: { ...opts.marker } } as unknown;
+    await sql`
+      UPDATE pages
+         SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
+                        || ${sql.json(patch as Parameters<typeof sql.json>[0])}
+       WHERE slug = ${slug} AND source_id = ${opts.sourceId ?? 'default'}
     `;
   }
 

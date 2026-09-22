@@ -75,12 +75,19 @@ export const EMBED_SKIP_FILTER_FRAGMENT =
   `NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? '${EMBED_SKIP_KEY}')`;
 
 export interface EmbedSkipMarker {
-  /** Why the page was skipped. v0.41 ships only `'oversized'`; future
-   *  reasons (e.g. `'chunk_token_limit'` from the deferred v0.42
-   *  chunk-level quarantine) extend this enum. */
-  reason: 'oversized';
-  /** Body bytes at the time of assessment. Operator visibility: at a
-   *  glance, see how oversized the page is. */
+  /** Why the page was skipped.
+   *
+   *  `'oversized'`         — the PAGE body breached the content-sanity
+   *                          block threshold at import (see content-sanity.ts).
+   *  `'chunk_token_limit'` — a CHUNK of the page is longer than the
+   *                          embedder's context window, so the page can never
+   *                          finish embedding as chunked. Written by
+   *                          the embed path, not by import, because only the
+   *                          provider can settle whether a given chunk fits. */
+  reason: 'oversized' | 'chunk_token_limit';
+  /** Bytes at the time of assessment — page body for `'oversized'`, the
+   *  offending chunk's length for `'chunk_token_limit'`. Operator
+   *  visibility: at a glance, see how far over the line it is. */
   bytes: number;
   /** ISO 8601 timestamp at assessment time. Tells the operator when
    *  the skip was first applied (page may have been edited later). */
@@ -97,6 +104,26 @@ export interface EmbedSkipMarker {
 export function buildEmbedSkipMarker(bytes: number, now: Date = new Date()): EmbedSkipMarker {
   return {
     reason: 'oversized',
+    bytes,
+    assessed_at: now.toISOString(),
+  };
+}
+
+/** Marker for a page holding a chunk the embedder rejected as over-context.
+ *  Written after the fact by the embed path; `bytes` is the offending chunk's
+ *  length, which is what an operator needs to decide whether to re-chunk the
+ *  page or leave it parked.
+ *
+ *  Parking is PAGE-level because that is the granularity every reader of the
+ *  skip semantic already shares (`EMBED_SKIP_FILTER_FRAGMENT`, the JS
+ *  predicate, both engines' stale-chunk queries). Chunks already embedded
+ *  keep their vectors and stay searchable — the marker only removes the page
+ *  from future embed SELECTION, which is precisely the unbounded retry it
+ *  exists to stop. A page re-imported after an edit is written fresh, so
+ *  changed content is re-assessed rather than parked forever. */
+export function buildChunkTokenLimitMarker(bytes: number, now: Date = new Date()): EmbedSkipMarker {
+  return {
+    reason: 'chunk_token_limit',
     bytes,
     assessed_at: now.toISOString(),
   };
