@@ -70,6 +70,7 @@
         "PERPLEXITY_API_KEY",
         "PPLX_API_KEY",
         "TOGETHER_API_KEY",
+        "TYPESAFE_API_KEY",
         "VOYAGE_API_KEY",
         "ZEROENTROPY_API_KEY",
         "ZHIPUAI_API_KEY"

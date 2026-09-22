@@ -20,7 +20,6 @@
  *   - Per-provider model cache keyed by (provider, modelId, baseUrl) so env
  *     rotation (via configureGateway()) invalidates stale entries.
  */
-
 import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema, type JSONSchema7, type Output } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
@@ -30,7 +29,6 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
-
 import { truncateUtf8 } from '../text-safe.ts';
 import {
   BudgetTracker,
@@ -68,7 +66,6 @@ import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gat
 import { invokeAI, sdkInvocationUsage, responseInvocationUsage, hasAIInvocationGuard, isAIInvocationPolicyError } from './invocation-guard.ts';
 import { createGuardedGeneration, chatInvocation } from './guarded-generation.ts';
 const guardedGeneration = createGuardedGeneration(() => DEFAULT_MAX_OUTPUT_TOKENS);
-
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
 // Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
@@ -93,7 +90,6 @@ const AI_CHAT_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_CHAT_TIMEOUT_MS', 300_0
 const AI_EMBED_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_EMBED_TIMEOUT_MS', 60_000);
 /** multimodal per request. */
 const AI_MULTIMODAL_TIMEOUT_MS = resolveAiTimeoutMs('GBRAIN_AI_MULTIMODAL_TIMEOUT_MS', 60_000);
-
 /**
  * Compose a caller signal with a default wall-clock timeout. When the caller
  * supplies its own (Fix 3's 6s query deadline, the facts queue's shutdown abort,
@@ -104,7 +100,6 @@ function withDefaultTimeout(caller: AbortSignal | undefined, timeoutMs: number):
   const timeout = AbortSignal.timeout(timeoutMs);
   return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
-
 const MAX_CHARS = 8000;
 // v0.46.3 SPLIT-DEFAULT: DEFAULT_EMBEDDING_MODEL / DEFAULT_EMBEDDING_DIMENSIONS
 // are now the LEGACY CONFIGLESS RUNTIME FALLBACK only (brains with no
@@ -125,6 +120,7 @@ import {
   type RerankerSunset,
 } from './defaults.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
+import { rerankTypeSafe } from './rerank-typesafe-gateway.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
@@ -134,7 +130,6 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
-
 /**
  * Materialize `applyResolveAuth`'s SDK-shaped result ({apiKey}|{headers}) into
  * raw HTTP headers: a Bearer-style apiKey becomes an Authorization header;
@@ -148,7 +143,6 @@ export function authToHeaders(auth: { apiKey?: string; headers?: Record<string, 
     ...(auth.headers ?? {}),
   };
 }
-
 /**
  * Recover the process-global gateway for foreground command entrypoints that
  * were reached without cli.ts's normal engine-connect initialization (#2590).
@@ -4766,6 +4760,12 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   // materializes both shapes so static-default-headers ride on the reranker
   // wire path the same way they ride the SDK paths.
   const authHeaders = authToHeaders(auth);
+  if (tp.wire_format === 'typesafe-systemone') return rerankTypeSafe(input, {
+    model: modelStr, modelId: parsed.modelId, maxPayloadBytes: tp.max_payload_bytes,
+    defaultTimeoutMs: DEFAULT_RERANK_TIMEOUT_MS, tracker, isPolicyError: isAIInvocationPolicyError,
+    send: (body, signal) => invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr },
+      () => (_rerankTransport ?? fetch)(url, { method: 'POST', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body, signal }), responseInvocationUsage),
+  });
   const body = JSON.stringify({
     model: parsed.modelId,
     query: input.query,

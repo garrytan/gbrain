@@ -252,6 +252,8 @@ export interface ExpansionTouchpoint {
 export interface RerankerTouchpoint {
   models: string[];
   default_model: string;
+  /** Native request/response dialect. Omitted means the standard rerank shape. */
+  wire_format?: 'typesafe-systemone';
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
   max_payload_bytes: number;
