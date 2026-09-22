@@ -4,7 +4,8 @@
 //   1. Discover transcripts via discoverTranscripts() AND brain pages
 //      via a single raw SQL query (NOT EXISTS subquery filters out
 //      pages already extracted by content hash — see "Idempotency" below).
-//   2. Dedup by content_hash; transcripts win on collision.
+//   2. Drop physical-file twins owned by live source pages, then dedup
+//      by content_hash; remaining transcripts win on hash collision.
 //   3. Per work-item, ask the configured extract_atoms model (key-aware
 //      utility-tier default, see resolveExtractAtomsModel below) for 1-3 atoms.
 //   4. Write each atom via importFromContent(slug, markdown, {sourceId})
@@ -66,7 +67,9 @@ import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker, isAvailable } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { importFromContent } from '../import-file.ts';
-import { serializeMarkdown } from '../markdown.ts';
+import { realpath } from 'node:fs/promises';
+import { isAbsolute, relative, sep } from 'node:path';
+import { resolveSourceLocalFilePath, serializeMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
@@ -483,6 +486,55 @@ export async function countExtractAtomsBacklog(
   }
 }
 
+/**
+ * Synced pages own transcripts that resolve to the same file in the source
+ * checkout, but only extractable page types own notes so neither door loses them.
+ * Scan live pages independently of the extraction batch.
+ */
+async function filterTranscriptPageTwins(
+  engine: BrainEngine,
+  sourceId: string,
+  transcripts: NonNullable<ExtractAtomsOpts['_transcripts']>,
+) {
+  if (transcripts.length === 0) return transcripts;
+  try {
+    const sources = await engine.executeRaw<{ local_path: string | null }>(
+      'SELECT local_path FROM sources WHERE id = $1', [sourceId],
+    );
+    const localPath = sources[0]?.local_path;
+    if (!localPath) return transcripts;
+    const root = await realpath(localPath);
+    const transcriptFiles = new Map<typeof transcripts[number], string>();
+    for (const transcript of transcripts) {
+      try {
+        const path = await realpath(transcript.filePath);
+        const withinRoot = relative(root, path);
+        if (withinRoot !== '..' && !withinRoot.startsWith(`..${sep}`)
+          && !isAbsolute(withinRoot)) transcriptFiles.set(transcript, path);
+      } catch { /* keep transcripts whose physical path is unavailable */ }
+    }
+    if (transcriptFiles.size === 0) return transcripts;
+    const pages = await engine.executeRaw<{ source_path: string | null; slug: string }>(
+      `SELECT source_path, slug FROM pages
+       WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])`,
+      [sourceId, await resolveExtractableTypes()],
+    );
+    const pageFiles = new Set<string>();
+    for (const page of pages) {
+      try {
+        const path = resolveSourceLocalFilePath(localPath, page.source_path, page.slug);
+        if (path) pageFiles.add(await realpath(path));
+      } catch { /* unresolved page cannot establish a twin */ }
+    }
+    return transcripts.filter(transcript => {
+      const path = transcriptFiles.get(transcript);
+      return path === undefined || !pageFiles.has(path);
+    });
+  } catch {
+    return transcripts; // fail-soft: extraction still proceeds
+  }
+}
+
 async function resolvePageDiscoveryLimit(engine: BrainEngine): Promise<number> {
   try {
     const configured = await engine.getConfig('cycle.extract_atoms.page_discovery_budget');
@@ -675,6 +727,10 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  const transcriptsBeforeTwins = transcripts.length;
+  transcripts = await filterTranscriptPageTwins(engine, sourceId, transcripts);
+  const transcriptPageTwinsSkipped = transcriptsBeforeTwins - transcripts.length;
+
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
   //     deliberately (transcript-only regression tests).
@@ -810,6 +866,7 @@ export async function runPhaseExtractAtoms(
         pages_processed: 0,
         pages_total: 0,
         duplicates_skipped: 0,
+        transcript_page_twins_skipped: transcriptPageTwinsSkipped,
         failures: [],
         estimated_spend_usd: 0,
         budget_usd: DEFAULT_BUDGET_USD,
@@ -1419,6 +1476,7 @@ export async function runPhaseExtractAtoms(
       pages_total: pages.length,
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
+      transcript_page_twins_skipped: transcriptPageTwinsSkipped,
       failures,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       malformed_outputs: malformedOutputs,
