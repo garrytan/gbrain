@@ -130,7 +130,7 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
   return digest(actual) === digest(canonical(snapshot.page, snapshot.tags));
 }
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
-  content: string | null, hostId?: string, options: { allowMissing?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean } = {}): Promise<PreparedMutation['file']> {
+  content: string | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
   // #5409: a read-only mirror's checkout belongs to its Git remote; nothing is written or removed there.
   if (await sourceMirrorReadOnly(engine, row.source_id)) return undefined;
@@ -158,16 +158,23 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     `The file of ${row.slug} resolves outside source ${row.source_id}'s registered root (a symlinked directory or a moved checkout), so nothing was written. Inspect the owner before resubmitting; how to repair the checkout is the user's decision.`,
     { fix: ownerStatusFix(row.source_id) });
   const before = existsSync(path) ? readFileSync(path) : null;
+  // A declared db_only page has no canonical file by design and publishes to
+  // the database only. gbrain.yml is consulted only here, where the write
+  // would otherwise refuse, so an invalid config can only change the refusal.
+  // Derive-phase output (atoms/, concepts/, ...) is database-only by design and
+  // deliberately never declared in gbrain.yml; a page there that never recorded
+  // a canonical file publishes to the database only. Both win over the
+  // deletion fall-through below.
+  // A delete_page of a live page with no recorded artifact (no source_path,
+  // no captured file URI: a subagent-sandbox or other database-only
+  // publication) has nothing that could have been "removed" and nothing to
+  // unlink; the coordinator tolerates ENOENT. Edits keep failing closed:
+  // source_path is NULL on pre-v0.32.7 rows too, so a missing file there may
+  // be a real uncoordinated removal that a forced write must not recreate.
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
-    // A declared db_only page has no canonical file by design and publishes to
-    // the database only. gbrain.yml is consulted only here, where the write
-    // would otherwise refuse, so an invalid config can only change the refusal.
-    // Derive-phase output (atoms/, concepts/, ...) is database-only by design and
-    // deliberately never declared in gbrain.yml. A page there that never recorded a
-    // canonical file publishes to the database only; a recorded file that went
-    // missing still refuses below.
     if (publishesDatabaseOnly(root, row.slug, snapshot)) return undefined;
-    throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
+    const unrecordedDeletion = options.deleting === true && content === null && !snapshot.page.source_path && !capturedPath;
+    if (!unrecordedDeletion) throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
       'Import the local deletion or recover the canonical file before editing this page.');
   }
   // A normal edit may replace only the bytes represented by its read snapshot.
@@ -269,7 +276,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     // Tombstones still own their recorded artifact. Purge always attempts its
     // removal before the guarded hard-delete and receipt commit; failure rolls
     // back to the prior row, and replay survives the eventual absence of that row.
-    const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { allowMissing: purge || options.allowMissingFile, activePack, remote: row.authority.remote });
+    const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { allowMissing: purge || options.allowMissingFile, deleting: true, activePack, remote: row.authority.remote });
     return { observedRevision, noop, file, ...await pageDatabaseOnlyPublication(engine, row, file), apply: async tx => {
       if (purge) {
         await tx.deletePage(row.slug, source);

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -16,7 +16,8 @@ const sourceId = 'captured-target';
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({}); await engine.initSchema();
-  home = mkdtempSync(join(tmpdir(), 'gbrain-captured-target-'));
+  // realpath: macOS tmpdir lives under /var -> /private/var; targets are compared post-realpath.
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-captured-target-')));
   root = join(home, 'source'); mkdirSync(root);
   await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
   worktreeId = (await claimWorktree(engine, sourceId, root)).worktree_id;
@@ -73,4 +74,80 @@ test('captured file still requires bytes matching the coherent page snapshot', a
   writeFileSync(file, 'Uncoordinated local edit');
   await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed' });
   expect(readFileSync(file, 'utf8')).toBe('Uncoordinated local edit');
+});
+
+async function neverFiled(slug: string, body: string) {
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body }, { sourceId });
+  await engine.executeRaw('UPDATE pages SET source_uri=NULL,source_path=NULL WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+  return { snapshot: (await engine.readPageSnapshot(slug, { sourceId }))!, row: { source_id: sourceId, worktree_id: worktreeId, slug } };
+}
+
+test('deleting a live page that never recorded a canonical artifact does not fail closed on a missing file', async () => {
+  // Subagent-sandbox and other database-only publications admit with no
+  // worktree, so no .md is ever written and source_path stays null. A later
+  // CLI delete_page (write-through authority, worktree bound) must treat the
+  // absent file as "nothing to unlink", not as an uncoordinated removal.
+  const slug = 'wiki/agents/42/notes/scratch/db-only';
+  const { row, snapshot } = await neverFiled(slug, 'Sandbox content');
+  const prepared = await prepareFileTarget(engine, row, snapshot, null, undefined, { deleting: true });
+  expect(prepared?.path).toBe(join(root, `${slug}.md`));
+  expect(prepared?.content).toBeNull();
+  expect(prepared?.expectedBeforeHash).toBeNull();
+});
+
+test('a page with no recorded file path whose file is missing still refuses edits; only its deletion proceeds', async () => {
+  // Pre-v0.32.7 rows have a NULL source_path even though their file existed,
+  // so a missing file may be a real uncoordinated removal. An edit must not
+  // silently recreate it; a delete has nothing to resurrect.
+  const slug = 'notes/legacy-null-source-path';
+  const { row, snapshot } = await neverFiled(slug, 'Legacy row');
+  const file = join(root, `${slug}.md`);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, serializePageToMarkdown(snapshot.page, snapshot.tags));
+  rmSync(file);
+  await expect(prepareFileTarget(engine, row, snapshot, 'Forced edit')).rejects.toMatchObject({ code: 'source_changed' });
+  await expect(prepareFileTarget(engine, row, snapshot, null)).rejects.toMatchObject({ code: 'source_changed' });
+  expect((await prepareFileTarget(engine, row, snapshot, null, undefined, { deleting: true }))?.expectedBeforeHash).toBeNull();
+});
+
+test('a live page whose recorded source_path artifact is missing still fails closed, including on delete', async () => {
+  const slug = 'notes/recorded-then-removed';
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Was on disk' }, { sourceId });
+  await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE source_id=$2 AND slug=$3', [`${slug}.md`, sourceId, slug]);
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const row = { source_id: sourceId, worktree_id: worktreeId, slug };
+  await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed' });
+  await expect(prepareFileTarget(engine, row, snapshot, null, undefined, { deleting: true })).rejects.toMatchObject({ code: 'source_changed' });
+});
+
+test('a live page recorded only through a captured file URI still fails closed when that file is missing', async () => {
+  // #5622 captured files record their artifact in source_uri, not source_path.
+  const slug = 'notes/captured-gone';
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Captured, then removed' }, { sourceId });
+  await engine.executeRaw('UPDATE pages SET source_uri=$1,source_path=NULL WHERE source_id=$2 AND slug=$3',
+    [pathToFileURL(join(root, 'notes', 'Captured Gone.md')).href, sourceId, slug]);
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const row = { source_id: sourceId, worktree_id: worktreeId, slug };
+  await expect(prepareFileTarget(engine, row, snapshot, null, undefined, { deleting: true })).rejects.toMatchObject({ code: 'source_changed' });
+  await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed' });
+});
+
+test('a declared db_only page stays database-only even when never published', async () => {
+  // Composition invariant: the gbrain.yml declaration must win over the
+  // never-published delete fall-through. notes/db-only/ is not a derive-phase
+  // prefix, so only the declaration can make this page database-only.
+  writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - notes/db-only/\n');
+  try {
+    const { row, snapshot } = await neverFiled('notes/db-only/declared-never-published', 'Database-only by declaration');
+    expect(await prepareFileTarget(engine, row, snapshot, null, undefined, { deleting: true })).toBeUndefined();
+    expect(await prepareFileTarget(engine, row, snapshot, 'Content change')).toBeUndefined();
+  } finally {
+    rmSync(join(root, 'gbrain.yml'), { force: true });
+  }
+});
+
+test('an undeclared never-filed derive-phase page stays database-only (atoms/ precedence)', async () => {
+  const { row, snapshot } = await neverFiled('atoms/derived-never-published', 'Derived output');
+  expect(await prepareFileTarget(engine, row, snapshot, null, undefined, { deleting: true })).toBeUndefined();
+  expect(await prepareFileTarget(engine, row, snapshot, 'Content change')).toBeUndefined();
 });
