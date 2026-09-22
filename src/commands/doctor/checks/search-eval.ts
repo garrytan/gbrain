@@ -28,25 +28,27 @@ function hasNonEmptyChatFallbackChain(value: unknown): boolean {
 }
 
 /**
- * `chat_fallback_chain` is accepted by config and reaches the gateway config,
- * but no production chat path consumes it. Keep the warning in doctor rather
- * than config loading so ordinary commands stay quiet. Returning null for an
- * empty value keeps clean doctor reports silent instead of adding an OK line.
+ * `chat_fallback_chain` is CONSUMED by `gateway.chat()` (chatWithFallback,
+ * v0.51+): when the primary model errors or completes with a D8 structural
+ * signal (stopReason 'refusal' / 'content_filter'), the chain is consulted
+ * in order. This check surfaces the configured state as an ok line for
+ * visibility; it stays silent when nothing is configured.
  */
-export async function checkChatFallbackChainInert(
+export async function checkChatFallbackChain(
   engine: BrainEngine,
   effectiveConfig: Pick<GBrainConfig, 'chat_fallback_chain'> | null = loadConfig(),
 ): Promise<Check | null> {
   const fileOrEnvSet = hasNonEmptyChatFallbackChain(effectiveConfig?.chat_fallback_chain);
   const dbValue = await engine.getConfig('chat_fallback_chain').catch(() => null);
   if (!fileOrEnvSet && !hasNonEmptyChatFallbackChain(dbValue)) return null;
+  const entries = (effectiveConfig?.chat_fallback_chain ?? []).join(', ');
   return {
-    name: 'chat_fallback_chain_inert',
-    status: 'warn',
+    name: 'chat_fallback_chain',
+    status: 'ok',
     message:
-      '`chat_fallback_chain` is set but currently has no effect: no production chat path consumes it. ' +
-      'If you set it expecting fallback behavior, clear it from every plane that still holds a value: ' +
-      'the DB (`gbrain config unset chat_fallback_chain`), `~/.gbrain/config.json`, and `GBRAIN_CHAT_FALLBACK_CHAIN`.',
+      '`chat_fallback_chain` is configured and consumed by `gateway.chat()`: on primary-model failure ' +
+      'or a D8 structural refusal (stopReason refusal/content_filter), the chain is consulted in order.' +
+      (entries ? ` Entries: [${entries}].` : ''),
   };
 }
 

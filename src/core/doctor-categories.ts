@@ -176,7 +176,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'batch_retry_health',
   'brainstorm_health',
   'connectors',
-  'chat_fallback_chain_inert',
+  'chat_fallback_chain',
   'connection',
   'db_only_collector_collision',
   'federation_health',
