@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -16,7 +16,8 @@ const sourceId = 'captured-target';
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({}); await engine.initSchema();
-  home = mkdtempSync(join(tmpdir(), 'gbrain-captured-target-'));
+  // realpath: macOS tmpdir lives under /var -> /private/var; targets are compared post-realpath.
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-captured-target-')));
   root = join(home, 'source'); mkdirSync(root);
   await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
   worktreeId = (await claimWorktree(engine, sourceId, root)).worktree_id;
@@ -73,4 +74,30 @@ test('captured file still requires bytes matching the coherent page snapshot', a
   writeFileSync(file, 'Uncoordinated local edit');
   await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed' });
   expect(readFileSync(file, 'utf8')).toBe('Uncoordinated local edit');
+});
+
+test('a live page that never recorded a canonical artifact does not fail closed on a missing file', async () => {
+  // Subagent-sandbox and other database-only publications admit with no
+  // worktree, so no .md is ever written and source_path stays null. A later
+  // CLI delete_page (write-through authority, worktree bound) must treat the
+  // absent file as "nothing to unlink", not as an uncoordinated removal.
+  const slug = 'wiki/agents/42/notes/scratch/db-only';
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Sandbox content' }, { sourceId });
+  await engine.executeRaw('UPDATE pages SET source_uri=NULL,source_path=NULL WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const row = { source_id: sourceId, worktree_id: worktreeId, slug };
+  const prepared = await prepareFileTarget(engine, row, snapshot, null);
+  expect(prepared?.path).toBe(join(root, `${slug}.md`));
+  expect(prepared?.expectedBeforeHash).toBeNull();
+  // First real publication of such a page is a create, not a conflict.
+  expect((await prepareFileTarget(engine, row, snapshot, 'First file publication'))?.expectedBeforeHash).toBeNull();
+});
+
+test('a live page whose recorded artifact is missing still fails closed', async () => {
+  const slug = 'notes/recorded-then-removed';
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Was on disk' }, { sourceId });
+  await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE source_id=$2 AND slug=$3', [`${slug}.md`, sourceId, slug]);
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const row = { source_id: sourceId, worktree_id: worktreeId, slug };
+  await expect(prepareFileTarget(engine, row, snapshot, null)).rejects.toMatchObject({ code: 'source_changed' });
 });

@@ -72,7 +72,13 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`)));
   if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
   const before = existsSync(path) ? readFileSync(path) : null;
-  if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
+  // A live page that never recorded a canonical artifact (subagent-sandbox or
+  // other database-only publication — no source_path, no captured file URI)
+  // has nothing that could have been "removed": its first file publication is
+  // a create, and its deletion has no artifact to unlink. Only a page whose
+  // artifact WAS recorded may fail closed on a missing file.
+  const neverPublished = !snapshot?.page.source_path && !capturedPath;
+  if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing && !neverPublished) {
     throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
       'Import the local deletion or recover the canonical file before editing this page.');
   }
