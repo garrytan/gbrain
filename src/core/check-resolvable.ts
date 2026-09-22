@@ -28,6 +28,8 @@ import {
   loadSkillTriggerIndex,
 } from './skill-trigger-index.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
+import { isWriteTargetContained } from './path-confine.ts';
+import { createSkillPaths, type SkillPathOptions } from './skill-paths.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,6 +49,8 @@ export interface ResolvableIssue {
     | 'mece_gap'
     | 'dry_violation'
     | 'missing_file'
+    | 'invalid_skill_path'
+    | 'skill_root_error'
     | 'orphan_trigger'
     // Check 5 (W2): routing eval results surfaced as advisories.
     | 'routing_miss'
@@ -177,7 +181,7 @@ export function parseResolverEntries(resolverContent: string): ResolverEntry[] {
       }
 
       // Backtick-wrapped skill path
-      const pathMatch = skillCol.match(/`(skills\/[^`]+\/SKILL\.md)`/);
+      const pathMatch = skillCol.match(/`([^`]*SKILL\.md)`/);
       if (pathMatch) {
         entries.push({ trigger, skillPath: pathMatch[1], isGStack: false, section: currentSection });
       }
@@ -302,9 +306,11 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
  */
 export function checkResolvable(
   skillsDir: string,
-  opts?: { skillsDirSource?: SkillsDirSource | null },
+  opts?: SkillPathOptions & { skillsDirSource?: SkillsDirSource | null },
 ): ResolvableReport {
   const issues: ResolvableIssue[] = [];
+  const paths = createSkillPaths(skillsDir, opts);
+
 
   // Load inputs via the v0.41.11 shared primitive. UNION semantics
   // across two surfaces:
@@ -317,7 +323,12 @@ export function checkResolvable(
   // Frontmatter is the source of truth (closes the #1451 drift class);
   // RESOLVER.md rows still contribute additively so the human-readable
   // dispatcher map stays load-bearing. See src/core/skill-trigger-index.ts.
-  const triggerEntries = loadSkillTriggerIndex(skillsDir);
+  const loadedManifest = paths.manifest();
+  const triggerEntries = loadSkillTriggerIndex(skillsDir, paths);
+  for (const message of paths.errors) issues.push({
+    type: 'skill_root_error', severity: 'error', skill: 'skill roots', message,
+    action: 'Provide readable absolute directories in GBRAIN_SKILL_ROOTS or skillRoots',
+  });
 
   // Primary RESOLVER.md path is still needed for error messages and
   // --fix targets that have to point at a concrete file. When neither
@@ -341,13 +352,14 @@ export function checkResolvable(
       action: `Create ${suggested} with skill routing tables, or add 'triggers:' to each SKILL.md frontmatter`,
       fix: { type: 'create_stub', file: suggested },
     };
-    return {
+    if (loadedManifest.skills.length === 0) return {
       ok: false,
-      errors: [missingIssue],
+      errors: [...issues, missingIssue],
       warnings: [],
-      issues: [missingIssue],
+      issues: [...issues, missingIssue],
       summary: { total_skills: 0, reachable: 0, unreachable: 0, overlaps: 0, gaps: 0 },
     };
+    issues.push(missingIssue);
   }
 
   // Project to ResolverEntry[] shape that downstream code already
@@ -358,7 +370,7 @@ export function checkResolvable(
   // and lint stages that still take string content. Re-emits both
   // frontmatter-derived AND RESOLVER.md-derived entries as one table.
   const resolverContent = entriesToResolverContent(triggerEntries);
-  const { skills: manifest } = loadOrDeriveManifest(skillsDir);
+  const { skills: manifest } = loadedManifest;
 
   // Build lookup sets
   const resolverSkillPaths = new Set(
@@ -444,32 +456,49 @@ export function checkResolvable(
   // Missing files are likewise one issue per SKILL PATH, not per trigger row
   // (a skill with six triggers is one missing file, not six).
   const missingFiles = new Map<string, string>();
+  const invalidFiles = new Map<string, string>();
+  // Manifest-only missing entries must not disappear merely because they
+  // have no trigger row. Keep this independent from reachability.
+  for (const skill of manifest) {
+    const location = paths.locate(skill.path);
+    if (!location.path) {
+      if (location.error === 'file missing') missingFiles.set(`skills/${skill.path}`, join(skillsDir, skill.path));
+      else invalidFiles.set(`skills/${skill.path}`, location.error!);
+    }
+  }
   for (const entry of triggerEntries) {
     if (entry.isGStack) continue;
 
     // Resolver uses 'skills/query/SKILL.md', manifest uses 'query/SKILL.md'
     // The file on disk is at skillsDir + 'query/SKILL.md'
     const relPath = entry.skillPath.replace(/^skills\//, '');
-    const fullPath = join(skillsDir, relPath);
-
-    if (!existsSync(fullPath)) missingFiles.set(entry.skillPath, fullPath);
+    const location = paths.locate(relPath);
+    const fullPath = location.path;
+    if (!fullPath) {
+      if (location.error === 'file missing') missingFiles.set(entry.skillPath, join(skillsDir, relPath));
+      else invalidFiles.set(entry.skillPath, location.error!);
+    }
 
     // Check if in manifest
     const skillName = relPath.replace(/\/SKILL\.md$/, '');
     const inManifest = manifest.some(s => s.name === skillName);
-    if (!inManifest && existsSync(fullPath)) {
+    if (!inManifest && fullPath) {
       if (entry.source === 'resolver_md') orphans.set(skillName, entry.skillPath);
       else if (!orphans.has(skillName)) orphans.set(skillName, null);
     }
   }
+  for (const [skillPath, message] of invalidFiles) issues.push({
+    type: 'invalid_skill_path', severity: 'error', skill: skillPath, message,
+    action: 'Correct the skill reference or explicitly approve its root; no automatic write is offered',
+  });
   for (const [skillPath, fullPath] of missingFiles) {
     issues.push({
       type: 'missing_file',
       severity: 'error',
       skill: skillPath,
-      message: `RESOLVER.md references '${skillPath}' but the file doesn't exist`,
+      message: `Skill reference '${skillPath}' has no file in the approved roots`,
       action: `Create the skill at '${fullPath}' or remove the resolver entry`,
-      fix: { type: 'create_stub', file: fullPath },
+      fix: isWriteTargetContained(fullPath, skillsDir) ? { type: 'create_stub', file: fullPath } : undefined,
     });
   }
   for (const [skillName, resolverSkillPath] of orphans) {
@@ -502,8 +531,8 @@ export function checkResolvable(
   // Build trigger→skill map from SKILL.md frontmatter triggers
   const triggerMap = new Map<string, string[]>();
   for (const skill of manifest) {
-    const skillPath = join(skillsDir, skill.path);
-    if (!existsSync(skillPath)) continue;
+    const skillPath = paths.locate(skill.path).path;
+    if (!skillPath) continue;
     try {
       const content = readFileSync(skillPath, 'utf-8');
       const triggers = extractTriggers(content);
@@ -536,8 +565,8 @@ export function checkResolvable(
   let gaps = 0;
   for (const skill of manifest) {
     if (OVERLAP_WHITELIST.has(skill.name)) continue; // always-on don't need triggers
-    const skillPath = join(skillsDir, skill.path);
-    if (!existsSync(skillPath)) continue;
+    const skillPath = paths.locate(skill.path).path;
+    if (!skillPath) continue;
     try {
       const content = readFileSync(skillPath, 'utf-8');
       const triggers = extractTriggers(content);
@@ -548,12 +577,12 @@ export function checkResolvable(
           severity: 'warning',
           skill: skill.name,
           message: `Skill '${skill.name}' has no triggers: field in its SKILL.md frontmatter`,
-          action: `Add a triggers: array to the frontmatter of skills/${skill.path}`,
-          fix: {
+          action: `Add a triggers: array to the frontmatter at ${skillPath} through its owning editor`,
+          fix: paths.locate(skill.path).source === 'workspace' ? {
             type: 'add_frontmatter',
             file: skillPath,
             skill_path: `skills/${skill.path}`,
-          },
+          } : undefined,
         });
       }
     } catch {
@@ -567,8 +596,8 @@ export function checkResolvable(
   // This catches the common case where a skill delegates at a section
   // header but still contains prose mentioning the rule by name.
   for (const skill of manifest) {
-    const skillPath = join(skillsDir, skill.path);
-    if (!existsSync(skillPath)) continue;
+    const skillPath = paths.locate(skill.path).path;
+    if (!skillPath) continue;
     try {
       const content = readFileSync(skillPath, 'utf-8');
       const delegations = extractDelegationTargets(content);
@@ -599,7 +628,7 @@ export function checkResolvable(
   // Check 5 (W2, v0.17): structural routing eval. Surfaces as warnings
   // only — routing issues are advisory. Agents running under --strict
   // will fail on them; default runs see them as informational.
-  const loaded = loadRoutingFixtures(skillsDir);
+  const loaded = loadRoutingFixtures(skillsDir, paths);
   if (loaded.fixtures.length > 0) {
     const triggerIndex = indexResolverTriggers(resolverContent);
     const lintIssues = lintRoutingFixtures(loaded.fixtures, triggerIndex);
@@ -653,13 +682,19 @@ export function checkResolvable(
   // shipped without a real implementation — warning-severity in
   // default mode, error-promoted under --strict via D-CX-3.
   for (const skill of manifest) {
-    const skillDir = join(skillsDir, skill.path.replace(/\/SKILL\.md$/, ''));
+    const skillPath = paths.locate(skill.path).path;
+    if (!skillPath) continue;
+    const skillDir = join(skillPath, '..');
     const scriptDir = join(skillDir, 'scripts');
-    const candidates: string[] = [join(skillsDir, skill.path)];
-    if (existsSync(scriptDir)) {
+    const candidates: string[] = [skillPath];
+    if (existsSync(scriptDir) && paths.contains(scriptDir)) {
       try {
         for (const f of readdirSync(scriptDir)) {
-          if (f.match(/\.(ts|mjs|js|py)$/)) candidates.push(join(scriptDir, f));
+          if (f.match(/\.(ts|mjs|js|py)$/)) {
+            const ref = skill.path.replace(/SKILL\.md$/, `scripts/${f}`);
+            const candidate = paths.locate(ref, paths.locate(skill.path).root ?? undefined).path;
+            if (candidate) candidates.push(candidate);
+          }
         }
       } catch {
         // Skip unreadable script dir.
@@ -689,7 +724,7 @@ export function checkResolvable(
   // adopted writes_pages:/writes_to: yet. Any errors in the rules
   // doc itself surface as a single fatal-ish entry.
   try {
-    const filingReport = runFilingAudit(skillsDir);
+    const filingReport = runFilingAudit(skillsDir, paths);
     for (const issue of filingReport.issues) {
       issues.push(issue);
     }
