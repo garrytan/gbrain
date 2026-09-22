@@ -951,22 +951,25 @@ export async function verifySearchRoundTrip(
       chunk_text: string;
     }>(
       `WITH page_candidates AS (
-         SELECT cc.page_id, p.source_id, p.title, cc.chunk_text,
-                MAX(cc.id) OVER (PARTITION BY cc.page_id) AS newest_chunk_id,
-                ROW_NUMBER() OVER (
-                  PARTITION BY cc.page_id
-                  ORDER BY LENGTH(cc.chunk_text) DESC, cc.id DESC
-                ) AS page_rank
+         SELECT cc.page_id, MAX(cc.id) AS newest_chunk_id
            FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
           WHERE cc.embedding IS NOT NULL AND p.deleted_at IS NULL
             AND (cc.modality IS NULL OR cc.modality = 'text')
+          GROUP BY cc.page_id
+          ORDER BY newest_chunk_id DESC
+          LIMIT $1
        )
-       SELECT page_id, source_id, title, chunk_text
-         FROM page_candidates
-        WHERE page_rank = 1
-        ORDER BY newest_chunk_id DESC
-        LIMIT $1`,
+       SELECT pc.page_id, p.source_id, p.title, representative.chunk_text
+         FROM page_candidates pc
+         JOIN pages p ON p.id = pc.page_id
+         CROSS JOIN LATERAL (
+           SELECT cc.chunk_text FROM content_chunks cc
+            WHERE cc.page_id = pc.page_id AND cc.embedding IS NOT NULL
+              AND (cc.modality IS NULL OR cc.modality = 'text')
+            ORDER BY LENGTH(cc.chunk_text) DESC, cc.id DESC LIMIT 1
+         ) representative
+        ORDER BY pc.newest_chunk_id DESC`,
       [n],
     );
     if (rows.length === 0) {
@@ -978,7 +981,7 @@ export async function verifySearchRoundTrip(
         // Page diversity is enforced in SQL. Prefixing the page title and
         // using a wider body window prevents repeated review/import boilerplate
         // from turning several otherwise healthy pages into the same canary.
-        const title = row.title?.trim();
+        const title = row.title?.trim().slice(0, 160);
         const query = `${title ? `${title}\n` : ''}${row.chunk_text.slice(0, 512)}`;
         const vec = await embedQuery(query);
         const results = await engine.searchVector(vec, {

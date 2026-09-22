@@ -30,6 +30,7 @@ import {
   completeEmbeddingMigration,
   migrationSignature,
   MIGRATION_STATE_KEY,
+  verifySearchRoundTrip,
 } from '../../src/core/embedding-migration.ts';
 import { runSchemaTransition } from '../../src/core/retrieval-upgrade-planner.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
@@ -245,4 +246,35 @@ d('embedding migration (live Postgres + pgvector)', () => {
     await completeEmbeddingMigration(engine, plan);
     expect(await engine.getConfig(MIGRATION_STATE_KEY)).toBeFalsy();
   }, 120000);
+
+  test('smoke sampling chooses distinct pages with bounded queries on Postgres', async () => {
+    const slugs = ['smoke/page-a', 'smoke/page-b', 'smoke/page-c'];
+    const ids: number[] = [];
+    const queries: string[] = [];
+    currentDims = await columnDims();
+    const vector = new Array(currentDims).fill(0).map((_, i) => Math.cos(i) * 0.01 + 0.002);
+    __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
+      queries.push(...values);
+      return { values, warnings: [], embeddings: values.map(() => vector), usage: { tokens: values.length * 4 } };
+    });
+    for (const slug of slugs) {
+      await engine.putPage(slug, { type: 'note', title: `${slug} ${'title '.repeat(100)}`, compiled_truth: 'Migration smoke evidence.' });
+      ids.push(Number((await engine.getPage(slug))!.id));
+      await installFixtureChunks(engine, slug, [0, 1, 2].map(i => ({
+        chunk_index: i, chunk_source: 'compiled_truth', token_count: 200,
+        chunk_text: `${slug} representative ${i} ${'Useful migration evidence. '.repeat((i + 1) * 20)}`,
+      })));
+      await engine.executeRaw(
+        `UPDATE content_chunks SET embedding = $1::vector WHERE page_id = $2`,
+        [JSON.stringify(vector), ids[ids.length - 1]],
+      );
+    }
+    const result = await verifySearchRoundTrip(engine, { samples: 3 });
+    expect(result.samples.map(s => s.page_id).sort((a, b) => a - b)).toEqual(ids.sort((a, b) => a - b));
+    expect(queries).toHaveLength(3);
+    expect(queries.every(q => q.length <= 673)).toBe(true);
+    expect(queries.every(q => q.includes('representative 2'))).toBe(true);
+    for (const slug of slugs) expect(queries.some(q => q.startsWith(slug))).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('representative');
+  });
 });

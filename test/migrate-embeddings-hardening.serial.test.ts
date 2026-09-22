@@ -940,16 +940,17 @@ describe('marker integrity across surfaces', () => {
 describe('smoke-check miss + heartbeat resilience', () => {
   test('verifySearchRoundTrip samples distinct pages, not adjacent chunks from one page', async () => {
     const slugs = ['srm-diverse-a', 'srm-diverse-b', 'srm-diverse-c'];
+    const titles = slugs.map((_, i) => `Distinct canary ${i}${i === 1 ? ' long title'.repeat(100) : ''}`);
     try {
       for (const [pageIndex, slug] of slugs.entries()) {
         await engine.putPage(slug, {
           type: 'note',
-          title: `Distinct canary ${pageIndex}`,
+          title: titles[pageIndex],
           compiled_truth: `# Distinct canary ${pageIndex}\n\nbody`,
         });
         await engine.upsertChunks(slug, [0, 1, 2].map((chunkIndex) => ({
           chunk_index: chunkIndex,
-          chunk_text: `${'Recommendation: review this imported evidence. '.repeat(4)}distinct page ${pageIndex} chunk ${chunkIndex} durable retrieval evidence`,
+          chunk_text: `${'Recommendation: review this imported evidence. '.repeat(4)}distinct page ${pageIndex} chunk ${chunkIndex} durable retrieval evidence ${'More useful context. '.repeat((chunkIndex + 1) * 20)}`,
           chunk_source: 'compiled_truth',
           token_count: 30,
         })));
@@ -969,9 +970,11 @@ describe('smoke-check miss + heartbeat resilience', () => {
       expect(new Set(outcome.samples.map((sample) => sample.page_id)).size).toBe(3);
       expect(embeddedTexts).toHaveLength(3);
       for (const pageIndex of [0, 1, 2]) {
-        expect(embeddedTexts.some(text => text.startsWith(`Distinct canary ${pageIndex}\n`)
+        expect(embeddedTexts.some(text => text.startsWith(`${titles[pageIndex].slice(0, 160)}\n`)
           && text.includes(`distinct page ${pageIndex}`))).toBe(true);
       }
+      expect(embeddedTexts.every(text => text.length <= 673)).toBe(true);
+      expect(embeddedTexts.every(text => text.includes('chunk 2'))).toBe(true);
     } finally {
       await engine.executeRaw(
         `DELETE FROM content_chunks WHERE page_id IN (SELECT id FROM pages WHERE slug LIKE 'srm-diverse-%')`,
