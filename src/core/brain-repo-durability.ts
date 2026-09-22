@@ -167,6 +167,12 @@ export function maintainPushLog(): void {
 // the lock wait — env-only, incident/test escape hatch.
 function renderPushRetry(lockTimeoutRc: 0 | 1): string {
   return `# --- gbrain durability push-retry (generated; one source of truth) ---
+brain_remote_contains_head() {
+  _remote_branch="$1"
+  git fetch --quiet origin "$_remote_branch" >>"$_log" 2>&1 &&
+    git merge-base --is-ancestor HEAD FETCH_HEAD
+}
+
 brain_push() {
   _branch="$1"
   _managed_git="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
@@ -189,9 +195,15 @@ brain_push() {
   if git push origin "HEAD:$_branch" >>"$_log" 2>&1; then
     echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short HEAD 2>/dev/null)" >>"$_log"; return 0
   fi
+  if brain_remote_contains_head "$_branch"; then
+    echo "$(date -u +%FT%TZ) [push] ok-already-on-remote $_branch $(git rev-parse --short HEAD 2>/dev/null)" >>"$_log"; return 0
+  fi
   echo "$(date -u +%FT%TZ) [push] rejected; rebase-pull $_branch" >>"$_log"
-  if git pull --rebase origin "$_branch" >>"$_log" 2>&1 && git push origin "HEAD:$_branch" >>"$_log" 2>&1; then
+  if git pull --rebase --autostash origin "$_branch" >>"$_log" 2>&1 && git push origin "HEAD:$_branch" >>"$_log" 2>&1; then
     echo "$(date -u +%FT%TZ) [push] ok-after-rebase $_branch $(git rev-parse --short HEAD 2>/dev/null)" >>"$_log"; return 0
+  fi
+  if brain_remote_contains_head "$_branch"; then
+    echo "$(date -u +%FT%TZ) [push] ok-already-on-remote $_branch $(git rev-parse --short HEAD 2>/dev/null)" >>"$_log"; return 0
   fi
   git rebase --abort >/dev/null 2>&1 || true
   echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short HEAD 2>/dev/null) could not reach origin. Run: gbrain sources pull <id> && git push" >>"$_log"

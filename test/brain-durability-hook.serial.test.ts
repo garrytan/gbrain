@@ -5,7 +5,7 @@
  * (the hook works even with the committed helper deleted).
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync, spawn } from 'child_process';
@@ -154,6 +154,50 @@ describe('brain-commit-push.sh (D13 guarantee)', () => {
     expect(subjects).toContain('remote change');
     // Working tree is clean — the modification was committed, not stranded.
     expect(git(work, 'status', '--porcelain', 'README.md')).toBe('');
+  });
+
+  test('#5138 — accepts a rejected push when the commit already landed remotely', () => {
+    rmSync(join(work, '.git', 'hooks', 'post-commit'));
+    writeFileSync(join(work, 'pending.md'), 'pending\n');
+    git(work, 'add', 'pending.md');
+    git(work, 'commit', '-qm', 'pending');
+    const head = git(work, 'rev-parse', 'HEAD');
+    writeFileSync(join(work, 'README.md'), 'unrelated dirty edit\n');
+
+    // Simulate the real race: another pusher lands this exact commit while our
+    // push still returns a stale expected-ref rejection. The dirty edit makes
+    // the old pull --rebase fallback fail, producing the false LOCAL-ONLY alarm.
+    const fakeBin = join(root, 'fake-bin');
+    mkdirSync(fakeBin, { recursive: true });
+    const fakeGit = join(fakeBin, 'git');
+    const marker = join(root, 'push-rejected-once');
+    writeFileSync(fakeGit, `#!/usr/bin/env bash
+if [ "\${1:-}" = push ] && [ ! -e "$GBRAIN_FAKE_PUSH_MARKER" ]; then
+  : >"$GBRAIN_FAKE_PUSH_MARKER"
+  "$GBRAIN_REAL_GIT" push origin HEAD:main >/dev/null
+  echo "simulated stale expected-ref rejection" >&2
+  exit 1
+fi
+exec "$GBRAIN_REAL_GIT" "$@"
+`);
+    chmodSync(fakeGit, 0o755);
+
+    execFileSync('bash', [join(work, 'scripts', 'brain-commit-push.sh'), '--push-only', 'main'], {
+      cwd: work,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
+        GBRAIN_REAL_GIT: Bun.which('git')!,
+        GBRAIN_FAKE_PUSH_MARKER: marker,
+      },
+    });
+
+    expect(originHead(bare)).toBe(head);
+    const log = readFileSync(join(process.env.HOME!, '.gbrain', 'brain-push.log'), 'utf-8');
+    expect(log).toContain('ok-already-on-remote main');
+    expect(log).not.toContain('LOCAL-ONLY, NEEDS ATTENTION');
+    expect(readFileSync(join(work, 'README.md'), 'utf-8')).toBe('unrelated dirty edit\n');
   });
 });
 
