@@ -15,16 +15,16 @@
 
 // '/readme' — a README is a folder descriptor, not a knowledge node;
 // nothing is expected to wikilink to it.
-const AUTO_SUFFIX_PATTERNS = ['/_index', '/log', '/readme'];
+export const AUTO_SUFFIX_PATTERNS = ['/_index', '/log', '/readme'];
 
 // 'readme' / 'index' — root-level folder descriptors, same rationale as the
 // '/readme' suffix. 'schema' — written by the schema pack on init; 'log' —
 // the root brain log.
-const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude', 'readme', 'index', 'schema', 'log']);
+export const PSEUDO_SLUGS = new Set(['_atlas', '_index', '_stats', '_orphans', '_scratch', 'claude', 'readme', 'index', 'schema', 'log']);
 
-const RAW_SEGMENT = '/raw/';
+export const RAW_SEGMENT = '/raw/';
 
-const DENY_PREFIXES = [
+export const DENY_PREFIXES = [
   'output/',
   'outputs/',
   'dashboards/',
@@ -39,7 +39,7 @@ const DENY_PREFIXES = [
   'life/events/',
 ];
 
-const FIRST_SEGMENT_EXCLUSIONS = new Set([
+export const FIRST_SEGMENT_EXCLUSIONS = new Set([
   'scratch',
   'thoughts',
   'catalog',
@@ -55,9 +55,9 @@ const FIRST_SEGMENT_EXCLUSIONS = new Set([
   'inbox',
 ]);
 
-const ROOT_DATE_SLUG = /^\d{4}-\d{2}-\d{2}(?:-.+)?$/;
+export const ROOT_DATE_SLUG = /^\d{4}-\d{2}-\d{2}(?:-.+)?$/;
 
-function isAgentWorkspaceConvention(slug: string): boolean {
+export function isAgentWorkspaceConvention(slug: string): boolean {
   if (!slug.startsWith('agents/')) return false;
   if (slug.includes('/memory/dreaming/')) return true;
   return /^agents\/[^/]+\/(?:agents|identity|soul|tools|user|heartbeat|dreams|dormant)$/.test(slug);

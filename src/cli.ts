@@ -1811,6 +1811,25 @@ export function formatResult(
         `Stale pages: ${h.stale_pages}`,
         `Orphan pages: ${h.orphan_pages}`,
       ];
+      if (h.pages_by_surface) {
+        const s = h.pages_by_surface;
+        const unknownPart = s.unknown ? `, ${s.unknown} unknown` : '';
+        lines.push(
+          `Pages by surface: ${s.prose} prose, ${s.code} code, ${s.image} image, ${s.raw_capture} raw capture${unknownPart}`,
+        );
+      }
+      if (h.trusted_graph_coverage !== undefined) {
+        if (h.trusted_graph_coverage != null) {
+          lines.push(
+            `Trusted graph coverage: ${(h.trusted_graph_coverage * 100).toFixed(1)}%` +
+              ` (${h.trusted_graph_covered_pages}/${h.trusted_graph_eligible_pages} knowledge pages)`,
+          );
+        } else {
+          lines.push(
+            `Trusted graph coverage: n/a (0 eligible knowledge pages — nothing to grade)`,
+          );
+        }
+      }
       // gbrain#4147: null = below the small-N floor — say so instead of
       // rendering a misleading hard 0%/100%.
       if (h.link_coverage != null) {
