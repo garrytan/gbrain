@@ -16,7 +16,8 @@
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
-import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
+import { tryAliasExact } from './entities/resolve.ts';
+import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE, SLUG_MARK_STRIP_RE } from './cjk.ts';
 // #3994: created stubs route through serializeMarkdown + importFromContent
 // (the same parse→chunk→embed pipeline put_page uses) instead of a bare
 // engine.putPage, so fresh entity pages land in the retrieval surface
@@ -98,7 +99,7 @@ export function slugifyEntity(name: string, type: 'person' | 'company'): string 
   const slug = name
     .replace(/['‘’]/g, '')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(SLUG_MARK_STRIP_RE, '')
     .normalize('NFC')
     .replace(SLUG_VARIATION_SELECTORS_RE, '')
     .toLowerCase()
@@ -130,7 +131,23 @@ export async function enrichEntity(
 ): Promise<EnrichmentResult> {
   const candidateSlug = slugifyEntity(request.entityName, request.entityType);
   const sourceId = opts?.sourceId ?? 'default';
-  const slug = await engine.resolveSlugWithAlias(candidateSlug, sourceId);
+  // ADR-0001: two spellings of one Russian name slugify APART on purpose, and
+  // the alias layer is what merges them. Consult it before minting: a page
+  // already claiming this normalized name owns the entity whatever spelling
+  // this particular mention used, so the second spelling appends to it instead
+  // of forking a twin. resolveSlugWithAlias (slug_aliases: rename redirects)
+  // is a different table and cannot see name spellings — both are needed.
+  // Fails closed to the old behaviour: a missing/empty alias table returns null.
+  //
+  // Namespace gate: page_aliases is brain-wide and type-blind — ANY page may
+  // claim ANY name (a `projects/атлас` note with `aliases: [Атлас]`). An
+  // Entity lives under people/ or companies/ and nowhere else, so a hit
+  // outside this entity's own namespace is not this entity; taking it would
+  // append the mention's timeline entry + backlink to an unrelated page.
+  const namespace = `${candidateSlug.split('/')[0]}/`;
+  const aliasHit = await tryAliasExact(engine, sourceId, request.entityName);
+  const aliasSlug = aliasHit?.startsWith(namespace) ? aliasHit : null;
+  const slug = aliasSlug ?? await engine.resolveSlugWithAlias(candidateSlug, sourceId);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
   const scope = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
@@ -178,9 +195,22 @@ export async function enrichEntity(
       created: new Date().toISOString().split('T')[0],
       source: request.sourceSlug,
       tier,
+      // ADR-0001 (TRUSTED path only): the stub claims its own display name as
+      // an alias, so the NEXT mention spelled differently resolves here
+      // through tryAliasExact above. Without this row an extraction-born
+      // entity has no alias at all and the yo/ye fold merges nothing.
+      // Projected into page_aliases by importFromContent; the fail-open
+      // putPage fallback below does NOT project aliases, so a stub written
+      // through it stays unmerged until re-import.
+      //
+      // A quarantined stub deliberately publishes nothing: page_aliases steers
+      // exact-lookup, hybrid search and resolveEntityRef for the whole brain,
+      // so an unreviewed extractor guess would get a vote on resolution
+      // everywhere — the same failure the authoritative-write gate refuses.
+      // Its two spellings stay forked until review promotes them.
       // issue #160 quarantine lane: stubs extracted from untrusted input
       // carry provenance + unverified markers until the owner reviews them.
-      ...(trusted ? {} : quarantineMarkers()),
+      ...(trusted ? { aliases: [title] } : quarantineMarkers()),
     };
     try {
       // #3994: canonical import pipeline so the stub is chunked (+ embedded

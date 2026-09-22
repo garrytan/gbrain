@@ -164,6 +164,7 @@ detail on demand.)
 | bulk-command progress wiring | `docs/progress-events.md` |
 | eval methodology / metrics | `docs/eval/` |
 | brains vs sources / topology | `docs/architecture/brains-and-sources.md`, `topologies.md` |
+| slug grammar / Cyrillic (`й`, `ё`) / when a name's spelling forks a page | `docs/adr/0001-cyrillic-slugs-keep-i-kratkoye-and-yo.md` + `CONTEXT.md` (Brain / Source / Entity / Slug / Alias vocabulary) |
 | google connector (Gmail/Calendar/Contacts, OAuth) / credential vault | `docs/guides/google-connect.md` + the `creds/*` + `google/*` entries in `KEY_FILES.md` |
 | open loops / `gbrain waiting` / commitment extraction | `docs/guides/open-loops.md` + the `loops*` entries in `KEY_FILES.md` |
 | skill routing | `skills/RESOLVER.md` |

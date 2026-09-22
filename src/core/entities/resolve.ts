@@ -23,6 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
+import { SLUG_WORD_CHARS, SLUG_MARK_STRIP_RE } from '../cjk.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { isUndefinedTableError } from '../utils.ts';
 
@@ -106,18 +107,29 @@ function fallbackSlugify(trimmed: string): string {
   return slugify(trimmed);
 }
 
+let aliasExactWarned = false;
+
 /**
- * Alias-exact arm (v0.46.15, #3730): unambiguous single-slug page_aliases hit,
- * verified against LIVE pages — page_aliases has no FK to pages, so stale
- * alias rows for deleted/renamed pages linger (outside-voice R2-8).
- * Liveness is filtered BEFORE uniqueness (codex ship-review): a stale sibling
- * row must not veto the sole live target — that fall-through would land on
+ * Alias-exact arm (v0.46.15, #3730): normalize `raw` and return the ONE live
+ * page claiming that normalized name, or null — ambiguous, absent, or the
+ * alias table is missing; every failure falls through rather than throwing.
+ *
+ * Hits are verified against LIVE pages: page_aliases has no FK to pages, so
+ * alias rows for deleted/renamed pages linger (outside-voice R2-8). Liveness
+ * is filtered BEFORE uniqueness (codex ship-review) — a stale sibling row must
+ * not veto the sole live target, since that fall-through lands on
  * fuzzy/slugify and could recreate a phantom slug on a WRITE path.
  * Fail-open on undefined-table (pre-v110 brains have no page_aliases table);
  * other errors warn once per process so degradation isn't silent.
+ *
+ * Exported for enrichment-service, which must consult the alias layer BEFORE
+ * minting an entity page: ADR-0001 slugs "Pyotr" and "Petr" apart on purpose,
+ * and this is the layer that merges them back onto one Entity. Note for that
+ * caller: the index is brain-wide and type-blind — ANY page may claim ANY
+ * name — so a caller that only accepts pages from one namespace must filter
+ * the result itself. This function deliberately does not guess the namespace.
  */
-let aliasExactWarned = false;
-async function tryAliasExact(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
+export async function tryAliasExact(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
   const norm = normalizeAlias(raw);
   if (!norm) return null;
   try {
@@ -475,6 +487,12 @@ async function tryFuzzyMatch(
   return null;
 }
 
+// Same keep-set as sync.ts's slugifySegment and enrichment-service.ts's
+// slugifyEntity (single grammar, see cjk.ts).  Was /[^a-z0-9]+/ - ASCII-only,
+// so EVERY name in a non-Latin script slugified to the empty string and all of
+// them collided on one empty resolve key.
+const SLUGIFY_RESOLVE_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}]`, 'gu');
+
 /**
  * Deterministic slugify: lowercase, fold accents and stroke letters to their
  * base letter, replace non-alphanumerics with hyphens, collapse repeated
@@ -494,10 +512,13 @@ export function slugify(raw: string): string {
       // NFKD decomposes accents into combining marks (U+0300..U+036F);
       // strip them before replacing the rest with hyphens so "è" → "e",
       // not "e" + "-".
-      .replace(/[̀-ͯ]/g, ''),
+      .replace(SLUG_MARK_STRIP_RE, '')
+      // Recompose so a kept Cyrillic mark becomes its single code point again
+      // before the keep-set sweep sees it (ADR-0001).
+      .normalize('NFC'),
   );
   return folded
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(SLUGIFY_RESOLVE_KEEP_RE, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
