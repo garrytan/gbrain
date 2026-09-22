@@ -16,6 +16,7 @@ import { sourceScopeOpts } from './context.ts';
 import { unverifiedExtractionFragment, isUnverifiedExtraction, EXTRACTION_STATUS_KEY, STATUS_VERIFIED } from '../extraction-review.ts';
 import { buildVisibilityClause } from '../search/sql-ranking.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { normalizeAliasList } from '../search/alias-normalize.ts';
 
 // ---------------------------------------------------------------------------
 // Extraction quarantine lane (issue #160)
@@ -223,20 +224,49 @@ const extraction_review: Operation = {
         continue;
       }
       if (action === 'promote') {
+        // ADR-0001: enrichEntity withholds a quarantined stub's self-claimed
+        // alias, because page_aliases steers resolution brain-wide and an
+        // unreviewed extractor guess must not get a vote there. That gate is a
+        // DEFERRAL, and THIS is the moment it lifts — so promotion publishes
+        // the alias the stub could not. Without it the gate would be a
+        // cancellation: trusted extraction needs BOTH a local caller and
+        // --trusted-extraction, so quarantine is the DEFAULT path, and the
+        // ё/е fold would merge nothing on a normal install, ever.
+        //
+        // Union, not overwrite: an owner who hand-added aliases before
+        // reviewing keeps them. normalizeAliasList dedupes post-normalization.
+        const declared = Array.isArray(page.frontmatter?.aliases)
+          ? (page.frontmatter.aliases as unknown[]).filter((a): a is string => typeof a === 'string')
+          : [];
+        const title = typeof page.title === 'string' ? page.title.trim() : '';
+        const aliases = [...new Set(title ? [...declared, title] : declared)];
+
         // Frontmatter-only flip via a targeted JSONB merge — NOT putPage,
         // whose upsert would reset non-carried columns (page_kind →
-        // 'markdown', content_hash, …) for a change that only touches one
-        // frontmatter key. provenance stays 'auto-extracted' as the audit
+        // 'markdown', content_hash, …) for a change that only touches
+        // frontmatter keys. provenance stays 'auto-extracted' as the audit
         // trail of HOW the page came to exist; status → 'verified' records
-        // the owner's call. jsonb_build_object binds as text (no
-        // JSON.stringify-into-::jsonb hazard); identical on both engines.
-        await maintenanceTransaction(ctx.engine, tx => tx.executeRaw(
-          `UPDATE pages
-           SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || jsonb_build_object($1::text, $2::text),
-               updated_at = now()
-           WHERE slug = $3 AND source_id = $4`,
-          [EXTRACTION_STATUS_KEY, STATUS_VERIFIED, slug, page.source_id],
-        ));
+        // the owner's call. jsonb_build_object binds as text; the alias array
+        // binds through $5::text::jsonb (text in, cast parses) — the
+        // sanctioned positional form, never JSON.stringify into a bare
+        // ::jsonb. Identical on both engines. Both the status flip and the
+        // alias-index write happen in the SAME maintenance transaction: the
+        // stub has no file on disk (importFromContent wrote it straight to
+        // the DB from generated markdown), so no later sync re-import would
+        // project a missed alias write for us, and a crash between the two
+        // writes must not leave a verified stub with no alias claimed.
+        await maintenanceTransaction(ctx.engine, async tx => {
+          await tx.executeRaw(
+            `UPDATE pages
+             SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
+                               || jsonb_build_object($1::text, $2::text)
+                               || jsonb_build_object('aliases', $5::text::jsonb),
+                 updated_at = now()
+             WHERE slug = $3 AND source_id = $4`,
+            [EXTRACTION_STATUS_KEY, STATUS_VERIFIED, slug, page.source_id, JSON.stringify(aliases)],
+          );
+          await tx.setPageAliases(slug, page.source_id, normalizeAliasList(aliases));
+        });
         results.push({ slug, status: 'promoted' });
       } else {
         await maintenanceTransaction(ctx.engine, tx => tx.softDeletePage(slug, { sourceId: page.source_id }));

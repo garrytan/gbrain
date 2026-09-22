@@ -16,6 +16,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { hasDatabase, setupLegacyEmbeddingDB, teardownDB } from './helpers.ts';
 import { enrichEntity } from '../../src/core/enrichment-service.ts';
+import { normalizeAlias } from '../../src/core/search/alias-normalize.ts';
 import { isUnverifiedExtraction, STATUS_VERIFIED, EXTRACTION_STATUS_KEY } from '../../src/core/extraction-review.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 
@@ -99,6 +100,17 @@ d('extraction quarantine lane (live Postgres)', () => {
     expect(out.results[0].status).toBe('promoted');
     const promoted = await engine.getPage('people/pg-fake');
     expect(promoted!.frontmatter[EXTRACTION_STATUS_KEY]).toBe(STATUS_VERIFIED);
+
+    // The alias promotion publishes rides a positional $N::text::jsonb bind.
+    // PGLite cannot surface the postgres.js double-encode bug, so THIS is the
+    // backstop: a double-encoded array lands as a jsonb string scalar, and
+    // both assertions below fail (frontmatter.aliases is not an array; the
+    // projected index row never appears).
+    expect(Array.isArray(promoted!.frontmatter.aliases)).toBe(true);
+    expect(promoted!.frontmatter.aliases).toContain(promoted!.title);
+    const aliasHits = (await engine.resolveAliases([normalizeAlias(promoted!.title)], { sourceId: 'default' }))
+      .get(normalizeAlias(promoted!.title)) ?? [];
+    expect(aliasHits.map((h) => h.slug)).toContain('people/pg-fake');
 
     await enrichEntity(engine, { entityName: 'Pg Reject', entityType: 'person', context: 'c', sourceSlug: 's' });
     const rej = (await operationsByName['extraction_review']!.handler(ctx({ remote: false }), {
