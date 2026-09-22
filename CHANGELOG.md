@@ -2,6 +2,54 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.51.7.0] - 2026-09-22
+
+**A resident brain server can be told to poll its database less often.**
+
+A `gbrain serve` that sits idle still checks its write queue several times a
+second. Against a local database that costs nothing. Against a managed Postgres
+it is billed traffic that accumulates whether or not you are working, and an
+operator who noticed it had no way to slow it down without editing source.
+
+`GBRAIN_PERSISTENCE_POLL_MS` now sets that interval. Leave it unset and nothing
+changes: the built-in 250ms default stands exactly as before.
+
+The value is deliberately bounded. Nothing wakes the server when a write
+arrives, so a synchronous write waits for the next poll, and the budget for one
+is five seconds. The ceiling sits under that budget, because a longer interval
+would fail writes outright rather than merely delay them. Anything that is not
+a whole number of milliseconds inside the supported range is refused with a
+one-line warning and the default is kept, so a value like `60s` cannot quietly
+become a 60-millisecond poll that runs busier than the default it replaced.
+
+| Value | Result |
+|---|---|
+| unset | 250ms default, unchanged |
+| `3000` | polls every 3 seconds |
+| `60s`, `3001`, `2147483648` | refused, warned once, default kept |
+
+### To take advantage of v0.51.7.0
+
+Widen the interval for a resident server on a metered database:
+
+```bash
+export GBRAIN_PERSISTENCE_POLL_MS=3000
+```
+
+**Say to your agent:** *"make the brain server poll my database less often"* —
+no skill backs this one, so your agent sets `GBRAIN_PERSISTENCE_POLL_MS` on the
+environment your `gbrain serve` runs in.
+
+### Itemized changes
+
+- Wire the consumer's existing `pollMs` option to `GBRAIN_PERSISTENCE_POLL_MS`
+  in `startPersistenceConsumer`; unset or malformed keeps the 250ms default.
+- Bound the accepted value to whole milliseconds in [50, 3000] — under
+  `waitForWrite`'s budget — and warn once when a value is refused.
+- Cover the accepted window and every rejection class, including the
+  timer-overflow value Bun clamps to 1ms and the magnitude that would turn the
+  consumer's recovery backoff into `Infinity`.
+
 ## [0.51.6.0] - 2026-09-21
 
 **A temporary brain gets one safe second chance to start.**
