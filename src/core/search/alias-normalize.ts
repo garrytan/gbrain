@@ -24,6 +24,11 @@ export function normalizeAlias(raw: string): string {
   return raw
     .normalize('NFKC')
     .toLowerCase()
+    // ADR-0001 companion: the SLUG keeps yo (u+0451) so it never lies about
+    // what was written; the ALIAS layer is where yo and ye (u+0435) merge, so
+    // the two spellings of one Russian name resolve to ONE Entity.  Runs after
+    // toLowerCase so the uppercase form is already folded in.
+    .replace(/ё/g, 'е')
     .replace(/[\s ]+/g, ' ')
     .trim()
     // strip a single layer of wrapping quotes/brackets left by loose YAML

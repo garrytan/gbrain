@@ -65,3 +65,10 @@ graphify-out/
 # Local eval run ledger (gbrain eval run-all / longmemeval / canary --record);
 # each machine keeps its own, so it is never committed.
 /.gbrain-evals/eval-results.jsonl
+
+# Local code-intelligence + brain state, per-clone and machine-specific.
+# .codegraph/ is the CodeGraph SQLite index (rebuilt by its file watcher);
+# .gbrain/ is this clone's local brain (PGLite data + config). Both are
+# regenerated on demand and neither is ever committed.
+.codegraph/
+.gbrain/

@@ -11,7 +11,7 @@
  *   pathToSlug()  →  convert file paths to page slugs
  */
 
-import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
+import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE, SLUG_MARK_STRIP_RE } from './cjk.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
@@ -627,7 +627,7 @@ const SLUGIFY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}.\\s_\\-]`, 'gu');
 export function slugifySegment(segment: string): string {
   return segment
     .normalize('NFD')                     // Decompose accented chars
-    .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    .replace(SLUG_MARK_STRIP_RE, '') // Fold Latin accents; keep Cyrillic i-kratkoye/yo (ADR-0001)
     // #3700: Hebrew niqqud (vowel points) + cantillation are optional
     // diacritics \u2014 the same word appears pointed and bare across filenames
     // and must land on ONE slug (the Hebrew analog of caf\u00e9 \u2192 cafe). Scoped

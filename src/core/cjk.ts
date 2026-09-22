@@ -52,6 +52,27 @@ export const SLUG_WORD_CHARS = '\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}\\p{N}';
 export const SLUG_VARIATION_SELECTORS_RE = /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu;
 
 /**
+ * Combining-mark strip for slug grammars (ADR-0001).
+ *
+ * Strips every U+0300-U+036F combining mark so Latin accents fold to their
+ * base letter, with ONE exception: U+0306 (breve) and U+0308 (diaeresis)
+ * survive on a Cyrillic base, because there they are not accents but halves
+ * of the letters й (и+U+0306) and ё (е+U+0308). A Cyrillic acute (U+0301,
+ * the stress mark in dictionaries) still folds, so "моло́ко" and "молоко"
+ * keep landing on one slug. Callers recompose with `.normalize('NFC')`.
+ *
+ * Scoped like the #3700 Hebrew-niqqud carve-out: one script's exception to
+ * the general fold, not a rewrite of it. The FOUR slug grammars share it —
+ * sync.ts's slugifySegment, enrichment-service.ts's slugifyEntity,
+ * entities/resolve.ts's slugify and link-extraction.ts's normalizeBasename.
+ * The last one is slugifySegment's basename twin (#4985): if it strips marks
+ * differently, a page's slug and its basename index key diverge and every
+ * `[[wikilink]]` to a name containing й or ё stops resolving.
+ */
+export const SLUG_MARK_STRIP_RE =
+  /(?<!\p{Script=Cyrillic})[\u0300-\u036F]|(?<=\p{Script=Cyrillic})[\u0300-\u0305\u0307\u0309-\u036F]/gu;
+
+/**
  * Page-slug segment grammar (no anchors): word-char lead, then word-char or
  * hyphen continuation. Single source for validatePageSlug (operations.ts),
  * SlugRegistry's SLUG_RE, and the dream-cycle SUMMARY_SLUG_RE so every slug

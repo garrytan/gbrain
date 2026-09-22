@@ -21,7 +21,7 @@ import { isValidSourceId } from './source-id.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { isMaterializedMarkerLine } from './timeline-marker.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
-import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
+import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE, SLUG_MARK_STRIP_RE } from './cjk.ts';
 import { foldNonDecomposingLatin } from './latin-fold.ts';
 import { isIdentityEntity, sameEntityName } from './entities/resolve.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
@@ -1462,7 +1462,7 @@ export function normalizeBasename(s: string): string {
   // the ASCII page slug does not, and the lookup misses in silence:
   // `[[\u0110\u1ee9c Example]]` keyed `\u0111uc-example` and never found `people/duc-example`.
   const folded = foldNonDecomposingLatin(
-    s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC')
+    s.normalize('NFD').replace(SLUG_MARK_STRIP_RE, '').normalize('NFC')
       .replace(SLUG_VARIATION_SELECTORS_RE, '').toLowerCase(), // twin of slugifySegment's strip (#4985)
   );
   return folded.replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
