@@ -59,6 +59,17 @@ export const google: Recipe = {
       // staying efficient. chars_per_token ~4 matches Gemini's SentencePiece
       // density on English. Tunable; recursion stays the backstop.
       max_batch_tokens: 20_000,
+      // batchEmbedContents rejects more than 100 inputs per request
+      // ("BatchEmbedContentsRequest.requests: at most 100 requests can be in
+      // one batch"). A token budget CANNOT bound item count — short inputs
+      // stay far under 20k tokens while blowing past 100 items — so the cap
+      // has to be declared separately or capBatchItems never splits. Without
+      // it, a page holding more than 100 facts failed its extract_facts batch
+      // embed WHOLESALE and every one of those facts landed with a NULL
+      // embedding, which silently drops them out of consolidate's clustering
+      // and remember's semantic dedup. Same class as the DashScope cap below
+      // it in dashscope.ts.
+      max_batch_items: 100,
       chars_per_token: 4,
       safety_factor: 0.8,
     },
