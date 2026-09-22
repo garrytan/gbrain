@@ -11,7 +11,8 @@
     "schema-unify": "type unification is a brain-owner migration; PGLite --follow guidance + doc links fixed in sweep",
     "skill-optimizer": "skillopt ships in the gbrain CLI; sweep added the read-only-snapshot note (optimize copies in your own skills dir)",
     "db-repair": "plugin users ARE the brain host — the GBRAIN_DB_ACCESS marker loop needs its repair skill installed by default or the availability feature defeats itself",
-    "postgres-adopt": "plugin users ARE the brain host — engine detection + Postgres-first install/migration is a host-owner activity the harness lane ships by default"
+    "postgres-adopt": "plugin users ARE the brain host — engine detection + Postgres-first install/migration is a host-owner activity the harness lane ships by default",
+    "remote-mcp": "plugin users ARE the brain host — publishing the local serve over Tailscale and granting remote clients is a host-owner activity the harness lane ships by default"
   },
   "base_exclusions": {
     "testing": "gbrain-repo development skill — instructs running this repository's own test suite; meaningless-to-harmful in a plugin snapshot",

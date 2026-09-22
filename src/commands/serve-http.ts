@@ -20,6 +20,7 @@ import { randomBytes, createHash, createHmac } from 'crypto';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { createMetricsCounters, metricsTrackingMiddleware, renderPrometheusMetrics } from './serve-http-metrics.ts';
+import { ADMIN_TOKEN_SHAPE } from '../core/serve-service.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -382,7 +383,7 @@ export function resolveBootstrapToken(
     return { kind: 'ok', token: randomBytesHex(), fromEnv: false };
   }
   const trimmed = envValue.trim();
-  if (!/^[A-Za-z0-9_-]{32,}$/.test(trimmed)) {
+  if (!ADMIN_TOKEN_SHAPE.test(trimmed)) {
     return {
       kind: 'error',
       message:

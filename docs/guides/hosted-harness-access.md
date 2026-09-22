@@ -21,17 +21,22 @@ Do not claim that generated instructions or a job ID prove a working integration
 
 ## 1. Grant access on the brain host
 
-The owner needs a current GBrain runtime and an initialized brain. Stop older servers and workers while applying the grant migration; do not run mixed authorization implementations. Use your normal upgrade and maintenance procedure before restarting them. The HTTPS endpoint comes from your [server deployment](../mcp/DEPLOY.md).
+The owner needs a current GBrain runtime and an initialized brain. Stop older servers and workers while applying the grant migration; do not run mixed authorization implementations. Use your normal upgrade and maintenance procedure before restarting them.
+
+**Get the HTTPS endpoint.** When the brain runs on the owner's own computer, `gbrain mcp expose` publishes `gbrain serve --http` on the owner's Tailscale tailnet with HTTPS, keeps it running as a user service, and writes the admin bootstrap token to `~/.gbrain/serve/admin-token`. Tailnet-only reach (the default) serves the owner's own devices; agents that run in a vendor's cloud — Grok Bot, Muse, ChatGPT, Claude.ai, Perplexity — need `gbrain mcp expose --funnel`. The printed MCP URL looks like `https://your-machine.your-tailnet.ts.net/mcp`. Steps, flags and troubleshooting: [Use your brain from anywhere over MCP](remote-mcp.md). Other HTTPS fronts (ngrok, a cloud host) come from your [server deployment](../mcp/DEPLOY.md); substitute their URL below.
+
+**Say to your agent:** *"use my brain over mcp"* — *"connect grok bot to my brain"* — the `remote-mcp` skill publishes, then grants.
 
 For ordinary memory, choose `memory-writer`:
 
 ```bash
 gbrain mcp grant agent-example --harness codex --profile memory-writer \
-  --source default --url https://brain.example.com/mcp \
+  --source default --url https://your-machine.your-tailnet.ts.net/mcp \
+  --admin-token-file ~/.gbrain/serve/admin-token \
   --credentials-out /absolute/private/agent-example.json --json
 ```
 
-Replace `codex` with the actual adapter identifier. For a running PGLite server, add `--admin-token-file /absolute/private/admin-token`; this uses the server's authenticated admin API and existing database connection. An ordinary OAuth token or the endpoint URL cannot provision access. Do not open the live PGLite database from a second process.
+Replace `codex` with the actual adapter identifier. `--admin-token-file` provisions the client through the running server's authenticated admin API and its existing database connection — `~/.gbrain/serve/admin-token` is the file `gbrain mcp expose` maintains; for a server you started yourself, point it at the file holding your `GBRAIN_ADMIN_BOOTSTRAP_TOKEN`. It is required for a running PGLite server (the only way in while `serve` holds the single-writer lock) and works for Postgres too. An ordinary OAuth token or the endpoint URL cannot provision access. Do not open the live PGLite database from a second process.
 
 Use `--dry-run` first to inspect a proposed grant without creating a client. Default output is redacted. The credential handoff is written with private permissions before any optional client installation or verification. Transfer it through a private file channel, then retain only the copies you need. Uploading credentials or backups is never automatic.
 
@@ -55,7 +60,7 @@ Snapshot-bound clients write through approved MCP operations such as `remember`,
 Install GBrain there if needed, using the documented GitHub/Bun distribution. Then:
 
 ```bash
-gbrain connect https://brain.example.com/mcp --harness codex \
+gbrain connect https://your-machine.your-tailnet.ts.net/mcp --harness codex \
   --credentials-file /absolute/private/agent-example.json --install
 ```
 
@@ -71,7 +76,7 @@ Run the server verifier from the harness environment:
 
 ```bash
 gbrain mcp verify --client CLIENT_ID --harness codex \
-  --url https://brain.example.com/mcp \
+  --url https://your-machine.your-tailnet.ts.net/mcp \
   --credentials-file /absolute/private/agent-example.json --json
 ```
 
@@ -153,7 +158,8 @@ Remove a managed native configuration with the same private handoff and `gbrain 
 
 | Symptom | Next action |
 | --- | --- |
-| PGLite is busy | Use authenticated host administration or wait for the current owner to close. Never remove a live lock. |
+| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. |
+| Published URL unreachable from the agent | On the host, `gbrain mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). |
 | Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. |
 | `grant_conflict` | Fetch the new revision and preview again. |
 | Delegation missing | Inspect repair reasons and explicitly bind supported tools, an active source, path policy, and positive concurrency. |

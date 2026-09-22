@@ -10,7 +10,7 @@
 
 import { describe, it, expect } from 'bun:test';
 import { spawnSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
@@ -29,7 +29,7 @@ interface RunResult {
   stderr: string;
 }
 
-function runLintIn(files: FakeFile[], allowlist: string[] = []): RunResult {
+function runLintIn(files: FakeFile[], allowlist: string[] = [], env: Record<string, string> = {}): RunResult {
   const dir = mkdtempSync(join(tmpdir(), 'lint-isolation-'));
   mkdirSync(join(dir, 'test'), { recursive: true });
   mkdirSync(join(dir, 'scripts'), { recursive: true });
@@ -49,7 +49,7 @@ function runLintIn(files: FakeFile[], allowlist: string[] = []): RunResult {
   const r = spawnSync('bash', [LINT_SH, 'test'], {
     cwd: dir,
     encoding: 'utf-8',
-    env: { ...process.env },
+    env: { ...process.env, ...env },
   });
   return { status: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 }
@@ -65,6 +65,30 @@ describe('check-test-isolation.sh', () => {
       ]);
       expect(r.status).toBe(0);
       expect(r.stdout).toContain('check-test-isolation: OK');
+    });
+
+    it('batches candidate scans instead of starting grep for every clean file', () => {
+      const bin = mkdtempSync(join(tmpdir(), 'lint-grep-count-'));
+      const log = join(bin, 'calls');
+      writeFileSync(join(bin, 'grep'), `#!/usr/bin/env bash\nprintf 'grep\\n' >> "$GREP_CALL_LOG"\nexec "$REAL_GREP" "$@"\n`, { mode: 0o755 });
+      try {
+        const files = Array.from({ length: 260 }, (_, i) => ({ path: `clean ${i}.test.ts`, contents: 'if (process.env.TEST_MODE === "yes") {}\n' }));
+        const env = { PATH: `${bin}:${process.env.PATH}`, GREP_CALL_LOG: log, REAL_GREP: Bun.which('grep')! };
+        const r = runLintIn(
+          files,
+          [],
+          env,
+        );
+        expect(r.status).toBe(0);
+        expect(r.stdout).toContain('260 non-serial unit files scanned');
+        expect(readFileSync(log, 'utf8').trim().split('\n').length).toBeLessThan(10);
+        const bad = runLintIn([...files, { path: 'z bad.test.ts', contents: `Reflect.set(process.env, 'OOPS', 'bad');\n` }], [], env);
+        expect(bad.status).toBe(1);
+        expect(bad.stdout).toContain('z bad.test.ts');
+        expect(bad.stdout).toContain('rule R1');
+      } finally {
+        rmSync(bin, { recursive: true, force: true });
+      }
     });
   });
 
@@ -178,6 +202,19 @@ describe('check-test-isolation.sh', () => {
         },
       ]);
       expect(r.status).toBe(0);
+    });
+
+    it('keeps the exact 50-line boundary and reports violations in later candidate files', () => {
+      const r = runLintIn([
+        { path: 'a clean.test.ts', contents: 'export {};\n' },
+        { path: 'b boundary.test.ts', contents: `beforeAll(() => {});\n${'\n'.repeat(49)}new PGLiteEngine();\nafterAll(() => engine.disconnect());\n` },
+        { path: 'c outside.test.ts', contents: `beforeAll(() => {});\n${'\n'.repeat(50)}new PGLiteEngine();\nafterAll(() => engine.disconnect());\n` },
+      ]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain('rule R3');
+      expect(r.stdout).toContain('c outside.test.ts');
+      expect(r.stdout).not.toContain('b boundary.test.ts');
+      expect(r.stdout).toContain('52:new PGLiteEngine();');
     });
   });
 

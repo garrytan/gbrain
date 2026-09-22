@@ -849,6 +849,22 @@ export class PGLiteEngine implements BrainEngine {
       const original = stringifyPgliteInitError(err); // #2674
       const verdict = classifyPgliteInitError(original);
       let ctx: PgliteInitRepairContext = { repair: 'not-attempted' };
+      let retryError: string | undefined;
+
+      if (!dataDir && !this._db) {
+        let retried: PGLiteDB | null = null;
+        try {
+          retried = await preservingProcessExitCode(() => PGlite.create({ ...embedded }));
+        } catch (error) {
+          retryError = stringifyPgliteInitError(error);
+        }
+        if (retried) {
+          this._db = this._attachDatabase(retried);
+          this._snapshotLoaded = false;
+          console.warn(`[pglite] in-memory init failed and was retried cold — recovered. First error: ${original}`);
+          return;
+        }
+      }
 
       // WAL-repair wave (#223/#1670/#2575): a wasm-abort on a PERSISTENT data
       // dir is almost always torn WAL/checkpoint state from an unclean
@@ -895,7 +911,8 @@ export class PGLiteEngine implements BrainEngine {
         }
       }
 
-      const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original, process.platform, ctx));
+      const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original, process.platform, ctx) +
+        (retryError === undefined ? '' : `\n  Cold retry error: ${retryError}`));
       if (this._db) {
         try { await this._closeInternal(); }
         catch (closeError) {

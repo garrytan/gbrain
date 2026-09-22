@@ -166,6 +166,8 @@ For development, tunnel the local server out via ngrok:
 ngrok http 3131 --domain your-brain.ngrok.app
 ```
 
+If the brain runs on your own computer rather than a server, `gbrain mcp expose` publishes it over HTTPS on your Tailscale tailnet (`--funnel` for agents that run in a vendor's cloud), keeps it running as a user service, and needs no `--bind 0.0.0.0`; see [use your brain from anywhere over MCP](../guides/remote-mcp.md).
+
 For production, put your server behind a real hostname with a real TLS certificate. Let's call your final URL `https://brain.acme-co.com` for the rest of this tutorial.
 
 Re-run the server with the public URL so the OAuth discovery metadata matches what clients hit:

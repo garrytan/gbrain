@@ -104,7 +104,15 @@ The agent spawns `gbrain serve` as a stdio subprocess against your local brain. 
 gbrain serve                      # stdio MCP (Claude Desktop / Code / Cursor)
 gbrain serve --surface verbs      # stdio MCP, just the 7 memory verbs (quickstart)
 gbrain serve --http               # HTTP MCP with OAuth 2.1 + admin dashboard
+gbrain mcp expose                 # publish serve --http on your Tailscale tailnet (HTTPS + user service)
 ```
+
+To reach the brain on this computer from your other devices, desktop apps or
+cloud agents, `gbrain mcp expose` publishes the HTTP server on your Tailscale
+tailnet and keeps it running as a user service (`--funnel` is the explicit
+opt-in for agents that run in a vendor's cloud). Guide:
+[use your brain from anywhere over MCP](guides/remote-mcp.md).
+**Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*.
 
 **Wire a coding agent to a remote brain in one command** (when you have an HTTP
 server + a bearer token): `gbrain connect` prints a paste-ready setup block, or

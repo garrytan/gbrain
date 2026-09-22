@@ -244,25 +244,43 @@ reserved for deployments that intentionally allow self-registered
 machine-to-machine (`client_credentials`) clients, which are issued tokens
 without owner approval; such clients are capped at **read-only** scope.
 
-### Recommended: `gbrain serve --http`
+### Recommended: `gbrain serve --http` published with `gbrain mcp expose`
 
-As of v0.22.7, GBrain ships a built-in HTTP transport that uses the
-existing `access_tokens` table for authentication:
+GBrain ships a built-in HTTP transport (OAuth 2.1 plus the existing
+`access_tokens` bearer table). The recommended way to publish it from your own
+computer is `gbrain mcp expose`:
 
 ```bash
-# Create a token
-gbrain auth create "my-client"
+# Publish on your Tailscale tailnet (HTTPS, tailnet-only, user service keeps it running)
+gbrain mcp expose
 
-# Start the HTTP server
-gbrain serve --http --port 8787
+# Public HTTPS on the same name — only for agents that run in a vendor's cloud
+gbrain mcp expose --funnel
 
-# Connect via ngrok, Tailscale, or any tunnel
-ngrok http 8787 --url your-brain.ngrok.app
+# Provision each client with a least-privilege grant through the running server
+gbrain mcp grant agent-example --harness codex --profile memory-writer --source default \
+  --url https://your-machine.your-tailnet.ts.net/mcp \
+  --admin-token-file ~/.gbrain/serve/admin-token --credentials-out /private/agent-example.json
 ```
 
-This is the recommended way to expose GBrain remotely. No OAuth, no
-registration endpoint, no self-service tokens. Tokens are managed
-exclusively via `gbrain auth create/list/revoke`.
+**Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*
+— the `remote-mcp` skill shows you the plan and asks before installing
+Tailscale or a service.
+
+Why this shape: the server keeps its loopback bind and Tailscale terminates
+TLS, so nothing listens on a LAN or public interface; tailnet-only reach means
+only your own devices, under your Tailscale ACLs, can even see the name; Funnel
+is an explicit opt-in and every request still needs a gbrain token; the admin
+bootstrap token lives in a 0600 file the service reads at run time and is
+never printed or stored in the service definition; `--remove` undoes only
+gbrain's own handler and service. Self-service registration stays off unless
+you pass `--enable-dcr`. Details and the troubleshooting table:
+[docs/guides/remote-mcp.md](docs/guides/remote-mcp.md).
+
+Running the server yourself behind ngrok or on a cloud host works the same way
+(`gbrain serve --http --public-url https://…`; [docs/mcp/DEPLOY.md](docs/mcp/DEPLOY.md)).
+Bearer tokens are managed via `gbrain auth create/list/revoke`; OAuth clients
+via `gbrain auth register-client` / `gbrain mcp grant` and the admin dashboard.
 
 ### If you must use a custom HTTP wrapper
 
@@ -398,13 +416,17 @@ fires when `--public-url` is set without `--bind` so the operator sees
 the binding before the first request — common cause of "ngrok forwards
 to me but the agent can't reach the upstream" misconfigurations.
 
-### Postgres-only
+### PGLite and Postgres
 
-`gbrain serve --http` requires a Postgres engine. PGLite is local-only by
-design and the `access_tokens` / `mcp_request_log` tables don't exist in
-the PGLite schema. Local agents continue to use stdio (`gbrain serve`).
-Running `--http` against a PGLite-backed install fails fast with a clear
-error message at startup.
+`gbrain serve --http` runs on both engines (both schemas carry
+`access_tokens` and the OAuth tables). PGLite is single-writer: while the
+HTTP server holds the brain, administer it through the running server
+(`gbrain mcp grant … --admin-token-file`, the admin dashboard) rather than a
+second process that opens the database — such a process fails fast with
+`live_serve`; `gbrain sync` and `gbrain sweep --once` delegate into the live
+serve. Mint bearer tokens (`gbrain auth create`) before the service runs, or
+grant scoped clients through the server. Local agents on the same machine can
+still use stdio (`gbrain serve`) when no HTTP server is running.
 
 ### Docker network isolation (self-hosted Postgres)
 

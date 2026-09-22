@@ -6,10 +6,11 @@ Repo: https://github.com/garrytan/gbrain
 
 ## Choose your agent setup
 
-- [Grok Bot](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md): Add repairable local memory inside Grok Bot, enable its native skill, or connect a hosted brain. Shared-computer trust and dated evidence.
-- [Muse personal agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md): Verify durable storage and add explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.
+- [Use your brain from anywhere over MCP](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/remote-mcp.md): `gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives.
+- [Grok Bot](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md): Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence.
+- [Muse personal agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md): Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.
 - [Inside an existing agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/in-agent-setup.md): Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration.
-- [Connect a hosted brain](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md): Host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification.
+- [Connect a hosted brain](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md): Getting the HTTPS endpoint (`gbrain mcp expose`, admin token file), host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification.
 - [Harness adapter reference](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/harness-adapters.md): Registry-generated transport, authentication lifetime and configuration facts.
 - [Harness validation evidence](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/harness-validation.md): Local lifecycle and HTTP/worker proof, reproducible tests, and the remaining actual-harness acceptance checks.
 

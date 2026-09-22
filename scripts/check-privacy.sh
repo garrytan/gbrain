@@ -25,6 +25,8 @@
 
 set -euo pipefail
 
+. "$(dirname "$0")/lib/guard-candidates.sh"
+
 BANNED_NAME='wintermute'
 # v0.25.1 (codex T7): additional patterns from wintermute-specific filesystem
 # layouts that would leak private fork context if they slipped through a port.
@@ -89,6 +91,12 @@ fi
 if [ -z "$FILES" ]; then
   exit 0
 fi
+
+SCAN_PATTERNS=(-iF -e "$BANNED_NAME")
+for path in "${BANNED_PATHS[@]}"; do
+  SCAN_PATTERNS+=(-e "$path")
+done
+FILES="$(guard_candidates "${SCAN_PATTERNS[@]}" <<< "$FILES")"
 
 # Allow-list: files in which the banned name is legitimate.
 # Meta-rule docs (define the rule itself), auto-generated LLM indexes,

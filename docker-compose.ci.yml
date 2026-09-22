@@ -154,6 +154,8 @@ services:
       # Without this, container `bun install` stomps host node_modules and
       # subsequent `bun test` on host fails with binary-incompat errors.
       - gbrain-ci-node-modules:/app/node_modules
+      - gbrain-ci-admin-node-modules:/app/admin/node_modules
+      - gbrain-ci-admin-dist:/app/admin/dist
       # Warm install cache across runs.
       - gbrain-ci-bun-cache:/root/.bun/install/cache
 
@@ -163,4 +165,6 @@ volumes:
   gbrain-ci-pg-data-3:
   gbrain-ci-pg-data-4:
   gbrain-ci-node-modules:
+  gbrain-ci-admin-node-modules:
+  gbrain-ci-admin-dist:
   gbrain-ci-bun-cache:

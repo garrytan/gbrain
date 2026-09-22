@@ -2502,7 +2502,7 @@ describe('#3583 review: GATE25 — the upgrade path for someone already wedged b
 describe('rename destination import: an errored skip must not checkpoint the rename as done', () => {
   test('a frontmatter slug-authority rejection at the destination is retried, never falsely checkpointed', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
-    const repo = mkRepo({ 'people/alpha.md': personMd('Alpha', 'Alpha is a person.') });
+    const repo = mkRepo({ 'people/alpha.md': `${personMd('Alpha', 'Alpha is a person.')}\n` });
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(await engine.getPage('people/alpha')).not.toBeNull();
 
@@ -2517,11 +2517,13 @@ describe('rename destination import: an errored skip must not checkpoint the ren
     execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
     writeFileSync(join(repo, 'people/beta.md'), [
       '---', 'type: person', 'title: Alpha', 'slug: totally-different', '---',
-      '', 'Alpha is a person.',
+      '', 'Alpha is a person.', '',
     ].join('\n'));
     execSync('git add -A && git commit -m "rename alpha to beta, corrupted frontmatter"', {
       cwd: repo, stdio: 'pipe',
     });
+    expect(execSync('git diff --name-status -M HEAD~1 HEAD', { cwd: repo }).toString())
+      .toMatch(/^R\d+\tpeople\/alpha\.md\tpeople\/beta\.md\n$/);
 
     const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(first.status).toBe('blocked_by_failures');

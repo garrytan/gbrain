@@ -13,7 +13,14 @@
 
 Access your brain from any device, any AI client. GBrain ships two transports:
 `gbrain serve` (stdio) for local agents, and `gbrain serve --http` for remote
-clients over OAuth 2.1.
+clients over OAuth 2.1. The recommended way to publish `serve --http` from your
+own computer is `gbrain mcp expose`, which puts it on your Tailscale tailnet
+with HTTPS and keeps it running as a user service — see
+[Use your brain from anywhere over MCP](../guides/remote-mcp.md).
+
+**Say to your agent:** *"use my brain over mcp"* — *"put my brain on
+tailscale"* — the `remote-mcp` skill runs `gbrain mcp expose` for you after
+you confirm the printed plan.
 
 Authorization-code connections require owner approval in the admin dashboard.
 Existing sessions are preserved. Before upgrading an installation with queued
@@ -57,20 +64,61 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 `--surface starter` sits between (~27 ops: the verbs plus the daily-driver set);
 omit the flag (default `full`) for every operation.
 
-### Remote over OAuth 2.1 (recommended)
+### Tailscale (recommended): `gbrain mcp expose`
 
 ```bash
-gbrain serve --http --port 3131
-ngrok http 3131 --url your-brain.ngrok.app
+gbrain mcp expose            # tailnet-only HTTPS: your own devices
+gbrain mcp expose --funnel   # public HTTPS on the same name: cloud agents (Grok Bot, Muse, ChatGPT, …)
+gbrain mcp expose --status   # re-probe the receipt, service and health
+```
+
+One command on the brain host: installs Tailscale if needed (after a consent
+prompt), signs in, publishes `gbrain serve --http` on your MagicDNS name with
+Tailscale-terminated TLS, provisions the admin bootstrap token in a private
+file, installs a launchd / systemd user service so the server survives
+reboots, and prints the MCP URL
+(`https://your-machine.your-tailnet.ts.net/mcp`) plus the grant command for
+each client. Engine-free — it works while a PGLite brain's `serve` holds the
+write lock. Default reach is your tailnet only; `--funnel` is the explicit
+opt-in for agents that run in a vendor's cloud. Steps, flags, `--remove`,
+and the troubleshooting table: [remote MCP guide](../guides/remote-mcp.md).
+
+```
+Your AI client
+  → https://your-machine.your-tailnet.ts.net/mcp   (Tailscale terminates TLS)
+  → gbrain serve --http on 127.0.0.1:3131           (user service)
+  → Postgres or PGLite
+```
+
+Then provision clients through the running server (the only way on PGLite
+while `serve` is live):
+
+```bash
+gbrain mcp grant agent-example --harness codex --profile memory-writer --source default \
+  --url https://your-machine.your-tailnet.ts.net/mcp \
+  --admin-token-file ~/.gbrain/serve/admin-token --credentials-out /private/agent-example.json
+```
+
+### Other tunnels and cloud hosts
+
+Any HTTPS front works: ngrok, Cloudflare Tunnel, or a cloud host (Fly.io,
+Railway) for a brain that must answer while your laptop is closed —
+[ALTERNATIVES.md](ALTERNATIVES.md) compares them. You run `gbrain serve --http`
+yourself and pass `--public-url` whenever the server is reachable at anything
+other than `http://localhost:<port>` so the OAuth issuer in discovery metadata
+matches what clients hit (RFC 8414 §3.3).
+
+#### Remote over OAuth 2.1
+
+```bash
 gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
+ngrok http 3131 --url your-brain.ngrok.app
 ```
 
 Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
 at `/admin`, and a live SSE activity feed. Zero external dependencies. This is
-the only path that works with ChatGPT (OAuth 2.1 + PKCE is required by the
-ChatGPT MCP connector). Pass `--public-url` whenever the server is reachable
-at anything other than `http://localhost:<port>` so the OAuth issuer in
-discovery metadata matches what clients hit (RFC 8414 §3.3).
+the only auth shape that works with ChatGPT (OAuth 2.1 + PKCE is required by
+the ChatGPT MCP connector).
 
 Supported clients:
 - **ChatGPT** — requires OAuth 2.1 + PKCE. Works natively with `--http`.
@@ -80,11 +128,11 @@ Supported clients:
 
 See the [OAuth 2.1 setup](#oauth-21-setup) section below.
 
-### Remote with legacy bearer tokens (simplest)
+#### Remote with legacy bearer tokens (simplest)
 
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
-  → ngrok tunnel (https://YOUR-DOMAIN.ngrok.app)
+  → HTTPS front (Tailscale name, ngrok domain, or cloud host)
   → gbrain serve --http  (built-in transport with bearer auth)
   → Postgres or PGLite
 ```
@@ -92,7 +140,7 @@ Your AI client (Claude Desktop, Perplexity, etc.)
 This requires:
 1. A machine running `gbrain serve --http` (works on both PGLite and Postgres
    brains)
-2. A public tunnel (ngrok, Tailscale, or cloud host)
+2. An HTTPS front (Tailscale via `gbrain mcp expose`, ngrok, or a cloud host)
 3. A bearer token created via `gbrain auth create <name>`
 
 Bearer tokens created without a `scopes` grant carry `read+write+admin` on
@@ -289,24 +337,43 @@ gbrain config set oauth.dcr_ttl_max_seconds 86400
 
 ### 3. Expose the server
 
-**Bind explicitly.** `gbrain serve --http` defaults to `127.0.0.1`.
-To accept connections from the ngrok tunnel (or any non-loopback source),
-restart with `--bind`:
+**Tailscale (recommended).** `gbrain mcp expose` does this whole section for
+you — Tailscale install/login, `tailscale serve` (or `funnel`), the admin
+token file, a user service, and the health checks — and keeps the server on
+its default loopback bind, because Tailscale terminates TLS on the tailnet
+and forwards to `127.0.0.1`. The manual equivalent is the
+[Tailnet / LAN-only](#tailnet--lan-only-no-public-tunnel) shape below. Full
+walkthrough: [remote MCP guide](../guides/remote-mcp.md).
+
+**ngrok (alternative).** ngrok also connects to loopback on the same
+machine, so the default bind is right there too:
 
 ```bash
-gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://your-brain.ngrok.app
+gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
+```
+
+**Bind explicitly only when the front is on another host.** `gbrain serve
+--http` defaults to `127.0.0.1`. To accept connections from a reverse proxy
+or tunnel agent running on a different machine (or a container), restart with
+`--bind`:
+
+```bash
+gbrain serve --http --port 3131 --bind 0.0.0.0 --public-url https://brain.example.com
 ```
 
 When `--public-url` is set without `--bind`, a stderr WARN fires at
-startup so the misconfiguration ("the tunnel is up but my agent gets
-ECONNREFUSED") is loud. Binding `0.0.0.0` without `GBRAIN_HTTP_CORS_ORIGIN`
-warns too: browser-based clients get no CORS header until you set the
-allowlist (see [SECURITY.md — CORS](../../SECURITY.md#cors)).
+startup so a real misconfiguration ("the tunnel is up but my agent gets
+ECONNREFUSED") is loud; in the Tailscale and same-machine-ngrok shapes the
+WARN is expected and harmless. Binding `0.0.0.0` without
+`GBRAIN_HTTP_CORS_ORIGIN` warns too: browser-based clients get no CORS header
+until you set the allowlist (see [SECURITY.md — CORS](../../SECURITY.md#cors)).
 
 `--source-guard` is a stdio-lane flag: with `--http` it prints a warning and
 is ignored. HTTP writes are fenced by each token's scopes instead, so
 operators migrating from stdio mint narrowed tokens
 (`gbrain auth create <name> --scopes read`) rather than relying on the guard.
+
+For the ngrok alternative, start the tunnel after the server:
 
 ```bash
 brew install ngrok
@@ -314,7 +381,9 @@ ngrok config add-authtoken YOUR_TOKEN
 ngrok http 3131 --url your-brain.ngrok.app
 ```
 
-Your OAuth issuer URL becomes `https://your-brain.ngrok.app`. The MCP SDK's
+Your OAuth issuer URL is whatever `--public-url` names
+(`https://your-machine.your-tailnet.ts.net` under Tailscale,
+`https://your-brain.ngrok.app` under ngrok). The MCP SDK's
 router exposes the spec-compliant discovery endpoint at
 `/.well-known/oauth-authorization-server`. The protected resource is the
 `/mcp` endpoint itself: its RFC 9728 metadata is served at
@@ -322,8 +391,8 @@ router exposes the spec-compliant discovery endpoint at
 `/.well-known/oauth-protected-resource` root stays as an alias for older
 clients), and every 401 carries `WWW-Authenticate: Bearer
 resource_metadata="<that URL>"`, so an MCP client pointed at
-`https://your-brain.ngrok.app/mcp` finds the token endpoint from a fresh
-connection without any pasted URLs.
+`https://your-machine.your-tailnet.ts.net/mcp` finds the token endpoint from a
+fresh connection without any pasted URLs.
 
 **Dual-mode auth on `/mcp`.** The same route verifies OAuth 2.1 access
 tokens and `gbrain auth create` bearers (OAuth first, then the
@@ -342,9 +411,10 @@ returns 401 / `invalid_token`.
 Two shapes work without exposing anything to the internet. In both, clients
 authenticate with `gbrain auth create` bearer tokens.
 
-**Tailscale Serve (HTTPS, tailnet-only).** Keep the default `127.0.0.1`
-bind, let Tailscale terminate TLS on the tailnet, and point `--public-url` at
-your MagicDNS name:
+**Tailscale Serve (HTTPS, tailnet-only).** This is what `gbrain mcp expose`
+automates (plus the admin token file, the user service and the health
+checks). By hand: keep the default `127.0.0.1` bind, let Tailscale terminate
+TLS on the tailnet, and point `--public-url` at your MagicDNS name:
 
 ```bash
 gbrain serve --http --port 3131 --public-url https://your-machine.your-tailnet.ts.net
@@ -354,8 +424,8 @@ tailscale serve --bg 3131
 Clients on the tailnet use `https://your-machine.your-tailnet.ts.net/mcp`.
 The "--public-url is set but --bind is not" WARN is expected in this shape —
 Tailscale Serve forwards to loopback. `tailscale serve` stays inside your
-tailnet; `tailscale funnel` is public exposure (see
-[ALTERNATIVES.md](ALTERNATIVES.md)).
+tailnet; `tailscale funnel` (or `gbrain mcp expose --funnel`) is public
+exposure for cloud agents (see [ALTERNATIVES.md](ALTERNATIVES.md)).
 
 **Plain HTTP, bearer-only.** Bind the tailnet/LAN interface and omit
 `--public-url` entirely:
@@ -394,12 +464,14 @@ Bearer tokens are the simple path when you don't need per-client scoping.
 Without a `--scopes` grant they carry `read+write+admin` on the
 HTTP server; pass `--scopes read,write` at creation to narrow one.
 
-### 1. Set up the tunnel
+### 1. Publish the server
 
-See the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md) for full setup.
-Quick version:
+Tailscale (recommended): `gbrain mcp expose` (add `--funnel` for cloud
+clients) — [remote MCP guide](../guides/remote-mcp.md). ngrok alternative,
+see the [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md); quick version:
 
 ```bash
+gbrain serve --http --port 8787
 brew install ngrok
 ngrok config add-authtoken YOUR_TOKEN
 ngrok http 8787 --url your-brain.ngrok.app  # Hobby tier for fixed domain
@@ -436,9 +508,11 @@ SHA-256 hashed in your database.
 
 ```bash
 gbrain auth test \
-  https://YOUR-DOMAIN.ngrok.app/mcp \
+  https://your-machine.your-tailnet.ts.net/mcp \
   --token YOUR_TOKEN
 ```
+
+(Substitute your ngrok domain or cloud host URL when you used one of those.)
 
 ## Operations
 
@@ -474,8 +548,10 @@ unrestricted filesystem access since the user owns the machine.
 
 ## Deployment Options
 
-See [ALTERNATIVES.md](ALTERNATIVES.md) for a comparison of ngrok, Tailscale
-Funnel, and cloud hosts (Fly.io, Railway).
+Tailscale via `gbrain mcp expose` is the recommended shape for a brain on your
+own computer ([remote MCP guide](../guides/remote-mcp.md)). See
+[ALTERNATIVES.md](ALTERNATIVES.md) for how Tailscale Serve / Funnel compare
+with ngrok and always-on cloud hosts (Fly.io, Railway).
 
 ### Co-located Docker workloads (self-hosted Postgres)
 
@@ -570,6 +646,14 @@ either way; OAuth clients may still refuse a non-HTTPS issuer.
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT
 `claude_desktop_config.json`. See [CLAUDE_DESKTOP.md](CLAUDE_DESKTOP.md).
+
+**`gbrain mcp expose` stops on a Tailscale error or `verify.tailnet: pending`**
+The pre-checks (`tailscale_https_not_enabled`, `tailscale_funnel_not_enabled`
+— exit 2 with the admin-console URL, nothing published), the classified
+errors (`https_not_enabled`, `funnel_not_enabled`, `needs_operator`,
+`daemon_not_running`, …), the pending-certificate wait, and the
+service/`--status` checks are tabled in the
+[remote MCP guide](../guides/remote-mcp.md#troubleshooting).
 
 ## Expected Latencies
 

@@ -1,9 +1,15 @@
 # GBrain for Grok Bot
 
-Give Grok Bot durable, inspectable memory by installing GBrain in
-`/workspace/gbrain`, then saving the generated memory instructions as a native
-skill. Start locally for a new brain. If you already operate GBrain elsewhere,
-connect to that hosted brain instead.
+Give Grok Bot durable, inspectable memory. The recommended shape runs the
+brain on **your own computer**, publishes it over MCP with
+`gbrain mcp expose --funnel`, grants the Bot a `memory-writer` client, and
+installs the thin GBrain CLI inside the Bot; the Bot then saves the generated
+memory instructions as a native skill. If you have no always-on machine,
+install GBrain locally in `/workspace/gbrain` on the Bot computer instead.
+
+**Say to your agent:** *"connect grok bot to my brain"* — *"use my brain over
+mcp"*. On your computer, the `remote-mcp` skill publishes and grants; inside
+the Bot, the paste-in prompt below installs the connection.
 
 This guide covers the **Grok Bot personal agent**. The `grok` coding CLI has a
 separate [Grok Build guide](../mcp/GROK.md). A Grok API key configures a model
@@ -13,11 +19,54 @@ provider; it does not install memory in Grok Bot.
 
 | Your situation | Use |
 | --- | --- |
-| New to GBrain; want memory inside your Bot | Local setup below; no model API key needed for the first fact/recall test |
-| Already have a hosted GBrain | [Hosted harness access](hosted-harness-access.md), adapter `grok-bot`; choose the thin CLI for the complete remote command path |
+| You have (or can run) GBrain on your own computer — recommended | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because the Bot runs in the vendor's cloud, not on your tailnet), grant the Bot a client, then install the thin CLI inside the Bot ([hosted harness access](hosted-harness-access.md), adapter `grok-bot`). Memory lives where you can back it up and inspect it. |
+| Already have a hosted GBrain elsewhere (cloud host, team brain) | Same client-side steps: [hosted harness access](hosted-harness-access.md), adapter `grok-bot`; choose the thin CLI for the complete remote command path |
+| No always-on machine; want memory inside your Bot only | [Local setup](#alternative-install-gbrain-inside-the-bot) below; no model API key needed for the first fact/recall test |
+| Want to keep the connection tailnet-only | Joining the Bot's runtime to your tailnet (userspace `tailscaled` with an ephemeral auth key) is possible in principle; it is advanced, not automated by gbrain, and unverified against a real Bot |
 | Want a native Grok Bot MCP plugin | Native plugin authentication is unverified and release-gated; use the supported thin CLI path until an actual Bot pilot establishes the native connection |
 
-## Paste this into your Bot
+## Recommended: your brain on your computer, reached over MCP
+
+On the computer that holds the brain:
+
+```bash
+gbrain mcp expose --funnel                      # consent prompt, Tailscale install/login if needed, service, URL
+gbrain mcp grant bot-example --harness grok-bot --profile memory-writer --source default \
+  --url https://your-machine.your-tailnet.ts.net/mcp \
+  --admin-token-file ~/.gbrain/serve/admin-token \
+  --credentials-out /private/bot-example.json
+```
+
+Move `/private/bot-example.json` to the Bot computer through a private file
+channel (never paste it into the chat), then paste this into your Bot:
+
+```text
+Connect this Bot to my existing GBrain over MCP. Read:
+https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md
+and its linked hosted-access guide.
+
+The brain is published at https://your-machine.your-tailnet.ts.net/mcp and my
+private credential file is at /private/bot-example.json on this computer.
+Install GBrain under /workspace/gbrain on the Grok Bot cloud computer (reuse an
+existing matching installation; do not replace existing state), then run
+gbrain connect with --harness grok-bot, that credentials file, --install and
+--root /workspace/gbrain. Use the generated absolute /workspace/gbrain/bin/gbrain
+launcher for every memory command. Keep secrets out of chat and command output.
+
+Run gbrain mcp verify and show me the server checks. Save the generated
+GBRAIN-INSTRUCTIONS.md as a private native skill and enable it for this Bot;
+keep your current identity and other instructions. Then remember a harmless
+randomized test fact with provenance, recall it in a fresh conversation, and
+tell me which native steps remain unverified.
+```
+
+The Bot's memory now lives on your machine: back it up, inspect it, and
+revoke the Bot's client on the host whenever it should stop. `gbrain mcp
+expose --status` on your computer re-checks the service and the public URL.
+
+## Alternative: install GBrain inside the Bot
+
+Use this when no computer of yours can stay online. Paste this into your Bot:
 
 ```text
 Set up GBrain as my durable local memory. Read:
@@ -41,6 +90,7 @@ GBrain result and root used. Tell me which native setup steps remain unverified.
 
 The exact shell commands, generated files, first test, repair, and recovery
 procedure are in [Install GBrain inside a personal agent](in-agent-setup.md).
+The rest of this guide's local-installation sections apply to this path.
 
 ## One shared brain for your Bots
 
@@ -59,8 +109,10 @@ maintenance so several Bots do not create duplicate routines.
 
 ## Attach the memory skill
 
-Ask the Bot to save the contents of
-`/workspace/gbrain/instructions/gbrain-skill.md` as a private skill. Grok's
+Ask the Bot to save the memory instructions as a private skill —
+`/workspace/gbrain/GBRAIN-INSTRUCTIONS.md` for a connection to your published
+brain, `/workspace/gbrain/instructions/gbrain-skill.md` for a local
+installation. Grok's
 documented controls are **Settings → Plugins → Yours** to enable a private
 skill for a Bot, and `/` in the composer to select it. Enable it for every Bot
 that should use this installation. GBrain does not assume that Grok Bot reads
@@ -118,9 +170,14 @@ also revoke that Bot installation's grant on the host.
 ## Acceptance checklist and limits
 
 The local installer and recovery path have hermetic repository tests. **An
-actual Grok Bot account has not been used to verify this integration.** Before
+actual Grok Bot account has not been used to verify this integration.** The
+Tailscale publish path (`gbrain mcp expose`) has repository tests with a fake
+Tailscale runner; a real tailnet, a real Funnel endpoint reached from a Bot,
+and the Bot's native skill activation are separate observed steps. Before
 calling your installation complete, check:
 
+- For the published-brain path: `gbrain mcp expose --status` verifies on your
+  computer and `gbrain mcp verify` passes its server checks from inside the Bot.
 - The launcher writes, recalls, corrects, and forgets the randomized test fact.
 - A fresh conversation invokes that same launcher through the native skill.
 - Every intended Bot uses the same root; concurrent calls recover from a busy

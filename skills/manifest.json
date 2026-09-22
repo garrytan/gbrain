@@ -368,6 +368,11 @@
       "name": "postgres-adopt",
       "path": "postgres-adopt/SKILL.md",
       "description": "Detect the active engine (PGLite vs Postgres), prefer/install Postgres for harness installs, wrap the guarded engine migration"
+    },
+    {
+      "name": "remote-mcp",
+      "path": "remote-mcp/SKILL.md",
+      "description": "Publish the user's own gbrain over MCP with `gbrain mcp expose` (Tailscale by default, Funnel only for cloud agents), keep the server alive as a user service, then grant, install and verify one least-privilege client per consumer."
     }
   ],
   "dependencies": {
