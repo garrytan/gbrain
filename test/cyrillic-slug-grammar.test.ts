@@ -8,6 +8,7 @@ import { normalizeBasename } from '../src/core/link-extraction.ts';
 import { normalizeAlias } from '../src/core/search/alias-normalize.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { isUnverifiedExtraction } from '../src/core/extraction-review.ts';
 
 /**
  * Pins ADR-0001 (docs/adr/0001-cyrillic-slugs-keep-i-kratkoye-and-yo.md).
@@ -202,6 +203,62 @@ describe('ADR-0001 consequence: enrichEntity merges the two spellings', () => {
     const second = await enrichEntity(engine, mention('Петр Иванов', 'person'), { trusted: false });
     expect(second.action).toBe('updated');
     expect(second.slug).toBe(stub.slug);
+  });
+
+  test('a failed index write leaves the page retryable, not half-promoted', async () => {
+    // The two writes are separate transactions. Index FIRST, status flip
+    // second: if the flip committed first and the index write then failed,
+    // the page would read `verified` with no alias row, and a retry would
+    // bounce off isUnverifiedExtraction as `not_unverified` — unfixable
+    // through this surface, and silently missing from tryAliasExact.
+    const stub = await enrichEntity(engine, mention('Игорь Волков', 'person'), { trusted: false });
+
+    const failing = new Proxy(engine, {
+      get(target, key, recv) {
+        if (key === 'setPageAliases') return () => Promise.reject(new Error('index write failed'));
+        const v = Reflect.get(target, key, recv);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as typeof engine;
+
+    await expect(
+      extraction_review.handler({ ...reviewCtx(), engine: failing }, { action: 'promote', slugs: [stub.slug] }),
+    ).rejects.toThrow();
+
+    // Still quarantined => the same command fixes it.
+    const mid = await engine.getPage(stub.slug);
+    expect(isUnverifiedExtraction(mid!.frontmatter)).toBe(true);
+
+    const out = (await extraction_review.handler(reviewCtx(), {
+      action: 'promote', slugs: [stub.slug],
+    })) as { results: Array<{ slug: string; status: string }> };
+    expect(out.results).toEqual([{ slug: stub.slug, status: 'promoted' }]);
+    const hits = (await engine.resolveAliases([normalizeAlias('Игорь Волков')], { sourceId: 'default' }))
+      .get(normalizeAlias('Игорь Волков')) ?? [];
+    expect(hits.map((h) => h.slug)).toContain(stub.slug);
+  });
+
+  test('an empty alias set never reaches the index as a bare DELETE', async () => {
+    // Unreachable for an extraction stub (it always has a title), but the
+    // branch exists: aliases=[] would write `aliases: []` and run
+    // setPageAliases(slug, src, []) — a DELETE with no INSERT, wiping rows
+    // that were already there.
+    const stub = await enrichEntity(engine, mention('Мария Козлова', 'person'), { trusted: false });
+    const page = await engine.getPage(stub.slug);
+    await engine.setPageAliases(stub.slug, 'default', [normalizeAlias('Прежний')]);
+    await engine.putPage(stub.slug, {
+      title: '',
+      type: 'person',
+      compiled_truth: page!.compiled_truth ?? '',
+      timeline: '',
+      frontmatter: page!.frontmatter,
+    });
+
+    await extraction_review.handler(reviewCtx(), { action: 'promote', slugs: [stub.slug] });
+
+    const kept = (await engine.resolveAliases([normalizeAlias('Прежний')], { sourceId: 'default' }))
+      .get(normalizeAlias('Прежний')) ?? [];
+    expect(kept.map((h) => h.slug)).toContain(stub.slug);
   });
 
   test('promotion does not clobber aliases the owner already declared', async () => {

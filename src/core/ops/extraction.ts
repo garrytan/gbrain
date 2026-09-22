@@ -212,28 +212,48 @@ const extraction_review: Operation = {
         const title = typeof page.title === 'string' ? page.title.trim() : '';
         const aliases = [...new Set(title ? [...declared, title] : declared)];
 
-        // Frontmatter-only flip via a targeted JSONB merge — NOT putPage,
-        // whose upsert would reset non-carried columns (page_kind →
-        // 'markdown', content_hash, …) for a change that only touches
-        // frontmatter keys. provenance stays 'auto-extracted' as the audit
-        // trail of HOW the page came to exist; status → 'verified' records
-        // the owner's call. jsonb_build_object binds as text; the alias array
-        // binds through $5::text::jsonb (text in, cast parses) — the
-        // sanctioned positional form, never JSON.stringify into a bare
-        // ::jsonb. Identical on both engines.
-        await ctx.engine.executeRaw(
-          `UPDATE pages
-           SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
-                             || jsonb_build_object($1::text, $2::text)
-                             || jsonb_build_object('aliases', $5::text::jsonb),
-               updated_at = now()
-           WHERE slug = $3 AND source_id = $4`,
-          [EXTRACTION_STATUS_KEY, STATUS_VERIFIED, slug, page.source_id, JSON.stringify(aliases)],
-        );
+        // ORDER MATTERS. These are two independent transactions
+        // (setPageAliases opens its own), so one can commit without the other.
+        // The index write goes FIRST and the status flip second, because the
+        // status flip is what makes the page ineligible for a retry:
+        // isUnverifiedExtraction gates this branch, so a page that reads
+        // `verified` reports `not_unverified` forever after. Flip-then-index
+        // would therefore strand a failure as a verified page with no alias —
+        // silently missing from tryAliasExact, unfixable through this surface.
+        // Index-then-flip strands it as a still-quarantined page instead, and
+        // re-running the SAME command converges. Same reasoning for a throw
+        // mid-batch: earlier slugs are fully promoted, the failing one stays
+        // retryable, and re-running the batch is safe (already-promoted slugs
+        // report `not_unverified`).
+        //
         // The stub has no file on disk (importFromContent wrote it straight to
         // the DB from generated markdown), so no later sync re-import would
         // project this for us — the index write has to happen right here.
-        await ctx.engine.setPageAliases(slug, page.source_id, normalizeAliasList(aliases));
+        // Skip both when there is nothing to claim: setPageAliases with an
+        // empty set is a DELETE with no INSERT, which would wipe rows the page
+        // already had (unreachable for a stub, which always has a title, but
+        // the branch is reachable in principle).
+        if (aliases.length) {
+          await ctx.engine.setPageAliases(slug, page.source_id, normalizeAliasList(aliases));
+        }
+
+        // Frontmatter merge — NOT putPage, whose upsert would reset
+        // non-carried columns (page_kind → 'markdown', content_hash, …) for a
+        // change that only touches frontmatter keys. provenance stays
+        // 'auto-extracted' as the audit trail of HOW the page came to exist;
+        // status → 'verified' records the owner's call. The patch binds
+        // through $1::text::jsonb (text in, the cast parses it) — the
+        // sanctioned positional form, never JSON.stringify into a bare
+        // ::jsonb. Identical on both engines.
+        const patch: Record<string, unknown> = { [EXTRACTION_STATUS_KEY]: STATUS_VERIFIED };
+        if (aliases.length) patch.aliases = aliases;
+        await ctx.engine.executeRaw(
+          `UPDATE pages
+           SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $1::text::jsonb,
+               updated_at = now()
+           WHERE slug = $2 AND source_id = $3`,
+          [JSON.stringify(patch), slug, page.source_id],
+        );
         results.push({ slug, status: 'promoted' });
       } else {
         await ctx.engine.softDeletePage(slug, { sourceId: page.source_id });
