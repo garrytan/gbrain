@@ -207,7 +207,12 @@ export async function enrichEntity(
       // exact-lookup, hybrid search and resolveEntityRef for the whole brain,
       // so an unreviewed extractor guess would get a vote on resolution
       // everywhere — the same failure the authoritative-write gate refuses.
-      // Its two spellings stay forked until review promotes them.
+      // That withholding is a DEFERRAL, not a cancellation: promoting the stub
+      // publishes this alias (ops/extraction.ts, the `promote` branch), which
+      // is what lifts it. Quarantine is the DEFAULT path — trusted extraction
+      // needs both a local caller and --trusted-extraction — so if promotion
+      // ever stops doing that, the yo/ye fold merges nothing on a normal
+      // install. test/cyrillic-slug-grammar.test.ts pins both halves.
       // issue #160 quarantine lane: stubs extracted from untrusted input
       // carry provenance + unverified markers until the owner reviews them.
       ...(trusted ? { aliases: [title] } : quarantineMarkers()),

@@ -6,6 +6,8 @@ import { enrichEntity, slugifyEntity } from '../src/core/enrichment-service.ts';
 import { slugify } from '../src/core/entities/resolve.ts';
 import { normalizeBasename } from '../src/core/link-extraction.ts';
 import { normalizeAlias } from '../src/core/search/alias-normalize.ts';
+import { operations } from '../src/core/operations.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 
 /**
  * Pins ADR-0001 (docs/adr/0001-cyrillic-slugs-keep-i-kratkoye-and-yo.md).
@@ -113,6 +115,18 @@ describe('ADR-0001 consequence: enrichEntity merges the two spellings', () => {
     }
   });
 
+  const extraction_review = operations.find((o) => o.name === 'extraction_review')!;
+
+  /** Owner-only op: promote/reject demand a strictly-local caller. */
+  const reviewCtx = (): OperationContext => ({
+    engine,
+    config: {} as OperationContext['config'],
+    logger: { info() {}, warn() {}, error() {}, debug() {} } as unknown as OperationContext['logger'],
+    dryRun: false,
+    remote: false,
+    sourceId: 'default',
+  } as OperationContext);
+
   const mention = (entityName: string, entityType: 'person' | 'company') => ({
     entityName,
     entityType,
@@ -161,6 +175,51 @@ describe('ADR-0001 consequence: enrichEntity merges the two spellings', () => {
 
     const aliases = await engine.resolveAliases([normalizeAlias('Пётр Иванов')], { sourceId: 'default' });
     expect(aliases.get(normalizeAlias('Пётр Иванов')) ?? []).toHaveLength(0);
+  });
+
+  test('promotion publishes the alias the quarantine gate withheld', async () => {
+    // The quarantine gate is a DEFERRAL, not a cancellation: review is what
+    // turns the withheld self-claim into a real alias row. Without this the
+    // ADR's headline consequence never fires on the DEFAULT path, since
+    // trusted extraction needs BOTH a local caller and --trusted-extraction.
+    const stub = await enrichEntity(engine, mention('Пётр Иванов', 'person'), { trusted: false });
+    expect(stub.action).toBe('created');
+
+    const out = (await extraction_review.handler(reviewCtx(), {
+      action: 'promote', slugs: [stub.slug],
+    })) as { results: Array<{ slug: string; status: string }> };
+    expect(out.results).toEqual([{ slug: stub.slug, status: 'promoted' }]);
+
+    // Both planes: the frontmatter declaration AND the projected index row.
+    const page = await engine.getPage(stub.slug);
+    expect(page!.frontmatter.aliases).toContain('Пётр Иванов');
+    const hits = (await engine.resolveAliases([normalizeAlias('Петр Иванов')], { sourceId: 'default' })).get(
+      normalizeAlias('Петр Иванов'),
+    ) ?? [];
+    expect(hits.map((h) => h.slug)).toContain(stub.slug);
+
+    // And the whole point: the other spelling now lands on the promoted page.
+    const second = await enrichEntity(engine, mention('Петр Иванов', 'person'), { trusted: false });
+    expect(second.action).toBe('updated');
+    expect(second.slug).toBe(stub.slug);
+  });
+
+  test('promotion does not clobber aliases the owner already declared', async () => {
+    const stub = await enrichEntity(engine, mention('Анна Смирнова', 'person'), { trusted: false });
+    const page = await engine.getPage(stub.slug);
+    await engine.putPage(stub.slug, {
+      title: 'Анна Смирнова',
+      type: 'person',
+      compiled_truth: page!.compiled_truth ?? '',
+      timeline: '',
+      frontmatter: { ...page!.frontmatter, aliases: ['Нюта'] },
+    });
+
+    await extraction_review.handler(reviewCtx(), { action: 'promote', slugs: [stub.slug] });
+
+    const after = await engine.getPage(stub.slug);
+    expect(after!.frontmatter.aliases).toContain('Нюта');
+    expect(after!.frontmatter.aliases).toContain('Анна Смирнова');
   });
 
   test('a trusted stub DOES publish its name, which is what merges the pair', async () => {
