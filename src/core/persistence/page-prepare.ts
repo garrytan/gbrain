@@ -83,12 +83,20 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`)));
   if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
   const before = existsSync(path) ? readFileSync(path) : null;
+  // A declared db_only page has no canonical file by design and publishes to
+  // the database only. gbrain.yml is consulted only here, where the write
+  // would otherwise refuse, so an invalid config can only change the refusal.
+  // A live page that never recorded a canonical artifact (subagent-sandbox or
+  // other database-only publication — no source_path, no captured file URI)
+  // has nothing that could have been "removed": its first file publication is
+  // a create, and its deletion has no artifact to unlink. Only a page whose
+  // artifact WAS recorded may fail closed on a missing file. The db_only
+  // declaration wins over the never-published fall-through: a declared page
+  // must keep publishing to the database, not materialize a stray file.
+  const neverPublished = !snapshot?.page.source_path && !capturedPath;
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
-    // A declared db_only page has no canonical file by design and publishes to
-    // the database only. gbrain.yml is consulted only here, where the write
-    // would otherwise refuse, so an invalid config can only change the refusal.
     if (isSourceDbOnlySlug(root, row.slug, 'refuse')) return undefined;
-    throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
+    if (!neverPublished) throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
       'Import the local deletion or recover the canonical file before editing this page.');
   }
   // A normal edit may replace only the bytes represented by its read snapshot.
