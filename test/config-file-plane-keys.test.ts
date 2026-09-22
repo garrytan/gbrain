@@ -202,6 +202,7 @@ const GATEWAY_MAPPED_KEYS = [
   'voyage_api_key',
   'dashscope_api_key',
   'deepseek_api_key',
+  'zhipu_api_key',
   'google_api_key',
 ] as const;
 

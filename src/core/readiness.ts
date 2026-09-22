@@ -35,7 +35,7 @@ import { isEngineDegraded } from './degraded-marker.ts';
 import { heldLockFor, peekLock, type LockPeekResult } from './pglite-lock.ts';
 import { listRecipes, RECIPES } from './ai/recipes/index.ts';
 import type { Recipe } from './ai/types.ts';
-import { mergedProviderEnv } from './ai/provider-env.ts';
+import { CONFIG_API_KEY_ENV, mergedProviderEnv } from './ai/provider-env.ts';
 import { resolveSchemaEmbeddingDim } from './embedding-dim-check.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, NEW_INSTALL_DEFAULT_EMBEDDING_MODEL } from './ai/defaults.ts';
 import { getCliOptions, parseGlobalFlags } from './cli-options.ts';
@@ -155,15 +155,13 @@ function providerLabel(recipe: Recipe): string {
   return recipe.name ?? recipe.id;
 }
 
-/** Provider keys `gbrain config set` stores on the file plane (src/commands/config.ts FILE_PLANE_API_KEYS). */
-const FILE_PLANE_KEY_ENVS: ReadonlySet<string> = new Set([
-  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'VOYAGE_API_KEY', 'DASHSCOPE_API_KEY',
-  'DEEPSEEK_API_KEY', 'LITELLM_API_KEY', 'TOGETHER_API_KEY', 'GOOGLE_API_KEY', 'AZURE_OPENAI_API_KEY',
-]);
+/** Env name -> the file-plane key `gbrain config set` stores it under (zhipu_api_key fills ZHIPUAI_API_KEY). */
+const FILE_PLANE_KEY_FOR_ENV: ReadonlyMap<string, string> = new Map(CONFIG_API_KEY_ENV.map(([key, env]) => [env, key]));
 
 function keyHow(name: string): string {
-  return FILE_PLANE_KEY_ENVS.has(name)
-    ? `store it with \`gbrain config set ${name.toLowerCase()} <key>\` (every gbrain process reads it), or export ${name} in the environment of every gbrain process`
+  const configKey = FILE_PLANE_KEY_FOR_ENV.get(name);
+  return configKey
+    ? `store it with \`gbrain config set ${configKey} <key>\` (every gbrain process reads it), or export ${name} in the environment of every gbrain process`
     : `export ${name}=<key> in the environment of every gbrain process, including the one your agent harness starts`;
 }
 

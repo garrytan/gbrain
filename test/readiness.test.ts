@@ -162,6 +162,22 @@ describe('embeddingEnablement', () => {
     expect(a.argv?.[4]).toBe('openai:text-embedding-3-small');
     expect(a.inputs?.map(i => i.name)).toEqual(['OPENAI_API_KEY']);
   });
+
+  test('the key hint names the config key `gbrain config set` accepts, not the lowercased env name', async () => {
+    const how = async (embedding_model: string, embedding_dimensions: number) =>
+      (await run(pglite({ embedding_disabled: true, embedding_model, embedding_dimensions }), {})).inputs?.[0]?.how ?? '';
+    // ZHIPUAI_API_KEY is stored as zhipu_api_key; `config set zhipuai_api_key` is rejected as unknown.
+    const zhipu = await how('zhipu:embedding-3', 1024);
+    expect(zhipu).toContain('`gbrain config set zhipu_api_key <key>`');
+    expect(zhipu).not.toContain('zhipuai_api_key');
+    // The google recipe reads GOOGLE_GENERATIVE_AI_API_KEY, stored as google_api_key.
+    const google = await how('google:gemini-embedding-001', 768);
+    expect(google).toContain('`gbrain config set google_api_key <key>`');
+    // A recipe key with no file-plane slot keeps the export-only hint.
+    const mistral = await how('mistral:mistral-embed', 1024);
+    expect(mistral).not.toContain('config set');
+    expect(mistral).toContain('export MISTRAL_API_KEY=<key>');
+  });
 });
 
 describe('harness_wiring by state', () => {

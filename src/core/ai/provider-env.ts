@@ -47,6 +47,11 @@ export const CONFIG_API_KEY_ENV = [
   // way voyage's #2662 did).
   ['litellm_api_key', 'LITELLM_API_KEY'],
   ['together_api_key', 'TOGETHER_API_KEY'],
+  // The zhipu recipe (embeddings + GLM chat/subagent) requires ZHIPUAI_API_KEY;
+  // fold the file-plane slot so launchers that do not export it (launchd
+  // workers, MCP stdio servers) can authenticate instead of failing GLM calls
+  // with Unauthorized while the CLI shell works.
+  ['zhipu_api_key', 'ZHIPUAI_API_KEY'],
   ['google_api_key', 'GOOGLE_GENERATIVE_AI_API_KEY'],
   // #4031: the Azure key was the only member of the group below left unfolded,
   // so a config.json-only setup failed every embed from keyless shells
