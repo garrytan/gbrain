@@ -1681,6 +1681,35 @@ export interface BrainStats {
  */
 export const MIN_ENTITY_PAGES_FOR_COVERAGE = 5;
 
+export interface PagesBySurface {
+  /** Live markdown knowledge pages, raw captures excluded. */
+  prose: number;
+  /** Live `page_kind = 'code'` pages — the symbol graph's territory. */
+  code: number;
+  /** Live `page_kind = 'image'` pages. */
+  image: number;
+  /** Live markdown pages still sitting in the `inbox/` triage area. */
+  raw_capture: number;
+  /** Live pages without a known surface (null, empty, or unrecognized page_kind). */
+  unknown: number;
+}
+
+export interface TrustedGraphCoverage {
+  /** Knowledge pages that could carry a trusted edge. */
+  eligible_pages: number;
+  /** Of those, how many have >= 1 trusted edge (inbound or outbound). */
+  covered_pages: number;
+  /** covered_pages / eligible_pages; null when eligible_pages is 0 so unpopulated corpora are distinguished from zero coverage. */
+  coverage: number | null;
+  /** Why pages dropped out of the denominator. Sums with eligible_pages to the markdown page count. */
+  excluded: {
+    raw_capture: number;
+    machine_stub: number;
+    empty_or_boilerplate: number;
+    pseudo_or_auto: number;
+  };
+}
+
 export interface BrainHealth {
   page_count: number;
   /**
@@ -1737,6 +1766,26 @@ export interface BrainHealth {
   timeline_coverage: number | null;
   /** Top 5 entities by total link count (in + out). */
   most_connected: Array<{ slug: string; link_count: number }>;
+  /**
+   * Breakdown of all live pages across storage surfaces (prose: live markdown
+   * knowledge pages outside inbox/; code: live page_kind='code' pages; image:
+   * live page_kind='image' pages; raw_capture: live markdown pages in inbox/;
+   * unknown: live pages with missing or unrecognized page_kind), returning zero
+   * for each surface when the brain contains no pages.
+   */
+  pages_by_surface?: PagesBySurface;
+  /**
+   * Fraction of eligible knowledge pages carrying >= 1 human-meant, non-mention
+   * link (inbound or outbound) to or from another live page; code chunks,
+   * images, machine stubs, and auto-linked mentions are excluded from the
+   * denominator, and the metric returns null (not 0 or 100%) when eligible_pages
+   * is 0 so unpopulated corpora are unambiguously distinguished from zero coverage.
+   */
+  trusted_graph_coverage?: number | null;
+  /** Denominator of `trusted_graph_coverage`: eligible knowledge pages. */
+  trusted_graph_eligible_pages?: number;
+  /** Numerator of `trusted_graph_coverage`: eligible pages with >= 1 trusted edge. */
+  trusted_graph_covered_pages?: number;
   /**
    * Per-component contribution to brain_score. Sum equals brain_score by
    * construction. Displayed by `gbrain doctor` when brain_score < 100.

@@ -106,6 +106,7 @@ import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts'
 import { PageMissingError } from './engine-errors.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
+import { computePagesBySurface, computeTrustedGraphCoverage } from './trusted-graph-coverage.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT, quarantineFilterFragment } from './quarantine.ts';
@@ -4944,6 +4945,9 @@ export class PostgresEngine implements BrainEngine {
     const noDeadLinksScore = pageCount === 0 ? 10 : Math.round(noDeadLinks * 10);
     const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
 
+    const surface = await computePagesBySurface(this, opts);
+    const trusted = await computeTrustedGraphCoverage(this, opts);
+
     return {
       page_count: pageCount,
       linkable_page_count: linkablePageCount,
@@ -4963,6 +4967,10 @@ export class PostgresEngine implements BrainEngine {
         slug: c.slug,
         link_count: Number(c.link_count),
       })),
+      pages_by_surface: surface,
+      trusted_graph_coverage: trusted.coverage,
+      trusted_graph_eligible_pages: trusted.eligible_pages,
+      trusted_graph_covered_pages: trusted.covered_pages,
       embed_coverage_score: embedCoverageScore,
       link_density_score: linkDensityScore,
       timeline_coverage_score: timelineCoverageScore,
