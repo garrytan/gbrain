@@ -22,6 +22,7 @@ import { markKeywordHits } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { HybridSearchMeta } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
+import { redactSearchResults, redactCredentialLikeText } from '../search/output-redaction.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS } from '../search/snippet-cap.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
@@ -291,10 +292,11 @@ const search: Operation = {
       // truth boost — but the provenance marker must still surface).
       await stampUnverifiedExtractions(ctx.engine, results, { ...scope, excludePrivate });
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
-      maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
-      ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, null, { conceptHint: true }));
+      const safeResults = redactSearchResults(results);
+      maybeCaptureSearch(ctx, queryText, safeResults, Date.now() - startedAt, false);
+      ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, safeResults, null, { conceptHint: true }));
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
-      return applySnippetCap(results, snippetCap);
+      return applySnippetCap(safeResults, snippetCap);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
@@ -318,10 +320,11 @@ const search: Operation = {
     stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
-    maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
-    ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, capturedMeta, { conceptHint: true }));
+    const safeResults = redactSearchResults(results);
+    maybeCaptureSearch(ctx, queryText, safeResults, latency_ms, true, capturedMeta);
+    ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, safeResults, capturedMeta, { conceptHint: true }));
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
-    return applySnippetCap(results, snippetCap);
+    return applySnippetCap(safeResults, snippetCap);
   },
   scope: 'read',
   cliHints: { name: 'search', positional: ['query'] },
@@ -504,7 +507,7 @@ const query: Operation = {
         ...(types ? { types } : {}),
         ...querySourceScope,
       });
-      return applySnippetCap(results, snippetCap);
+      return applySnippetCap(redactSearchResults(results), snippetCap);
     }
 
     if (!queryText) {
@@ -699,7 +702,10 @@ const query: Operation = {
               embedQuestion: (q) => embedQuery(q),
             });
             crag.think = {
-              answer: t.answer,
+              // The think answer synthesizes retrieved content, so it can
+              // carry the same credential-like material redactSearchResults
+              // scrubs from the result envelope — scrub it with the same pass.
+              answer: redactCredentialLikeText(t.answer),
               citations: t.citations.length,
               ...(t.synthesis_status ? { synthesis_status: t.synthesis_status } : {}),
               model: t.modelUsed,
@@ -711,6 +717,7 @@ const query: Operation = {
       }
     }
     const latency_ms = Date.now() - startedAt;
+    const safeResults = redactSearchResults(results);
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
     // search handler — fire-and-forget, internal callers bypass this path.
@@ -729,7 +736,7 @@ const query: Operation = {
         {
           tool_name: 'query',
           query: queryText,
-          results,
+          results: safeResults,
           meta,
           latency_ms,
           remote: ctx.remote ?? false,
@@ -745,12 +752,12 @@ const query: Operation = {
     // WP2/D3: query never nudges toward itself — no concept hint here.
     // #1663: the CRAG grade rides the same retrieval meta channel.
     ctx.emitResponseMeta?.('retrieval', {
-      ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, results, capturedMeta)),
+      ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, safeResults, capturedMeta)),
       crag,
     });
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
-    return applySnippetCap(results, snippetCap);
+    return applySnippetCap(safeResults, snippetCap);
   },
   scope: 'read',
   cliHints: { name: 'query', positional: ['query'] },

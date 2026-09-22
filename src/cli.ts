@@ -38,6 +38,7 @@ import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
+import { redactSearchResults } from './core/search/output-redaction.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
@@ -1750,7 +1751,9 @@ export function formatResult(
     }
     case 'search':
     case 'query': {
-      const results = result as any[];
+      // Redact BEFORE any rendering branch below, --json included: every exit
+      // from this case must go through the scrubbed copy.
+      const results = redactSearchResults(result as any[]);
       if (params.json === true) return JSON.stringify(results, null, 2) + '\n';
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —
