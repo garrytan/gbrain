@@ -23,6 +23,7 @@ import type {
   AdjacencyRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
+import type { EmbedSkipMarker } from './embed-skip.ts';
 
 /**
  * v0.27.1: file row for binary-asset metadata. Mirrors the `files` table
@@ -1188,6 +1189,18 @@ export interface BrainEngine {
    * stale. Idempotent. No-op if the page doesn't exist.
    */
   setPageEmbeddingSignature(slug: string, opts: { sourceId?: string; signature: string }): Promise<void>;
+  /**
+   * Merge an embed-skip marker into one page's `frontmatter`.
+   * Called by the embed path when a chunk is rejected as over-context, so the
+   * page stops being selected for embedding instead of failing on every run
+   * forever. Merges rather than replaces — the rest of the frontmatter is
+   * untouched. Idempotent. No-op if the page doesn't exist.
+   *
+   * The marker is the same one import writes for oversized pages, read
+   * through the shared predicate in `embed-skip.ts`; see
+   * `buildChunkTokenLimitMarker` for why parking is page-level.
+   */
+  markEmbedSkip(slug: string, opts: { sourceId?: string; marker: EmbedSkipMarker }): Promise<void>;
   /**
    * NULL out the embeddings (and embedded_at) of every chunk whose page
    * `embedding_signature` is set AND differs from `signature` — i.e. pages

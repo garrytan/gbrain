@@ -77,13 +77,13 @@ src/core/persistence/semantic-pages.ts	1	coordinator	Publication is transaction-
 src/core/pglite-engine/facts.ts	14	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/pglite-engine/salience.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/pglite-engine/takes.ts	6	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
-src/core/pglite-engine.ts	34	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/pglite-engine.ts	35	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication. The embed path adds one page-frontmatter writer, markEmbedSkip, which merges an embed-skip marker under the same engine guard and touches no canonical table.
 src/core/pglite-schema.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
 src/core/postgres-engine/facts.ts	11	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/postgres-engine/forward-reference-bootstrap.ts	1	schema	Schema installation and forward-reference DDL; coordinated activation quiesces canonical writers.
 src/core/postgres-engine/salience.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/postgres-engine/takes.ts	6	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
-src/core/postgres-engine.ts	33	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/postgres-engine.ts	34	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication. The embed path adds one page-frontmatter writer, markEmbedSkip, which merges an embed-skip marker under the same engine guard and touches no canonical table.
 src/core/schema-pack/mutate.ts	0	filesystem_guard	The shared manifest write primitive checks its root before atomic replacement.
 src/core/schema-pack/page-to-alias.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/schema-pack/page-to-link.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.

@@ -59,6 +59,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'upsertChunks', 'getChunks', 'countStaleChunks', 'sumStaleChunkChars', 'setPageEmbeddingSignature',
   'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
   'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'deleteChunks',
+  'markEmbedSkip',
   // Extraction watermark
   'countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch',
   // Links + graph
