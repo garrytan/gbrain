@@ -178,3 +178,93 @@ describe('search output credential redaction', () => {
     expect(rawResult.chunk_text).toContain(classicGithubToken);
   });
 });
+
+describe('search output redaction — shapes that must not slip through', () => {
+  const fill = (n: number, c: string) => c.repeat(n);
+
+  test('an assigned value may start with, or contain, punctuation', () => {
+    for (const value of [
+      `!${fill(20, 'p')}`,
+      `$${fill(20, 'q')}`,
+      `${fill(10, 'r')}!#%${fill(20, 's')}`,
+    ]) {
+      const out = redactCredentialLikeText(`password=${value}`);
+      // No fragment of the value may survive, not merely its first run.
+      expect(out).not.toContain(value);
+      expect(out).not.toContain(value.slice(-12));
+      expect(out).toContain('<REDACTED:assigned_secret>');
+    }
+  });
+
+  test('a value longer than any old length cap is redacted, with no surviving tail', () => {
+    const longBearer = fill(300, 't');
+    const bearer = redactCredentialLikeText(`Authorization: Bearer ${longBearer}`);
+    expect(bearer).not.toContain(fill(40, 't'));
+
+    const longAssigned = fill(300, 'u');
+    const assigned = redactCredentialLikeText(`API_KEY=${longAssigned}`);
+    expect(assigned).not.toContain(fill(40, 'u'));
+
+    const longGithub = ['ghp', fill(300, 'G')].join('_');
+    expect(redactCredentialLikeText(longGithub)).not.toContain(fill(40, 'G'));
+  });
+
+  test('Basic credentials are redacted the same way as Bearer', () => {
+    const basic = `Authorization: Basic ${fill(40, 'e')}==`;
+    const out = redactCredentialLikeText(basic);
+    expect(out).not.toContain(fill(40, 'e'));
+    expect(out).toContain('<REDACTED:authorization_credentials>');
+  });
+
+  test('a private key cut off before its END fence still has its material removed', () => {
+    const fence = '-'.repeat(5);
+    const excerpt = `${fence}BEGIN PRIVATE KEY${fence}\n${fill(64, 'v')}\n${fill(64, 'w')}`;
+    const out = redactCredentialLikeText(excerpt);
+    expect(out).not.toContain(fill(64, 'v'));
+    expect(out).not.toContain(fill(64, 'w'));
+    expect(out).toContain('<REDACTED:pem_private_key>');
+  });
+
+  test('text before a truncated private key survives; only the key onward is removed', () => {
+    const fence = '-'.repeat(5);
+    const out = redactCredentialLikeText(`deploy notes:\n${fence}BEGIN RSA PRIVATE KEY${fence}\n${fill(64, 'k')}`);
+    expect(out.startsWith('deploy notes:\n')).toBe(true);
+    expect(out).not.toContain(fill(64, 'k'));
+  });
+
+  test('an ssh key inside one-line JSON leaves the other fields intact', () => {
+    const json = `{"key":"ssh-ed25519 ${fill(68, 'x')} me@host","other":"keep-this-value"}`;
+    const out = redactCredentialLikeText(json);
+    expect(out).not.toContain(fill(68, 'x'));
+    expect(out).toContain('"other":"keep-this-value"');
+  });
+
+  test('vendor-prefixed tokens the first list missed', () => {
+    const sendgrid = ['SG', fill(22, 'a'), fill(43, 'b')].join('.');
+    const digitalocean = `dop_v1_${fill(64, 'c')}`;
+    for (const token of [sendgrid, digitalocean]) {
+      const out = redactCredentialLikeText(`value ${token} end`);
+      expect(out).not.toContain(token);
+      expect(out).toContain('<REDACTED:');
+    }
+  });
+
+  test('prose that merely names an auth scheme or a vendor prefix is left alone', () => {
+    for (const safe of [
+      'see Basic concepts in the docs',
+      'Bearer of bad news',
+      'the SG. prefix is SendGrid',
+    ]) {
+      expect(redactCredentialLikeText(safe), safe).toBe(safe);
+    }
+  });
+
+  test('an unquoted assignment is redacted to the next whitespace, including a trailing field', () => {
+    // Pinned as the accepted trade: a password may legitimately contain `,` or
+    // `;`, so the value is not cut there. On an unquoted `k=v,k2=v2` line the
+    // trailing field is redacted with it — over-redaction, never a leaked tail.
+    const out = redactCredentialLikeText(`password=${fill(12, 'z')},next=1 tail`);
+    expect(out).not.toContain(fill(12, 'z'));
+    expect(out.endsWith(' tail')).toBe(true);
+  });
+});
