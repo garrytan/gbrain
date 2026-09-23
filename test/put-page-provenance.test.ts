@@ -168,6 +168,34 @@ describe('put_page provenance — trusted local caller (ctx.remote === false)', 
 });
 
 describe('put_page provenance — CV6 spoofing guard (ctx.remote !== false)', () => {
+  test('bound OAuth client bare slug is prefixed and persisted under its first bound_slug_prefix', async () => {
+    await engine.executeRaw(
+      `INSERT INTO oauth_clients(client_id,client_name,scope,source_id,bound_slug_prefixes)
+       VALUES($1,$2,'read write','default',$3)`,
+      ['gbrain_cl_prefix_test', 'Prefix test client', ['vault-example/']],
+    );
+    const ctx = makeCtx({
+      remote: true,
+      auth: {
+        token: 'test-token',
+        clientId: 'gbrain_cl_prefix_test',
+        principal: { kind: 'oauth_client', id: 'gbrain_cl_prefix_test' },
+        scopes: ['read', 'write'],
+        sourceId: 'default',
+        boundSlugPrefixes: ['vault-example/'],
+      },
+    });
+
+    const result = await putPageOp.handler(ctx, {
+      slug: 'garden/x',
+      content: '---\ntype: note\ntitle: Garden X\n---\n\nbody',
+    }) as Record<string, unknown>;
+
+    expect(result.slug).toBe('vault-example/garden/x');
+    expect(await engine.getPage('vault-example/garden/x', { sourceId: 'default' })).not.toBeNull();
+    expect(await engine.getPage('garden/x', { sourceId: 'default' })).toBeNull();
+  });
+
   test('remote caller cannot claim source_kind: capture-cli', async () => {
     const ctx = makeCtx({ remote: true });
     await putPageOp.handler(ctx, {

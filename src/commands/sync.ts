@@ -332,6 +332,10 @@ export interface SyncOpts {
   noPull?: boolean;
   noEmbed?: boolean;
   noExtract?: boolean;
+  /** Run embedding inline. The default leaves it for the serve idle drain. */
+  embedInline?: boolean;
+  /** Allow a directory source reconcile above the 10% delete guard. */
+  forceReconcile?: boolean;
   /**
    * #3969: opt back into per-poll ingest_log rows. By default a sync that
    * landed nothing (no pages written, no chunks, no failures acknowledged)
@@ -1369,6 +1373,17 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       const rawCfg = typeof cfgRows[0].config === 'string'
         ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
         : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+      if (rawCfg.kind === 'directory') {
+        serr(`[gbrain phase] sync.directory_walk`);
+        const { parseDirectorySourceConfig, runDirectorySync } = await import('../core/directory-source.ts');
+        const fallbackDir = cfgRows[0].local_path ?? repoPath;
+        return await runDirectorySync(
+          engine,
+          srcId,
+          parseDirectorySourceConfig(rawCfg, fallbackDir),
+          opts,
+        );
+      }
       if (rawCfg.kind === 'github') {
         serr(`[gbrain phase] sync.github_materialize`);
         const { parseGitHubSourceConfig, runGitHubSync } = await import('../core/github-source.ts');
@@ -2402,7 +2417,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     };
   }
 
-  const noEmbed = opts.noEmbed || totalChanges > 100;
+  // Import stays fast and deterministic by default. `--embed-inline` is the
+  // explicit opt-in for the old provider-coupled path.
+  const noEmbed = opts.noEmbed || opts.embedInline !== true || totalChanges > 100;
   if (totalChanges > 100) {
     slog(`Large sync (${totalChanges} files). Importing text, deferring embeddings.`);
   }
@@ -3841,7 +3858,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // the stale sweep scans the whole source, so banked-across-runs pages are
   // covered regardless.
   const extractOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
-  if (!opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
+  if (opts.embedInline !== true && !opts.noExtract && pagesAffected.length > 0) {
+    const { markDeferredExtractionPending } = await import('../core/serve-sync-runner.ts');
+    markDeferredExtractionPending(engine, opts.sourceId);
+  }
+  if (opts.embedInline === true && !opts.noExtract && totalChanges > 100 && pagesAffected.length > 0) {
     // #2849: above the size gate the deferred extraction must be DURABLY
     // QUEUED, not just hinted. The autopilot cycle's extract phase is
     // slug-scoped (an up_to_date follow-up sync hands it an empty
@@ -3906,7 +3927,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       ` Run 'gbrain extract --stale${opts.sourceId ? ` --source-id ${opts.sourceId}` : ''}' to extract now.`,
     );
   }
-  if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
+  if (opts.embedInline === true && !opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
     try {
       const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted, slugsSafeToStamp } = await import('./extract.ts');
       // #774: pages' source_path is git-root-relative, so extract resolves
@@ -3988,7 +4009,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // against this run's confirmed-deleted set (slugs re-imported later in the
   // run were removed from it at their push sites).
   const embedSlugs = pagesAffected.filter((s) => !deletedSlugs.has(s));
-  if (!noEmbed && embedSlugs.length > 0 && pagesAffected.length <= 100) {
+  if (opts.embedInline === true && !noEmbed && embedSlugs.length > 0 && pagesAffected.length <= 100) {
     try {
       const { runEmbedCore } = await import('./embed.ts');
       const embedOpts = opts.sourceId
@@ -4005,8 +4026,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
       // Other errors stay best-effort — rate limits, transient network.
     }
-  } else if (noEmbed || totalChanges > 100) {
+  } else if (opts.noEmbed || totalChanges > 100) {
     slog(`Text imported. Run 'gbrain embed --stale' to generate embeddings.`);
+  }
+  if (!opts.noEmbed && opts.embedInline !== true && embedSlugs.length > 0) {
+    const { scheduleDeferredSyncEmbeds } = await import('../core/serve-sync-runner.ts');
+    scheduleDeferredSyncEmbeds(engine, opts.sourceId);
   }
 
   if (malformedSkipped.length > 0) {
@@ -4034,7 +4059,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     chunksCreated,
     embedded,
     pagesAffected,
-    ...(totalChanges > 100 && embedSlugs.length > 0 ? { embedDeferralReason: 'large_sync' as const } : {}),
+    ...(opts.embedInline === true && totalChanges > 100 && embedSlugs.length > 0
+      ? { embedDeferralReason: 'large_sync' as const } : {}),
     malformedSkipped: malformedSkipped.length,
     ...(typeWarningsEnabled && typeWarnings.length > 0 ? { type_warnings: typeWarnings } : {}),
     ...(uncommittedDrift ? { uncommitted: uncommittedDrift } : {}),
@@ -4117,7 +4143,7 @@ async function performFullSync(
   slog(`Running full import of ${syncScopeRoot}${fullConcurrency > 1 ? ` (${fullConcurrency} workers)` : ''}...`);
   const { runImport, ImportAbortError } = await import('./import.ts');
   const importArgs = [syncScopeRoot];
-  if (opts.noEmbed) importArgs.push('--no-embed');
+  if (opts.noEmbed || opts.embedInline !== true) importArgs.push('--no-embed');
   if (opts.includeGitignored) importArgs.push('--include-gitignored');
   if (fullConcurrency > 1) importArgs.push('--workers', String(fullConcurrency));
   // v0.31.2: thread strategy through so code-strategy first sync
@@ -4442,7 +4468,7 @@ async function performFullSync(
   // same reason as the incremental path — surface dim-mismatch via hint
   // instead of silently swallowing or killing the process.
   let embedded = 0;
-  if (!opts.noEmbed) {
+  if (!opts.noEmbed && opts.embedInline === true) {
     try {
       const { runEmbedCore } = await import('./embed.ts');
       await runEmbedCore(engine, { stale: true });
@@ -4456,6 +4482,14 @@ async function performFullSync(
       }
       // Other errors stay best-effort.
     }
+  }
+  if (!opts.noEmbed && opts.embedInline !== true && result.imported > 0) {
+    const { scheduleDeferredSyncEmbeds } = await import('../core/serve-sync-runner.ts');
+    scheduleDeferredSyncEmbeds(engine, opts.sourceId);
+  }
+  if (!opts.noExtract && result.imported > 0) {
+    const { markDeferredExtractionPending } = await import('../core/serve-sync-runner.ts');
+    markDeferredExtractionPending(engine, opts.sourceId);
   }
 
   return {
@@ -4548,12 +4582,16 @@ async function runSyncInner(engine: BrainEngine, args: string[]) {
 Sync the brain repo's text content into the engine, then embed.
 
 Options:
+  --embed-inline       Embed during sync. Default: import first, then let the
+                       serve process drain stale embeds in the background.
   --no-embed           Skip the embed step. Use this when the embed
                        provider is misconfigured or you want to defer
                        embedding (run 'gbrain embed --stale' later).
   --no-extract         Skip the link/timeline extraction step. Pages will
                        show as stale in 'gbrain doctor'; run
                        'gbrain extract --stale' later to catch up.
+  --force              Allow a directory source reconcile above the 10%
+                       delete guard after you have checked the source path.
   --workers N          Run the import phase with N parallel workers
                        (alias: --concurrency). Default: 4 when the
                        diff is >100 files, else serial.
@@ -4652,6 +4690,8 @@ See also:
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
   let noEmbed = resolveNoEmbed(args, loadConfig());
+  const embedInline = args.includes('--embed-inline');
+  const forceReconcile = args.includes('--force');
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');
   const retryFailed = args.includes('--retry-failed');
@@ -5054,7 +5094,8 @@ See also:
       catch (error) { policyFailures.set(source.id, error); }
     }
     const embedPlan = await resolveSyncAllEmbedPlan(engine, runnableSources.filter(src => !policyFailures.has(src.id) && !companyPolicies.get(src.id)), {
-      v2Enabled, serialFlag, noEmbed: noEmbed || !!embeddingCredentialError, noAutoEmbed, dryRun, jsonOut, yesFlag, full, includeGitignored,
+      v2Enabled, serialFlag, noEmbed: noEmbed || !!embeddingCredentialError, embedInline,
+      noAutoEmbed, dryRun, jsonOut, yesFlag, full, includeGitignored,
     });
     if (embedPlan.stop) return;
     const {
@@ -5122,6 +5163,8 @@ See also:
         repoPath: msysToNativePath(src.local_path!), // #2955: heal MSYS /c/... before joins
         dryRun, full, noPull,
         noEmbed: effectiveNoEmbed,
+        embedInline,
+        forceReconcile,
         noExtract,
         skipFailed, retryFailed, noSchemaPack,
         includeGitignored,
@@ -5356,7 +5399,7 @@ See also:
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
   const opts: SyncOpts = {
-    repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored, workingTree, sourceId,
+    repoPath, dryRun, full, noPull, noEmbed, noExtract, embedInline, forceReconcile, skipFailed, retryFailed, noSchemaPack, includeGitignored, workingTree, sourceId,
     strategy: strategyArg, concurrency,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
@@ -5375,7 +5418,7 @@ See also:
   let singleSourceAutoDefer = false;
   let singleSourceNoWorkerSurface = false;
   let singleCostGate: Record<string, unknown> | undefined;
-  if (!noEmbed && !dryRun && !watch) {
+  if (embedInline && !noEmbed && !dryRun && !watch) {
     const gateRows = await engine.executeRaw<{ local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null }>(
       `SELECT local_path, config, last_commit, chunker_version FROM sources WHERE id = $1`,
       [sourceId],
@@ -5651,6 +5694,8 @@ export async function syncOneSource(
     full: boolean;
     noPull: boolean;
     noEmbed: boolean;
+    embedInline?: boolean;
+    forceReconcile?: boolean;
     skipFailed: boolean;
     retryFailed: boolean;
     concurrency: number | undefined;
@@ -5671,6 +5716,8 @@ export async function syncOneSource(
     full: shared.full,
     noPull: shared.noPull,
     noEmbed: shared.noEmbed,
+    embedInline: shared.embedInline,
+    forceReconcile: shared.forceReconcile,
     noExtract: shared.noExtract,
     skipFailed: shared.skipFailed,
     retryFailed: shared.retryFailed,

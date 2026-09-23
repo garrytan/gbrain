@@ -46,6 +46,7 @@ import {
 } from '../core/destructive-guard.ts';
 import {
   addSource as opsAddSource,
+  setSourceKindDirectory,
   recloneIfMissing,
   defaultCloneDir,
   SourceOpError,
@@ -132,7 +133,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google] ' +
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|directory] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
@@ -170,6 +171,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
   let gHistoryDays = 90;
   let gCalendarId: string = DEFAULT_CALENDAR_ID;
+  let dKind = false;
+  const directoryExclude: string[] = [];
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -188,8 +191,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         ghKind = true;
       } else if (kind === 'google') {
         gKind = true;
+      } else if (kind === 'directory') {
+        dKind = true;
       } else {
-        console.error(`Unknown source kind: ${kind}. Supported: "github", "google".`);
+        console.error(`Unknown source kind: ${kind}. Supported: "github", "google", "directory".`);
         process.exit(2);
       }
       continue;
@@ -231,6 +236,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       gCalendarId = v;
       continue;
     }
+    if (a === '--exclude') { directoryExclude.push(args[++i] ?? ''); continue; }
     if (a === '--scope') {
       const scope = args[++i];
       if (scope !== 'auto' && scope !== 'repos') {
@@ -275,12 +281,20 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     console.error('Error: --url and --path are mutually exclusive (--url manages its own clone path).');
     process.exit(2);
   }
-  if (ghKind && (remoteUrl || localPath)) {
+  if (ghKind && (remoteUrl || localPath || dKind)) {
     console.error('Error: --kind github is mutually exclusive with --url and --path.');
     process.exit(2);
   }
-  if (gKind && (remoteUrl || localPath || ghKind)) {
+  if (gKind && (remoteUrl || localPath || ghKind || dKind)) {
     console.error('Error: --kind google is mutually exclusive with --url, --path, and --kind github.');
+    process.exit(2);
+  }
+  if (dKind && (remoteUrl || ghKind || gKind)) {
+    console.error('Error: --kind directory is mutually exclusive with --url and other source kinds.');
+    process.exit(2);
+  }
+  if (dKind && !localPath) {
+    console.error('Error: --kind directory requires --path <folder>.');
     process.exit(2);
   }
   if (gKind && !gAccount) {
@@ -436,6 +450,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
           },
         }
       : {}),
+    ...(dKind ? { directory: { exclude: directoryExclude } } : {}),
   });
 
   // Topology A discovery: if the just-added source carries a brain-resident
@@ -489,6 +504,22 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       console.error(`         Run \`gbrain sources harden ${id}\` to retry.`);
     }
   }
+}
+
+async function runSetKind(engine: BrainEngine, args: string[]): Promise<void> {
+  const [id, kind] = args;
+  if (!id || kind !== 'directory') {
+    console.error('Usage: gbrain sources set-kind <id> directory [--exclude <glob> ...]');
+    process.exit(2);
+  }
+  const exclude: string[] = [];
+  for (let i = 2; i < args.length; i++) {
+    if (args[i] === '--exclude') { exclude.push(args[++i] ?? ''); continue; }
+    console.error(`Unknown flag: ${args[i]}`);
+    process.exit(2);
+  }
+  const source = await setSourceKindDirectory(engine, id, exclude);
+  console.log(`Source "${id}" now syncs ${source.local_path} as a plain directory; existing pages were preserved.`);
 }
 
 /**
@@ -1850,6 +1881,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
   }
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
+    case 'set-kind':   return runSetKind(engine, rest);
     case 'list':       return runList(engine, rest);
     case 'remove':     return runRemove(engine, rest);
     case 'rename':     return runRename(engine, rest);
@@ -1906,6 +1938,10 @@ Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
+  add <id> --kind directory --path <p> [--exclude <glob> ...]
+                                    Register a plain folder; git is never used.
+  set-kind <id> directory [--exclude <glob> ...]
+                                    Flip an existing source in place without losing pages.
   list [--json]                     List registered sources with page counts.
   writer status|claim|activate|transfer  Inspect, activate or transfer canonical ownership (see writer --help).
   reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).

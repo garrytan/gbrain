@@ -262,6 +262,14 @@ interface GBrainOAuthProviderOptions {
    * the admin explicitly widened the window.
    */
   dcrTtlMaxSeconds?: number;
+  /**
+   * Scope granted to a DCR registrant that requests NO scope.
+   * ChatGPT's custom-connector flow registers without a `scope` field; the
+   * stock server then stores '' and every later tools/list is empty. Default
+   * ['read'] matches the CLI's register-client default. Operator override:
+   * `gbrain config set oauth.dcr_default_scope "read write"`.
+   */
+  dcrDefaultScope?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +325,7 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     private allowClientCredentialsDcr: boolean,
     private dcrTtlMin: number,
     private dcrTtlMax: number,
+    private dcrDefaultScope: string[],
   ) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
@@ -389,21 +398,30 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       // hard-rejecting: OIDC-flavored stacks append `offline_access` /
       // `openid`. Empty-after-filter with a non-empty request is a hard 400.
       const requestedScopes = parseScopeString(client.scope);
-      const ceilingViolation = dcrScopeViolation(requestedScopes, grantTypes);
+      // A default is still a DCR grant, so validate it under the exact same
+      // grant-type ceiling as an explicit request. In particular, an
+      // insecure client_credentials registration stays read-only and an
+      // operator-configured agent/admin default cannot bypass DCR policy.
+      const effectiveRequestedScopes = requestedScopes.length === 0
+        ? this.dcrDefaultScope
+        : requestedScopes;
+      const ceilingViolation = dcrScopeViolation(effectiveRequestedScopes, grantTypes);
       if (ceilingViolation) throw new InvalidClientMetadataError(ceilingViolation);
-      const { allowed, dropped } = filterAllowedScopes(requestedScopes);
+      const { allowed, dropped } = filterAllowedScopes(effectiveRequestedScopes);
       if (dropped.length > 0) {
         console.warn(
           `[gbrain dcr] dropping unknown scopes from registration ` +
           `(client_name=${client.client_name || 'unnamed'}): ${dropped.join(' ')}`,
         );
       }
-      if (requestedScopes.length > 0 && allowed.length === 0) {
+      if (effectiveRequestedScopes.length > 0 && allowed.length === 0) {
         throw new InvalidClientMetadataError(
-          `No recognized scopes in request (${requestedScopes.join(' ')}). ` +
+          `No recognized scopes in request (${effectiveRequestedScopes.join(' ')}). ` +
           `Allowed: ${ALLOWED_SCOPES_LIST.join(', ')}.`,
         );
       }
+      // A scope-less registration gets the operator's default instead of an
+      // empty, unusable grant.
       registeredScope = allowed.join(' ');
 
       // v0.41.3 (T5): validate token_endpoint_auth_method on the DCR path so
@@ -570,6 +588,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       options.allowClientCredentialsDcr === true,
       dcrTtlMin,
       dcrTtlMax,
+      options.dcrDefaultScope?.length ? options.dcrDefaultScope : ['read'],
     );
   }
 

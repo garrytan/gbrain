@@ -120,15 +120,16 @@ See the [deep-research ID protocol](../protocol/DEEP_RESEARCH_IDS_v1.md) for
 encoding, rename behavior, and escaped citation URLs. This protocol is tested
 through GBrain's CLI and MCP transports, not a live ChatGPT connector session.
 
-**DCR zero-scope gotcha.** If the connector registers itself via dynamic
-client registration (`--enable-dcr`) and the registration request omits
-`scope`, the client is registered with an EMPTY scope — and every token it
-mints is zero-scope. The connector then connects fine but every tool call
-(including deep research's `search`/`fetch`) fails with
-`insufficient_scope`. Fix: rescope the client to `read` (or `read write`)
-from the `/admin` dashboard or the CLI, then reconnect. Manual
-registration per step 2 above never hits this — you pick the scopes
-explicitly.
+**DCR default scope.** When a dynamic registration (`--enable-dcr`) omits
+`scope`, it receives `read` by default and still requires your approval in the
+admin dashboard. An operator can change that default with
+`gbrain config set oauth.dcr_default_scope "read write"`. The configured default
+must satisfy the same limits as an explicitly requested scope. Insecure dynamic
+machine-client registrations remain limited to `read`.
+
+Existing zero-scope registrations are unchanged. Rescope a selected client from
+the admin dashboard or CLI and reconnect if it needs access; this upgrade does
+not widen existing grants automatically.
 
 **DCR scope ceiling.** The reverse also holds: a self-registering connector
 may request at most `read write`, and while `--enable-dcr` is on, OAuth

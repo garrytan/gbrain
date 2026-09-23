@@ -26,8 +26,9 @@ import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { atomicWriteFileSync } from './atomic-write.ts';
 import type { BrainEngine } from './engine.ts';
-import { serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
+import { serializePageToMarkdown, resolveSourceLocalFilePath } from './markdown.ts';
 import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
+import { matchesAnyGlob } from './sync.ts';
 import {
   isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
   type PushLogOutcome,
@@ -87,7 +88,7 @@ export interface WriteThroughResult {
    *     differently-cased entry that the FS folds onto this page's file, so
    *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
-  skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
+  skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'path_excluded' | 'case_insensitive_collision';
   /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
   warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
@@ -222,7 +223,41 @@ export type PageWriteTarget =
        */
       sourcePathToBind: string;
     }
-  | { ok: false; skipped: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' };
+  | { ok: false; skipped: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' | 'path_excluded' };
+
+function prettySegmentKey(value: string): string {
+  return value.normalize('NFKD').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Resolve only parent folders. The final markdown filename remains slug-literal. */
+export function resolvePrettySlugPath(root: string, slug: string): string {
+  const segments = slug.split('/');
+  const file = `${segments.pop() ?? ''}.md`;
+  let cursor = root;
+  for (const wanted of segments) {
+    let chosen = wanted;
+    if (existsSync(cursor)) {
+      const dirs = readdirSync(cursor, { withFileTypes: true })
+        .filter(e => e.isDirectory() && !e.isSymbolicLink())
+        .map(e => e.name)
+        .sort((a, b) => a.localeCompare(b));
+      const exact = dirs.find(e => e === wanted);
+      if (exact) {
+        chosen = exact;
+      } else {
+        const caseMatches = dirs.filter(e => e.toLowerCase() === wanted.toLowerCase());
+        if (caseMatches.length === 1) {
+          chosen = caseMatches[0]!;
+        } else if (caseMatches.length === 0) {
+          const prettyMatches = dirs.filter(e => prettySegmentKey(e) === prettySegmentKey(wanted));
+          if (prettyMatches.length === 1) chosen = prettyMatches[0]!;
+        }
+      }
+    }
+    cursor = join(cursor, chosen);
+  }
+  return join(cursor, file);
+}
 
 /**
  * Scanner-convention `pages.source_path` for a file under `scanRoot` (the
@@ -303,8 +338,8 @@ export async function resolvePageWriteTarget(
   let filePath: string;
   let writeRoot: string;
   let scanRoot: string;
-  const srcRows = await engine.executeRaw<{ local_path: string | null }>(
-    `SELECT local_path FROM sources WHERE id = $1`,
+  const srcRows = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
+    `SELECT local_path, config FROM sources WHERE id = $1`,
     [sourceId],
   );
   // gbrain#2955: heal an msys-style local_path (`/c/Users/x`, recorded by a
@@ -313,6 +348,14 @@ export async function resolvePageWriteTarget(
   // real vault. Identity on POSIX and for already-native paths.
   const rawLocalPath = srcRows[0]?.local_path ?? null;
   const sourceLocalPath = rawLocalPath ? msysToNativePath(rawLocalPath) : null;
+  const rawConfig = srcRows[0]?.config;
+  let sourceConfig: Record<string, unknown> = {};
+  try {
+    sourceConfig = typeof rawConfig === 'string' ? JSON.parse(rawConfig) as Record<string, unknown>
+      : (rawConfig && typeof rawConfig === 'object' ? rawConfig as Record<string, unknown> : {});
+  } catch { sourceConfig = {}; }
+  const sourceExclude = Array.isArray(sourceConfig.exclude)
+    ? sourceConfig.exclude.filter((v): v is string => typeof v === 'string') : [];
 
   const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
     `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2${opts.includeDeleted ? '' : ' AND deleted_at IS NULL'} LIMIT 1`,
@@ -325,10 +368,13 @@ export async function resolvePageWriteTarget(
     if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
       return { ok: false, skipped: 'repo_not_found' };
     }
+    const uriPath = recordedPathFromFileUri(recordedUri, sourceLocalPath);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
     filePath = recordedPath
-      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
-      ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath, slug) ?? join(sourceLocalPath, `${slug}.md`)
-      : join(sourceLocalPath, recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
+      ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath, slug) ?? resolvePrettySlugPath(sourceLocalPath, slug)
+      : uriPath
+        ? join(sourceLocalPath, uriPath)
+        : resolvePrettySlugPath(sourceLocalPath, slug);
     writeRoot = sourceLocalPath;
     scanRoot = sourceLocalPath;
   } else {
@@ -350,7 +396,7 @@ export async function resolvePageWriteTarget(
     }
     const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
     const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
-    filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
+    filePath = knownPath ? join(pageRoot, knownPath) : resolvePrettySlugPath(pageRoot, slug);
     writeRoot = repoPath;
     // pageRoot, not repoPath: a later `sources add --path <pageRoot>` scan
     // walks pageRoot, so the bind must speak that scan's convention.
@@ -365,8 +411,14 @@ export async function resolvePageWriteTarget(
   if (!isWriteTargetContained(filePath, writeRoot)) {
     return { ok: false, skipped: 'path_escapes_source_root' };
   }
+  const sourcePathToBind = sourceConfig.kind === 'directory'
+    ? relative(resolve(scanRoot), resolve(filePath)).replaceAll('\\', '/')
+    : scannerSourcePath(scanRoot, filePath);
+  if (matchesAnyGlob(sourcePathToBind, sourceExclude) || matchesAnyGlob(`${sourcePathToBind}/`, sourceExclude)) {
+    return { ok: false, skipped: 'path_excluded' };
+  }
 
-  return { ok: true, filePath, writeRoot, sourcePathToBind: scannerSourcePath(scanRoot, filePath) };
+  return { ok: true, filePath, writeRoot, sourcePathToBind };
 }
 
 /**

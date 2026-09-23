@@ -43,6 +43,7 @@ src/core/cycle/phases/consolidate.ts	5	engine_guard	Canonical table SQL trigger 
 src/core/cycle/synthesize.ts	2	early_refusal	Managed mode refuses this legacy entry point before its canonical filesystem/provider effects.
 src/core/cycle.ts	3	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/destructive-guard.ts	3	coordinator	Managed source archive, restore and expiry purge use native exclusion and guarded topology transitions; remaining canonical maintenance keeps its engine guard.
+src/core/directory-source.ts	2	early_refusal	Managed sync routes to the persistence coordinator before connector dispatch, and the exported legacy directory helper independently refuses managed mode before filesystem watermark or canonical database effects.
 src/core/embedding-dim-check.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/embedding-invalidation.ts	2	projection	Derived vector invalidation; signature restamping requires matching chunk context and a current text projection. Canonical fields remain guarded by SQL triggers.
 src/core/embedding-migration.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
@@ -97,7 +98,7 @@ src/core/schema-pack/rewrite-links-batch.ts	1	early_refusal	Managed mode refuses
 src/core/schema-pack/sync.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/search/safe-chunks.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
 src/core/source-config-sql.ts	1	projection	Derived indexing, retrieval telemetry, or source settings; canonical fields remain guarded by SQL triggers.
-src/core/sources-ops.ts	8	coordinator	Managed source constructors, removal and reclone delegate to guarded lifecycle transactions and reserved directory recovery; legacy paths remain preactivation only.
+src/core/sources-ops.ts	10	coordinator	Managed source constructors, including ordinary directory roots, removal and reclone delegate to guarded lifecycle transactions and reserved directory recovery; unmanaged directory registration remains preactivation, while kind conversion changes source config without publishing page content.
 src/core/sweep.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/sync-anchor.ts	5	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/takes-write.ts	8	filesystem_guard	Managed operation routes through journal; legacy atomic file helper checks the root.

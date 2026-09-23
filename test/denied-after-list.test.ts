@@ -5,7 +5,7 @@
  * as status='denied_after_list' (the wave's trend-to-zero metric). Pins:
  *   - publish-gate call-time backstop (detail 'config_key=...') → counted
  *   - bound-client fence OP-level deny (detail 'fence=op') → counted
- *   - argument-level slug-fence denials (no marker) → EXCLUDED (D10)
+ *   - put_page auto-prefixes an out-of-prefix slug into the bound namespace
  *   - non-permission errors → excluded
  *
  * The fence + gate cases run through the real dispatchToolCall so the
@@ -143,18 +143,16 @@ describe('real envelopes through dispatchToolCall', () => {
     expect(isListLevelDenialEnvelope(p)).toBe(true);
   });
 
-  test('argument-level slug-fence deny (listed op, out-of-fence slug) → excluded (D10)', async () => {
-    // put_page IS fence-allowed (listed for bound clients); an out-of-prefix
-    // slug denies at the ARGUMENT level — legitimate, not a catalog lie.
+  test('put_page auto-prefixes an out-of-fence slug, so no denial is counted', async () => {
     const res = await dispatchToolCall(
       engine,
       'put_page',
       { slug: 'other/page', title: 'x', content: 'x' },
       { ...HTTP, auth: boundAuth() },
     );
-    expect(res.isError).toBe(true);
+    expect(res.isError ?? false).toBe(false);
     const p = parsed(res);
-    expect(p.error).toBe('permission_denied');
+    expect(p.slug).toBe('notes/other/page');
     expect(isListLevelDenialEnvelope(p)).toBe(false);
   });
 });

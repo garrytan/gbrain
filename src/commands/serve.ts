@@ -679,6 +679,7 @@ function installStdioLifecycle(
       // Deferred-embed drain: delegated syncs always run noEmbed (the #2139
       // cost gate lives in runSync); the lock owner closes that loop here.
       await runner.maybeDrainDeferredEmbeds(e);
+      await runner.maybeDrainDeferredExtractions(e);
     });
     let stdinSawData = false;
     let sweepInFlight = false;

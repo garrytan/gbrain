@@ -175,6 +175,54 @@ describe('writePageThrough', () => {
     expect(rows[0]?.source_path).toBe(`${slug}.md`);
   });
 
+  test('pretty-path NEW page reuses existing folder names case/space/punctuation-insensitively', async () => {
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $2, config = $3::text::jsonb WHERE id = $1`,
+      ['default', brainDir, JSON.stringify({ kind: 'directory' })],
+    );
+    fs.mkdirSync(path.join(brainDir, '10 - Example Garden'), { recursive: true });
+    const slug = '10-example-garden/plots/x';
+    await importFromContent(engine, slug, '# Pretty path\n', { noEmbed: true, sourceId: 'default' });
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res.written).toBe(true);
+    expect(res.path).toBe(path.join(brainDir, '10 - Example Garden', 'plots', 'x.md'));
+    expect(fs.existsSync(path.join(brainDir, '10-example-garden'))).toBe(false);
+  });
+
+  test('pretty-path NEW page does not choose arbitrarily between ambiguous normalized folders', async () => {
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $2, config = $3::text::jsonb WHERE id = $1`,
+      ['default', brainDir, JSON.stringify({ kind: 'directory' })],
+    );
+    fs.mkdirSync(path.join(brainDir, 'Foo Bar'), { recursive: true });
+    fs.mkdirSync(path.join(brainDir, 'Foo-Bar'), { recursive: true });
+    const slug = 'foobar/new-page';
+    await importFromContent(engine, slug, '# Ambiguous path\n', { noEmbed: true, sourceId: 'default' });
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res.written).toBe(true);
+    expect(res.path).toBe(path.join(brainDir, 'foobar', 'new-page.md'));
+    expect(fs.existsSync(path.join(brainDir, 'Foo Bar', 'new-page.md'))).toBe(false);
+    expect(fs.existsSync(path.join(brainDir, 'Foo-Bar', 'new-page.md'))).toBe(false);
+  });
+
+  test('directory exclude fence refuses write-through targets', async () => {
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $2, config = $3::text::jsonb WHERE id = $1`,
+      ['default', brainDir, JSON.stringify({ kind: 'directory', exclude: ['private/**'] })],
+    );
+    const slug = 'private/secret';
+    await importFromContent(engine, slug, '# Secret\n', { noEmbed: true, sourceId: 'default' });
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'default' });
+
+    expect(res).toEqual({ written: false, skipped: 'path_excluded' });
+    expect(fs.existsSync(path.join(brainDir, 'private', 'secret.md'))).toBe(false);
+  });
+
   test('[REGRESSION twin] falls back to a contained file:// source_uri when source_path is null (capture --file of a vault file)', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'library/companies/postiz';

@@ -129,13 +129,13 @@ test('a self-registered public client cannot obtain or redeem a code without own
   expect(forged.status).toBe(400);
   expect((await forged.json() as any).error).toBe('invalid_grant');
 
-  // scope omitted: nothing is registered and the consent request carries no scopes (one consent GET).
+  // Scope omitted: registration defaults to read and consent cannot widen it.
   const unscoped = await register({ grant_types: ['authorization_code'] });
-  expect(unscoped.scope ?? '').toBe('');
-  const id = await expectPending(unscoped.client_id);
+  expect(unscoped.scope).toBe('read');
+  const id = await expectPending(unscoped.client_id, 'read');
   const details = await fetch(`${base}/admin/api/oauth-requests/${id}`, { headers: { Cookie: adminCookie } });
   expect(details.status).toBe(200);
-  expect((await details.json() as any).scopes).toEqual([]);
+  expect((await details.json() as any).scopes).toEqual(['read']);
 
   // Revoked self-registered client: /authorize is refused before any consent request exists.
   const revoked = await fetch(`${base}/admin/api/revoke-client`, { method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId: client.client_id }) });

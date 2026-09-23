@@ -1110,7 +1110,7 @@ function resolveMaxWalkDepth(): number {
   return 32;
 }
 
-interface CollectOpts {
+export interface CollectOpts {
   strategy?: SyncStrategy;
   includeGitignored?: boolean;
   /**
@@ -1122,6 +1122,10 @@ interface CollectOpts {
   onExcluded?: (relPath: string) => void;
   /** See `RunImportOpts.includeHidden` — same repeatable-glob semantics. */
   includeHidden?: string[];
+  /** Directory-source fence. Matched against root-relative POSIX paths. */
+  exclude?: string[];
+  /** Reports an incomplete walk so callers can refuse delete reconciliation. */
+  onWalkError?: (path: string, error: unknown) => void;
 }
 
 /**
@@ -1285,10 +1289,13 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
     let entries: string[];
     try {
       entries = readdirSync(d);
-    } catch {
+    } catch (error) {
+      opts.onWalkError?.(d, error);
       return;
     }
     for (const entry of entries) {
+      const relEntry = relative(dir, join(d, entry)).replaceAll('\\', '/');
+      if (matchesAnyGlob(relEntry, opts.exclude) || matchesAnyGlob(`${relEntry}/`, opts.exclude)) continue;
       // Descent-time prune through the canonical gate (single source of truth
       // in core/sync.ts) instead of a hand-maintained inline list that drifted
       // from it. Skips hidden dirs (`.git`, `.raw`, etc.), `node_modules`,
@@ -1307,7 +1314,8 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
       let stat;
       try {
         stat = lstatSync(full);
-      } catch {
+      } catch (error) {
+        opts.onWalkError?.(full, error);
         console.warn(`[gbrain import] Skipping unreadable path: ${full}`);
         continue;
       }

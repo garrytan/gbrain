@@ -910,7 +910,11 @@ async function runExtractAndEmbed(
   const pagesAffected = summary.pagesAffected;
   if (totalChanges === 0 || pagesAffected.length === 0) return;
 
-  if (!deps.opts.noExtract && totalChanges <= 100) {
+  const { scheduleDeferredSyncEmbeds, markDeferredExtractionPending } = await import('../serve-sync-runner.ts');
+  if (!deps.opts.noExtract) markDeferredExtractionPending(deps.engine, deps.sourceId);
+  if (!deps.opts.noEmbed && deps.opts.embedInline !== true) scheduleDeferredSyncEmbeds(deps.engine, deps.sourceId);
+
+  if (deps.opts.embedInline === true && !deps.opts.noExtract && totalChanges <= 100) {
     try {
       const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted, slugsSafeToStamp } = await import('../../commands/extract.ts');
       const extractOpts = { sourceId: deps.sourceId };
@@ -924,17 +928,17 @@ async function runExtractAndEmbed(
           .map((slug) => ({ slug, source_id: deps.sourceId })),
       );
     } catch { /* extraction is best-effort */ }
-  } else if (totalChanges > 100 && !deps.opts.noExtract) {
+  } else if (deps.opts.embedInline === true && totalChanges > 100 && !deps.opts.noExtract) {
     process.stderr.write(`[google] large sync (${totalChanges} pages); extraction deferred to 'gbrain extract --stale --source-id ${deps.sourceId}'\n`);
   }
 
-  if (!deps.opts.noEmbed && totalChanges <= 100 && pagesAffected.length > 0) {
+  if (deps.opts.embedInline === true && !deps.opts.noEmbed && totalChanges <= 100 && pagesAffected.length > 0) {
     try {
       const { runEmbedCore } = await import('../../commands/embed.ts');
       await runEmbedCore(deps.engine, { slugs: pagesAffected, sourceId: deps.sourceId });
       summary.embedded = pagesAffected.length;
     } catch { /* embed is best-effort */ }
-  } else if (!deps.opts.noEmbed && totalChanges > 100) {
+  } else if (deps.opts.embedInline === true && !deps.opts.noEmbed && totalChanges > 100) {
     const drainHint = `run 'gbrain embed --stale --source ${deps.sourceId}' to drain now`;
     try {
       const { submitEmbedBackfill } = await import('../embed-backfill-submit.ts');

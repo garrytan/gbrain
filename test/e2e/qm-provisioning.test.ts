@@ -11,8 +11,8 @@
  *     client per employee, is idempotent on re-run, and RESCOPES in place
  *     (no secret rotation) when the roster changes;
  *   - thin clients (`init --mcp-only`) can write inside their
- *     bound_slug_prefixes and are rejected with the fence error outside
- *     them (v0.42.70.0 enforceClientSlugFence, over the real transport);
+ *     bound_slug_prefixes; put_page confines outside slugs beneath the first
+ *     bound prefix while other write operations retain the fence denial;
  *   - reads stay source-granular (a bob-example client CAN read
  *     chan-eng/ — the documented shared-source tradeoff).
  */
@@ -235,22 +235,25 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
     expect(joined.exitCode, cliDiagnostic("qm CLI", joined)).toBe(0);
   });
 
-  test("alice cannot write bob's namespace or an unbound prefix", async () => {
+  test("alice put_page rewrites bob's namespace and unbound prefixes beneath her own namespace", async () => {
     const bobNs = await asAlice(['put', 'emp-bob-example/notes/nope', '--content', 'x']);
-    expect(bobNs.exitCode, cliDiagnostic("qm CLI", bobNs)).not.toBe(0);
-    expect(bobNs.stdout + bobNs.stderr).toMatch(/bound_slug_prefixes/);
+    expect(bobNs.exitCode, cliDiagnostic("qm CLI", bobNs)).toBe(0);
+    expect((JSON.parse(bobNs.stdout) as { slug: string }).slug)
+      .toBe('emp-alice-example/emp-bob-example/notes/nope');
 
     const stray = await asAlice(['put', 'org-notes/anything', '--content', 'x']);
-    expect(stray.exitCode, cliDiagnostic("qm CLI", stray)).not.toBe(0);
-    expect(stray.stdout + stray.stderr).toMatch(/bound_slug_prefixes/);
+    expect(stray.exitCode, cliDiagnostic("qm CLI", stray)).toBe(0);
+    expect((JSON.parse(stray.stdout) as { slug: string }).slug)
+      .toBe('emp-alice-example/org-notes/anything');
   });
 
-  test('bob is fenced to HIS prefixes (not in eng)', async () => {
+  test('bob put_page remains inside his namespace when given an eng slug', async () => {
     const own = await asBob(['put', 'emp-bob-example/notes/hello', '--content', '# hi']);
     expect(own.exitCode, cliDiagnostic("qm CLI", own)).toBe(0);
     const eng = await asBob(['put', 'chan-eng/notes/nope', '--content', 'x']);
-    expect(eng.exitCode, cliDiagnostic("qm CLI", eng)).not.toBe(0);
-    expect(eng.stdout + eng.stderr).toMatch(/bound_slug_prefixes/);
+    expect(eng.exitCode, cliDiagnostic("qm CLI", eng)).toBe(0);
+    expect((JSON.parse(eng.stdout) as { slug: string }).slug)
+      .toBe('emp-bob-example/chan-eng/notes/nope');
   });
 
   test('reads stay source-granular: bob CAN read chan-eng pages (documented tradeoff)', async () => {
@@ -337,9 +340,10 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
     expect(ok).not.toMatch(/not available to slug-bound clients/);
     expect(ok).not.toMatch(/permission_denied/);
 
-    const denied = await mcpCall(token, 'put_page', {
-      slug: 'emp-bob-example/notes/nope', content: '# nope',
+    const confined = await mcpCall(token, 'put_page', {
+      slug: 'emp-bob-example/notes/via-mcp-rewritten', content: '# rewritten',
     });
-    expect(denied).toMatch(/bound_slug_prefixes/);
+    expect(confined).not.toMatch(/permission_denied/);
+    expect(confined).toContain('emp-alice-example/emp-bob-example/notes/via-mcp-rewritten');
   });
 });

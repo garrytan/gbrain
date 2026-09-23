@@ -173,7 +173,7 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
     });
     let stdout: string[];
     try {
-      ({ stdout } = await run(['--no-pull', '--json']));
+      ({ stdout } = await run(['--no-pull', '--embed-inline', '--json']));
     } finally {
       resetGateway();
     }

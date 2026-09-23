@@ -30,6 +30,7 @@ import {
   enforceClientSlugFence,
   federatedSearchScope,
   normalizeSlugPrefix,
+  slugUnderBoundPrefixes,
   parseSourceIdParam,
   validatePageSlug,
 } from './context.ts';
@@ -292,16 +293,26 @@ const put_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'put_page');
-    if (ctx.dryRun) {
-      if (typeof p.slug === 'string') {
-        validatePageSlug(p.slug);
-        enforceClientSlugFence(ctx, p.slug, 'put_page');
-        enforceSubagentSlugFence(ctx, p.slug, 'put_page');
+    let params = p;
+    if (typeof p.slug === 'string') {
+      let slug = p.slug;
+      const boundPrefixes = ctx.auth?.boundSlugPrefixes;
+      if (ctx.viaSubagent !== true && boundPrefixes && boundPrefixes.length > 0 && !slugUnderBoundPrefixes(boundPrefixes, slug)) {
+        const first = normalizeSlugPrefix(boundPrefixes[0] ?? '');
+        if (first) slug = `${first.endsWith('/') ? first : `${first}/`}${slug}`;
       }
-      return { dry_run: true, action: 'put_page', slug: p.slug };
+      if (slug !== p.slug) params = { ...p, slug };
     }
-    return submitPageMutation(ctx, { operation: 'put_page', params: p });
+    pageMutationSource(ctx, params, 'put_page');
+    if (ctx.dryRun) {
+      if (typeof params.slug === 'string') {
+        validatePageSlug(params.slug);
+        enforceClientSlugFence(ctx, params.slug, 'put_page');
+        enforceSubagentSlugFence(ctx, params.slug, 'put_page');
+      }
+      return { dry_run: true, action: 'put_page', slug: params.slug };
+    }
+    return submitPageMutation(ctx, { operation: 'put_page', params });
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };

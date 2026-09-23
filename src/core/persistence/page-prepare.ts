@@ -1,7 +1,7 @@
 import { isEmbedSkipped } from '../embed-skip.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
@@ -10,7 +10,8 @@ import { parseMarkdown, serializePageToMarkdown, resolveSourceLocalFilePath } fr
 import { OperationError } from '../ops/contract.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { recordedPathFromFileUri, scannerSourcePath } from '../write-through.ts';
+import { recordedPathFromFileUri, resolvePrettySlugPath, scannerSourcePath } from '../write-through.ts';
+import { matchesAnyGlob } from '../sync.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite } from './authority.ts';
@@ -65,10 +66,26 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   const binding = await getWorktreeBinding(engine, row.source_id, hostId);
   if (!binding?.local_path) throw new OperationError('owner_unavailable', 'The canonical worktree is unavailable on this host.');
   const root = join(binding.local_path, binding.relative_path);
+  const [source] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [row.source_id]);
+  const config = (() => {
+    try {
+      return typeof source?.config === 'string' ? JSON.parse(source.config) as Record<string, unknown>
+        : source?.config && typeof source.config === 'object' ? source.config as Record<string, unknown> : {};
+    } catch { return {}; }
+  })();
+  const directorySource = config.kind === 'directory';
   const capturedPath = recordedPathFromFileUri(snapshot?.page.source_uri, root);
-  const path = resolveSourceLocalFilePath(root, snapshot?.page.source_path, row.slug)
-    ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`));
+  const recordedPath = snapshot?.page.source_path
+    ? resolveSourceLocalFilePath(root, snapshot.page.source_path, row.slug)
+    : null;
+  const path = recordedPath
+    ?? (capturedPath ? join(root, capturedPath) : resolvePrettySlugPath(root, row.slug));
   if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
+  const relativePath = relative(root, path).replaceAll('\\', '/');
+  const exclude = Array.isArray(config.exclude) ? config.exclude.filter((value): value is string => typeof value === 'string') : [];
+  if (directorySource && (matchesAnyGlob(relativePath, exclude) || matchesAnyGlob(`${relativePath}/`, exclude))) {
+    throw new OperationError('source_changed', 'The canonical file target is excluded by the directory source policy.');
+  }
   const before = existsSync(path) ? readFileSync(path) : null;
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
     throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
@@ -89,7 +106,13 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)) {
     throw new OperationError('source_changed', 'An unindexed file already occupies the canonical page path.', 'Import the file before replacing it.');
   }
-  return { path, root, content, expectedBeforeHash: before ? sha256(before) : null };
+  return {
+    path,
+    root,
+    content,
+    expectedBeforeHash: before ? sha256(before) : null,
+    sourcePath: directorySource ? relativePath : scannerSourcePath(root, path),
+  };
 }
 
 /** Providers and parsing run before the OS lock and before any publication transaction. */
@@ -212,7 +235,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const links = !noop && !targetDeleted && ordinaryPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
     ? await prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id) : undefined;
   const file = await prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered);
-  const sourcePath = file ? scannerSourcePath(file.root, file.path) : undefined;
+  const sourcePath = file?.sourcePath ?? (file ? scannerSourcePath(file.root, file.path) : undefined);
   return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, apply: async tx => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     if (!noop) {
