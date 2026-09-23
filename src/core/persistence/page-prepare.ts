@@ -1,6 +1,6 @@
 import { isEmbedSkipped } from '../embed-skip.ts';
 import { isQuarantined } from '../quarantine.ts';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -60,6 +60,18 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   Object.assign(parsed.frontmatter, stamp);
   return stamp;
 }
+/** Case-insensitive filesystems accept a lowercased slug path, but Git pathspecs match the on-disk spelling. */
+function onDiskSpelling(root: string, relativePath: string): string {
+  const segments = relativePath.split('/');
+  let path = root;
+  for (const [index, segment] of segments.entries()) {
+    if (!existsSync(join(path, segment))) return join(path, ...segments.slice(index));
+    const entries = readdirSync(path);
+    path = join(path, entries.includes(segment) ? segment
+      : entries.find(entry => entry.toLowerCase() === segment.toLowerCase()) ?? segment);
+  }
+  return path;
+}
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
   content: string | null, hostId?: string, options: { allowMissing?: boolean } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
@@ -68,7 +80,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   const root = join(binding.local_path, binding.relative_path);
   const capturedPath = recordedPathFromFileUri(snapshot?.page.source_uri, root);
   const path = resolveSourceLocalFilePath(root, snapshot?.page.source_path, row.slug)
-    ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`));
+    ?? (capturedPath ? join(root, capturedPath) : onDiskSpelling(root, `${row.slug}.md`));
   if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
   const before = existsSync(path) ? readFileSync(path) : null;
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {

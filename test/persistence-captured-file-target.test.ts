@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -73,4 +73,18 @@ test('captured file still requires bytes matching the coherent page snapshot', a
   writeFileSync(file, 'Uncoordinated local edit');
   await expect(prepareFileTarget(engine, row, snapshot, 'Replacement')).rejects.toMatchObject({ code: 'source_changed' });
   expect(readFileSync(file, 'utf8')).toBe('Uncoordinated local edit');
+});
+
+// Only a case-insensitive filesystem lets a lowercased slug path land in a mixed-case directory.
+const caseInsensitiveFs = (() => {
+  const probe = mkdtempSync(join(tmpdir(), 'gbrain-case-probe-'));
+  try { mkdirSync(join(probe, 'Probe')); return existsSync(join(probe, 'PROBE')); }
+  finally { rmSync(probe, { recursive: true, force: true }); }
+})();
+
+test.skipIf(!caseInsensitiveFs)('new page path keeps the on-disk spelling of an existing mixed-case directory', async () => {
+  mkdirSync(join(root, 'Mixed'));
+  const row = { source_id: sourceId, worktree_id: worktreeId, slug: 'mixed/new-page' };
+  const prepared = await prepareFileTarget(engine, row, null, 'New page');
+  expect(prepared?.path).toBe(join(prepared!.root, 'Mixed', 'new-page.md'));
 });
