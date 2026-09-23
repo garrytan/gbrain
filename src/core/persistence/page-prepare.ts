@@ -207,7 +207,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const rendered = serializePageToMarkdown(renderedPage, tags);
   const logicalNoop = snapshot !== null && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(ready.parsedPage, tags));
   const noop = logicalNoop && (snapshot?.page.deleted_at != null) === targetDeleted;
-  const project = row.operation === 'remember' || row.operation.startsWith('takes_') ? undefined
+  const project = row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity') ? undefined
     : prepareCanonicalProjections(ready.parsedPage,row.slug,row.source_id);
   const ordinaryPage = ['put_page','capture','restore_page','revert_version'].includes(row.operation);
   const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage);

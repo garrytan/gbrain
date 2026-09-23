@@ -5,6 +5,7 @@ import { discoverExtractablePages, countExtractAtomsBacklog, runPhaseExtractAtom
 import { matchingLegacyAtomPageState, transferLegacyAtomPageState } from '../src/core/cycle/extract-atoms-page-state.ts';
 import { MIGRATIONS } from '../src/core/migrate.ts';
 import type { ChatResult } from '../src/core/ai/gateway.ts';
+import { withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 
 let engine: PGLiteEngine;
 beforeAll(async () => {
@@ -156,9 +157,11 @@ describe('derived atom page state', () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     let calls = 0;
     for (const dryRun of [false, true]) {
-      await expect(runPhaseExtractAtoms(engine, { dryRun, _transcripts: [], _chat: async () => {
+      await expect(withSubmissionAuthority({ version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: 'example-client' },
+        grant: { scopes: ['admin'], sourceId: 'default', sourceCreatedAt: new Date().toISOString(), allowedTools: ['put_page'], allowedSlugPrefixes: ['*'] },
+        payloadHash: '0'.repeat(64) }, () => runPhaseExtractAtoms(engine, { dryRun, _transcripts: [], _chat: async () => {
         calls++; return response(atoms);
-      } })).rejects.toThrow('Atom extraction cannot mutate a managed brain');
+      } }))).rejects.toThrow('Atom extraction cannot mutate a managed brain');
     }
     expect(calls).toBe(0);
     expect(await rows()).toEqual([]);

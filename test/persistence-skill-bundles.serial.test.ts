@@ -11,7 +11,7 @@ import { BUNDLE_FILE_LIMITS } from '../src/core/persistence/bundle-files.ts';
 import { publishMutation, recoverPublication, type PreparedMutation } from '../src/core/persistence/coordinator.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
-import { claimPersistenceEffect, completeEffect } from '../src/core/persistence/effect-journal.ts';
+import { advanceEffectCursor, claimPersistenceEffect, completeEffect, renewPersistenceEffectClaim } from '../src/core/persistence/effect-journal.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { admitWrite, claimNextWrite, compactWriteReceipts, getWriteRequestById, prepareRecovery, type WriteAdmission } from '../src/core/persistence/journal.ts';
@@ -215,6 +215,44 @@ describe('typed skill bundle persistence', () => {
       await completeEffect(f.engine, effect);
       await expect(f.engine.executeRaw("SELECT gbrain_require_persistence_protocol(2)")).rejects.toThrow('writer_upgrade_required');
       await f.engine.transaction(async tx => { await declarePersistenceProtocol(tx); await tx.executeRaw('SELECT gbrain_require_persistence_protocol(2)'); });
+    }
+  });
+
+  test('embedding claim renewal and cursor advancement retain protocol-2 fencing', async () => {
+    for (const f of fixtures) {
+      const p = await prepare(f, 'embedding-protocol');
+      const row = await claim(f, p.admission);
+      expect((await publishMutation(f.engine, row, p.prepared, hostId)).state).toBe('committed');
+      await f.engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
+          VALUES($1::uuid,'embedding','{"source_scan":true}',$2,$3::uuid,$4::uuid)`,
+        [row.id, sourceId, f.binding.source_incarnation, f.binding.worktree_id]);
+      });
+      const effect = (await claimPersistenceEffect(f.engine, hostId))!;
+      expect(effect.request_id).toBe(row.id);
+      await expect(f.engine.executeRaw('UPDATE persistence_effects SET updated_at=now() WHERE id=$1', [effect.id]))
+        .rejects.toThrow('writer_upgrade_required');
+      await f.engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.executeRaw("UPDATE persistence_effects SET claim_expires_at=now()-interval '1 second' WHERE id=$1", [effect.id]);
+      });
+      const direct = { executeRaw: f.engine.executeRawDirect.bind(f.engine) };
+      expect(await renewPersistenceEffectClaim(direct, { ...effect, execution_token: randomUUID() })).toBe(false);
+      expect(await renewPersistenceEffectClaim(direct, effect)).toBe(true);
+      expect(await f.engine.executeRaw("SELECT claim_expires_at>now()+interval '1 minute' AS renewed FROM persistence_effects WHERE id=$1", [effect.id]))
+        .toEqual([{ renewed: true }]);
+      await expect(f.engine.executeRaw('SELECT gbrain_require_persistence_protocol(2)')).rejects.toThrow('writer_upgrade_required');
+      await advanceEffectCursor(f.engine, effect, 'notes/next');
+      expect(await f.engine.executeRaw('SELECT state,execution_token,data FROM persistence_effects WHERE id=$1', [effect.id]))
+        .toEqual([{ state: 'queued', execution_token: null, data: { source_scan: true, after_slug: 'notes/next', embedding_attempt_base: effect.attempts } }]);
+      expect(await renewPersistenceEffectClaim(direct, effect)).toBe(false);
+      const next = (await claimPersistenceEffect(f.engine, hostId))!;
+      expect(next.execution_token).not.toBe(effect.execution_token);
+      expect(await renewPersistenceEffectClaim(direct, effect)).toBe(false);
+      expect(await renewPersistenceEffectClaim(direct, next)).toBe(true);
+      await completeEffect(f.engine, next);
+      await expect(f.engine.executeRaw('SELECT gbrain_require_persistence_protocol(2)')).rejects.toThrow('writer_upgrade_required');
     }
   });
 

@@ -68,6 +68,14 @@ export interface BackupAssetVerdict {
   /** Structured fix argv (AdvisorFix discipline) or null when no single
    * mechanical fix exists. */
   fix_argv?: string[] | null;
+  configured_remote?: boolean;
+  verification?: {
+    state: 'verified' | 'not_checked' | 'unavailable' | 'missing_ref' | 'mismatch' | 'budget_exhausted' | 'stale';
+    checked_at?: string;
+    local_commit?: string;
+    remote_commit?: string;
+    repository_fingerprint?: string;
+  };
 }
 
 export interface BackupTotals {
@@ -79,6 +87,7 @@ export interface BackupTotals {
   recoverable_repos: number;
   /** Pages at risk on disk loss (db_only + undeclared DB-only signal). */
   pages_at_risk: number;
+  configured_repos?: number;
 }
 
 export interface BackupStatus {
@@ -97,6 +106,31 @@ export interface BackupStatus {
    * (coverage.ts getBackupStatus) — it would silence or fabricate a warn.
    */
   degraded?: boolean;
+  remote_check_at?: string;
+  recovery_scope?: string;
+}
+
+export const BACKUP_VERIFICATION_MAX_AGE_MS = 60 * 60 * 1000;
+export const BACKUP_RECOVERY_SCOPE = 'Git evidence covers committed repository files only; not a full database backup. DB-only pages, facts, configuration and credentials need a separate backup and restore drill.';
+
+export function currentBackupEvidence(s: BackupStatus, now = Date.now()): BackupStatus {
+  const statusAge = now - Date.parse(s.checked_at);
+  const stale = isBackupStatusStale(s, now) || !Number.isFinite(statusAge) || statusAge < 0;
+  const assets = s.assets.map(a => {
+    if (a.verification?.state !== 'verified') return a;
+    const age = now - Date.parse(a.verification.checked_at ?? '');
+    if (!s.degraded && Number.isFinite(age) && age >= 0 && age <= BACKUP_VERIFICATION_MAX_AGE_MS && !stale) return a;
+    return { ...a, verification: { ...a.verification, state: 'stale' as const } };
+  });
+  const repos = assets.filter(a => a.kind === 'source_repo' || a.kind === 'bootstrap_workspace');
+  const recoverable = repos.filter(a => a.state === 'ok' && a.verification?.state === 'verified').length;
+  return {
+    ...s,
+    assets,
+    recovery_scope: BACKUP_RECOVERY_SCOPE,
+    totals: { ...s.totals, recoverable_repos: recoverable },
+    overall: s.degraded || stale || repos.length > recoverable || s.totals.no_remote > 0 || s.totals.unpushed > 0 || s.totals.failing > 0 ? 'warn' : s.overall,
+  };
 }
 
 // ── Paths (test seams follow the nag-state.ts idiom) ────────────────────────
@@ -273,6 +307,9 @@ export function backupNoticeText(s: BackupStatus, surface: 'human' | 'aggregate'
   if (s.overall !== 'warn') return null;
   const n = s.totals.no_remote;
   const total = s.totals.assets;
+  if (n === 0) {
+    return "Current backup recovery is not verified for all knowledge assets. Run 'gbrain backup check' on the brain host; git does not cover the full database.";
+  }
   if (surface === 'aggregate') {
     return (
       `gbrain monthly backup check: ${n} of ${total} knowledge assets have no git remote ` +

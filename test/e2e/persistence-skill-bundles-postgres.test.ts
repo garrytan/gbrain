@@ -16,7 +16,8 @@ import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     process.stdout.write(stdout); process.stderr.write(stderr);
     expect({ code, stdout, stderr }).toMatchObject({ code: 0 });
-    expect(stderr).toContain('11 pass'); expect(stderr).toContain('0 fail');
+    expect(stderr).toContain('12 pass'); expect(stderr).toContain('0 fail');
+    expect(stderr).toContain('embedding claim renewal and cursor advancement retain protocol-2 fencing');
   } finally {
     clearTimeout(timer);
     if (child.exitCode === null) { child.kill('SIGKILL'); await child.exited; }

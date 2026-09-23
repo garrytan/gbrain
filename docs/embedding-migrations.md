@@ -54,6 +54,39 @@ A **dimension** change still requires the wipe-and-reinit (PGLite) or
 column-alter (Postgres) recipe below — the on-disk `vector(N)` width
 genuinely has to change.
 
+## Repair missing fact vectors deliberately
+
+Fact vectors are separate from page/chunk embeddings. Extraction preserves
+already embedded facts when it cannot produce a complete valid replacement;
+it does not transplant old vectors onto different text or a new model.
+Restrictive source changes still expire removed claims and tighten visibility
+before deferred reconciliation. Existing NULL fact vectors do not heal merely
+because later extraction runs. Preview a selected source without provider work:
+
+```bash
+gbrain embed --stale --facts --source <source-id>
+```
+
+The preview reports the scope and count, not a repair-price estimate. Its zero
+cost means no provider spend occurred during the preview. After reviewing the
+count and choosing a finite spending cap, explicitly authorize a bounded repair:
+
+```bash
+gbrain embed --stale --facts --source <source-id> --yes --max-cost-usd <cap>
+```
+
+The cap must be finite and nonnegative. `--max-facts` limits attempted facts
+(default 100, range 1–10,000); `--batch-size` bounds each batch (default 100,
+range 1–100); `--budget-ms` limits run time (default 60,000, range 1–3,600,000).
+All three accept integers. This is not an automatic, background or full-brain fact sweep.
+Only NULL vectors on current source/incarnation, row-version and withdrawal
+state are eligible; valid vectors are not re-embedded. Each provider attempt
+rechecks the selected-brain and database off switches and spend allowance.
+Managed sources repair physical fact projections under guarded authority, not
+canonical content; an owner-held PGLite brain uses private resident delegation
+without stopping its writer. Failed/unavailable providers leave the original
+facts intact and return bounded diagnostics.
+
 ## Why we don't do this automatically
 
 Switching dimensions requires:

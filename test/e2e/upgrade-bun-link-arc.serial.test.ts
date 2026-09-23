@@ -404,6 +404,8 @@ describe('runPostUpgrade — migration-ledger checkpoint (spawned)', () => {
     // Snapshot fast-path (when the runner exports it) — pure accelerant.
     if (process.env.GBRAIN_PGLITE_SNAPSHOT) postUpgradeEnv.GBRAIN_PGLITE_SNAPSHOT = process.env.GBRAIN_PGLITE_SNAPSHOT;
 
+    assertExit0('initialize installed fixture schema', await spawnWithShims(fx,
+      [CLI_PATH, 'init', '--migrate-only'], postUpgradeEnv));
     const run1 = await spawnWithShims(fx, [CLI_PATH, 'post-upgrade'], postUpgradeEnv);
     assertExit0('post-upgrade run 1', run1);
     // Pitch pass fired for the one migration newer than the prior binary...

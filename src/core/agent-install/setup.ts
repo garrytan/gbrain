@@ -40,7 +40,7 @@ export interface AgentSetupResult {
 }
 
 async function cli(root: string, artifact: InstallArtifact, args: string[]): Promise<void> {
-  const commandArgs = args.includes('--migrate-only') ? [...args, '--json'] : args;
+  const commandArgs = args.includes('--migrate-only') || args[0] === 'apply-migrations' ? [...args, '--json'] : args;
   const child = Bun.spawn([join(root, artifact.directory, 'bun'), '--no-env-file', join(root, artifact.cli), '--brain', 'host', ...commandArgs], {
     cwd: root, env: { ...isolatedAgentEnv(root), DATABASE_URL: '', GBRAIN_DATABASE_URL: '', ...(args[0] === 'init' ? { GBRAIN_IN_AGENT_SETUP: '1' } : {}) },
     stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
@@ -54,7 +54,7 @@ async function cli(root: string, artifact: InstallArtifact, args: string[]): Pro
     if (errors) process.stderr.write(errors);
     if (code !== 0) {
       let failure: { error?: string; reason?: string; next_action?: string } | undefined;
-      try { failure = JSON.parse(output); } catch { /* ordinary command error remains below */ }
+      try { failure = JSON.parse(output.trim().split(/\r?\n/).at(-1) ?? ''); } catch { /* ordinary command error remains below */ }
       if (failure?.error === 'pglite_busy') throw new PgliteBusyError(
         failure.next_action ?? 'The database is busy. Wait for its owner to finish and rerun setup; do not remove its lock.',
         failure.reason === 'live_serve' ? 'live_serve' : 'timeout',

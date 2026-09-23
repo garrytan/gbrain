@@ -168,7 +168,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
 
   // ── OpenRouter (router-prefixed, own catalogue rate) ────────────────────
   // Static entries pulled from OpenRouter's published `/api/v1/models`
-  // catalogue (verified 2026-08-17), NOT aliased to the inner vendor's
+  // catalogue, NOT aliased to the inner vendor's
   // direct rate — a router bills its own spread, and canonicalLookup's
   // nested-id miss (see doc comment below) exists precisely to stop a
   // router-prefixed id from silently matching the vendor's key instead.
@@ -176,8 +176,8 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // path is untouched; only ids listed here resolve, everything else still
   // returns undefined and the caller's no-pricing refusal still applies.
   //
-  // Scoped to the three models this fork's OpenRouter fallback tier
-  // actually routes through (model-fallback-probe.ts's FALLBACK map) —
+  // Scoped to explicit routes used by the OpenRouter fallback tier
+  // (model-fallback-probe.ts's FALLBACK map) and situation-cue builds —
   // add more entries here as needed rather than fetching the catalogue
   // live; see PR discussion on gbrain#3848 for why a dynamic fetch/cache
   // didn't merge (default-on network behavior, new pricing-source surface).
@@ -188,6 +188,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openrouter:deepseek/deepseek-v4-flash-0731': { input: 0.14,  output: 0.28 },
   'openrouter:qwen/qwen3.7-flash':              { input: 0.03,  output: 0.13 },
   'openrouter:qwen/qwen3.6-plus':               { input: 0.325, output: 1.95 },
+  'openrouter:anthropic/claude-sonnet-4.6':     { input: 3.00,  output: 15.00 },
 };
 
 /**
@@ -199,7 +200,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
  * non-Anthropic bare ids therefore miss, preserving the prior null-return
  * contract for ids like `gpt-5`.
  *
- * Nested OpenRouter ids (`openrouter:anthropic/claude-...`) intentionally MISS:
+ * Unlisted nested OpenRouter ids (`openrouter:anthropic/claude-...`) intentionally MISS:
  * splitProviderModelId yields provider `openrouter`, model
  * `anthropic/claude-...`, and `openrouter:anthropic/claude-...` is not a
  * canonical key. OpenRouter markup ≠ native pricing, so we never reprice it as

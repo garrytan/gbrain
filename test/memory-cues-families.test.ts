@@ -67,6 +67,29 @@ describe('controlled cue family ablations', () => {
     expect(['scene', 'horizon']).toContain(rows.candidates[0].family);
   });
 
+  test('the priced OpenRouter cue route has a bounded preview while unlisted routes refuse admission', async () => {
+    const originalModel = await engine.getConfig('chat_model');
+    const builds = await engine.executeRaw('SELECT id FROM memory_cue_builds ORDER BY id');
+    try {
+      await engine.setConfig('chat_model', 'openrouter:anthropic/claude-sonnet-4.6');
+      const preview = await previewMemoryCueBuild(engine, { sourceIds: ['default'] });
+      expect(preview).toMatchObject({ ready: true, generationModel: 'openrouter:anthropic/claude-sonnet-4.6' });
+      expect(preview.costPreview.maximumReservationUsdPerWindow).toBeGreaterThan(0);
+      expect(Number.isFinite(preview.costPreview.maximumReservationUsdPerPass)).toBe(true);
+      for (const model of ['openrouter:anthropic/claude-sonnet-4-6', 'openrouter:anthropic/claude-sonnet-5']) {
+        await engine.setConfig('chat_model', model);
+        expect(await previewMemoryCueBuild(engine, { sourceIds: ['default'] }))
+          .toMatchObject({ ready: false, reason: 'pricing_unknown', costPreview: { maximumReservationUsdPerWindow: null } });
+        await expect(submitMemoryCueBuild(engine, { sourceIds: ['default'], trustedLocal: true, maxUsd: 1 })).rejects.toThrow('pricing_unknown');
+      }
+      expect(await engine.executeRaw('SELECT id FROM memory_cue_builds ORDER BY id')).toEqual(builds);
+      expect(generations).toBe(1);
+    } finally {
+      if (originalModel === null) await engine.unsetConfig('chat_model');
+      else await engine.setConfig('chat_model', originalModel);
+    }
+  });
+
   test('each family selects frozen production cues without another generation call', async () => {
     for (const family of ['scene', 'horizon', 'bridge'] as const) {
       await engine.setConfig('memory.cues.families', JSON.stringify([family]));

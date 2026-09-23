@@ -245,7 +245,7 @@ test/register-client-source-normalize.test.ts	register-client route wiring (stru
 test/regression-strict-source-id.test.ts	cycle reverse-write call sites use the consolidated path	4	readFileSync
 test/regression-strict-source-id.test.ts	utils.ts no longer carries an inline permissive regex	2	readFileSync
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	readFileSync
-test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	10	readFileSync
+test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	11	readFileSync
 test/remediation-command-resolution.test.ts	#3697 — remediation text resolves against the live CLI surface	3	readFileSync
 test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)	5	readFileSync
 test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
@@ -287,6 +287,7 @@ test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-mod
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync
 test/skillopt/deadline-and-hermetic.test.ts	#4741 — hermetic-config docs make no platform-survives-logout claim	2	readFileSync
+test/skillpack-check-report-only.test.ts	(file-level)	2	readFileSync
 test/skillpack-harness-bridge.test.ts	review-driven hardening (ship pre-landing findings)	5	readFileSync
 test/skillpack-harvest.test.ts	addToBundleManifest	1	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — happy path	2	readFileSync

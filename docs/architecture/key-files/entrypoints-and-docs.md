@@ -58,7 +58,7 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
 
 - `gbrain.yml` (brain repo root) — Optional storage tiering config. Top-level `storage:` section with `db_tracked:` and `db_only:` array-valued keys. `gbrain sync` auto-manages `.gitignore` for `db_only` paths on successful sync (skips on dry-run, blocked-by-failures, submodule context, or `GBRAIN_NO_GITIGNORE=1`). `gbrain export --restore-only [--repo P] [--type T] [--slug-prefix S]` repopulates missing `db_only` files from the database.
 
-- `openclaw.plugin.json` — ClawHub bundle plugin manifest
+- `openclaw.plugin.json` — ClawHub bundle manifest with installed/slot ID `gbrain-context-engine`, `kind: context-engine`, declared legacy/current engine contracts, valid config JSON Schema and root-level sensitive UI hints for database URL and API key. The `gbrain-context` registration alias does not make an old slot setting valid on current hosts. See `docs/mcp/OPENCLAW.md`.
 
 - `recipes/` — Integration recipe files (YAML frontmatter + markdown setup instructions)
 

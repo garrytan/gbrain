@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, fstatSync, linkSync, mkdirSync, openSync, readSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { AgentInstallError, assertNoSymlinks, confinedPath } from '../agent-install/state.ts';
+import { AgentInstallError, assertNoSymlinks, confinedPath, syncDirectory } from '../agent-install/state.ts';
 
 const MAGIC = Buffer.from('GBRAIN-BACKUP-1\n');
 const MAX_MANIFEST = 8 * 1024 * 1024;
@@ -94,8 +94,7 @@ export function writeBackupArchive(output: string, metadata: Record<string, unkn
     }
     fsyncSync(fd);
     linkSync(temporary, output);
-    const parent = openSync(dirname(output), 'r');
-    try { fsyncSync(parent); } finally { closeSync(parent); }
+    syncDirectory(dirname(output));
   } finally { closeSync(fd); unlinkSync(temporary); }
   return manifest;
 }

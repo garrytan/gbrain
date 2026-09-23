@@ -14,6 +14,7 @@
 
 import { VERSION } from '../version.ts';
 import { loadConfig } from '../core/config.ts';
+import { PgliteBusyError } from '../core/pglite-lock.ts';
 import { loadCompletedMigrations, appendCompletedMigration, type CompletedMigrationEntry } from '../core/preferences.ts';
 import { migrations, compareVersions, type Migration, type OrchestratorOpts } from './migrations/index.ts';
 import {
@@ -342,6 +343,25 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     return;
   }
 
+  if (cli.dryRun && (cli.forceRetry || cli.forceOrchestrator || cli.forceSchema || cli.forceAll)) {
+    if (cli.forceRetry) {
+      if (!migrations.some(m => m.version === cli.forceRetry)) {
+        console.error(`No migration registered with version "${cli.forceRetry}". Run \`gbrain apply-migrations --list\`.`);
+        process.exit(2);
+      }
+      console.log(`[dry-run] Would write a 'retry' marker for v${cli.forceRetry}. No ledger or database changes made.`);
+      return;
+    }
+    if (cli.forceOrchestrator || cli.forceAll) {
+      console.log("[dry-run] Would write 'retry' markers for wedged orchestrator migrations. No ledger changes made.");
+      if (!cli.forceAll) return;
+    }
+    if (cli.forceSchema || cli.forceAll) {
+      console.log('[dry-run] Would run schema migrations from current config.version. Database not opened; no schema changes made.');
+    }
+    return;
+  }
+
   // Bug 3 — --force-retry: write an explicit reset marker for a wedged
   // migration, then return. User re-runs `gbrain apply-migrations --yes`
   // to actually re-attempt.
@@ -539,8 +559,10 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     console.log(`\n=== Applying migration v${m.version}: ${m.featurePitch.headline} ===`);
     try {
       const result = await m.orchestrator(orchestratorOptsFrom(cli));
-      if (result.status === 'failed') {
-        console.error(`Migration v${m.version} reported status=failed.`);
+      if (result.status === 'failed' || result.phases.some(p => p.status === 'failed')) {
+        console.error(result.status === 'failed'
+          ? `Migration v${m.version} reported status=failed.`
+          : `Migration v${m.version} has failed phases (reported status=${result.status}); recording as partial.`);
         // Surface each failed phase's detail — the ledger records it, but
         // the operator needs it on stderr to act (#921).
         for (const p of result.phases) {
@@ -597,6 +619,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`Migration v${m.version} threw: ${msg}`);
+      if (e instanceof PgliteBusyError) throw e;
       // Same partial-on-throw treatment so the cap counts runaway failures.
       try {
         if (recordCheckpoint) appendCompletedMigration({ version: m.version, status: 'partial' });

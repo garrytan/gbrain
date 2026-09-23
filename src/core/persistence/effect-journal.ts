@@ -34,10 +34,7 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (!prepared?.deferEmbedding) await queue('embedding');
     outcome.embedding_state = prepared?.deferEmbedding ? 'deferred' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
-      // Recheck activation/kill switch at publication, before promising work.
-      const [brain] = await tx.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-      if (brain?.enabled) outcome.facts_backstop = { skipped: 'writer_coordinator_required' };
-      else if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
+      if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
       else await queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
     }
   }
@@ -65,9 +62,17 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
   });
 }
 
+export async function renewPersistenceEffectClaim(engine: SqlEngine, effect: PersistenceEffect): Promise<boolean> {
+  const rows = await engine.executeRaw(`UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
+    WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [effect.id, effect.execution_token]);
+  return rows.length === 1;
+}
+
 export async function advanceEffectCursor(engine: SqlEngine, effect: PersistenceEffect, slug: string): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_effects SET state='queued',data=jsonb_set(data,'{after_slug}',to_jsonb($3::text)),
-    execution_token=NULL,claim_expires_at=NULL,next_attempt_at=now(),error_code=NULL,updated_at=now()
+  await engine.executeRaw(`UPDATE persistence_effects SET state='queued',data=jsonb_set(
+    CASE WHEN kind='embedding' THEN jsonb_set(data,'{embedding_attempt_base}',to_jsonb(attempts)) ELSE data END,'{after_slug}',to_jsonb($3::text)),
+    execution_token=NULL,claim_expires_at=NULL,next_attempt_at=now(),error_code=NULL,
+    updated_at=now()
     WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [effect.id, effect.execution_token, slug]);
 }
 
@@ -93,7 +98,7 @@ export async function publicEffectsForRequest(engine: SqlEngine, requestId: stri
   return rows.filter(row => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop'].includes(row.kind)).map(row => {
     const reason = row.error_code ?? row.outcome?.reason;
     const push = row.outcome?.push;
-    return { kind: row.kind, state: row.recovering ? 'recovering' : row.outcome?.git === 'skipped' || row.outcome?.facts === 'skipped' ? 'skipped'
+    return { kind: row.kind, state: row.recovering ? 'recovering' : row.outcome?.git === 'skipped' || row.outcome?.facts === 'skipped' || row.outcome?.embedding === 'skipped' ? 'skipped'
       : row.outcome?.facts === 'queued' ? 'dispatched' : row.state,
       ...(typeof reason === 'string' && /^[a-z_]{1,80}$/.test(reason) ? { reason } : {}),
       ...(row.kind === 'git' && (push === 'committed' || push === 'skipped') ? { push } : {}),

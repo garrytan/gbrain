@@ -228,20 +228,20 @@ test('remote sync keeps submit_job authority and rejects option upgrades and cur
 }),120_000);
 
 
-test('raw bytes changing after preparation conflict without publishing and the same request replays', async () => withEnv({GBRAIN_HOME:home},async()=>{
+test.each([false, true])('raw bytes changing after preparation conflict without publishing and the same request replays', async newlineOnly => withEnv({GBRAIN_HOME:home},async()=>{
   for(const engine of engines){
     await disposePersistenceConsumer(engine);
     const original='Original source observation before admission.\n';
     const f=await fixture(engine,{'a.md':original}); const binding=(await getWorktreeBinding(engine,f.id))!;
     const authority=await managedSyncAuthority(engine,f.id,binding.source_incarnation,f.root);
-    const intent:SyncIntent={kind:'managed_sync_import',expected_revision:null,sourcePath:'a.md',path:'a.md',rawHash:sha256(original),content:original,
+    const intent:SyncIntent={kind:'managed_sync_import',expected_revision:null,sourcePath:'a.md',path:'a.md',rawHash:sha256(original),content:original,...(newlineOnly?{lineEndingOnly:true}:{}),
       ownerEpoch:String(binding.owner_epoch),syncAuthority:authority,cursorKey:'test-cursor',runId:randomUUID(),index:0,total:1,from:null,target:f.head,slugMode:'git-root'};
     const requestId=randomUUID();
     const admission={requestId,operation:'submit_job',sourceId:f.id,sourceIncarnation:binding.source_incarnation,slug:'a',pageId:null,
       worktreeId:binding.worktree_id,topologyGeneration:binding.topology_generation,principal:authority.writer.principal,authority:authority.writer,callerIntent:intent,intent};
     const accepted=await admitWrite(engine,admission); const claimed=(await claimNextWrite(engine,localHostId()))!; expect(claimed.id).toBe(accepted.id);
     const prepared=await prepareManagedSyncMutation(engine,claimed,{engine:engine.kind});
-    const newer='New external source observation after preparation.\n'; writeFileSync(join(f.root,'a.md'),newer);
+    const newer=newlineOnly?original.replace(/\n/g,'\r\n'):'New external source observation after preparation.\n'; writeFileSync(join(f.root,'a.md'),newer);
     const outcome=await publishMutation(engine,claimed,prepared);
     expect(outcome.state).toBe('conflict'); expect(outcome.error_code).toBe('source_changed');
     expect(await engine.getPage('a',{sourceId:f.id})).toBeNull(); expect(readFileSync(join(f.root,'a.md'),'utf8')).toBe(newer);
@@ -262,6 +262,29 @@ test.each([false, true])('managed terminal receipts survive a missing ledger and
       const working = crlf ? pinned.replace(/\n/g, '\r\n') : 'A private uncommitted observation that must not appear in diagnostics.\n';
       writeFileSync(path, working);
       const opts = { sourceId: f.id, noPull: true };
+      if (crlf) {
+        const { entries, ...discovery } = await discoverManagedSync(engine, opts);
+        expect(entries).toHaveLength(1);
+        const [previous] = await engine.executeRaw<{ fingerprint: string }>(
+          "SELECT fingerprint FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'done'='true'", [f.id]);
+        expect(previous).toBeDefined();
+        const authority = await managedSyncAuthority(engine, f.id, discovery.incarnation, discovery.root);
+        const runId = randomUUID(), requestId = randomUUID(), entry = entries[0];
+        const legacyIntent: SyncIntent = { kind: 'managed_sync_import', expected_revision: entry.revision ?? null,
+          sourcePath: entry.sourcePath, path: entry.path, rawHash: sha256(working), content: pinned,
+          ownerEpoch: String(discovery.binding.owner_epoch), syncAuthority: authority, cursorKey: previous.fingerprint,
+          runId, index: 0, total: entries.length, from: discovery.from, target: discovery.target, slugMode: discovery.slugMode };
+        expect(legacyIntent).not.toHaveProperty('lineEndingOnly');
+        const legacyCursor = { ...discovery, authority, runId, index: 0, total: entries.length,
+          counts: { added: 0, modified: 0, deleted: 0, chunks: 0 },
+          pending: { requestId, slug: entry.slug!, pageId: entry.pageId ?? null, intent: legacyIntent } };
+        await engine.transaction(async tx => {
+          await tx.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)',
+            ['managed-sync-manifest', runId, JSON.stringify(entries)]);
+          await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=$2::text::jsonb WHERE op='managed-sync' AND fingerprint=$1",
+            [previous.fingerprint, JSON.stringify([legacyCursor])]);
+        });
+      }
       const blocked = await performManagedSync(engine, opts);
       expect(blocked).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1, filesImported: 0,
         managedWrite: { source_id: f.id, slug: 'notes/example', path: 'notes/example.md', write_error: 'source_changed',

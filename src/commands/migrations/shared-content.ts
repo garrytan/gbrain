@@ -4,6 +4,7 @@ import { runSharedSkillsMigration, type SharedMigrationReport } from '../../core
 import type { Migration } from './types.ts';
 import type { OrchestratorOpts } from './types.ts';
 import { exportDatabaseContent } from '../../core/shared-skills/migration-export.ts';
+import { PgliteBusyError } from '../../core/pglite-lock.ts';
 
 export const SHARED_CONTENT_MIGRATION_VERSION = '0.53.0';
 
@@ -52,6 +53,7 @@ export const sharedContentMigration: Migration = {
         phases: [{ name: 'content-checkpoints', status: 'complete', detail: pending ? 'Mechanical inventory is durable; publication and enrollment are NOT complete. Per-source actions remain in shared_skills.migration.v1.' : 'Source checkpoints verified.' }],
         pending_host_work: pending ? 1 : 0 };
     } catch (error) {
+      if (error instanceof PgliteBusyError) throw error;
       return { version: SHARED_CONTENT_MIGRATION_VERSION, status: 'partial', phases: [{ name: 'content-checkpoints', status: 'failed',
         detail: error instanceof Error ? error.message : 'Content migration failed.' }] };
     }

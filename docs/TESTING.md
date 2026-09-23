@@ -154,12 +154,115 @@ checks real process exclusion, crash handoff, retained files, cancellation,
 missing-addon failure and source/binary manifest integrity. Tests use isolated
 temporary paths and never open an operator datastore. The required
 `native-locks.yml` lane rebuilds and executes all eight OS/architecture/libc
-targets on Bun 1.3.11 and 1.3.13, including native musl Docker userspace.
+targets on Bun 1.3.11, 1.3.13 and 1.4.2, including native musl Docker userspace.
 Every pair also runs `bun scripts/native/compiled-smoke.ts` to prove compiled
 process locking. Release CI verifies the shipped CLI embeds the matching
 addon and runs the compiled smoke on its two release platforms. Rebuild
 instructions and the precise packaging/runtime distinction are in
 `native/locks/README.md`.
+Release compilation uses Bun 1.4.2; strict Darwin codesign verification must
+pass before publication. The native macOS 26.2 smoke is not macOS 27
+certification, and Linux fault injection is not a full native Windows backup
+create/restore test.
+
+The OpenClaw 2026.9.4 / Node 24.18.0 native-host fixture proves plugin startup,
+restarted-turn saved-page pointer retrieval and same-slug source isolation with
+a deterministic loopback provider:
+
+```bash
+GBRAIN_TEST_OPENCLAW_BIN=<absolute-installed-cli> \
+GBRAIN_TEST_OPENCLAW_DATABASE_URL=<isolated-postgres-test-db> \
+bun test test/openclaw-context-engine-native.serial.test.ts
+```
+
+The database user needs `CREATEDB`; fixtures create/drop unique databases
+rather than truncating shared rows. Real-provider recall and macOS 27 behavior
+remain unverified.
+
+Focused safety coverage: `test/apply-migrations-safety.serial.test.ts` checks
+force dry-run previews before DB/ledger access and failed-phase partial exit;
+`test/real-home-guard-preload.test.ts` pins the test-home fingerprint backstop
+(detection, not prevention). Managed retry, durable diagnostics, restart and
+PGLite/Postgres parity are covered by `test/persistence-sync-failures.serial.test.ts`
+and `test/e2e/managed-sync-failures.test.ts`. Backup remote readback and fsync
+fault cases run in `test/backup-verification.serial.test.ts` and
+`test/backup-fsync.serial.test.ts`; `test/e2e/backup-coverage-parity.test.ts`
+covers PGLite/Postgres page/fact/config parity. Output redaction uses
+`test/search/output-redaction.serial.test.ts` and
+`test/search/output-redaction.test.ts`, including unchanged internal capture.
+
+Managed writer fixtures use isolated PGLite and guarded disposable Postgres:
+`test/e2e/fact-vector-repair-parity.test.ts`,
+`test/e2e/fact-embedding-backfill-parity.test.ts`, and
+`test/e2e/fact-backfill-resident.test.ts` cover preserved vectors, bounded
+NULL-only fact backfill, selected-config refusal and owner-held PGLite IPC;
+`test/ai/google-embed-batch-items.test.ts` pins 100-item provider batches.
+`test/persistence-embedding-effects.test.ts`,
+`test/persistence-effect-retry.test.ts`, and
+`test/embedding-completion-atomic.serial.test.ts` cover partial vector
+completion, exhausted durable attempts and state-bound explicit retry.
+`test/managed-extract-atoms.test.ts`, `test/managed-facts-backstop.test.ts`
+and their `test/e2e/` counterparts exercise admitted atom/fact replay,
+including fresh-process facts authority. `test/persistence-connectors.test.ts`
+covers managed bound/unbound Google/GitHub sources, API pagination and
+source-scoped deletions. `test/persistence-connector-retry.test.ts` covers
+explicit retry, compaction, checkpoint dependency identity, concurrent approval
+and lost acknowledgements. Each suite creates its own home, engines and
+lifecycle through `test/helpers/connector-fixture.ts`; the helper shares no
+live engine or mutable suite state. Their separate E2E entry points,
+`test/e2e/managed-connector-routing.test.ts` and
+`test/e2e/managed-connector-retry.test.ts`, retain the runner's default
+180-second per-file cap without duplicating the base cases in the retry lane.
+Linux root runners execute the complete EACCES case in an isolated `setpriv`
+child and assert UID 65534 before testing permissions. This needs a readable
+checkout, not changes to the parent process identity or checkout permissions;
+the CI runner image supplies `setpriv`.
+`test/managed-maintenance.test.ts` and
+`test/helpers/maintenance-restart.ts` cover local synthesize/patterns/
+consolidation, restart replay, retired takes and semantic snapshots;
+`test/managed-unsupported-preflight.serial.test.ts` checks unsupported bulk
+lanes refuse before spend. These use synthetic provider/API transports, not
+paid model calls or production connectors. PGLite dream/job CLI with an active
+owner is **not** proven delegated by the live fact-backfill IPC test.
+
+`test/facts-worker-config.test.ts` and its PostgreSQL E2E counterpart dispose
+the original consumer before executing a real facts-absorb job. They verify the
+worker passes trusted selected configuration, ignores job-supplied configuration
+and settles the entity-page effect with zero fact or chunk embedding calls when
+disabled. Fact extraction still captures the generated fact with a NULL embedding.
+
+`test/managed-facts-embedding.test.ts` and its PostgreSQL counterpart bind retained
+fact vectors to the selected brain's model and dimensions, including equal-width
+host/mount mismatches, keyless capture, policy changes and replay without new spend.
+`test/managed-atom-regressions.test.ts` and its PostgreSQL counterpart preserve
+later target edits through explicit retries and honor database-only storage policy
+without relaxing source authority. `test/managed-synthesis-postprocess.test.ts`
+and its E2E wrapper verify that completed quote/provenance work never rewrites a
+later user edit, while unfinished work resumes against its original revision.
+The synthesis suite also preserves the existing same-date summary on replay and
+rebuilds a complete index after partial recovery. `test/managed-atom-compaction.test.ts`
+and its PostgreSQL counterpart age and compact real receipts: permanent completion
+identity still prevents repeated extraction, while expired retry payloads produce
+an explicit refusal without changing terminal outcomes or compaction accounting.
+`test/managed-facts-compaction.test.ts` and its PostgreSQL counterpart cover the
+same lifetime boundary for explicit and derived fact-batch identities, including
+failed or partially committed batches and successful replay without new spend.
+Connector sweep fencing and physical-path normalization have separate parity
+coverage in `test/persistence-connector-fencing.test.ts`. Standalone crash/recovery
+cases live in `test/persistence-connector-recovery.test.ts` and their own E2E
+wrapper so they do not share the routing file's wall-clock budget; their original
+assertions, child watchdogs and per-file timeout are unchanged.
+
+`test/managed-atoms-cli.slow.test.ts` exercises real disk-backed PGLite CLI
+recovery with a loopback provider: live-owner refusal, graceful owner stop,
+malformed extraction, explicit same-input retry, idempotent replay and owner
+restart. Fresh-process readback checks the private canonical file, searchable
+chunk, retained failure receipt, committed completion and released leases.
+`test/managed-connector-routing.serial.test.ts` pins actual activation and
+`performSync` routing for API sources; the maintenance suite also drives
+`runCycle` with eligible facts in two sources and proves the other source is
+unchanged. The E2E wrapper files ensure these optional PostgreSQL arms execute
+in the database lane rather than only passing their PGLite controls.
 
 For platform-only feedback, dispatch
 `gh workflow run test.yml --ref <branch> -f native_only=true`. This explicit manual option uses a separate concurrency
@@ -726,6 +829,17 @@ unit/slow wrappers (`run-unit-parallel.sh` / `run-unit-shard.sh` /
 discipline as the database-URL vars — so a dev shell configured for a real
 brain can't ride through. `GBRAIN_DEBUG_PRELOAD=1` prints the allocated
 scratch home for debugging.
+
+Installer fixtures must never delete `GBRAIN_HOME` to test a fallback against
+the operator's home. Spawn a disposable child with HOME set before Bun starts,
+then set GBRAIN_HOME to the specific fixture. `real-home-guard-preload.ts`
+compares metadata for the real-home autopilot wrapper, env file, start script,
+launchd plist and systemd unit around tests. It detects changes rather than
+intercepting writes and never reads env-file contents. A deliberate one-shot
+installer test can explicitly set `GBRAIN_TEST_ALLOW_REAL_HOME_WRITES=1`, which
+prints a warning; use that only inside an independently isolated child home.
+`test/real-home-guard-preload.test.ts` runs the installer suite with fake-live
+sentinels and verifies they are untouched.
 
 **Provider-key strip preload.** `test/helpers/provider-keys-preload.ts` (bunfig
 `[test]` preload) strips the ambient provider credentials the canonical fold

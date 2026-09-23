@@ -1,25 +1,33 @@
 {
   "id": "gbrain-context-engine",
   "name": "gbrain",
-  "version": "0.54.0.0",
+  "version": "0.55.0.0",
   "description": "Personal knowledge brain with Postgres + pgvector hybrid search",
   "family": "bundle-plugin",
+  "kind": "context-engine",
   "configSchema": {
-    "database_url": {
-      "type": "string",
-      "required": true,
-      "description": "PostgreSQL connection URL (Supabase recommended)",
-      "uiHints": {
-        "sensitive": true
+    "type": "object",
+    "properties": {
+      "database_url": {
+        "type": "string",
+        "description": "PostgreSQL connection URL (Supabase recommended)"
+      },
+      "openai_api_key": {
+        "type": "string",
+        "description": "OpenAI API key for embeddings (uses OPENAI_API_KEY env var if not set)"
+      },
+      "workspaceDir": {
+        "type": "string",
+        "description": "Absolute workspace for legacy hosts without per-session workspace context; omit for multi-agent hosts"
       }
+    }
+  },
+  "uiHints": {
+    "database_url": {
+      "sensitive": true
     },
     "openai_api_key": {
-      "type": "string",
-      "required": false,
-      "description": "OpenAI API key for embeddings (uses OPENAI_API_KEY env var if not set)",
-      "uiHints": {
-        "sensitive": true
-      }
+      "sensitive": true
     }
   },
   "mcpServers": {
@@ -114,6 +122,7 @@
   },
   "contracts": {
     "contextEngines": [
+      "gbrain-context-engine",
       "gbrain-context"
     ]
   }

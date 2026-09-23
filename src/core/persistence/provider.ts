@@ -64,6 +64,6 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     if (request.brain_id !== brain.brain_id || verified.remote || verified.principal.kind !== 'local_cli') {
       throw new OperationError('permission_denied', 'Local administration requires this brain’s current trusted CLI registration.');
     }
-    return runPersistenceAdministration(engine, request.operation, request.params);
+    return runPersistenceAdministration(engine, request.operation, request.params, config);
   }) };
 }

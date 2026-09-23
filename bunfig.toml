@@ -57,4 +57,4 @@ timeout = 60_000
 # 183 failures + 15-minute retry hangs on an OPENAI-only shell). The e2e
 # wrapper sets GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 to opt back in. See
 # test/helpers/provider-keys-preload.ts.
-preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/operator-env-preload.ts", "./test/helpers/provider-keys-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]
+preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/operator-env-preload.ts", "./test/helpers/provider-keys-preload.ts", "./test/helpers/real-home-guard-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]

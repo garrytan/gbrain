@@ -7,7 +7,7 @@ import { PGLiteEngine } from '../pglite-engine.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
 import { configDir, type GBrainConfig } from '../config.ts';
 import { LATEST_VERSION } from '../migrate.ts';
-import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, readFileConfigState, readInstallReceipt, type AgentInstallReceipt } from '../agent-install/state.ts';
+import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, readFileConfigState, readInstallReceipt, syncDirectory, type AgentInstallReceipt } from '../agent-install/state.ts';
 import { extractPgliteDump, hashFile, isBackupArchiveFile, readBackupArchive, writeBackupArchive, type ArchiveManifest } from './archive.ts';
 import { quarantineRestoredExecution, type RestoreQuarantine } from './quarantine.ts';
 import { quarantineSharedSkillRestore, validateSharedSkillRestoreMode, type SharedSkillRestore, type SharedSkillRestoreOptions } from '../shared-skills/restore.ts';
@@ -77,8 +77,12 @@ function relativeInside(root: string, path: string): string | null {
 /** Persist restored file contents AND directory entries before the ready receipt. */
 function syncRestoredTree(path: string): void {
   const stat = lstatSync(path);
-  if (stat.isDirectory()) for (const name of readdirSync(path)) syncRestoredTree(join(path, name));
-  else if (!stat.isFile()) throw new AgentInstallError('unsupported_file', 'Unexpected file type in restored staging.');
+  if (stat.isDirectory()) {
+    for (const name of readdirSync(path)) syncRestoredTree(join(path, name));
+    syncDirectory(path);
+    return;
+  }
+  if (!stat.isFile()) throw new AgentInstallError('unsupported_file', 'Unexpected file type in restored staging.');
   const fd = openSync(path, 'r');
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
@@ -317,7 +321,7 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     }
     const reconnect = [...new Set([...metadata.credential_references.map(key => `Configure credential: ${key}`), ...metadata.omitted, ...detachedConfig, ...execution!.reconnect, 'Autopilot is paused; review .gbrain/restore-detached.json before explicitly resuming automation.'])];
     privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'ready', original_root: metadata.original_root, shared_skills: sharedSkills, quarantined_jobs: quarantined, reconnect_required: reconnect, launcher_ready: false, setup_required: true, native_automation_started: false }, null, 2) + '\n');
-    const rootFd = openSync(root, 'r'); try { fsyncSync(rootFd); } finally { closeSync(rootFd); }
+    syncDirectory(root);
     published = true;
     return { root, quarantined_jobs: quarantined, reconnect_required: reconnect, shared_skills: sharedSkills };
   } catch (error) {

@@ -7,6 +7,8 @@ import { localHostId, existingLocalHostId, persistenceHome, registerLocalWriter 
 import { nativeLockCapability, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
+import { inspectLegacyWriterLocks } from './legacy-locks.ts';
+import { deleteLockRowExact } from '../db-lock.ts';
 
 export interface ActivationReport {
   enabled: boolean;
@@ -14,23 +16,24 @@ export interface ActivationReport {
   filesystem_sources: number;
   native_lock: { target: string; napi: 3 };
   drift_audit?: { sources: Array<Record<string, unknown>>; complete: boolean; snapshot_only: true };
+  legacy_locks?: Awaited<ReturnType<typeof inspectLegacyWriterLocks>>;
 }
-interface SourceRoot { id: string; incarnation: string; root: string | null; }
+interface SourceRoot { id: string; incarnation: string; root: string | null; connector: boolean; }
 const quiescence = () => new OperationError('writer_not_quiesced', 'Managed activation requires all older writers and maintenance jobs to be stopped.',
   WRITER_INSPECTION_HINT);
 
 async function configuredSources(engine: BrainEngine, lock = false): Promise<SourceRoot[]> {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
-    `SELECT id,incarnation,local_path FROM sources WHERE archived=false ORDER BY id${lock ? ' FOR UPDATE' : ''}`);
+  const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; kind: string | null }>(
+    `SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id${lock ? ' FOR UPDATE' : ''}`);
   const fallback = await engine.getConfig('sync.repo_path');
-  return sources.map(source => ({ id: source.id, incarnation: source.incarnation,
+  return sources.map(source => ({ id: source.id, incarnation: source.incarnation, connector: source.kind === 'google' || source.kind === 'github',
     root: source.local_path || (source.id === 'default' ? fallback : null) }));
 }
 async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hostId: string | null, lock = false): Promise<WorktreeBinding[]> {
   const bindings: WorktreeBinding[] = [];
   for (const source of sources) {
     let binding = await getWorktreeBinding(engine, source.id, hostId);
-    if (!source.root && !binding) continue;
+    if ((!source.root || source.connector) && !binding) continue;
     if (binding && lock) {
       await engine.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [binding.worktree_id]);
       binding = await getWorktreeBinding(engine, source.id, hostId);
@@ -54,7 +57,7 @@ async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hos
 }
 
 /** Explicit coordinated-upgrade boundary. Refusal records become durable before enabled does. */
-export async function activatePersistence(engine: BrainEngine, opts: { confirmQuiesced?: boolean; dryRun?: boolean; expectedState?: string } = {}): Promise<ActivationReport> {
+export async function activatePersistence(engine: BrainEngine, opts: { confirmQuiesced?: boolean; dryRun?: boolean; expectedState?: string; cleanupDeadLocalLocks?: boolean } = {}): Promise<ActivationReport> {
   if (opts.confirmQuiesced !== true) throw quiescence();
   if (Number(await engine.getConfig('version')) < 157) throw new OperationError('writer_upgrade_required', 'Apply the canonical writer guard, outbox, and source lifecycle migrations before activation.');
   const native = await nativeLockCapability();
@@ -109,18 +112,22 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       // Block fresh legacy lease admission for the duration of this commit.
       // Even an expired row needs explicit inspection/removal; TTL is not proof
       // that a legacy process has stopped touching canonical files.
-      await tx.executeRaw('LOCK TABLE gbrain_cycle_locks IN SHARE MODE');
-      if ((await tx.executeRaw('SELECT id FROM gbrain_cycle_locks LIMIT 1')).length) throw quiescence();
+      await tx.executeRaw('LOCK TABLE gbrain_cycle_locks IN SHARE ROW EXCLUSIVE MODE');
+      const legacyLocks = await inspectLegacyWriterLocks(tx);
+      if (legacyLocks.some(row => !opts.cleanupDeadLocalLocks || row.liveness !== 'dead_eligible')) throw quiescence();
       if ((await tx.executeRaw(`SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1`)).length
         || (await tx.executeRaw('SELECT id FROM persistence_effects WHERE recovery IS NOT NULL LIMIT 1')).length) throw quiescence();
-      if (opts.dryRun) return { enabled: false, activated: false, filesystem_sources: bindings.length, native_lock: native, drift_audit: driftAudit };
+      if (opts.dryRun) return { enabled: false, activated: false, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, drift_audit: driftAudit };
+      for (const row of legacyLocks) {
+        if (!(await deleteLockRowExact(tx, row.id, row.holder_pid, row.acquisition_token)).deleted) throw quiescence();
+      }
       await registerLocalWriter(tx, 'cli');
       await registerLocalWriter(tx, 'stdio');
       await tx.executeRaw('UPDATE persistence_brain SET enabled=true,activated_at=COALESCE(activated_at,now()) WHERE singleton=1');
       // Any fsync/marker failure rolls back enabled=true. A conservative stale
       // refusal record after rollback is safe and cannot grant writer authority.
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
-      return { enabled: true, activated: true, filesystem_sources: bindings.length, native_lock: native };
+      return { enabled: true, activated: true, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks };
     });
   } finally { for (const lock of locks.reverse()) await lock.release(); }
 }

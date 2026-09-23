@@ -95,6 +95,19 @@ export function confinedPath(root: string, relative: string): string {
   return target;
 }
 
+export function syncDirectory(path: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, 'r');
+    fsyncSync(fd);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!(process.platform === 'win32' && ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes(code ?? ''))) throw error;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 export function privateWrite(path: string, contents: string | Uint8Array, mode = 0o600): void {
   assertNoSymlinks(path);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -106,8 +119,7 @@ export function privateWrite(path: string, contents: string | Uint8Array, mode =
     fsyncSync(fd);
     closeSync(fd); fd = undefined;
     renameSync(tmp, path);
-    const dir = openSync(dirname(path), 'r');
-    try { fsyncSync(dir); } finally { closeSync(dir); }
+    syncDirectory(dirname(path));
   } catch (error) {
     if (fd !== undefined) closeSync(fd);
     try { unlinkSync(tmp); } catch { /* no temporary file after a failed write */ }

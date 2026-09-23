@@ -1,4 +1,6 @@
 import { sanitizeRemoteBody } from '../core/remote-body.ts';
+import { embedStaleFacts, type EmbedFactsResult } from '../core/embed-facts.ts';
+import { parseFactEmbedArgs } from './embed-facts-delegate.ts';
 import { readProjectionSnapshot, installPageProjection, installPageEmbeddings } from '../core/page-state/projections.ts';
 import { PageRevisionConflictError } from '../core/page-state/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -17,7 +19,7 @@ import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
@@ -829,7 +831,12 @@ export function isKeylessStaleRefusal(args: string[], embeddingDisabled: boolean
     && embeddingDisabled === true;
 }
 
-export async function runEmbed(engine: BrainEngine, args: string[]): Promise<EmbedResult | undefined> {
+export async function runEmbed(engine: BrainEngine, args: string[], selectedConfig: GBrainConfig | null = null): Promise<EmbedResult | EmbedFactsResult | undefined> {
+  if (args.includes('--facts')) {
+    const result = await embedStaleFacts(engine, parseFactEmbedArgs(args), selectedConfig);
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
   // Keyless clean refusal — see isKeylessStaleRefusal. Checked BEFORE the
   // background block so we never queue a job that can only fail. stderr only;
   // stdout stays empty like every other embed outcome (embed has no JSON

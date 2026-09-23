@@ -143,21 +143,28 @@ describe('put_page persistence boundary', () => {
   });
 
   test('a stale queued embedding reports superseded without invoking its provider', async () => {
-    const slug = 'notes/stale-before-provider';
-    const stale = await put(slug, content('Old queued embedding.'));
-    await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour'");
-    const latest = await put(slug, content('Current canonical body.'));
-    await disposePersistenceConsumer(engine);
-    await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour'");
-    await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE request_id=(SELECT id FROM persistence_requests WHERE request_id=$1::uuid) AND kind='embedding'", [stale.payload.request_id]);
-    let calls = 0;
-    await runPersistenceEffects(engine, { engine: 'pglite' }, { hostId: localHostId(), limit: 1,
-      embedding: { signature: 'test:1536', model: 'test', embed: async () => { calls++; throw new Error('stale provider must not run'); } } });
-    expect(calls).toBe(0);
-    expect(await embedding(stale)).toMatchObject({ state: 'committed', reason: 'revision_changed' });
-    expect((await replay(stale)).payload.revision).toBe(stale.payload.revision);
-    expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision).toBe(latest.payload.revision);
-    expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('Current canonical body.');
+    await engine.executeRaw("ALTER TABLE persistence_effects ALTER COLUMN next_attempt_at SET DEFAULT (now()+interval '1 hour')");
+    try {
+      const slug = 'notes/stale-before-provider';
+      const stale = await put(slug, content('Old queued embedding.'));
+      await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour'");
+      const latest = await put(slug, content('Current canonical body.'));
+      await disposePersistenceConsumer(engine);
+      expect(await engine.executeRaw("SELECT state FROM persistence_effects WHERE request_id=(SELECT id FROM persistence_requests WHERE request_id=$1::uuid) AND kind='embedding'", [stale.payload.request_id]))
+        .toEqual([{ state: 'queued' }]);
+      await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour'");
+      await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE request_id=(SELECT id FROM persistence_requests WHERE request_id=$1::uuid) AND kind='embedding'", [stale.payload.request_id]);
+      let calls = 0;
+      await runPersistenceEffects(engine, { engine: 'pglite' }, { hostId: localHostId(), limit: 1,
+        embedding: { signature: 'test:1536', model: 'test', embed: async () => { calls++; throw new Error('stale provider must not run'); } } });
+      expect(calls).toBe(0);
+      expect(await embedding(stale)).toMatchObject({ state: 'committed', reason: 'revision_changed' });
+      expect((await replay(stale)).payload.revision).toBe(stale.payload.revision);
+      expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision).toBe(latest.payload.revision);
+      expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('Current canonical body.');
+    } finally {
+      await engine.executeRaw('ALTER TABLE persistence_effects ALTER COLUMN next_attempt_at SET DEFAULT now()');
+    }
   });
 
   test('contended worktree durably queues existing and new pages while another root writes', async () => {

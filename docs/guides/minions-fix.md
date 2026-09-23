@@ -40,8 +40,11 @@ For a machine-readable report (cron-friendly):
 
 ```bash
 gbrain skillpack-check --quiet && echo healthy || echo needs_action
-gbrain skillpack-check | jq -r '.actions[]'    # prints the exact commands to run
+gbrain skillpack-check | jq -r '.actions[]'    # prints proposed repairs, without executing them
 ```
+
+Health checks report proposals only. Review the action and scope and obtain
+separate approval before applying a repair, installing services or spending money.
 
 ## The fix
 
@@ -70,6 +73,10 @@ Your host agent walks the TODOs using `skills/migrations/v0.11.0.md` +
 host repo, then re-runs `gbrain apply-migrations --yes`. Newly
 registerable cron entries get rewritten and the JSONL rows mark
 `status: "complete"`.
+
+A failed phase makes the run exit nonzero and prevents that attempt from being
+recorded as complete. Inspect the reported phase failure before retrying;
+pending host work is not the only reason an attempt can remain partial.
 
 ## Verify the fix landed
 

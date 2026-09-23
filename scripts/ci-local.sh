@@ -342,10 +342,11 @@ echo "[runner] bun version: $(bun --version)"
 if ! command -v git >/dev/null 2>&1 || \
    ! command -v python3 >/dev/null 2>&1 || \
    ! command -v ps >/dev/null 2>&1 || \
-   ! command -v psql >/dev/null 2>&1; then
+   ! command -v psql >/dev/null 2>&1 || \
+   ! command -v jq >/dev/null 2>&1; then
   echo "[runner] Installing test prerequisites (debian apt)..."
   apt-get update -qq >/dev/null
-  apt-get install -y -qq git ca-certificates python3 procps postgresql-client >/dev/null
+  apt-get install -y -qq git ca-certificates python3 procps postgresql-client jq >/dev/null
 fi
 # Container runs as root (uid 0) against a host-uid bind-mount; mark repo +
 # any worktree gitdir as safe so `git status` etc. don't refuse.

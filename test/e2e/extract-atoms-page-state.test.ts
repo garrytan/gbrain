@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { withSubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { countExtractAtomsBacklog, discoverExtractablePages, runPhaseExtractAtoms } from '../../src/core/cycle/extract-atoms.ts';
@@ -113,7 +114,9 @@ describeDb('Postgres derived atom page state', () => {
   test('managed refusal precedes all provider calls', async () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     let calls = 0;
-    await expect(runPhaseExtractAtoms(engine, { _transcripts: [], _chat: async () => { calls++; return chat(); } }))
+    await expect(withSubmissionAuthority({ version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: 'example-client' },
+      grant: { scopes: ['admin'], sourceId: 'default', sourceCreatedAt: new Date().toISOString(), allowedTools: ['put_page'], allowedSlugPrefixes: ['*'] },
+      payloadHash: '0'.repeat(64) }, () => runPhaseExtractAtoms(engine, { _transcripts: [], _chat: async () => { calls++; return chat(); } })))
       .rejects.toThrow('Atom extraction cannot mutate a managed brain');
     expect(calls).toBe(0);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');

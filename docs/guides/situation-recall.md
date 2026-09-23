@@ -14,6 +14,13 @@ reminders."*
 
 You need a configured, priced chat model and text embedding model, explicit source enrollment, and a build spending cap. Provider-backed construction sends source text and generated cues to those configured providers. Local storage does not make those calls local.
 
+The exact OpenRouter generation route `openrouter:anthropic/claude-sonnet-4.6`
+has a declared price of $3 per million input tokens and $15 per million output
+tokens, verified against the [OpenRouter model catalog](https://openrouter.ai/api/v1/models)
+on 2026-09-23. Router prices are explicit entries, never aliases to native vendor
+prices; unlisted routes still refuse build admission. This price entry neither
+selects a default model nor authorizes spending or enables generation.
+
 The new gbrain-evals associative-retrieval category and cross-category comparison gate distinguish semantic-quality measurements from deterministic plumbing tests. Live quality and non-regression results must be collected for the selected models before promoting a configuration. No T-Mem result establishes a GBrain gain.
 
 Administration is trusted-local only. HTTP and stdio agent-facing callers cannot configure, submit, cancel or resume cue builds through this operation, even with an admin token. They can use ordinary authorized search when the operator enables cue recall.

@@ -172,9 +172,12 @@ slug-prefix restriction. `sources writer activate --dry-run` includes a bounded
 drift sample and identifies incomplete samples without authorizing repairs.
 
 Atom scan/failure bookkeeping now lives outside canonical note metadata so
-processing progress does not create new disagreements. Unsupported managed atom
-extraction refuses before calling a model; this does not migrate every legacy
-maintenance writer to managed publication.
+processing progress does not create new disagreements. Managed atom extraction
+checks trusted local source-wide authority and, for filesystem writes, owner
+readiness before model work, then journals publication and completion. Retained
+accepted output replays without
+another model call. This does not restore every legacy maintenance writer; see
+[supported managed work and explicit repair](../architecture/topologies.md#supported-managed-work-and-explicit-repair).
 
 ### Roll back safely
 
@@ -261,16 +264,17 @@ files. An unconfigured remote is reported as a skipped push. Embeddings wait
 for an enabled, configured provider and install only if the page revision and
 its text projection still match.
 
-Before managed activation, eligible `put_page` and `capture` writes also
+Before and after managed activation, eligible `put_page` and `capture` writes
 record durable facts-extraction intent. `facts_backstop.queued` means that
 intent committed with the page; the `facts-backstop` effect becomes
 `dispatched` when its durable worker job is accepted. Extraction availability
 is checked by that worker. The handoff is idempotent and rechecks the source,
 page revision and current writer grant. Confined writers, unchanged pages,
 disabled extraction and dream-generated content do not enqueue work.
-After activation the legacy extractor reports `writer_coordinator_required`
-and skips; it cannot bypass canonical publication. Activation also causes
-previously queued extraction jobs to skip. Canonical receipts remain unchanged.
+Managed jobs retain the committed page request as their authority and publish
+through the coordinator. Legacy jobs without that request skip with
+`missing_write_authority`; raw queue/fence paths remain unsupported. Activation
+does not by itself skip authorized durable jobs. Canonical receipts remain unchanged.
 
 ## Receipt access and explicit grant migration
 

@@ -164,6 +164,16 @@ describe('canonicalLookup — id normalization', () => {
     });
   });
 
+  test('the exact OpenRouter Sonnet 4.6 route has independent prices without vendor cache assumptions', () => {
+    const route = 'openrouter:anthropic/claude-sonnet-4.6';
+    expect(canonicalLookup(route)).toEqual({ input: 3, output: 15 });
+    expect(canonicalLookup(route)).toBe(CANONICAL_PRICING[route]);
+    expect(canonicalLookup(route)).not.toBe(CANONICAL_PRICING['anthropic:claude-sonnet-4-6']);
+    expect(canonicalLookup('openrouter:anthropic/claude-sonnet-4-6')).toBeUndefined();
+    expect(canonicalLookup('openrouter:anthropic/claude-sonnet-4.6:extended')).toBeUndefined();
+    expect(canonicalLookup('openrouter:anthropic/claude-sonnet-5')).toBeUndefined();
+  });
+
   test('slash-bearing model tail kept as exact key (together Llama)', () => {
     expect(canonicalLookup('together:meta-llama/Llama-3.3-70B-Instruct-Turbo')).toEqual({
       input: 0.88,
