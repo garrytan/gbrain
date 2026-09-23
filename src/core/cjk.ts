@@ -105,6 +105,14 @@ export function foldSlugText(s: string): string {
     .toLowerCase();
 }
 
+/**
+ * Version of the slug grammar (foldSlugText + the grammars built on it). Bump
+ * whenever an existing file could slug differently. Stamped into the import
+ * checkpoint: a checkpoint from another grammar is discarded, because resuming
+ * it would skip files whose pages must re-key. 2 = ADR-0001 (й/ё kept).
+ */
+export const SLUG_GRAMMAR_VERSION = 2;
+
 /** A run of characters outside SLUG_WORD_CHARS: the hyphenating grammars' separator. */
 export const SLUG_NON_WORD_RUN_RE = new RegExp(`[^${SLUG_WORD_CHARS}]+`, 'gu');
 

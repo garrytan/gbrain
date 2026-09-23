@@ -28,6 +28,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { permsEnforced } from './helpers/fs-perms.ts';
 import { runImport } from '../src/commands/import.ts';
+import { SLUG_GRAMMAR_VERSION } from '../src/core/cjk.ts';
 
 let engine: PGLiteEngine;
 let workspace: string;        // GBRAIN_HOME target — `${workspace}/.gbrain/` holds the checkpoint file
@@ -127,6 +128,7 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
         dir: brainDir,
         completedPaths: ['a.md', 'b.md'],
         timestamp: '2026-05-14T00:00:00Z',
+        slug_grammar: SLUG_GRAMMAR_VERSION,
       }));
 
       const result = await runImport(engine, [brainDir, '--no-embed']);
@@ -134,6 +136,24 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
       expect(result.skipped).toBe(2);
       expect(result.errors).toBe(0);
       expect(await engine.getChunks('a', { sourceId: 'default' })).toEqual(originalChunks);
+    });
+  }, 30_000);
+
+  test('a checkpoint written under another slug grammar is ignored: every file is re-walked', async () => {
+    // After a slug-grammar change the files a checkpoint marks done must be
+    // re-imported, or their pages never move to the new slug (ADR-0001).
+    await withEnv({ GBRAIN_HOME: workspace }, async () => {
+      writeBrainFile('a.md', validMarkdown('a'));
+      writeBrainFile('b.md', validMarkdown('b'));
+      writeBrainFile('c.md', validMarkdown('c'));
+      writeFileSync(cpPath, JSON.stringify({
+        dir: brainDir,
+        completedPaths: ['a.md', 'b.md'],
+        timestamp: '2026-05-14T00:00:00Z',
+      }));
+
+      const result = await runImport(engine, [brainDir, '--no-embed']);
+      expect(result.imported).toBe(3);
     });
   }, 30_000);
 

@@ -10,6 +10,7 @@ import {
   resolveImportTargetDir,
   type ImportCheckpoint,
 } from '../src/core/import-checkpoint.ts';
+import { SLUG_GRAMMAR_VERSION } from '../src/core/cjk.ts';
 
 let workDir: string;
 let cpPath: string;
@@ -53,6 +54,7 @@ describe('loadCheckpoint', () => {
 
   test('returns null when dir mismatches the current run', () => {
     const cp: ImportCheckpoint = {
+      slug_grammar: SLUG_GRAMMAR_VERSION,
       schema_version: 1,
       owner: 'gbrain',
       kind: 'import',
@@ -131,6 +133,7 @@ describe('loadCheckpoint', () => {
       dir: '/tmp/example-brain',
       completedPaths: ['meetings/2026-05-13.md', 'concepts/foo.md'],
       timestamp: '2026-05-14T12:34:56Z',
+      slug_grammar: SLUG_GRAMMAR_VERSION,
     };
     writeFileSync(cpPath, JSON.stringify(cp));
     const loaded = loadCheckpoint(cpPath, '/tmp/example-brain');
@@ -143,11 +146,12 @@ describe('loadCheckpoint', () => {
     expect(loaded?.kind).toBe('import');
   });
 
-  test('returns legacy path-based checkpoint without metadata as v1 in memory', () => {
+  test('returns legacy path-based checkpoint without schema metadata as v1 in memory', () => {
     writeFileSync(cpPath, JSON.stringify({
       dir: '/tmp/example-brain',
       completedPaths: ['a.md'],
       timestamp: '2026-05-14T12:34:56Z',
+      slug_grammar: SLUG_GRAMMAR_VERSION,
     }));
     const loaded = loadCheckpoint(cpPath, '/tmp/example-brain');
     expect(loaded?.schema_version).toBe(1);
@@ -157,9 +161,37 @@ describe('loadCheckpoint', () => {
   });
 });
 
+describe('loadCheckpoint — slug grammar', () => {
+  // Files a checkpoint marks done were slugged under the grammar of the run
+  // that wrote it. After a grammar change (ADR-0001) resuming would skip them,
+  // so their pages never re-key and a retried file can land on a slug an old
+  // page still holds. Such a checkpoint is discarded (re-walk is cheap).
+  const base = { dir: '/tmp/example-brain', completedPaths: ['a.md'], timestamp: '2026-05-14T12:34:56Z' };
+
+  test('a checkpoint written before slug_grammar existed is discarded, with a reason', () => {
+    captureStderr();
+    writeFileSync(cpPath, JSON.stringify(base));
+    expect(loadCheckpoint(cpPath, '/tmp/example-brain')).toBeNull();
+    expect(stderrCaptured).toContain('slug rules changed');
+  });
+
+  test('a checkpoint from another slug grammar is discarded', () => {
+    captureStderr();
+    writeFileSync(cpPath, JSON.stringify({ ...base, slug_grammar: SLUG_GRAMMAR_VERSION - 1 }));
+    expect(loadCheckpoint(cpPath, '/tmp/example-brain')).toBeNull();
+  });
+
+  test('saveCheckpoint stamps the current grammar', () => {
+    saveCheckpoint(cpPath, { schema_version: 1, owner: 'gbrain', kind: 'import', ...base });
+    expect(JSON.parse(readFileSync(cpPath, 'utf-8')).slug_grammar).toBe(SLUG_GRAMMAR_VERSION);
+    expect(loadCheckpoint(cpPath, '/tmp/example-brain')).not.toBeNull();
+  });
+});
+
 describe('saveCheckpoint', () => {
   test('round-trips through loadCheckpoint', () => {
     const cp: ImportCheckpoint = {
+      slug_grammar: SLUG_GRAMMAR_VERSION,
       schema_version: 1,
       owner: 'gbrain',
       kind: 'import',

@@ -41,6 +41,14 @@ export interface ReconcilePlan {
    * them — the mass-delete signal that trips the safety valve.
    */
   massDelete: boolean;
+  /**
+   * Old-slug twins: rows whose backing file still exists but now slugs to a
+   * different slug that a sibling row (same source_path) already holds — the
+   * leftover of a slug-grammar change. The sibling carries the file's content,
+   * so the twin is safe to retire and `canonical` is where it should redirect.
+   * Never counted toward the mass-delete valve.
+   */
+  superseded: Array<{ slug: string; canonical: string }>;
 }
 
 /**
@@ -52,11 +60,14 @@ export interface ReconcilePlan {
  * @param rows           pages with a non-null `source_path` (deleted_at IS NULL).
  * @param currentFiles   repo-relative paths present in the working tree.
  * @param isSyncablePath predicate excluding metafiles and the wrong strategy.
+ * @param expectedSlug   the slug a source_path produces under the CURRENT
+ *                       grammar; enables twin detection (`superseded`).
  */
 export function planReconcileDeletes(
   rows: ReadonlyArray<{ slug: string; source_path: string | null }>,
   currentFiles: Iterable<string>,
   isSyncablePath: (p: string) => boolean,
+  expectedSlug?: (sourcePath: string) => string,
 ): ReconcilePlan {
   const current = new Set<string>();
   for (const f of currentFiles) current.add(normalizeReconcilePath(f));
@@ -69,7 +80,22 @@ export function planReconcileDeletes(
   const massDelete =
     reconcilable.length > MASS_RECONCILE_MIN_PAGES &&
     staleSlugs.length > reconcilable.length * MASS_RECONCILE_RATIO;
-  return { staleSlugs, reconcilableCount: reconcilable.length, massDelete };
+  const superseded: Array<{ slug: string; canonical: string }> = [];
+  if (expectedSlug) {
+    const byPath = new Map<string, string[]>();
+    for (const r of reconcilable) {
+      const p = normalizeReconcilePath(r.source_path as string);
+      if (!current.has(p)) continue;
+      byPath.set(p, [...(byPath.get(p) ?? []), r.slug]);
+    }
+    for (const [p, slugs] of byPath) {
+      if (slugs.length < 2) continue;
+      const canonical = expectedSlug(p);
+      if (!slugs.includes(canonical)) continue;
+      for (const slug of slugs) if (slug !== canonical) superseded.push({ slug, canonical });
+    }
+  }
+  return { staleSlugs, reconcilableCount: reconcilable.length, massDelete, superseded };
 }
 
 /**

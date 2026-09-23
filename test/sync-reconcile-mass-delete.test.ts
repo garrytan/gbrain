@@ -122,3 +122,45 @@ describe('massReconcileAllowed — GBRAIN_ALLOW_MASS_RECONCILE escape hatch (#28
     expect(overridden).toBe(false); // old behavior restored
   });
 });
+
+describe('planReconcileDeletes — twins left by a slug-grammar change', () => {
+  // A file whose slug changed under a new grammar gets a NEW page on the next
+  // full sync while the old-slug page keeps the same source_path. The old row
+  // is a twin: its content lives in the sibling that holds the current slug.
+  const expected = (p: string) => p.replace(/\\/g, '/').replace(/\.md$/, '').toLowerCase().replace(/ /g, '-');
+
+  test('an old-slug row whose sibling holds the current slug is superseded, not kept', () => {
+    const stored = [
+      { slug: 'wiki/елка', source_path: 'wiki/Ёлка.md' },
+      { slug: 'wiki/ёлка', source_path: 'wiki\\Ёлка.md' },
+      { slug: 'wiki/other', source_path: 'wiki/Other.md' },
+    ];
+    const plan = planReconcileDeletes(stored, ['wiki/Ёлка.md', 'wiki/Other.md'], () => true, expected);
+    expect(plan.staleSlugs).toEqual([]);
+    expect(plan.superseded).toEqual([{ slug: 'wiki/елка', canonical: 'wiki/ёлка' }]);
+  });
+
+  test('a lone row with an out-of-date slug is kept: nothing holds its content yet', () => {
+    const plan = planReconcileDeletes([{ slug: 'wiki/елка', source_path: 'wiki/Ёлка.md' }], ['wiki/Ёлка.md'], () => true, expected);
+    expect(plan.superseded).toEqual([]);
+    expect(plan.staleSlugs).toEqual([]);
+  });
+
+  test('no expectedSlug → no twin detection (legacy callers unchanged)', () => {
+    const stored = [
+      { slug: 'wiki/елка', source_path: 'wiki/Ёлка.md' },
+      { slug: 'wiki/ёлка', source_path: 'wiki/Ёлка.md' },
+    ];
+    expect(planReconcileDeletes(stored, ['wiki/Ёлка.md'], () => true).superseded).toEqual([]);
+  });
+
+  test('twins never count toward the mass-delete valve', () => {
+    const stored = Array.from({ length: 30 }, (_, i) => [
+      { slug: `p/old-${i}`, source_path: `p/New ${i}.md` },
+      { slug: `p/new-${i}`, source_path: `p/New ${i}.md` },
+    ]).flat();
+    const plan = planReconcileDeletes(stored, stored.map((r) => r.source_path), () => true, expected);
+    expect(plan.superseded).toHaveLength(30);
+    expect(plan.massDelete).toBe(false);
+  });
+});

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, realpathSync } from 'fs';
 import { relative, isAbsolute, resolve } from 'path';
+import { SLUG_GRAMMAR_VERSION } from './cjk.ts';
 
 /**
  * Path-based import checkpoint.
@@ -44,9 +45,12 @@ export interface ImportCheckpoint {
   completedPaths: string[];
   /** ISO 8601, diagnostic only. */
   timestamp: string;
+  /** cjk.ts:SLUG_GRAMMAR_VERSION of the run that wrote it. Mismatch or absent on resume → discard. */
+  slug_grammar: number;
 }
 
 const OLD_FORMAT_LOG = 'Older checkpoint format detected — re-walking (cheap via content_hash)';
+const GRAMMAR_CHANGED_LOG = 'Import checkpoint is from before the slug rules changed — re-walking every file (cheap via content_hash)';
 export const IMPORT_CHECKPOINT_SCHEMA_VERSION = 1;
 export const IMPORT_CHECKPOINT_OWNER = 'gbrain';
 export const IMPORT_CHECKPOINT_KIND = 'import';
@@ -73,6 +77,7 @@ export function resolveImportTargetDir(dir: string): string {
  *   - the payload is a pre-v0.33.2 positional checkpoint (logs to stderr
  *     so users see why a partial import is re-walking)
  *   - `completedPaths` is missing or not an array of strings
+ *   - it was written under another slug grammar (logs to stderr)
  */
 export function loadCheckpoint(path: string, currentDir: string): ImportCheckpoint | null {
   if (!existsSync(path)) return null;
@@ -107,6 +112,10 @@ export function loadCheckpoint(path: string, currentDir: string): ImportCheckpoi
   if (obj.kind !== undefined && obj.kind !== IMPORT_CHECKPOINT_KIND) return null;
   if (typeof obj.timestamp !== 'string') return null;
   if (!obj.completedPaths.every((p): p is string => typeof p === 'string')) return null;
+  if (obj.slug_grammar !== SLUG_GRAMMAR_VERSION) {
+    console.error(GRAMMAR_CHANGED_LOG);
+    return null;
+  }
 
   return {
     schema_version: IMPORT_CHECKPOINT_SCHEMA_VERSION,
@@ -115,6 +124,7 @@ export function loadCheckpoint(path: string, currentDir: string): ImportCheckpoi
     dir: obj.dir,
     completedPaths: obj.completedPaths,
     timestamp: obj.timestamp,
+    slug_grammar: SLUG_GRAMMAR_VERSION,
   };
 }
 
@@ -127,7 +137,7 @@ export function loadCheckpoint(path: string, currentDir: string): ImportCheckpoi
  * is cheap because `importFile` short-circuits unchanged files via
  * `content_hash`.
  */
-export function saveCheckpoint(path: string, cp: ImportCheckpoint): void {
+export function saveCheckpoint(path: string, cp: Omit<ImportCheckpoint, 'slug_grammar'>): void {
   try {
     const tmp = `${path}.tmp`;
     // Sort for stable serialization — keeps diffs across snapshots minimal
@@ -139,6 +149,7 @@ export function saveCheckpoint(path: string, cp: ImportCheckpoint): void {
       dir: cp.dir,
       completedPaths: [...cp.completedPaths].sort(),
       timestamp: cp.timestamp,
+      slug_grammar: SLUG_GRAMMAR_VERSION,
     };
     writeFileSync(tmp, JSON.stringify(payload));
     renameSync(tmp, path);

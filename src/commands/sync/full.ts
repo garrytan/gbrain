@@ -22,7 +22,9 @@ import {
   isEmbeddingInfraCode,
   DEFAULT_SOURCE_ID,
   RENAME_SENTINEL_PREFIX,
+  resolveSlugForPath,
 } from '../../core/sync.ts';
+import { retireSupersededTwins } from '../../core/sync-twins.ts';
 import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
 import { autoConcurrency } from '../../core/sync-concurrency.ts';
 import { slog, serr } from '../../core/console-prefix.ts';
@@ -430,6 +432,7 @@ async function reconcileFullSyncDeletes(
       rows,
       currentFiles,
       p => (scopePrefix === '' || p.startsWith(scopePrefix)) && reconcileEligible(p),
+      p => resolveSlugForPath(p),
     );
     if (plan.staleSlugs.length > 0 && plan.massDelete && !massReconcileAllowed()) {
       // #2828 mass-delete safety valve: a reconcile that would sweep more than
@@ -523,6 +526,7 @@ async function reconcileFullSyncDeletes(
         }
       }
     }
+    await retireSupersededTwins(engine, sid, plan.superseded, slog);
   }
   return reconciledDeletes;
 }
