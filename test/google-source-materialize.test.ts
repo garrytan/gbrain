@@ -90,6 +90,8 @@ interface FakeGoogle {
   history: string[][];
   historyResponseId: string;
   historyExpired: boolean;
+  /** Serve history.list with a nextPageToken on every page (never terminates) so drainPages hits its cap. */
+  historyEndless: boolean;
   failThreads: Set<string>;
   /** Threads that 429 (rate-limited) on every fetch — retry-after: 0 so tests
    *  don't actually sleep through the client's real backoff schedule. */
@@ -113,6 +115,7 @@ function emptyFx(): FakeGoogle {
     history: [],
     historyResponseId: '1000',
     historyExpired: false,
+    historyEndless: false,
     failThreads: new Set(),
     rateLimitThreads: new Set(),
     contacts: [],
@@ -169,6 +172,7 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
       return json({
         historyId: fx.historyResponseId,
         history: fx.history.map((tids) => ({ messages: tids.map((tid) => ({ threadId: tid })) })),
+        ...(fx.historyEndless ? { nextPageToken: 'more' } : {}),
       });
     }
 
@@ -669,6 +673,47 @@ describe('google-source materialize', () => {
         const state = readGoogleState(dir);
         expect(state.gmail_history_id).toBe('2000'); // fresh anchor
         expect(state.gmail_backfill_done).toBe(true);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('history delta over the pagination cap falls back to the bookmark window instead of failing the sweep', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-histcap-'));
+    const fx = emptyFx();
+    gmailFixture(fx);
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+        const anchoredAt = readGoogleState(dir).gmail_history_id;
+        expect(anchoredAt).toBeTruthy();
+
+        // The delta has grown past what history.list can be drained in one
+        // sweep (the fake never stops paginating). A fresh thread arrived
+        // meanwhile. Before the fix this threw, the sweep failed, and the
+        // cursor stayed put — so tomorrow's delta was larger still.
+        fx.historyEndless = true;
+        fx.profileHistoryId = '3000';
+        fx.messages.push(
+          gmsg('18c2f4a9b3d21e07', T_C, hoursAgoMs(1), {
+            headers: { From: 'Erin Example <erin@example.com>', To: 'a@example.com', Subject: 'Fresh zephyr kickoff' },
+            body: 'Kicking off the fresh thread here.',
+          }),
+        );
+        const callsBefore = fx.calls.length;
+        const res = await sweep(dir, fx, vault, {}, 'gmail');
+        expect(res.status).toBe('synced');
+        expect(res.added).toBe(1); // the fresh thread landed via the bookmark window
+        const newCalls = fx.calls.slice(callsBefore);
+        expect(newCalls.some((c) => c.includes('/users/me/messages?'))).toBe(true);
+        expect(newCalls.some((c) => c.endsWith('/users/me/profile'))).toBe(true);
+        // The fallback listing was complete, so the cursor re-anchors on the fresh historyId.
+        const state = readGoogleState(dir);
+        expect(state.gmail_history_id).toBe('3000');
+        expect(state.gmail_history_id).not.toBe(anchoredAt);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
