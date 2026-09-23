@@ -128,7 +128,9 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       throw new OperationError('source_changed','The requested claim path differs from the configured source root.');
     const expired=input.expiredOnly?await tx.executeRaw('SELECT id FROM sources WHERE id=$1 AND archived=true AND archive_expires_at<=now()',[input.sourceId]):null;
     const noop=expired?.length===0 || input.operation==='archive'&&source?.archived || input.operation==='restore'&&!source?.archived
-      || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&currentBinding?.local_path===root!.worktree&&join(currentBinding.local_path,currentBinding.relative_path)===root!.source;
+      || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&currentBinding?.local_path===root!.worktree&&join(currentBinding.local_path,currentBinding.relative_path)===root!.source
+        // A matching binding with a stale pointer is a repair, not a no-op.
+        &&source?.local_path===root!.source;
     if(noop){
       await lockTopologyPrincipal(tx,principal);
       return topologyReceipt(await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source!.incarnation,worktrees},

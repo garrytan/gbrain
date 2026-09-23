@@ -9,7 +9,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { registerLocalWriter, revokeLocalWriter } from '../src/core/persistence/identity.ts';
-import { claimWorktree, getWorktreeBinding, worktreeManifest } from '../src/core/persistence/ownership.ts';
+import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, prepareWriterTransfer, worktreeManifest } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
@@ -96,6 +96,29 @@ test('rebind requires exact manifest including deletion and old path remains fen
   expect((await getWorktreeBinding(engine,source))!.local_path).toBe(candidate);
   const {assertManagedFilesystemWrite}=await import('../src/core/persistence/filesystem-guard.ts');
   expect(()=>assertManagedFilesystemWrite(join(root,'example.md'))).toThrow('managed canonical worktree');
+}),60_000);
+
+async function sourcePath(source:string){return (await engine.executeRaw<{local_path:string|null}>('SELECT local_path FROM sources WHERE id=$1',[source]))[0].local_path;}
+
+test('writer transfer moves the source pointer with its canonical checkout',()=>fixture(async(home,source,root)=>{
+  const successor=join(home,'successor');cpSync(root,successor,{recursive:true});
+  const transfer=await prepareWriterTransfer(engine,source);
+  await acceptWriterTransfer(engine,source,successor,transfer.owner_epoch,transfer.manifest.digest);
+  expect((await getWorktreeBinding(engine,source))!.local_path).toBe(successor);
+  expect(await sourcePath(source)).toBe(successor);
+}),60_000);
+
+test('rebind repairs a source pointer left behind by an earlier transfer',()=>fixture(async(home,source,root)=>{
+  const successor=join(home,'successor');cpSync(root,successor,{recursive:true});
+  const transfer=await prepareWriterTransfer(engine,source);
+  await acceptWriterTransfer(engine,source,successor,transfer.owner_epoch,transfer.manifest.digest);
+  // Reproduce a brain transferred before the pointer followed the checkout.
+  await engine.transaction(async tx=>{await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+    await tx.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1',[source,root]);});
+  const result=await runManagedSourceLifecycle(engine,{operation:'rebind',sourceId:source,path:successor});
+  expect(result.noop).toBeFalsy();
+  expect(await sourcePath(source)).toBe(successor);
+  expect((await getWorktreeBinding(engine,source))!.local_path).toBe(successor);
 }),60_000);
 
 test('clone publication rolls forward after the directory rename and retains exact reservations until cleanup',()=>fixture(async(home,source,root)=>{
