@@ -35,6 +35,7 @@
  */
 
 import type { PageType } from '../types.ts';
+import { classifyCalendarEvent } from '../calendar-horizon.ts';
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: string };
 
@@ -85,6 +86,15 @@ export function isFactsBackstopEligible(
   if (slug.startsWith('wiki/agents/')) return { ok: false, reason: 'subagent_namespace' };
   if (parsed.frontmatter && parsed.frontmatter.dream_generated === true) {
     return { ok: false, reason: 'dream_generated' };
+  }
+
+  const cal = classifyCalendarEvent({
+    slug,
+    type: parsed.type,
+    frontmatter: parsed.frontmatter,
+  });
+  if (cal.isCalendar && (cal.beyondFutureHorizon || !cal.valid)) {
+    return { ok: false, reason: 'calendar_beyond_future_horizon' };
   }
 
   const body = (parsed.compiled_truth ?? '').trim();

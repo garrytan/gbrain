@@ -198,7 +198,7 @@ describe('buildRecencyComponentSql', () => {
       decayMap: {},
       fallback: { halflifeDays: 30, coefficient: 1.0 },
     });
-    expect(sql).not.toContain('CASE');
+    expect(sql).toContain('CASE WHEN p.updated_at > NOW() THEN 0.0 ELSE');
     expect(sql).toContain('1 * 30.0 / (30.0 +');
   });
 });

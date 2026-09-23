@@ -4,6 +4,7 @@
 // and NOT a diary/event page. Diary interiority is NEVER mined into events
 // (privacy/consent — plan D5.4); event pages are already the output (anti-loop).
 import type { PageType } from '../types.ts';
+import { classifyCalendarEvent } from '../calendar-horizon.ts';
 
 export type ChronicleEligibility = { ok: true } | { ok: false; reason: string };
 
@@ -18,6 +19,8 @@ export function isChronicleEligible(input: {
   slug: string;
   body?: string;
   dreamGenerated?: boolean;
+  frontmatter?: Record<string, unknown> | null;
+  nowMs?: number;
 }): ChronicleEligibility {
   const { type, slug } = input;
   if (input.dreamGenerated === true) return { ok: false, reason: 'dream_generated' };
@@ -25,6 +28,16 @@ export function isChronicleEligible(input: {
   if (type === 'diary' || slug.startsWith('life/diary/')) return { ok: false, reason: 'diary_excluded' };
   if (type === 'event' || slug.startsWith('life/events/')) return { ok: false, reason: 'event_self' };
   if (slug.startsWith('wiki/agents/')) return { ok: false, reason: 'subagent_scratch' };
+
+  const cal = classifyCalendarEvent({
+    slug,
+    type,
+    frontmatter: input.frontmatter,
+    nowMs: input.nowMs,
+  });
+  if (cal.isCalendar && (cal.isFuture || !cal.valid)) {
+    return { ok: false, reason: 'calendar_future' };
+  }
   const bodyOk = (input.body?.length ?? MIN_BODY_CHARS) >= MIN_BODY_CHARS;
   if (!bodyOk) return { ok: false, reason: 'too_short' };
   const typeOk = ELIGIBLE_TYPES.includes(type);

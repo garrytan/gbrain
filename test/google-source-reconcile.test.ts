@@ -205,10 +205,10 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
     if (/\/calendars\/[^/]+\/events$/.test(u.pathname)) {
       if (u.searchParams.get('syncToken')) {
         if (fx.calendarExpireSyncToken) return json({ error: { code: 410, message: 'Sync token expired' } }, 410);
-        return json({ items: fx.calendarDelta, nextSyncToken: 'cal-sync-delta' });
+        return json({ timeZone: 'America/New_York', items: fx.calendarDelta, nextSyncToken: 'cal-sync-delta' });
       }
       fx.calendarWindowedLists++;
-      return json({ items: fx.calendarEvents, nextSyncToken: `cal-sync-w${fx.calendarWindowedLists}` });
+      return json({ timeZone: 'America/New_York', items: fx.calendarEvents, nextSyncToken: `cal-sync-w${fx.calendarWindowedLists}` });
     }
 
     if (u.pathname.includes('/people/me/connections')) {
@@ -652,7 +652,8 @@ describe('syncToken 410 recovery', () => {
         // The stored token expires upstream: 410 → windowed re-list.
         fx.calendarExpireSyncToken = true;
         const res2 = await sweep(dir, fx, vault, {}, 'calendar');
-        expect(res2.status).not.toBe('partial'); // recovery, not failure
+        expect(res2.status).toBe('partial');
+        expect(readGoogleState(dir).calendar_degraded).toBe(true);
         const state = readGoogleState(dir);
         expect(state.calendar_sync_token).toBe('cal-sync-w2'); // fresh token banked
         // The windowed re-list actually ran (second windowed call).
@@ -689,7 +690,8 @@ describe('syncToken 410 recovery', () => {
 
         fx.calendarExpireSyncToken = true;
         const res2 = await sweep(dir, fx, vault, {}, 'calendar', { cfg });
-        expect(res2.status).not.toBe('partial');
+        expect(res2.status).toBe('partial');
+        expect(readGoogleState(dir).calendar_degraded).toBe(true);
         expect(readGoogleState(dir).calendar_sync_token).toBe('cal-sync-w2');
         expect(fx.calendarWindowedLists).toBe(2);
 

@@ -784,14 +784,15 @@ describe('CalendarClient', () => {
   test('windowed listing sends timeMin/timeMax and normalizes events', async () => {
     const h = makeHarness((u) => {
       expect(u.searchParams.get('syncToken')).toBeNull();
-      return json({ items: RAW_EVENTS, nextSyncToken: 'cal-1' });
+      return json({ timeZone: 'America/New_York', items: RAW_EVENTS, nextSyncToken: 'cal-1' });
     });
     const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
-    const { events, nextSyncToken } = await cal.listEvents('a@example.com', {
+    const { events, nextSyncToken, timeZone } = await cal.listEvents('a@example.com', {
       timeMinIso: '2026-05-01T00:00:00.000Z',
       timeMaxIso: '2026-10-01T00:00:00.000Z',
     });
     expect(nextSyncToken).toBe('cal-1');
+    expect(timeZone).toBe('America/New_York');
     expect(h.calls[0].url).toContain('timeMin=');
     expect(h.calls[0].url).toContain('timeMax=');
     expect(h.calls[0].url).toContain('singleEvents=true');
@@ -814,7 +815,7 @@ describe('CalendarClient', () => {
     const h = makeHarness((u) => {
       expect(u.searchParams.get('syncToken')).toBe('cal-1');
       expect(u.searchParams.get('timeMin')).toBeNull();
-      return json({ items: [], nextSyncToken: 'cal-2' });
+      return json({ timeZone: 'America/New_York', items: [], nextSyncToken: 'cal-2' });
     });
     const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
     const { events, nextSyncToken } = await cal.listEvents('a@example.com', { syncToken: 'cal-1' });
@@ -836,14 +837,14 @@ describe('CalendarClient', () => {
   });
 
   test('defaults to the primary calendar when no calendarId is given', async () => {
-    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const h = makeHarness(() => json({ timeZone: 'America/New_York', items: [], nextSyncToken: 'cal-1' }));
     const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
     await cal.listEvents('a@example.com', { timeMinIso: '2026-05-01T00:00:00.000Z' });
     expect(h.calls[0].url).toContain('/calendars/primary/events');
   });
 
   test('a secondary calendar id is URL-encoded into the path, not the query', async () => {
-    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const h = makeHarness(() => json({ timeZone: 'America/New_York', items: [], nextSyncToken: 'cal-1' }));
     const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
     await cal.listEvents('a@example.com', {
       calendarId: 'family0123456789@group.calendar.google.com',
@@ -859,10 +860,41 @@ describe('CalendarClient', () => {
   });
 
   test('an empty/whitespace calendarId falls back to primary', async () => {
-    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const h = makeHarness(() => json({ timeZone: 'America/New_York', items: [], nextSyncToken: 'cal-1' }));
     const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
     await cal.listEvents('a@example.com', { calendarId: '   ', syncToken: 'cal-1' });
     expect(h.calls[0].url).toContain('/calendars/primary/events');
+  });
+
+  test('missing response timeZone throws error without updating state', async () => {
+    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await expect(cal.listEvents('a@example.com', { timeMinIso: '2026-05-01T00:00:00.000Z' })).rejects.toThrow(
+      'missing required timeZone',
+    );
+  });
+
+  test('invalid response timeZone throws error without updating state', async () => {
+    const h = makeHarness(() => json({ timeZone: 'Not/Real_Tz', items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await expect(cal.listEvents('a@example.com', { timeMinIso: '2026-05-01T00:00:00.000Z' })).rejects.toThrow(
+      'invalid IANA timeZone',
+    );
+  });
+
+  test('mismatched response timeZone across pages throws error', async () => {
+    let page = 0;
+    const h = makeHarness(() => {
+      page++;
+      if (page === 1) {
+        return json({ timeZone: 'America/New_York', items: [], nextPageToken: 'p2' });
+      }
+      return json({ timeZone: 'Europe/London', items: [], nextSyncToken: 'cal-1' });
+    });
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await expect(cal.listEvents('a@example.com', { timeMinIso: '2026-05-01T00:00:00.000Z' })).rejects.toThrow(
+      'timeZone changed across pages',
+    );
   });
 
   test('listCalendars normalizes calendarList and flags the primary', async () => {

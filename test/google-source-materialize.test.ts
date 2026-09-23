@@ -207,9 +207,9 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
     if (/\/calendars\/[^/]+\/events/.test(u.pathname)) {
       if (u.searchParams.get('syncToken')) {
         if (fx.calendarExpireSyncToken) return json({ error: { code: 410, message: 'Sync token expired' } }, 410);
-        return json({ items: fx.calendarDelta, nextSyncToken: 'cal-sync-2' });
+        return json({ timeZone: 'America/New_York', items: fx.calendarDelta, nextSyncToken: 'cal-sync-2' });
       }
-      return json({ items: fx.calendarEvents, nextSyncToken: 'cal-sync-1' });
+      return json({ timeZone: 'America/New_York', items: fx.calendarEvents, nextSyncToken: 'cal-sync-1' });
     }
 
     if (u.pathname.includes('/people/me/connections')) {
