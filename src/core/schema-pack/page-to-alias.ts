@@ -120,7 +120,7 @@ async function canonicalExists(
  * Insert a slug_aliases row. ON CONFLICT DO NOTHING (idempotent retry).
  * Returns true on first-time insert, false on conflict (already exists).
  */
-async function insertAliasRow(
+export async function insertAliasRow(
   engine: BrainEngine,
   sourceId: string,
   aliasSlug: string,

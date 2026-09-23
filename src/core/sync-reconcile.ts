@@ -27,6 +27,12 @@ function normalizeReconcilePath(p: string): string {
   return p.replace(/\\/g, '/');
 }
 
+/** An old-slug twin and the page that replaced it (see ReconcilePlan.superseded). */
+export interface SupersededTwin {
+  slug: string;
+  canonical: string;
+}
+
 export interface ReconcilePlan {
   /** Slugs whose backing file is genuinely gone; safe to reconcile-delete. */
   staleSlugs: string[];
@@ -48,7 +54,7 @@ export interface ReconcilePlan {
    * so the twin is safe to retire and `canonical` is where it should redirect.
    * Never counted toward the mass-delete valve.
    */
-  superseded: Array<{ slug: string; canonical: string }>;
+  superseded: SupersededTwin[];
 }
 
 /**
@@ -80,7 +86,7 @@ export function planReconcileDeletes(
   const massDelete =
     reconcilable.length > MASS_RECONCILE_MIN_PAGES &&
     staleSlugs.length > reconcilable.length * MASS_RECONCILE_RATIO;
-  const superseded: Array<{ slug: string; canonical: string }> = [];
+  const superseded: SupersededTwin[] = [];
   if (expectedSlug) {
     const byPath = new Map<string, string[]>();
     for (const r of reconcilable) {

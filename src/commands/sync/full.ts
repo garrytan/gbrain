@@ -25,6 +25,7 @@ import {
   resolveSlugForPath,
 } from '../../core/sync.ts';
 import { retireSupersededTwins } from '../../core/sync-twins.ts';
+import { trackedSlugIndex } from './rename-reconcile.ts';
 import { CHUNKER_VERSION } from '../../core/chunkers/code.ts';
 import { autoConcurrency } from '../../core/sync-concurrency.ts';
 import { slog, serr } from '../../core/console-prefix.ts';
@@ -526,7 +527,7 @@ async function reconcileFullSyncDeletes(
         }
       }
     }
-    await retireSupersededTwins(engine, sid, plan.superseded, slog);
+    await retireSupersededTwins(engine, sid, plan.superseded, slog, () => trackedSlugIndex(gitContextRoot));
   }
   return reconciledDeletes;
 }
