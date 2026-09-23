@@ -392,6 +392,13 @@ describe('runUpgrade target verification (#4366)', () => {
       url: '',
     })).toBe('0.50.0.0');
     expect(upgradeModule.resolveUpgradeTarget(undefined, { ok: false, reason: 'network_error' })).toBeUndefined();
+    // A previously confirmed pending release remains trustworthy enough to
+    // detect a no-op when the post-update release check is offline.
+    expect(upgradeModule.resolveUpgradeTarget(
+      undefined,
+      { ok: false, reason: 'network_error' },
+      TARGET,
+    )).toBe(TARGET);
   });
 
   // A failed binary swap must still name the release it attempted. With no

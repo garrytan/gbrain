@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, rea
 import { basename, join, dirname, resolve } from 'path';
 import { parseSemver, semverGt } from '../core/semver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { readUpdateCache } from '../core/self-upgrade.ts';
 import { fetchLatestRelease, type LatestReleaseResult } from './check-update.ts';
 import { VERSION } from '../version.ts';
 
@@ -30,8 +31,9 @@ export function assessUpgradeOutcome(
 export function resolveUpgradeTarget(
   targetVersion: string | undefined,
   release: LatestReleaseResult | null,
+  cachedTarget?: string,
 ): string | undefined {
-  return targetVersion ?? (release?.ok ? release.tag : undefined);
+  return targetVersion ?? (release?.ok ? release.tag : cachedTarget);
 }
 
 export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
@@ -165,7 +167,9 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     // release too, so an exact-tag Bun pin cannot convert a successful
     // `bun update` exit into a false upgrade confirmation.
     const release = opts.targetVersion ? null : await fetchLatestRelease();
-    const target = resolveUpgradeTarget(opts.targetVersion, release);
+    const cachedMarker = opts.targetVersion ? null : readUpdateCache()?.marker;
+    const cachedTarget = cachedMarker?.kind === 'upgrade_available' ? cachedMarker.latest : undefined;
+    const target = resolveUpgradeTarget(opts.targetVersion, release, cachedTarget);
     if (target && assessUpgradeOutcome(target, newVersion) === 'mismatch') {
       console.error(`Upgrade did not take effect: still running ${newVersion}, expected ${target}.`);
       console.error('Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');
