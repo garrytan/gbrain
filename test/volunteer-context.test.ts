@@ -254,6 +254,50 @@ describe('gateVolunteeredPointers — direct unit (the pure gate step)', () => {
     extractCandidatesFromWindow([{ role: 'user', text: 'Alice Example met Widget Co' }]),
   );
 
+  test('excludeSlugPrefixes drops a whole subtree, BEFORE the cap consumes a slot', () => {
+    // An imported flashcard vault: its one-word aliases ("Delivery", "Cell")
+    // collide with ordinary prose, and the subtree cannot be enumerated as a
+    // set because its members change on every sync. Two card pointers sit
+    // AHEAD of the real hit, so a post-cap filter would return nothing at
+    // maxPages: 1 — the exclusion has to happen before the cap.
+    const block: PointerBlock = {
+      pointers: [
+        { display: 'Delivery', slug: 'inbox/obsidian-cards/oratory-delivery', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 },
+        { display: 'Cell', slug: 'inbox/obsidian-cards/cells', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 },
+        { display: 'Alice Example', slug: 'people/alice-example', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 },
+      ],
+      text: 'BLOCK',
+    };
+    const cands = candidatesByNorm(
+      extractCandidatesFromWindow([{ role: 'user', text: 'Delivery Cell Alice Example' }]),
+    );
+
+    const unfiltered = gateVolunteeredPointers(block, cands, { windowSize: 1, maxPages: 1 });
+    expect(unfiltered.map((p) => p.slug)).toEqual(['inbox/obsidian-cards/oratory-delivery']);
+
+    const filtered = gateVolunteeredPointers(block, cands, {
+      windowSize: 1,
+      maxPages: 1,
+      excludeSlugPrefixes: ['inbox/obsidian-cards/'],
+    });
+    expect(filtered.map((p) => p.slug)).toEqual(['people/alice-example']);
+  });
+
+  test('excludeSlugPrefixes is prefix-anchored, not a substring match', () => {
+    const block: PointerBlock = {
+      pointers: [
+        { display: 'Alice Example', slug: 'people/inbox/obsidian-cards-note', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 },
+      ],
+      text: 'BLOCK',
+    };
+    const cands = candidatesByNorm(extractCandidatesFromWindow([{ role: 'user', text: 'Alice Example' }]));
+    const out = gateVolunteeredPointers(block, cands, {
+      windowSize: 1,
+      excludeSlugPrefixes: ['inbox/obsidian-cards/'],
+    });
+    expect(out.map((p) => p.slug)).toEqual(['people/inbox/obsidian-cards-note']);
+  });
+
   test('gates below-threshold arms out; passes alias arm with newest-turn boost', () => {
     const pages = gateVolunteeredPointers(BLOCK, CANDS, { windowSize: 1 });
     expect(pages.map((p) => p.slug)).toEqual(['people/alice-example']); // slug-suffix 0.6+0.05 < 0.7
