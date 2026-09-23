@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S bun --use-system-ca
 
 import { affectsRecall } from './core/types.ts';
 import { installSigchldHandler } from './core/zombie-reap.ts';
