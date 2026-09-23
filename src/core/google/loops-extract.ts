@@ -49,6 +49,12 @@ export const LOOPS_EXTRACT_MAX_PER_SWEEP = 50;
 export const LOOPS_EXTRACT_ENQUEUE_CEILING = 500;
 /** Only threads whose newest message is within this window get extracted. */
 export const LOOPS_EXTRACT_WINDOW_DAYS = 30;
+// #3763 parity for the loop judge. A dense 12k thread extracts more loops than 2048 output
+// tokens can carry (thinking models also spend reasoning tokens inside this budget), and the
+// retry is deterministic: same thread, same cap, same truncation, dead after max_attempts with
+// the revision never extracted. Escalate once, exactly as propose_takes does.
+export const LOOPS_EXTRACT_MAX_TOKENS = 2048;
+export const LOOPS_EXTRACT_RETRY_MAX_TOKENS = 8192;
 
 /** Gmail categories that are bulk by construction. */
 const BULK_CATEGORY_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS'];
@@ -344,16 +350,26 @@ export async function runLoopsExtract(
 
   let text: string;
   try {
-    const res = await chat({
-      system: JUDGE_SYSTEM,
-      messages: [
-        {
-          role: 'user',
-          content: `<thread subject=${JSON.stringify(page.title ?? '')} account_owner="me">\n${content}\n</thread>\n\nExtract the open loops.`,
-        },
-      ],
-      maxTokens: 2000,
-    });
+    const call = (maxTokens: number) =>
+      chat({
+        system: JUDGE_SYSTEM,
+        messages: [
+          {
+            role: 'user',
+            content: `<thread subject=${JSON.stringify(page.title ?? '')} account_owner="me">\n${content}\n</thread>\n\nExtract the open loops.`,
+          },
+        ],
+        maxTokens,
+      });
+
+    let res = await call(LOOPS_EXTRACT_MAX_TOKENS);
+    if (res.stopReason === 'length') {
+      process.stderr.write(
+        `[loops_extract] WARN: judge output truncated at maxTokens=${LOOPS_EXTRACT_MAX_TOKENS} ` +
+          `(${payload.slug}); retrying once at ${LOOPS_EXTRACT_RETRY_MAX_TOKENS}\n`,
+      );
+      res = await call(LOOPS_EXTRACT_RETRY_MAX_TOKENS);
+    }
     if (res.stopReason === 'refusal' || res.stopReason === 'content_filter') {
       return { ...empty, reason: 'refused' };
     }
@@ -365,7 +381,10 @@ export async function runLoopsExtract(
     if (res.stopReason === 'length') {
       throw new LoopsExtractRetryableError(
         'truncated',
-        'loops_extract: model output truncated (stopReason=length) — retryable',
+        `loops_extract: model output truncated (stopReason=length) even at ` +
+          `maxTokens=${LOOPS_EXTRACT_RETRY_MAX_TOKENS} on ${payload.slug} — the thread extracts ` +
+          `more loops than the cap can carry (thinking models spend reasoning tokens inside ` +
+          `this budget); raise LOOPS_EXTRACT_RETRY_MAX_TOKENS — retryable`,
       );
     }
     text = res.text;

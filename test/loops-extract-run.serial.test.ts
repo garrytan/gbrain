@@ -50,9 +50,12 @@ mock.module('../src/core/ai/gateway.ts', () => ({
 }));
 
 const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
-const { runLoopsExtract, isLoopsExtractionEnabled } = await import(
-  '../src/core/google/loops-extract.ts'
-);
+const {
+  runLoopsExtract,
+  isLoopsExtractionEnabled,
+  LOOPS_EXTRACT_MAX_TOKENS,
+  LOOPS_EXTRACT_RETRY_MAX_TOKENS,
+} = await import('../src/core/google/loops-extract.ts');
 const { normalizeAlias } = await import('../src/core/search/alias-normalize.ts');
 const { MinionQueue } = await import('../src/core/minions/queue.ts');
 
@@ -392,6 +395,45 @@ describe('runLoopsExtract', () => {
     );
 
     expect(await countLoops()).toBe(0); // none of the failure paths wrote anything
+  });
+
+  test('truncation escalates maxTokens ONCE and succeeds (#3763 parity)', async () => {
+    // Pre-fix the judge called chat() at a single hardcoded cap, so a dense
+    // thread truncated, threw, and truncated identically on every retry —
+    // deterministically dead, with the revision never extracted. The escalated
+    // second call is what rescues it.
+    const caps: number[] = [];
+    chatImpl = async () => {
+      const n = caps.length;
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return n === 0
+        ? { text: 'partial…', stopReason: 'length' }
+        : { text: '{"commitments":[],"decisions_pending":[]}', stopReason: 'end' };
+    };
+
+    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+
+    expect(r.status).not.toBe('failed');
+    expect(caps.length).toBe(2); // escalated exactly once, not a retry loop
+    expect(caps[0]).toBe(LOOPS_EXTRACT_MAX_TOKENS);
+    expect(caps[1]).toBe(LOOPS_EXTRACT_RETRY_MAX_TOKENS);
+    expect(caps[1]).toBeGreaterThan(caps[0]);
+  });
+
+  test('still truncated at the escalated cap → THROWS, and the message names the cap', async () => {
+    // The operator has to be able to tell "this thread is bigger than the cap"
+    // apart from a generic transient, or the ceiling can never be tuned.
+    const caps: number[] = [];
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return { text: 'partial…', stopReason: 'length' };
+    };
+
+    await expect(runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC })).rejects.toThrow(
+      new RegExp(`maxTokens=${LOOPS_EXTRACT_RETRY_MAX_TOKENS}`),
+    );
+    expect(caps.length).toBe(2); // escalates once, then gives up — no unbounded climb
+    expect(await countLoops()).toBe(0);
   });
 
   test('parse failure (garbage response) THROWS the all-or-nothing barrier, ZERO open_loops rows', async () => {
