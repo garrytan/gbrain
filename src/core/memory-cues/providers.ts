@@ -29,7 +29,9 @@ export const liveMemoryCueProviders: MemoryCueProviders = {
     if (response.stopReason !== 'end') throw new Error(response.stopReason === 'refusal' ? 'provider_refusal' : 'incomplete_output');
     const price = canonicalLookup(response.model);
     if (!price || response.model !== model) throw new Error('generation_model_changed');
-    return { output: JSON.parse(response.text), actualUsd: (response.usage.input_tokens * price.input + response.usage.output_tokens * price.output
+    const text = response.text.trim();
+    const fence = text.match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
+    return { output: JSON.parse(fence?.[1] ?? text), actualUsd: (response.usage.input_tokens * price.input + response.usage.output_tokens * price.output
       + response.usage.cache_read_tokens * (price.cache_read ?? price.input) + response.usage.cache_creation_tokens * (price.cache_write ?? price.input * 2)) / 1e6 };
   },
   async embed(texts, column, signal) {
