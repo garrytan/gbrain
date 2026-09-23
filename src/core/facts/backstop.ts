@@ -687,7 +687,7 @@ async function runPipelineBodyInner(
   // route (no fence file, no stub page, no commit) without the
   // thin-client warning — the operator chose it.
   const { isWriteThroughDisabled } = await import('../write-through.ts');
-  const writeThroughDisabled = await isWriteThroughDisabled(ctx.engine);
+  const writeThroughDisabled = await isWriteThroughDisabled(ctx.engine, ctx.sourceId);
   const localPath = writeThroughDisabled
     ? null
     : await lookupSourceLocalPath(ctx.engine, ctx.sourceId);

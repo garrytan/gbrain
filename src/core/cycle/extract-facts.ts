@@ -134,7 +134,7 @@ async function canonicalCacheState(
   // sync.write_through=off: the fence writers already treat the file as
   // non-canonical (fence-write.ts legacy fallback), so a stale mirror file must
   // not block reconcile here either.
-  if (await isWriteThroughDisabled(engine)) return 'unavailable';
+  if (await isWriteThroughDisabled(engine, sourceId)) return 'unavailable';
   const target = await resolvePageWriteTarget(engine, slug, sourceId);
   if (!target.ok || !existsSync(target.filePath)) return 'unavailable';
   try {

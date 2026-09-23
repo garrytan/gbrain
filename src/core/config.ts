@@ -1267,6 +1267,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // 'false' makes every page write DB-only. For brains whose host repo is a
   // shared working tree where stray root-level .md artifacts are unwanted.
   'sync.write_through',
+  'sync.write_source_id',
   // Gateway-native subagent loop toggle (routes subagent jobs through the
   // provider-agnostic gateway.toolLoop for non-Anthropic providers). The
   // subagent handler's error message tells users to `config set` this, so it

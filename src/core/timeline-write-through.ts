@@ -301,7 +301,7 @@ export async function writeTimelineEntryThrough(
   // caller's DB-only fallback or the next sync re-extract duplicates it.
   let onDisk: CanonicalTimelineTuple | undefined;
   try {
-    if (await isWriteThroughDisabled(engine)) {
+    if (await isWriteThroughDisabled(engine, sourceId)) {
       return { handled: false, skipped: 'disabled_by_config' };
     }
     const target = await resolvePageWriteTarget(engine, slug, sourceId);
