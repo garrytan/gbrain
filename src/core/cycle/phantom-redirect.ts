@@ -54,6 +54,7 @@ import {
   FACTS_FENCE_END,
   type ParsedFact,
 } from '../facts-fence.ts';
+import { locateOutsideCode } from '../fence-scan.ts';
 import { parseMarkdown, splitBody, serializeMarkdown } from '../markdown.ts';
 import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { isAborted } from '../abort-check.ts';
@@ -141,10 +142,9 @@ export function stripFenceAndFrontmatterAndLeadingH1(body: string): string {
   // 1. Strip the entire `## Facts\n\n<fence>...<fence>` block. We grab
   //    the `## Facts` heading too (with surrounding blank lines) so the
   //    section header doesn't count as residue.
-  const beginIdx = working.indexOf(FACTS_FENCE_BEGIN);
-  const endIdx = beginIdx >= 0
-    ? working.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length)
-    : -1;
+  const located = locateOutsideCode(working, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
+  const beginIdx = located.beginIdx;
+  const endIdx = beginIdx >= 0 ? located.endIdx : -1;
   if (beginIdx !== -1 && endIdx !== -1) {
     // Walk backward from beginIdx to swallow a leading `## Facts\n\n`
     // (or `## facts\n\n` — case-insensitive markdown headings).
