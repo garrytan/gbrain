@@ -3,7 +3,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { healOversizedPageChunks } from '../src/core/embed-oversize-heal.ts';
 import { installPageEmbeddings, installPageProjection, PageProjectionConflictError,
-  readProjectionSnapshot, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
+  queuePageProjection, readProjectionSnapshot, rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -149,6 +149,24 @@ test('projection replacement preserves vector work completed after its capture',
     const current = await embedCurrent(engine, slug);
     await expect(installPageProjection(engine, origin, [chunk(body)], { seal: true })).rejects.toBeInstanceOf(PageProjectionConflictError);
     expect(await engine.getChunks(slug, { sourceId, includeEmbedding: true })).toEqual(current);
+  }
+});
+
+test('queued rebuild of an unchanged page keeps vectors that predate the embedded text hash', async () => {
+  for (const engine of engines) {
+    const slug = 'grandfathered-vector';
+    await engine.putPage(slug, { type: 'note', title: 'Example origin', compiled_truth: body }, { sourceId });
+    await queuePageProjection(engine, sourceId, slug, 'protocol_activation');
+    expect((await rebuildPendingPageProjections(engine, 100)).rebuilt).toBeGreaterThan(0);
+    await embedCurrent(engine, slug);
+    // Rows embedded before the hash column existed carry a vector and a NULL hash.
+    await engine.executeRaw(`UPDATE content_chunks SET embedded_text_hash=NULL
+      WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)`, [sourceId, slug]);
+    const before = await engine.getChunks(slug, { sourceId, includeEmbedding: true });
+    expect(before.every(c => c.embedding !== null)).toBe(true);
+    await queuePageProjection(engine, sourceId, slug, 'protocol_activation');
+    expect((await rebuildPendingPageProjections(engine, 100)).rebuilt).toBeGreaterThan(0);
+    expect(await engine.getChunks(slug, { sourceId, includeEmbedding: true })).toEqual(before);
   }
 });
 
