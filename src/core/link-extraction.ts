@@ -21,7 +21,7 @@ import { isValidSourceId } from './source-id.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { isMaterializedMarkerLine } from './timeline-marker.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
-import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE, SLUG_MARK_STRIP_RE } from './cjk.ts';
+import { SLUG_WORD_CHARS, foldSlugText } from './cjk.ts';
 import { foldNonDecomposingLatin } from './latin-fold.ts';
 import { isIdentityEntity, sameEntityName } from './entities/resolve.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
@@ -1461,11 +1461,10 @@ export function normalizeBasename(s: string): string {
   // the query side. Without it a display name keeps the unfolded letter while
   // the ASCII page slug does not, and the lookup misses in silence:
   // `[[\u0110\u1ee9c Example]]` keyed `\u0111uc-example` and never found `people/duc-example`.
-  const folded = foldNonDecomposingLatin(
-    s.normalize('NFD').replace(SLUG_MARK_STRIP_RE, '').normalize('NFC')
-      .replace(SLUG_VARIATION_SELECTORS_RE, '').toLowerCase(), // twin of slugifySegment's strip (#4985)
-  );
-  return folded.replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  // foldSlugText is slugifySegment's own letter fold, so the key and the page
+  // slug agree on marks, Hebrew niqqud and variation selectors (#4985).
+  const folded = foldNonDecomposingLatin(foldSlugText(s));
+  return folded.replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-');
 }
 
 /** Stable order: shorter slug first (likely closer to brain root), then lexical. */

@@ -11,7 +11,7 @@
  *   pathToSlug()  →  convert file paths to page slugs
  */
 
-import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE, SLUG_MARK_STRIP_RE } from './cjk.ts';
+import { SLUG_WORD_CHARS, foldSlugText } from './cjk.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
@@ -625,23 +625,10 @@ export const SLUG_SEGMENT_PATTERN = new RegExp(`[${SLUG_WORD_CHARS}._\\-]+`, 'u'
 const SLUGIFY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}.\\s_\\-]`, 'gu');
 
 export function slugifySegment(segment: string): string {
-  return segment
-    .normalize('NFD')                     // Decompose accented chars
-    .replace(SLUG_MARK_STRIP_RE, '') // Fold Latin accents; keep Cyrillic i-kratkoye/yo (ADR-0001)
-    // #3700: Hebrew niqqud (vowel points) + cantillation are optional
-    // diacritics \u2014 the same word appears pointed and bare across filenames
-    // and must land on ONE slug (the Hebrew analog of caf\u00e9 \u2192 cafe). Scoped
-    // to U+0591\u2013U+05C7 only; \p{M} stays in SLUG_WORD_CHARS so Devanagari
-    // matras, Thai vowels, Arabic text etc. keep their #3417 behavior.
-    // Runs in NFD space so precomposed presentation forms (U+FB1D\u2013FB4F)
-    // are already decomposed and their points strip too.
-    .replace(/[\u0591-\u05c7]/g, '')      // Strip Hebrew niqqud + cantillation
-    .normalize('NFC')                     // Recompose Hangul Jamo back to Syllables (v0.32.7)
-    // Strip variation selectors (emoji VS16, ideographic IVS): Mn invisibles
-    // that survive \p{M}, so `🗂️ entities` forked a `<U+FE0F>-entities` twin of
-    // the clean-slug page. Shared with normalizeBasename via cjk.ts (#4985).
-    .replace(SLUG_VARIATION_SELECTORS_RE, '')
-    .toLowerCase()
+  // Shared letter fold (cjk.ts): Latin accents and Hebrew niqqud fold (#3700),
+  // Cyrillic й/ё survive (ADR-0001), variation selectors drop (#4985), NFC
+  // recomposes Hangul (v0.32.7).
+  return foldSlugText(segment)
     .replace(SLUGIFY_KEEP_RE, '')         // Keep alnum, dots, spaces, _-, and CJK (v0.32.7)
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
