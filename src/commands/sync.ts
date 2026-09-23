@@ -655,7 +655,8 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     return (await import('../core/company-brain/runtime.ts')).performCompanyBrainSync(engine, opts);
   }
   const [managed] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (managed?.enabled) {
+  // #5198: a claimed-but-not-activated owner already refuses legacy writes; admit through its journal instead.
+  if (managed?.enabled || await (await import('../core/persistence/sync-discovery.ts')).hasActiveLocalSyncOwner(engine, opts.sourceId)) {
     const connector = await runConnectorSync(engine, opts, true);
     return connector ?? (await import('../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
   }

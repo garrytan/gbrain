@@ -42,6 +42,14 @@ export function readSyncFile(root: string, path: string): Buffer | null {
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
 export const syncRawHash = (root: string, path: string): string | null => { const bytes = readSyncFile(root, path); return bytes === null ? null : sha256(bytes); };
+/** #5198: the owner marker refuses legacy sync whether or not the brain is activated, so an
+ * active local owner routes sync through the same journal put_page uses. Activation is unchanged.
+ * This is a preliminary ROUTING predicate only; resolveManagedSyncContext remains the authoritative
+ * gate (archive/incarnation/topology/path revalidation) before any mutation, and fails closed. */
+export async function hasActiveLocalSyncOwner(engine: BrainEngine, sourceId = 'default'): Promise<boolean> {
+  const binding = await getWorktreeBinding(engine, sourceId);
+  return binding?.owner_host_id === localHostId() && binding.state === 'active' && !!binding.local_path;
+}
 /** Validate the current owner and source without enumerating a new manifest. */
 export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncOpts): Promise<ManagedSyncContext> {
   if (!opts.noPull && !opts.dryRun) throw new OperationError('writer_coordinator_required', 'Managed sync requires --no-pull; Git pull/rebase needs an explicit drained maintenance window.');
