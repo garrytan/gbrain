@@ -8,6 +8,7 @@ import { readHolders } from './context.ts';
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { resolveSearchDateBounds } from '../search/date-bounds.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
 import {
@@ -25,6 +26,10 @@ import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS } from '../search/snippet-cap.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
+import { probeProjectionReadiness } from '../search/projection-readiness.ts';
+import { resolveHardExcludes } from '../search/source-boost.ts';
+import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
@@ -72,21 +77,17 @@ type SourceScope = { sourceId?: string; sourceIds?: string[] };
  * SMALLINT NOT NULL, so it is the same set as `NOT safeChunksFilter`), NOT
  * the COALESCE form the read legs use: only the range is sargable, and this
  * runs on every empty remote result — on a fully sealed brain the COALESCE
- * form walked every markdown page. The probe deliberately ignores the call's
- * `types` / `excludePrivate` filters: it answers "is the fence withholding
- * anything in scope", not "would this exact query have matched".
+ * form walked every markdown page.
  */
-async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope): Promise<boolean> {
-  const [sourceClause, params] = scope.sourceIds?.length
-    ? ['AND p.source_id = ANY($1::text[])', [scope.sourceIds]]
-    : scope.sourceId
-      ? ['AND p.source_id = $1', [scope.sourceId]]
-      : ['', []];
+async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope, excludePrivate: boolean): Promise<boolean> {
+  if (scope.sourceIds?.length === 0) return false;
+  const params: unknown[] = [];
+  const policy = pageReadFilter('p', { ...scope, excludePrivate }, params, true);
   try {
     const rows = await ctx.engine.executeRaw(
-      `SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
-       WHERE p.page_kind = 'markdown' AND p.deleted_at IS NULL AND NOT s.archived
-         AND p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} ${sourceClause} LIMIT 1`,
+      `SELECT 1 FROM pages p
+       WHERE p.page_kind = 'markdown' AND ${policy}
+         AND p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} LIMIT 1`,
       params,
     );
     return rows.length > 0;
@@ -114,18 +115,27 @@ async function buildRetrievalResponseMeta(
   queryText: string,
   results: unknown[],
   meta: HybridSearchMeta | null,
-  opts: { conceptHint?: boolean } = {},
+  opts: { conceptHint?: boolean; types?: string[] } = {},
 ): Promise<Record<string, unknown>> {
   const m = meta as (HybridSearchMeta & { degraded?: unknown[]; retrieved_count?: number }) | null;
   const hint = opts.conceptHint && looksConceptShaped(queryText)
     ? "concept-shaped question — the 'query' tool adds multi-query expansion and recovers " +
       'synonym-phrased matches this keyword-leaning search can miss.'
     : undefined;
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const safeIndexPending = results.length === 0 && ctx.remote !== false
-    && await hasUnsealedPagesInScope(ctx, scope);
-  const degraded = safeIndexPending
-    ? [...(m?.degraded ?? []), { stage: 'safe_index_pending' }]
-    : m?.degraded;
+    && await hasUnsealedPagesInScope(ctx, scope, excludePrivate);
+  const readiness = await probeProjectionReadiness(ctx.engine, {
+    ...scope,
+    excludePrivate,
+    types: opts.types,
+    excludeSlugPrefixes: resolveHardExcludes(),
+  });
+  const degraded = [...(m?.degraded ?? [])];
+  if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
+  if (readiness.status !== 'ready') {
+    degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });
+  }
   return {
     returned_count: results.length,
     retrieved_count: m?.retrieved_count ?? results.length,
@@ -134,9 +144,11 @@ async function buildRetrievalResponseMeta(
       expansion_applied: m.expansion_applied,
       ...(m.cache ? { cache: m.cache.status } : {}),
       ...(m.token_budget ? { token_budget: m.token_budget } : {}),
+      ...(m.vector_pool_underfilled ? { vector_pool_underfilled: m.vector_pool_underfilled } : {}),
     } : {}),
-    ...(degraded !== undefined ? { degraded } : {}),
-    ...(hint ? { hint } : {}),
+    ...((m?.degraded !== undefined || degraded.length > 0) ? { degraded } : {}),
+    projection_readiness: readiness,
+    ...(hint || readiness.hint ? { hint: [hint, readiness.hint].filter(Boolean).join(' ') } : {}),
   };
 }
 
@@ -248,7 +260,7 @@ const search: Operation = {
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
     // #3985: validated multi-type filter, threaded into both branches below.
-    const types = normalizeTypesParam(p.types);
+    let types = normalizeTypesParam(p.types);
     // #3800: snippet cap (param > subagent config default > full text).
     const snippetCap = await resolveSnippetCap(ctx, p);
     // #4398: explicit per-call source_id wins over ctx.sourceId, validated
@@ -275,6 +287,10 @@ const search: Operation = {
     const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
 
     if (keywordOnly) {
+      if (types) {
+        types = (await expandEngineTypeFilters(ctx.engine, { types, ...scope })).types;
+        if (types?.length === 0) return [];
+      }
       const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope });
       const results = dedupResults(raw);
       // #3783 — every row here IS a keyword hit (direct FTS path); mark
@@ -292,7 +308,7 @@ const search: Operation = {
       await stampUnverifiedExtractions(ctx.engine, results, { ...scope, excludePrivate });
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
-      ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, null, { conceptHint: true }));
+      ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, null, { conceptHint: true, types }));
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return applySnippetCap(results, snippetCap);
     }
@@ -319,7 +335,7 @@ const search: Operation = {
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
-    ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, capturedMeta, { conceptHint: true }));
+    ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, capturedMeta, { conceptHint: true, types }));
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return applySnippetCap(results, snippetCap);
   },
@@ -364,7 +380,7 @@ const query: Operation = {
     types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
     // #3800: subagent token economy — per-call snippet cap.
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
-    expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
+    expand: { type: 'boolean', description: 'Request multi-query expansion (default: true in every search mode, regardless of search.expansion). Set false to opt out. Requires configured embedding and expansion providers; a cloud expander receives the query and may charge for the call. Response metadata expansion_applied reports whether variants were actually used.' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.' },
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
@@ -453,7 +469,7 @@ const query: Operation = {
     const queryText = p.query as string | undefined;
     // #3985: validated multi-type filter (text path; the image-similarity
     // branch below also honors it — searchVector filters types at SQL level).
-    const types = normalizeTypesParam(p.types);
+    let types = normalizeTypesParam(p.types);
     // #3800: snippet cap (param > subagent config default > full text).
     const snippetCap = await resolveSnippetCap(ctx, p);
     const imageData = p.image as string | undefined;
@@ -482,6 +498,17 @@ const query: Operation = {
     // text-only); embeds the image via embedMultimodal and runs a direct
     // vector search against the embedding_image column.
     if (imageData) {
+      const dates = resolveSearchDateBounds({
+        since: typeof p.since === 'string' ? p.since : undefined,
+        until: typeof p.until === 'string' ? p.until : undefined,
+      });
+      if (types) {
+        types = (await expandEngineTypeFilters(ctx.engine, { types, ...querySourceScope })).types;
+        if (types?.length === 0) return [];
+      }
+      const imageMeta: HybridSearchMeta = {
+        vector_enabled: true, expansion_applied: false, detail_resolved: null, degraded: [],
+      };
       const { embedMultimodal } = await import('../ai/gateway.ts');
       const [vec] = await embedMultimodal([
         { kind: 'image_base64', data: imageData, mime: imageMime },
@@ -503,7 +530,18 @@ const query: Operation = {
         takesHoldersAllowList: readHolders(ctx),
         ...(types ? { types } : {}),
         ...querySourceScope,
+        ...dates,
+        onVectorPoolMeta: info => {
+          if (!info.underfilled) return;
+          const { underfilled, ...detail } = info;
+          imageMeta.vector_pool_underfilled = { ...detail, incomplete: true };
+          imageMeta.degraded = [{ stage: 'vector_candidates_incomplete',
+            reason: info.reason === 'deadline' ? 'timeout' : info.reason ?? 'candidate_budget' }];
+        },
       });
+      stampDeepResearchIds(results);
+      imageMeta.retrieved_count = results.length;
+      ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }));
       return applySnippetCap(results, snippetCap);
     }
 
@@ -712,6 +750,8 @@ const query: Operation = {
     }
     const latency_ms = Date.now() - startedAt;
 
+    stampDeepResearchIds(results);
+
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
     // search handler — fire-and-forget, internal callers bypass this path.
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
@@ -745,7 +785,7 @@ const query: Operation = {
     // WP2/D3: query never nudges toward itself — no concept hint here.
     // #1663: the CRAG grade rides the same retrieval meta channel.
     ctx.emitResponseMeta?.('retrieval', {
-      ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, results, capturedMeta)),
+      ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, results, capturedMeta, { types })),
       crag,
     });
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded

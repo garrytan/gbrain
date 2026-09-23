@@ -28,15 +28,27 @@ describe('buildCJKKeywordSql (#3986)', () => {
     expect(buildCJKKeywordSql('   ', ctx())).toBeNull();
   });
 
-  test('one ILIKE clause per term, AND-joined, with explicit ESCAPE', () => {
+  test('one case-safe LIKE clause per term, AND-joined, with explicit ESCAPE', () => {
     const built = buildCJKKeywordSql('東京 会議', ctx());
     expect(built).not.toBeNull();
-    const ilikeCount = (built!.sql.match(/ILIKE \$\d+ ESCAPE '\\'/g) || []).length;
-    expect(ilikeCount).toBe(2);
+    const likeCount = (built!.sql.match(/(?<!I)LIKE \$\d+ ESCAPE '\\'/g) || []).length;
+    expect(likeCount).toBe(2);
     // Escaped + wrapped LIKE params come first, raw terms after, raw query next.
     expect(built!.params.slice(0, 2)).toEqual(['%東京%', '%会議%']);
     expect(built!.params.slice(2, 4)).toEqual(['東京', '会議']);
     expect(built!.params[4]).toBe('東京 会議');
+  });
+
+  test('mixed Hangul and Latin terms select matching operators independently', () => {
+    const built = buildCJKKeywordSql('앨범 Example 기획', ctx());
+    expect(built!.sql).toContain("cc.chunk_text LIKE $1 ESCAPE '\\'");
+    expect(built!.sql).toContain("cc.chunk_text ILIKE $2 ESCAPE '\\'");
+    expect(built!.sql).toContain("cc.chunk_text LIKE $3 ESCAPE '\\'");
+  });
+
+  test('case-bearing letters remain case-insensitive within a mixed-script term', () => {
+    const built = buildCJKKeywordSql('東京Example', ctx());
+    expect(built!.sql).toContain("cc.chunk_text ILIKE $1 ESCAPE '\\'");
   });
 
   test('LIKE metacharacters in terms are escaped', () => {
@@ -128,7 +140,7 @@ describe('postgres-engine searchKeywordCJK executor (#3986)', () => {
       ctx(),
     );
     expect(calls.length).toBe(1);
-    expect(calls[0].sql).toContain('ILIKE');
+    expect(calls[0].sql).toContain("cc.chunk_text LIKE $1 ESCAPE '\\'");
     expect(calls[0].params[0]).toBe('%東京%');
     expect(results.length).toBe(1);
     expect(results[0].slug).toBe('notes/tokyo');

@@ -52,6 +52,13 @@ export function localHostId(): string {
   if (value.version !== 1 || typeof value.id !== 'string') throw new OperationError('writer_identity_invalid', 'The local writer identity is invalid.');
   return value.id;
 }
+export function existingLocalHostId(): string | null {
+  const path = join(persistenceHome(), 'host.json');
+  if (!existsSync(path)) return null;
+  const value = JSON.parse(readFileSync(path, 'utf8')) as { version: number; id: string };
+  if (value.version !== 1 || typeof value.id !== 'string') throw new OperationError('writer_identity_invalid', 'The local writer identity is invalid.');
+  return value.id;
+}
 async function brainIdentity(engine: SqlEngine): Promise<string> {
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   if (!brain) throw new OperationError('writer_not_initialized', 'Persistence metadata has not been initialized.');

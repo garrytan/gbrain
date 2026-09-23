@@ -15,22 +15,49 @@ neither a bootstrap interview nor a private repository.
 The paths below are the manual equivalents and deep-dive detail. Pick one.
 Mix later if needed.
 
+Before enabling capabilities, read [memory boundaries](guides/memory-boundaries.md):
+durable preferences can be shared, but harness configuration stays local;
+remote writes need graph maintenance, cloud providers can receive text, and
+Markdown export is not a full database backup.
+
 ## 1. Run with an agent platform
 
 Already running [OpenClaw](https://github.com/garrytan/openclaw) or [Hermes](https://github.com/garrytan/hermes)?
 
 ```bash
 bun install -g github:garrytan/gbrain#latest-stable
-gbrain init --pglite                  # 2 seconds; no server
+gbrain init --pglite --no-embedding   # keyless; no server
 gbrain skillpack scaffold --all       # scaffolds every bundled skill (skills/manifest.json) into your agent workspace
-gbrain doctor                         # green checks all the way down
+gbrain doctor                         # inspect diagnostics and expected empty-brain warnings
 ```
 
-Your agent now reads `skills/RESOLVER.md` once per request, routes intent to the right skill, executes. New entity mentions create new pages. Daily cron runs enrichment overnight.
+Scaffolding creates skill files; it does not prove the harness has loaded them.
+Connect and verify the intended harness before calling it activated. Entity
+capture, recurring jobs and paid enrichment require separate opt-in; none of
+the commands above schedules a daily enrichment job.
 
 Scaffolded skills are first-class files in your agent repo — edit freely. To pull upstream gbrain improvements later, `gbrain skillpack reference <name>` diffs your local copy vs the bundle. If your `RESOLVER.md` / `AGENTS.md` still carries the managed `skillpack install` fence, `gbrain skillpack migrate-fence` strips it once and keeps the routing rows inside it.
 
-To upgrade later: `gbrain upgrade` runs schema migrations + post-upgrade prompts (chunker bumps, provider-sunset notices). Always TTY-only; non-TTY upgrades skip prompts with informational stderr lines.
+To upgrade later, use the [memory-only upgrade path](#memory-only-upgrades)
+unless services and provider work were deliberately configured. Upgrade runs
+schema migrations and post-upgrade work; non-TTY execution is supported and
+skips interactive prompts, not all side effects.
+
+## Memory-only upgrades
+
+```bash
+GBRAIN_NO_AUTOPILOT_INSTALL=1 GBRAIN_NO_REEMBED=1 gbrain upgrade --no-autopilot-install
+```
+
+The autopilot opt-out reaches package postinstall hooks and migration
+orchestrators, and skips existing service-unit rewrites. Other migrations still
+run. `GBRAIN_NO_REEMBED=1` independently skips potentially paid reindexing.
+For a clone linked with Bun, use `git pull --ff-only`, then
+`GBRAIN_NO_AUTOPILOT_INSTALL=1 bun install`,
+`gbrain apply-migrations --yes --no-autopilot-install`, and
+`GBRAIN_NO_REEMBED=1 gbrain post-upgrade --no-autopilot-install`.
+Verify a known keyword result, saved fact and process reopen after upgrading.
+See the [agent upgrade steps](../INSTALL_FOR_AGENTS.md#upgrade).
 
 ## 2. CLI standalone
 
@@ -38,10 +65,10 @@ No agent platform, just shell + MCP-aware editor.
 
 ```bash
 bun install -g github:garrytan/gbrain#latest-stable
-gbrain init --pglite
+gbrain init --pglite --no-embedding
 ```
 
-> **If `bun install -g` hits a postinstall error** (Bun blocks postinstall hooks in some environments), the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain doctor` to diagnose, then `gbrain apply-migrations --yes` manually. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+> **If `bun install -g` hits a postinstall error** (Bun blocks postinstall hooks in some environments), the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain doctor` to diagnose, then `gbrain apply-migrations --yes --no-autopilot-install` manually. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && GBRAIN_NO_AUTOPILOT_INSTALL=1 bun install && bun link`.
 
 The init flow detects your repo size and suggests Supabase for brains > 1000 markdown files. Agent-harness installs that want Postgres first can run the ladder instead:
 
@@ -60,13 +87,18 @@ If Postgres access ever breaks at runtime, `gbrain engine status --probe` diagno
 
 For shared / large / multi-machine deployments (a team or company brain with multiple users hitting one server over HTTP MCP with OAuth scoping per user), follow the dedicated walkthrough: **[Tutorial: set up GBrain as your company brain](tutorials/company-brain.md)**.
 
-API keys live in `~/.gbrain/config.json` (file plane) or env vars (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`). Set them via env, or with `gbrain config set <KEY> <value>` — vendor API keys (and `database_url`/`database_path`) are file-plane routed, so the write lands where the pipeline actually reads it:
+Optional provider setup: API keys live in `~/.gbrain/config.json` (file plane) or env vars (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`). Set them only after choosing the capability and approving its text disclosure and cost. Vendor API keys (and `database_url`/`database_path`) are file-plane routed, so `gbrain config set <KEY> <value>` writes where the pipeline reads it:
 
 ```bash
 export VOYAGE_API_KEY=pa-...          # default embedding (voyage-4) + reranker (rerank-2.5) — one key
 export OPENAI_API_KEY=sk-...          # alternative embeddings; also powers automatic fact extraction + chat models
 export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models; also improves search via query expansion
 ```
+
+For a brain initialized with `--no-embedding`, adding a key alone does not enable
+embeddings. Follow the CLI's explicit activation path, for example
+`gbrain init --force --embedding-model voyage:voyage-4`, after reviewing the
+provider and dimension choice. Keyword retrieval needs none of these keys.
 
 Reading a value back: `gbrain config get <key>` prints redacted by default — sensitive keys (any `key`/`secret`/`token`/`password`-segmented name) print `***`, and a `postgres://` / `postgresql://` value like `database_url` has its `user:password` userinfo replaced with `***` (host, port, database, and query string preserved) — because `get` output lands in agent transcripts and shell history. Scripts that need the real value pass `--raw` (accepted before or after the key). `config show` and the `Set <key> = ...` confirmation that `config set` prints redact the same way. `get` keeps stdout a bare value and reports which plane answered (file/env or DB) on stderr.
 

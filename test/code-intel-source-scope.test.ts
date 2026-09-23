@@ -107,6 +107,7 @@ async function seedTwoSourceCodeGraph(): Promise<void> {
   await insertUnresolvedEdge(betaCallerChunk, 'betaCallerFn', 'betaSecretFn', 'srcbeta');
   await insertUnresolvedEdge(betaSharedChunk, 'sharedCallerFn', 'betaSecretFn', 'srcbeta');
   await insertUnresolvedEdge(betaCallerChunk, 'betaCallerFn', 'alphaTargetFn', 'srcbeta');
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision');
 }
 
 // Trusted local reads retain their historical source behavior.

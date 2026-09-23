@@ -9,7 +9,7 @@ src/commands/frontmatter.ts	0	filesystem_guard	Batch frontmatter repair prefligh
 src/commands/import.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/commands/jobs.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/commands/migrate-engine.ts	11	early_refusal	Managed mode refuses this legacy entry point before its canonical filesystem/provider effects.
-src/commands/migrations/v0_13_1.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/commands/migrations/v0_13_1.ts	2	engine_guard	Metadata-only batches hold canonical page guards and row locks; update validate and preserve only already-valid text seals in the same transaction.
 src/commands/migrations/v0_32_2.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/commands/pages.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/commands/reconcile-links.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
@@ -27,8 +27,13 @@ src/core/brain-repo-durability.ts	0	filesystem_guard	Hardening checks the root; 
 src/core/brain-writer.ts	0	filesystem_guard	Frontmatter repair checks the managed root before backup or file replacement.
 src/core/calibration/undo-wave.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/chronicle/extract-events.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/company-brain/admission.ts	1	coordinator	Managed registration delegates to source lifecycle; the unmanaged insert runs under native topology locks and a principal/source-locked transaction that validates the approved plan, binds the schema and records the ingestion receipt atomically.
+src/core/company-brain/demo.ts	1	isolated_eval	Fictional source registration uses a new PGLiteEngine connected with an empty config, so writes remain in an isolated in-memory database that is disconnected after the demo; the configured brain is never opened.
+src/core/company-brain/profile.ts	1	engine_guard	Company-profile legacy deletes use withCompanyBrainSource to lock and validate source incarnation, path, receipt and policy; calls without that context retain engine guards, and managed sync routes to the coordinator before this legacy path.
+src/core/company-brain/runtime.ts	1	projection	Only source policy metadata advances under the company-source lock and brain/source row locks; the same transaction validates immutable approval and creates a receipt with source-incarnation and managed owner/topology fences, without source-file writes.
 src/core/cycle/drift.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/cycle/extract-atoms.ts	3	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
+src/core/cycle/extract-atoms-page-state.ts	1	engine_guard	Atom completion updates and cardinality checks share one transaction; managed canonical SQL remains fenced and scan/failure bookkeeping is stored separately.
 src/core/cycle/extract-facts.ts	2	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/cycle/extract-takes.ts	3	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.
 src/core/cycle/grade-takes.ts	1	engine_guard	Canonical table SQL trigger requires coordinator capability; legacy calls fail before canonical DB publication.

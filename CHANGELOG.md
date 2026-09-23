@@ -2,6 +2,288 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.52.2.0] - 2026-09-22
+
+**Repair a memory page without guessing which copy to overwrite.** GBrain keeps
+your notes in files and in its database. When those copies disagree, saving a new
+memory can stop even though the file looks unchanged in Git. You can now compare
+one exact page, preserve both originals, choose between conflicting fields, and
+save the reviewed result through the existing safe writer. Information found on
+only one side is kept rather than quietly discarded.
+
+The repair checks again before saving. If another writer changed the page, file,
+or owner while you were reviewing it, GBrain stops and asks for a fresh preview.
+Interrupted saves recover through the same durable request, and retrying a
+completed request does not apply it twice. After repair, retry your original
+memory request separately and read back what was actually saved.
+
+Background atom scanning now keeps its progress outside your note's metadata, so
+a scan no longer creates a new disagreement just by recording that it finished.
+Failed saves and syncs identify their page, specific reason, and durable request
+instead of leaving you with a misleading permission error or an unnamed failed
+file. Unsupported managed atom extraction stops before spending on a model.
+
+**Say to your agent:** *"Preview this page's file/database disagreement, preserve
+both originals, and show me the conflicts before repairing it. Then retry my
+memory request and verify the fact, visibility, and provenance."*
+
+### How to use it
+
+```bash
+gbrain sources reconcile workspace people/example --brain host --preview --json
+gbrain sources reconcile workspace --brain host --audit --limit 25 --json
+gbrain sources reconcile --help
+```
+
+Use `--out <new-private-file>` to keep an actionable preview, resolve conflicting
+fields with explicit decisions, then apply the reviewed artifact with a retained
+request UUID. The complete flow is in `docs/guides/concurrent-writes.md`.
+
+| Situation | What happens now |
+|---|---|
+| Each copy has different additional metadata | Both sets of fields survive. |
+| The same field has conflicting values | You choose explicitly; timestamps do not pick a winner. |
+| A preview became stale | Apply refuses without overwriting either copy. |
+| A save was interrupted | Retry its original UUID; inspect the durable receipt. |
+
+### Things to watch
+
+Repair requires an existing valid owner and trusted local CLI registration. It
+works before or after managed activation but never claims, transfers, activates,
+or changes source checkpoints. Private backups consume bounded local storage and
+remain until explicitly removed. Forgotten active facts can still exist in that
+history. This does not migrate every legacy maintenance writer to managed mode.
+
+## To take advantage of v0.52.2.0
+
+`gbrain upgrade` should apply migration 163 automatically. If it did not, run
+`gbrain apply-migrations --yes`, then restart upgraded resident writers and
+maintenance workers. Follow `skills/migrations/v0.52.2.0.md`; use a read-only audit
+and an exact-page preview before any repair. No automatic bulk merge, ownership
+change, activation, or paid enrichment is required.
+
+### Itemized changes
+
+- Add trusted-local `sources reconcile` preview, decision resolution, guarded
+  apply, bounded audit, and retained-backup inspection/removal. Existing
+  overwrite guards and frozen memory-verb error codes remain intact.
+- Reuse the persistence journal and coordinator for revision/raw-byte/owner/policy
+  checks, same-ID replay, durable preimages, and interrupted-publication recovery.
+- Migration 163 adds source-incarnation/page/hash-keyed atom processing state with
+  conservative legacy backfill. Canonical pages are not rewritten by migration.
+  Partial atom publication still remains retryable until all provenance is saved.
+- Preserve identical generated safety assessments across repeated imports, while
+  keeping safety fields and policy checks in canonical comparisons.
+- Report managed sync failures from their authoritative receipts, including
+  resident-owner JSON, even when the local failure ledger is missing or unwritable.
+  The ledger call-site fix is adapted from #5314. Contributed by @Masashi-Ono0611.
+- Add real-engine reconciliation, scoped-authority, concurrent-replay, privacy,
+  retained-backup, bounded-audit, real-owner CLI, and process-kill regression tests.
+
+
+## [0.52.1.0] - 2026-09-22
+
+**A search result opens the page it found, and routine repair stays routine.**
+
+If two sources contain a note with the same name, opening a search result now
+keeps the source that produced it. Old saved identifiers still work when there
+is one readable match. An ambiguous identifier asks you to search again instead
+of choosing another page. Current access permissions still apply when you open
+the result, including after an operator changes a grant.
+
+Maintenance can inspect a writer problem without changing who owns the brain's
+files. Deliberate ownership changes remain available to both human operators
+and provisioning scripts, but now require the particular action and the state
+the operator reviewed. If that state changed, the request stops for another look.
+
+Keyless installations also get a safer upgrade path. You can keep daemon
+installation and paid reindexing off while applying the remaining migrations.
+An older metadata migration preserves keyword retrieval for already-indexed
+pages, and diagnostics no longer prescribe a destructive embedding repair for
+a brain whose embeddings are disabled.
+
+### What to expect
+
+| Situation | Result |
+|---|---|
+| Two sources share a slug | Pass the search result's opaque `id` unchanged to `fetch`; it stays source-qualified. |
+| A saved ID becomes unavailable | Fetch refuses rather than substituting another source or a stale alias target. |
+| Routine maintenance hits an owner problem | Inspect writer status first; do not claim or activate a topology as a quick repair. |
+| Switching search modes | Query expansion defaults are unchanged: `query` requests it in every mode; `--no-expand` opts out. |
+
+The documentation now separates durable shared preferences from local harness
+configuration, describes when remote graph links need maintenance, and names
+which configured providers receive text. The large file index is split into
+linked subsystem references so agents can read the relevant contract without
+loading the entire index.
+
+## To take advantage of v0.52.1.0
+
+For a memory-only installation:
+
+```bash
+GBRAIN_NO_AUTOPILOT_INSTALL=1 GBRAIN_NO_REEMBED=1 gbrain upgrade --no-autopilot-install
+gbrain sources writer status --json
+gbrain search "a known phrase from your notes" --json
+```
+
+The two opt-outs are independent; they do not skip other migrations. Existing
+service deployments should follow their coordinated upgrade procedure instead.
+Read [the migration guide](skills/migrations/v0.52.1.0.md) before updating writer
+automation: claim, activation and transfer require an action-specific intent and
+the unchanged fingerprint from reviewed status. Do not automatically refresh that
+fingerprint just to make a refused request pass.
+
+### Itemized changes
+
+#### Correctness and recovery
+
+- Source-qualified search and query IDs use canonical versioned JSON/base64url
+  encoding. Fetch independently applies current grants, visibility and live-source
+  policy, rejects ambiguous legacy IDs, and keeps exact-address precedence over
+  stale aliases even when the exact page is hidden or soft-deleted.
+- Writer administration binds each mutation to reviewed topology state and checks
+  it again inside the transaction. Status does not create a host identity, and
+  CLI output safely renders PostgreSQL ownership epochs.
+- Upgrade propagates the no-autopilot option through package hooks and migration
+  orchestration. Metadata grandfathering preserves only already-valid text
+  projections under canonical guards and row locks; unsealed rows stay unsealed.
+- Disabled primary embeddings no longer trigger irrelevant resizing or sunset
+  advice. Explicit custom-column errors and independently enabled rerankers
+  remain diagnosable.
+
+#### Documentation and cost visibility
+
+- Primary guides align preference memory, local configuration, remote graph
+  extraction, provider disclosure and full-backup boundaries. Search-mode output
+  distinguishes retained bundle defaults from effective operation behavior.
+- README and agent entry points route to bounded subsystem references. Existing
+  historical material remains available, with an explicit warning on obsolete
+  installation commands.
+
+### For contributors
+
+- The heavy sync check coordinates overlapping ownership on real PostgreSQL
+  instead of counting eventual successes. Hermes fetches immutable reviewed
+  installer bytes with checksum enforcement; OpenCode keyless and opt-in
+  credentialed coverage are separate and report omitted coverage explicitly.
+- A bounded 3,600-page reindex fixture verifies transaction completion and crash
+  recovery. It did not reproduce the reported macOS aged-store hang and is not
+  presented as a fix or a performance improvement.
+## [0.51.8.0] - 2026-09-22
+
+**Connect a company knowledge repository without rewriting its files.**
+
+You can now preview a company's committed notes, review the import plan, and
+connect them to an explicitly chosen company brain and new source. The optional
+company vocabulary keeps customers, competitors, products, ownership, and decision
+history distinct. Connecting indexes the approved files without paid services,
+checks their relationships, and returns a durable receipt with cited evidence and
+visible gaps. A fictional demo lets you try the same pipeline without keys or a
+saved brain.
+
+Installing this release does not activate the company vocabulary, import a
+repository, rewrite pages, or change access grants. Existing personal brains keep
+their current schema. Embeddings, schedules, imported skills, and sharing remain
+separate opt-in choices.
+
+**Say to your agent:** “Connect our existing company brain, preserve its files,
+and show me the plan before importing.”
+
+### Try it, then connect
+
+```bash
+gbrain schema validate company-brain
+gbrain sources demo company-brain
+gbrain sources inspect ./company-wiki --profile company-brain --json --out ./company-plan.json
+gbrain sources connect --plan ./company-plan.json --brain company-example --source wiki
+```
+
+Connect requires an initialized, compatible dedicated company brain. Inspection
+needs no database and makes no source edits.
+
+| Situation | What GBrain does |
+| --- | --- |
+| Indexing or relationship extraction is interrupted | Resumes the missing stage from the approved revision |
+| A response is lost | Replays the exact request ID instead of duplicating the source |
+| Saved plan, selection, schema, or extractor approval no longer matches | Refuses rather than silently changing the run |
+| Ownership or decision history is unclear | Shows gaps rather than inventing relationships |
+| Existing clients have broad access | Shows that implication without changing their grants |
+
+## To take advantage of v0.51.8.0
+
+Run `gbrain upgrade`, then `gbrain doctor` on the intended brain host. If migration
+162 did not complete, run `gbrain apply-migrations --yes` before connecting. Do not
+switch an existing personal brain's schema merely to inspect the optional preset.
+Company connect requires a trusted local host; ordinary remote OAuth access is not
+administration authority.
+
+Read [the company ingestion guide](docs/guides/company-brain-ingestion.md) for
+explicit approval, request replay, and recovery. This release supports committed
+Markdown and a new source in a compatible dedicated company brain. It is not an
+automatic privacy audit; mixed-schema federation and in-place semantic reapproval
+are not enabled.
+
+### Itemized changes
+
+- Bundle the optional `company-brain` schema and fictional compatibility corpus,
+  adapted from @mattzimak's company-brain project with MIT attribution.
+- Resolve typed imports and queries against the selected brain's schema, refuse
+  unreadable schemas, and keep product aliases and folder inference distinct from
+  company types. Filesystem typing incorporates #5153, contributed by @mattzimak.
+- Reconcile only origin-attributed derived links, preserve manual links, and check
+  both relationship endpoints and their revisions. Legacy frontmatter links without origin
+  metadata stop for review rather than losing provenance.
+- Add committed-repository inspection, guided `sources connect`, and an offline
+  demo using the real ingestion pipeline. Completion evidence stays source-scoped
+  and cites imported pages; unsupported or ambiguous references remain gaps.
+- Migration 162 adds durable source-scoped ingestion receipts, immutable approval
+  fingerprints, and protected incomplete checkpoints for resumable imports.
+- Preserve approved file selection in managed and legacy sync without source
+  writeback or paid enrichment. Reject stale plans and unsupported privacy labels,
+  retain writer ownership and revision guards, and keep progress out of JSON output.
+- Complete schema hashing before CLI exit without changing existing fingerprints.
+
+## [0.51.7.0] - 2026-09-21
+
+**Search can find your pages without quietly mistaking an unfinished index for an empty brain.** Large brains no longer rely on a misleading estimate that made vector search scan every chunk. Filtered searches can look beyond their first batch of candidates, and they tell you when their work limit still leaves the answer incomplete. Keyword results stay stable between repeated requests and adjacent pages.
+
+Code and Markdown recovery now use the same guarded preparation as normal indexing. Code metadata can be repaired while the resident writer owns the database, without changing your original files or paying to embed them again. Existing vectors survive only when their content and model provenance still match. Search and doctor distinguish pending projections from a genuine miss, even when some results are already available.
+
+**Say to your agent:** *"Check whether my search index is ready, and repair code metadata without spending on embeddings."*
+
+### How to use it
+
+Upgrade normally, then run `gbrain doctor`. Keep the upgraded resident `gbrain serve` running to drain queued projection rebuilds. For code metadata repair, use `gbrain reindex-code --force --no-embed`; use `--source <id>` to restrict the work. Authorize `gbrain embed --stale` separately if vectors are still missing.
+
+| Situation | What you can now see |
+|---|---|
+| A filtered vector scan reaches its work limit | `vector_candidates_incomplete`, not a false clean miss. |
+| Some visible pages still need a current text projection | `projection_pending`, including alongside nonempty results. |
+| The readiness probe cannot run | `projection_status_unknown`, rather than an unsupported claim that everything is ready. |
+| A query starts or ends at an exact date boundary | Inclusive public bounds, including the final microseconds of a date-only upper bound. |
+
+### Things to watch
+
+HNSW remains approximate. Postgres can use a server-cancelled exact fallback within its remaining search budget; PGLite reports an unresolved shortfall rather than pretending a timer stopped its database work. A text-ready page may still need embeddings. CLI JSON keeps its result-array format and sends incompleteness notices to stderr; MCP exposes retrieval metadata in its response envelope.
+
+## To take advantage of v0.51.7.0
+
+`gbrain upgrade` should apply the schema changes automatically. If schema maintenance failed, run `gbrain apply-migrations --yes` with an authorized database maintenance role, then run `gbrain doctor`. Statistics hidden by row-security policy are not treated as absent. Your agent can follow `skills/migrations/v0.51.7.0.md`; no global planner settings, vector-index rebuild, provider change or automatic embedding spend is required.
+
+### Itemized changes
+
+- Schema migrations 160 and 161 add verified current-projection expression statistics and the pending-projection lookup index. Bulk import, sync, reindex and drained recovery refresh statistics outside page locks.
+- Both engines separate candidate, iterative-scan and pagination limits; preserve scope and visibility filters; and surface incomplete candidate pools through hybrid search, CLI and MCP.
+- Postgres relaxed keyword retries prefer index access locally. Keyword candidate and result ordering are deterministic; caseless CJK terms use LIKE while case-sensitive alphabets retain ILIKE.
+- Public `since`/`until` comparisons preserve inclusivity and timestamp precision. Independent atoms no longer receive transcript-session demotions.
+- Managed-safe code reindexing and shared Markdown/code preparation preserve fenced metadata, valid vectors and incoming graph edges; rebuilt outgoing edges become eligible for resolution again. Resolver batches and projection replacement share ordered guards, so a concurrent old resolver cannot certify new edges. Code reads enforce current live projections, and recursive operations do not reuse stale traversal caches.
+- Contributed by @time-attack (#5126, keyword ordering), @morven-ai (#5169, CJK operator selection), @Laochaleun (#5245, Markdown projection preparation), and @tarush1989 (#5085, atom diversification). Thanks to the issue reporters for the planner and retrieval reproductions.
+
+### For contributors
+
+- Required PgBouncer execution checks no longer misclassify passing output when the summary reader exits early. Native-lock contention fixtures wait for setup ownership before asserting write exclusion, without changing the contention assertions.
+
 ## [0.51.6.0] - 2026-09-21
 
 **A temporary brain gets one safe second chance to start.**

@@ -52,7 +52,7 @@ restart the shell or add the PATH export to the shell profile.
 > **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`** (Bun
 > occasionally blocks the top-level postinstall hook on global installs, so schema
 > migrations don't run automatically), the CLI prints a recovery hint pointing at
-> [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes`
+> [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes --no-autopilot-install`
 > to recover. If that doesn't work, fall back to the deterministic install path:
 >
 > ```bash
@@ -61,6 +61,12 @@ restart the shell or add the PATH export to the shell profile.
 > ```
 
 ## Step 2: API Keys
+
+Configured cloud providers receive text: embedding inputs, queries and candidate
+passages for reranking, and source or retrieved content for LLM extraction and
+synthesis. The harness's own model receives the memory it recalls even when
+GBrain is keyless. Explain these boundaries before enabling a capability; see
+[memory boundaries](docs/guides/memory-boundaries.md#where-text-goes).
 
 Skip API-key setup for the initial keyless memory path. If the user enables semantic retrieval or paid enrichment, configure the selected provider explicitly. GBrain defaults to the Voyage embedding + reranker stack
 (`voyage:voyage-4` @ 1024d + `voyage:rerank-2.5` — one key covers both); OpenAI is the
@@ -94,8 +100,8 @@ comes from agent-authored `## Facts` fences and the `remember` verb.
 ## Step 3: Create the Brain
 
 ```bash
-gbrain init                           # PGLite, no server needed
-gbrain doctor --json                  # verify all checks pass
+gbrain init --pglite --no-embedding     # keyless memory, no server needed
+gbrain doctor --json                   # inspect diagnostics and any warnings
 ```
 
 The user's markdown files (notes, docs, brain repo) are SEPARATE from this tool repo.
@@ -173,7 +179,7 @@ operator.
 
 **Present this matrix verbatim:**
 
-<!-- Cost matrix: three verbatim homes — CLAUDE.md "Search Mode", src/commands/init-mode-picker.ts, and this block. Sync all three when refreshing. -->
+<!-- Cost matrix: keep this block aligned with src/commands/init-mode-picker.ts; CLAUDE.md links here rather than duplicating it. -->
 ```
 Per-query cost @ 10K queries/mo (typical single-user volume):
 
@@ -193,16 +199,19 @@ Per-query cost @ 10K queries/mo (typical single-user volume):
 > a one-time setup decision that controls retrieval payload size. Which mode
 > do you want?
 >
->   1) conservative — tight 4K budget, no LLM expansion, 10 chunks max.
+>   1) conservative — tight 4K budget, 10 chunks max.
 >      Best for Haiku subagents, cost-sensitive setups, high-volume loops.
 >
->   2) balanced — 12K budget, no expansion, 25 chunks. Sonnet-tier sweet spot.
+>   2) balanced — 12K budget, 25 chunks. Sonnet-tier sweet spot.
 >
 >   3) tokenmax (recommended default — preserves v0.31.x retrieval shape) —
->      no budget, LLM expansion ON, 50 chunks. Best for Opus/frontier models.
+>      no budget, 50 chunks. Best for Opus/frontier models.
 >
-> ("no expansion" governs `gbrain search` and callers that leave expansion
-> unset; `gbrain query` expands in every mode unless you pass `--no-expand`.)
+> Expansion is command-specific, not mode-specific: `gbrain search` and the
+> memory verbs do not expand; `gbrain query` expands in every mode unless you
+> pass `--no-expand` (`expand: false` over MCP). The `search.expansion` bundle
+> setting does not change these shipped command paths. See
+> [search modes](docs/guides/search-modes.md) for the current contract.
 >
 > Cost depends on BOTH the mode AND the downstream model you run. See the
 > matrix above for the 9-cell breakdown.
@@ -220,6 +229,13 @@ gbrain config set search.searchLimit 20
 
 Verify the choice with `gbrain search modes` before continuing.
 
+This matrix estimates downstream model input cost, not the whole bill.
+Configured embeddings, reranking, expansion, and synthesis can add provider
+charges. Downstream prompt caching is separate from GBrain's disabled semantic
+result cache; budget for fresh retrieval. Read the command-level caveats in
+[search modes](docs/guides/search-modes.md) rather than treating a mode choice as
+a guarantee of zero paid calls.
+
 **Why this matters:** the cost spread between corners of the matrix is 25x.
 An agent that silently accepts the default and starts running queries against
 a user who didn't expect tokenmax-class context loads can rack up surprise
@@ -227,17 +243,23 @@ spend. Confirm before continuing.
 
 ## Step 4: Import and Index
 
+Optional, when the user has chosen files to import. Keyword retrieval stays
+local; embedding and expanded query calls require separate provider consent.
+
 ```bash
 gbrain import ~/brain/ --no-embed     # import markdown files
-gbrain embed --stale                  # generate vector embeddings
-gbrain query "key themes across these documents?"
+gbrain search "a phrase from an imported page" --json
 ```
+
+Only after enabling the selected embedding provider, run `gbrain embed --stale`.
+Use `gbrain query` for expanded retrieval only when its provider use is intended;
+`--no-expand` opts out of expansion independently of the mode.
 
 ## Step 4.5: Wire the Knowledge Graph
 
 If the user already had a brain repo (Step 3 imported existing markdown), backfill
 the typed-link graph and structured timeline. This populates the `links` and
-`timeline_entries` tables that future writes will maintain automatically.
+`timeline_entries` tables; later maintenance depends on the write path.
 
 ```bash
 gbrain extract links --source db --dry-run | head -20    # preview
@@ -246,13 +268,18 @@ gbrain extract timeline --source db                      # dated events
 gbrain stats                                             # verify links > 0
 ```
 
-For brand-new empty brains, skip this step — auto-link populates the graph as the
-agent writes pages going forward. There is nothing to backfill yet.
+For brand-new empty brains, skip this backfill: there is nothing to extract yet.
+Trusted local page writes auto-link when enabled. Remote `put_page` (both stdio
+and HTTP MCP) saves references as text without inline graph extraction. Stdio
+`gbrain serve` runs bounded startup/idle sweeps; `gbrain serve --http` does not
+self-sweep. For HTTP, arrange explicit host-side `gbrain sweep --once` or
+extraction; use authorized `add_link` calls for edges needed immediately.
 
 After this step:
 - `gbrain graph-query <slug> --depth 2` works (relationship traversal)
 - Search ranks well-connected entities higher (backlink boost)
-- Every future `put_page` auto-creates typed links and reconciles stale ones
+- Verify graph edges separately from page acceptance; a successful remote write
+  does not prove that its links have been extracted
 
 If a user has a very large brain (>10K pages), `extract --source db` is idempotent
 and supports `--since YYYY-MM-DD` for incremental runs.
@@ -277,8 +304,8 @@ before you flip it. When a bare name matches more than one page (`[[struktura]]`
 both `projects/struktura` and `archive/struktura`), GBrain emits one edge to each
 rather than guessing a winner — review and prune the duplicates with
 `gbrain graph-query <slug>`. The mode is also honored on the filesystem-walk path
-(`gbrain extract links` with no `--source db`) and by auto-link on every future
-`put_page`.
+(`gbrain extract links` with no `--source db`) and by enabled auto-link on trusted
+local `put_page`. Remote writes still need the maintenance described above.
 
 ## Step 5: Load Skills
 
@@ -376,6 +403,10 @@ If skipped, minimal defaults are installed automatically.
 
 ## Step 7: Recurring Jobs
 
+Optional: skip this entire step for memory-only installs. Ask before scheduling
+capture, enrichment, maintenance or a service; do not infer consent from a
+successful install or from a health recommendation.
+
 Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
 platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon):
 
@@ -391,7 +422,7 @@ platform glue entirely with `gbrain autopilot --install` (built-in self-maintain
 - **Dream cycle** (nightly): `gbrain dream` runs the 8-phase overnight maintenance cycle.
   Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
   synthesis and cross-session pattern detection. One cron-friendly command. This is what
-  makes the brain compound. Do not skip it. See `docs/guides/cron-schedule.md` for the
+  is an opt-in maintenance capability. See `docs/guides/cron-schedule.md` for the
   full protocol.
 - **Weekly**: `gbrain doctor --json && gbrain embed --stale`
 
@@ -405,8 +436,15 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 
 ## Step 9: Verify
 
-Read `docs/GBRAIN_VERIFY.md` and run every verification check in it. Check #4
-(live sync actually works) is the most important.
+For memory-only installs, save one user-approved generic test note or fact with
+provenance, retrieve it, exit the CLI, and retrieve it again in a new process.
+Check exact keyword retrieval as well as `remember`/`recall`. A process reopen
+proves local persistence, not a new conversation in the native harness; verify
+that separately after the user authorizes harness setup.
+
+Read `docs/GBRAIN_VERIFY.md` for the checks covering capabilities the user enabled.
+Run live-sync checks only when sync was configured; do not install services or
+enable paid providers to make optional checks pass.
 
 Once verification passes and the brain has content, run the activation probe:
 
@@ -419,20 +457,29 @@ consent gates around unattended remediation.
 
 ## Upgrade
 
-If you installed via `bun install -g`:
+For memory-only upgrades, keep services and paid reindexing opt-in. If you
+installed via `bun install -g`:
 
 ```bash
-gbrain upgrade                        # self-updates the binary, runs schema migrations,
-                                      # and prints post-upgrade notes for the version range
+GBRAIN_NO_AUTOPILOT_INSTALL=1 GBRAIN_NO_REEMBED=1 gbrain upgrade --no-autopilot-install
 ```
 
 If you installed via `git clone + bun link`:
 
 ```bash
-cd ~/gbrain && git pull origin master && bun install
-gbrain apply-migrations --yes         # apply schema migrations (idempotent)
-gbrain post-upgrade                   # show migration notes for the version range
+cd ~/gbrain && git pull --ff-only origin master
+GBRAIN_NO_AUTOPILOT_INSTALL=1 bun install
+gbrain apply-migrations --yes --no-autopilot-install
+GBRAIN_NO_REEMBED=1 gbrain post-upgrade --no-autopilot-install
 ```
+
+The autopilot opt-out skips installation and service rewrites, including package
+postinstall hooks; it does not skip other migrations. Keep the environment form
+on the package-manager command because hooks run before `post-upgrade`.
+`GBRAIN_NO_REEMBED=1` separately skips the potentially paid reindex step.
+For an existing service deployment, review its migration guide instead of
+assuming memory-only options are the desired maintenance policy. Verify a known
+keyword query after upgrading, not just the version string.
 
 Then read `~/gbrain/skills/migrations/v<NEW_VERSION>.md` (and any intermediate
 versions you skipped) and run any backfill or verification steps it lists. Skipping

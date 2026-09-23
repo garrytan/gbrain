@@ -27,13 +27,16 @@ import { tmpdir } from 'node:os';
 import * as realHybrid from '../src/core/search/hybrid.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
-let nextResults: unknown[] = [{ page_id: 1, slug: 'a', chunk_text: 'x' }];
+let nextResults: unknown[] = [{ page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 
 // Mock BEFORE importing dispatch (operations.ts binds hybridSearchCached at
 // import time; the spread keeps every other export live).
 mock.module('../src/core/search/hybrid.ts', () => ({
   ...realHybrid,
   hybridSearchCached: async () => nextResults,
+}));
+mock.module('../src/core/search/projection-readiness.ts', () => ({
+  probeProjectionReadiness: async () => ({ status: 'ready', ready: true }),
 }));
 
 const { dispatchToolCall, __resetBackupNoticeForTests } = await import('../src/mcp/dispatch.ts');
@@ -144,7 +147,7 @@ beforeEach(() => {
   __resetBackupNoticeForTests();
   __resetBackupRefreshForTests();
   rawCalls = [];
-  nextResults = [{ page_id: 1, slug: 'a', chunk_text: 'x' }];
+  nextResults = [{ page_id: 1, source_id: 'default', slug: 'a', chunk_text: 'x' }];
 });
 
 afterEach(() => {

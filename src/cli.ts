@@ -581,6 +581,22 @@ async function main() {
     if (await printSelfHelpWithoutEngine(command, subArgs)) return;
   }
 
+  if (command === 'sources' && subArgs[0] === 'inspect') {
+    const { runCompanyBrainInspection } = await import('./commands/company-brain-inspect.ts');
+    await runCompanyBrainInspection(subArgs.slice(1));
+    return;
+  }
+  if (command === 'sources' && subArgs[0] === 'connect') {
+    const { runCompanyBrainConnect } = await import('./commands/company-brain-connect.ts');
+    await runCompanyBrainConnect(subArgs.slice(1), () => connectEngine({ probeOnly: true }));
+    return;
+  }
+  if (command === 'sources' && subArgs[0] === 'demo' && subArgs[1] === 'company-brain') {
+    const { runCompanyBrainDemoCli } = await import('./commands/company-brain-demo.ts');
+    await runCompanyBrainDemoCli(subArgs.slice(2));
+    return;
+  }
+
   // #2185: strict unknown-flag validation — pre-dispatch, pre-engine. A flag
   // no handler consults (the repro: `init --migrate-only --dry-run` applying
   // REAL migrations while the user asked for a rehearsal) fails loud here
@@ -1751,7 +1767,17 @@ export function formatResult(
     case 'search':
     case 'query': {
       const results = result as any[];
-      if (params.json === true) return JSON.stringify(results, null, 2) + '\n';
+      const incompleteStages = Array.isArray(lastRetrievalMeta?.degraded)
+        ? [...new Set((lastRetrievalMeta.degraded as Array<{ stage?: string }>).map(d => d.stage)
+          .filter(stage => stage === 'vector_candidates_incomplete' || stage === 'projection_pending' || stage === 'projection_status_unknown'))]
+        : [];
+      const incompleteNotice = incompleteStages.length > 0
+        ? `Retrieval incomplete: ${incompleteStages.join(', ')}.\n`
+        : '';
+      if (params.json === true) {
+        if (incompleteNotice) process.stderr.write(incompleteNotice);
+        return JSON.stringify(results, null, 2) + '\n';
+      }
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —
       // a bare "No results." was indistinguishable from a degraded pipeline.
@@ -1767,7 +1793,7 @@ export function formatResult(
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
         return formatResultsExplain(results, lastRetrievalMeta ?? undefined);
       }
-      return results.map(r =>
+      return incompleteNotice + results.map(r =>
         `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
     }
@@ -2069,7 +2095,7 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 
   // Local deferred connections must not bypass the remote installation route.
-  if (command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve'].includes(args[0]) && !hasHelpFlag(args)) {
+  if (command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve'].includes(args[0]) && !hasHelpFlag(args)) {
     const { runDeferredPersistenceCommand } = await import('./commands/persistence-delegate.ts');
     await runDeferredPersistenceCommand(command, args, connectEngine);
     return;
@@ -2898,6 +2924,10 @@ async function handleCliOnly(command: string, args: string[]) {
       const { maybeDelegateSyncToServe } = await import('./commands/sync-delegate.ts');
       if (await maybeDelegateSyncToServe(cfgSync.database_path, args)) return;
     }
+  }
+
+  if (command === 'reindex-code') {
+    if (await (await import('./commands/reindex-code-delegate.ts')).maybeDelegateReindexCode(loadConfig(), args)) return;
   }
 
   // Serve-delegated sweep preflight (#677) — same shape as sync above: a live

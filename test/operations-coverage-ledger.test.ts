@@ -74,6 +74,7 @@ const LEDGER: Record<string, string> = {
   advisor: 'test/advisor-op-gate.test.ts',
   get_status_snapshot: 'test/get-status-snapshot-op.test.ts',
   sync_brain: 'test/sync-brain-op-source-id.test.ts',
+  sources_inspect: 'test/company-brain-inspect-cli.test.ts',
   put_raw_data: 'test/source-id-tx-regression.test.ts',
   get_raw_data: 'test/get-page-federated-scope.test.ts',
   resolve_slugs: 'test/local-federated-search-scope.test.ts',

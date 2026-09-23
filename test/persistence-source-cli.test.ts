@@ -14,6 +14,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { submitRememberMutation } from '../src/core/persistence/memory-mutations.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
+import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 
 let diskEngine: PGLiteEngine;
 beforeAll(() => { diskEngine = new PGLiteEngine(); });
@@ -51,7 +52,7 @@ describe('source lifecycle CLI', () => {
         mkdirSync(join(dir, '.gbrain'), { recursive: true });
         writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify(config));
         const provider = await createPersistenceIpcProvider(engine, config);
-        await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true });
+        await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, ...await reviewedWriterIntent(engine, 'writer_activate') });
         binding = await startPersistenceIpcServer(persistenceSocketPathForConfig(config)!, provider);
         const cli = async (args: string[]) => {
           const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), 'sources', ...args, '--json'], {

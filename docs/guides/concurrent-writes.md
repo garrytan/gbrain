@@ -38,6 +38,20 @@ publication is in progress, a reader may see the prior committed snapshot.
 Separate calls can observe different committed revisions. Search ranking,
 embeddings, and direct filesystem reads are outside this snapshot guarantee.
 
+Search reports `projection_pending` while visible canonical revisions still
+need a derived-text rebuild, including when other pages already produce hits.
+The resident owner rebuilds queued Markdown and code using revision-checked
+snapshots. `gbrain reindex-code --force --no-embed` repairs code metadata through
+that owner without changing canonical files or revisions. Exact compatible
+vectors survive; missing vectors remain explicitly stale, not silently ready.
+Rebuilt outgoing code edges are marked for resolution again, while incoming
+edges to unchanged target chunks are preserved. These read diagnostics do not
+start repairs or authorize provider spending.
+
+Edge resolution uses a transaction and the same ordered page guards as
+projection publication. Candidate chunks are revalidated after locking, so a
+resolver cannot certify replacement edges from an older read of their IDs.
+
 Do not regenerate a request ID because the response was lost or a waiter timed
 out. Repeat the same operation, arguments, source, and UUID. A committed replay
 returns its original result; a terminal conflict/failure is not executed again.
@@ -45,6 +59,132 @@ Changing the operation or arguments with the same UUID produces
 `idempotency_conflict`. Resolve the conflict and use a new UUID for a new intent.
 Relative times, generated capture slugs, and trusted owner/resolver defaults
 are frozen at admission so retries cannot drift.
+
+## Repair a file/database disagreement
+
+**Say to your agent:** *"Preview the disagreement between this page's file and
+database record. Preserve both originals, show me conflicting fields, and don't
+apply the repair until I've reviewed it. Then retry my original memory request
+separately and verify the fact, visibility, and provenance."*
+
+`source_changed` can mean the file and database disagree even when Git reports a
+clean checkout. `sources reconcile` is an exact-page repair, not a force-write
+bypass. It works with an already-claimed active owner before or after managed
+activation. It never claims, transfers, activates, changes source checkpoints,
+or repairs an absent owner. Run it on the canonical host with an existing trusted
+CLI write registration. Both its original and current grants must permit
+`put_page` for the selected source and exact slug. A CLI can delegate to its
+resident PGLite owner; ordinary
+HTTP/MCP tokens and stdio credentials cannot administer reconciliation.
+
+Select the brain, source, and exact slug explicitly. Store the preview outside the
+canonical repository:
+
+```bash
+mkdir -p -m 700 ~/.gbrain/repair
+gbrain sources reconcile workspace people/example --brain host \
+  --preview --out ~/.gbrain/repair/example.preview.json --json
+```
+
+Without `--out`, preview returns a summary only. Preview never changes canonical
+content. The private artifact includes both originals and the proposed result;
+keep it out of Git, shared directories, and public reports. Output files use mode
+0600 and never overwrite existing files. Inspect the artifact locally in a private
+editor, or use `jq '.conflicts' ~/.gbrain/repair/example.preview.json`. This output
+contains private content; do not paste it into shared logs or public reports.
+
+Fields present on only one side are preserved. Disjoint nested fields combine;
+different values require explicit choices. Absence is not a deletion, timestamps
+do not decide which side wins, and arrays are whole values. Tags stay add-only.
+Provenance, visibility, withdrawals, protected takes, and safety metadata retain
+their existing policies rather than accepting merge overrides.
+
+For conflicts, create a decisions file containing a JSON array:
+
+```json
+[
+  { "path": "/frontmatter/profile/role", "action": "take_file" },
+  { "path": "/frontmatter/obsolete_note", "action": "delete" }
+]
+```
+
+Other actions are `take_database` and `set_value` (with a `value`). Paths use JSON
+Pointer escaping: `~0` for `~`, `~1` for `/` inside a field name. Unknown,
+duplicate, overlapping, and protected-field decisions are rejected. Render the
+final policy-checked result before applying:
+
+```bash
+gbrain sources reconcile workspace people/example --brain host --preview \
+  --from ~/.gbrain/repair/example.preview.json \
+  --decisions ~/.gbrain/repair/decisions.json \
+  --out ~/.gbrain/repair/example.resolved.json --json
+```
+
+The command prints only a summary. Inspect the actual resolved content locally
+with `jq '.result' ~/.gbrain/repair/example.resolved.json` before approving it.
+
+After reviewing a `ready` preview, generate and retain one UUID:
+
+```bash
+REQUEST_ID="$(bun -e 'console.log(crypto.randomUUID())')"
+gbrain sources reconcile workspace people/example --brain host \
+  --apply ~/.gbrain/repair/example.resolved.json \
+  --request-id "$REQUEST_ID" --json
+```
+
+If the initial preview was already `ready`, apply that artifact instead. GBrain
+rechecks the revision, raw bytes, source identity, owner epoch/binding, and safety
+policy before publishing. Changed inputs require a fresh preview, not automatic
+overwrite. Lost response or pending receipt: retry the same artifact and UUID.
+Terminal conflict: make a corrected preview and use a new UUID. Inspect
+`get_write_request` until committed; accepted is not the same as saved. That
+helper requires its own operation grant. If it is not granted, replay the same
+apply artifact and UUID to inspect the original request without widening grants.
+
+Both originals are retained privately in `~/.gbrain/reconciliation-previews/`,
+independently of temporary recovery records and receipt compaction. Backups use
+bounded local capacity; capacity or disk failures refuse the repair before
+publication. Local history does not protect against disk loss, and forgetting an
+active fact does not erase historical backups.
+
+Inspect backups for the exact page using `sources reconcile workspace
+people/example --brain host --backups --json`. After reviewing retention needs
+and copying any history you want to keep to another private location, remove an
+exact returned reference with `--remove-backup <reference>`. Removal is explicit
+and refuses nonterminal or recovering requests. It never deletes the page or
+changes its immutable receipt. Backups from an interrupted pre-admission attempt
+remain private and require operator inspection rather than automatic removal.
+
+After commitment, submit the originally blocked `remember`, capture, or other
+edit separately with its own new UUID. Read back the fact, visibility, and
+provenance. Repair never silently replays a failed memory intent.
+
+For bounded, read-only verification after sync:
+
+```bash
+gbrain sources reconcile workspace --brain host --audit --limit 25 --json
+```
+
+Continue with `--after` and the returned `next_after`. `complete` means the end of
+the source was reached, not that it is drift-free. Results name scoped slugs and
+reasons without page content. Whole-source audit requires a CLI grant without a
+slug-prefix restriction. `sources writer activate --dry-run` includes a bounded
+drift sample and identifies incomplete samples without authorizing repairs.
+
+Atom scan/failure bookkeeping now lives outside canonical note metadata so
+processing progress does not create new disagreements. Unsupported managed atom
+extraction refuses before calling a model; this does not migrate every legacy
+maintenance writer to managed publication.
+
+### Roll back safely
+
+Stop submitting new reconciliation requests first. Keep a compatible upgraded
+owner running until all accepted requests are terminal and recovery has drained;
+inspect the durable receipts before disabling the new command or reverting the
+binary. Never downgrade an active reconciliation queue to a version that does
+not understand its intents. Leave the additive processing-state table and private
+backups in place. Do not automatically restore an old preimage over later edits,
+and do not disable guards or change ownership as part of rollback.
 
 ## Receipt states and errors
 
@@ -190,18 +330,28 @@ not rewrite an accepted mutation's authority snapshot.
 
 ## Local registrations and canonical ownership
 
-For a coordinated upgrade, update and stop older writers on every host first.
+Routine repair, startup and maintenance must not change writer topology in
+response to an ownership error. Inspect `gbrain sources writer status --json`
+first and obtain the operator's decision. See the
+[state-bound administration procedure](../architecture/topologies.md#writer-administration-is-not-routine-repair).
+
+For an approved coordinated upgrade, update and stop older writers on every host first.
 Claim each filesystem source on its canonical host, then inspect writer status
 and existing locks. Activation is explicit:
 
 ```bash
 gbrain sources writer status --probe --json
 gbrain sources writer activate --confirm-quiesced --dry-run --json
-gbrain sources writer activate --confirm-quiesced --json
+gbrain sources writer activate --confirm-quiesced \
+  --admin-intent writer_activate --expected-state <reviewed-admin-state> --json
 ```
 
-The flag asserts that older binaries, external editors and maintenance writers
-have been quiesced on every host. Activation verifies all owner bindings and
+The quiescence flag asserts that older binaries, external editors and maintenance writers
+have been quiesced on every host. It does not authorize a topology change alone:
+each non-dry-run claim, activation or transfer requires its exact `--admin-intent`
+and the `admin_state` fingerprint from reviewed status. Inspect again after each
+change; stale state refuses. A TTY or `--yes` is not a substitute, and explicit
+noninteractive provisioning uses the same guards. Activation verifies all owner bindings and
 native locking, rejects outstanding legacy leases and unfinished publications,
 and makes local refusal records durable before enabling managed writes. Even an
 expired lease needs explicit inspection and removal; elapsed time does not prove
@@ -223,7 +373,8 @@ gbrain auth local-writer register stdio --source-ids default \
   --allowed-operations remember,forget --scopes read,write --dry-run --json
 gbrain auth local-writer revoke 11111111-1111-4111-8111-111111111111 --json
 gbrain sources writer status --probe --json
-gbrain sources writer claim default --path /absolute/canonical/source --json
+gbrain sources writer claim default --path /absolute/canonical/source \
+  --admin-intent writer_claim --expected-state <reviewed-admin-state> --json
 ```
 
 `register --replace` requires the complete intended grant, revokes the prior
@@ -244,9 +395,12 @@ manifest digest. Copy the complete canonical worktree to the successor, then
 accept there with the exact epoch and digest:
 
 ```bash
-gbrain sources writer transfer prepare default --json
+gbrain sources writer transfer prepare default \
+  --admin-intent writer_transfer_prepare --expected-state <reviewed-admin-state> --json
+gbrain sources writer status --json
 gbrain sources writer transfer accept default --path /absolute/successor/root \
-  --expected-epoch 1 --manifest '<prepared-sha256>' --json
+  --expected-epoch 1 --manifest '<prepared-sha256>' \
+  --admin-intent writer_transfer_accept --expected-state <reviewed-successor-admin-state> --json
 ```
 
 Successful preparation places the root in its draining state and records an

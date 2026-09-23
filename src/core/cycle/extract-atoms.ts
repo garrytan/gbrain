@@ -78,6 +78,8 @@ import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { AtomPageStateError, completeAtomReceipts, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -134,6 +136,12 @@ const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
 // doctor check can't drift.
 const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
   `AND NOT (p.type = 'source' AND COALESCE(p.frontmatter ? 'raw', false))`;
+
+const PAGE_SCAN_STATE_EXCLUSION_SQL = `AND NOT EXISTS (
+  SELECT 1 FROM extract_atoms_page_state scan
+  WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+    AND scan.page_id=p.id AND scan.content_hash=p.content_hash AND scan.tombstoned
+)`;
 
 /**
  * Pure allowlist policy: the legacy floor UNION the pack's `extractable: true`
@@ -327,12 +335,6 @@ never explain in prose.
 
 Output ONLY the JSON array, no prose.`;
 
-interface DiscoveredPage {
-  slug: string;
-  content: string;
-  contentHash: string;
-}
-
 /**
  * v0.41.2.1 (D2) — single-SQL discovery + idempotency filter for brain
  * pages. Discovers extractable pages whose content_hash has no
@@ -359,10 +361,12 @@ export async function discoverExtractablePages(
   sourceId: string,
   affectedSlugs?: string[],
   limit: number = PAGE_DISCOVERY_BUDGET,
-): Promise<DiscoveredPage[]> {
+): Promise<AtomPageInput[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const sql = `
-    SELECT p.slug,
+    SELECT p.id, p.knowledge_revision,
+           (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
+           p.slug,
            p.compiled_truth,
            p.content_hash
     FROM pages p
@@ -374,7 +378,7 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND length(COALESCE(p.compiled_truth, '')) >= $3
-      AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
+      ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
@@ -397,6 +401,9 @@ export async function discoverExtractablePages(
 
   try {
     const rows = await engine.executeRaw<{
+      id: number;
+      knowledge_revision: string;
+      source_incarnation: string;
       slug: string;
       compiled_truth: string;
       content_hash: string;
@@ -405,6 +412,7 @@ export async function discoverExtractablePages(
       slug: r.slug,
       content: r.compiled_truth,
       contentHash: r.content_hash,
+      identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision },
     }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -448,7 +456,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $3
-           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
+           ${PAGE_SCAN_STATE_EXCLUSION_SQL}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -463,7 +471,7 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $2
-           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
+           ${PAGE_SCAN_STATE_EXCLUSION_SQL}
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -635,6 +643,7 @@ export async function runPhaseExtractAtoms(
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
+  await assertUnmanagedCanonicalWriter(engine, 'Atom extraction');
 
   // 1a. Get transcripts (test seam OR production discovery).
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
@@ -678,9 +687,11 @@ export async function runPhaseExtractAtoms(
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
   //     deliberately (transcript-only regression tests).
-  let pages: Array<{ slug: string; content: string; contentHash: string }>;
+  let pages: AtomPageInput[];
   if (opts._pages !== undefined) {
-    pages = opts._pages;
+    pages = await Promise.all(opts._pages.map(async page => ({
+      ...page, identity: await readAtomPageIdentity(engine, sourceId, page),
+    })));
   } else {
     pages = await discoverExtractablePages(
       engine,
@@ -700,11 +711,6 @@ export async function runPhaseExtractAtoms(
   // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
   opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
   const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
-  // v146 READ SIDE. The counter written above is inert without this: transcript
-  // eligibility was gated ONLY by "does an atom row exist for this hash", so a
-  // tombstone nothing consults would leave the item in the pool forever. Pages
-  // need no equivalent edit — their tombstone (`atoms_scan_hash`) is already
-  // read by discoverExtractablePages' SQL, which this change does not touch.
   const tombstonedTranscriptKeys = await tombstonedTranscriptsForHashes(
     engine,
     sourceId,
@@ -750,7 +756,7 @@ export async function runPhaseExtractAtoms(
   //    forever while atoms keep getting extracted from transcripts.
   type WorkItem =
     | { kind: 'transcript'; filePath: string; content: string; contentHash: string }
-    | { kind: 'page'; slug: string; content: string; contentHash: string };
+    | ({ kind: 'page' } & AtomPageInput);
 
   const seenHashes = new Set<string>();
   const transcriptItems: WorkItem[] = [];
@@ -973,16 +979,8 @@ export async function runPhaseExtractAtoms(
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
 
-  /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
-  async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
-    try {
-      await engine.executeRaw(
-        `UPDATE pages
-            SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
-          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
-        [item.contentHash.slice(0, 16), sourceId, item.slug],
-      );
-    } catch { /* fail-soft: page stays rediscoverable */ }
+  async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
+    await writeAtomPageState(engine, sourceId, item, 'complete');
   }
 
   /**
@@ -1011,14 +1009,13 @@ export async function runPhaseExtractAtoms(
    * content edit resets the streak. Returns the new consecutive count, or
    * null on write failure (never blocks the phase).
    *
-   * v146: transcripts are covered too. Pages keep their frontmatter counter;
-   * transcripts are files with no frontmatter, so theirs lives in
+   * v146: transcripts are covered too. Their state lives in
    * `extract_atoms_transcript_state`. Both reset on a content change for the
    * same reason — the page counter is hash-keyed, the transcript row IS
    * hash-keyed — and both feed the same MAX_DETERMINISTIC_FAILURES bound.
    */
   async function recordItemFailureCount(
-    item: { kind: string; slug?: string; filePath?: string; contentHash: string },
+    item: WorkItem,
   ): Promise<number | null> {
     if (opts.dryRun) return null;
     const hash16 = item.contentHash.slice(0, 16);
@@ -1047,23 +1044,12 @@ export async function runPhaseExtractAtoms(
         return null;
       }
     }
-    if (item.kind !== 'page' || !item.slug) return null;
     try {
-      const rows = await engine.executeRaw<{ cnt: number | string }>(
-        `UPDATE pages
-            SET frontmatter = frontmatter
-              || jsonb_build_object('atoms_fail_hash', $1::text)
-              || jsonb_build_object('atoms_fail_count',
-                   CASE WHEN COALESCE(frontmatter->>'atoms_fail_hash', '') = $1::text
-                        THEN COALESCE((frontmatter->>'atoms_fail_count')::int, 0) + 1
-                        ELSE 1 END)
-          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
-          RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
-        [hash16, sourceId, item.slug],
-      );
-      const cnt = rows[0]?.cnt;
-      return cnt == null ? null : Number(cnt);
-    } catch {
+      return await writeAtomPageState(engine, sourceId, item, 'failure');
+    } catch (err) {
+      const error = err instanceof AtomPageStateError ? err.message : new AtomPageStateError('storage').message;
+      failures.push({ source: item.slug, error });
+      console.error(`[extract_atoms] ${item.slug}: ${error}`);
       return null;
     }
   }
@@ -1292,12 +1278,7 @@ export async function runPhaseExtractAtoms(
         // after every atom AND provenance edge persisted), then stamp the
         // source page. A crash between flip and stamp degrades to the legacy
         // atom-rows-mean-done semantics — safe, not lossy.
-        await engine.executeRaw(
-          `UPDATE pages
-              SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
-            WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
-          [hash16, sourceId, importedSlugs],
-        );
+        await completeAtomReceipts(engine, sourceId, importedSlugs, hash16, item.kind === 'page' ? item : undefined);
         if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }

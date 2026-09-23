@@ -11,19 +11,27 @@ import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../
 import { runPersistenceAdministration } from '../core/persistence/administration.ts';
 import type { PersistenceAdminOperation } from '../core/persistence/admin-contract.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
+import { bigintToStringReplacer } from '../core/utils.ts';
 
 export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
-  gbrain sources writer claim <source> --path <directory> [--dry-run] [--json]
-  gbrain sources writer activate --confirm-quiesced [--dry-run] [--json]
-  gbrain sources writer transfer prepare <source> [--dry-run] [--json]
-  gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--dry-run] [--json]
+  gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
+  gbrain sources writer activate --confirm-quiesced [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer prepare <source> [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [administration options] [--dry-run] [--json]
 
+Inspect status first. Routine diagnosis, doctor --fix, startup, and maintenance
+must not change ownership or activate managed persistence. Read the operator
+procedure in docs/architecture/topologies.md before deliberate administration.
+Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_transfer_prepare|writer_transfer_accept>
+matching the action and --expected-state <admin_state from reviewed status>.
+These checks also apply to interactive terminals; --yes is not a substitute.
+Explicit noninteractive administration is supported. Stale state is rejected.
 Use --brain <id> to select a database. Prepare drains the current owner and records
 an exact manifest; accept requires that epoch and matching bytes on the successor.
 Before activation, upgrade and stop older writers on every host, claim every
 filesystem source, and inspect/release remaining legacy locks. --confirm-quiesced
-records that operator intent; --dry-run performs the same checks without enabling.
+attests quiescence but does not grant administration intent. --dry-run never enables.
 No command takes over an owner based on a stale heartbeat.`;
 
 export const LOCAL_WRITER_HELP = `Usage:
@@ -50,6 +58,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     '--path': 'path', '--source': 'source_id', '--expected-epoch': 'expected_epoch', '--manifest': 'manifest',
     '--source-ids': 'source_ids', '--scopes': 'scopes', '--allowed-operations': 'allowed_operations',
     '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before',
+    '--admin-intent': 'admin_intent', '--expected-state': 'expected_state',
   };
   const arrays = new Set(['source_ids', 'scopes', 'allowed_operations', 'slug_prefixes']);
   const seen = new Set<string>();
@@ -125,7 +134,7 @@ export async function runPersistenceAdminCli(group: Group, args: string[], conne
       }
       result = await runPersistenceAdministration(connected ?? owned!, parsed.operation, parsed.params);
     }
-    await writeStdoutFinal(JSON.stringify(result, null, 2) + '\n');
+    await writeStdoutFinal(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   } catch (error) {
     if (!await reportPersistenceCliError(error, args.includes('--json'))) {
       console.error(error instanceof Error ? error.message : String(error));

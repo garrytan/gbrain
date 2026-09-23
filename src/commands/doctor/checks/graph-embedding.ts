@@ -5,6 +5,7 @@
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
 import { isZeroEntropyModel, NEW_INSTALL_DEFAULT_RERANKER_MODEL } from '../../../core/ai/defaults.ts';
+import { loadConfigFileOnly } from '../../../core/config.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 
@@ -231,12 +232,14 @@ export async function checkBrainstormHealth(engine: BrainEngine): Promise<Check>
  */
 export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check> {
   try {
+    if (loadConfigFileOnly()?.embedding_disabled === true) {
+      return { name: 'ze_embedding_health', status: 'ok', message: 'Embeddings disabled — provider setup deferred.' };
+    }
     // v0.37 fix wave (Lane E.3 + CDX2-10): read from gateway, not DB.
     // The file plane is canonical post-v0.37; the DB config table is
     // schema-applied metadata. Reading DB here would skip the warning
     // when the user has a fresh install with no DB config row yet.
     const { getEmbeddingModel } = await import('../../../core/ai/gateway.ts');
-    const { loadConfigFileOnly } = await import('../../../core/config.ts');
     let model = '';
     try { model = getEmbeddingModel(); } catch { /* gateway unconfigured */ }
     if (!isZeroEntropyModel(model)) {
@@ -356,7 +359,8 @@ export async function checkProviderSunset(engine: BrainEngine, now: number = Dat
     } catch {
       // Mode resolution failed — make no reranker-exposure claim.
     }
-    const onSunsetEmbedding = isZeroEntropyModel(model);
+    const embeddingDisabled = loadConfigFileOnly()?.embedding_disabled === true;
+    const onSunsetEmbedding = !embeddingDisabled && isZeroEntropyModel(model);
     const onSunsetReranker = isZeroEntropyModel(reranker);
     // Custom embedding columns can route queries through a ZE-backed model
     // even when the primary embedding + reranker are clear — without this arm
@@ -373,7 +377,7 @@ export async function checkProviderSunset(engine: BrainEngine, now: number = Dat
       return {
         name,
         status: 'ok',
-        message: `No configured provider has an announced shutdown (embedding: ${model}).`,
+        message: `No configured provider has an announced shutdown (embedding: ${embeddingDisabled ? 'disabled' : model}).`,
       };
     }
     // Shared date-itself-counts comparison with the gateway's rerank
@@ -457,6 +461,9 @@ export async function checkProviderSunset(engine: BrainEngine, now: number = Dat
  */
 export async function checkEmbeddingWidthConsistency(engine: BrainEngine): Promise<Check> {
   try {
+    if (loadConfigFileOnly()?.embedding_disabled === true) {
+      return { name: 'embedding_width_consistency', status: 'ok', message: 'Embeddings disabled — no active embedding width to reconcile.' };
+    }
     // v0.37 fix wave (Lane E.1 + CDX-8): read from gateway, not DB. The
     // file plane is canonical post-v0.37; the DB config table is
     // schema-applied metadata. Reading DB here silently skipped the

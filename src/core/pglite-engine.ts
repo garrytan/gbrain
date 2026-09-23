@@ -1,4 +1,5 @@
 import { registerManagedFilesystemEngine } from './persistence/filesystem-guard.ts';
+import { replaceDerivedLinks, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { trackPgliteDatabase, PgliteClosingError, notifyPgliteOpened } from './pglite-lifecycle.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
@@ -67,7 +68,9 @@ import {
 } from './chronicle/ontology.ts';
 import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatchExhausted } from './audit/batch-retry-audit.ts';
 import { runMigrations } from './migrate.ts';
-import { hnswEfSearchFor, hnswIndexExpected, HNSW_EF_SEARCH_MAX } from './vector-index.ts';
+import { hnswIndexExpected, supportsHnswIterativeScan } from './vector-index.ts';
+import { searchVectorPool, readVectorPool } from './search/vector-pool.ts';
+import { withVectorSettings } from './search/vector-settings.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts';
@@ -354,6 +357,7 @@ export function computeSnapshotSchemaHash(
     hash.update('files:v3\n');
     for (const file of [
       'migrate.ts', 'pglite-schema.ts', 'fts-language.ts', 'vector-index.ts', 'ai/defaults.ts',
+      'search/projection-statistics.ts',
       'timeline-dedup-repair.ts', 'pages-upsert-arbiter.ts', 'link-extraction.ts',
       'grants/schema.ts', 'grants/migration.ts', 'grants/model.ts', 'grants/service.ts', 'grants/profiles.ts',
       'page-state/schema.ts', 'lease-schema.ts', 'page-state/projection-schema.ts', 'persistence/schema.ts', 'persistence/effect-schema.ts', 'persistence/writer-guard-schema.ts', 'persistence/topology-schema.ts', 'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',
@@ -702,6 +706,7 @@ export async function probePgliteScratchStore(
 }
 
 export class PGLiteEngine implements BrainEngine {
+  private vectorIterativeScan?: Promise<boolean>;
   /** Transaction clones keep chunk invalidation and replacement atomic. */
   private _chunkWritesInTransaction = false;
   readonly kind = 'pglite' as const;
@@ -753,6 +758,7 @@ export class PGLiteEngine implements BrainEngine {
       }
       return this._connectPromise ?? undefined;
     }
+    this.vectorIterativeScan = undefined;
     const opening = this._connectInternal(config).then(async () => {
       try { await registerManagedFilesystemEngine(this, config.database_path); }
       catch (error) {
@@ -929,6 +935,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async disconnect(): Promise<void> {
+    this.vectorIterativeScan = undefined;
     if (this._disconnectCall) return this._disconnectCall;
     if (this._closePoison) throw this._closePoison;
     this._disconnectRequested = true;
@@ -2473,11 +2480,11 @@ export class PGLiteEngine implements BrainEngine {
     // got reimported). Same param shape as Postgres engine.
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation. Array wins over scalar.
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
@@ -2514,7 +2521,7 @@ export class PGLiteEngine implements BrainEngine {
            -- OCR text doesn't drown text-page hits. Image-similarity queries
            -- run a separate vector path on embedding_image.
            AND cc.modality = 'text'
-         ORDER BY score DESC
+         ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $2
        ),
        ${buildBestPerPagePoolCte('ranked')}
@@ -2599,11 +2606,11 @@ export class PGLiteEngine implements BrainEngine {
     }
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       params.push(opts.sourceIds);
@@ -2763,11 +2770,11 @@ export class PGLiteEngine implements BrainEngine {
     // v0.29.1 since/until parity (codex pass-1 #10).
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     // v0.34.1 (#861 — P0 leak seal): source-isolation for the chunk-grain
     // anchor primitive. Layer 7 two-pass walks from these anchors so a
@@ -2802,7 +2809,7 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages p ON p.id = cc.page_id
        JOIN sources s ON s.id = p.source_id
        WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-       ORDER BY score DESC
+       ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $2 OFFSET $3`,
       params
     );
@@ -2840,23 +2847,29 @@ export class PGLiteEngine implements BrainEngine {
     const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', boostMap, opts?.detail, 'unverified_stub');
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
-    // v0.46.15 (retrieval-cathedral P1): bounded escalation — see
-    // postgres-engine.ts searchVector for the full rationale; the logic here
-    // is IDENTICAL (engine-parity pinned). Cap policy (R2-10 + codex ship
-    // review): the ef_search ceiling applies only to HNSW-backed columns;
-    // above-ceiling columns fall back to exact scans where capping the SQL
-    // LIMIT would make offset >= 1000 permanently empty — those stay bounded
-    // by the escalation count instead. (Hoisted resolvedColEarly: same
-    // descriptor the cast fragment uses below.)
     const resolvedColEarly = normalizeEngineColumn(opts?.embeddingColumn);
-    const innerCap = hnswIndexExpected(resolvedColEarly.type, resolvedColEarly.dimensions)
-      ? HNSW_EF_SEARCH_MAX
-      : Number.MAX_SAFE_INTEGER;
-    const innerLimit = Math.min(offset + Math.max(limit * 5, 100), innerCap);
-
-    const params: unknown[] = [vecStr, innerLimit, limit, offset];
-    const innerLimitIdx = 1; // mutated by the escalation loop
+    const indexed = hnswIndexExpected(resolvedColEarly.type, resolvedColEarly.dimensions);
+    const innerLimit = offset + Math.max(limit * 5, 100);
+    this.vectorIterativeScan ??= this.executeRaw<{ extversion: string }>(
+      `SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
+    ).then(rows => supportsHnswIterativeScan(rows[0]?.extversion));
+    const probe = this.vectorIterativeScan;
+    let iterative: boolean;
+    try { iterative = await probe; }
+    catch (error) {
+      if (this.vectorIterativeScan === probe) this.vectorIterativeScan = undefined;
+      throw error;
+    }
+    const params: unknown[] = [vecStr];
     let extraFilter = '';
+    if (opts?.type) {
+      params.push(opts.type);
+      extraFilter += ` AND p.type = $${params.length}`;
+    }
+    if (opts?.exclude_slugs?.length) {
+      params.push(opts.exclude_slugs);
+      extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
+    }
     if (opts?.language) {
       params.push(opts.language);
       extraFilter += ` AND cc.language = $${params.length}`;
@@ -2877,11 +2890,11 @@ export class PGLiteEngine implements BrainEngine {
     // pages — preserves pagination contract.
     if (opts?.afterDate) {
       params.push(opts.afterDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) > $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.afterDateInclusive ? '>=' : '>'} $${params.length}::text::timestamptz`;
     }
     if (opts?.beforeDate) {
       params.push(opts.beforeDate);
-      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) < $${params.length}::timestamptz`;
+      extraFilter += ` AND COALESCE(p.effective_date, p.updated_at, p.created_at) ${opts?.beforeDateInclusive ? '<=' : '<'} $${params.length}::text::timestamptz`;
     }
     // v0.34.1 (#861, F2 — P0 leak seal): source-isolation in the INNER CTE
     // so HNSW candidate pool narrows before re-rank. Mirrors postgres-engine
@@ -2893,6 +2906,12 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
+
+    const innerLimitIdx = params.length;
+    params.push(innerLimit, limit, offset);
+    const innerLimitParam = `$${innerLimitIdx + 1}`;
+    const limitParam = `$${innerLimitIdx + 2}`;
+    const offsetParam = `$${innerLimitIdx + 3}`;
 
     // v0.26.5: visibility filter applied in the inner CTE so HNSW sees the
     // same candidate count it always did. See postgres-engine.ts for rationale.
@@ -2916,14 +2935,11 @@ export class PGLiteEngine implements BrainEngine {
       modalityFilter = `AND cc.modality = 'text'`;
     }
 
-    // hnsw.ef_search: an HNSW scan returns at most ef_search rows (default
-    // 40), so LIMIT $2 past 40 was silently unreachable — see hnswEfSearchFor.
-    // SET LOCAL semantics need a transaction (PGLite autocommits bare
-    // queries); scoping it locally keeps the engine's single session clean.
-    const runOnce = async (il: number) => (await this.db.transaction(async (tx) => {
-      await tx.query(`SELECT set_config('hnsw.ef_search', $1, true)`, [String(hnswEfSearchFor(il))]);
-      return tx.query(
-      `WITH hnsw_candidates AS (
+    const candidateFrom = `FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         JOIN sources s ON s.id = p.source_id
+         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}`;
+    const rawQuery = `WITH hnsw_candidates AS (
          SELECT
            p.slug, p.id as page_id, p.title, p.type, p.source_id, p.updated_at,
            p.effective_date, p.effective_date_source,
@@ -2934,12 +2950,9 @@ export class PGLiteEngine implements BrainEngine {
            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
            (${unverifiedExtractionFragment('p')}) AS unverified_stub,
            1 - (cc.${col} <=> ${castSql}) AS raw_score
-         FROM content_chunks cc
-         JOIN pages p ON p.id = cc.page_id
-         JOIN sources s ON s.id = p.source_id
-         WHERE cc.${col} IS NOT NULL ${modalityFilter} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         ${candidateFrom}
          ORDER BY cc.${col} <=> ${castSql}
-         LIMIT $2
+         LIMIT ${innerLimitParam}
        ),
        -- score as a select-list expr; inner ORDER BY stays pure-distance so
        -- the HNSW index is usable.
@@ -2950,7 +2963,8 @@ export class PGLiteEngine implements BrainEngine {
        -- T1 (retrieval-maxpool incident): collapse to the best chunk PER PAGE
        -- over the full candidate set before the user LIMIT. Shared builder with
        -- postgres-engine + the keyword path so they cannot drift.
-       ${buildBestPerPagePoolCte('scored')}
+       ${buildBestPerPagePoolCte('scored')},
+       page_results AS (
        SELECT
          bpp.slug, bpp.page_id, bpp.title, bpp.type, bpp.source_id,
          bpp.effective_date, bpp.effective_date_source,
@@ -2959,8 +2973,7 @@ export class PGLiteEngine implements BrainEngine {
          bpp.score,
          CASE WHEN bpp.updated_at < (
            SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = bpp.page_id
-         ) THEN true ELSE false END AS stale,
-         (SELECT count(*) FROM hnsw_candidates)::int AS candidate_pool
+         ) THEN true ELSE false END AS stale
        FROM best_per_page bpp
        -- v0.41.13: stable tiebreaker. When two chunks share a score (same
        -- source-prefix boost + same cosine distance, the basis-vector + same-
@@ -2969,39 +2982,32 @@ export class PGLiteEngine implements BrainEngine {
        -- master and feature branches that add unrelated indexes — see the
        -- pages_dedup_idx (v95) regression that motivated this.
        ORDER BY bpp.score DESC, bpp.page_id ASC, bpp.chunk_id ASC
-       LIMIT $3
-       OFFSET $4`,
-      params
-      );
-    })).rows;
+       LIMIT ${limitParam}
+       OFFSET ${offsetParam}
+       )
+       SELECT page_results.*, pool.candidate_pool
+       FROM (SELECT count(*)::int AS candidate_pool FROM hnsw_candidates) pool
+       LEFT JOIN page_results ON true
+       ORDER BY score DESC NULLS LAST, page_id ASC, chunk_id ASC`;
 
-    // v0.46.15 bounded escalation loop — IDENTICAL logic to postgres-engine
-    // (parity-pinned): retry ×4 up to 3 times while the PAGE set is short
-    // but the pre-collapse candidate pool was full; a short page with a
-    // non-full pool is a genuine final page. Zero rows with offset>0
-    // escalates (deep pagination) but never emits — pool unknowable there.
-    let escalations = 0;
-    let rows = await runOnce(innerLimit);
-    for (;;) {
-      const il = params[innerLimitIdx] as number;
-      if (rows.length >= limit) break;
-      const pool = rows.length > 0
-        ? Number((rows[0] as { candidate_pool?: number }).candidate_pool ?? 0)
-        : null;
-      const shouldEscalate = pool !== null ? pool >= il : offset > 0;
-      if (!shouldEscalate) break;
-      if (il >= innerCap || escalations >= 3) {
-        if (pool !== null && pool >= il) {
-          opts?.onVectorPoolMeta?.({ underfilled: true, escalations, innerLimit: il });
-        }
-        break;
-      }
-      params[innerLimitIdx] = Math.min(il * 4, innerCap);
-      escalations++;
-      rows = await runOnce(params[innerLimitIdx] as number);
-    }
-
-    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+    const rows = await searchVectorPool(limit, innerLimit, iterative, indexed, 'pglite',
+      async ({ innerLimit: requested, maxScanTuples }) => this.db.transaction(async tx => {
+        return withVectorSettings(async (sql, values) => (await tx.query<Record<string, unknown>>(sql, values)).rows, iterative, requested, maxScanTuples, async () => {
+          const bound = [...params];
+          bound[innerLimitIdx] = requested;
+          return readVectorPool((await tx.query<Record<string, unknown>>(rawQuery, bound)).rows);
+        });
+      }),
+      async pool => {
+        const bound = [...params.slice(0, innerLimitIdx), pool + 1];
+        const { rows } = await this.db.query<{ eligible: number }>(`SELECT count(*)::int AS eligible FROM (
+          SELECT 1 ${candidateFrom} AND $1::text IS NOT NULL LIMIT $${bound.length}
+        ) eligible`, bound);
+        return Number(rows[0].eligible) > pool;
+      },
+      opts?.onVectorPoolMeta,
+    );
+    return rows.map(rowToSearchResult);
   }
 
   async getEmbeddingsByChunkIds(
@@ -3813,6 +3819,10 @@ export class PGLiteEngine implements BrainEngine {
   async addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number> {
     if (links.length === 0) return 0;
     return this.batchRetry(opts?.auditSite ?? 'addLinksBatch', opts?.signal, () => this._addLinksBatchOnce(links), links.length);
+  }
+
+  async replaceDerivedLinks(origin: DerivedLinkOrigin, links: LinkBatchInput[], opts?: DerivedLinkReplacementOptions) {
+    return replaceDerivedLinks(this, origin, links, opts);
   }
 
   private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {

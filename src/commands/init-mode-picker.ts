@@ -75,7 +75,7 @@ export function recommendModeFor(inputs: ModePickerInputs): { mode: SearchMode; 
   if (inputs.hasExpansionKey === false) {
     return {
       mode: 'conservative',
-      reason: 'No expansion-capable API key (Anthropic/OpenAI/Google) — semantic cache still works, but LLM query expansion cannot run.',
+      reason: 'No expansion-capable API key (Anthropic/OpenAI/Google) — start with a tight result budget; semantic result caching is temporarily disabled.',
     };
   }
   const opus = /opus/i.test(inputs.defaultModel ?? '') || /opus/i.test(inputs.subagentModel ?? '');
@@ -130,12 +130,12 @@ Search mode preference
 Three named modes. Cost depends on BOTH the mode AND your downstream model
 — the corner-to-corner spread is 25x. Pick the pairing intentionally.
 
-The "cost" isn't gbrain itself — it's the downstream agent's input cost
-reading the retrieved chunks back into its context window. gbrain's own
-overhead is rounding-error (semantic result caching is temporarily disabled,
-so budget for fresh retrieval on every query; gbrain query adds ~$1.50 per 1K
-queries for the Haiku expansion call in every mode — --no-expand skips it;
-gbrain search never expands).
+This matrix estimates the downstream agent's input cost for reading retrieved
+chunks. Embedding, reranking and expansion can add separate provider charges.
+GBrain's semantic result caching is temporarily disabled; budget for fresh retrieval.
+When configured, gbrain query adds ~$1.50 per 1K queries under the historical
+Haiku expansion call estimate, in every mode — --no-expand skips it;
+gbrain search never expands. Actual expansion cost depends on model and tokens.
 
 Per-query cost @ 10K queries/mo (full search payload, no cache savings):
 
@@ -149,23 +149,26 @@ Per-query cost @ 10K queries/mo (full search payload, no cache savings):
 
 Natural pairings span ~4x (cheap/cheap → frontier/frontier). Mismatches
 (tokenmax+Haiku, conservative+Opus) waste capacity in different
-directions. Real agent loops with disciplined prompt caching see 50-80%
-discount on top of these numbers (cache hits skip downstream entirely).
+directions. Downstream provider prompt caching may discount input charges;
+it does not skip retrieval or downstream generation.
 
-  1) conservative   4K-token cap, no LLM expansion, 10 chunks max.
+  1) conservative   4K-token cap, 10 results by default.
                     Best for: Haiku subagents, cost-sensitive agents,
                     high-volume search loops, MCP servers w/ many users.
 
-  2) balanced       12K cap, no LLM expansion, 25 chunks max.
+  2) balanced       12K-token cap, 25 results by default.
                     Best for: Sonnet-tier work, mixed workloads.
                     (The middle path most users land on.)
 
-  3) tokenmax       no cap, LLM query expansion ON, 50 chunks.
-                    Best for: Opus/frontier models, max retrieval quality,
+  3) tokenmax       no token cap, 50 results by default.
+                    Best for: Opus/frontier models, broad retrieval,
                     low-volume high-stakes work.
 
-("no LLM expansion" governs gbrain search + callers that leave expansion
-unset; gbrain query expands in every mode unless you pass --no-expand.)
+gbrain query requests expansion in every mode unless you pass --no-expand.
+gbrain search never expands. Neither inherits search.expansion. Actual
+expansion needs configured embedding and expansion providers; keyless
+retrieval sends no expansion request. Cloud expansion sends the query
+to the configured provider and may incur its model's input/output charges.
 
 You can change this any time with: gbrain config set search.mode <mode>
 Per-knob tuning + recommendation engine ships at: gbrain search tune
@@ -257,6 +260,8 @@ export async function runModePicker(
     console.log('');
     console.log('   (scales linearly: ×10 for 100K queries/mo, ÷10 for 1K)');
     console.log('   25x corner-to-corner spread. Natural diagonal pairings span ~4x.');
+    console.log('   query requests expansion in every mode; --no-expand opts out. search never expands.');
+    console.log('   Keyless retrieval skips expansion; configured cloud providers may add separate charges.');
     console.log('');
     console.log('To change later: gbrain config set search.mode <mode>');
     console.log('To see what is running: gbrain search modes');

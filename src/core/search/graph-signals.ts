@@ -199,6 +199,7 @@ const SESSION_MARKERS = new Set(['chat', 'session', 'sessions']);
 
 export function sessionPrefix(slug: string): string | null {
   if (!slug.includes('/')) return null;
+  if (slug.startsWith('atoms/')) return null;
   const segments = slug.split('/');
   // Strategy: walk segments left-to-right. Find the first segment that's
   // either a session marker (chat/session/sessions) OR a date prefix.

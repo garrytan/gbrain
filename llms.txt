@@ -10,6 +10,8 @@ Repo: https://github.com/garrytan/gbrain
 - [Grok Bot](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md): Recommended: keep the brain on your computer, publish it with `gbrain mcp expose --funnel`, grant the Bot a client and install the thin CLI; local in-Bot memory as the no-host alternative. Native skill activation, shared-computer trust and dated evidence.
 - [Muse personal agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md): Verify durable storage first; connect Muse to your published brain (`gbrain mcp expose --funnel` + thin CLI) or add local explicit memory with provenance alongside Muse's native memory; distinguish Muse Code and unverified native MCP.
 - [Inside an existing agent](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/in-agent-setup.md): Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration.
+- [Memory boundaries](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/memory-boundaries.md): Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits.
+- [Brain versus session memory](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/brain-vs-memory.md): Route durable facts and preferences to shared memory, configuration to the harness, and temporary work to session state.
 - [Connect a hosted brain](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/hosted-harness-access.md): Getting the HTTPS endpoint (`gbrain mcp expose`, admin token file), host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification.
 - [Harness adapter reference](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/harness-adapters.md): Registry-generated transport, authentication lifetime and configuration facts.
 - [Harness validation evidence](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/harness-validation.md): Local lifecycle and HTTP/worker proof, reproducible tests, and the remaining actual-harness acceptance checks.
@@ -18,7 +20,7 @@ Repo: https://github.com/garrytan/gbrain
 
 - [AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md): Start here if you are not Claude Code. Install order, trust boundary, skill resolver, config/debug/migration pointers.
 - [CLAUDE.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md): Orientation + resolver. North Star, two axes, architecture + cross-cutting invariants, the reference map pointing at on-demand docs, and the inline ship IRON RULES.
-- [docs/architecture/KEY_FILES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/KEY_FILES.md): Per-file index for the gbrain repo: what each src/ file does + its load-bearing invariants. The on-demand detail CLAUDE.md's reference map routes to.
+- [docs/architecture/KEY_FILES.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/KEY_FILES.md): Bounded navigation index for subsystem references: find a source file's current behavior, invariants, and test evidence without loading the entire reference corpus.
 - [docs/architecture/thin-client.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/thin-client.md): The thin-client / remote-MCP / cross-modal routing seam: isThinClient detection, callRemoteTool, SSRF-hardened URL validation, per-command routing.
 - [INSTALL_FOR_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md): 9-step agent installation.
 - [skills/RESOLVER.md](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md): Skill dispatcher. Read first for any task.
@@ -54,7 +56,7 @@ Repo: https://github.com/garrytan/gbrain
 ## Migrations
 
 - [docs/UPGRADING_DOWNSTREAM_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md): Patches for downstream agent skill forks. One section per release.
-- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions (latest: v0.49.0.0 — isolated agent setup, hosted grant migration, and verification).
+- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions and post-upgrade verification.
 - [CHANGELOG.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md): Release-summary voice + itemized changes + self-repair block per version.
 
 ## Contributing

@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { getWorktreeBinding, claimWorktree } from '../src/core/persistence/ownership.ts';
+import { getWorktreeBinding, claimWorktree, acquireWorktree } from '../src/core/persistence/ownership.ts';
 import { admitWrite, claimNextWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { managedSyncAuthority } from '../src/core/persistence/sync-authority.ts';
@@ -21,6 +21,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { loadSyncFailures, syncFailuresPath } from '../src/core/sync-failure-ledger.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-sync-'));
 const engines: BrainEngine[] = [];
@@ -180,8 +181,10 @@ test('subpath exclusions and unsupported code/pull paths refuse before canonical
     expect(await engine.getPage('a',{sourceId:f.id})).not.toBeNull(); expect(await engine.getPage('private/b',{sourceId:f.id})).toBeNull();
     await expect(performManagedSync(engine,{sourceId:f.id})).rejects.toMatchObject({code:'writer_coordinator_required'});
     const c=await fixture(engine,{'a.md':'Normal page source observation.\n','code.ts':'export const example = 1;\n'});
-    await expect(performManagedSync(engine,{sourceId:c.id,noPull:true,strategy:'auto'})).rejects.toMatchObject({code:'writer_coordinator_required'});
-    expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1',[c.id])).toHaveLength(0);
+    expect(await performManagedSync(engine,{sourceId:c.id,noPull:true,strategy:'auto',noEmbed:true})).toMatchObject({added:2});
+    expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1',[c.id])).toHaveLength(2);
+    expect(await engine.executeRaw("SELECT page_kind FROM pages WHERE source_id=$1 AND slug='code-ts'",[c.id])).toEqual([{page_kind:'code'}]);
+    expect((await engine.getChunks('code-ts',{sourceId:c.id})).some(chunk=>chunk.symbol_name==='example')).toBe(true);
   }
 }),120_000);
 
@@ -246,6 +249,86 @@ test('raw bytes changing after preparation conflict without publishing and the s
     expect((await getWriteRequest(engine,authority.writer.principal,requestId))?.intent).toEqual(intent);
   }
 }),120_000);
+
+test.each([false, true])('managed terminal receipts survive a missing ledger and corrected retry uses a new ID (CRLF=%s)', async crlf =>
+  withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+    for (const engine of engines) {
+      const f = await fixture(engine, { 'notes/example.md': 'An original observation about the example system.\n' });
+      await performManagedSync(engine, { sourceId: f.id, noPull: true });
+      const pinned = 'A newly committed observation about the example system.\n';
+      const path = join(f.root, 'notes/example.md');
+      writeFileSync(path, pinned);
+      const target = commit(f.root);
+      const working = crlf ? pinned.replace(/\n/g, '\r\n') : 'A private uncommitted observation that must not appear in diagnostics.\n';
+      writeFileSync(path, working);
+      const opts = { sourceId: f.id, noPull: true };
+      const blocked = await performManagedSync(engine, opts);
+      expect(blocked).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1, filesImported: 0,
+        managedWrite: { source_id: f.id, slug: 'notes/example', path: 'notes/example.md', write_error: 'source_changed',
+          reason: 'pinned_git_worktree_conflict', ledger_recorded: true, write_request: { state: 'conflict', retry_after_ms: null } } });
+      expect(blocked.managedWrite?.line_endings).toBe(crlf ? 'crlf_lf_only' : undefined);
+      expect(JSON.stringify(blocked)).not.toContain(working.trim());
+      expect(JSON.stringify(blocked)).not.toContain(f.root);
+      expect(readFileSync(path, 'utf8')).toBe(working);
+      const id = blocked.managedWrite!.write_request.request_id;
+      const recorded = loadSyncFailures().filter(row => row.source_id === f.id);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0].path).toBe('notes/example.md');
+      expect(recorded[0].error).toContain(id);
+      expect(recorded[0].error).toContain('source_changed');
+      expect((await engine.executeRaw<{ last_commit: string }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBe(f.head);
+      writeFileSync(path, pinned);
+      rmSync(syncFailuresPath(), { force: true });
+      const replay = await performManagedSync(engine, opts);
+      expect(replay.managedWrite?.write_request).toEqual(blocked.managedWrite!.write_request);
+      expect(replay.status).toBe('blocked_by_failures');
+      expect(loadSyncFailures().find(row => row.source_id === f.id)?.error).toContain(id);
+      await withEnv({ GBRAIN_SYNC_FAILURES_DIR: path }, async () => {
+        const unavailable = await performManagedSync(engine, opts);
+        expect(unavailable).toMatchObject({ status: 'blocked_by_failures', managedWrite: { ledger_recorded: false,
+          write_request: { request_id: id, state: 'conflict' } } });
+      });
+      await expect(performManagedSync(engine, { ...opts, skipFailed: true })).rejects.toMatchObject({ code: 'writer_coordinator_required' });
+      const corrected = await performManagedSync(engine, { ...opts, retryFailed: true });
+      expect(corrected.status).toBe('synced');
+      expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
+      const requests = await engine.executeRaw<{ request_id: string; state: string }>('SELECT request_id,state FROM persistence_requests WHERE source_id=$1 ORDER BY sequence', [f.id]);
+      expect(requests.filter(row => row.request_id === id)).toEqual([{ request_id: id, state: 'conflict' }]);
+      expect(requests.at(-1)?.state).toBe('committed');
+      expect(requests.at(-1)?.request_id).not.toBe(id);
+      expect((await engine.executeRaw<{ last_commit: string }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBe(target);
+    }
+  }), 120_000);
+
+test('pending durable sync retries keep the same request ID and do not claim committed imports', async () =>
+  withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+    for (const engine of engines) {
+      await disposePersistenceConsumer(engine);
+      const f = await fixture(engine, { 'pending.md': 'An observation waiting for publication.\n' });
+      const lock = await acquireWorktree((await getWorktreeBinding(engine, f.id))!);
+      expect(lock).not.toBeNull();
+      try {
+        const opts = { sourceId: f.id, noPull: true };
+        const pending = await performManagedSync(engine, opts);
+        expect(pending).toMatchObject({ status: 'partial', reason: 'writer_pending', filesImported: 0, added: 0,
+          managedWrite: { source_id: f.id, slug: 'pending', path: 'pending.md', write_error: 'write_pending' } });
+        const id = pending.managedWrite!.write_request.request_id;
+        expect(pending.managedWrite!.write_request.state).not.toBe('committed');
+        expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1', [f.id])).toHaveLength(0);
+        expect((await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [f.id]))[0].last_commit).toBeNull();
+        const retry = await performManagedSync(engine, { ...opts, retryFailed: true });
+        expect(retry).toMatchObject({ status: 'partial', reason: 'writer_pending', filesImported: 0,
+          managedWrite: { write_request: { request_id: id } } });
+        expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(1);
+        expect(loadSyncFailures().filter(row => row.source_id === f.id)).toHaveLength(0);
+        await lock!.release();
+        const resumed = await performManagedSync(engine, opts);
+        expect(resumed).toMatchObject({ status: 'first_sync', added: 1 });
+        expect(await engine.executeRaw('SELECT state FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid', [f.id, id]))
+          .toEqual([{ state: 'committed' }]);
+      } finally { await lock?.release(); await disposePersistenceConsumer(engine); }
+    }
+  }), 120_000);
 
 test('continuous foreground arrivals cannot starve a bounded sync batch', async () => withEnv({GBRAIN_HOME:home},async()=>{
   const { registerMutationPreparer, startPersistenceConsumer, foregroundWriteCompletions } = await import('../src/core/persistence/service.ts');

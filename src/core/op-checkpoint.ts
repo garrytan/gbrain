@@ -498,6 +498,13 @@ export async function purgeStaleCheckpoints(
       `WITH deleted AS (
          DELETE FROM op_checkpoints
          WHERE updated_at < now() - ($1 || ' days')::interval
+           AND NOT EXISTS (
+             SELECT 1 FROM source_ingestion_receipts r,
+               LATERAL jsonb_array_elements(r.checkpoint_refs) ref
+             WHERE r.outcome = 'incomplete'
+               AND ref->>'op' = op_checkpoints.op
+               AND ref->>'fingerprint' = op_checkpoints.fingerprint
+           )
          RETURNING 1
        )
        SELECT count(*)::text AS count FROM deleted`,

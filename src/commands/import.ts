@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
+import { currentCompanyBrainSync, importCompanyBrainFile } from '../core/company-brain/profile.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -30,6 +31,7 @@ import {
 } from '../core/import-checkpoint.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
+import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -266,22 +268,6 @@ export async function runImport(
       throw e;
     }
   }
-  // v0.39 T1.5: load active pack ONCE at runImport entry; thread to every
-  // per-file importFile call below. Codex perf finding #7 — never per-file.
-  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
-  try {
-    const { loadActivePack } = await import('../core/schema-pack/load-active.ts');
-    const { loadConfig } = await import('../core/config.ts');
-    const resolved = await loadActivePack({
-      cfg: loadConfig(),
-      remote: false, // CLI import is trusted
-      sourceId: opts.sourceId,
-    });
-    importActivePack = { page_types: resolved.manifest.page_types };
-  } catch {
-    importActivePack = undefined;
-  }
-
   // v0.30.x follow-up to PR #707: programmatic sourceId support so internal
   // callers (performFullSync, future Step 6 paths) can route to a named
   // source.
@@ -382,6 +368,15 @@ export async function runImport(
       }
     }
   }
+  let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
+  try {
+    const { loadActivePackForEngine } = await import('../core/schema-pack/engine-resolution.ts');
+    const resolved = await loadActivePackForEngine(engine, { remote: false, sourceId });
+    importActivePack = { page_types: resolved.manifest.page_types };
+  } catch {
+    importActivePack = undefined;
+  }
+
   const workersIdx = args.indexOf('--workers');
   const workersArg = workersIdx !== -1 ? args[workersIdx + 1] : null;
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
@@ -476,7 +471,8 @@ export async function runImport(
   const _walkT0 = Date.now();
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
   const malformedExcluded: string[] = [];
-  let allFiles = collectSyncableFiles(dir, {
+  const company = currentCompanyBrainSync(sourceId);
+  let allFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => join(dir, entry.path)) : collectSyncableFiles(dir, {
     strategy, includeGitignored,
     includeHidden: opts.includeHidden,
     onExcluded: (rel) => { malformedExcluded.push(rel); },
@@ -495,7 +491,7 @@ export async function runImport(
   const fileTypeLabel = strategy === 'code' ? 'code'
     : strategy === 'auto' ? 'syncable' : 'markdown';
   // #753/#774: apply --exclude glob patterns (threaded by performFullSync).
-  if (opts.exclude && opts.exclude.length > 0) {
+  if (!company && opts.exclude && opts.exclude.length > 0) {
     const beforeExclude = allFiles.length;
     allFiles = allFiles.filter(abs => !matchesAnyGlob(relative(dir, abs), opts.exclude));
     info(
@@ -522,7 +518,11 @@ export async function runImport(
   // (parallel-import silent-skip and failed-file no-retry).
   const checkpointPath = gbrainPath('import-checkpoint.json');
   const completed = new Set<string>();
-  if (!fresh) {
+  if (company) {
+    await company.protect([{ op: 'company-brain-content', fingerprint: company.receiptId, kind: 'content' }]);
+    const [row] = await engine.executeRaw<{ completed_keys: string[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='company-brain-content' AND fingerprint=$1", [company.receiptId]);
+    for (const path of row?.completed_keys ?? []) completed.add(path);
+  } else if (!fresh) {
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
       for (const p of cp.completedPaths) completed.add(p);
@@ -624,7 +624,7 @@ export async function runImport(
       // multimodal is enabled. The walker (collectMarkdownFiles) only picks
       // up images when GBRAIN_EMBEDDING_MULTIMODAL=true so this branch is
       // unreachable when the gate is off; defense-in-depth check anyway.
-      const result = isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
+      const result = company ? await importCompanyBrainFile(eng, filePath, sourceId!) : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
         : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
       // An import that landed while cancellation arrived is still complete.
@@ -682,6 +682,11 @@ export async function runImport(
     }
     processed++;
     tickProgress();
+    if (company) {
+      await engine.executeRaw("INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('company-brain-content',$1,$2::text::jsonb) ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()",
+        [company.receiptId, JSON.stringify([...completed])]);
+      return;
+    }
     // Save checkpoint every 100 SUCCESSFUL adds (not every 100 processed).
     // Failed files never enter `completed`, so a flaky file can't push the
     // checkpoint past it — the next run will retry it.
@@ -804,6 +809,7 @@ export async function runImport(
   // Save the successful tail on interruption/failure. Keep this synchronous:
   // checkpoint and cancellation decisions must not race another worker.
   function preserveCompletedPaths(): void {
+    if (company) return;
     if (completed.size <= lastCheckpointSize) return;
     try {
       mkdirSync(gbrainPath(), { recursive: true });
@@ -1049,7 +1055,7 @@ export async function runImport(
 
   throwIfInterrupted();
   // Only a fully completed run removes resume state, including async metadata.
-  if (errors === 0) clearCheckpoint(checkpointPath);
+  if (errors === 0 && !company) clearCheckpoint(checkpointPath);
   else if (existsSync(checkpointPath)) info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1078,6 +1084,7 @@ export async function runImport(
     slog(`  ${chunksCreated} chunks created`);
   }
 
+  if (imported > 0 && !opts.managedBookmark) await refreshProjectionStatistics(engine);
   return {
     imported, skipped, errors, chunksCreated, failures,
     ...(totalMalformed > 0 ? { malformedSkipped: totalMalformed } : {}),

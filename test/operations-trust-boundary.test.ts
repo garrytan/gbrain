@@ -232,6 +232,7 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'get_recent_transcripts',
       'migrate_embeddings',
       'purge_deleted_pages',
+      'sources_inspect',
       'sync_brain',
     ];
     const derived = operations.filter(o => o.localOnly).map(o => o.name).sort();

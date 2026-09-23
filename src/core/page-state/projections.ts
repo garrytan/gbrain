@@ -1,6 +1,9 @@
 import type { BrainEngine } from '../engine.ts';
-import type { Chunk, ChunkInput, ResolvedColumn } from '../types.ts';
-import { chunkText, MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
+import type { Chunk, ChunkInput, ResolvedColumn, PageKind } from '../types.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
+import { CHUNKER_VERSION } from '../chunkers/code.ts';
+import { prepareMarkdownChunks } from '../markdown-chunks.ts';
+import { prepareCodeChunks, installCodeChunkEdges } from '../code-chunks.ts';
 import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
 import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -8,6 +11,7 @@ import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
+import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 
 /** Complete the searchable snapshot only after its sanitized chunks are installed. */
 export async function sealPageTextProjection(engine: BrainEngine, slug: string, sourceId: string): Promise<void> {
@@ -25,8 +29,10 @@ export interface ProjectionSnapshot {
   chunks: Chunk[];
   indexingContext: string;
   embeddingModel: string | null;
+  embeddingColumn: ResolvedColumn;
   maxChunkTokens: number;
   maxChunkTokensOverride?: number;
+  pageKind: PageKind;
 }
 
 /** Canonical state can stay unchanged while another worker replaces its projection. */
@@ -38,7 +44,7 @@ export class PageProjectionConflictError extends PageRevisionConflictError {
   }
 }
 
-async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxChunkTokensOverride?: number): Promise<{ key: string; model: string | null; maxChunkTokens: number; column: ResolvedColumn }> {
+async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxChunkTokensOverride?: number): Promise<{ key: string; model: string | null; maxChunkTokens: number; column: ResolvedColumn; pageKind: PageKind }> {
   const config = await engine.executeRaw<{ key: string; value: string }>(
     "SELECT key,value FROM config WHERE key IN ('search_embedding_column','embedding_columns','embedding_model','embedding_dimensions','contextual_retrieval.mode') ORDER BY key");
   let model = config.find(row => row.key === 'embedding_model')?.value ?? null;
@@ -50,9 +56,12 @@ async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxC
   });
   const [projection] = await engine.executeRaw<{ chunker_version: number | null; corpus_generation: string | null }>(
     'SELECT chunker_version,corpus_generation FROM pages WHERE id=$1', [snapshot.page.id]);
+  const [kind] = await engine.executeRaw<{ page_kind: PageKind }>('SELECT page_kind FROM pages WHERE id=$1', [snapshot.page.id]);
+  if (!kind) throw new PageRevisionConflictError(snapshot.revision, null);
   return { key: digest({ config, mode: snapshot.page.contextual_retrieval_mode, model, column,
     maxChunkTokens, storedChunkerVersion: projection?.chunker_version ?? null, corpusGeneration: projection?.corpus_generation ?? null,
-    chunkerVersion: MARKDOWN_CHUNKER_VERSION, ftsLanguage: getFtsLanguage() }), model, maxChunkTokens, column };
+    chunkerVersion: MARKDOWN_CHUNKER_VERSION, codeChunkerVersion: CHUNKER_VERSION, pageKind: kind.page_kind,
+    ftsLanguage: getFtsLanguage() }), model, maxChunkTokens, column, pageKind: kind.page_kind };
 }
 
 /** A short guarded read binds the exact chunk set and title/body revision. */
@@ -64,12 +73,12 @@ export async function readProjectionSnapshot(engine: BrainEngine, slug: string, 
     if (!snapshot || (!opts.allowUnsealed && snapshot.page.text_projection_revision !== snapshot.revision)) return null;
     const context = await indexingContext(tx, snapshot, opts.maxChunkTokens);
     return { snapshot, chunks: await tx.getChunks(slug, { sourceId, includeUnsealed: true }), indexingContext: context.key,
-      embeddingModel: context.model, maxChunkTokens: context.maxChunkTokens, maxChunkTokensOverride: opts.maxChunkTokens };
+      embeddingModel: context.model, embeddingColumn: context.column, maxChunkTokens: context.maxChunkTokens, maxChunkTokensOverride: opts.maxChunkTokens, pageKind: context.pageKind };
   });
 }
 
 /** No provider work under the guard. Delayed derived results lose to newer content. */
-export async function installPageProjection(engine: BrainEngine, prepared: ProjectionSnapshot, chunks: ChunkInput[], opts: { seal?: boolean; signature?: string; preserveEmbeddings?: boolean } = {}): Promise<void> {
+export async function installPageProjection(engine: BrainEngine, prepared: ProjectionSnapshot, chunks: ChunkInput[], opts: { seal?: boolean; signature?: string; preserveEmbeddings?: boolean; code?: Awaited<ReturnType<typeof prepareCodeChunks>> } = {}): Promise<void> {
   const { snapshot } = prepared;
   const sourceId = snapshot.page.source_id;
   const slug = snapshot.page.slug;
@@ -77,6 +86,8 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     await tx.lockPageKeys([{ sourceId, slug }]);
     const current = await tx.readPageSnapshot(slug, { sourceId });
     assertPageRevision(current, { expectedRevision: snapshot.revision });
+    const [source] = await tx.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
+    if (!source || source.archived || current!.page.deleted_at) throw new PageRevisionConflictError(snapshot.revision, current!.revision);
     if (current!.sourceIncarnation !== snapshot.sourceIncarnation || current!.page.id !== snapshot.page.id) {
       throw new PageRevisionConflictError(snapshot.revision, current!.revision);
     }
@@ -90,8 +101,25 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
       || context.key !== prepared.indexingContext) {
       throw new PageProjectionConflictError(snapshot.revision, current!.revision);
     }
-    if (opts.seal && !opts.preserveEmbeddings) await tx.deleteChunks(slug, { sourceId });
+    if (opts.seal && opts.preserveEmbeddings) {
+      const byIndex = new Map(chunks.map(chunk => [chunk.chunk_index, chunk]));
+      const identity = (chunk: ChunkInput | Chunk) => [chunk.chunk_text, chunk.chunk_source,
+        chunk.language ?? null, chunk.symbol_name ?? null, chunk.symbol_type ?? null,
+        chunk.start_line ?? null, chunk.end_line ?? null, chunk.parent_symbol_path ?? null,
+        chunk.doc_comment ?? null, chunk.symbol_name_qualified ?? null, chunk.modality ?? 'text'];
+      const matching = stored.filter(chunk => {
+        const next = byIndex.get(chunk.chunk_index);
+        return next && digest(identity(chunk)) === digest(identity(next));
+      }).map(chunk => chunk.id);
+      await tx.executeRaw(`DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))`, [snapshot.page.id, matching]);
+      await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(context.column.name)}=NULL,
+        embedded_at=NULL,embedded_text_hash=NULL WHERE page_id=$1 AND
+        (model IS DISTINCT FROM $2 OR embedded_text_hash IS DISTINCT FROM md5(chunk_text) OR $3::boolean)`,
+      [snapshot.page.id, context.column.name === 'embedding' ? context.model : context.column.embeddingModel,
+        ![null, undefined, 'none'].includes(snapshot.page.contextual_retrieval_mode)]);
+    } else if (opts.seal) await tx.deleteChunks(slug, { sourceId });
     await tx.upsertChunks(slug, chunks, { sourceId, expectedRevision: snapshot.revision, embeddingColumn: context.column });
+    if (opts.code) await installCodeChunkEdges(tx, slug, sourceId, opts.code);
     if (opts.seal) {
       await tx.executeRaw(`UPDATE pages SET chunker_version=$3
         WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
@@ -152,12 +180,24 @@ export async function queuePageProjection(engine: Pick<BrainEngine, 'executeRaw'
     ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
 }
 
-/** Bounded and keyless. Code/image pages retain queued work for their source importer. */
+export async function preparePageProjection(prepared: ProjectionSnapshot) {
+  const page = prepared.snapshot.page;
+  if (prepared.pageKind === 'code') {
+    const path = typeof page.frontmatter.file === 'string' ? page.frontmatter.file : page.source_path;
+    if (!path) throw new Error('Code projection requires a recorded source path. Restore frontmatter.file or source_path before retrying.');
+    const code = await prepareCodeChunks(page, path);
+    return { chunks: code.chunks, code };
+  }
+  if (prepared.pageKind !== 'markdown') throw new Error('This page kind requires its source importer.');
+  return { chunks: await prepareMarkdownChunks(page, prepared.maxChunkTokens), code: undefined };
+}
+
+/** Bounded and keyless. Unsupported media remains queued for its source importer. */
 export async function rebuildPendingPageProjections(engine: BrainEngine, limit = 20): Promise<{ rebuilt: number; superseded: number }> {
   const jobs = await engine.executeRaw<{ source_id: string; source_incarnation: string; slug: string; revision: string; page_kind: string }>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind
     FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation
     JOIN pages p ON p.source_id=s.id AND p.slug=j.slug
-    WHERE p.deleted_at IS NULL AND p.page_kind='markdown'
+    WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind IN ('markdown','code')
     ORDER BY j.updated_at,j.source_incarnation,j.slug LIMIT $1`, [Math.max(1, Math.min(limit, 100))]);
   let rebuilt = 0;
   let superseded = 0;
@@ -169,20 +209,27 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
       if (!pending.length) return null;
       return readProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
     });
-    if (!prepared) { superseded++; continue; }
-    const chunks: ChunkInput[] = [];
-    for (const field of ['compiled_truth', 'timeline'] as const) {
-      for (const chunk of chunkText(sanitizeRemoteBody(prepared.snapshot.page[field]), { maxTokens: prepared.maxChunkTokens })) {
-        chunks.push({ chunk_index: chunks.length, chunk_text: chunk.text, chunk_source: field });
-      }
-    }
+    if (!prepared || prepared.snapshot.sourceIncarnation !== job.source_incarnation || prepared.snapshot.revision !== job.revision) { superseded++; continue; }
     try {
-      await installPageProjection(engine, prepared, chunks, { seal: true });
+      const projection = await preparePageProjection(prepared);
+      await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
       rebuilt++;
     } catch (error) {
-      if (!(error instanceof PageRevisionConflictError)) throw error;
+      if (!(error instanceof PageRevisionConflictError)) {
+        await engine.executeRaw(`UPDATE page_projection_jobs SET reason='rebuild_failed',updated_at=now()
+          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [job.source_incarnation, job.slug, job.revision]);
+        process.stderr.write('[gbrain] Projection rebuild failed; work remains queued. Inspect projection readiness and the recorded source path.\n');
+        continue;
+      }
       superseded++;
     }
+  }
+  if (rebuilt > 0) {
+    const remaining = await engine.executeRaw(`SELECT 1 FROM page_projection_jobs j
+      JOIN sources s ON s.incarnation=j.source_incarnation JOIN pages p ON p.source_id=s.id AND p.slug=j.slug
+      WHERE p.deleted_at IS NULL AND NOT s.archived AND p.page_kind IN ('markdown','code')
+        AND j.reason<>'rebuild_failed' LIMIT 1`);
+    if (!remaining.length) await refreshProjectionStatistics(engine);
   }
   return { rebuilt, superseded };
 }

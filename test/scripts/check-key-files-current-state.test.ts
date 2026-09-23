@@ -122,4 +122,36 @@ describe("check-key-files-current-state.sh", () => {
     writeDoc("docs/architecture/thin-client.md", "# Thin-client\n\n**v0.36.3:** added cross-modal.\n");
     expect(run().status).toBe(1);
   });
+
+  it("checks history markers in subsystem references", () => {
+    seedClean();
+    writeDoc("docs/architecture/key-files/engines.md", "# Engines\n\n**v0.40.0:** changed behavior.\n");
+    const result = run();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("key-files/engines.md");
+  });
+
+  it("detects duplicate entries across different subsystems", () => {
+    seedClean();
+    writeDoc("docs/architecture/key-files/engines.md", "- `src/core/example.ts` — one current truth.\n");
+    writeDoc("docs/architecture/key-files/runtime.md", "- `src/core/example.ts` — another current truth.\n");
+    const result = run();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("more than one bullet");
+    expect(result.stderr).toContain("src/core/example.ts");
+  });
+
+  it.each([
+    ["README.md", 45000],
+    ["docs/architecture/KEY_FILES.md", 10000],
+    ["docs/architecture/key-files/engines.md", 60000],
+  ] as const)("bounds %s without rejecting the exact cap", (path, cap) => {
+    seedClean();
+    writeDoc(path, "x".repeat(cap));
+    expect(run().status).toBe(0);
+    writeDoc(path, "x".repeat(cap + 1));
+    const result = run();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`over the ${cap} cap`);
+  });
 });

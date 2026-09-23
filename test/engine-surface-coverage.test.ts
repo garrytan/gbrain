@@ -62,7 +62,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Extraction watermark
   'countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch',
   // Links + graph
-  'addLink', 'addLinksBatch', 'removeLink', 'getLinks', 'getBacklinks', 'listLinkSources',
+  'addLink', 'addLinksBatch', 'replaceDerivedLinks', 'removeLink', 'getLinks', 'getBacklinks', 'listLinkSources',
   'findByTitleFuzzy', 'traverseGraph', 'traversePaths', 'traversePathsDetailed', 'relationalFanout', 'getBacklinkCounts',
   'getAdjacencyBoosts', 'getContentFlagsByPageIds', 'getUnverifiedExtractionPageIds',
   'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages',

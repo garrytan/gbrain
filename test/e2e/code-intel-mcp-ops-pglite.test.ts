@@ -296,6 +296,7 @@ async function seedQualifiedMethodGraph(engine: PGLiteEngine): Promise<void> {
     [page],
   );
   await insertUnresolvedEdge(engine, rows[0]!.id, 'MyApp.Services.OrderService.SubmitAsync', 'ValidateRequest', 'source-a');
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [page]);
 }
 
 async function seedCrossSourceGraph(engine: PGLiteEngine): Promise<void> {
@@ -325,6 +326,7 @@ async function seedDefSite(engine: PGLiteEngine): Promise<void> {
      VALUES ($1, 0, 'export function parseMarkdown(s: string) { return s; }', 'compiled_truth', 'typescript', 'parseMarkdown', 'parseMarkdown', 'function', 1, 3)`,
     [pageA],
   );
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [pageA]);
 }
 
 async function registerSource(engine: PGLiteEngine, id: string): Promise<void> {
@@ -359,6 +361,7 @@ async function insertChunk(
      RETURNING id`,
     [pageId, chunkIndex, `// ${symbolName} body`, symbolName, symbolType],
   );
+  await engine.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id=$1', [pageId]);
   return rows[0]!.id;
 }
 

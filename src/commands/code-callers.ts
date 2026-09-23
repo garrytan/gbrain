@@ -76,6 +76,7 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
     const readiness = await resolveCodeReadiness(engine, {
       kind: 'edge', count: edges.length, sourceId: sourceId ?? undefined, allSources, remote: false,
     });
+    const hint = readinessHint(readiness);
 
     if (shouldEmitJson(args)) {
       const out: Record<string, unknown> = {
@@ -85,19 +86,18 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
       // #3707: out_of_scope names the empty scope so "grant/scope problem" is
       // distinguishable from "graph never built" in machine output.
       if (readiness.scoped_source_id) out.scoped_source_id = readiness.scoped_source_id;
-      if (edges.length === 0 && !allSources && sourceId) {
-        out.hint = readiness.status === 'out_of_scope'
-          ? (readinessHint(readiness) ?? `No callers in source '${sourceId}'.`)
-          : `No callers in source '${sourceId}'. Try --all-sources to search every source.`;
+      if (hint) out.hint = hint;
+      if (edges.length === 0 && !allSources && sourceId
+        && !['projection_pending', 'unknown', 'out_of_scope'].includes(readiness.status)) {
+        out.hint = `No callers in source '${sourceId}'. Try --all-sources to search every source.`;
       }
       console.log(JSON.stringify(out, null, 2));
     } else if (edges.length === 0) {
       if (!allSources && sourceId) {
-        console.log(`No callers found for "${sym}" in source '${sourceId}'. Try --all-sources to search every source.`);
+        console.log(`No callers found for "${sym}" in source '${sourceId}'.${!['projection_pending', 'unknown'].includes(readiness.status) ? ' Try --all-sources to search every source.' : ''}`);
       } else {
         console.log(`No callers found for "${sym}".`);
       }
-      const hint = readinessHint(readiness);
       if (hint) console.log(hint);
     } else {
       console.log(`${edges.length} caller(s) for "${sym}":`);
@@ -105,6 +105,7 @@ export async function runCodeCallers(engine: BrainEngine, args: string[]): Promi
         const res = e.resolved ? 'resolved' : 'unresolved';
         console.log(`  ${e.from_symbol_qualified}  → ${e.to_symbol_qualified}  [${res}]`);
       }
+      if (hint) console.log(hint);
     }
   } catch (e: unknown) {
     const env = serializeError(e);

@@ -11,6 +11,7 @@ import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from '
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation } from './physical-root.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
+import { assertWriterAdminState } from './admin-intent.ts';
 
 export interface WorktreeBinding {
   worktree_id: string;
@@ -32,7 +33,7 @@ export async function managedPersistenceEnabled(engine: SqlEngine): Promise<bool
   const [row] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
   return row?.enabled === true;
 }
-export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId = localHostId()): Promise<WorktreeBinding | null> {
+export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId: string | null = localHostId()): Promise<WorktreeBinding | null> {
   const [row] = await engine.executeRaw<WorktreeBinding>(`SELECT s.*,w.owner_host_id,w.owner_epoch,w.state,
     h.local_path,h.coordination_path FROM persistence_source_bindings s
     JOIN persistence_worktrees w ON w.id=s.worktree_id
@@ -40,11 +41,11 @@ export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, ho
     WHERE s.source_id=$1`, [sourceId, hostId]);
   return row ?? null;
 }
-export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId()): Promise<WorktreeBinding> {
+export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = localHostId(), expectedAdminState?: string): Promise<WorktreeBinding> {
   if(await managedPersistenceEnabled(engine)) {
     if(hostId!==localHostId()) throw new OperationError('permission_denied','A source can be claimed only by the local registered host.');
     const { runManagedSourceLifecycle }=await import('./source-lifecycle.ts');
-    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path});
+    await runManagedSourceLifecycle(engine,{operation:'claim',sourceId,path,expectedAdminState});
     return (await getWorktreeBinding(engine,sourceId,hostId))!;
   }
   let sourceRoot: string;
@@ -68,6 +69,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   await engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+    await assertWriterAdminState(tx, expectedAdminState);
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
     if (!source || source.archived) throw new OperationError('source_changed', 'Only an active registered source can claim a worktree.');
     const current = await getWorktreeBinding(tx, sourceId, hostId);
@@ -140,7 +142,7 @@ export function worktreeManifest(root: string): { digest: string; files: Record<
   visit(canonical);
   return { digest: digest(files), files };
 }
-export async function prepareWriterTransfer(engine: BrainEngine, sourceId: string, hostId = localHostId()): Promise<{ worktree_id: string; owner_epoch: string; manifest: ReturnType<typeof worktreeManifest> }> {
+export async function prepareWriterTransfer(engine: BrainEngine, sourceId: string, hostId = localHostId(), expectedAdminState?: string): Promise<{ worktree_id: string; owner_epoch: string; manifest: ReturnType<typeof worktreeManifest> }> {
   const binding = await getWorktreeBinding(engine, sourceId, hostId);
   if (!binding || binding.owner_host_id !== hostId || !binding.local_path) throw new OperationError('permission_denied', 'Only the current owner can prepare this transfer.');
   const lock = await acquireWorktree(binding, 5000);
@@ -148,6 +150,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
   try {
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+      await assertWriterAdminState(tx, expectedAdminState);
       const [owner] = await tx.executeRaw<{ owner_host_id: string; owner_epoch: string }>('SELECT owner_host_id,owner_epoch FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       if (owner.owner_host_id !== hostId) throw new OperationError('owner_unavailable', 'Ownership changed during transfer.');
       const pending = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND
@@ -160,7 +163,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
     });
   } finally { await lock.release(); }
 }
-export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string, path: string, expectedEpoch: string, expectedManifest: string, hostId = localHostId()): Promise<void> {
+export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string, path: string, expectedEpoch: string, expectedManifest: string, hostId = localHostId(), expectedAdminState?: string): Promise<void> {
   const root = realpathSync(resolve(path));
   const manifest = worktreeManifest(root);
   if (manifest.digest !== expectedManifest) throw new OperationError('writer_manifest_mismatch', 'Successor checkout differs from the recorded canonical manifest.');
@@ -172,6 +175,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   try {
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+      await assertWriterAdminState(tx, expectedAdminState);
       const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string; manifest: { digest: string } }>('SELECT owner_epoch,state,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
       if (!owner || owner.state !== 'draining' || String(owner.owner_epoch) !== expectedEpoch || owner.manifest?.digest !== expectedManifest) throw new OperationError('writer_transfer_conflict', 'Transfer preparation or epoch changed.');
       const pending = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND (state IN ('running','recovering') OR recovery IS NOT NULL) LIMIT 1`, [binding.worktree_id]);

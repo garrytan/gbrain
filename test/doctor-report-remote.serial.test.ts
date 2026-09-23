@@ -218,3 +218,31 @@ describe('doctorReportRemote — source scope (#4592)', () => {
     expect(JSON.stringify(scoped)).not.toContain(SRCB);
   });
 });
+
+describe('run_doctor canonical projection readiness', () => {
+  test('the real handler excludes private and ungranted pending pages while local callers can diagnose them', async () => {
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES ('readiness-visible','readiness-visible'),('readiness-hidden','readiness-hidden') ON CONFLICT DO NOTHING");
+    await engine.putPage('notes/current-example', { title: 'Example', type: 'note', compiled_truth: 'current' }, { sourceId: 'readiness-visible' });
+    await engine.putPage('notes/private-example', { title: 'Private example', type: 'note', compiled_truth: 'private', frontmatter: { visibility: 'private' } }, { sourceId: 'readiness-hidden' });
+    await engine.executeRaw("UPDATE pages SET text_projection_revision=knowledge_revision WHERE source_id='readiness-visible'");
+    const ctx = {
+      engine, remote: true, sourceId: 'readiness-hidden',
+      auth: { allowedSources: ['readiness-visible', 'readiness-hidden'] },
+    } as unknown as OperationContext;
+    const check = (report: DoctorReport) => report.checks.find(c => c.name === 'text_projection_readiness')!;
+    const remote = check(await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport);
+    expect(remote.status).toBe('ok');
+    expect(remote.details).toEqual({ readiness: 'ready', ready: true });
+    const local = check(await operationsByName.run_doctor.handler({ ...ctx, remote: false }, {}) as DoctorReport);
+    expect(local.status).toBe('warn');
+    expect(local.details).toEqual({ readiness: 'projection_pending', ready: false });
+    const restricted = check(await operationsByName.run_doctor.handler({ ...ctx, auth: { ...ctx.auth!, allowedSources: ['readiness-visible'] } }, {}) as DoctorReport);
+    expect(restricted.status).toBe('ok');
+    expect(JSON.stringify(restricted)).not.toContain('readiness-hidden');
+    expect(JSON.stringify(local)).not.toContain('notes/private-example');
+    await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL WHERE source_id='readiness-visible'");
+    const pending = check(await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport);
+    expect(pending.status).toBe('warn');
+    expect(pending.details).toEqual({ readiness: 'projection_pending', ready: false });
+  });
+});

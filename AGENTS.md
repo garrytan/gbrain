@@ -23,9 +23,9 @@ start here.
    ```
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`,
    the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218).
-   Run `gbrain apply-migrations --yes` to recover, or fall back to the
+   Run `gbrain apply-migrations --yes --no-autopilot-install` to recover without installing services, or fall back to the
    deterministic install: `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
-2. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
+2. Init keyless memory: `gbrain init --pglite --no-embedding` (zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
 3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
    default but printed a 9-cell cost matrix (mode × downstream model)
@@ -41,6 +41,15 @@ start here.
 ## Memory operating protocol
 
 Recall relevant saved context before answering. Save explicit requests to remember with provenance; confirm corrections against the stored record. Automatic capture requires opt-in. Withdrawal (`forget`) removes a fact from active memory; history, source material, and private backups may remain. Never promise physical erasure. Verify changes with actual GBrain calls and distinguish a local test from a new-conversation test in the harness.
+
+Durable preferences and facts belong in shared memory when the user wants them
+recalled later. Transient task state, credentials, local configuration, and harness
+activation state do not. Remote `put_page` saves references as text without inline
+graph extraction; stdio has best-effort startup/idle sweeps, while HTTP requires
+explicit host maintenance or authorized `add_link` calls. Configured model
+providers can receive text; Markdown export is not a full database backup.
+Read [memory boundaries](docs/guides/memory-boundaries.md) before promising
+portability, graph freshness, privacy, or recovery.
 
 ## Read this order
 
@@ -88,7 +97,7 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
-  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes` (manual schema-only).
+  [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).
 - **Eval retrieval changes:** capture is off by default. To benchmark a
   retrieval change against real captured queries, set
   `GBRAIN_CONTRIBUTOR_MODE=1`, then `gbrain eval export --since 7d > base.ndjson`

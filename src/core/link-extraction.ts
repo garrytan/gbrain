@@ -31,7 +31,7 @@ import { PageRegexBudget } from './schema-pack/redos-guard.ts';
  * loadActivePackBestEffort → `.manifest`); null/undefined keeps the legacy
  * in-code inference exactly as before.
  */
-export type LinkExtractionPack = Pick<SchemaPackManifest, 'link_types' | 'frontmatter_links'>;
+export type LinkExtractionPack = Pick<SchemaPackManifest, 'link_types' | 'frontmatter_links'> & Partial<Pick<SchemaPackManifest, 'page_types'>>;
 
 export { stripCodeBlocks } from './markdown-code.ts';
 export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidate } from './timeline-citations.ts';
@@ -55,10 +55,6 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // links inside the machine-written list sections rolePriorSuppressedRanges
 // matches (Timeline, See also, Related, Facts, Sources, Links, Email mention
 // links, Backlinks, Significant moments), so pre-fix extractions re-run.
-// NOTE: a re-run ADDS a 'mentions' row beside the prior-typed works_at/advises
-// row — link_type is part of the links conflict key and the insert is
-// ON CONFLICT DO NOTHING with no prune — it does NOT demote the old edge;
-// cleaning those up is a separate maintainer decision.
 // 2026-09-06: #4873 — pass 1b accepts a leading `./` (and, same wave, the
 // `../` / `./../` sibling forms + the folded bare-wikilink grammar), so pages
 // whose links were pruned by the sweep reconcile re-extract on `extract --stale`.
@@ -76,7 +72,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-09-09T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-09-21T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -222,7 +218,7 @@ const WIKILINK_RE = new RegExp(
  * anyway, but the two-pass approach keeps intent crystal-clear).
  */
 const QUALIFIED_WIKILINK_RE = new RegExp(
-  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):(${DIR_PATTERN}\\/[^|\\]#]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
+  `\\[\\[([a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?):([^|\\]#\\n[]+?)(?:#[^|\\]]*?)?(?:\\|([^\\]]+?))?\\]\\]`,
   'g',
 );
 
@@ -572,6 +568,7 @@ export interface LinkCandidate {
   fromSlug?: string;
   /** Target page slug (no .md, no ../). */
   targetSlug: string;
+  targetSourceId?: string;
   /** Inferred relationship type. */
   linkType: string;
   /** Surrounding text (up to ~80 chars) used for inference + storage. */
@@ -627,7 +624,8 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; pack?: LinkExtractionPack | null } = {},
+  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; pack?: LinkExtractionPack | null;
+    targetType?: (slug: string, sourceId?: string) => string | undefined } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -646,13 +644,21 @@ export async function extractPageLinks(
   // `content` (stripCodeBlocks and the wikilink mask are length-preserving,
   // so indices line up); idx < 0 / undefined keeps the old behavior.
   const suppressedRanges = rolePriorSuppressedRanges(stripCodeBlocks(content));
-  const typeFor = (ctx: string, targetSlug: string, idx?: number): string => {
+  const typeFor = (ctx: string, targetSlug: string, idx?: number, sourceId?: string): string => {
+    const targetType = opts.targetType?.(targetSlug, sourceId);
     if (pack) {
-      const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget);
-      if (packVerb) return packVerb;
+      const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget, targetType);
+      if (packVerb) {
+        if (packVerb === 'attended' && pageType === 'meeting'
+          && (opts.targetType ? targetType !== 'person' : !targetSlug.startsWith('people/'))) return 'mentions';
+        return packVerb;
+      }
     }
     const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
-    return inferLinkType(pageType, ctx, suppressPrior ? undefined : content, targetSlug);
+    const legacy = inferLinkType(pageType, ctx, suppressPrior ? undefined : content, targetSlug,
+      opts.targetType ? targetType ?? null : undefined);
+    if (pack?.link_types.some(lt => lt.name === legacy && (lt.inference?.page_type || lt.inference?.target_type))) return 'mentions';
+    return legacy;
   };
 
   // 1. Markdown entity refs.
@@ -807,7 +813,8 @@ export async function extractPageLinks(
     const targetSlug = resolveRelativeSlug(slug, ref).toLowerCase();
     candidates.push({
       targetSlug,
-      linkType: typeFor(context, targetSlug, idx),
+      targetSourceId: ref.sourceId ?? undefined,
+      linkType: typeFor(context, targetSlug, idx, ref.sourceId ?? undefined),
       context,
       linkSource: 'markdown',
     });
@@ -857,7 +864,7 @@ export async function extractPageLinks(
   // path needed `resolveBasenameMatches` on the real resolver.
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack, opts.targetType);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
   }
@@ -873,7 +880,7 @@ export async function extractPageLinks(
   const seen = new Set<string>();
   const result: LinkCandidate[] = [];
   for (const c of candidates) {
-    const key = `${c.fromSlug ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}`;
+    const key = `${c.fromSlug ?? ''}\u0000${c.targetSourceId ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(c);
@@ -1050,7 +1057,7 @@ function inSuppressedRange(ranges: Array<[number, number]>, idx: number): boolea
  * lists portfolio companies without repeating the investment verb each time
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
  */
-export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string): string {
+export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null): string {
   if (pageType === 'media') {
     return 'mentions';
   }
@@ -1059,7 +1066,10 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   // path-proximity helper, not by markdown extraction — but the type is
   // declared here so graph-query knows the edge name.
   if ((pageType as string) === 'image') return 'image_of';
-  if ((pageType as string) === 'meeting') return 'attended';
+  if ((pageType as string) === 'meeting') {
+    return targetType !== undefined ? (targetType === 'person' ? 'attended' : 'mentions')
+      : (!targetSlug || targetSlug.startsWith('people/') ? 'attended' : 'mentions');
+  }
   // Per-edge verb rules.
   if (FOUNDED_RE.test(context)) return 'founded';
   if (INVESTED_RE.test(context)) return 'invested_in';
@@ -1423,6 +1433,7 @@ export interface UnresolvedFrontmatterRef {
   field: string;
   /** The name that did not resolve. */
   name: string;
+  reason?: 'target_type_mismatch';
 }
 
 export interface FrontmatterExtractResult {
@@ -1445,18 +1456,11 @@ export async function extractFrontmatterLinks(
   resolver: SlugResolver,
   globalBasename = false,
   pack?: LinkExtractionPack | null,
+  targetType?: (slug: string) => string | undefined,
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
 
-  // #3190: append pack-declared frontmatter_links as OUTGOING mappings.
-  // Pre-fix a pack's `frontmatter_links` table (e.g. `parents:` →
-  // parent_of) was dead weight — only the hardcoded FRONTMATTER_LINK_MAP
-  // ever ran, so pack-declared fields produced 0 candidates. Field → verb
-  // resolution goes through frontmatterLinkTypeFromPack (first matching
-  // pack rule for this page type wins, the helper's documented contract).
-  // Built-ins keep their table order; pack mappings run after, and the
-  // final within-page dedup collapses exact duplicates.
   const packMappings: FrontmatterFieldMapping[] = [];
   if (pack && pack.frontmatter_links.length > 0) {
     const seenFields = new Set<string>();
@@ -1466,12 +1470,20 @@ export async function extractFrontmatterLinks(
         seenFields.add(field);
         const type = frontmatterLinkTypeFromPack(pack, pageType as string, field);
         if (!type) continue; // no pack rule for this page type
-        packMappings.push({ fields: [field], type, direction: 'outgoing', dirHint: '' });
+        const expectedType = pack.link_types.find(lt => lt.name === type)?.inference?.target_type;
+        const prefixes = pack.page_types?.find(pt => pt.name === expectedType)?.path_prefixes.map(p => p.replace(/^\/+|\/+$/g, ''));
+        const legacy = FRONTMATTER_LINK_MAP.find(mapping => mapping.fields.includes(field)
+          && (!mapping.pageType || mapping.pageType === pageType));
+        packMappings.push({ fields: [field], type, direction: 'outgoing', dirHint: prefixes?.length ? prefixes : legacy?.dirHint ?? '' });
       }
     }
   }
 
-  for (const mapping of [...FRONTMATTER_LINK_MAP, ...packMappings]) {
+  const overriddenFields = new Set(packMappings.flatMap(mapping => mapping.fields));
+  const legacyMappings = FRONTMATTER_LINK_MAP.map(mapping => ({
+    ...mapping, fields: mapping.fields.filter(field => !overriddenFields.has(field)),
+  }));
+  for (const mapping of [...legacyMappings, ...packMappings]) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];
@@ -1522,6 +1534,12 @@ export async function extractFrontmatterLinks(
         }
         if (!resolved) {
           unresolved.push({ field, name });
+          continue;
+        }
+        const expectedType = packMappings.includes(mapping)
+          ? pack?.link_types.find(lt => lt.name === mapping.type)?.inference?.target_type : undefined;
+        if (expectedType && targetType?.(resolved) !== expectedType) {
+          unresolved.push({ field, name, reason: 'target_type_mismatch' });
           continue;
         }
 

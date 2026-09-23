@@ -1,8 +1,8 @@
 /**
  * #4655 write-time pack vocabulary helpers — the edges the capture / add_link
  * negative-regression tests do not reach:
- *   - loader: a rejecting engine.getConfig never throws (resolution falls
- *     through to the env / file tiers); an unresolvable pack name → null, so
+ *   - loader: a rejecting engine.getConfig never throws (returns null
+ *     without selecting a fallback pack); an unresolvable pack name → null, so
  *     the write proceeds (enforcement only where a vocabulary exists).
  *   - previewNames bound (via the suggestion builders): 0 names →
  *     'none declared'; 15 names → the first 12 plus a '(15 total)' tail.
@@ -39,12 +39,11 @@ function fakePack(pageTypes: string[], linkTypes: string[] = []): ResolvedPack {
 }
 
 describe('loadActivePackForWriteVocabulary (best-effort loader)', () => {
-  test('a rejecting engine.getConfig never throws — resolution falls through to the env tier', async () => {
+  test('a rejecting engine.getConfig never throws — no fallback vocabulary is enforced', async () => {
     const engine = { getConfig: async () => { throw new Error('connection lost'); } };
     await withEnv({ GBRAIN_SCHEMA_PACK: 'gbrain-base' }, async () => {
       const pack = await loadActivePackForWriteVocabulary({ engine, remote: true });
-      expect(pack).not.toBeNull();
-      expect(pack!.manifest.name).toBe('gbrain-base');
+      expect(pack).toBeNull();
     });
   });
 

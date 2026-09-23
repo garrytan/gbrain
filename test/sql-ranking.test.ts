@@ -311,7 +311,7 @@ describe('buildVisibilityClause (v0.26.5)', () => {
 
   test('uses the supplied aliases verbatim', () => {
     expect(buildVisibilityClause('pp', 'src')).toBe(
-      "AND pp.deleted_at IS NULL AND pp.text_projection_revision = pp.knowledge_revision AND NOT src.archived AND NOT (COALESCE(pp.frontmatter, '{}'::jsonb) ? 'quarantine')",
+      "AND pp.deleted_at IS NULL AND (pp.text_projection_revision = pp.knowledge_revision) IS TRUE AND NOT src.archived AND NOT (COALESCE(pp.frontmatter, '{}'::jsonb) ? 'quarantine')",
     );
   });
 

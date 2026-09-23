@@ -383,6 +383,72 @@ The agent's MCP client picks the alias and thus the destination per tool
 call. There's no global gbrain orchestrator that knows about all of them
 simultaneously — that's by design.
 
+## Writer administration is not routine repair
+
+An `owner_unavailable` write error means that the selected source cannot currently
+publish through its designated owner. It is not permission to claim a checkout,
+activate managed persistence, or transfer ownership. Start with read-only inspection
+on the selected brain host:
+
+```bash
+gbrain sources writer status --brain host --json
+```
+
+Keep the brain and source selection explicit. Inspect the existing owners, source
+bindings, epochs, enabled state and outstanding recovery before asking the operator
+what should change. `doctor`, `doctor --fix`, startup checks, scheduled maintenance
+and retries must leave these identities and epochs alone. Never remove ownership
+markers, recreate identities, or edit database rows to bypass a refusal.
+
+### Deliberate topology changes
+
+Only the trusted local CLI administration lane can perform these operations.
+Ordinary remote tokens and stdio agent credentials cannot administer ownership,
+even when they supply the flags below. Local shell access is already trusted:
+these flags record deliberate, state-bound intent, not proof that a human is
+typing. A TTY or a generic `--yes` is neither required nor sufficient.
+
+For a planned change, the operator must review `status` and retain its `admin_state`
+fingerprint. Each non-dry-run action requires both an exact `--admin-intent` and
+`--expected-state` containing that reviewed fingerprint:
+
+| Action | Required intent |
+|---|---|
+| `claim` | `writer_claim` |
+| `activate` | `writer_activate` |
+| `transfer prepare` | `writer_transfer_prepare` |
+| `transfer accept` | `writer_transfer_accept` |
+
+For example, after reviewing the target host and canonical directory:
+
+```bash
+gbrain sources writer claim default --brain host --path /absolute/canonical/source --dry-run --json
+gbrain sources writer claim default --brain host --path /absolute/canonical/source \
+  --admin-intent writer_claim --expected-state <reviewed-admin-state> --json
+```
+
+Inspect status again after each change. The fingerprint covers the brain identity,
+managed mode, source incarnations and paths, owner identities and epochs, worktree
+membership and transfer manifests. It excludes heartbeats and ordinary queue
+traffic. A changed fingerprint refuses with `writer_admin_state_changed`, including
+a change racing the final transaction. Re-inspect and re-review; do not blindly
+substitute the new value and retry. Dry runs do not grant permission to apply.
+
+Activation additionally requires every older writer and maintenance process on
+every host to be upgraded and stopped, filesystem sources to have their intended
+owners, and outstanding locks and recovery to be resolved. Preview activation
+with `--confirm-quiesced --dry-run`, then, only when approved:
+
+```bash
+gbrain sources writer activate --brain host --confirm-quiesced \
+  --admin-intent writer_activate --expected-state <reviewed-admin-state> --json
+```
+
+`--confirm-quiesced` remains an attestation about all hosts, not a way to bypass the
+intent and state checks. Explicit noninteractive provisioning uses the same
+procedure and preconditions. A transfer still requires the prepared epoch and an
+exact successor manifest; stale heartbeats never authorize takeover.
+
 ## When NOT to use these topologies
 
 - **Don't use Topology 2 if your agent only ever runs on the same machine

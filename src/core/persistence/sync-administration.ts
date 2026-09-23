@@ -28,7 +28,8 @@ export async function runAuthenticatedSyncSlice(engine: BrainEngine, params: Rec
         // Delegation bypasses runSync's inline embedding cost/config gate.
         // Preserve import-only publication; the owner drains accepted embeds.
         const result=await performSync(engine,{...wire.options,sourceId,noEmbed:true,signal:controller.signal});
-        if(!wire.options.dryRun&&!wire.options.noEmbed&&result.added+result.modified>0) {
+        if(!wire.options.dryRun&&!wire.options.noEmbed&&result.added+result.modified>0 &&
+          !await (await import('../company-brain/profile.ts')).getCompanyBrainProfile(engine,sourceId)) {
           (await import('../serve-sync-runner.ts')).scheduleDeferredSyncEmbeds(engine,sourceId);
         }
         return {...result,source_id:sourceId};

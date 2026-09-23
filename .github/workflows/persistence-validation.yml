@@ -119,6 +119,19 @@ jobs:
             test/persistence-recovery-capacity.test.ts \
             test/audit/pool-recovery-audit.test.ts \
             test/persistence-recovery-fairness.test.ts
+      - name: Require canonical reconciliation through direct and pooled PostgreSQL
+        timeout-minutes: 5
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+          GBRAIN_PGBOUNCER_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:55433/gbrain_test
+          GBRAIN_PGBOUNCER_DIRECT_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_CI_REQUIRE_PGBOUNCER: '1'
+        run: >-
+          bun --no-env-file test --timeout=120000
+          test/persistence-reconcile.test.ts
+          test/e2e/reconcile-pgbouncer.test.ts
+          test/e2e/extract-atoms-page-state.test.ts
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -158,6 +171,25 @@ jobs:
         run: >-
           bun --no-env-file scripts/persistence/validate.ts --engine=${{ matrix.engine }}
           --manifest=.context/persistence-manifest.json
+      - name: Require all reconciliation crash boundaries before and after activation
+        timeout-minutes: 12
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+          GBRAIN_TEST_RECONCILE_CRASH_MANIFEST_DIR: .context/reconcile-crashes
+        run: |
+          if [ '${{ matrix.engine }}' = 'postgres' ]; then
+            bun --no-env-file test --timeout=180000 test/e2e/reconcile-crash.test.ts test/e2e/reconcile-crash-unactivated.test.ts
+          else
+            env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun --no-env-file test --timeout=180000 test/reconcile-crash.slow.test.ts
+          fi
+      - name: Upload reconciliation crash manifests
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reconciliation-${{ matrix.engine }}-bun-${{ matrix.bun }}
+          path: .context/reconcile-crashes/*.json
+          if-no-files-found: error
       - name: Upload executed-case and latency manifest
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

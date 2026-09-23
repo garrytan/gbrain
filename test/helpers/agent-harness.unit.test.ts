@@ -519,7 +519,7 @@ describe('resolveGrokBinary — fail-closed GROK_BIN handling', () => {
 describe('opencodeChildEnv — XDG redirection + explicit anthropic re-admission (5a-core factory)', () => {
   test('ANTHROPIC_API_KEY survives via explicit override; HOME + both XDG dirs point at the temp home; autoupdate env kill set', async () => {
     await withEnv({ ANTHROPIC_API_KEY: 'ant-child-sentinel' }, () => {
-      const env = opencodeChildEnv('/tmp/opencode-child-test');
+      const env = opencodeChildEnv('/tmp/opencode-child-test', { paid: true });
       expect(env.ANTHROPIC_API_KEY).toBe('ant-child-sentinel');
       expect(env.HOME).toBe('/tmp/opencode-child-test');
       expect(env.XDG_CONFIG_HOME).toBe('/tmp/opencode-child-test/.config');
@@ -543,6 +543,7 @@ describe('opencodeChildEnv — XDG redirection + explicit anthropic re-admission
     }, () => {
       const env = opencodeChildEnv('/tmp/opencode-child-test');
       for (const k of [
+        'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
         'OPENAI_API_KEY', 'XAI_API_KEY', 'OPENROUTER_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY',
         'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG_CONTENT',
         'GITHUB_ENV',

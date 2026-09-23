@@ -118,6 +118,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "use my brain over mcp", "serve my brain over mcp", "expose my brain over mcp", "gbrain mcp server", "remote mcp access to my brain", "put my brain on tailscale", "gbrain mcp expose" | `skills/remote-mcp/SKILL.md` (publish the local `serve --http` on the tailnet; Funnel only for cloud agents) |
 | "connect grok bot to my brain", "connect muse to my brain", "connect claude desktop to my brain", "reach my brain from my phone" | `skills/remote-mcp/SKILL.md` (host-side publish + per-client grant; the client-side install then follows `skills/setup/SKILL.md` / hosted access) |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
+| "connect our company brain", "connect our existing company brain", "import an existing company brain" | `skills/migrate/SKILL.md` (company repository workflow; preview and approval before import, not sanitization) |
 | "Switch embedding provider" / "migrate my embeddings" / "switch reranker" / "ZeroEntropy" / "provider_sunset" / "search stopped working after a provider shutdown" | `skills/migrations/v0.46.3.0.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |

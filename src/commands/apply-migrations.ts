@@ -68,7 +68,7 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
     mode,
     specificMigration: val('--migration'),
     hostDir: val('--host-dir'),
-    noAutopilotInstall: has('--no-autopilot-install'),
+    noAutopilotInstall: has('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1',
     forceRetry: val('--force-retry'),
     forceOrchestrator: has('--force-orchestrator'),
     forceSchema: has('--force-schema'),
@@ -112,6 +112,7 @@ Flags:
   --host-dir <path>                      Include this directory in host-file walk
                                          (default scope: \$HOME/.claude + \$HOME/.openclaw).
   --no-autopilot-install                 Skip the Phase F autopilot install step.
+                                         Also: GBRAIN_NO_AUTOPILOT_INSTALL=1.
   --non-interactive                      Equivalent to --yes; never prompt.
 
 Exit codes:

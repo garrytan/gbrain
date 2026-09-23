@@ -17,6 +17,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { CodeEdgeResult } from '../types.ts';
 import { classifySink, type SinkKind } from './sinks/index.ts';
+import { codeReadFilter } from './read-scope.ts';
 
 export type WalkDirection = 'callers' | 'callees';
 
@@ -84,8 +85,8 @@ async function disambiguateSymbol(
     const exact = await engine.executeRaw<{ symbol_name_qualified: string }>(
       `SELECT DISTINCT symbol_name_qualified
          FROM content_chunks
-         JOIN pages ON pages.id = content_chunks.page_id
-        WHERE pages.source_id = $1
+         JOIN pages p ON p.id = content_chunks.page_id
+        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
           AND symbol_name_qualified IS NOT NULL
           AND (symbol_name = $2 OR symbol_name_qualified = $2)
         LIMIT 25`,
@@ -99,8 +100,8 @@ async function disambiguateSymbol(
     const fuzzy = await engine.executeRaw<{ symbol_name_qualified: string }>(
       `SELECT DISTINCT symbol_name_qualified
          FROM content_chunks
-         JOIN pages ON pages.id = content_chunks.page_id
-        WHERE pages.source_id = $1
+         JOIN pages p ON p.id = content_chunks.page_id
+        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
           AND symbol_name_qualified IS NOT NULL
           AND symbol_name_qualified ILIKE $2
         LIMIT 5`,
@@ -131,8 +132,8 @@ async function detectSymbolLanguage(
     const rows = await engine.executeRaw<{ language: string | null }>(
       `SELECT content_chunks.language
          FROM content_chunks
-         JOIN pages ON pages.id = content_chunks.page_id
-        WHERE pages.source_id = $1
+         JOIN pages p ON p.id = content_chunks.page_id
+        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
           AND content_chunks.symbol_name_qualified = $2
         LIMIT 1`,
       [sourceId, qualified],

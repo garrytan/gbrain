@@ -1,7 +1,57 @@
 # Testing (gbrain repo)
 
+`test/local-install-lifecycle.serial.test.ts` exercises isolated Bun-link install,
+keyless memory write/read/search, process reopen and migration/post-upgrade with
+service-command tripwires. `test/e2e/grandfather-projection-postgres.test.ts`
+checks guarded metadata-only grandfathering, duplicate source slugs, preserved
+valid text projections and refusal to seal previously unsealed rows on Postgres.
+`test/reindex-markdown-persistence.slow.test.ts` retains the bounded 3,600-page
+real-CLI reindex, SIGKILL and resume workload; the diagnostic benchmark launcher
+is `scripts/bench-reindex-markdown.ts`.
+
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only.
+
+### Canonical reconciliation
+
+`test/persistence-reconcile-merge.test.ts` pins loss-preserving field choices.
+`test/persistence-reconcile.test.ts` runs the guarded repair and replay contracts
+on PGLite and, with an explicit safe `DATABASE_URL`, isolated PostgreSQL databases.
+It covers stale preconditions, current/original grants, private facts, retained
+backups, ordinary mutations after repair, and competing publications.
+`test/reconcile-owner-journey.serial.test.ts` drives real CLI requests through
+HTTP and stdio PGLite owners before and after activation, restarts the owner, and
+independently reads the newly remembered private fact and provenance.
+
+`test/reconcile-crash.slow.test.ts` and `test/e2e/reconcile-crash*.test.ts` kill real
+processes at all eight publication boundaries with activation off/on. PostgreSQL
+uses one file per activation state to stay within the unchanged per-file cap. Optional
+`GBRAIN_TEST_RECONCILE_CRASH_MANIFEST_DIR` retains executed-case evidence.
+`test/e2e/reconcile-pgbouncer.test.ts` requires the transaction-mode pooler when
+`GBRAIN_CI_REQUIRE_PGBOUNCER=1` and proves repair followed by a new private memory
+write. The durable-persistence workflow runs these contracts on both supported
+Bun versions and uploads the crash manifests; local CI runs the slow and E2E lanes.
+
+`test/docs-navigation.test.ts` checks local links and fragments in the primary
+install/memory guides and all `docs/architecture/key-files/` references, requires
+every subsystem to be linked from `KEY_FILES.md`, and guards against blanket
+graph-write and preference-routing claims. The fixture suite
+`test/scripts/check-key-files-current-state.test.ts` covers history markers,
+cross-subsystem duplicate entries, and byte caps for the entry docs and references.
+
+Search reliability has real-planner and transport regressions in
+`test/e2e/vector-candidate-safety-postgres.test.ts`,
+`test/e2e/search-query-contract-postgres.test.ts`,
+`test/e2e/projection-statistics-postgres.test.ts`, and
+`test/e2e/search-readiness-http.test.ts`. The statistics tests include owner,
+restricted-reader and FORCE-RLS roles; the candidate tests distinguish natural
+plans from forced-HNSW controls and prove server cancellation of exact fallback.
+`test/e2e/projection-recovery-parity.test.ts` runs the shared Markdown/code
+recovery, graph-edge preservation and migration-origin contracts against both
+engines. PGLite work caps never count a Promise race as cancellation evidence.
+The recovery parity entry also runs `symbol-resolver-projection-race.test.ts`:
+paused resolver/rebuild ordering, atomic rollback, candidate revalidation, and
+a real PostgreSQL lock-wait receipt before releasing the competing writer.
 
 `test/pglite-in-memory-create-retry.serial.test.ts` injects create failures while
 using real PGLite instances and a validated schema snapshot. It pins one cold

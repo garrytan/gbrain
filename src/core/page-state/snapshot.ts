@@ -5,6 +5,7 @@ import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import type { ReadQuery } from '../search/read-enrichment.ts';
 import { rowToPage } from '../utils.ts';
 import type { PageSnapshot, PageSnapshotOptions, PageWithdrawal } from './types.ts';
+import { PageSnapshotAmbiguousError } from './types.ts';
 
 /** The DB normalizes companion lines, preserving its lower()/POSIX-space semantics. */
 function overlayWithdrawals(body: string, normalizedBody: string, withdrawals: PageWithdrawal[]): string {
@@ -44,7 +45,9 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
 /** One MVCC statement binds content, tags, identity and withdrawals to one revision. */
 export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
   const params: unknown[] = [slug, opts?.resolveAlias === true];
-  const where = [`(p.slug=$1 OR ($2::boolean AND EXISTS (SELECT 1 FROM slug_aliases a
+  const where = [`(p.slug=$1 OR ($2::boolean
+    ${opts?.preserveExactIdentity ? 'AND NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=p.source_id AND exact_page.slug=$1)' : ''}
+    AND EXISTS (SELECT 1 FROM slug_aliases a
     WHERE a.alias_slug=$1 AND a.source_id=p.source_id AND a.canonical_slug=p.slug
       AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id=a.source_id ${opts?.includeDeleted ? '' : 'AND NOT alias_source.archived'}))))`];
   if (opts?.sourceIds?.length) {
@@ -56,9 +59,10 @@ export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: Pa
   }
   if (!opts?.includeDeleted) where.push('p.deleted_at IS NULL');
   if (opts?.excludePrivate) where.push(privatePagesFilterFragment('p'));
+  if (opts?.requireLiveSource) where.push('EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)');
   params.push(opts?.sourceIds?.[0] ?? 'default');
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
-    SELECT p.* FROM pages p WHERE ${where.join(' AND ')}
+    SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM pages p WHERE ${where.join(' AND ')}
     ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
@@ -73,6 +77,7 @@ export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: Pa
     FROM chosen p`, params);
   if (!rows.length) return null;
   const row = rows[0];
+  if (opts?.requireUnambiguous && Number(row.snapshot_matches) > 1) throw new PageSnapshotAmbiguousError();
   const page = rowToPage(row);
   const withdrawals = row.snapshot_withdrawals as PageWithdrawal[];
   page.compiled_truth = overlayWithdrawals(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals);

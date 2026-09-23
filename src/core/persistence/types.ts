@@ -12,7 +12,7 @@ export const WRITE_ERROR_CODES = [
   'permission_denied', 'scope_denied', 'invalid_params', 'not_found', 'page_not_found',
   'page_identity_changed', 'write_claim_lost', 'request_too_large', 'response_too_large',
   'writer_registration_required', 'writer_identity_invalid', 'writer_not_initialized',
-  'writer_coordinator_required', 'fact_already_expired',
+  'writer_coordinator_required', 'fact_already_expired', 'source_writeback_required',
 ] as const;
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];

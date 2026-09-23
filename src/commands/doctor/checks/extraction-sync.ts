@@ -317,9 +317,9 @@ export async function checkCodeChunkMetadata(engine: BrainEngine): Promise<Check
       message:
         `${chunks} chunk(s) on ${pages} code page(s) have no symbol metadata ` +
         `(symbol_name and language both NULL) — code-def/code-refs and ` +
-        `--lang/--symbol-kind filters miss them. A plain sync/reindex skips ` +
-        `unchanged pages via the content_hash short-circuit. ` +
-        `Fix: gbrain reindex-code --force`,
+        `--lang/--symbol-kind filters miss them. A plain sync/reindex may skip ` +
+        `already-current text projections. ` +
+        `Fix: gbrain reindex-code --force --no-embed`,
       details: { chunks_missing_metadata: chunks, pages_affected: pages },
     };
   } catch (e) {

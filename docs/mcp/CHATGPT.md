@@ -103,14 +103,22 @@ chat: the server must expose a `search`/`fetch` tool PAIR, where every
 `search` result carries an `id` and `fetch(id)` returns
 `{ id, title, text, url, metadata }`. GBrain ships both:
 
-- `search` results carry `id` (the page slug) alongside the native fields.
-- `fetch` takes that `id` and returns the OpenAI shape — `text` is the
+- `search` results carry an opaque, versioned `id` identifying the hit's
+  source and slug alongside the native fields. `query` uses the same IDs.
+- Pass the `id` unchanged to `fetch`; do not replace it with the slug or
+  construct it from the current source. `fetch` returns the OpenAI shape — `text` is the
   page's full canonical markdown, `url` is a stable `gbrain://page/...`
   URI for the citation slot, and `metadata` carries type/source/tags.
 
 `fetch` is a thin read-only adapter over the same page read as `get_page`
 (same source scoping, same privacy fences for remote readers). Normal chat
 keeps using the richer gbrain-native tools; deep research uses the pair.
+An ID does not grant access: fetch rechecks current source grants and page
+visibility. Legacy bare-slug IDs still work when unambiguous within the current
+read scope; collisions are refused instead of selecting the first source.
+See the [deep-research ID protocol](../protocol/DEEP_RESEARCH_IDS_v1.md) for
+encoding, rename behavior, and escaped citation URLs. This protocol is tested
+through GBrain's CLI and MCP transports, not a live ChatGPT connector session.
 
 **DCR zero-scope gotcha.** If the connector registers itself via dynamic
 client registration (`--enable-dcr`) and the registration request omits

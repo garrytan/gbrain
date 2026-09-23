@@ -15,6 +15,7 @@ import { parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal } from './model.ts';
 import { normalizeSubagentPageInput } from './page-input.ts';
+import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   if (ctx.auth?.principal) return { ...ctx.auth.principal };
@@ -39,6 +40,9 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
 }
 export async function submitPageMutation(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; waitMs?: number }): Promise<Record<string, unknown>> {
+  if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
+    throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.');
+  }
   assertPersistenceAccepting(ctx.engine);
   const p: Record<string, unknown> = { ...input.params, ...parseMutationPrecondition(input.params) };
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
@@ -114,7 +118,7 @@ export async function submitPageMutation(ctx: OperationContext,
       'Register the source canonical path, then omit --dir or use that same path.');
   }
   if (writeThrough && root && !binding) {
-    if (ctx.engine.kind !== 'pglite') throw new OperationError('owner_unavailable', 'This source has no designated canonical owner.', 'Register its owner with sources writer claim before accepting writes.');
+    if (ctx.engine.kind !== 'pglite') throw new OperationError('owner_unavailable', 'This source has no designated canonical owner.', WRITER_INSPECTION_HINT);
     binding = await claimWorktree(ctx.engine, sourceId, root);
   }
   const row = await admitWrite(ctx.engine, { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,

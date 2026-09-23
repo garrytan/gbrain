@@ -24,6 +24,7 @@
 // the depth limit can't form because BFS deduplicates visits.
 
 import type { SchemaPackManifest } from './manifest-v1.ts';
+import { createHash } from 'node:crypto';
 
 export const ALIAS_CLOSURE_MAX_DEPTH = 4 as const;
 
@@ -172,9 +173,5 @@ export async function computeAliasClosureHash(
     resolved[t] = expandClosure(t, graph);
   }
   const canonical = JSON.stringify(resolved);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
-  return Array.from(new Uint8Array(hashBuffer))
-    .slice(0, 8)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

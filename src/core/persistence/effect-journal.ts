@@ -27,8 +27,8 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     if (outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {
-    await queue('embedding');
-    outcome.embedding_state = 'queued';
+    if (!prepared?.deferEmbedding) await queue('embedding');
+    outcome.embedding_state = prepared?.deferEmbedding ? 'deferred' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
       // Recheck activation/kill switch at publication, before promising work.
       const [brain] = await tx.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');

@@ -116,9 +116,20 @@ try {
   assert.equal(config.engine, 'pglite'); assert.equal(config.database_path, database); assert.equal(config.embedding_disabled, true);
   await run(['auth', 'local-writer', 'register', 'cli', '--json']);
   await run(['auth', 'local-writer', 'register', 'stdio', '--json']);
-  const claimed = json((await run(['sources', 'writer', 'claim', 'default', '--path', checkout, '--json'])).stdout);
+  const inspected = json((await run(['sources', 'writer', 'status', '--json'])).stdout);
+  assert.match(inspected.admin_state, /^[a-f0-9]{64}$/);
+  const claimArgs = ['sources', 'writer', 'claim', 'default', '--path', checkout, '--json'];
+  assert.equal(json((await run(claimArgs, 1)).stdout).error, 'writer_admin_intent_required');
+  assert.equal(json((await run(['sources', 'writer', 'status', '--json'])).stdout).admin_state, inspected.admin_state);
+  const claimed = json((await run([...claimArgs, '--admin-intent', 'writer_claim', '--expected-state', inspected.admin_state])).stdout);
   assert.equal(claimed.claimed, true);
-  const activated = json((await run(['sources', 'writer', 'activate', '--confirm-quiesced', '--json'])).stdout);
+  const activateArgs = ['sources', 'writer', 'activate', '--confirm-quiesced', '--json'];
+  assert.equal(json((await run(activateArgs, 1)).stdout).error, 'writer_admin_intent_required');
+  assert.equal(json((await run([...activateArgs, '--admin-intent', 'writer_activate', '--expected-state', inspected.admin_state], 1)).stdout).error, 'writer_admin_state_changed');
+  const reviewed = json((await run(['sources', 'writer', 'status', '--json'])).stdout);
+  assert.equal(reviewed.enabled, false);
+  assert.notEqual(reviewed.admin_state, inspected.admin_state);
+  const activated = json((await run([...activateArgs, '--admin-intent', 'writer_activate', '--expected-state', reviewed.admin_state])).stdout);
   assert.equal(activated.enabled, true);
   const status = json((await run(['sources', 'writer', 'status', '--probe', '--json'])).stdout);
   assert.equal(status.native_lock?.acquired, true); assert.equal(status.native_lock?.released, true);
@@ -194,7 +205,7 @@ try {
   await readPage(slug, residentRevision, 'Resident canonical release sentinel.');
   assert.equal(committed(await call('put_page', resident), residentId), residentRevision, 'Receipt did not survive resident shutdown and reopen.');
   console.log(JSON.stringify({ ok: true, target: status.native_lock.target, binary: 'release artifact',
-    legacy_socket_path_bytes: Buffer.byteLength(socketPath), checks: [...(process.platform === 'win32' ? [] : ['long-unicode-ipc-path']), 'keyless-init', 'native-probe', 'filesystem-publication', 'durable-replay', 'revision-conflict', 'authenticated-owner-readiness', 'resident-ipc', 'shutdown-reopen'] }));
+    legacy_socket_path_bytes: Buffer.byteLength(socketPath), checks: [...(process.platform === 'win32' ? [] : ['long-unicode-ipc-path']), 'keyless-init', 'reviewed-writer-intent', 'stale-writer-state-refusal', 'native-probe', 'filesystem-publication', 'durable-replay', 'revision-conflict', 'authenticated-owner-readiness', 'resident-ipc', 'shutdown-reopen'] }));
 } finally {
   try { await stopOwner(); }
   finally {

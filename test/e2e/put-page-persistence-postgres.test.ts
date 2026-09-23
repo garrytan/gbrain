@@ -89,11 +89,12 @@ d('Postgres put_page persistence', () => {
   test('native lock contention preserves the prior revision and returns a durable same-ID receipt', async () => {
     const first = await put('Original canonical revision.');
     expect(first.payload.state).toBe('committed');
+    await disposePersistenceConsumer(engine);
     const before = await snapshot();
     const disk = readFileSync(join(root, `${slug}.md`), 'utf8');
     const binding = await getWorktreeBinding(engine, 'default');
     expect(binding).not.toBeNull();
-    const holder = await acquireWorktree(binding!);
+    const holder = await acquireWorktree(binding!, 5000);
     expect(holder).not.toBeNull();
     let accepted: Awaited<ReturnType<typeof put>>;
     try {

@@ -16,6 +16,7 @@ import { OperationError } from './contract.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
 import { CJK_SLUG_CHARS, SLUG_WORD_CHARS } from '../cjk.ts';
 import { ALL_SOURCES, isValidSourceId } from '../source-id.ts';
+import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
@@ -938,14 +939,8 @@ export function stampEvidenceSafe(results: SearchResult[]): void {
   try { stampEvidence(results); } catch { /* non-fatal */ }
 }
 
-/**
- * #4039 — OpenAI deep-research contract: search results must carry an `id`
- * that the paired `fetch` tool round-trips. id = slug (what `fetch` — the
- * thin get_page adapter in ops/pages.ts — resolves). Additive stamp; every
- * other consumer of SearchResult ignores it.
- */
 export function stampDeepResearchIds(results: SearchResult[]): void {
-  for (const r of results) (r as SearchResult & { id?: string }).id = r.slug;
+  for (const r of results) (r as SearchResult & { id?: string }).id = encodeDeepResearchId(r.source_id, r.slug);
 }
 
 /** T4 — shared eval-capture for the `search` op (keyword-only + cheap-hybrid paths). */
