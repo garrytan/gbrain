@@ -24,6 +24,7 @@ import {
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
 import {
   loadCheckpoint,
+  freshCompletedPaths,
   saveCheckpoint,
   clearCheckpoint,
   resolveImportTargetDir,
@@ -525,8 +526,14 @@ export async function runImport(
   } else if (!fresh) {
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
-      for (const p of cp.completedPaths) completed.add(p);
-      info(`Resuming from checkpoint: skipping ${completed.size} already-processed files`);
+      // Drop entries whose file changed (or vanished) after the checkpoint
+      // was written — a preserved checkpoint may be days old.
+      const { fresh: done, stale } = freshCompletedPaths(cp, dir);
+      for (const p of done) completed.add(p);
+      info(
+        `Resuming from checkpoint: skipping ${completed.size} already-processed files` +
+        (stale > 0 ? ` (${stale} changed since checkpoint, re-checking)` : ''),
+      );
     }
   }
   const files = resumeFilter(allFiles, dir, completed);
