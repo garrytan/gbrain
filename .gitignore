@@ -58,10 +58,3 @@ graphify-out/
 # Coverage lane output (COVERAGE_DIR opt-in in test-shard.sh /
 # run-serial-tests.sh / run-e2e.sh; merged by scripts/merge-lcov.ts)
 .coverage/
-
-# Local code-intelligence + brain state, per-clone and machine-specific.
-# .codegraph/ is the CodeGraph SQLite index (rebuilt by its file watcher);
-# .gbrain/ is this clone's local brain (PGLite data + config). Both are
-# regenerated on demand and neither is ever committed.
-.codegraph/
-.gbrain/

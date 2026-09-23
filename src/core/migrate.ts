@@ -6645,6 +6645,31 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
       END $rls$;
     `,
   },
+  {
+    version: 164,
+    name: 'page_aliases_cyrillic_fold',
+    // normalizeAlias now folds ё → е and drops a Cyrillic stress mark (U+0301)
+    // after lowercasing (ADR-0001), on both the write and the read side. Rows
+    // written before that would never match a query again, so re-key them
+    // with the same two folds (alias_norm is already NFKC + lowercase). Rows
+    // that collapse onto a sibling of the same page lose the duplicate first
+    // (keeping an already-folded row, else the oldest), so the
+    // (source_id, alias_norm, slug) unique key cannot fire. Idempotent.
+    // test/cyrillic-slug-grammar.test.ts pins this SQL to normalizeAlias.
+    idempotent: true,
+    sql: `
+      DELETE FROM page_aliases a USING page_aliases b
+       WHERE regexp_replace(replace(a.alias_norm, 'ё', 'е'), '([\u0400-\u04FF])\u0301+', '\\1', 'g') <> a.alias_norm
+         AND b.id <> a.id
+         AND b.source_id = a.source_id AND b.slug = a.slug
+         AND regexp_replace(replace(b.alias_norm, 'ё', 'е'), '([\u0400-\u04FF])\u0301+', '\\1', 'g')
+           = regexp_replace(replace(a.alias_norm, 'ё', 'е'), '([\u0400-\u04FF])\u0301+', '\\1', 'g')
+         AND (regexp_replace(replace(b.alias_norm, 'ё', 'е'), '([\u0400-\u04FF])\u0301+', '\\1', 'g') = b.alias_norm
+              OR b.id < a.id);
+      UPDATE page_aliases SET alias_norm = regexp_replace(replace(alias_norm, 'ё', 'е'), '([\u0400-\u04FF])\u0301+', '\\1', 'g')
+       WHERE regexp_replace(replace(alias_norm, 'ё', 'е'), '([\u0400-\u04FF])\u0301+', '\\1', 'g') <> alias_norm;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

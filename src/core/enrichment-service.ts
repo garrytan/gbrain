@@ -17,7 +17,7 @@ import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
 import { tryAliasExact } from './entities/resolve.ts';
-import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE, SLUG_MARK_STRIP_RE } from './cjk.ts';
+import { SLUG_NON_WORD_RUN_RE, foldSlugText } from './cjk.ts';
 // #3994: created stubs route through serializeMarkdown + importFromContent
 // (the same parse→chunk→embed pipeline put_page uses) instead of a bare
 // engine.putPage, so fresh entity pages land in the retrieval surface
@@ -80,35 +80,23 @@ export interface EnrichmentResult {
 // Entity naming utilities
 // ---------------------------------------------------------------------------
 
-// Keep-set mirrors sync.ts:slugifySegment (single grammar, see cjk.ts
-// docstring) so an entity minted here and a file synced under brain/people/
-// never diverge on what counts as a slug character.
-const SLUGIFY_ENTITY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}]`, 'gu');
+/** The page namespace an entity of this type lives under. */
+export function entityNamespace(type: 'person' | 'company'): 'people' | 'companies' {
+  return type === 'person' ? 'people' : 'companies';
+}
 
 /**
- * Convert an entity name to a URL-safe slug.
- *
- * Was ASCII-only ([a-z0-9]), which silently dropped every non-Latin
- * character — Cyrillic/CJK/Arabic/etc. names slugified to '' or a bare
- * '-', producing empty or colliding people/companies slugs. Now mirrors
- * sync.ts:slugifySegment's Unicode-aware keep-set: strip Latin accents to
- * their base letter (fold, don't drop), keep every script's own letters
- * as-is (Cyrillic, CJK, Devanagari, …).
+ * Convert an entity name to a page slug under its namespace. Letters of every
+ * script survive through the shared letter fold (cjk.ts:foldSlugText), so an
+ * entity minted here keeps the same letters as a file synced under
+ * brain/people/. Apostrophes drop ("O'Brien" → "obrien"); every other
+ * non-letter run becomes one hyphen, so the result passes PAGE_SLUG_SEG.
  */
 export function slugifyEntity(name: string, type: 'person' | 'company'): string {
-  const slug = name
-    .replace(/['‘’]/g, '')
-    .normalize('NFD')
-    .replace(SLUG_MARK_STRIP_RE, '')
-    .normalize('NFC')
-    .replace(SLUG_VARIATION_SELECTORS_RE, '')
-    .toLowerCase()
-    .replace(SLUGIFY_ENTITY_KEEP_RE, '-')
-    .replace(/-+/g, '-')
+  const slug = foldSlugText(name.replace(/['‘’]/g, ''))
+    .replace(SLUG_NON_WORD_RUN_RE, '-')
     .replace(/^-+|-+$/g, '');
-
-  const prefix = type === 'person' ? 'people' : 'companies';
-  return `${prefix}/${slug}`;
+  return `${entityNamespace(type)}/${slug}`;
 }
 
 /** Get the brain page path for an entity. */
@@ -131,22 +119,14 @@ export async function enrichEntity(
 ): Promise<EnrichmentResult> {
   const candidateSlug = slugifyEntity(request.entityName, request.entityType);
   const sourceId = opts?.sourceId ?? 'default';
-  // ADR-0001: two spellings of one Russian name slugify APART on purpose, and
-  // the alias layer is what merges them. Consult it before minting: a page
-  // already claiming this normalized name owns the entity whatever spelling
-  // this particular mention used, so the second spelling appends to it instead
-  // of forking a twin. resolveSlugWithAlias (slug_aliases: rename redirects)
-  // is a different table and cannot see name spellings — both are needed.
-  // Fails closed to the old behaviour: a missing/empty alias table returns null.
-  //
-  // Namespace gate: page_aliases is brain-wide and type-blind — ANY page may
-  // claim ANY name (a `projects/атлас` note with `aliases: [Атлас]`). An
-  // Entity lives under people/ or companies/ and nowhere else, so a hit
-  // outside this entity's own namespace is not this entity; taking it would
-  // append the mention's timeline entry + backlink to an unrelated page.
-  const namespace = `${candidateSlug.split('/')[0]}/`;
+  // ADR-0001: two spellings of one name slug apart on purpose; the alias layer
+  // (page_aliases) merges them, so consult it before minting a twin.
+  // resolveSlugWithAlias reads slug_aliases (rename redirects), a different
+  // table that cannot see name spellings. page_aliases is type-blind, so only
+  // a hit inside this entity's own namespace counts: `projects/атлас` claiming
+  // "Атлас" is not the company Атлас.
   const aliasHit = await tryAliasExact(engine, sourceId, request.entityName);
-  const aliasSlug = aliasHit?.startsWith(namespace) ? aliasHit : null;
+  const aliasSlug = aliasHit?.startsWith(`${entityNamespace(request.entityType)}/`) ? aliasHit : null;
   const slug = aliasSlug ?? await engine.resolveSlugWithAlias(candidateSlug, sourceId);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
@@ -195,24 +175,11 @@ export async function enrichEntity(
       created: new Date().toISOString().split('T')[0],
       source: request.sourceSlug,
       tier,
-      // ADR-0001 (TRUSTED path only): the stub claims its own display name as
-      // an alias, so the NEXT mention spelled differently resolves here
-      // through tryAliasExact above. Without this row an extraction-born
-      // entity has no alias at all and the yo/ye fold merges nothing.
-      // Projected into page_aliases by importFromContent; the fail-open
-      // putPage fallback below does NOT project aliases, so a stub written
-      // through it stays unmerged until re-import.
-      //
-      // A quarantined stub deliberately publishes nothing: page_aliases steers
-      // exact-lookup, hybrid search and resolveEntityRef for the whole brain,
-      // so an unreviewed extractor guess would get a vote on resolution
-      // everywhere — the same failure the authoritative-write gate refuses.
-      // That withholding is a DEFERRAL, not a cancellation: promoting the stub
-      // publishes this alias (ops/extraction.ts, the `promote` branch), which
-      // is what lifts it. Quarantine is the DEFAULT path — trusted extraction
-      // needs both a local caller and --trusted-extraction — so if promotion
-      // ever stops doing that, the yo/ye fold merges nothing on a normal
-      // install. test/cyrillic-slug-grammar.test.ts pins both halves.
+      // ADR-0001: a trusted stub claims its display name as an alias
+      // (projected into page_aliases by importFromContent, not by the putPage
+      // fallback below) so the next differently-spelled mention resolves here.
+      // A quarantined stub publishes no alias until `extraction_review
+      // promote` does it for it (ops/extraction.ts).
       // issue #160 quarantine lane: stubs extracted from untrusted input
       // carry provenance + unverified markers until the owner reviews them.
       ...(trusted ? { aliases: [title] } : quarantineMarkers()),
@@ -397,6 +364,11 @@ export function extractEntities(text: string): Array<{ name: string; type: 'pers
   // and the Unicode line/paragraph separators (U+2028/U+2029) -- while
   // retaining horizontal whitespace (spaces, tabs, NBSP, other Unicode
   // space separators), unlike a plain `[ \t]+`.
+  //
+  // Capitalization is the only name signal here, so detection covers scripts
+  // with letter case (Latin, Cyrillic, Greek, Armenian, …). Caseless scripts
+  // (CJK, Arabic, Hebrew, Devanagari) yield no candidates; names in them still
+  // slug correctly when they reach enrichEntity by another route.
   const namePattern = /(?<!\p{L})(\p{Lu}[\p{Ll}\p{M}]+(?:[^\S\r\n\v\f\u2028\u2029]+\p{Lu}[\p{Ll}\p{M}]+){1,3})(?!\p{L})/gu;
   let match;
   while ((match = namePattern.exec(text)) !== null) {

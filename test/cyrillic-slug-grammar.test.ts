@@ -9,6 +9,8 @@ import { normalizeAlias } from '../src/core/search/alias-normalize.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { isUnverifiedExtraction } from '../src/core/extraction-review.ts';
+import { PAGE_SLUG_SEG } from '../src/core/cjk.ts';
+import { MIGRATIONS } from '../src/core/migrate.ts';
 
 /**
  * Pins ADR-0001 (docs/adr/0001-cyrillic-slugs-keep-i-kratkoye-and-yo.md).
@@ -54,6 +56,38 @@ describe('ADR-0001: Cyrillic slugs keep и-kratkoye and yo', () => {
     });
   }
 
+  for (const [name, fn] of GRAMMARS) {
+    test(`${name} keeps и-kratkoye when a stress mark sits between и and its breve`, () => {
+      // The base of a mark is the nearest non-mark before it, not the previous
+      // code point: и + U+0301 + U+0306 is a stressed й, not a stressed и.
+      expect(fn('Андри\u0301\u0306')).toBe('андрй');
+      expect(fn('Пе\u0308\u0301тр')).toBe('пётр');
+    });
+
+    test(`${name} folds Hebrew niqqud like an accent (#3700)`, () => {
+      expect(fn('שָׁלוֹם')).toBe('שלום');
+    });
+  }
+
+  test('every grammar keeps the same letters for one input', () => {
+    // The four grammars share one letter fold (cjk.ts:foldSlugText). What they
+    // do with NON-letters differs by contract (`.`/`_` kept, hyphenated or
+    // dropped), and resolve/basename also fold stroke letters, so compare the
+    // letters only, on inputs without stroke letters.
+    const letters = (s: string) => s.replace(/[^\p{L}\p{M}\p{N}]/gu, '');
+    for (const input of ['שָׁלוֹם Cohen', 'А.С. Пушкин', 'Ёлка_Йошкар', 'Zoë Ångström', 'Иван\uFE0F Петров']) {
+      const outs = GRAMMARS.map(([, fn]) => letters(fn(input)));
+      expect(new Set(outs).size).toBe(1);
+    }
+  });
+
+  test('an entity slug is always a valid page slug, dots and underscores included', () => {
+    const seg = new RegExp(`^${PAGE_SLUG_SEG}$`, 'u');
+    for (const name of ['А.С. Пушкин', 'foo_bar Baz', 'Łukasz Nowak', "O'Brien Example", 'שָׁלוֹם Cohen']) {
+      expect(slugifyEntity(name, 'person').replace(/^people\//, '')).toMatch(seg);
+    }
+  });
+
   test('a page slug and its basename index key agree on Cyrillic', () => {
     // The regression guard. normalizeBasename is slugifySegment's twin (#4985):
     // when only one of them keeps the marks, every [[wikilink]] to a name
@@ -80,6 +114,13 @@ describe('ADR-0001 consequence: the alias layer merges yo and ye', () => {
   test('yo and ye spellings share one alias key', () => {
     expect(normalizeAlias('Пётр Иванов')).toBe(normalizeAlias('Петр Иванов'));
     expect(normalizeAlias('ПЁТР ИВАНОВ')).toBe(normalizeAlias('Петр Иванов'));
+  });
+
+  test('a Cyrillic stress mark does not split the alias key', () => {
+    expect(normalizeAlias('Андре\u0301й')).toBe(normalizeAlias('Андрей'));
+    expect(normalizeAlias('Ё\u0301лка')).toBe(normalizeAlias('Елка'));
+    // Macedonian ѓ/ќ compose under NFKC, so they are letters here, not stress.
+    expect(normalizeAlias('Ѓорѓи')).toBe('ѓорѓи');
   });
 
   test('и-kratkoye is NOT merged into и', () => {
@@ -325,6 +366,27 @@ describe('ADR-0001 consequence: enrichEntity merges the two spellings', () => {
     expect(after!.frontmatter.aliases).toContain('Анна Смирнова');
   });
 
+  test('promotion keeps a comma-list scalar alias the owner wrote', async () => {
+    const stub = await enrichEntity(engine, mention('Ольга Кузнецова', 'person'), { trusted: false });
+    const page = await engine.getPage(stub.slug);
+    await engine.putPage(stub.slug, {
+      title: 'Ольга Кузнецова',
+      type: 'person',
+      compiled_truth: page!.compiled_truth ?? '',
+      timeline: '',
+      frontmatter: { ...page!.frontmatter, aliases: 'Оля, Лёля' },
+    });
+
+    await extraction_review.handler(reviewCtx(), { action: 'promote', slugs: [stub.slug] });
+
+    const after = await engine.getPage(stub.slug);
+    expect(after!.frontmatter.aliases).toEqual(['Оля', 'Лёля', 'Ольга Кузнецова']);
+    const rows = await engine.executeRaw<{ alias_norm: string }>(
+      `SELECT alias_norm FROM page_aliases WHERE slug = $1 ORDER BY alias_norm`, [stub.slug],
+    );
+    expect(rows.map((r) => r.alias_norm)).toEqual(['леля', 'ольга кузнецова', 'оля']);
+  });
+
   test('a trusted stub DOES publish its name, which is what merges the pair', async () => {
     await enrichEntity(engine, mention('Пётр Иванов', 'person'), { trusted: true });
 
@@ -332,5 +394,67 @@ describe('ADR-0001 consequence: enrichEntity merges the two spellings', () => {
       normalizeAlias('Петр Иванов'),
     ) ?? [];
     expect(hits.map((h) => h.slug)).toContain('people/пётр-иванов');
+  });
+});
+
+describe('ADR-0001 upgrade: alias rows written before the yo fold are re-keyed', () => {
+  let engine: PGLiteEngine;
+  const migration = MIGRATIONS.find((m) => m.name === 'page_aliases_cyrillic_fold')!;
+  const rows = async () =>
+    (await engine.executeRaw<{ alias_norm: string; slug: string }>(
+      `SELECT alias_norm, slug FROM page_aliases ORDER BY slug, alias_norm`,
+    )).map((r) => `${r.slug}=${r.alias_norm}`);
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('old yo rows fold; collapsed duplicates keep one row; a rerun is a no-op', async () => {
+    await engine.executeRaw(`DELETE FROM page_aliases`);
+    // What a pre-fold brain holds: the yo spelling stored verbatim, a page
+    // claiming both spellings, and a page with two yo variants of one name.
+    await engine.executeRaw(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug) VALUES
+        ('default', 'пётр иванов', 'people/a'),
+        ('default', 'петр иванов', 'people/b'),
+        ('default', 'пётр иванов', 'people/b'),
+        ('default', 'пётр ёжиков', 'people/c'),
+        ('default', 'петр ёжиков', 'people/c'),
+        ('default', 'андрей', 'people/d')`,
+    );
+    await engine.runMigration(migration.version, migration.sql);
+    const after = await rows();
+    expect(after).toEqual([
+      'people/a=петр иванов',
+      'people/b=петр иванов',
+      'people/c=петр ежиков',
+      'people/d=андрей',
+    ]);
+    // Every row is reachable again by the key normalizeAlias computes today.
+    expect(after[0].split('=')[1]).toBe(normalizeAlias('Пётр Иванов'));
+    await engine.runMigration(migration.version, migration.sql);
+    expect(await rows()).toEqual(after);
+  });
+
+  test('the migration SQL re-keys a pre-fold row to exactly what normalizeAlias computes', async () => {
+    // A pre-fold row is NFKC + lowercase (+ trim/collapse) without the two
+    // Cyrillic folds. The SQL twin must land on normalizeAlias's key, or the
+    // re-keyed row still never matches a query.
+    const names = ['Пётр Иванов', 'Андре\u0301й', 'Ё\u0301лка', 'Ѓорѓи', 'Café Olé', 'Йошкар-Ола'];
+    await engine.executeRaw(`DELETE FROM page_aliases`);
+    for (const [i, name] of names.entries()) {
+      await engine.executeRaw(
+        `INSERT INTO page_aliases (source_id, alias_norm, slug) VALUES ('default', $1, $2)`,
+        [name.normalize('NFKC').toLowerCase(), `people/p${i}`],
+      );
+    }
+    await engine.runMigration(migration.version, migration.sql);
+    const got = await engine.executeRaw<{ alias_norm: string; slug: string }>(
+      `SELECT alias_norm, slug FROM page_aliases ORDER BY slug`,
+    );
+    expect(got.map((r) => r.alias_norm)).toEqual(names.map((n) => normalizeAlias(n)));
   });
 });

@@ -23,7 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { SLUG_WORD_CHARS, SLUG_MARK_STRIP_RE } from '../cjk.ts';
+import { SLUG_NON_WORD_RUN_RE, foldSlugText } from '../cjk.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { isUndefinedTableError } from '../utils.ts';
 
@@ -122,12 +122,10 @@ let aliasExactWarned = false;
  * Fail-open on undefined-table (pre-v110 brains have no page_aliases table);
  * other errors warn once per process so degradation isn't silent.
  *
- * Exported for enrichment-service, which must consult the alias layer BEFORE
- * minting an entity page: ADR-0001 slugs "Pyotr" and "Petr" apart on purpose,
- * and this is the layer that merges them back onto one Entity. Note for that
- * caller: the index is brain-wide and type-blind — ANY page may claim ANY
- * name — so a caller that only accepts pages from one namespace must filter
- * the result itself. This function deliberately does not guess the namespace.
+ * Exported for enrichment-service, which consults it before minting an entity
+ * page (ADR-0001: two spellings slug apart, the alias layer merges them). The
+ * index is type-blind — any page may claim any name — so a caller that only
+ * accepts one namespace filters the result itself.
  */
 export async function tryAliasExact(engine: BrainEngine, source_id: string, raw: string): Promise<string | null> {
   const norm = normalizeAlias(raw);
@@ -487,38 +485,20 @@ async function tryFuzzyMatch(
   return null;
 }
 
-// Same keep-set as sync.ts's slugifySegment and enrichment-service.ts's
-// slugifyEntity (single grammar, see cjk.ts).  Was /[^a-z0-9]+/ - ASCII-only,
-// so EVERY name in a non-Latin script slugified to the empty string and all of
-// them collided on one empty resolve key.
-const SLUGIFY_RESOLVE_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}]`, 'gu');
-
 /**
  * Deterministic slugify: lowercase, fold accents and stroke letters to their
- * base letter, replace non-alphanumerics with hyphens, collapse repeated
- * hyphens, trim leading/trailing hyphens.
+ * base letter, keep letters and digits of every script (Cyrillic й/ё
+ * included, ADR-0001), turn every other run into one hyphen, trim hyphens.
  *
  * Exported for tests + callers who want the same fallback shape independently.
  */
 export function slugify(raw: string): string {
-  // Stroke letters carry no decomposition, so the mark strip cannot fold them
-  // and the sweep below would DELETE them: "Đăng Example" slugged to
-  // "ang-example". Fold after the strip so composed forms reduce in one pass
-  // ("ǿ" → "ø" → "o").
-  const folded = foldNonDecomposingLatin(
-    raw
-      .toLowerCase()
-      .normalize('NFKD')
-      // NFKD decomposes accents into combining marks (U+0300..U+036F);
-      // strip them before replacing the rest with hyphens so "è" → "e",
-      // not "e" + "-".
-      .replace(SLUG_MARK_STRIP_RE, '')
-      // Recompose so a kept Cyrillic mark becomes its single code point again
-      // before the keep-set sweep sees it (ADR-0001).
-      .normalize('NFC'),
-  );
-  return folded
-    .replace(SLUGIFY_RESOLVE_KEEP_RE, '-')
-    .replace(/-+/g, '-')
+  // NFKD first so compatibility forms fold too ("ﬁ" → "fi"), then the shared
+  // letter fold (cjk.ts). Stroke letters carry no decomposition, so the mark
+  // strip cannot fold them and the sweep below would DELETE them ("Đăng
+  // Example" → "ang-example"); fold them after the strip so composed forms
+  // reduce in one pass ("ǿ" → "ø" → "o").
+  return foldNonDecomposingLatin(foldSlugText(raw.normalize('NFKD')))
+    .replace(SLUG_NON_WORD_RUN_RE, '-')
     .replace(/^-+|-+$/g, '');
 }

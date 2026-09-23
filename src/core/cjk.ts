@@ -58,19 +58,55 @@ export const SLUG_VARIATION_SELECTORS_RE = /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/g
  * base letter, with ONE exception: U+0306 (breve) and U+0308 (diaeresis)
  * survive on a Cyrillic base, because there they are not accents but halves
  * of the letters й (и+U+0306) and ё (е+U+0308). A Cyrillic acute (U+0301,
- * the stress mark in dictionaries) still folds, so "моло́ко" and "молоко"
- * keep landing on one slug. Callers recompose with `.normalize('NFC')`.
+ * the dictionary stress mark) still folds, so a stressed and a bare spelling
+ * of one word keep landing on one slug.
  *
- * Scoped like the #3700 Hebrew-niqqud carve-out: one script's exception to
- * the general fold, not a rewrite of it. The FOUR slug grammars share it —
- * sync.ts's slugifySegment, enrichment-service.ts's slugifyEntity,
- * entities/resolve.ts's slugify and link-extraction.ts's normalizeBasename.
- * The last one is slugifySegment's basename twin (#4985): if it strips marks
- * differently, a page's slug and its basename index key diverge and every
- * `[[wikilink]]` to a name containing й or ё stops resolving.
+ * "On a Cyrillic base" means the nearest non-mark character before the mark,
+ * not the character immediately before it: in и + U+0301 + U+0306 the breve
+ * still belongs to и, so it survives and the result recomposes to й.
+ *
+ * Use it through foldSlugText below, which recomposes afterwards.
  */
 export const SLUG_MARK_STRIP_RE =
-  /(?<!\p{Script=Cyrillic})[\u0300-\u036F]|(?<=\p{Script=Cyrillic})[\u0300-\u0305\u0307\u0309-\u036F]/gu;
+  /(?<!\p{Script=Cyrillic}[\u0300-\u036F]*)[\u0300-\u036F]|(?<=\p{Script=Cyrillic}[\u0300-\u036F]*)[\u0300-\u0305\u0307\u0309-\u036F]/gu;
+
+/**
+ * Hebrew niqqud (vowel points) + cantillation, U+0591-U+05C7 (#3700). They are
+ * optional diacritics — the same word appears pointed and bare across
+ * filenames — so they fold like Latin accents. \p{M} stays in SLUG_WORD_CHARS,
+ * so Devanagari matras, Thai vowels and Arabic harakat are unaffected.
+ */
+const SLUG_HEBREW_POINTS_RE = /[\u0591-\u05C7]/g;
+
+/**
+ * The letter fold every slug grammar shares: which letters survive, and in
+ * which form. NFD, strip combining marks (SLUG_MARK_STRIP_RE) and Hebrew
+ * points, recompose to NFC (Hangul syllables and й/ё come back as single code
+ * points; NFD macOS filenames match NFC ones), drop variation selectors,
+ * lowercase.
+ *
+ * Callers: sync.ts:slugifySegment, enrichment-service.ts:slugifyEntity,
+ * entities/resolve.ts:slugify, link-extraction.ts:normalizeBasename. For one
+ * input they keep the same letters. What each grammar then does with
+ * NON-letters is its own contract and differs on purpose: slugifySegment
+ * keeps `.` and `_` (file paths like notes/v1.0.0), slugifyEntity and slugify
+ * turn every non-letter run into `-` (entity slugs must pass PAGE_SLUG_SEG),
+ * normalizeBasename drops them. resolve.slugify and normalizeBasename also
+ * fold stroke letters (latin-fold.ts, #4855); the page-minting grammars keep
+ * them.
+ */
+export function foldSlugText(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(SLUG_MARK_STRIP_RE, '')
+    .replace(SLUG_HEBREW_POINTS_RE, '')
+    .normalize('NFC')
+    .replace(SLUG_VARIATION_SELECTORS_RE, '')
+    .toLowerCase();
+}
+
+/** A run of characters outside SLUG_WORD_CHARS: the hyphenating grammars' separator. */
+export const SLUG_NON_WORD_RUN_RE = new RegExp(`[^${SLUG_WORD_CHARS}]+`, 'gu');
 
 /**
  * Page-slug segment grammar (no anchors): word-char lead, then word-char or

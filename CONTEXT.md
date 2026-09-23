@@ -1,46 +1,47 @@
-# GBrain — язык предметной области
+# GBrain — domain language
 
-Общий словарь для работы над этим форком. Термины на английском — так они
-названы в коде; определения на русском. Если слово используется не так, как
-здесь написано, спор идёт об этом файле, а не в комментариях к коду.
+A shared vocabulary for working on GBrain. Terms are named as they appear in
+the code. If a word is used differently from what is written here, the
+disagreement is about this file, not about a code comment.
 
 ## Language
 
 **Brain**:
-Одна база данных со своим содержимым и политикой доступа.
-_Избегать_: «база», «инстанс», «хранилище» — они не различают Brain и Engine.
+One database with its own content and access policy.
+_Avoid_: "database", "instance", "store" — they do not separate a Brain from its Engine.
 
 **Source**:
-Именованный набор страниц внутри одного Brain. Слаги уникальны в паре
-`(source_id, slug)`, а не сами по себе.
-_Избегать_: «репозиторий», «коллекция», «пространство имён».
+A named set of pages inside one Brain. Slugs are unique per
+`(source_id, slug)`, not on their own.
+_Avoid_: "repository", "collection", "namespace".
 
 **Engine**:
-Реализация, которой работает Brain: `pglite` или `postgres`. Свойство
-подключения, а не данных.
-_Избегать_: «бэкенд», «драйвер», «движок БД».
+What a Brain runs on: `pglite` or `postgres`. A property of the connection,
+not of the data.
+_Avoid_: "backend", "driver".
 
 **Slug**:
-Устойчивый идентификатор страницы внутри Source. Выводится из имени файла
-или из имени сущности.
-_Избегать_: «путь», «ключ», «id страницы».
+The stable identifier of a page inside a Source. Derived from a file name or
+from an entity name.
+_Avoid_: "path", "key", "page id".
 
-**Грамматика слага**:
-Правило, по которому произвольный текст превращается в Slug: какие символы
-сохраняются, какие сворачиваются, какие выбрасываются.
+**Slug grammar**:
+The rule that turns free text into a Slug: which characters are kept, which
+fold, which are dropped. Every grammar shares one letter fold
+(`cjk.ts:foldSlugText`).
 
-**Лексическая рука**:
-Ветвь поиска, сопоставляющая слова. Зависит от языка: стемминг и стоп-слова
-задаются одной конфигурацией на весь Brain.
-_Избегать_: «полнотекстовый поиск», «FTS» — в разговоре расходятся с «рукой».
+**Lexical arm**:
+The search branch that matches words. Language-dependent: stemming and stop
+words come from one configuration for the whole Brain.
+_Avoid_: "full-text search", "FTS" — in conversation they drift away from "arm".
 
-**Векторная рука**:
-Ветвь поиска, сопоставляющая смысл через эмбеддинги. Языку безразлична.
+**Vector arm**:
+The search branch that matches meaning through embeddings. Language-agnostic.
 
-**Сущность (Entity)**:
-Страница, представляющая человека или организацию, под `people/` или
-`companies/`. Рождается извлечением из текста, а не синхронизацией файла.
+**Entity**:
+A page representing a person or an organization, under `people/` or
+`companies/`. Born from extraction out of text, not from syncing a file.
 
-**Алиас**:
-Альтернативная форма записи, ведущая к той же Сущности. Слой, на котором
-разные написания одного имени сводятся вместе, не трогая Slug.
+**Alias**:
+An alternative spelling that leads to the same Entity. The layer where
+different spellings of one name merge, without touching the Slug.
