@@ -282,11 +282,11 @@ describe('dynamically registered public clients', () => {
     await expectPending(client.client_id, 'read write');
   });
 
-  test('registration omitting scope registers no scope and its consent request carries no scopes', async () => {
+  test('registration omitting scope receives the read fallback and consent stays read-only', async () => {
     const client = await registerDcr({}, ['scope']);
-    expect(client.scope ?? '').toBe('');
-    const id = await expectPending(client.client_id);
-    expect((await details(id)).scopes).toEqual([]);
+    expect(client.scope).toBe('read');
+    const id = await expectPending(client.client_id, 'read');
+    expect((await details(id)).scopes).toEqual(['read']);
   });
 
   test('the eleventh pending request for one client is a redirect carrying error=too_many_requests, not a 429', async () => {

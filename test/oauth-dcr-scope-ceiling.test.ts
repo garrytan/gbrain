@@ -156,12 +156,12 @@ describe('registerClient (DCR) enforces the scope ceiling', () => {
     expect(info.scope).toBe('read');
   });
 
-  test('scope omitted → "" (documented zero-scope shape; rescope later)', async () => {
+  test('scope omitted → read-only fallback', async () => {
     const provider = makeProvider();
     const info = await provider.clientsStore.registerClient!(authCodeMetadata(undefined));
-    expect(info.scope ?? '').toBe('');
+    expect(info.scope).toBe('read');
     const stored = await provider.clientsStore.getClient(info.client_id);
-    expect(stored!.scope ?? '').toBe('');
+    expect(stored!.scope).toBe('read');
   });
 
   test('grant_types omitted still defaults to authorization_code and gets the read write ceiling', async () => {

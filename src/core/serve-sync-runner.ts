@@ -86,6 +86,16 @@ interface DeferredEmbeds {
 /** Each datastore owns its backlog and actual provider/SQL lifetime. */
 const deferredEmbeds = new Map<BrainEngine, DeferredEmbeds>();
 
+interface DeferredExtractions {
+  pending: Set<string | undefined>;
+  running?: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  stopped: boolean;
+  unregister: () => void;
+}
+/** Extraction follows the same per-datastore lifetime as deferred embeds. */
+const deferredExtractions = new Map<BrainEngine, DeferredExtractions>();
+
 const isTerminal = (s: DelegatedSyncState): boolean => s === 'done' || s === 'error';
 
 function log(msg: string): void {
@@ -214,6 +224,9 @@ export function startDelegatedSync(
       if (!options.dryRun && !options.noEmbed && r.added + r.modified > 0) {
         scheduleDeferredSyncEmbeds(engine, sourceId);
       }
+      if (!options.dryRun && !options.noExtract && r.added + r.modified > 0) {
+        markDeferredExtractionPending(engine, sourceId);
+      }
     } catch (e) {
       job.jobError = e instanceof Error ? e.message : String(e);
       job.state = 'error';
@@ -275,6 +288,10 @@ export function shutdownDelegatedSync(timeoutMs?: number): Promise<void> {
     for (const state of deferredEmbeds.values()) {
       state.stopped = true;
       state.controller.abort();
+      if (state.timer) clearTimeout(state.timer);
+    }
+    for (const state of deferredExtractions.values()) {
+      state.stopped = true;
       if (state.timer) clearTimeout(state.timer);
     }
     const job = current;
@@ -397,6 +414,69 @@ export function scheduleDeferredSyncEmbeds(engine: BrainEngine, sourceId?: strin
   state.timer.unref?.();
 }
 
+/** Queue bounded link/timeline catch-up under the owning datastore lifetime. */
+export function markDeferredExtractionPending(engine: BrainEngine, sourceId?: string): void {
+  if (shuttingDown) return;
+  let state = deferredExtractions.get(engine);
+  if (!state) {
+    state = { pending: new Set(), stopped: false, unregister: () => {} };
+    const owned = state;
+    state.unregister = engine.registerBeforeDisconnect(async () => {
+      owned.stopped = true;
+      if (owned.timer) clearTimeout(owned.timer);
+      await owned.running?.catch(() => {});
+      owned.unregister();
+      if (deferredExtractions.get(engine) === owned) deferredExtractions.delete(engine);
+    });
+    deferredExtractions.set(engine, state);
+  }
+  if (state.stopped) return;
+  state.pending.add(sourceId);
+  if (state.timer) return;
+  const owned = state;
+  state.timer = setTimeout(() => {
+    owned.timer = undefined;
+    if (owned.stopped) return;
+    void maybeDrainDeferredExtractions(engine);
+  }, 5_000);
+  state.timer.unref?.();
+}
+
+/** Bounded, idempotent link/timeline catch-up. Pending clears only at zero stale pages. */
+export async function maybeDrainDeferredExtractions(engine: BrainEngine): Promise<void> {
+  const state = deferredExtractions.get(engine);
+  if (!state || state.stopped || shuttingDown) return;
+  if (state.running) return state.running;
+  if (!state.pending.size || isDelegatedSyncRunning()) return;
+  const work = (async () => {
+    const { extractStaleFromDB } = await import('../commands/extract.ts');
+    // Snapshot one fair pass. A source queued again while it is running stays
+    // pending even when the earlier pass reaches zero stale pages.
+    for (const sourceId of [...state.pending]) {
+      if (state.stopped) break;
+      state.pending.delete(sourceId);
+      try {
+        const r = await extractStaleFromDB(engine, {
+          dryRun: false,
+          jsonMode: true,
+          includeFrontmatter: true,
+          sourceIdFilter: sourceId,
+          catchUp: false,
+          timeBudgetMs: 60_000,
+        });
+        log(`extract-drain pages=${r.pagesProcessed} stale=${r.staleRemaining} source=${sourceId ?? 'all'}`);
+        if (r.staleRemaining !== 0) state.pending.add(sourceId);
+      } catch (error) {
+        state.pending.add(sourceId);
+        log(`extract-drain failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  })().catch(error => { log(`extract-drain failed: ${error instanceof Error ? error.message : String(error)}`); });
+  state.running = work;
+  try { await work; }
+  finally { if (state.running === work) state.running = undefined; }
+}
+
 /** Test seam: reset every module singleton (serial tests only). */
 export function __resetDelegatedSyncForTests(): void {
   current = null;
@@ -407,9 +487,18 @@ export function __resetDelegatedSyncForTests(): void {
     if (state.timer) clearTimeout(state.timer);
   }
   deferredEmbeds.clear();
+  for (const state of deferredExtractions.values()) {
+    state.stopped = true; state.unregister();
+    if (state.timer) clearTimeout(state.timer);
+  }
+  deferredExtractions.clear();
 }
 
 /** Test seam: report whether the deferred-embed backlog is pending. */
 export function __deferredEmbedsPendingForTests(engine?: BrainEngine): boolean {
   return engine ? !!deferredEmbeds.get(engine)?.pending.size : [...deferredEmbeds.values()].some(state => state.pending.size > 0);
+}
+
+export function __deferredExtractionsPendingForTests(engine?: BrainEngine): boolean {
+  return engine ? !!deferredExtractions.get(engine)?.pending.size : [...deferredExtractions.values()].some(state => state.pending.size > 0);
 }

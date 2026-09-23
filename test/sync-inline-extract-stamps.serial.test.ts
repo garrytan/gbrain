@@ -2,17 +2,16 @@
  * CRITICAL regression (v0.42.7, #1696, CDX-6) — inline sync extract stamps the
  * link-extraction watermark.
  *
- * `performSync`'s INCREMENTAL path runs link/timeline extraction inline for the
- * changed pages (the `gbrain sync` default — see performSyncInner's auto-extract
- * block). v0.42.7 adds a `stampExtracted` call at that call site (after
+ * `performSync` can run link/timeline extraction inline for changed pages when
+ * the caller opts into the legacy `embedInline` path. v0.42.7 adds a
+ * `stampExtracted` call at that call site (after
  * extractLinksForSlugs/extractTimelineForSlugs) so a normal incremental sync
  * marks the pages it just extracted as fresh — otherwise every synced page
  * would show as stale forever in the links_extraction_lag doctor check.
  *
- * NOTE: a FULL / first sync routes to performFullSync which does NOT extract
- * inline (pre-existing behavior — exactly the "imported ≠ curated" gap that
- * `extract --stale` closes). So this regression test drives the INCREMENTAL
- * path: full sync to seed, then edit + incremental sync.
+ * The default now leaves both full and incremental pages stale, then the serve
+ * follower drains them. These tests pin both the opt-in old path and the new
+ * default convergence path.
  *
  * IRON RULE: pins (a) an incremental sync NOW stamps links_extracted_at for the
  * pages it processed, and (b) the existing link extraction is unchanged. Plus
@@ -34,6 +33,11 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import {
+  __deferredExtractionsPendingForTests,
+  __resetDelegatedSyncForTests,
+  maybeDrainDeferredExtractions,
+} from '../src/core/serve-sync-runner.ts';
 
 let engine: PGLiteEngine;
 let repoPath: string;
@@ -66,6 +70,7 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
 
   beforeEach(async () => {
     await resetPgliteState(engine);
+    __resetDelegatedSyncForTests();
     repoPath = mkdtempSync(join(tmpdir(), 'gbrain-stamp-'));
     execSync('git init', { cwd: repoPath, stdio: 'pipe' });
     execSync('git config user.email "t@t.com"', { cwd: repoPath, stdio: 'pipe' });
@@ -97,7 +102,7 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
     // disk; the FS extractor resolves relative to the file's directory).
     writeAcme('[Alice](../people/alice.md) is the CEO of Acme.');
     git('git add -A && git commit -m "add link"');
-    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     expect(['synced', 'first_sync']).toContain(result.status);
 
     // (b) extraction unchanged — the CEO-of link is created.
@@ -106,6 +111,24 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
 
     // (a) the changed page sync extracted is now stamped (not stale).
     expect(await stampOf('companies/acme')).not.toBeNull();
+  }, 60_000);
+
+  test('default sync defers extraction, then the serve drain converges links and watermark', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    writeAcme('[Alice](../people/alice.md) is the CEO of Acme.');
+    git('git add -A && git commit -m "deferred link"');
+
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    expect(await engine.getLinks('companies/acme')).toHaveLength(0);
+    expect(await stampOf('companies/acme')).toBeNull();
+    expect(__deferredExtractionsPendingForTests()).toBe(true);
+
+    await maybeDrainDeferredExtractions(engine);
+
+    const links = await engine.getLinks('companies/acme');
+    expect(links.some(l => l.to_slug === 'people/alice')).toBe(true);
+    expect(await stampOf('companies/acme')).not.toBeNull();
+    expect(__deferredExtractionsPendingForTests()).toBe(false);
   }, 60_000);
 
   test('--no-extract: changed page is NOT stamped and no links are created', async () => {
@@ -132,7 +155,7 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
       '[Alice](../people/alice.md) is the CEO of Widget Co.',
     ].join('\n'));
     git('git add -A && git commit -m "add widget co"');
-    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     expect(['synced', 'first_sync']).toContain(result.status);
 
     // The page imported under its slugified slug either way.
@@ -176,7 +199,7 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
       '[Alice](people/alice.md) is mentioned in this note.',
     ].join('\n'));
     git('git add -A && git commit -m "add underscore note"');
-    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     expect(['synced', 'first_sync']).toContain(result.status);
 
     const pages = await engine.executeRaw<{ slug: string }>(
@@ -197,7 +220,7 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
     ].join('\n'));
     git('git add -A && git commit -m "add hidden note"');
     const result = await performSync(engine, {
-      repoPath, noPull: true, noEmbed: true, includeHidden: ['.github/**'],
+      repoPath, noPull: true, noEmbed: true, embedInline: true, includeHidden: ['.github/**'],
     });
     expect(['synced', 'first_sync']).toContain(result.status);
 

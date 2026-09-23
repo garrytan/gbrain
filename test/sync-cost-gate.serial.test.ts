@@ -3,7 +3,8 @@
  *
  * Pure shouldBlockSync / willEmbedSynchronously / parseUsdLimit logic is pinned
  * in test/sync-cost-preview.test.ts. THIS file pins the end-to-end wiring in
- * runSync's --all AND single-source paths:
+ * runSync's --all AND single-source `--embed-inline` opt-in paths. Default
+ * sync is provider-free and is covered by the deferred-stage regression.
  *
  *   R-1 (headline): PGLite's serial fallback is inline, never a fictional
  *        deferred-to-worker path.
@@ -119,7 +120,7 @@ async function runSyncCaptured(
     throw new Error('__exit__');
   }) as typeof process.exit;
   try {
-    await runSync(targetEngine, args);
+    await runSync(targetEngine, args.includes('--embed-inline') ? args : [...args, '--embed-inline']);
   } catch (e) {
     if ((e as Error).message !== '__exit__') throw e;
   } finally {

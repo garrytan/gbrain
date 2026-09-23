@@ -34,7 +34,7 @@ type SyncCostGateFlags = {
 export async function resolveSyncAllEmbedPlan(
   engine: BrainEngine,
   sources: SyncCostGateSource[],
-  opts: SyncCostGateFlags & { v2Enabled: boolean; serialFlag: boolean; noEmbed: boolean },
+  opts: SyncCostGateFlags & { v2Enabled: boolean; serialFlag: boolean; noEmbed: boolean; embedInline?: boolean },
 ): Promise<{
   stop: boolean;
   workerSurface: EmbedBackfillWorkerSurface;
@@ -50,17 +50,18 @@ export async function resolveSyncAllEmbedPlan(
   const deferEligible =
     opts.v2Enabled && !opts.serialFlag && workerSurface.status === 'worker_backed';
   const fanOutEligible = deferEligible && sources.length > 1;
+  const embedInline = opts.embedInline ?? true;
   const buildPlan = (stop: boolean, autoDeferEmbeds: boolean, costGate?: Record<string, unknown>) => ({
     stop,
     workerSurface,
     deferEligible,
     fanOutEligible,
     autoDeferEmbeds,
-    effectiveNoEmbed: deferEligible || opts.noEmbed || autoDeferEmbeds,
-    shouldBackfill: deferEligible || autoDeferEmbeds || (opts.v2Enabled && opts.noEmbed),
+    effectiveNoEmbed: opts.noEmbed || (embedInline && (deferEligible || autoDeferEmbeds)),
+    shouldBackfill: embedInline && (deferEligible || autoDeferEmbeds || (opts.v2Enabled && opts.noEmbed)),
     costGate,
   });
-  if (!opts.noEmbed) {
+  if (embedInline && !opts.noEmbed) {
     const gate = await runInlineCostGate(engine, {
       sources: sources.map((source) => ({ ...source, sourceId: source.id })),
       mode: resolveWorkerBackedSyncEmbedMode({ deferEligible, noEmbed: opts.noEmbed }),

@@ -2,6 +2,63 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.52.2.1] - 2026-09-23
+
+**Keep a notes folder searchable without turning it into a Git repository.**
+You can now add an ordinary Markdown folder as a source. GBrain imports its
+notes, preserves their existing filenames when saving changes, and leaves
+pulling, committing, and pushing out of the workflow. This is useful when a
+notes application already manages the folder.
+
+A failed import no longer looks like a timeout or moves the successful-sync
+checkpoint past the failed file. Cancellation leaves the checkpoint available
+for a retry. New note writes can use existing human-readable parent folders,
+while recorded filenames, exclusions, source boundaries, and writer permissions
+remain authoritative.
+
+For clients restricted to a note prefix, `put_page` adds the prefix when it is
+missing. Subagents keep their explicit slug requirements. Sync imports defer
+embedding work by default, so importing notes does not have to wait for their
+embeddings. Callers that need those results immediately can use `--inline-embed`.
+Provider and spending settings continue to apply.
+
+Connectors that omit a scope during dynamic registration now start with
+read-only access and still need approval in the admin dashboard. Existing
+registrations keep their current grants. Operators can configure a different
+default within the same limits as an explicit registration request.
+
+**Say to your agent:** *"Add my notes folder as a directory source, exclude its
+application settings, and verify that a sync finishes without losing failed
+files from the next retry."*
+
+### How to use it
+
+```sh
+gbrain sources add notes --kind directory --path /absolute/path/to/notes \
+  --exclude '.obsidian/**'
+gbrain sync --source notes
+```
+
+See [directory sources](docs/guides/directory-sources.md) and the
+[ChatGPT connection guide](docs/mcp/CHATGPT.md). Registering a folder does not
+activate managed writing or widen any remote client's permissions.
+
+## To take advantage of v0.52.2.1
+
+No new schema migration is added. Existing sources and grants stay unchanged.
+Use `--kind directory` when registering a plain folder, or explicitly convert an
+existing source with `sources set-kind <id> directory`. Use `--inline-embed` if a
+sync caller must wait for embeddings before continuing. Apply the coordinated
+upgrade instructions for earlier releases when upgrading an older brain.
+
+### Itemized changes
+
+- Add directory sources with per-file checkpoints and accurate failure reporting.
+- Preserve source paths and resolve new note parent folders without weakening
+  path confinement or exclusion checks.
+- Add missing bound-client slug prefixes and defer sync enrichment by default.
+- Give scope-less dynamic registrations a validated, configurable read-only default.
+
 ## [0.52.2.0] - 2026-09-22
 
 **Repair a memory page without guessing which copy to overwrite.** GBrain keeps

@@ -1591,6 +1591,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // defaults fail-closed to max(--token-ttl, min).
   'oauth.dcr_ttl_min_seconds',
   'oauth.dcr_ttl_max_seconds',
+  // Scope granted to DCR registrants that request none.
+  'oauth.dcr_default_scope',
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',

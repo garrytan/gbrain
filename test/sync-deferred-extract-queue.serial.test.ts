@@ -1,6 +1,7 @@
 /**
- * #2849 — a sync above the size gate (totalChanges > 100) must leave link
- * extraction DURABLY QUEUED, not just hinted.
+ * #2849 — the legacy `embedInline` path above the size gate (totalChanges >
+ * 100) must leave link extraction DURABLY QUEUED, not just hinted. Default
+ * sync now uses the serve follower and is pinned separately.
  *
  * PR #2850 fixed the sub-gate case (webhook + trigger submit noExtract:false),
  * but above the gate performSync only printed a "deferring link/timeline
@@ -95,7 +96,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     ].join('\n'));
     git('git add -A && git commit -m "initial"');
     const { performSync } = await import('../src/commands/sync.ts');
-    await performSync(engine, { repoPath, full: true, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, full: true, noPull: true, noEmbed: true, embedInline: true });
   });
 
   afterEach(() => {
@@ -106,7 +107,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     const { performSync } = await import('../src/commands/sync.ts');
     writeLinkedPages(101);
     git('git add -A && git commit -m "big drop"');
-    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     expect(['synced', 'first_sync']).toContain(result.status);
 
     // Above the gate: no inline extract, page unstamped (pre-existing, by design).
@@ -130,7 +131,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     const baseCommit = headCommit();
     writeLinkedPages(101);
     git('git add -A && git commit -m "big drop"');
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     expect(await staleExtractJobs()).toHaveLength(1);
     // Rewind the anchor and re-drain the SAME range incrementally: the defer
     // branch fires again with the same pin, the idempotency fast path hands
@@ -141,7 +142,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     // and never reach the defer branch).
     await engine.setConfig('sync.last_commit', baseCommit);
     await engine.executeRaw(`UPDATE pages SET content_hash = 'stale-test' WHERE slug LIKE 'notes/%'`);
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     const jobs = await staleExtractJobs();
     expect(jobs.length).toBe(1);
     expect(jobs[0].status).toBe('waiting');
@@ -159,7 +160,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     const { performSync } = await import('../src/commands/sync.ts');
     writeLinkedPages(101);
     git('git add -A && git commit -m "big drop"');
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     const jobs = await staleExtractJobs();
     expect(jobs.length).toBe(1);
     expect(jobs[0].status).toBe('waiting');
@@ -177,7 +178,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     const baseCommit = headCommit();
     writeLinkedPages(101);
     git('git add -A && git commit -m "big drop"');
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     const [first] = await staleExtractJobs();
     await engine.executeRaw(`UPDATE minion_jobs SET status = 'completed' WHERE id = $1`, [first.id]);
     // Rewind and re-drain the same range (garbled hashes force the
@@ -186,7 +187,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     // must exist afterwards.
     await engine.setConfig('sync.last_commit', baseCommit);
     await engine.executeRaw(`UPDATE pages SET content_hash = 'stale-test' WHERE slug LIKE 'notes/%'`);
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     const jobs = await staleExtractJobs();
     const waiting = jobs.filter(j => j.status === 'waiting');
     expect(waiting.length).toBe(1);
@@ -198,7 +199,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     const { performSync } = await import('../src/commands/sync.ts');
     writeLinkedPages(3);
     git('git add -A && git commit -m "small drop"');
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     expect(await staleExtractJobs()).toHaveLength(0);
     // Inline path stamped the pages (the #1696 contract, unchanged).
     expect(await stampOf('notes/page-0')).not.toBeNull();
@@ -208,7 +209,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     const { performSync } = await import('../src/commands/sync.ts');
     writeLinkedPages(101);
     git('git add -A && git commit -m "big drop"');
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true, noExtract: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, noExtract: true, embedInline: true });
     expect(await staleExtractJobs()).toHaveLength(0);
   }, 120_000);
 
@@ -216,7 +217,7 @@ describe('#2849 — size-gated sync durably queues the deferred extraction', () 
     const { performSync } = await import('../src/commands/sync.ts');
     writeLinkedPages(101);
     git('git add -A && git commit -m "big drop"');
-    await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    await performSync(engine, { repoPath, noPull: true, noEmbed: true, embedInline: true });
     expect(await stampOf('notes/page-7')).toBeNull();
     expect(await engine.getLinks('notes/page-7')).toHaveLength(0);
 

@@ -50,7 +50,13 @@ import {
   dcrRegistrationContext,
   DEFAULT_DCR_TTL_MIN_SECONDS,
 } from '../core/oauth-provider.ts';
-import { hasScope, scopesSupportedForDiscovery, normalizeScopesInput } from '../core/scope.ts';
+import {
+  hasScope,
+  scopesSupportedForDiscovery,
+  normalizeScopesInput,
+  filterAllowedScopes,
+  parseScopeString,
+} from '../core/scope.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { normalizeSourceInput, normalizeFederatedReadInput } from '../core/source-id.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult } from '../mcp/dispatch.ts';
@@ -979,6 +985,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     dcrTtlMaxSeconds = dcrTtlMinSeconds;
   }
 
+  // Scope for DCR registrants that request none (including ChatGPT connectors).
+  // `gbrain config set oauth.dcr_default_scope "read write"`; unknown scope
+  // names are dropped, an empty/unset value falls back to ['read'].
+  let dcrDefaultScope: string[] | undefined;
+  try {
+    const { allowed } = filterAllowedScopes(parseScopeString(String(await engine.getConfig('oauth.dcr_default_scope') ?? '')));
+    if (allowed.length > 0) dcrDefaultScope = allowed;
+  } catch { /* fall back to the provider default */ }
+
   const oauthProvider = new GBrainOAuthProvider({
     sql,
     transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
@@ -987,6 +1002,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     allowClientCredentialsDcr: enableDcrInsecure === true,
     dcrTtlMinSeconds,
     dcrTtlMaxSeconds,
+    dcrDefaultScope,
   });
 
   // #1353: loud stderr security WARN when DCR is enabled. DCR is an

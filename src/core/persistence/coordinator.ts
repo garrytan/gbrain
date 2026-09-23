@@ -24,7 +24,7 @@ export interface PreparedMutation {
   sourceExclusive?: boolean;
   observedRevision: string | null;
   additionalPageKeys?: readonly {sourceId:string;slug:string}[];
-  file?: { path: string; root: string; content: string | Uint8Array | null; expectedBeforeHash?: string | null };
+  file?: { path: string; root: string; content: string | Uint8Array | null; expectedBeforeHash?: string | null; sourcePath?: string };
   noop?: boolean;
   deferEmbedding?: boolean;
   /** Must perform only transaction-composable database work. */

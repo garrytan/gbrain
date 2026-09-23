@@ -201,6 +201,8 @@ export interface AddSourceOpts {
     tokenCommand?: string;
     tokenEnv?: string;
   };
+  /** Register a plain folder. This path never invokes git. */
+  directory?: { exclude?: string[] };
 }
 
 export interface RemoveSourceOpts {
@@ -501,7 +503,8 @@ export async function addSource(
     !!opts.localPath &&
     !opts.remoteUrl &&
     !opts.github &&
-    !opts.google;
+    !opts.google &&
+    !opts.directory;
   if (existing.length > 0 && !attachPath) {
     const pathNote = existing[0]!.local_path
       ? ` with local_path ${existing[0]!.local_path}`
@@ -681,6 +684,23 @@ export async function addSource(
            VALUES ($1, $2, $3, $4::text::jsonb)`,
       [opts.id, displayName, finalPath, JSON.stringify(config)],
     );
+  } else if (opts.directory) {
+    // Plain-folder source: operator-owned storage, no clone and no git probe.
+    if (!finalPath || !existsSync(finalPath) || !lstatSync(finalPath).isDirectory()) {
+      throw new SourceOpError('unmanaged_path', `Directory source path is missing or not a directory: ${finalPath ?? '(missing)'}`);
+    }
+    const { normalizeDirectoryExclude } = await import('./directory-source.ts');
+    const config: Record<string, unknown> = {
+      kind: 'directory',
+      exclude: normalizeDirectoryExclude(opts.directory.exclude ?? []),
+      federated: opts.federated ?? true,
+    };
+    const displayName = opts.name ?? opts.id;
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, $2, $3, $4::text::jsonb)`,
+      [opts.id, displayName, finalPath, JSON.stringify(config)],
+    );
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created
@@ -753,6 +773,31 @@ export async function addSource(
     );
   }
   return created;
+}
+
+/** Flip a git-band-aided source in place. Page rows and OAuth bindings survive. */
+export async function setSourceKindDirectory(
+  engine: BrainEngine,
+  id: string,
+  exclude: string[] = [],
+): Promise<SourceRow> {
+  validateSourceId(id);
+  const source = await fetchSourceRow(engine, id);
+  if (!source) throw new SourceOpError('not_found', `Source "${id}" not found.`);
+  if (!source.local_path || !existsSync(source.local_path) || !lstatSync(source.local_path).isDirectory()) {
+    throw new SourceOpError('unmanaged_path', `Source "${id}" has no readable directory at ${source.local_path ?? '(missing)'}.`);
+  }
+  const { normalizeDirectoryExclude } = await import('./directory-source.ts');
+  const config = parseConfig(source.config);
+  delete config.remote_url;
+  delete config.managed_clone;
+  config.kind = 'directory';
+  config.exclude = normalizeDirectoryExclude(exclude);
+  await engine.executeRaw(
+    `UPDATE sources SET config = $2::text::jsonb WHERE id = $1`,
+    [id, JSON.stringify(config)],
+  );
+  return (await fetchSourceRow(engine, id))!;
 }
 
 // ── resolveDefaultSource ────────────────────────────────────────────────────

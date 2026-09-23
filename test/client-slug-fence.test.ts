@@ -100,6 +100,11 @@ describe('client slug fence (bound_slug_prefixes on direct writes)', () => {
 
       test(`${name}: out-of-binding slug rejected with permission_denied`, async () => {
         const ctx = makeCtx({ auth });
+        if (name === 'put_page') {
+          const result = await op(name).handler(ctx, params('chan-product/roadmap')) as Record<string, unknown>;
+          expect(result.slug).toBe('chan-eng/chan-product/roadmap');
+          return;
+        }
         try {
           await op(name).handler(ctx, params('chan-product/roadmap'));
           throw new Error('should have thrown');
@@ -117,10 +122,16 @@ describe('client slug fence (bound_slug_prefixes on direct writes)', () => {
       expect(result).toMatchObject({ dry_run: true });
     });
 
-    test('prefix match is plain startsWith — bare slug equal to a prefix-less-slash is rejected', async () => {
+    test('put_page auto-prefixes a bare slug with the first bound_slug_prefix', async () => {
+      const ctx = makeCtx({ auth: boundAuth(['vault-example/']) });
+      const result = await op('put_page').handler(ctx, { slug: 'garden/x', content: 'stub' });
+      expect(result).toMatchObject({ dry_run: true, slug: 'vault-example/garden/x' });
+    });
+
+    test('a prefix-root slug is normalized under the first bound prefix', async () => {
       const ctx = makeCtx({ auth });
-      const p = op('put_page').handler(ctx, { slug: 'chan-eng', content: 'stub' });
-      await expect(p).rejects.toBeInstanceOf(OperationError);
+      const result = await op('put_page').handler(ctx, { slug: 'chan-eng', content: 'stub' });
+      expect(result).toMatchObject({ slug: 'chan-eng/chan-eng' });
     });
 
     test('add_link: `to` outside the binding is allowed (reference, not mutation)', async () => {
@@ -158,8 +169,8 @@ describe('client slug fence (bound_slug_prefixes on direct writes)', () => {
       const ctx = makeCtx({ auth: boundAuth(['chan-eng/', '']) });
       const ok = await op('put_page').handler(ctx, { slug: 'chan-eng/x', content: 'stub' });
       expect(ok).toMatchObject({ dry_run: true });
-      await expect(op('put_page').handler(ctx, { slug: 'other/x', content: 'stub' }))
-        .rejects.toBeInstanceOf(OperationError);
+      const prefixed = await op('put_page').handler(ctx, { slug: 'other/x', content: 'stub' });
+      expect(prefixed).toMatchObject({ slug: 'chan-eng/other/x' });
     });
 
     test('slugUnderBoundPrefixes ignores empty prefixes', () => {

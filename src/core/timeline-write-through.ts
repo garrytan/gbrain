@@ -107,6 +107,7 @@ export interface TimelineWriteThroughOutcome {
     | 'repo_not_found'
     | 'source_repo_belongs_to_other_source'
     | 'path_escapes_source_root'
+    | 'path_excluded'
     | 'page_not_found'
     | 'render_not_roundtrippable'
     | 'file_missing'

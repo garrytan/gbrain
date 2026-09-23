@@ -5,7 +5,7 @@
  */
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { isAbsolute, join, relative, sep } from 'path';
+import { isAbsolute, join, parse, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { resolveSlugForPath, DEFAULT_SOURCE_ID } from './sync.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
@@ -308,6 +308,9 @@ export function git(
   { silenceStderr = false }: { silenceStderr?: boolean } = {},
 ): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
+    // `git -C` owns repository resolution. Do not inherit an unreadable or
+    // deleted process cwd, which otherwise makes spawn fail before git runs.
+    cwd: parse(repoPath).root || sep,
     encoding: 'utf-8',
     timeout: timeoutMs,
     maxBuffer: 100 * 1024 * 1024,
@@ -324,6 +327,7 @@ export function git(
  */
 export function gitRawOutput(repoPath: string, args: string[]): string {
   return execFileSync('git', buildGitInvocation(repoPath, args, []), {
+    cwd: parse(repoPath).root || sep,
     encoding: 'utf-8',
     timeout: 30000,
     maxBuffer: 100 * 1024 * 1024,
@@ -345,13 +349,22 @@ export function gitRawOutput(repoPath: string, args: string[]): string {
  * auto-recovery made the *outcome* self-healing; this keeps the *log* quiet
  * about the expected miss that triggered it).
  */
+export function formatDiscoverGitRootError(inputPath: string, err: unknown): string {
+  const e = (err ?? {}) as { code?: string; status?: number | null; signal?: string | null; stderr?: unknown; message?: string };
+  const stderr = e.stderr == null ? '' : String(e.stderr).trim();
+  if (e.status === 128 && /not a git repository/i.test(stderr)) {
+    return `Not inside a git repository: ${inputPath}. GBrain sync requires a git-initialized repo (or a subdirectory of one).`;
+  }
+  const shape = e.code ?? (e.signal ? `signal ${e.signal}` : e.status != null ? `exit ${e.status}` : 'unknown failure');
+  const detail = stderr || e.message || '';
+  return `Could not run git for ${inputPath}: ${shape}${detail ? ` (${detail.split('\n')[0]})` : ''}.`;
+}
+
 export function discoverGitRoot(inputPath: string): string {
   try {
     return git(inputPath, ['rev-parse', '--show-toplevel'], [], 30000, { silenceStderr: true });
-  } catch {
-    throw new Error(
-      `Not inside a git repository: ${inputPath}. GBrain sync requires a git-initialized repo (or a subdirectory of one).`,
-    );
+  } catch (err) {
+    throw new Error(formatDiscoverGitRootError(inputPath, err));
   }
 }
 

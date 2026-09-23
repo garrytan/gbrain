@@ -548,13 +548,13 @@ describe('E5 truthful catalog — OAuth-path cells (serve-http seams over dispat
     });
     expect(inPrefix.kind).toBe('success');
 
-    // D10 carve-out: an out-of-prefix slug on a LISTED op is an ARGUMENT-level
-    // denial — permission_denied WITHOUT the fence=op marker, excluded from
-    // the invariant (and from the denied_after_list metric).
+    // put_page confines an out-of-prefix slug by prepending the client's first
+    // bound prefix, so the listed operation remains callable without widening
+    // its write authority.
     const outOfPrefix = await oauthToolCall(cell, 'put_page', {
       slug: 'wiki/other/e5-probe', content: '# probe', dry_run: true,
     });
-    expect(outOfPrefix.kind).toBe('arg_level_denial');
+    expect(outOfPrefix.kind).toBe('success');
     expect(isListLevelDenialEnvelope(outOfPrefix.envelope)).toBe(false);
 
     // Inverse (ENG-3, same predicate at list and call time): a fence-hidden
