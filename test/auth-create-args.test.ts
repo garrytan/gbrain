@@ -3,6 +3,54 @@ import { parseAuthCreateArgs, parseAuthClientsArgs, parseRescopeSurfaceValue, re
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 describe('parseAuthCreateArgs', () => {
+  // --source (write-source of a legacy bearer token). Without it every legacy
+  // token fell back to the literal 'default' in parseLegacyTokenScope, which on
+  // a multi-source brain routes writes to the wrong source with no warning.
+  test('name + --source', () => {
+    expect(parseAuthCreateArgs(['claude-code', '--source', 'workspace'])).toEqual({
+      name: 'claude-code',
+      takesHolders: undefined,
+      source: 'workspace',
+    });
+  });
+
+  test('--source before the name still finds the name', () => {
+    expect(parseAuthCreateArgs(['--source', 'workspace', 'claude-code']).name).toBe('claude-code');
+  });
+
+  test('the source value is not mistaken for the name', () => {
+    expect(parseAuthCreateArgs(['--source', 'workspace', 'mybot']).source).toBe('workspace');
+    expect(parseAuthCreateArgs(['--source', 'workspace', 'mybot']).name).toBe('mybot');
+  });
+
+  test('--source as the last arg fails closed', () => {
+    // Fail-open here would mint a token silently scoped to 'default' — the
+    // exact bug this flag exists to fix.
+    expect(parseAuthCreateArgs(['mybot', '--source']).error).toContain('source flag requires a value');
+  });
+
+  test('--source followed by another flag fails closed', () => {
+    // De andere vlag krijgt hier wel een waarde, anders slaat DIE controle als
+    // eerste aan: de parser checkt takes-holders en scopes voor source.
+    expect(parseAuthCreateArgs(['mybot', '--source', '--takes-holders', 'world']).error)
+      .toContain('source flag requires a value');
+  });
+
+  test('omitting --source leaves source undefined (grandfathered behaviour)', () => {
+    expect(parseAuthCreateArgs(['mybot']).source).toBeUndefined();
+  });
+
+  test('--source combines with --scopes and --takes-holders', () => {
+    expect(parseAuthCreateArgs([
+      'mybot', '--scopes', 'read,write', '--takes-holders', 'world', '--source', 'workspace',
+    ])).toEqual({
+      name: 'mybot',
+      takesHolders: ['world'],
+      scopes: ['read', 'write'],
+      source: 'workspace',
+    });
+  });
+
   test('bare name (no flag) resolves the name — regression for the dropped-name bug', () => {
     // Pre-fix this returned name='' because rest[takesIdx+1] === rest[0] when
     // takesIdx === -1, excluding the only positional from the search.
