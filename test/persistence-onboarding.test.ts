@@ -43,7 +43,9 @@ for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'po
     await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'default', path: root, ...await reviewedWriterIntent(engine, 'writer_claim') });
     const claimed = await runPersistenceAdministration(engine, 'writer_status', {}) as any;
     expect(claimed.onboarding.sources).toContainEqual(expect.objectContaining({ source_id: 'default', state: 'activation_required' }));
-    await expect(performSync(engine, { sourceId: 'default', noEmbed: true, noPull: true })).rejects.toThrow();
+    // #5198: a claimed owner admits sync through its journal before activation; activation stays a separate, deliberate step.
+    await expect(performSync(engine, { sourceId: 'default', noEmbed: true, noPull: true })).resolves.toBeDefined();
+    expect(((await runPersistenceAdministration(engine, 'writer_status', {})) as any).onboarding.sources).toContainEqual(expect.objectContaining({ source_id: 'default', state: 'activation_required' }));
     const activate = async (params: Record<string, unknown> = {}) => runPersistenceAdministration(engine, 'writer_activate', {
       confirm_quiesced: true, ...params, ...await reviewedWriterIntent(engine, 'writer_activate'),
     });
