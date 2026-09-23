@@ -39,6 +39,36 @@ const SUCCESS: ReembedPageResult = {
 const JOB = { id: 42, data: { page_slug: 'wiki/example' }, signal: new AbortController().signal } as never;
 
 describe('contextual_reindex_per_chunk synopsis lease release', () => {
+  test('uses expected_source_id to resolve a duplicate slug in its intended source', async () => {
+    const getPageCalls: Array<{ slug: string; sourceId?: string }> = [];
+    const engine = {
+      async getPage(slug: string, opts?: { sourceId?: string }) {
+        getPageCalls.push({ slug, sourceId: opts?.sourceId });
+        if (opts?.sourceId === 'source-a') return { source_id: 'source-a' };
+        if (opts?.sourceId === 'source-b') return { source_id: 'source-b' };
+        return null;
+      },
+      async getConfig() { return null; },
+    };
+    let reembedSourceId: string | undefined;
+    const handler = makeContextualReindexHandler({
+      engine: engine as never,
+      reembedPage: async (args) => {
+        reembedSourceId = args.sourceId;
+        return SUCCESS;
+      },
+    });
+
+    await handler({
+      id: 43,
+      data: { page_slug: 'changelog', expected_source_id: 'source-a' },
+      signal: new AbortController().signal,
+    } as never);
+
+    expect(getPageCalls).toEqual([{ slug: 'changelog', sourceId: 'source-a' }]);
+    expect(reembedSourceId).toBe('source-a');
+  });
+
   test('releases the lease acquired through a Postgres-shaped RETURNING id (native BigInt)', async () => {
     const calls: Call[] = [];
     const handler = makeContextualReindexHandler({

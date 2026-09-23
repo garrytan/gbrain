@@ -22,6 +22,9 @@ function run(args: string[]): { exitCode: number; stdout: string; stderr: string
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: REPO,
+      // --recent can emit a multi-file JSON report; keep the captured payload
+      // intact so the JSON assertion does not parse a truncated stdout buffer.
+      maxBuffer: 10 * 1024 * 1024,
     });
     return { exitCode: 0, stdout, stderr: '' };
   } catch (err: any) {
