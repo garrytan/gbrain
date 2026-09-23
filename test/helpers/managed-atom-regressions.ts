@@ -54,7 +54,7 @@ export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof 
         get(current, key) {
           if (key === 'addLinksBatch') return async (...args: Parameters<BrainEngine['addLinksBatch']>) => {
             const links = args[0];
-            if (!retrying && !failureInjected && links.some(link => link.to_slug === slugs.at(-1))) {
+            if (!retrying && !failureInjected && links.some(link => link.to_source_id === sourceId && link.to_slug === slugs.at(-1))) {
               failureInjected = true;
               if (state === 'conflict') throw new OperationError('revision_conflict', 'Fixture publication conflict');
               throw new Error('Fixture publication failure');
