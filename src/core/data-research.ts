@@ -368,12 +368,22 @@ export function buildDateWindows(
 }
 
 // ---------------------------------------------------------------------------
-// HTML email stripping (6-phase pipeline)
+// HTML email stripping (7-phase pipeline)
 // ---------------------------------------------------------------------------
 
 const MAX_HTML_SIZE = 500 * 1024; // 500KB cap (ReDoS prevention)
 
-/** Strip HTML from email bodies. 6-phase pipeline with input size cap. */
+function decodeHtmlEntities(text: string): string {
+  text = text.replace(/&nbsp;/gi, ' ');
+  text = text.replace(/&amp;/gi, '&');
+  text = text.replace(/&lt;/gi, '<');
+  text = text.replace(/&gt;/gi, '>');
+  text = text.replace(/&quot;/gi, '"');
+  text = text.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)));
+  return text;
+}
+
+/** Strip HTML from email bodies. 7-phase pipeline with input size cap. */
 export function stripEmailHtml(html: string): string {
   // Phase 0: Size cap (ReDoS prevention)
   let text = html;
@@ -381,33 +391,44 @@ export function stripEmailHtml(html: string): string {
     text = text.slice(0, MAX_HTML_SIZE) + '\n...[truncated]';
   }
 
-  // Phase 1: Remove <style> and <script> blocks entirely
+  // Phase 1: Decode entities FIRST (#5327). Quoted replies, forwards, and
+  // gateway-processed mail routinely carry entity-encoded markup
+  // (`&lt;style&gt;…&lt;/style&gt;`); decoding last made that markup
+  // invisible to the strip phases and then turned it back into literal
+  // tag text — indexing CSS rules and tag names as content.
+  text = decodeHtmlEntities(text);
+
+  // Phase 2: Remove <style> and <script> blocks entirely, plus HTML
+  // comments and downlevel-revealed conditional blocks — whose contents
+  // sit between tags, so the tag strip alone never reached them.
   text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
   text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+  text = text.replace(/<!--[\s\S]*?-->/g, '');
+  text = text.replace(/<!\[if[^\]]*\]>[\s\S]*?<!\[endif\]>/gi, '');
 
-  // Phase 2: Convert block elements to newlines
+  // Phase 3: Convert block elements to newlines
   text = text.replace(/<br\s*\/?>/gi, '\n');
   text = text.replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n');
 
-  // Phase 3: Strip remaining HTML tags (non-greedy)
-  text = text.replace(/<[^>]*?>/g, '');
+  // Phase 4: Strip remaining HTML tags (non-greedy). Anchored on a real tag
+  // opener — a letter (element/close), `!` (doctype), or `?` (processing
+  // instruction) — so a bare `<`/`>` pair decoded from `&lt;`/`&gt;` stays
+  // literal text instead of eating the characters between them.
+  text = text.replace(/<\/?[a-zA-Z!?][^>]*?>/g, '');
 
-  // Phase 4: Strip inline CSS artifacts (skip on large inputs for performance)
+  // Phase 5: Strip inline CSS artifacts (skip on large inputs for performance)
   if (text.length < 100000) {
     text = text.replace(/@media[^{]*\{[^}]*\}/g, '');
     text = text.replace(/\.[a-zA-Z][\w-]*\s*\{[^}]*\}/g, '');
     text = text.replace(/#[a-zA-Z][\w-]*\s*\{[^}]*\}/g, '');
   }
 
-  // Phase 5: Decode HTML entities
-  text = text.replace(/&nbsp;/gi, ' ');
-  text = text.replace(/&amp;/gi, '&');
-  text = text.replace(/&lt;/gi, '<');
-  text = text.replace(/&gt;/gi, '>');
-  text = text.replace(/&quot;/gi, '"');
-  text = text.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)));
+  // Phase 6: Decode entities again — an `&amp;`-wrapped entity only
+  // resolves once the ampersand layer is peeled (`&amp;nbsp;` → `&nbsp;`
+  // → space). Doubly-encoded markup (`&amp;lt;`) stays literal text.
+  text = decodeHtmlEntities(text);
 
-  // Phase 6: Collapse whitespace
+  // Phase 7: Collapse whitespace
   text = text.replace(/[ \t]+/g, ' ');
   text = text.replace(/\n{3,}/g, '\n\n');
   text = text.trim();

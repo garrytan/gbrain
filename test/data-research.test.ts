@@ -261,6 +261,38 @@ describe('data-research', () => {
       expect(result).toContain('>');
     });
 
+    // #5327 — entity-encoded markup must be decoded BEFORE stripping, or the
+    // encoded <style>/<script>/tags survive into the corpus as literal text.
+    test('entity-encoded style/script blocks are stripped, not indexed as content', () => {
+      const result = stripEmailHtml(
+        '&lt;style&gt;.q { display:none } css junk&lt;/style&gt;Hello&amp;nbsp;world',
+      );
+      expect(result).toContain('Hello');
+      expect(result).toContain('world');
+      expect(result).not.toContain('style');
+      expect(result).not.toContain('css junk');
+      expect(result).not.toContain('&nbsp;');
+    });
+
+    test('entity-encoded tags are stripped; decoded content entities still resolve', () => {
+      const result = stripEmailHtml('Hi&lt;em&gt;there&lt;/em&gt; &amp;amp; you');
+      expect(result).toContain('there');
+      expect(result).not.toContain('<em>');
+      expect(result).not.toContain('&lt;em&gt;');
+      expect(result).toContain('&'); // &amp;amp; → &amp; → &
+    });
+
+    test('removes HTML comments and downlevel-revealed conditional blocks', () => {
+      const result = stripEmailHtml(
+        'Real<!-- tracking comment -->body<![if mso]>outlook only junk<![endif]>tail',
+      );
+      expect(result).toContain('Real');
+      expect(result).toContain('body');
+      expect(result).toContain('tail');
+      expect(result).not.toContain('tracking comment');
+      expect(result).not.toContain('outlook only junk');
+    });
+
     test('truncates >500KB input (ReDoS prevention)', () => {
       // Use a string just over 500KB to trigger truncation
       const huge = '<p>' + 'x'.repeat(510 * 1024) + '</p>';

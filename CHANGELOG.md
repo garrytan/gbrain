@@ -2,6 +2,17 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.52.25.0] - 2026-09-23
+
+**Email text decodes entities before it strips markup.** `stripEmailHtml`
+stripped tags first and decoded entities second, so a message containing
+`&amp;` could be read as markup after decoding and quietly eaten mid-sentence.
+Entities now decode first — ampersands, quotes, and `<`/`>` typed into an
+email survive as text instead of vanishing as accidental HTML.
+
+**Say to your agent:** *"Re-sync mail — decoded bodies keep their literal
+characters now."*
+
 ## [0.52.2.0] - 2026-09-22
 
 **Repair a memory page without guessing which copy to overwrite.** GBrain keeps
