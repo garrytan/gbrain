@@ -3,7 +3,7 @@ import { canonicalLookup } from '../model-pricing.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { MemoryCueProviders } from './types.ts';
 import { loadConfigWithEngine } from '../config.ts';
-import { parseTree } from 'jsonc-parser';
+import { visit } from 'jsonc-parser';
 import { CUE_SYSTEM_PROMPT, formatCueEvidence, resolveCueEvidence } from './evidence.ts';
 export { CUE_SYSTEM_PROMPT } from './evidence.ts';
 
@@ -27,8 +27,16 @@ export const liveMemoryCueProviders: MemoryCueProviders = {
     const fence = text.match(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i);
     const json = fence?.[1] ?? text;
     const parsed = JSON.parse(json);
-    if (parseTree(json)?.children?.some(cue => cue.type === 'object' && cue.children?.length !== 4)) throw new Error('invalid_output');
-    return { output: resolveCueEvidence(parsed, formatted.excerpts), actualUsd: (response.usage.input_tokens * price.input + response.usage.output_tokens * price.output
+    const keys: Set<string>[] = [];
+    visit(json, {
+      onObjectBegin: () => { keys.push(new Set()); },
+      onObjectProperty: key => {
+        if (keys.at(-1)!.has(key)) throw new Error('invalid_output');
+        keys.at(-1)!.add(key);
+      },
+      onObjectEnd: () => { keys.pop(); },
+    });
+    return { output: resolveCueEvidence(parsed, formatted.excerpts, includeBridge), actualUsd: (response.usage.input_tokens * price.input + response.usage.output_tokens * price.output
       + response.usage.cache_read_tokens * (price.cache_read ?? price.input) + response.usage.cache_creation_tokens * (price.cache_write ?? price.input * 2)) / 1e6 };
   },
   async embed(texts, column, signal) {

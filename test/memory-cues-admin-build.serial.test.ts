@@ -9,6 +9,7 @@ import { __setChatTransportForTests, __setEmbedTransportForTests, resetGateway }
 import { cueEvidence, cueVector, enrollCues, seedCuePage } from './helpers/memory-cues.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runPendingMemoryCueJob, submitMemoryCueBuild } from '../src/core/memory-cues/index.ts';
+import { cueSlots } from './helpers/memory-cues-wire.ts';
 
 let engine: PGLiteEngine;
 let home: string;
@@ -43,7 +44,7 @@ async function withProviders(run: (calls: { chat: number; embed: number }) => Pr
   await withEnv({ GBRAIN_HOME: home, OPENAI_API_KEY: 'test-fixture-not-a-key' }, async () => {
     __setChatTransportForTests(async opts => {
       calls.chat++;
-      return { text: JSON.stringify([{ family: 'horizon', relation: 'explicit_constraint_applies', evidence_ref: 1, text: 'Scheduling an early meeting' }]), blocks: [], stopReason: 'end',
+      return { text: JSON.stringify(cueSlots({ kind: 'horizon:explicit_constraint_applies', evidence_ref: 1, text: 'Scheduling an early meeting' })), blocks: [], stopReason: 'end',
         usage: { input_tokens: 20, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
         model: opts.model!, providerId: 'openai' };
     });

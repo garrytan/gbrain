@@ -12,6 +12,7 @@ import { digest } from '../src/core/persistence/digest.ts';
 import { memoryCueOperations } from '../src/core/ops/memory-cues.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { cueEvidence, cueProviders, cueVector, enrollCues, seedCuePage, startCueBuild } from './helpers/memory-cues.ts';
+import { cueSlots } from './helpers/memory-cues-wire.ts';
 
 const model = 'openrouter:anthropic/claude-sonnet-4.6';
 let engine: PGLiteEngine;
@@ -50,8 +51,8 @@ async function legacySignature(version: string) {
 const configure = (params: Record<string, unknown>) => memoryCueOperations[0]!.handler(ctx, { action: 'configure', apply: true, ...params });
 const recall = async () => recallMemoryCues(engine, cueVector(), { embeddingColumn: await memoryCueColumn(engine), sourceIds: ['default'] });
 
-for (const version of ['situation-v2', 'situation-v3']) {
-test(`${version} calibrations fail closed and read/push must be renewed independently for v4`, async () => {
+for (const version of ['situation-v2', 'situation-v3', 'situation-v4']) {
+test(`${version} calibrations fail closed and read/push must be renewed independently for v5`, async () => {
   const old = await legacySignature(version);
   await engine.setConfig('memory.cues.read_calibration_signature', old);
   await engine.setConfig('memory.cues.push', 'true');
@@ -143,7 +144,7 @@ for (const kind of ['custom', 'live'] as const) {
     __setChatTransportForTests(async opts => {
       generated++;
       expect(opts.messages[0]!.content).toBe(formatted.content);
-      return { text: '[]', blocks: [], stopReason: 'end', model, providerId: 'openrouter',
+      return { text: JSON.stringify(cueSlots()), blocks: [], stopReason: 'end', model, providerId: 'openrouter',
         usage: { input_tokens: 20, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 } };
     });
     const build = await startCueBuild(engine);
@@ -169,7 +170,7 @@ for (const kind of ['custom', 'live'] as const) {
       env: { OPENROUTER_API_KEY: 'test-fixture-not-a-key', OPENAI_API_KEY: 'test-fixture-not-a-key' } });
     __setChatTransportForTests(async () => {
       generated++;
-      return { text: '[]', blocks: [], stopReason: 'end', model, providerId: 'openrouter',
+      return { text: JSON.stringify(cueSlots()), blocks: [], stopReason: 'end', model, providerId: 'openrouter',
         usage: { input_tokens: 20, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 } };
     });
     __setEmbedTransportForTests(async ({ values }) => {

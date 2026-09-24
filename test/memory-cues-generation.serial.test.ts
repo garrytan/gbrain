@@ -11,6 +11,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
+import { cueSlots } from './helpers/memory-cues-wire.ts';
 
 describe('durable memory cue generation', () => {
   let engine: PGLiteEngine;
@@ -122,7 +123,7 @@ describe('durable memory cue generation', () => {
     configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'test-fixture-not-a-key' } });
     __setChatTransportForTests(async opts => {
       generated++;
-      return { text: JSON.stringify([{ family: 'horizon', relation: 'explicit_constraint_applies', evidence_ref: 1, text: 'Scheduling an early meeting' }]),
+      return { text: JSON.stringify(cueSlots({ kind: 'horizon:explicit_constraint_applies', evidence_ref: 1, text: 'Scheduling an early meeting' })),
         blocks: [], stopReason: 'end', usage: { input_tokens: 20, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
         model: opts.model!, providerId: 'anthropic' };
     });

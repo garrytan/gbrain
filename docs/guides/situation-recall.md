@@ -27,7 +27,7 @@ Administration is trusted-local only. HTTP and stdio agent-facing callers cannot
 
 ## Window policy and pipeline upgrades
 
-The `situation-v4` pipeline constructs windows of at most 8,192 UTF-8 bytes,
+The `situation-v5` pipeline constructs windows of at most 8,192 UTF-8 bytes,
 including carried speaker attribution. It retains up to 640 bytes of overlap
 and preserves Unicode code-point boundaries, splitting long turns as needed.
 Each window spans at most three original chunks. The full eligible history is
@@ -50,6 +50,15 @@ malformed output fail closed; no cue is silently discarded. This prevents quote
 transcription errors, not semantic generation errors, and makes no quality-gain
 claim. Injected providers keep the existing quote-based output contract.
 
+The live response contains exactly `scene`, `association_1`, `association_2`,
+and `association_3`; each unused slot must be `null`. Scene metadata is derived
+from its slot. Associations select one finite `kind` that fixes both family and
+relation, with bridge kinds allowed only when explicitly enabled. Shared
+constants define the prompt and decoder contract. Independent family/relation
+fields, extra slots, duplicate keys, missing slots and malformed selections are
+rejected rather than dropped or relabeled. All-null explicitly means no cues.
+Injected quote-based providers and downstream semantic validation are unchanged.
+
 This is a prospective construction-cost policy, not a measured retrieval gain.
 Larger windows can reduce request overhead and serial build time, but increase
 each window's reservation and make more evidence compete for the same four-cue
@@ -59,7 +68,7 @@ chosen profile's cost and quality checks before enabling it.
 
 Pipeline identity is part of both the cue signature and the independent read
 and push calibration bindings. Earlier pipeline cues are not reused by
-v4, and old builds cannot resume as v4 builds. Explicitly approve a new build
+v5, and old builds cannot resume as v5 builds. Explicitly approve a new build
 to regenerate cues, then recalibrate retrieval and reminders separately, even
 when the embedding model is unchanged. There is no automatic backfill, budget
 transfer, or refill of an old build's allowance. Canonical memories are unchanged.

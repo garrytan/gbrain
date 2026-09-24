@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { CUE_SYSTEM_PROMPT, formatCueEvidence, resolveCueEvidence } from '../src/core/memory-cues/evidence.ts';
 import { buildCueWindows, groundCueQuote, MAX_CUE_WINDOW_BYTES, validateCueOutput } from '../src/core/memory-cues/windows.ts';
+import { cueSlots } from './helpers/memory-cues-wire.ts';
 
 for (const [name, text] of [
   ['ascii', 'x'.repeat(8192)],
@@ -49,8 +50,8 @@ test('selecting a later excerpt preserves exact Markdown and clipped window edge
   expect(window).toBeDefined();
   const formatted = formatCueEvidence(window!.text, false);
   const selected = formatted.excerpts.find(e => e.text.includes('**Goal 2:'))!;
-  const output = resolveCueEvidence([{ family: 'horizon', relation: 'stated_goal_tradeoff', evidence_ref: selected.id,
-    text: 'Planning evening viewing time' }], formatted.excerpts);
+  const output = resolveCueEvidence(cueSlots({ kind: 'horizon:stated_goal_tradeoff', evidence_ref: selected.id,
+    text: 'Planning evening viewing time' }), formatted.excerpts);
   const [cue] = validateCueOutput(output, window!);
   expect(cue!.quote).toBe(selected.text);
   expect(cue!.quote).toContain('**Goal 2: Balance video watching time**');
@@ -66,8 +67,8 @@ test('selection trims only edge whitespace while the complete synthetic chunk se
   expect(formatted.excerpts[0]!.text).toBe('a'.repeat(500) + '\n');
   expect(groundCueQuote(window, formatted.excerpts[0]!.text)).toBeNull();
   for (const ref of [1, 2]) {
-    const [cue] = validateCueOutput(resolveCueEvidence([{ family: 'horizon', relation: 'explicit_constraint_applies',
-      text: 'Applying the recorded constraint', evidence_ref: ref }], formatted.excerpts), window);
+    const [cue] = validateCueOutput(resolveCueEvidence(cueSlots({ kind: 'horizon:explicit_constraint_applies',
+      text: 'Applying the recorded constraint', evidence_ref: ref }), formatted.excerpts), window);
     expect(cue!.quote).toBe((ref === 1 ? 'a' : 'b').repeat(500));
     expect(cue!.quoteStart).toBe(ref === 1 ? 0 : 501);
     expect(groundCueQuote(window, cue!.quote, cue!.quoteStart)).toEqual([{ chunk_id: ref, start: 0, end: 500, separator: '' }]);
@@ -79,8 +80,8 @@ test('trusted reference offsets preserve later identical text and Unicode chunk 
   const first = '🌱'.repeat(7) + repeated;
   const window = buildCueWindows([{ id: 1, chunk_text: first }, { id: 2, chunk_text: repeated }])[0]!;
   const formatted = formatCueEvidence(window.text, false);
-  const [cue] = validateCueOutput(resolveCueEvidence([{ family: 'horizon', relation: 'explicit_constraint_applies',
-    text: 'Applying the second recorded constraint', evidence_ref: 2 }], formatted.excerpts), window);
+  const [cue] = validateCueOutput(resolveCueEvidence(cueSlots({ kind: 'horizon:explicit_constraint_applies',
+    text: 'Applying the second recorded constraint', evidence_ref: 2 }), formatted.excerpts), window);
   expect(cue!.quote).toBe(repeated);
   expect(window.text.indexOf(cue!.quote)).toBe(14);
   expect(cue!.quoteStart).toBe(515);
@@ -99,8 +100,8 @@ test('only selected quote edges lose whitespace, never Markdown punctuation or i
   const text = ' \n**Goal 2: Practice**\n- Leave  two spaces.\n\t';
   const window = buildCueWindows([{ id: 1, chunk_text: text }])[0]!;
   const formatted = formatCueEvidence(text, false);
-  const [cue] = validateCueOutput(resolveCueEvidence([{ family: 'horizon', relation: 'stated_goal_tradeoff',
-    text: 'Planning practice time', evidence_ref: 1 }], formatted.excerpts), window);
+  const [cue] = validateCueOutput(resolveCueEvidence(cueSlots({ kind: 'horizon:stated_goal_tradeoff',
+    text: 'Planning practice time', evidence_ref: 1 }), formatted.excerpts), window);
   expect(formatted.excerpts[0]!.text).toBe(text);
   expect(cue!.quote).toBe('**Goal 2: Practice**\n- Leave  two spaces.');
   expect(cue!.quoteStart).toBe(2);
