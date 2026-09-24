@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, beforeEach, describe, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { assertTranscriptDeferralScenario, assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
+import { assertTransientCutScenario, assertTranscriptDeferralScenario, assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
 
 const describeDb = hasDatabase() ? describe : describe.skip;
 describeDb('Postgres dream --drain --window in-batch checkpoint', () => {
@@ -24,7 +24,11 @@ describeDb('Postgres dream --drain --window in-batch checkpoint', () => {
     await assertWindowCheckpointScenario(engine);
   });
 
-  test('deferred transcripts keep stopped=window when the page backlog recounts 0', async () => {
+  test('deferred transcripts stay due and the follow-up drain processes them', async () => {
     await assertTranscriptDeferralScenario(engine);
+  });
+
+  test('a window cut after one transient failure is deferral; an uncut all-failed batch is an outage', async () => {
+    await assertTransientCutScenario(engine);
   });
 });

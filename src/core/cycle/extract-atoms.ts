@@ -642,6 +642,73 @@ export async function resolveExtractAtomsModel(engine: BrainEngine): Promise<str
   return (await resolveExtractAtomsModelWithSource(engine)).model;
 }
 
+type TranscriptInput = { filePath: string; content: string; contentHash: string };
+
+/**
+ * Discover transcripts (default source only; `_transcripts` test seam wins)
+ * and drop those already extracted (atom row for the content hash) or
+ * tombstoned. `live` is exactly the transcript work the phase will attempt.
+ * Pages are counted separately by `countExtractAtomsBacklog`.
+ */
+export async function loadLiveTranscripts(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig' | 'progress'>,
+): Promise<{ transcripts: TranscriptInput[]; live: TranscriptInput[]; duplicatesSkipped: number }> {
+  //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
+  //     dream.* DB-plane merge from Phase 1 reaches this phase.
+  let transcripts: TranscriptInput[] = opts._transcripts ?? [];
+  // Configured transcript corpus paths are brain-global, so only default discovers them.
+  if (sourceId === 'default' && transcripts.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
+    try {
+      const { discoverTranscripts } = await import('./transcript-discovery.ts');
+      const { loadConfigWithEngine } = await import('../config.ts');
+      const cfgRaw = opts._loadConfig ? await opts._loadConfig() : await loadConfigWithEngine(engine);
+      const cfg = (cfgRaw ?? {}) as unknown as Record<string, unknown>;
+      const dream = cfg.dream as
+        | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
+        | undefined;
+      const corpusDir = dream?.synthesize?.session_corpus_dir;
+      if (corpusDir !== undefined) {
+        transcripts = discoverTranscripts({ corpusDir, meetingTranscriptsDir: dream?.synthesize?.meeting_transcripts_dir })
+          .map((d) => ({ filePath: d.filePath, content: d.content, contentHash: d.contentHash }));
+      }
+    } catch {
+      // No transcripts available — phase no-ops cleanly.
+    }
+  }
+  // Transcript-side source-hash idempotency in ONE batch query instead of N
+  // per-hash round trips. Page-side idempotency lives in the discovery SQL.
+  const live: TranscriptInput[] = [];
+  let duplicatesSkipped = 0;
+  const allHashes16 = transcripts.map(t => t.contentHash.slice(0, 16));
+  // Heartbeat before the batch query so even an instant short-circuit shows life.
+  opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
+  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
+  const tombstoned = await tombstonedTranscriptsForHashes(engine, sourceId, allHashes16);
+  for (const t of transcripts) {
+    const hash16 = t.contentHash.slice(0, 16);
+    if (existingHashes.has(hash16) || tombstoned.has(transcriptStateKey(t.filePath, hash16))) duplicatesSkipped++;
+    else live.push(t);
+  }
+  return { transcripts, live, duplicatesSkipped };
+}
+
+/** Distinct live transcript contents still due for atom extraction (the drain's non-page backlog). */
+export async function countPendingTranscripts(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig'>,
+): Promise<number | null> {
+  try {
+    const { live } = await loadLiveTranscripts(engine, sourceId, opts);
+    return new Set(live.map(t => t.contentHash)).size;
+  } catch (err) {
+    console.error(`[extract_atoms] transcript backlog count failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 /**
  * v0.41 minimal extract_atoms body, rebuilt for v0.41.2.1.
  *
@@ -659,44 +726,12 @@ export async function runPhaseExtractAtoms(
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry);
   const writeRequests: WriteReceipt[] = [];
 
-  // 1a. Get transcripts (test seam OR production discovery).
-  //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
-  //     dream.* DB-plane merge from Phase 1 reaches this phase.
-  let transcripts: Array<{ filePath: string; content: string; contentHash: string }> = opts._transcripts ?? [];
-  // Configured transcript corpus paths are brain-global, so only default discovers them.
-  if (
-    sourceId === 'default'
-    && transcripts.length === 0
-    && opts.brainDir !== undefined
-    && opts._transcripts === undefined
-  ) {
-    try {
-      const { discoverTranscripts } = await import('./transcript-discovery.ts');
-      const { loadConfigWithEngine } = await import('../config.ts');
-      const cfgRaw = opts._loadConfig
-        ? await opts._loadConfig()
-        : await loadConfigWithEngine(engine);
-      const cfg = (cfgRaw ?? {}) as unknown as Record<string, unknown>;
-      const dream = cfg.dream as
-        | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
-        | undefined;
-      const corpusDir = dream?.synthesize?.session_corpus_dir;
-      const meetingDir = dream?.synthesize?.meeting_transcripts_dir;
-      if (corpusDir !== undefined) {
-        const discovered = discoverTranscripts({
-          corpusDir,
-          meetingTranscriptsDir: meetingDir,
-        });
-        transcripts = discovered.map((d) => ({
-          filePath: d.filePath,
-          content: d.content,
-          contentHash: d.contentHash,
-        }));
-      }
-    } catch {
-      // No transcripts available — phase no-ops cleanly.
-    }
-  }
+  // 1a+2. Transcripts (test seam OR production discovery) filtered by the
+  //     batched source-hash idempotency + tombstone checks. Shared with the
+  //     drain's pending-work count so the two can never disagree.
+  const { transcripts, live: transcriptsLive, duplicatesSkipped: transcriptDuplicates } =
+    await loadLiveTranscripts(engine, sourceId, opts);
+  let duplicatesSkipped = transcriptDuplicates;
 
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
@@ -715,33 +750,6 @@ export async function runPhaseExtractAtoms(
     );
   }
 
-  // 2. Apply transcript-side source-hash idempotency in ONE batch query
-  //    instead of N per-hash round trips. Page-side idempotency lives in
-  //    the discovery SQL's NOT EXISTS subquery (already batched).
-  const transcriptsLive: typeof transcripts = [];
-  let duplicatesSkipped = 0;
-  const allHashes16 = transcripts.map(t => t.contentHash.slice(0, 16));
-  // Surface a heartbeat before the batch query so even an instant
-  // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
-  opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
-  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
-  const tombstonedTranscriptKeys = await tombstonedTranscriptsForHashes(
-    engine,
-    sourceId,
-    allHashes16,
-  );
-  for (const t of transcripts) {
-    const hash16 = t.contentHash.slice(0, 16);
-    if (existingHashes.has(hash16)) {
-      duplicatesSkipped++;
-      continue;
-    }
-    if (tombstonedTranscriptKeys.has(transcriptStateKey(t.filePath, hash16))) {
-      duplicatesSkipped++;
-      continue;
-    }
-    transcriptsLive.push(t);
-  }
 
   // 3. Dual-source merge: transcripts + pages, dedup by contentHash.
   //    Transcripts win on COLLISION (origin attribution stays with the raw
@@ -1384,7 +1392,8 @@ export async function runPhaseExtractAtoms(
         cost_usd: estimatedSpendUsd,
         summary:
           `Extracted ${totalAtomsExtracted} atoms from ` +
-          `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.`,
+          `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.` +
+          (transcriptsDeferred + pagesDeferred > 0 ? ` ${transcriptsDeferred + pagesDeferred} deferred at stop checkpoint.` : ''),
       });
     } catch (err) {
       console.error(`[extract_atoms] receipt write failed: ${(err as Error).message}`);

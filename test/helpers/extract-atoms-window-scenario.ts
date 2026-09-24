@@ -148,4 +148,67 @@ export async function assertTranscriptDeferralScenario(engine: BrainEngine): Pro
   });
   expect(await atomCount(engine)).toBe(1);
   expect(await countExtractAtomsBacklog(engine, 'default')).toBe(0);
+
+  // Follow-up run (what "exit 3 — run again" promises): the page backlog is
+  // 0, but the deferred transcripts are still due, so the drain must process
+  // them rather than report drained without doing any work.
+  const clock2 = { t: 0, calls: 0 };
+  const second = await runExtractAtomsDrainForSource(engine, {
+    sourceId: undefined,
+    windowSeconds: 3600,
+    _now: () => clock2.t,
+    _phase: { _chat: makeClockedChat(clock2), _transcripts: transcripts },
+  });
+  expect(clock2.calls).toBe(2);
+  expect(second).toMatchObject({
+    status: 'ok', stopped: 'drained', extracted: 2, items_completed: 2,
+    items_deferred: 0, remaining: 0, transcripts_remaining: 0,
+  });
+  expect(await atomCount(engine)).toBe(3);
+  // Checked last so a regression fails on the behaviour (no follow-up work) first.
+  expect(result.transcripts_remaining).toBe(2);
+}
+
+/** A chat stub whose first call fails transiently after a simulated minute. */
+function transientThenOk(clock: { t: number; calls: number }) {
+  const ok = makeClockedChat(clock);
+  return async (o: ChatOpts): Promise<ChatResult> => {
+    if (clock.calls === 0) {
+      clock.calls++;
+      clock.t += ITEM_MS;
+      throw new Error('upstream request timed out');
+    }
+    return ok(o);
+  };
+}
+
+/**
+ * A window cut right after ONE transient failure is deferral, not an outage:
+ * the other items never ran. Contrast: an uncut batch whose every attempted
+ * item fails is still a provider failure (#3218).
+ */
+export async function assertTransientCutScenario(engine: BrainEngine): Promise<void> {
+  await seedWindowScenarioPages(engine);
+  const cut = { t: 0, calls: 0 };
+  const cutResult = await runExtractAtomsDrainForSource(engine, {
+    sourceId: undefined,
+    windowSeconds: 30,
+    _now: () => cut.t,
+    _phase: { _chat: transientThenOk(cut), _transcripts: [] },
+  });
+  expect(cut.calls).toBe(1);
+  expect(cutResult).toMatchObject({
+    status: 'ok', stopped: 'window', failure_count: 1, items_completed: 0, items_deferred: 2, remaining: 3,
+  });
+
+  const uncut = { t: 0, calls: 0 };
+  const failing = async (): Promise<ChatResult> => { uncut.calls++; throw new Error('upstream request timed out'); };
+  const uncutResult = await runExtractAtomsDrainForSource(engine, {
+    sourceId: undefined,
+    windowSeconds: 3600,
+    _now: () => uncut.t,
+    _phase: { _chat: failing, _transcripts: [] },
+  });
+  expect(uncut.calls).toBe(3);
+  expect(uncutResult).toMatchObject({ status: 'provider_failure', stopped: 'provider_failure', items_deferred: 0 });
 }

@@ -107,6 +107,13 @@ export interface ExtractAtomsDrainDeps {
   }>;
   /** Count remaining eligible-but-unextracted pages, or null on query error. */
   countRemaining: () => Promise<number | null>;
+  /**
+   * Count live transcript work still due (not in the page backlog), or null on
+   * error. Optional for adapters without transcripts; absent counts as 0. The
+   * drain's continue/stop and `drained` decisions use pages + transcripts, so a
+   * run never reports `drained` while deferred transcripts are still due.
+   */
+  countPendingTranscripts?: () => Promise<number | null>;
   /** Injectable clock. Production: Date.now. */
   now: () => number;
   /** Optional progress sink (one line per batch). */
@@ -134,6 +141,8 @@ export interface ExtractAtomsDrainResult {
   skipped: number;
   /** Eligible pages still pending after the window. null if the count errored. */
   remaining: number | null;
+  /** Live transcripts still pending after the window (not in `remaining`). null if the count errored. */
+  transcripts_remaining: number | null;
   /** Batches actually processed. */
   batches: number;
   /** Work items finished across every batch (atoms persisted or zero-yield settled). */
@@ -177,6 +186,21 @@ export interface ExtractAtomsDrainResult {
  * secret-redacted + bounded above) — a missing provider key is a one-line
  * diagnosis instead of an opaque batches/remaining.
  */
+/**
+ * True when a drain left work undone and the caller should run again: any
+ * non-ok status (provider failure), a page or transcript count that failed
+ * (null) or is non-zero, or items deferred by the window. The CLI exit code
+ * and the Minion continuation both read this, so they cannot disagree.
+ */
+export function drainLeftWorkDue(
+  result: Pick<ExtractAtomsDrainResult, 'status' | 'remaining' | 'transcripts_remaining' | 'items_deferred'>,
+): boolean {
+  return result.status !== 'ok'
+    || result.remaining === null || result.remaining > 0
+    || result.transcripts_remaining === null || result.transcripts_remaining > 0
+    || result.items_deferred > 0;
+}
+
 export function formatDrainProviderFailure(
   result: Pick<ExtractAtomsDrainResult, 'batches' | 'remaining' | 'last_error'>,
 ): string {
@@ -185,6 +209,13 @@ export function formatDrainProviderFailure(
     `(batches=${result.batches}, remaining=${result.remaining ?? '?'})` +
     `${result.last_error ? `; last error: ${result.last_error}` : ''} — retrying`
   );
+}
+
+/** Pages + live transcripts still due; null when either count failed. */
+async function pendingWork(deps: ExtractAtomsDrainDeps): Promise<number | null> {
+  const pages = await deps.countRemaining();
+  const transcripts = deps.countPendingTranscripts ? await deps.countPendingTranscripts() : 0;
+  return pages === null || transcripts === null ? null : pages + transcripts;
 }
 
 function countOrZero(n: unknown): number {
@@ -217,7 +248,7 @@ export async function runExtractAtomsDrain(
     while (deps.now() < deadline) {
       if (batches >= maxBatches) { stopped = 'max_batches'; break; }
 
-      const before = await deps.countRemaining();
+      const before = await pendingWork(deps);
       if (before === 0) { stopped = 'drained'; break; }
 
       // The window is enforced INSIDE the batch too: one batch is up to the
@@ -297,28 +328,29 @@ export async function runExtractAtomsDrain(
       // zero-yield pages shrink the backlog without producing atoms. Only
       // stop when the backlog count genuinely didn't move.
       if (r.extracted === 0 && r.skipped === 0) {
-        const after = await deps.countRemaining();
+        const after = await pendingWork(deps);
         if (after === null || before === null || after >= before) { stopped = 'no_progress'; break; }
       }
     }
 
     const remaining = await deps.countRemaining();
+    const transcriptsRemaining = deps.countPendingTranscripts ? await deps.countPendingTranscripts() : 0;
     // issue #3218 (codex P2): don't let a final remaining===0 recount
     // overwrite 'provider_failure' back to 'drained' — that would report the
     // contradictory {status: 'provider_failure', stopped: 'drained'} and
     // mislead the CLI/JSON consumer (dream.ts prints both fields verbatim).
     // status already takes precedence for the Minion handler's retry
     // decision; keep `stopped` consistent with it once a failure latched.
-    // `remaining` counts only the page backlog; deferred items (transcripts
-    // included) are still due, so a zero recount after a window cut is NOT
-    // drained — stopped stays 'window' and callers treat the run as incomplete.
-    if (!providerFailure && remaining === 0 && itemsDeferred === 0) stopped = 'drained';
+    // Drained only when neither pool has work due and nothing was deferred:
+    // `remaining` counts pages, so it alone cannot see deferred transcripts.
+    if (!providerFailure && remaining === 0 && transcriptsRemaining === 0 && itemsDeferred === 0) stopped = 'drained';
     return {
       phase: 'extract_atoms',
       status: providerFailure ? 'provider_failure' : 'ok',
       extracted,
       skipped,
       remaining,
+      transcripts_remaining: transcriptsRemaining,
       batches,
       items_completed: itemsCompleted,
       items_deferred: itemsDeferred,
@@ -377,7 +409,7 @@ export async function runExtractAtomsDrainForSource(
   opts: DrainForSourceOpts,
 ): Promise<ExtractAtomsDrainResult> {
   const { withRefreshingLock } = await import('../db-lock.ts');
-  const { runPhaseExtractAtoms, countExtractAtomsBacklog } = await import('./extract-atoms.ts');
+  const { runPhaseExtractAtoms, countExtractAtomsBacklog, countPendingTranscripts } = await import('./extract-atoms.ts');
   const { cycleLockIdFor } = await import('../cycle.ts');
 
   const extractionSourceId = opts.sourceId ?? 'default';
@@ -420,20 +452,79 @@ export async function runExtractAtomsDrainForSource(
               typeof (f as { error?: unknown }).error === 'string',
           )
           .map(({ source, error }) => ({ source, reason: error }));
+        const deferred = Number(d.pages_deferred ?? 0) + Number(d.transcripts_deferred ?? 0);
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
           completed: itemsSucceeded,
-          deferred: Number(d.pages_deferred ?? 0) + Number(d.transcripts_deferred ?? 0),
-          providerFailure: failures.length > 0 && itemsSucceeded === 0,
+          deferred,
+          // Every attempted item failed AND the batch was not cut by the window.
+          // A cut after one (often transient) failure is ordinary deferral —
+          // the rest never ran, so there is no outage-level evidence. A real
+          // auth/billing halt breaks the phase loop without deferring, so it
+          // still lands here.
+          providerFailure: failures.length > 0 && itemsSucceeded === 0 && deferred === 0,
           failureCount: failures.length,
           failures: typedFailures,
         };
       },
       countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
+      countPendingTranscripts: () => countPendingTranscripts(engine, extractionSourceId, {
+        brainDir: opts.brainDir, _transcripts: opts._phase?._transcripts,
+      }),
       now: opts._now ?? Date.now,
       onBatch: opts.onBatch,
     },
     { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches },
   );
+}
+
+// ─── Background continuation (Minion lane) ──────────────────────────────────
+//
+// A window-cut drain job used to complete like a finished one, so deferred
+// work waited for autopilot's next daily slot. The handler now chains ONE
+// continuation job when the run made forward progress and left work due,
+// bounded by MAX_DRAIN_CONTINUATIONS per chain. Every other case reports why
+// no continuation was queued, so the job result never implies more than it did.
+
+/** Longest continuation chain one submitted drain may start. */
+export const MAX_DRAIN_CONTINUATIONS = 8;
+
+export type DrainContinuation =
+  | { queued: true; job_id: number; depth: number }
+  | { queued: false; reason: 'drained' | 'no_forward_progress' | 'continuation_limit' | 'not_window_cut' | 'submit_failed'; error?: string };
+
+export async function queueDrainContinuation(
+  engine: BrainEngine,
+  job: { id: number; data: Record<string, unknown> },
+  result: ExtractAtomsDrainResult,
+): Promise<DrainContinuation> {
+  if (!drainLeftWorkDue(result)) return { queued: false, reason: 'drained' };
+  // no_progress / provider_failure stops must not self-chain: they would spin.
+  if (result.status !== 'ok' || (result.stopped !== 'window' && result.stopped !== 'max_batches')) {
+    return { queued: false, reason: 'not_window_cut' };
+  }
+  if (result.items_completed === 0) return { queued: false, reason: 'no_forward_progress' };
+  const depth = typeof job.data.continuation_depth === 'number' ? job.data.continuation_depth : 0;
+  if (depth >= MAX_DRAIN_CONTINUATIONS) return { queued: false, reason: 'continuation_limit' };
+  try {
+    const { MinionQueue } = await import('../minions/queue.ts');
+    const [parent] = await engine.executeRaw<{ max_attempts: number | null; timeout_ms: number | null; queue: string | null }>(
+      'SELECT max_attempts, timeout_ms, queue FROM minion_jobs WHERE id = $1', [job.id]);
+    const next = await new MinionQueue(engine).add(
+      'extract-atoms-drain',
+      { ...job.data, continuation_of: job.id, continuation_depth: depth + 1 },
+      {
+        // One continuation per parent even if the parent's handler is retried.
+        idempotency_key: `extract-atoms-drain:continuation:${job.id}`,
+        ...(parent?.queue ? { queue: parent.queue } : {}),
+        ...(parent?.max_attempts ? { max_attempts: parent.max_attempts } : {}),
+        ...(parent?.timeout_ms ? { timeout_ms: parent.timeout_ms } : {}),
+      },
+      { allowProtectedSubmit: true },
+    );
+    return { queued: true, job_id: next.id, depth: depth + 1 };
+  } catch (e) {
+    return { queued: false, reason: 'submit_failed', error: sanitizeFailureText(e instanceof Error ? e.message : String(e), MAX_DRAIN_FAILURE_REASON_CHARS) };
+  }
 }

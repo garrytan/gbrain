@@ -18,10 +18,11 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 let nextResult: ExtractAtomsDrainResult;
 let drainCalls: Array<{ sourceId: string | undefined }> = [];
 
+// Real exports (incl. drainLeftWorkDue, which decides the exit code) stay
+// live; only the drain run itself is stubbed.
+const realDrain = { ...(await import('../src/core/cycle/extract-atoms-drain.ts')) };
 mock.module('../src/core/cycle/extract-atoms-drain.ts', () => ({
-  MAX_DRAIN_FAILURE_RECORDS: 25,
-  MAX_DRAIN_FAILURE_SOURCE_CHARS: 256,
-  MAX_DRAIN_FAILURE_REASON_CHARS: 200,
+  ...realDrain,
   runExtractAtomsDrainForSource: async (_engine: unknown, opts: { sourceId: string | undefined }) => {
     drainCalls.push({ sourceId: opts.sourceId });
     return nextResult;
@@ -53,6 +54,7 @@ function baseResult(overrides: Partial<ExtractAtomsDrainResult>): ExtractAtomsDr
     extracted: 1,
     skipped: 0,
     remaining: 0, // fully drained → dream exits 0 (no process.exit call)
+    transcripts_remaining: 0,
     batches: 1,
     items_completed: 1,
     items_deferred: 0,
@@ -156,6 +158,20 @@ describe('dream --drain failure summary (#4730)', () => {
     const json = await runDrainCaptured(['--json']);
     expect(json.exitCode).toBe(3);
     expect(JSON.parse(json.stdout.find(l => l.trim().startsWith('{'))!)).toMatchObject({ remaining: 0, stopped: 'window', items_deferred: 1 });
+  });
+
+  test('an all-failed run exits 3 even with nothing left in either backlog count', async () => {
+    nextResult = baseResult({ status: 'provider_failure', stopped: 'provider_failure', extracted: 0,
+      remaining: 0, transcripts_remaining: 0, items_completed: 0, failure_count: 2,
+      failures: [{ batch: 1, source: 'writings/a', reason: 'auth' }, { batch: 1, source: 'writings/b', reason: 'auth' }] });
+    expect((await runDrainCaptured([])).exitCode).toBe(3);
+  });
+
+  test('pending transcripts exit 3 and are named in the text line', async () => {
+    nextResult = baseResult({ remaining: 0, transcripts_remaining: 2, stopped: 'no_progress', items_completed: 0 });
+    const r = await runDrainCaptured([]);
+    expect(r.exitCode).toBe(3);
+    expect(r.stdout.join('\n')).toContain('0 remaining + 2 transcript(s) (stopped: no_progress)');
   });
 
   test('a clean run prints no failure line at all', async () => {

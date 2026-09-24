@@ -2987,7 +2987,7 @@ export async function registerBuiltinHandlers(
       const { retryManagedAtomBatch } = await import('../core/persistence/atom-retry.ts');
       return retryManagedAtomBatch(engine, job.data.sourceId, job.data.retryRequestId, `job:${job.id}`);
     }
-    const { formatDrainProviderFailure, runExtractAtomsDrainForSource } =
+    const { formatDrainProviderFailure, queueDrainContinuation, runExtractAtomsDrainForSource } =
       await import('../core/cycle/extract-atoms-drain.ts');
     const { LockUnavailableError } = await import('../core/db-lock.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
@@ -3014,7 +3014,7 @@ export async function registerBuiltinHandlers(
       if (result.status === 'provider_failure') {
         throw new Error(formatDrainProviderFailure(result));
       }
-      return result;
+      return { ...result, continuation: await queueDrainContinuation(engine, job, result) };
     } catch (e) {
       if (e instanceof LockUnavailableError) {
         return { phase: 'extract_atoms', status: 'skipped', deferred: true, reason: 'cycle_already_running' };

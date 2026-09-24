@@ -446,9 +446,10 @@ Options:
                       (the default phase when --drain is set). Holds the
                       cycle lock once, processes batches until the backlog
                       empties or --window elapses, reports {extracted,
-                      remaining}, and exits 3 when the backlog isn't empty
-                      or --window deferred any item (transcripts included)
-                      so a cron/agent loop knows to run again. Use this to
+                      remaining}, and exits 3 while pages or transcripts
+                      remain, --window deferred any item, or every attempted
+                      item failed, so a cron/agent loop knows to run again.
+                      A follow-up run picks up deferred transcripts too. Use this to
                       grind down an extract_atoms backlog on a brain whose
                       pack doesn't run the phase in the routine cycle.
   --window <seconds>  Drain wallclock budget. Default 300 (5 min). Checked
@@ -594,23 +595,25 @@ async function runDrain(
   brainDir: string | null,
 ): Promise<void> {
   const { LockUnavailableError } = await import('../core/db-lock.ts');
-  const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
-  const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
+  const { countExtractAtomsBacklog, countPendingTranscripts } = await import('../core/cycle/extract-atoms.ts');
+  const { drainLeftWorkDue, runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
 
   const extractionSourceId = resolvedSourceId ?? 'default';
 
   // Dry-run: preview the backlog without holding the lock or extracting.
   if (opts.dryRun) {
     const remaining = await countExtractAtomsBacklog(engine, extractionSourceId);
+    const transcriptsRemaining = await countPendingTranscripts(engine, extractionSourceId, { brainDir: brainDir ?? undefined });
+    const preview = { phase: 'extract_atoms' as const, status: 'ok' as const, remaining, transcripts_remaining: transcriptsRemaining, items_deferred: 0 };
     if (opts.json) {
-      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, items_completed: 0, items_deferred: 0, stopped: 'window', failure_count: 0, failures: [], omitted_failure_count: 0, last_error: null }, null, 2));
+      console.log(JSON.stringify({ ...preview, dry_run: true, extracted: 0, skipped: 0, batches: 0, items_completed: 0, stopped: 'window', failure_count: 0, failures: [], omitted_failure_count: 0, last_error: null }, null, 2));
     } else {
-      console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) eligible for atom extraction (no work done)`);
+      console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) + ${transcriptsRemaining ?? '?'} transcript(s) eligible for atom extraction (no work done)`);
     }
-    // null = the backlog count query FAILED — treat as incomplete, never as
-    // "drained" (Codex: `remaining ?? 0` would exit 0 on a failed count and
-    // make automation believe the backlog cleared when it was never verified).
-    if (remaining === null || remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+    // null = a count query FAILED — treat as incomplete, never as "drained"
+    // (Codex: `remaining ?? 0` would exit 0 on a failed count and make
+    // automation believe the backlog cleared when it was never verified).
+    if (drainLeftWorkDue(preview)) process.exit(EXIT_DRAIN_INCOMPLETE);
     return;
   }
 
@@ -662,18 +665,20 @@ async function runDrain(
     const deferred = result.items_deferred > 0
       ? `, ${result.items_deferred} deferred by --window`
       : '';
+    // Transcripts are not in the page backlog; name them only when some are due.
+    const transcripts = result.transcripts_remaining === 0
+      ? ''
+      : ` + ${result.transcripts_remaining ?? '?'} transcript(s)`;
     console.log(
       `[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ` +
-      `${result.remaining ?? '?'} remaining (stopped: ${result.stopped}) — ` +
+      `${result.remaining ?? '?'} remaining${transcripts} (stopped: ${result.stopped}) — ` +
       `${result.items_completed} item(s) completed${deferred}, ${result.failure_count} failed`,
     );
   }
-  // null remaining = the final count query failed; do not report success.
-  // Deferred items are pending work even when the page backlog reads 0
-  // (transcripts are not in that count), so they also mean "run again".
-  if (result.remaining === null || result.remaining > 0 || result.items_deferred > 0) {
-    process.exit(EXIT_DRAIN_INCOMPLETE);
-  }
+  // Anything left due — a failed or non-zero page/transcript count, deferred
+  // items, or a provider failure (every attempted item failed) — means
+  // "run again", never success.
+  if (drainLeftWorkDue(result)) process.exit(EXIT_DRAIN_INCOMPLETE);
 }
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {

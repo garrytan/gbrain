@@ -11,7 +11,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from '../helpers/extract-atoms-page-fixtures.ts';
 import { countExtractAtomsBacklog } from '../../src/core/cycle/extract-atoms.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
-import { assertTranscriptDeferralScenario, assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
+import { assertTransientCutScenario, assertTranscriptDeferralScenario, assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
 import type { ChatResult } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -98,7 +98,11 @@ describe('dream --drain --window enforced inside a batch (PGLite)', () => {
     await assertWindowCheckpointScenario(engine);
   });
 
-  test('deferred transcripts keep stopped=window when the page backlog recounts 0', async () => {
+  test('deferred transcripts stay due and the follow-up drain processes them', async () => {
     await assertTranscriptDeferralScenario(engine);
+  });
+
+  test('a window cut after one transient failure is deferral; an uncut all-failed batch is an outage', async () => {
+    await assertTransientCutScenario(engine);
   });
 });
