@@ -42,7 +42,7 @@ scheduled coverage profile on demand, dispatch the E2E workflow with
 | Large fixtures | Reuse setup and analyze the original seeded data | Original sizes, assertions and performance thresholds |
 | Nightly database checks | Four isolated workers with exact file receipts | The complete discovered collection |
 
-The matched sequential E2E benchmark on the audited baseline improved from
+The matched sequential E2E benchmark on the audited baseline `31f257a` improved from
 43m05.91s to 37m48.30s, a 12.28% reduction. Both timing runs retained the same
 two host-environment failures; they are timing evidence, not passing gates.
 The integrated changes separately passed the complete clean Docker gate.
