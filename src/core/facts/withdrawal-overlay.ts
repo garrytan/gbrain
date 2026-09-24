@@ -14,25 +14,63 @@ export function withdrawnFact(fact: ParsedFact, date: string, reason = 'memory w
 /** Enumerate every complete legacy fence; leave ambiguous tails untouched for diagnostics. */
 export function withdrawalFenceBlocks(body: string): Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> {
   const blocks: Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> = [];
-  let cursor = 0;
-  while (cursor < body.length) {
-    const start = body.indexOf(FACTS_FENCE_BEGIN, cursor);
-    if (start < 0) break;
-    const endMarker = body.indexOf(FACTS_FENCE_END, start + FACTS_FENCE_BEGIN.length);
-    const nested = body.indexOf(FACTS_FENCE_BEGIN, start + FACTS_FENCE_BEGIN.length);
-    if (endMarker < 0 || (nested >= 0 && nested < endMarker)) break;
-    const end = endMarker + FACTS_FENCE_END.length;
-    blocks.push({ start, end, parsed: parseFactsFence(body.slice(start, end)) });
-    cursor = end;
+  let open: { start: number } | undefined;
+  for (const marker of standaloneFenceMarkers(body)) {
+    if (marker.kind === 'begin') {
+      open = { start: marker.start };
+      continue;
+    }
+    if (!open) continue;
+    blocks.push({ start: open.start, end: marker.end, parsed: parseFactsFence(body.slice(open.start, marker.end)) });
+    open = undefined;
   }
   return blocks;
 }
 
-/** A shortlisted claim inside an unparseable fence is conservatively page-affecting. */
+function standaloneFenceMarkers(body: string): Array<{ start: number; end: number; kind: 'begin' | 'end' }> {
+  const markers: Array<{ start: number; end: number; kind: 'begin' | 'end' }> = [];
+  for (const [marker, kind] of [[FACTS_FENCE_BEGIN, 'begin'], [FACTS_FENCE_END, 'end']] as const) {
+    let cursor = 0;
+    while (cursor < body.length) {
+      const start = body.indexOf(marker, cursor);
+      if (start < 0) break;
+      const lineStart = body.lastIndexOf('\n', start - 1) + 1;
+      const lineEndAt = body.indexOf('\n', start + marker.length);
+      const lineEnd = lineEndAt < 0 ? body.length : lineEndAt;
+      if (!body.slice(lineStart, start).trim() && !body.slice(start + marker.length, lineEnd).trim()) {
+        markers.push({ start, end: start + marker.length, kind });
+      }
+      cursor = start + marker.length;
+    }
+  }
+  return markers.sort((a, b) => a.start - b.start);
+}
+
+/** Return only malformed standalone fence segments; inline documentation is ordinary prose. */
+export function ambiguousWithdrawalFenceSegments(body: string): string[] {
+  const segments: string[] = [];
+  let open: { start: number } | undefined;
+  for (const marker of standaloneFenceMarkers(body)) {
+    if (marker.kind === 'begin') {
+      if (open) segments.push(body.slice(open.start, marker.start));
+      open = { start: marker.start };
+      continue;
+    }
+    if (!open) {
+      segments.push(body.slice(marker.start, marker.end));
+      continue;
+    }
+    const segment = body.slice(open.start, marker.end);
+    if (parseFactsFence(segment).warnings.length) segments.push(segment);
+    open = undefined;
+  }
+  if (open) segments.push(body.slice(open.start));
+  return segments;
+}
+
+/** A shortlisted claim inside an unparseable standalone fence is conservatively page-affecting. */
 export function hasAmbiguousWithdrawalFence(body: string): boolean {
-  if (!body.includes(FACTS_FENCE_BEGIN)) return false;
-  const blocks = withdrawalFenceBlocks(body);
-  return blocks.length === 0 || blocks.some(block => block.parsed.warnings.length > 0);
+  return ambiguousWithdrawalFenceSegments(body).length > 0;
 }
 
 /** Apply hashes from DB-normalized companion text to the original Markdown. */

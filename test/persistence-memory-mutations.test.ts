@@ -205,7 +205,9 @@ describe('journaled memory publication, both engines', () => {
       expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(before.revision);
       const local = await registerLocalWriter(engine, 'cli');
       const request = (await getWriteRequest(engine, { kind: 'local_cli', id: local.id }, requestId))!;
-      expect(await engine.executeRaw('SELECT kind FROM persistence_effects WHERE request_id=$1::uuid', [request.id])).toEqual([]);
+      expect(await engine.executeRaw<{ kind: string }>(
+        'SELECT kind FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [request.id],
+      )).toEqual([{ kind: 'embedding' }, { kind: 'git' }, { kind: 'withdrawal-mirror' }]);
     }
   });
 

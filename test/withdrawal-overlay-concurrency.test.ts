@@ -36,6 +36,12 @@ test('an unterminated facts fence remains conservatively ambiguous', () => {
   expect(hasAmbiguousWithdrawalFence(`${FACTS_FENCE_BEGIN}\n| 1 | fact | world |`)).toBe(true);
 });
 
+test('inline marker documentation is not a fence, while a trailing standalone fence remains ambiguous', () => {
+  expect(hasAmbiguousWithdrawalFence(`Use \`${FACTS_FENCE_BEGIN}\` to start a fact table.`)).toBe(false);
+  expect(hasAmbiguousWithdrawalFence(`${renderFactsTable([fact('complete fence')])}\n${FACTS_FENCE_BEGIN}\n| 2 | trailing claim |`)).toBe(true);
+  expect(withdrawalFenceBlocks(`Use \`${FACTS_FENCE_BEGIN}\` here.\n${renderFactsTable([fact('real fence')])}`)).toHaveLength(1);
+});
+
 test('withdrawal covers prior context, inactive history and every legacy fence by fingerprint', async () => {
   const active = 'withdrawalcontextsentinel active claim';
   const expired = 'withdrawalhistorysentinel expired claim';
@@ -214,11 +220,8 @@ test('malformed, timeline-only and provenance-only candidates remain conservativ
         timeline: renderFactsTable([fact(malformedTimelineClaim)]).replace('| world |', '| impossible |') }, { sourceId: isolatedSourceId });
       await engine.putPage('provenance-only', { type: 'note', title: 'Provenance only', compiled_truth: 'No facts fence' },
         { sourceId: isolatedSourceId });
-      for (const [slug, claim] of [['malformed-fence', malformedClaim], ['malformed-timeline-fence', malformedTimelineClaim],
-        ['timeline-fence', timelineClaim], ['provenance-only', provenanceClaim]]) {
-        await engine.upsertChunks(slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
-          { sourceId: isolatedSourceId });
-      }
+      await engine.upsertChunks('malformed-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: malformedClaim }],
+        { sourceId: isolatedSourceId });
       const malformed = await engine.insertFact({ fact: malformedClaim, source: 'legacy', visibility: 'world' },
         { source_id: isolatedSourceId });
       const malformedTimeline = await engine.insertFact({ fact: malformedTimelineClaim, source: 'legacy', visibility: 'world' },
@@ -297,12 +300,37 @@ test('prepared import refuses an ambiguous fence when the source has a withdrawa
       await importFromContent(engine, 'malformed-prepared-withdrawal', body, { sourceId: isolatedSourceId, noEmbed: true,
         prepare: async value => { prepared = value; return value.result; } });
       await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
+      const unrelated = await engine.insertFact({ fact: 'unrelated withdrawn claim', source: 'remember', visibility: 'world' },
+        { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, unrelated.id, isolatedSourceId, true)).withdrawn).toBe(true);
+      await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
       const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
       expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages).toEqual([]);
 
       await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toMatchObject({ code: 'invalid_params' });
-      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toThrow('Repair the fence before importing');
+      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toThrow('malformed fact fence contains a withdrawn claim');
       expect(await engine.getPage('malformed-prepared-withdrawal', { sourceId: isolatedSourceId })).toBeNull();
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('prepared import accepts inline marker documentation after an unrelated withdrawal', async () => {
+  const isolatedSourceId = 'withdrawal-inline-marker-test';
+  const body = `---\ntitle: Fence documentation\ntype: note\n---\nUse \`${FACTS_FENCE_BEGIN}\` to begin a facts table.`;
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      const stored = await engine.insertFact({ fact: 'unrelated inline-doc withdrawal', source: 'remember', visibility: 'world' },
+        { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).withdrawn).toBe(true);
+      let prepared: PreparedContentImport | undefined;
+      await importFromContent(engine, 'inline-marker-documentation', body, { sourceId: isolatedSourceId, noEmbed: true,
+        prepare: async value => { prepared = value; return value.result; } });
+      await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
+      await expect(engine.transaction(tx => prepared!.apply(tx))).resolves.toBeUndefined();
+      expect(await engine.getPage('inline-marker-documentation', { sourceId: isolatedSourceId })).not.toBeNull();
     } finally {
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
     }
