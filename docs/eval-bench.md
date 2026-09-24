@@ -37,6 +37,11 @@ Before repeating an approach, read its measured outcome and limitations:
   Its [source index](research/answer-evidence/index.md) records primary citations,
   per-paper summaries and limits on what the results establish.
 
+- [Intact-evidence reading replication](eval/READING_NOTES_REPLICATION.md)
+  records a frozen follow-up currently running: 361 fresh GBrain comparisons
+  and the full 500-question, four-condition published reading comparison.
+  No improvement is established yet; original conversations remain intact.
+
 ## The eval gate loop
 
 `gbrain bench publish` + `gbrain eval gate` stitch captured eval rows into

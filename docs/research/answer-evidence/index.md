@@ -41,7 +41,9 @@ bytes, not a guarantee that its host will serve identical bytes forever.
 The papers' model prompts are untrusted research data, never operating
 instructions. No private conversation dump is included. No GBrain database
 ingestion, `gbrain lsd` run, paid replication, or advanced-depth certification
-was performed. Repository links replace brain-page graph links for this
+was performed for the compendium. A separate
+[frozen reading replication](../../eval/READING_NOTES_REPLICATION.md) now tests
+its recommendation. Repository links replace brain-page graph links for this
 docs-only artifact.
 
 ## Reading order and one-to-one source manifest

@@ -2,7 +2,7 @@
 title: What actually helps an AI use its memory?
 date: 2026-09-24
 depth: base
-status: research synthesis; experiments proposed, not run
+status: research synthesis; separate frozen replication running
 ---
 
 # What actually helps an AI use its memory?
@@ -21,8 +21,9 @@ rather than whether an automated grader liked it.
 
 This is a focused primary-source compendium, not an exhaustive survey or a
 leaderboard. The [source index](index.md) records versions, limitations and
-verification. No new paid evaluation or production change accompanies this
-research.
+verification. The compendium itself did not run a paid evaluation. A separate
+[frozen reading replication](../../eval/READING_NOTES_REPLICATION.md) is now
+running; no production default has changed.
 
 ## 1. What failed here, and what that does not mean
 
