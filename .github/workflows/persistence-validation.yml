@@ -119,6 +119,18 @@ jobs:
             test/persistence-recovery-capacity.test.ts \
             test/audit/pool-recovery-audit.test.ts \
             test/persistence-recovery-fairness.test.ts
+      - name: Require data-safety on PostgreSQL
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+        run: |
+          : "${DATABASE_URL:?Data-safety tests require the explicit test database}"
+          bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts
       - name: Require canonical reconciliation through direct and pooled PostgreSQL
         timeout-minutes: 5
         env:

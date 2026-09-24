@@ -278,7 +278,7 @@ for f in "${files[@]}"; do
   # word-splitting into extra gtimeout arguments or breaking the 4x math.
   case "$file_timeout" in ''|*[!0-9]*) file_timeout=180 ;; esac
   case "$f" in
-    */skills.test.ts|*/zeroentropy-live.test.ts|*/serve-http-multi-agent.test.ts) file_timeout=$((file_timeout * 4)) ;;
+    */skills.test.ts|*/serve-http-multi-agent.test.ts) file_timeout=$((file_timeout * 4)) ;;
   esac
   if command -v gtimeout >/dev/null 2>&1; then
     TIMEOUT_CMD="gtimeout $file_timeout"

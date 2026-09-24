@@ -14,9 +14,9 @@ let engine: PGLiteEngine;
  * Actual `content_chunks.embedding` column width at runtime. Probed
  * after initSchema, NOT hardcoded — the brain inherits from
  * `~/.gbrain/config.json` (locally) or `DEFAULT_EMBEDDING_DIMENSIONS`
- * (CI fresh-install). Hardcoding 1536 or 1280 makes the test green
+ * (CI fresh-install). Hardcoding 1536 or 1024 makes the test green
  * on one and red on the other; the default model has flipped twice
- * already (OpenAI 3-large=1536 → ZE zembed-1=1280 in v0.36+).
+ * already (OpenAI 3-large=1536 → Voyage voyage-4=1024 in v0.36+).
  */
 let TEXT_DIM = 0;
 
@@ -42,7 +42,7 @@ beforeEach(async () => {
 /**
  * Build a fake text-column vector at the column's runtime dim. Reads
  * `TEXT_DIM` populated in `beforeAll` from the actual column. Works
- * on any default — 1280 (CI fresh-install) and 1536 (local dev with
+ * on any default — 1024 (CI fresh-install) and 1536 (local dev with
  * gbrain config from older default) both pass.
  */
 function fakeTextDefault(seed: number): Float32Array {

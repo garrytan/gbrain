@@ -73,7 +73,7 @@ describe('applyReranker — fail-open contract (D6 + R8)', () => {
       topNIn: 30,
       topNOut: null,
       rerankerFn: async () => {
-        throw new RerankError('missing ZEROENTROPY_API_KEY', 'auth');
+        throw new RerankError('missing VOYAGE_API_KEY', 'auth');
       },
     };
     const out = await applyReranker('test query', results, opts);

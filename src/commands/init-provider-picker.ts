@@ -123,12 +123,6 @@ export async function pickProvider(opts: PickProviderOpts): Promise<PickedProvid
   const all = listRecipes();
   let ready = readyRecipesForTouchpoint(all, opts.touchpoint, env);
 
-  // v0.46.3: never OFFER a provider whose hosted API has an announced shutdown
-  // (recipe.sunset) — a fresh install must not be steered onto a dying
-  // provider. Explicit --embedding-model still works (with a loud warning)
-  // until the removal release.
-  ready = ready.filter((r) => !r.sunset);
-
   // Probe-gate the ollama daemon: `envReady` treats no-key-required as
   // ready, but daemon-up ≠ model-pulled — the exact trap that let a keyless
   // Enter "choose" a broken ollama config and continue silently degraded.

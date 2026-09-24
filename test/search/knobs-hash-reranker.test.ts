@@ -28,14 +28,14 @@ import {
   type ResolvedSearchKnobs,
 } from '../../src/core/search/mode.ts';
 import { resolveHardExcludes } from '../../src/core/search/source-boost.ts';
-import { DEFAULT_RERANKER_MODEL, LEGACY_DEFAULT_RERANKER_MODEL } from '../../src/core/ai/defaults.ts';
+import { DEFAULT_RERANKER_MODEL } from '../../src/core/ai/defaults.ts';
 
 /** Build a baseline resolved knob set with all reranker fields filled. */
 function baseKnobs(): ResolvedSearchKnobs {
   return {
     ...MODE_BUNDLES.balanced,
     reranker_enabled: false,
-    reranker_model: 'zeroentropyai:zerank-2',
+    reranker_model: 'voyage:rerank-2.5',
     reranker_top_n_in: 30,
     reranker_top_n_out: null,
     reranker_timeout_ms: 5000,
@@ -119,10 +119,10 @@ describe('Each reranker field flips the hash (cache-row separation)', () => {
   });
 
   test('reranker_model differs → different hash', () => {
-    const z2 = knobsHash({ ...baseKnobs(), reranker_model: 'zeroentropyai:zerank-2' });
-    const z1 = knobsHash({ ...baseKnobs(), reranker_model: 'zeroentropyai:zerank-1' });
-    const z1s = knobsHash({ ...baseKnobs(), reranker_model: 'zeroentropyai:zerank-1-small' });
-    expect(new Set([z2, z1, z1s]).size).toBe(3);
+    const full = knobsHash({ ...baseKnobs(), reranker_model: 'voyage:rerank-2.5' });
+    const lite = knobsHash({ ...baseKnobs(), reranker_model: 'voyage:rerank-2.5-lite' });
+    const preview = knobsHash({ ...baseKnobs(), reranker_model: 'voyage:rerank-3' });
+    expect(new Set([full, lite, preview]).size).toBe(3);
   });
 
   test('reranker_top_n_in differs → different hash', () => {
@@ -282,12 +282,12 @@ describe('v=12 hard-exclude participation (#2825)', () => {
 });
 
 describe('v0.48.2 reranker default flip re-keys the cache (rrm= is folded unconditionally)', () => {
-  test('per mode: hash(DEFAULT voyage) !== hash(LEGACY zerank) even with the reranker OFF', () => {
+  test('per mode: hash(DEFAULT voyage) !== hash(synthetic model) even with the reranker OFF', () => {
     expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-2.5');
     for (const mode of ['conservative', 'balanced', 'tokenmax'] as const) {
       const base = { ...baseKnobs(), reranker_enabled: MODE_BUNDLES[mode].reranker_enabled };
       const withDefault = knobsHash({ ...base, reranker_model: DEFAULT_RERANKER_MODEL });
-      const withLegacy = knobsHash({ ...base, reranker_model: LEGACY_DEFAULT_RERANKER_MODEL });
+      const withLegacy = knobsHash({ ...base, reranker_model: 'fixture-provider:reranker-v1' });
       expect(withDefault).not.toBe(withLegacy);
     }
   });

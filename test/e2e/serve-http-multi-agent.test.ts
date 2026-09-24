@@ -77,14 +77,13 @@ const C_SOURCE = 'nova-notes';
 // Embedding is FORCED UNAVAILABLE in every serve this file spawns: the
 // nightly coverage lane (and dev shells) inject real provider keys, and the
 // hammer must not spend. Blanking OPENAI alone is not enough — the gateway's
-// config-less default embedding model is zeroentropyai:zembed-1 (1280-dim,
-// keyed by ZEROENTROPY_API_KEY), and a lane-injected ZE/Voyage/Gemini key
-// would make the serve embed for real: 1280-dim vectors into the 1536-dim
+// config-less default embedding model is voyage:voyage-4 (1024-dim,
+// keyed by VOYAGE_API_KEY), and a lane-injected Voyage/Voyage/Gemini key
+// would make the serve embed for real: 1024-dim vectors into the 1536-dim
 // column kill every write with a pgvector dimension error (observed), and
 // each one costs money. Blank every embedding-capable provider key.
 const NO_EMBED_ENV = {
   OPENAI_API_KEY: '',
-  ZEROENTROPY_API_KEY: '',
   VOYAGE_API_KEY: '',
   GEMINI_API_KEY: '',
   GOOGLE_API_KEY: '',

@@ -84,7 +84,7 @@ describe('resolveLiveRerankerModel — divergence fix', () => {
     // per-key getConfig errors via its internal safeGet wrapper, so the
     // mode bundle default surfaces normally — doctor reports the truth
     // about what would happen at search time.
-    configureGateway({ env: { ZEROENTROPY_API_KEY: 'sk-test' } });
+    configureGateway({ env: { VOYAGE_API_KEY: 'sk-test' } });
     const engine = {
       async getConfig(): Promise<string | null> {
         throw new Error('DB unreachable');

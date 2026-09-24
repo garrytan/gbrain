@@ -98,8 +98,6 @@ export {
 export {
   checkGraphSignalsCoverage,
   checkBrainstormHealth,
-  checkZeEmbeddingHealth,
-  checkProviderSunset,
   checkEmbeddingWidthConsistency,
   checkFactsEmbeddingWidthConsistency,
   checkJunkEntityHubs,
@@ -190,8 +188,6 @@ import {
 import {
   checkGraphSignalsCoverage,
   checkBrainstormHealth,
-  checkZeEmbeddingHealth,
-  checkProviderSunset,
   checkEmbeddingWidthConsistency,
   checkFactsEmbeddingWidthConsistency,
   checkJunkEntityHubs,
@@ -2472,11 +2468,6 @@ export async function buildChecks(
     });
   }
 
-  // 8b. v0.41.2.1 embedding_env_override (D9 #9 — uses Check.details, NOT
-  //     Check.issues). Defense in depth for users who bypass ze-switch
-  //     entirely; surfaces on every hourly doctor run when env disagrees
-  //     with DB config. Mirrored in doctorReportRemote() via the shared
-  //     checkEmbeddingEnvOverride() helper.
   progress.heartbeat('embedding_env_override');
   checks.push(await checkEmbeddingEnvOverride(engine));
 
@@ -4037,14 +4028,6 @@ export async function buildChecks(
     // budget so a huge brain never wedges doctor on this check.
     progress.heartbeat('link_resolution_opportunity');
     checks.push(await checkLinkResolutionOpportunity(engine, progress));
-    // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
-    progress.heartbeat('ze_embedding_health');
-    checks.push(await checkZeEmbeddingHealth(engine));
-    // provider_sunset — brain pinned to a provider with an announced
-    // hosted-API shutdown; paste-ready migration hint with the actual
-    // column width. Warn before the date, fail after.
-    progress.heartbeat('provider_sunset');
-    checks.push(await checkProviderSunset(engine));
     progress.heartbeat('embedding_width_consistency');
     checks.push(await checkEmbeddingWidthConsistency(engine));
     // v0.41.15.0 (T6, codex #19/#20) — facts.embedding column drift

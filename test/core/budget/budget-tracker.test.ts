@@ -346,10 +346,10 @@ describe('BudgetTracker.reserve', () => {
     expect(t.totalSpent).toBeGreaterThan(0);
   });
 
-  test('#3223: rerank kind for zeroentropyai:zerank-2 prices from the embedding table (no TX2 throw under --max-cost)', () => {
-    // Pre-fix: `search_mode: tokenmax` defaults the zerank-2 reranker ON
-    // (docs/ai-providers/zeroentropy.md), but lookupPricing's rerank branch
-    // never consulted the embedding pricing table (where ZeroEntropy's
+  test('#3223: rerank kind for voyage:rerank-2.5-lite prices from the embedding table (no TX2 throw under --max-cost)', () => {
+    // Pre-fix: `search_mode: tokenmax` defaults the rerank-2.5-lite reranker ON
+    // (docs/ai-providers/README.md), but lookupPricing's rerank branch
+    // never consulted the embedding pricing table (where Voyage's
     // provider:model-keyed prices live) — so any --max-cost run that
     // reranked TX2 hard-failed with "no pricing entry" even after adding
     // the entry to EMBEDDING_PRICING alone. Fixed by wiring the rerank
@@ -357,7 +357,7 @@ describe('BudgetTracker.reserve', () => {
     const t = new BudgetTracker({ maxCostUsd: 0.0001, label: 'test', auditPath });
     expect(() =>
       t.reserve({
-        modelId: 'zeroentropyai:zerank-2',
+        modelId: 'voyage:rerank-2.5-lite',
         estimatedInputTokens: 3000,
         maxOutputTokens: 0,
         kind: 'rerank',
@@ -366,15 +366,15 @@ describe('BudgetTracker.reserve', () => {
     expect(t.totalSpent).toBe(0); // reserve() only projects; record() below banks it.
     expect(() =>
       t.record({
-        modelId: 'zeroentropyai:zerank-2',
+        modelId: 'voyage:rerank-2.5-lite',
         inputTokens: 3000,
         outputTokens: 0,
         kind: 'rerank',
       }),
     ).not.toThrow();
-    // $0.025/1M * 3000 tokens = $0.000075, under the $0.0001 cap — proves the
-    // real ZeroEntropy price was used, not a $0 fallback.
-    expect(t.totalSpent).toBeCloseTo(0.000075, 9);
+    // $0.02/1M * 3000 tokens = $0.00006, under the $0.0001 cap — proves the
+    // real Voyage price was used, not a $0 fallback.
+    expect(t.totalSpent).toBeCloseTo(0.00006, 9);
   });
 
   test('v0.40.x: local embed providers price at $0 (no TX2 throw under --max-cost)', () => {

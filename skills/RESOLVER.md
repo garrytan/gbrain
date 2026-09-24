@@ -120,7 +120,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "connect grok bot to my brain", "connect muse to my brain", "connect claude desktop to my brain", "reach my brain from my phone" | `skills/remote-mcp/SKILL.md` (host-side publishing, then `skills/mcp-access/SKILL.md` / hosted access selects native OAuth or a private machine handoff) |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
 | "connect our company brain", "connect our existing company brain", "import an existing company brain" | `skills/migrate/SKILL.md` (company repository workflow; preview and approval before import, not sanitization) |
-| "Switch embedding provider" / "migrate my embeddings" / "switch reranker" / "ZeroEntropy" / "provider_sunset" / "search stopped working after a provider shutdown" | `skills/migrations/v0.46.3.0.md` |
+| "Switch embedding provider" / "migrate my embeddings" / "switch reranker" / "unsupported embedding provider" / "search stopped working after a provider shutdown" | `skills/migrations/v0.46.3.0.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run", "retriage the backlog", "re-score the triage" | `skills/maintain/SKILL.md` (dream cycle section) |

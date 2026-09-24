@@ -146,7 +146,7 @@ describe('#2540 (ii) — an enabled phase that never completes still prevents th
       // against a brain directory that no longer exists. The previous shape
       // ('embed' with OPENAI_API_KEY/ANTHROPIC_API_KEY unset) was
       // environment-sensitive — on a machine where any OTHER embedding
-      // provider resolves (Voyage, ZeroEntropy, a local endpoint, …), embed
+      // provider resolves (Voyage, Voyage, a local endpoint, …), embed
       // with zero stale chunks succeeds and the cycle reports 'clean',
       // flipping this test's expectation. A vanished checkout fails the
       // sync phase on every machine. This is NOT the fix under test; it's

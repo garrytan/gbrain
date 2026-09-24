@@ -300,8 +300,6 @@ export const openrouter: Recipe = {
       // `cost_per_search_usd` field for exact accounting.
       cost_per_1m_tokens_usd: 0.001,
       price_last_verified: '2026-06-13',
-      // OpenRouter doesn't publish an explicit payload cap; 5MB matches
-      // ZeroEntropy's upstream limit and the gateway's pre-flight ceiling.
       max_payload_bytes: 5_000_000,
       // OR serves /rerank under /api/v1. base_url_default already ends in /v1,
       // so gateway concatenates to …/api/v1/rerank.

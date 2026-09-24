@@ -80,11 +80,11 @@ const META: HybridSearchMeta = {
 };
 
 beforeAll(async () => {
-  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1280 (ZE Matryoshka).
+  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1024 (Voyage Matryoshka).
   // This test hardcodes DIM=1536 in its embeddings. If another test file in
   // the same shard configured the gateway before us, initSchema() would size
-  // query_cache.embedding at vector(1280) and every insert below would fail
-  // with "expected 1280 dimensions, not 1536". Pin the gateway to 1536d
+  // query_cache.embedding at vector(1024) and every insert below would fail
+  // with "expected 1024 dimensions, not 1536". Pin the gateway to 1536d
   // explicitly so this file is hermetic regardless of cross-file state.
   resetGateway();
   configureGateway({

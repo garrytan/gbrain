@@ -544,9 +544,9 @@ describe('v0.41.6.0 D2 — embedding error classification', () => {
     expect(classifyErrorCode('Voyage AI embedding requires VOYAGE_API_KEY.')).toBe('EMBEDDING_NO_CREDS');
   });
 
-  test('EMBEDDING_NO_CREDS matches ZeroEntropy openai-compat shape', async () => {
+  test('EMBEDDING_NO_CREDS matches Voyage openai-compat shape', async () => {
     const { classifyErrorCode } = await import('../src/core/sync.ts');
-    expect(classifyErrorCode('ZeroEntropy embedding requires ZEROENTROPY_API_KEY.')).toBe('EMBEDDING_NO_CREDS');
+    expect(classifyErrorCode('Voyage embedding requires VOYAGE_API_KEY.')).toBe('EMBEDDING_NO_CREDS');
   });
 
   test('EMBEDDING_NO_CREDS matches DeepSeek openai-compat shape', async () => {

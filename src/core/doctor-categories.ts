@@ -198,7 +198,6 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'plugin_lane_collision',
   'pool_budget',
   'progressive_batch_audit_health',
-  'provider_sunset',
   'queue_health',
   'reranker_health',
   'rls',
@@ -216,7 +215,6 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'wedged_queue',
   'orphaned_private_queue',
   'worker_oom_loop',
-  'ze_embedding_health',
 ]);
 
 /**

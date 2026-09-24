@@ -138,7 +138,7 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
       .toMatchObject({ compiled_truth: expect.stringContaining('Body for note 0.') });
     expect(await operation('get_page', { slug: 'topics/note-0001', source_id: 'workspace' }))
       .toMatchObject({ compiled_truth: expect.stringContaining('Body for note 1.') });
-    expect(serveStderr).not.toContain('requires ZEROENTROPY_API_KEY');
+    expect(serveStderr).not.toContain('requires VOYAGE_API_KEY');
     expect(inspectLockHolder(dbDir).pid).toBe(serveProc!.pid);
   }, 120_000);
 
@@ -167,8 +167,8 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
         }
         const result = await operation('list_write_requests', { source_id: 'workspace', limit: 25 }) as { requests: typeof observed };
         observed = result.requests;
-        return observed.some(row => row.state === 'committed');
-      }, 'a committed sync page receipt');
+        return observed.some(row => row.state === 'committed') && observed.some(row => row.state === 'running');
+      }, 'committed and running sync page receipts');
     } finally { serveProc!.kill('SIGKILL'); await serveProc!.exited; }
     const result = await client;
     expect(result.code).toBe(1);
@@ -198,7 +198,33 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
   }, 200_000);
 
   test('Pin 4 — direct sync resumes the same run and IDs without a manual lock break', async () => {
-    const result = await runSyncChild(resumeArgs, 240_000);
+    let result = await runSyncChild(resumeArgs, 240_000);
+    if (result.code !== 0) {
+      expect(result.code).toBe(1);
+      if (!pendingRequestId) throw new Error('Pending recovery has no saved request ID.');
+      const partial = JSON.parse(result.out);
+      expect(partial).toMatchObject({ schema_version: 1, source_id: 'workspace', sync_status: 'partial',
+        reason: 'writer_pending', run_id: interruptedRun });
+      expect(partial.managed_write.write_request.request_id).toBe(pendingRequestId);
+      const pendingEngine = await createEngine(config());
+      let retryAfterMs: number;
+      try {
+        await pendingEngine.connect(config());
+        const [request] = await pendingEngine.executeRaw<{ request_id: string; state: string; retry_after_ms: number | null }>(
+          `SELECT request_id,state,GREATEST(0,extract(epoch FROM claim_expires_at-clock_timestamp())*1000)::float8 AS retry_after_ms
+            FROM persistence_requests WHERE request_id=$1::uuid`, [pendingRequestId]);
+        expect(request.request_id).toBe(pendingRequestId);
+        expect(['queued', 'running']).toContain(request.state);
+        retryAfterMs = Number(request.retry_after_ms ?? 0);
+        expect(Number.isFinite(retryAfterMs)).toBe(true);
+        expect(retryAfterMs).toBeGreaterThanOrEqual(0);
+        expect(retryAfterMs).toBeLessThanOrEqual(30_000);
+        const [source] = await pendingEngine.executeRaw<{ last_commit: string }>("SELECT last_commit FROM sources WHERE id='workspace'");
+        expect(source.last_commit).toBe(initialCommit);
+      } finally { await pendingEngine.disconnect(); }
+      await Bun.sleep(Math.ceil(retryAfterMs) + 1);
+      result = await runSyncChild(resumeArgs, 240_000);
+    }
     assertSuccess(result);
     expect(result.err).not.toContain('Delegating');
     expect(JSON.parse(result.out)).toMatchObject({ schema_version: 1, source_id: 'workspace', sync_status: 'synced', added: 300, embedded: 0 });

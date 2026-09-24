@@ -78,7 +78,7 @@ export async function withEnv<T>(
  * A fresh empty temp dir for `GBRAIN_HOME`, so `loadConfig()` / `configDir()`
  * resolve to a directory with no config.json. Pair with a `withEnv` override
  * (`GBRAIN_HOME: emptyHome()`) on any "no key" assertion: `hasAnthropicKey()`
- * and the ZE/embedding key probes read BOTH the env var AND the gbrain config
+ * and the Voyage/embedding key probes read BOTH the env var AND the gbrain config
  * file, so clearing only the env var is NOT hermetic on a dev machine whose
  * real `~/.gbrain/config.json` holds a key — the assertion flips and the test
  * fails locally while passing in key-less CI. The dir is tiny and intentionally

@@ -65,12 +65,6 @@ export const voyage: Recipe = {
       // 4xx).
       multimodal_models: ['voyage-multimodal-3'],
     },
-    // v0.46.3: Voyage reranking (the recommended zerank-2 replacement — same
-    // VOYAGE_API_KEY as embeddings). gateway.rerank() posts to
-    // `${base_url_default}/rerank` (base already ends in /v1). Wire dialect:
-    // request takes `top_k` (declared via top_param); response is
-    // {object: "list", data: [{index, relevance_score}]} — live-wire verified
-    // 2026-08-15; the gateway's parser accepts both data[] and results[].
     reranker: {
       // #4938: rerank-3 / rerank-3-lite are Voyage's preview generation on the
       // same /rerank wire (path + top_param unchanged). default_model stays
@@ -86,10 +80,6 @@ export const voyage: Recipe = {
       // through src/core/embedding-pricing.ts; this scalar is a display hint.
       cost_per_1m_tokens_usd: 0.05,
       price_last_verified: '2026-09-06',
-      // Voyage enforces token-based caps (32K per query+document pair,
-      // ≤1000 documents/request) rather than a byte cap; 5MB is a
-      // conservative byte-level proxy matching the ZE-era pre-flight so
-      // oversized bodies still fail open before the wire.
       max_payload_bytes: 5_000_000,
     },
   },

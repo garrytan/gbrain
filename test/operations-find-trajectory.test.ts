@@ -20,7 +20,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
-  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1280 (ZE Matryoshka). unitVec()
+  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1024 (Voyage Matryoshka). unitVec()
   // below inserts 1536-dim vectors into facts.embedding. Without pinning, a
   // fresh CI environment (no prior gateway configure) sizes the column at
   // vector(1280) and the inserts throw "expected 1280 dimensions, not 1536"

@@ -262,6 +262,7 @@ test('managed sync imports and deletions cannot disguise canonical files as know
     const slug = `notes/disguised-${kind}-${index}`;
     const content = readFileSync(join(f.root, path), 'utf8');
     const intent: SyncIntent = { kind, expected_revision: null, sourcePath: path, path, rawHash: sha256(content), content,
+      processingOptions: { noEmbed: true, noExtract: true, noSchemaPack: true },
       ownerEpoch: String(binding.owner_epoch), syncAuthority, cursorKey: 'fixture', runId: randomUUID(), index: 0,
       from: null, target: 'fixture', total: 1, slugMode: 'source-root' };
     const row = await admitWrite(f.engine, { principal: syncAuthority.writer.principal, authority: syncAuthority.writer,

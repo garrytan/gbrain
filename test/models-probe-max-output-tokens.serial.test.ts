@@ -183,7 +183,7 @@ describe('models doctor chat probe respects the provider max-output-tokens floor
       // mode-bundle reranker default is voyage:rerank-2.5, so voyage joins
       // the skip list — this env has no VOYAGE_API_KEY by design.)
       const doctor = await runCli(
-        ['models', 'doctor', '--json', '--skip=zeroentropyai', '--skip=voyage', '--skip=llama-server'],
+        ['models', 'doctor', '--json', '--skip=voyage', '--skip=llama-server'],
         env,
         120_000,
       );

@@ -401,8 +401,8 @@ describe('signature invalidation is probe-gated (#4283)', () => {
     expect(await embeddedCount()).toBe(4);
 
     const result = await embedStaleForSource(engine, 'default', {
-      embeddingSignature: 'zeroentropyai:zembed-1:1280',
-      embedFn: async () => { throw new Error('ZeroEntropy embedding requires ZEROENTROPY_API_KEY.'); },
+      embeddingSignature: 'fixture-provider:embedding-v1:1280',
+      embedFn: async () => { throw new Error('Fixture embedding requires FIXTURE_API_KEY.'); },
     });
 
     // Pre-fix: all 4 embeddings were stripped and the run reported done.
@@ -417,7 +417,7 @@ describe('signature invalidation is probe-gated (#4283)', () => {
     const result = await embedStaleForSource(engine, 'default', {
       // Signature claims 1280 dims but the embedder returns 1536-d vectors:
       // every post-NULL upsert would fail, so refuse to NULL at all.
-      embeddingSignature: 'zeroentropyai:zembed-1:1280',
+      embeddingSignature: 'fixture-provider:embedding-v1:1280',
       embedFn: fakeEmbedFn,
     });
     expect(await embeddedCount()).toBe(2);

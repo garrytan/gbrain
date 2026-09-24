@@ -62,10 +62,10 @@ describe('resolveEmbeddingColumn — resolution chain', () => {
     const r = resolveEmbeddingColumn(
       { embeddingColumn: 'embedding_voyage' },
       cfg({
-        search_embedding_column: 'embedding_zeroentropy',
+        search_embedding_column: 'embedding_fixture',
         embedding_columns: {
           embedding_voyage: { provider: 'voyage:voyage-3-large', dimensions: 1024, type: 'vector' },
-          embedding_zeroentropy: { provider: 'zeroentropyai:zembed-1', dimensions: 2560, type: 'halfvec' },
+          embedding_fixture: { provider: 'fixture-provider:embedding-v1', dimensions: 2560, type: 'halfvec' },
         },
       }),
     );
@@ -101,7 +101,7 @@ describe('resolveEmbeddingColumn — resolution chain', () => {
       name: 'embedding_custom',
       type: 'halfvec',
       dimensions: 2560,
-      embeddingModel: 'zeroentropyai:zembed-1',
+      embeddingModel: 'fixture-provider:embedding-v1',
     };
     const r = resolveEmbeddingColumn({ embeddingColumn: descriptor }, cfg());
     expect(r).toEqual(descriptor);
@@ -171,12 +171,12 @@ describe('getEmbeddingColumnRegistry — builtins + merge', () => {
     const reg = getEmbeddingColumnRegistry(
       cfg({
         embedding_columns: {
-          embedding_ze: { provider: 'zeroentropyai:zembed-1', dimensions: 2560, type: 'halfvec' },
+          embedding_fixture: { provider: 'fixture-provider:embedding-v1', dimensions: 2560, type: 'halfvec' },
         },
       }),
     );
-    expect(reg.embedding_ze!.type).toBe('halfvec');
-    expect(reg.embedding_ze!.dimensions).toBe(2560);
+    expect(reg.embedding_fixture!.type).toBe('halfvec');
+    expect(reg.embedding_fixture!.dimensions).toBe(2560);
   });
 });
 
@@ -281,9 +281,9 @@ describe('D3 — buildVectorCastFragment + quoteIdentifier', () => {
   });
 
   test('halfvec type emits $1::halfvec(N) cast', () => {
-    const r: ResolvedColumn = { name: 'embedding_ze', type: 'halfvec', dimensions: 2560, embeddingModel: 'zeroentropyai:zembed-1' };
+    const r: ResolvedColumn = { name: 'embedding_fixture', type: 'halfvec', dimensions: 2560, embeddingModel: 'fixture-provider:embedding-v1' };
     const { col, castSql } = buildVectorCastFragment(r);
-    expect(col).toBe('"embedding_ze"');
+    expect(col).toBe('"embedding_fixture"');
     expect(castSql).toBe('$1::halfvec(2560)');
   });
 
@@ -321,10 +321,10 @@ describe('normalizeEngineColumn — engine-side legacy converter', () => {
 
   test('ResolvedColumn descriptor passes through', () => {
     const descriptor: ResolvedColumn = {
-      name: 'embedding_ze',
+      name: 'embedding_fixture',
       type: 'halfvec',
       dimensions: 2560,
-      embeddingModel: 'zeroentropyai:zembed-1',
+      embeddingModel: 'fixture-provider:embedding-v1',
     };
     expect(normalizeEngineColumn(descriptor)).toEqual(descriptor);
   });
@@ -442,10 +442,10 @@ describe('codex /ship #2 — descriptor passthrough validates', () => {
 
   test('valid descriptor passes through unchanged', () => {
     const good: ResolvedColumn = {
-      name: 'embedding_ze',
+      name: 'embedding_fixture',
       type: 'halfvec',
       dimensions: 2560,
-      embeddingModel: 'zeroentropyai:zembed-1',
+      embeddingModel: 'fixture-provider:embedding-v1',
     };
     expect(resolveEmbeddingColumn({ embeddingColumn: good }, cfg())).toEqual(good);
   });

@@ -8,14 +8,14 @@
  *  - Schema seed stores provider:model (Lane A.8 — was prefix-stripped)
  *  - Chunk-row INSERT default writes gateway model (Lane A.7)
  *  - Init precedence chain (Lane B.1 + B.4 + CDX2-7)
- *  - ZE setup hint fires at init when key missing (Lane B.1)
+ *  - Voyage setup hint fires at init when key missing (Lane B.1)
  *  - Init merges existing config across re-init (Lane B.4)
  *  - config set refuses schema-sizing fields with the recipe (Lane C.2)
- *  - ZEROENTROPY_API_KEY env merge into GBrainConfig (Lane C.3)
+ *  - VOYAGE_API_KEY env merge into GBrainConfig (Lane C.3)
  *  - Embed pre-flight catches dim mismatch end-to-end (Lane D.2)
  *  - Sync hint fires at both catch sites (Lane D.3, CDX2-8)
  *  - reinit-pglite end-to-end behavior (deferred-TODO sugar)
- *  - loadRecommendationContext reads gateway + ZE keys (Lane E.4)
+ *  - loadRecommendationContext reads gateway + Voyage keys (Lane E.4)
  *
  * Hermetic — no DATABASE_URL, no real API keys, no real network. Uses
  * PGLite in-memory + transport stubs.
@@ -75,11 +75,11 @@ describe('Lane A.7 — chunk-row INSERT default tracks the gateway-resolved mode
 // Lane A.8 — Schema seed stores provider:model (was prefix-stripped)
 // ─────────────────────────────────────────────────────────────────────
 describe('Lane A.8 — schema seed stores full provider:model in DB config', () => {
-  test('fresh init with ZE model stores `zeroentropyai:zembed-1`, not `zembed-1`', async () => {
+  test('fresh init with Voyage model stores `voyage:voyage-4`, not `voyage-4`', async () => {
     // Independent engine + gateway so the assertion is unambiguous.
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: 1280,
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: 1024,
       env: { ...process.env },
     });
     const engine = new PGLiteEngine();
@@ -87,9 +87,9 @@ describe('Lane A.8 — schema seed stores full provider:model in DB config', () 
     try {
       await engine.initSchema();
       const stored = await engine.getConfig('embedding_model');
-      expect(stored).toBe('zeroentropyai:zembed-1');
-      // CDX-4 regression: would have been 'zembed-1' under the strip.
-      expect(stored).not.toBe('zembed-1');
+      expect(stored).toBe('voyage:voyage-4');
+      // CDX-4 regression: would have been 'voyage-4' under the strip.
+      expect(stored).not.toBe('voyage-4');
     } finally {
       await engine.disconnect();
       configureGateway({
@@ -173,9 +173,9 @@ describe('Lane B — init precedence chain (CLI > env > existing file > default)
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// Lane C.3 — ZEROENTROPY_API_KEY env merge into GBrainConfig
+// Lane C.3 — OPENAI_API_KEY env merge into GBrainConfig
 // ─────────────────────────────────────────────────────────────────────
-describe('Lane C.3 — env ZEROENTROPY_API_KEY merges into loadConfig', () => {
+describe('Lane C.3 — env OPENAI_API_KEY merges into loadConfig', () => {
   let tmpHome: string;
   let origHome: string | undefined;
 
@@ -198,19 +198,19 @@ describe('Lane C.3 — env ZEROENTROPY_API_KEY merges into loadConfig', () => {
     else process.env.GBRAIN_HOME = origHome;
   });
 
-  test('process.env.ZEROENTROPY_API_KEY → cfg.zeroentropy_api_key', async () => {
-    await withEnv({ ZEROENTROPY_API_KEY: 'ze-from-env-key' }, async () => {
+  test('process.env.OPENAI_API_KEY → cfg.openai_api_key', async () => {
+    await withEnv({ OPENAI_API_KEY: 'openai-from-env-key' }, async () => {
       const { loadConfig } = await import('../src/core/config.ts');
       const cfg = loadConfig();
-      expect(cfg?.zeroentropy_api_key).toBe('ze-from-env-key');
+      expect(cfg?.openai_api_key).toBe('openai-from-env-key');
     });
   });
 
-  test('loadConfigFileOnly does NOT merge the env ZE key', async () => {
-    await withEnv({ ZEROENTROPY_API_KEY: 'ze-from-env-key' }, async () => {
+  test('loadConfigFileOnly does NOT merge the env OpenAI key', async () => {
+    await withEnv({ OPENAI_API_KEY: 'openai-from-env-key' }, async () => {
       const { loadConfigFileOnly } = await import('../src/core/config.ts');
       const cfg = loadConfigFileOnly();
-      expect(cfg?.zeroentropy_api_key).toBeUndefined();
+      expect(cfg?.openai_api_key).toBeUndefined();
     });
   });
 });
@@ -249,13 +249,13 @@ describe('Lane D.2 — embed pre-flight catches dim mismatch before worker pool'
     });
   });
 
-  test('schema=1536 + gateway=ZE/1280 → runEmbedCore throws EmbeddingDimMismatchError before transport fires', async () => {
-    // Reconfigure to mismatched dim. Schema (1536) and gateway (1280)
+  test('schema=1536 + gateway=Voyage/1024 → runEmbedCore throws EmbeddingDimMismatchError before transport fires', async () => {
+    // Reconfigure to mismatched dim. Schema (1536) and gateway (1024)
     // now disagree; pre-flight should throw before the worker pool
     // calls embedMany.
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: 1280,
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: 1024,
       env: { ...process.env },
     });
 
@@ -275,7 +275,7 @@ describe('Lane D.2 — embed pre-flight catches dim mismatch before worker pool'
     expect(caught).toBeInstanceOf(EmbeddingDimMismatchError);
     const err = caught as InstanceType<typeof EmbeddingDimMismatchError>;
     expect(err.recipeMessage).toContain('vector(1536)');
-    expect(err.recipeMessage).toContain('vector(1280)');
+    expect(err.recipeMessage).toContain('vector(1024)');
     // The transport must never have fired — pre-flight's whole point is
     // to kill the N-parallel-API-call-fail-pattern.
     expect(transportCalled).toBe(false);
@@ -290,8 +290,8 @@ describe('Lane D.2 — embed pre-flight catches dim mismatch before worker pool'
 
   test('dryRun skips the pre-flight (no embed risk to gate)', async () => {
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: 1280,
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: 1024,
       env: { ...process.env },
     });
     const { runEmbedCore } = await import('../src/commands/embed.ts');
@@ -339,7 +339,7 @@ describe('Lane E.4 — loadRecommendationContext is provider-aware', () => {
     // provider for the key. v0.40.x replaced the inline prefix ladder with the
     // shared recipe-aware helper `embeddingProviderConfigured` (so doctor +
     // autopilot can't drift) — assert that shape rather than the old inline
-    // ZE strings.
+    // Voyage strings.
     const fnIdx = src.indexOf('async function loadRecommendationContext');
     expect(fnIdx).toBeGreaterThan(0);
     const slice = src.slice(fnIdx, fnIdx + 3000);
@@ -410,8 +410,8 @@ describe('reinit-pglite — backup + reinit', () => {
     (process as any).exit = ((code?: number) => { exits.push(code ?? 0); throw new Error('exit:' + (code ?? 0)); });
     try {
       await runReinitPglite([
-        '--embedding-model', 'zeroentropyai:zembed-1',
-        '--embedding-dimensions', '1280',
+        '--embedding-model', 'voyage:voyage-4',
+        '--embedding-dimensions', '1024',
         '--yes', '--json',
       ]);
     } catch (e) {
@@ -520,15 +520,15 @@ describe('reinit-pglite — backup + reinit', () => {
     writeFileSync(join(tmpHome, '.gbrain', 'brain.pglite.bak'), 'sentinel');
 
     const { exits, logs, errs } = await captureRun([
-      '--embedding-model', 'zeroentropyai:zembed-1',
-      '--embedding-dimensions', '1280',
+      '--embedding-model', 'voyage:voyage-4',
+      '--embedding-dimensions', '1024',
       '--yes',
     ]);
 
     expect(exits).toContain(1); // bak_exists sentinel
     const out = logs.join('\n');
-    expect(out).toContain('New embedding model: zeroentropyai:zembed-1');
-    expect(out).toMatch(/New dimensions:\s+1280/);
+    expect(out).toContain('New embedding model: voyage:voyage-4');
+    expect(out).toMatch(/New dimensions:\s+1024/);
     expect(out).not.toContain('openai:text-embedding-3-large');
     // No defaulting note when both values came from flags.
     expect(errs.join('\n')).not.toContain('defaulted from config');

@@ -78,6 +78,16 @@ jobs:
         run: cc -std=c11 native/locks/abi-check.c -o "${{ runner.temp }}/native-abi-check"
       - run: bun test --timeout=60000 test/native-lock.test.ts test/pglite-lock.test.ts test/local-ipc-path.test.ts
       - run: bun scripts/native/compiled-smoke.ts
+      - name: Verify native data-safety contracts
+        shell: bash
+        env:
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+          GBRAIN_TEST_REQUIRE_CASE_INSENSITIVE: ${{ runner.os != 'Linux' && '1' || '0' }}
+        run: |
+          bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-git-publication.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/backup-portability-native.serial.test.ts
       - name: Build the published CLI platforms and verify persistent writes
         if: matrix.target == 'linux-x64-glibc' || matrix.target == 'darwin-arm64'
         timeout-minutes: 8

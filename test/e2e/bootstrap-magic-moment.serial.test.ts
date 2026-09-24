@@ -86,7 +86,7 @@ const OTHER_SOURCE = 'other';
 // Every provider key that detectCapabilities / the sweep could observe. Stripped
 // so keyless is deterministic (and no accidental live embedding cost/flake).
 const PROVIDER_KEYS = [
-  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'ZEROENTROPY_API_KEY', 'OPENROUTER_API_KEY',
+  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY',
   'VOYAGE_API_KEY', 'DASHSCOPE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY',
 ];
 const ENV_KEYS = [
