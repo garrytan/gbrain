@@ -14,6 +14,7 @@ import { lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { maximumInvocationCents } from '../minions/delegated-spend.ts';
 import { loadConfig } from '../config.ts';
 import { assertEmbeddingEnabled } from '../embedding-dim-check.ts';
+import { MAX_CUE_WINDOW_BYTES } from './windows.ts';
 
 export interface CueBuildRow {
   id: string;
@@ -65,14 +66,15 @@ export async function previewMemoryCueBuild(engine: BrainEngine, opts: MemoryCue
     : sources.length !== limits.sourceIds.length ? 'source_unavailable' : unsupportedCueColumn(column)
       ?? (!canonicalLookup(generationModel) || lookupEmbeddingPrice(column.embeddingModel).kind !== 'known' ? 'pricing_unknown' : undefined);
   const chatCents = maximumInvocationCents({ operation: 'memory-cues-preview', kind: 'chat', model: generationModel,
-    maxInputTokens: Buffer.byteLength(CUE_SYSTEM_PROMPT) + 800 * 6 + 1024, maxOutputTokens: 1200 });
+    maxInputTokens: Buffer.byteLength(CUE_SYSTEM_PROMPT + JSON.stringify({ includeBridge: limits.includeBridge, evidence: '' }))
+      + MAX_CUE_WINDOW_BYTES * 6 + 1024, maxOutputTokens: 1200 });
   const embeddingCents = maximumInvocationCents({ operation: 'memory-cues-preview', kind: 'embedding', model: column.embeddingModel,
     maxInputTokens: 4096, maxOutputTokens: 0 });
   const perWindow = chatCents === null || embeddingCents === null ? null : (Math.max(1, Math.ceil(chatCents)) + Math.max(1, Math.ceil(embeddingCents))) / 100;
   return { ...limits, eligiblePages: pages.length, signature: cueSignature(column), embeddingColumn: column, generationModel,
     ready: !reason, ...(reason ? { reason } : {}), sourceIncarnations: Object.fromEntries(sources.map(s => [s.id, s.incarnation])),
     costPreview: { maximumReservationUsdPerWindow: perWindow, maximumReservationUsdPerPass: perWindow === null ? null : perWindow * limits.windowLimit,
-      maxWindowsPerPass: limits.windowLimit, assumptions: 'Upper reservation bound, not measured cost: 800-byte evidence, 1200 output tokens, four 240-character cues; unknown calls retain their reservation. Retries consume the original cap.' } };
+      maxWindowsPerPass: limits.windowLimit, assumptions: `Upper reservation bound, not measured cost: ${MAX_CUE_WINDOW_BYTES}-byte evidence with worst-case JSON escaping, 1200 output tokens, four 240-character cues; unknown calls retain their reservation. Retries consume the original cap.` } };
 }
 
 export async function submitMemoryCueBuild(engine: BrainEngine, opts: MemoryCueBuildOptions & { trustedLocal: true; maxUsd: number }): Promise<MemoryCueBuildReceipt> {

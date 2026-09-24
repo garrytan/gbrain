@@ -70,6 +70,10 @@ not need to opt in or change their capture settings.
   diagnostic coverage. PGLite explicit submissions can advance a bounded pass.
 - Price the exact `openrouter:anthropic/claude-sonnet-4.6` generation route for
   bounded cue builds; unlisted router routes still refuse spending admission.
+- Use versioned 8 KiB source windows with retained overlap, speaker attribution
+  and exact grounding. This prospective cost/quality tradeoff requires fresh
+  cue generation and separate read/push recalibration after a pipeline change;
+  it does not establish a measured retrieval gain or refill prior budgets.
 - Add an optional bounded hybrid recall arm, a separate cue-aware ranking view,
   honest source evidence/confidence, and final policy revalidation.
 - Extend supported volunteer/turn-context/reflex paths with at most one

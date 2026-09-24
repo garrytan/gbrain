@@ -3,7 +3,7 @@ import type { ResolvedColumn } from '../types.ts';
 import { resolveEmbeddingColumn } from '../search/embedding-column.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { digest } from '../persistence/digest.ts';
-import { MEMORY_CUE_FAMILIES, type MemoryCueSettings, type MemoryCueFamily } from './types.ts';
+import { MEMORY_CUE_FAMILIES, MEMORY_CUE_PROMPT_VERSION, type MemoryCueSettings, type MemoryCueFamily } from './types.ts';
 
 export async function loadMemoryCueSettings(engine: BrainEngine): Promise<MemoryCueSettings> {
   const rows = await engine.executeRaw<{ key: string; value: string }>("SELECT key,value FROM config WHERE key LIKE 'memory.cues.%'");
@@ -39,7 +39,7 @@ export async function memoryCueColumn(engine: BrainEngine): Promise<ResolvedColu
 }
 
 export function cueSignature(column: ResolvedColumn): string {
-  return digest([column.name, column.type, column.dimensions, column.embeddingModel]);
+  return digest([MEMORY_CUE_PROMPT_VERSION, column.name, column.type, column.dimensions, column.embeddingModel]);
 }
 
 export function unsupportedCueColumn(column: ResolvedColumn): string | undefined {

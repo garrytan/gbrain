@@ -180,6 +180,9 @@ one per source-qualified page. Shadow mode observes candidates without changing
 the result set. Reranking receives a separate internal cue view, and final
 revalidation checks authorization/current generation after asynchronous work.
 The source's cosine and evidence/create-safety labels retain their meaning.
+Construction windows are capped at 8 KiB under `situation-v3`; cue identity and
+both calibration bindings include this pipeline version as well as the encoder.
+Larger windows are a prospective cost/quality tradeoff, not a measured gain.
 See [situation-aware recall](../guides/situation-recall.md) for consent, budgets,
 calibration, diagnosis and rollback. This is experimental; live quality gains
 and cross-category non-regression require the external evaluation receipts.
@@ -201,6 +204,7 @@ hybrid recall + fusion:
    ├── keyword (BM25 via tsvector)
    ├── title-phrase arm
    ├── relational (typed-edge recall arm — relational queries only)
+   ├── situation-cue vector arm (optional, default off; current pipeline/encoder calibration)
    ├── source-aware re-rank (CASE in SQL)
    ├── role-tagged arms; variant/clause lists weighted by search.expansion_variant_budget INSIDE the fusion (fusion-lists.ts)
    └── RRF fusion → cosine re-score → post-fusion boosts

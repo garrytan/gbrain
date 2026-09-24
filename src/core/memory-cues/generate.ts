@@ -120,7 +120,7 @@ export async function runMemoryCueBuild(engine: BrainEngine, opts: { buildId: st
         const prepare = async () => {
           let testHold: { id: string; cents: number } | undefined;
           if (opts.providers) testHold = await reserveCueAttempt(engine, context, { operation: 'memory-cues-test-generate', model: build.generation_model,
-            kind: 'chat', maxInputTokens: Buffer.byteLength(CUE_SYSTEM_PROMPT + window.text) + 1024, maxOutputTokens: 1200 });
+            kind: 'chat', maxInputTokens: context.inputTokenCeiling, maxOutputTokens: 1200 });
           const output = await providers.generate({ evidence: window.text, includeBridge: build.include_bridge, model: build.generation_model, signal });
           if (testHold) await settleCueAttempt(engine, build, testHold.id, output.actualUsd * 100);
           const cues = validateCueOutput(output.output, window, build.include_bridge);

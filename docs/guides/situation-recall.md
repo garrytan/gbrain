@@ -25,6 +25,29 @@ The new gbrain-evals associative-retrieval category and cross-category compariso
 
 Administration is trusted-local only. HTTP and stdio agent-facing callers cannot configure, submit, cancel or resume cue builds through this operation, even with an admin token. They can use ordinary authorized search when the operator enables cue recall.
 
+## Window policy and pipeline upgrades
+
+The `situation-v3` pipeline constructs windows of at most 8,192 UTF-8 bytes,
+including carried speaker attribution. It retains up to 640 bytes of overlap,
+keeps turn and Unicode boundaries intact, and spans at most three original
+chunks. The full eligible history is windowed rather than trimmed. Grounding
+still allows at most four spans, and generation still emits at most four cues
+with a 1,200-token output limit. Windows execute serially.
+
+This is a prospective construction-cost policy, not a measured retrieval gain.
+Larger windows can reduce request overhead and serial build time, but increase
+each window's reservation and make more evidence compete for the same four-cue
+output limit. Preview bounds include JSON framing and worst-case escaping;
+they are not measured provider charges or a whole-corpus cost estimate. Run the
+chosen profile's cost and quality checks before enabling it.
+
+Pipeline identity is part of both the cue signature and the independent read
+and push calibration bindings. Existing `situation-v2` cues are not reused by
+v3, and old builds cannot resume as v3 builds. Explicitly approve a new build
+to regenerate cues, then recalibrate retrieval and reminders separately, even
+when the embedding model is unchanged. There is no automatic backfill, budget
+transfer, or refill of an old build's allowance. Canonical memories are unchanged.
+
 ## Inspect and enroll a source
 
 ```sh
@@ -85,7 +108,7 @@ Shadow mode computes candidates and reports metadata without adding them to sear
 
 Reranking can use a separately labeled cue view, but the source snippet and raw source similarity remain unchanged. A cue match does not establish that a similarly named page already exists or upgrade the source's factual confidence. Exact lookups and existing output-token budgets retain their contracts.
 
-Each selected threshold is bound to its embedding descriptor. Changing model, dimensions or vector representation invalidates it until explicitly chosen again. Old cue vectors are not searched in a different semantic space. Missing/stale cue indexes fall back to ordinary retrieval with diagnostic reasons; a core database outage remains an error.
+Each selected threshold is bound to its embedding descriptor and construction-pipeline version. Changing either the pipeline or the model, dimensions or vector representation invalidates it until explicitly chosen again. Old cue vectors are not searched in a different semantic space. Missing/stale cue indexes fall back to ordinary retrieval with diagnostic reasons; a core database outage remains an error.
 
 For controlled evaluation, `configure --families scene` or `--families horizon`
 selects one family from already generated cues without another model call.

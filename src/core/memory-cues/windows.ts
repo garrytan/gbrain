@@ -2,6 +2,8 @@ import type { Chunk } from '../types.ts';
 import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
 import { MAX_CUE_GROUNDING_CHUNKS, MAX_CUE_GROUNDING_SPANS, type CueGroundingSpan, type CueOutput, type CueWindow } from './types.ts';
 
+export const MAX_CUE_WINDOW_BYTES = 8192;
+
 function byteEnd(text: string, start: number, budget: number): number {
   let end = start;
   let bytes = 0;
@@ -71,7 +73,7 @@ export function buildCueWindows(chunks: Pick<Chunk, 'id' | 'chunk_text' | 'modal
     const marker = markers.findLast(m => m.start < start);
     const prefix = marker && start >= marker.end ? slice(marker.start, marker.end) : [];
     const prefixText = prefix.map(s => s.separatorBefore + s.text).join('');
-    const capacity = 800 - Buffer.byteLength(prefixText) - (prefix.length ? 1 : 0);
+    const capacity = MAX_CUE_WINDOW_BYTES - Buffer.byteLength(prefixText) - (prefix.length ? 1 : 0);
     let end = byteEnd(text, start, capacity);
     const splitMarker = markers.find(m => m.start < end && m.end > end);
     if (splitMarker) end = splitMarker.start;
