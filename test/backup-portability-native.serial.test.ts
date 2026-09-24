@@ -215,6 +215,100 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSO
   }
 }, 120_000);
 
+test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')('private directory ACL setup compares cmdlet and direct dotnet calls', () => {
+  const protectProgram = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-protect.ps1'), 'utf8');
+  const inspectProgram = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-inspect.ps1'), 'utf8');
+  const observations = [];
+  let originalProgram: string | undefined;
+  for (const mode of ['cmdlet', 'dotnet', 'dotnet', 'cmdlet'] as const) {
+    const path = join(temporary, `dotnet-${observations.length} [literal] 'é`);
+    fs.mkdirSync(path);
+    const before = fs.lstatSync(path, { bigint: true });
+    let launches = 0;
+    let inspections = 0;
+    let bounded = false;
+    let fixedExecutable = false;
+    let stableProgram = false;
+    let protectionOptions: childProcess.ExecFileSyncOptionsWithStringEncoding | undefined;
+    let nativeError: string | null = null;
+    let inspectionError: string | null = null;
+    const execute = childProcess.execFileSync;
+    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+      apply(target, thisArg, args) {
+        const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+        const protection = options?.env?.GBRAIN_BACKUP_PRIVATE_PATH === path;
+        const inspection = options?.env?.GBRAIN_TEST_ACL_PATH === path;
+        if (!protection && !inspection) return Reflect.apply(target, thisArg, args);
+        const command = args[1] as string[];
+        if (protection) {
+          launches++;
+          fixedExecutable = args[0] === join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+          bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && !options.shell && options.windowsHide === true
+            && Buffer.isBuffer(options.input) && options.input.length === 0
+            && Array.isArray(options.stdio) && options.stdio.length === 3 && options.stdio.every(stream => stream === 'pipe');
+          originalProgram ??= command.at(-1);
+          stableProgram = command.at(-1) === originalProgram;
+          protectionOptions = options;
+        } else inspections++;
+        try {
+          expect(command.slice(0, -1)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
+          return Reflect.apply(target, thisArg, mode === 'cmdlet' ? args : [args[0], [...command.slice(0, -1),
+            Buffer.from(protection ? protectProgram : inspectProgram, 'utf16le').toString('base64')], options]);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
+          if (protection) nativeError = code;
+          else inspectionError = code;
+          throw error;
+        }
+      },
+    }));
+    let protectedPath = false;
+    let privateAcl = false;
+    let protectionElapsedMs = 0;
+    let inspectionElapsedMs: number | null = null;
+    const started = performance.now();
+    try {
+      try { privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
+      protectionElapsedMs = Math.round(performance.now() - started);
+      if (mode === 'dotnet' && protectedPath) {
+        const inspectionStarted = performance.now();
+        try {
+          if (!protectionOptions) throw new Error('Missing original launch options');
+          const actual = JSON.parse(childProcess.execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+            ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(inspectProgram, 'utf16le').toString('base64')],
+            { ...protectionOptions, env: { ...process.env, GBRAIN_TEST_ACL_PATH: path } }));
+          privateAcl = typeof actual.user === 'string' && /^S-\d+(?:-\d+)+$/.test(actual.user)
+            && actual.owner === actual.user && actual.protected === true && Array.isArray(actual.rules)
+            && JSON.stringify(actual.rules.map((rule: { sid: string }) => rule.sid).sort()) === JSON.stringify([...new Set([actual.user, 'S-1-5-18'])].sort())
+            && actual.rules.every((rule: { inherited: boolean; allow: string; rights: number; inheritance: number; propagation: number }) =>
+              rule.inherited === false && rule.allow === 'Allow' && rule.rights === 0x1f01ff && rule.inheritance === 3 && rule.propagation === 0);
+        } catch (error) { inspectionError ??= (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other'; }
+        finally { inspectionElapsedMs = Math.round(performance.now() - inspectionStarted); }
+      }
+    } finally { inspect.mockRestore(); }
+    const after = fs.lstatSync(path, { bigint: true });
+    observations.push({ mode, protectionElapsedMs, inspectionElapsedMs, launches, inspections,
+      bounded, fixedExecutable, stableProgram, nativeError, inspectionError, protectedPath, privateAcl,
+      sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
+      empty: after.isDirectory() && fs.readdirSync(path).length === 0 });
+  }
+  process.stderr.write(`Windows backup dotnet controls: ${JSON.stringify({ arch: process.arch, runtime: Bun.version, observations })}\n`);
+  for (const observation of observations) {
+    expect(observation.launches).toBe(1);
+    expect(observation.bounded).toBe(true);
+    expect(observation.fixedExecutable).toBe(true);
+    expect(observation.stableProgram).toBe(true);
+    expect(observation.sameIdentity).toBe(true);
+    expect(observation.empty).toBe(true);
+    if (observation.mode !== 'dotnet') continue;
+    expect(observation.protectedPath).toBe(true);
+    expect(observation.nativeError).toBeNull();
+    expect(observation.inspections).toBe(1);
+    expect(observation.privateAcl).toBe(true);
+    expect(observation.inspectionError).toBeNull();
+  }
+}, 120_000);
+
 test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in Windows PowerShell modules from the inherited environment', () => {
   const observations = [];
   for (const mode of ['ambient', 'builtin', 'builtin', 'ambient'] as const) {

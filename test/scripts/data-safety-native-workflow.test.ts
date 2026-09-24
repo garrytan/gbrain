@@ -17,6 +17,8 @@ const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/work
     native: { steps: Step[]; strategy: { matrix: { target: string[]; bun: string[] } } };
     'windows-backup-console': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
       strategy: { 'fail-fast': boolean; matrix: { include: { runner: string; bun: string }[] } } };
+    'windows-backup-dotnet': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
+      strategy: { 'fail-fast': boolean; matrix: { include: { runner: string; bun: string }[] } } };
   };
 };
 const suites = [
@@ -56,6 +58,42 @@ describe('data-safety native CI coverage', () => {
       const step = workflow.jobs['windows-backup-console'].steps.find(entry => entry.name === 'Compare native hidden-window launch behavior')!;
       const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
         bun() { if [[ "$GBRAIN_TEST_OBSERVATION" == 1 ]]; then printf '%s\\n' 'Windows backup console controls: synthetic'; fi; return "$GBRAIN_TEST_EXIT"; }
+        ${step.run}
+      `], { env: { PATH: process.env.PATH ?? '', RUNNER_TEMP: temporary, GBRAIN_TEST_OBSERVATION: observation ? '1' : '0', GBRAIN_TEST_EXIT: String(exitCode) } });
+      expect(result.exitCode).toBe(exitCode === 0 && observation ? 0 : 1);
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
+  });
+
+  test('the direct dotnet program comparison has its own six-cell opt-in Windows job', () => {
+    const job = workflow.jobs['windows-backup-dotnet'];
+    expect(job['runs-on']).toBe('${{ matrix.runner }}');
+    expect(job['timeout-minutes']).toBe(5);
+    expect(job.strategy['fail-fast']).toBe(false);
+    expect(job.strategy.matrix.include).toEqual(['windows-2022', 'windows-11-arm'].flatMap(runner =>
+      ['1.3.11', '1.3.13', '1.4.2'].map(bun => ({ runner, bun }))));
+    expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
+    const step = job.steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs');
+    expect(step).toBeDefined();
+    expect(step!.if).toBeUndefined();
+    expect(step!['continue-on-error']).toBeUndefined();
+    expect(step!.shell).toBe('bash');
+    expect(step!.env).toEqual({ GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1', GBRAIN_TEST_BACKUP_DOTNET_PROBE: '1' });
+    expect(step!.run!.trim().split('\n')).toEqual([
+      "bun --no-env-file test --timeout=180000 --test-name-pattern '^private directory ACL setup compares cmdlet and direct dotnet calls$' test/backup-portability-native.serial.test.ts 2>&1 | tee \"$RUNNER_TEMP/backup-dotnet.log\"",
+      "grep -Fq 'Windows backup dotnet controls:' \"$RUNNER_TEMP/backup-dotnet.log\"",
+    ]);
+    const fixture = readFileSync(join(import.meta.dir, '../backup-portability-native.serial.test.ts'), 'utf8');
+    expect(fixture).toContain("test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')('private directory ACL setup compares cmdlet and direct dotnet calls'");
+    expect(workflow.jobs.native.steps.some(entry => entry.env?.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== undefined)).toBe(false);
+    expect(workflow.jobs['windows-backup-console'].steps.some(entry => entry.env?.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== undefined)).toBe(false);
+  });
+
+  for (const [exitCode, observation] of [[0, true], [1, true], [0, false]] as const) test(`dotnet probe refuses failed or unexecuted diagnostics (${exitCode}, ${observation})`, () => {
+    const temporary = mkdtempSync(join(tmpdir(), 'gbrain-dotnet-workflow-'));
+    try {
+      const step = workflow.jobs['windows-backup-dotnet'].steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs')!;
+      const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+        bun() { if [[ "$GBRAIN_TEST_OBSERVATION" == 1 ]]; then printf '%s\\n' 'Windows backup dotnet controls: synthetic'; fi; return "$GBRAIN_TEST_EXIT"; }
         ${step.run}
       `], { env: { PATH: process.env.PATH ?? '', RUNNER_TEMP: temporary, GBRAIN_TEST_OBSERVATION: observation ? '1' : '0', GBRAIN_TEST_EXIT: String(exitCode) } });
       expect(result.exitCode).toBe(exitCode === 0 && observation ? 0 : 1);
