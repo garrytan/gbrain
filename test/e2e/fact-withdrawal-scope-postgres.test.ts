@@ -16,8 +16,10 @@ describePg('Postgres fact-withdrawal scope', () => {
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
       await engine.executeRaw(`ALTER TABLE pages DISABLE TRIGGER USER`);
       await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter,search_vector)
-        SELECT $1,'notes/scale-'||n,'note','Scale '||n,'Unrelated canonical body '||n,'','{}'::jsonb,
-          to_tsvector('english','Scale '||n) FROM generate_series(1,5000) n`, [sourceId]);
+        SELECT $1,'notes/scale-'||n,'note','Scale '||n,replace($2,'__N__',n::text),'','{}'::jsonb,
+          to_tsvector('english','Scale '||n) FROM generate_series(1,5000) n`,
+      [sourceId, renderFactsTable([{ rowNum: 1, claim: 'unrelated fence __N__', kind: 'fact', confidence: 1,
+        visibility: 'world', notability: 'medium', active: true }])]);
       await engine.executeRaw(`ALTER TABLE pages ENABLE TRIGGER USER`);
       await engine.executeRaw(`ALTER TABLE content_chunks DISABLE TRIGGER USER`);
       await engine.executeRaw(`INSERT INTO content_chunks(page_id,chunk_index,chunk_text,chunk_source,search_vector)

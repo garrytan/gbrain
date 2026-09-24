@@ -4,7 +4,7 @@ import { escapeFenceCell, isSeparatorRow, parseRowCells, stripStrikethrough } fr
 import { getFtsLanguage } from '../fts-language.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { PageWithdrawal } from '../page-state/types.ts';
-import { ambiguousWithdrawalFenceSegments, hasAmbiguousWithdrawalFence, overlayWithdrawalBody, withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
+import { ambiguousWithdrawalFenceSegments, overlayWithdrawalBody, withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -86,12 +86,15 @@ export async function recordFactWithdrawal(
         FROM candidates c JOIN pages p ON p.source_id=$1 AND p.slug=c.slug ORDER BY p.slug`,
       [sourceId, target.visibility, target.fact, escapeFenceCell(target.fact)]);
     const withdrawal: PageWithdrawal = { visibility: target.visibility, fact_hash: target.fact_hash, withdrawn_at: new Date().toISOString() };
+    const ambiguousMatch = (body: string) => ambiguousFenceClaims(body).some(candidate =>
+      normalizeFactClaim(candidate.claim) === normalizeFactClaim(target.fact) &&
+      (candidate.visibility === null || candidate.visibility === target.visibility));
     const affected = candidates.filter(page =>
       page.provenance || page.chunk_match ||
       overlayWithdrawalBody(page.compiled_truth, page.fingerprint_body ?? '', [withdrawal]) !== page.compiled_truth ||
       overlayWithdrawalBody(page.timeline, page.fingerprint_timeline ?? '', [withdrawal]) !== page.timeline ||
-      page.body_match && hasAmbiguousWithdrawalFence(page.compiled_truth) ||
-      page.timeline_match && hasAmbiguousWithdrawalFence(page.timeline),
+      page.body_match && ambiguousMatch(page.compiled_truth) ||
+      page.timeline_match && ambiguousMatch(page.timeline),
     ).map(page => page.slug);
     await tx.lockPageKeys(affected.map(slug => ({ sourceId, slug })));
     const rows = await tx.executeRaw<{ visibility: string; fact: string }>(
@@ -120,6 +123,10 @@ export async function recordFactWithdrawal(
     }
     return { withdrawn: true, pages: pages.map(page => ({ sourceId, slug: page.slug, revision: page.knowledge_revision })) };
   });
+}
+
+function normalizeFactClaim(claim: string): string {
+  return claim.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function ambiguousFenceClaims(body: string): Array<{ claim: string; visibility: string | null }> {

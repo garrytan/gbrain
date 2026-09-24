@@ -220,8 +220,6 @@ test('malformed, timeline-only and provenance-only candidates remain conservativ
         timeline: renderFactsTable([fact(malformedTimelineClaim)]).replace('| world |', '| impossible |') }, { sourceId: isolatedSourceId });
       await engine.putPage('provenance-only', { type: 'note', title: 'Provenance only', compiled_truth: 'No facts fence' },
         { sourceId: isolatedSourceId });
-      await engine.upsertChunks('malformed-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: malformedClaim }],
-        { sourceId: isolatedSourceId });
       const malformed = await engine.insertFact({ fact: malformedClaim, source: 'legacy', visibility: 'world' },
         { source_id: isolatedSourceId });
       const malformedTimeline = await engine.insertFact({ fact: malformedTimelineClaim, source: 'legacy', visibility: 'world' },
@@ -238,6 +236,26 @@ test('malformed, timeline-only and provenance-only candidates remain conservativ
       expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
         WHERE p.source_id=$1 AND p.slug=ANY($2::text[])`, [isolatedSourceId,
           ['malformed-fence', 'malformed-timeline-fence', 'timeline-fence', 'provenance-only']])).toEqual([]);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('malformed body fallback requires an exact fence-row claim, not a substring', async () => {
+  const isolatedSourceId = 'withdrawal-malformed-substring-test';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      const body = renderFactsTable([fact('quarterly roadmap planning note')]).replace('| fact |', '| impossible |');
+      await engine.putPage('malformed-substring', { type: 'note', title: 'Malformed substring', compiled_truth: body },
+        { sourceId: isolatedSourceId });
+      const before = (await engine.readPageSnapshot('malformed-substring', { sourceId: isolatedSourceId }))!;
+      const stored = await engine.insertFact({ fact: 'roadmap', source: 'remember', visibility: 'world' },
+        { source_id: isolatedSourceId });
+
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages).toEqual([]);
+      expect((await engine.readPageSnapshot('malformed-substring', { sourceId: isolatedSourceId }))!.revision).toBe(before.revision);
     } finally {
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
     }
