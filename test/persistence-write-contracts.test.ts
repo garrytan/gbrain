@@ -4,10 +4,15 @@ import { ERROR_SCHEMA, RESPONSE_SCHEMAS } from '../src/core/verbs.ts';
 import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
 import { parseMutationPrecondition } from '../src/core/persistence/preconditions.ts';
 import { committedVerbOutcome, frozenVerbWriteError } from '../src/core/persistence/verb-errors.ts';
-import { isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../src/core/persistence/types.ts';
+import { isWriteBlockedReason, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../src/core/persistence/types.ts';
 import { receiptFor } from '../src/core/persistence/journal.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { writeHealth, pendingWriteHint } from '../src/core/persistence/health.ts';
+import { Glob } from 'bun';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const ROOT = join(import.meta.dir, '..');
 
 const REQUEST_ID = 'd7599b95-65c2-4d54-aa4e-cb5745af90cf';
 const receipt = (state: WriteReceipt['state']): WriteReceipt => ({
@@ -122,11 +127,40 @@ describe('public write receipts', () => {
     const uncertain = { ...receipt('recovering'), blocked_reason: 'commit_outcome_uncertain' as const };
     expect(JSON.parse(JSON.stringify(Object.assign(new OperationError('write_pending', 'Pending.'), { writeRequest: uncertain })))
       .write_request).toEqual(uncertain);
-    // A reason from a newer server is dropped, never a reason to discard the receipt.
-    const newer = { ...receipt('queued'), blocked_reason: 'future_reason' } as unknown as WriteReceipt;
-    expect(isWriteReceipt(newer)).toBe(true);
-    expect(publicWriteReceipt(newer)).toEqual(receipt('queued'));
-    for (const bad of ['', 7, null]) expect(isWriteReceipt({ ...receipt('queued'), blocked_reason: bad })).toBe(false);
+  });
+
+  test.each([['future', 'future_reason'], ['null', null], ['empty', ''], ['number', 7], ['object', { reason: 'x' }], ['array', ['owner_unavailable']]])(
+    'a %s blocked_reason never invalidates a valid receipt and is dropped from public output', (_label, value) => {
+      for (const state of ['queued', 'committed'] as const) {
+        const received = { ...receipt(state), blocked_reason: value };
+        expect(isWriteReceipt(received)).toBe(true);
+        expect(publicWriteReceipt(received as unknown as WriteReceipt)).toEqual(receipt(state));
+      }
+    });
+
+  test('every blocked_reason literal stored by source code is in the shared vocabulary', () => {
+    const files = new Glob('src/**/*.ts').scanSync({ cwd: ROOT });
+    const found = new Map<string, string>();
+    const patterns = [
+      /blocked_reason(?:='|: ')([a-z_]+)'/g,                                     // SQL assignment or object field
+      /await (?:releaseUnpublishedClaim|markRecovering)\([^;]*;/g,               // every literal in a producer call
+      /const reason: WriteBlockedReason = [^;]*;/g,                               // typed direct-SQL reason
+    ];
+    for (const file of files) {
+      if (file.endsWith('schema-embedded.generated.ts')) continue;
+      const text = readFileSync(join(ROOT, file), 'utf8');
+      for (const pattern of patterns) for (const match of text.matchAll(pattern)) {
+        const literals = match[1] ? [match[1]] : [...match[0].matchAll(/'([a-z_]+)'/g)].map(m => m[1]);
+        for (const literal of literals) found.set(literal, file);
+      }
+    }
+    // Producers found by the scan: claim release, recovery marks, pool capacity and recovery blocks.
+    for (const expected of ['owner_unavailable', 'writer_busy', 'database_contention', 'revision_changed_repreparing', 'recovery_required',
+      'recovery_capacity', 'consumer_stopping', 'publication_failed', 'commit_outcome_uncertain', 'publication_not_started',
+      'writer_pool_capacity', 'database_unavailable', 'unexpected_staging_bytes', 'unexpected_file_bytes'])
+      expect(found.has(expected)).toBe(true);
+    const unknown = [...found].filter(([literal]) => !isWriteBlockedReason(literal));
+    expect(unknown).toEqual([]);
   });
 
   test('frozen verb receipt schema accepts the blocked reason', () => {

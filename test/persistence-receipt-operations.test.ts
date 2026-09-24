@@ -177,6 +177,19 @@ describe('own-principal write receipt operations', () => {
     expect(done).not.toHaveProperty('write_error');
   });
 
+  test('a committed receipt with retained staging recovery stays committed and names the operator block', async () => {
+    const row = await accept();
+    // Terminal outcome is immutable; recoverPublication can only mark retained staging/file bytes.
+    await engine.executeRaw(`UPDATE persistence_requests SET state='committed',outcome=$2::text::jsonb,completed_at=now(),
+      blocked_reason='unexpected_staging_bytes' WHERE id=$1`, [row.id, JSON.stringify({ status: 'created_or_updated', slug: 'allowed/page' })]);
+    const receipt = await call('get_write_request', { request_id: row.request_id });
+    expect(receipt).toMatchObject({ state: 'committed', retry_after_ms: null, blocked_reason: 'unexpected_staging_bytes',
+      outcome: { status: 'created_or_updated' } });
+    const listed = await call('list_write_requests', { source_id: source });
+    expect(listed.requests.find((r: { request_id: string }) => r.request_id === row.request_id))
+      .toMatchObject({ state: 'committed', blocked_reason: 'unexpected_staging_bytes' });
+  });
+
   test('foreign and missing UUIDs have the same get/cancel not_found envelope', async () => {
     const row = await accept(foreign);
     for (const operation of ['get_write_request', 'cancel_write_request']) {

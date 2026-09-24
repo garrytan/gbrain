@@ -213,13 +213,26 @@ offline or changed), `writer_busy`, `writer_pool_capacity`,
 (publication ran but the commit acknowledgment was lost). It is a fixed,
 content-free vocabulary, and its absence means ordinary queueing. It appears on
 pending error envelopes, `get_write_request`, `list_write_requests`, and CLI
-output (`Request: <id> (queued, owner_unavailable)`). Clients ignore
-unrecognized reasons rather than discard the receipt.
+output (`Request: <id> (queued, owner_unavailable)`). Clients ignore a null,
+malformed or unrecognized reason rather than discard the receipt.
 
-If a local owner commits a write whose result is too large for the transport,
-the response is `response_too_large` with the outcome-free receipt, for
-example `state: "committed"`. Do not resubmit it. Read the change back or
-inspect the request ID.
+A terminal receipt can keep only `unexpected_staging_bytes` or
+`unexpected_file_bytes`. For example, `state: "committed"` with
+`blocked_reason: "unexpected_staging_bytes"` means the write committed and its
+outcome is final. Retained recovery or staging files still block that worktree
+until an operator reconciles them (see `gbrain sources writer status`). Do not
+resubmit the write.
+
+A local owner may be unable to return a result after the work has run, because
+it exceeds the transport limit (`response_too_large`) or cannot be encoded
+(`storage_error`). In that case the error carries every receipt the result held,
+without outcome bodies: `write_request` for one write, or `write_requests` for
+a batch such as fact extraction or a sync's pending write. `remember` and
+`forget` keep the frozen `unavailable` code, with the detail in `write_error`.
+When every attached receipt is `committed`, the CLI prints `Committed [...]`
+and exits 0 while the JSON envelope is unchanged. Otherwise it exits 1. Never
+resubmit a committed receipt. Read the change back or inspect the request ID.
+A result that carries no receipt still returns the plain error.
 
 Nonterminal receipts may include a validated `diagnostic` with `age_ms`,
 `assessment` (`pending`, `blocked`, or `stalled`), a closed `reason`, and

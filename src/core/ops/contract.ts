@@ -59,6 +59,8 @@ export class OperationError extends Error {
   public protocolVersion?: number;
   public writeRequest?: WriteReceipt;
   public writeError?: WriteErrorCode;
+  /** Several receipts when one call accepted several writes (e.g. a batch whose result could not be framed). */
+  public writeRequests?: WriteReceipt[];
 
   constructor(
     public code: ErrorCode,
@@ -80,6 +82,7 @@ export class OperationError extends Error {
       protocol_version: this.protocolVersion,
       ...(this.writeRequest ? { write_request: publicWriteReceipt(this.writeRequest) } : {}),
       ...(this.writeError ? { write_error: this.writeError } : {}),
+      ...(this.writeRequests?.length ? { write_requests: this.writeRequests.map(publicWriteReceipt) } : {}),
     };
   }
 }

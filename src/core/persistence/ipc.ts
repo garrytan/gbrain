@@ -4,7 +4,7 @@ import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 import { resolveSocketPathForConfig, socketHasLiveListener } from '../context/resolve-ipc.ts';
-import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt } from './types.ts';
+import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import { isPersistenceAdminOperation, PERSISTENCE_ADMIN_OPERATIONS, type PersistenceAdminOperation } from './admin-contract.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe, prepareLocalIpcPath } from '../context/ipc-path.ts';
 
@@ -142,26 +142,50 @@ function responseFrame(value: unknown): string {
   return frame;
 }
 
+/** Frozen MEMORY_VERBS v1 operations reachable over this socket; their error enum never widens. */
+const FROZEN_VERB_OPERATIONS = new Set(['remember', 'forget']);
+
+/** Receipts at the result's top level or one record below (e.g. a sync `managedWrite`). */
+function resultReceipts(result: unknown, depth = 0): WriteReceipt[] {
+  if (!record(result)) return [];
+  const found: WriteReceipt[] = [];
+  if (isWriteReceipt(result.write_request)) found.push(result.write_request);
+  if (Array.isArray(result.write_requests)) found.push(...result.write_requests.filter(isWriteReceipt));
+  if (depth === 0) for (const [key, value] of Object.entries(result)) {
+    if (key !== 'write_request' && key !== 'write_requests' && record(value)) found.push(...resultReceipts(value, 1));
+  }
+  return [...new Map(found.map(receipt => [receipt.request_id, receipt])).values()];
+}
+
 /**
- * The operation already ran when its result is framed. An oversized result
- * keeps its receipt (without the outcome body), so a committed write is never
- * reported as a receiptless failure.
+ * The operation already ran when its result is framed. A result that cannot be
+ * framed keeps every receipt it carried (without outcome bodies), so committed
+ * writes are never reported as a receiptless failure. Frozen verbs keep the
+ * frozen `unavailable` code and carry the detail in `write_error`.
  */
-export function resultFrame(result: unknown): string {
+export function resultFrame(result: unknown, operation?: string): string {
   try { return responseFrame({ version: 1, ok: true, result }); } catch (error) {
-    if (!(error instanceof OperationError) || error.code !== 'response_too_large') throw error;
-    const candidate = record(result) ? result.write_request : undefined;
-    if (!isWriteReceipt(candidate)) throw error;
-    const receipt = publicWriteReceipt(candidate);
-    delete receipt.outcome;
-    const committed = receipt.state === 'committed';
+    const receipts = resultReceipts(result).map(receipt => {
+      const outcomeFree = publicWriteReceipt(receipt);
+      delete outcomeFree.outcome;
+      return outcomeFree;
+    });
+    if (!receipts.length) throw error;
+    const reason = error instanceof OperationError && error.code === 'response_too_large' ? 'response_too_large' : 'storage_error';
+    const committed = receipts.every(receipt => receipt.state === 'committed');
+    const frozen = operation !== undefined && FROZEN_VERB_OPERATIONS.has(operation);
+    const ids = receipts.length === 1 ? `request_id ${receipts[0].request_id}` : 'these request_ids';
+    const problem = reason === 'response_too_large' ? 'exceeds the local transport limit' : 'could not be encoded';
     return responseFrame({ version: 1, ok: false, error: {
-      error: 'response_too_large', write_error: 'response_too_large', write_request: receipt,
-      message: committed ? 'The write committed, but its result exceeds the local transport limit.'
-        : `The request is ${receipt.state}, but its result exceeds the local transport limit.`,
+      error: frozen ? 'unavailable' : reason, write_error: reason,
+      ...(frozen ? { protocol_version: 1 } : {}),
+      ...(receipts.length === 1 ? { write_request: receipts[0] } : { write_requests: receipts }),
+      message: committed
+        ? `The ${receipts.length === 1 ? 'write' : `${receipts.length} writes`} committed, but the result ${problem}.`
+        : `States: ${[...new Set(receipts.map(receipt => receipt.state))].join(', ')}; the result ${problem}.`,
       suggestion: committed
-        ? `Do not resubmit. Read the committed change back, or inspect request_id ${receipt.request_id} with get_write_request.`
-        : `Inspect request_id ${receipt.request_id} with get_write_request before retrying; do not generate a replacement ID.`,
+        ? `Do not resubmit. Read the committed change back, or inspect ${ids} with get_write_request.`
+        : `Inspect ${ids} with get_write_request before retrying; do not generate replacement IDs.`,
     } });
   }
 }
@@ -232,7 +256,7 @@ export async function startPersistenceIpcServer(
           admitted = true;
           if (request.kind === 'administration' && !provider.administer) throw new OperationError('unavailable', 'This owner does not support local administration.');
           const result = request.kind === 'administration' ? await provider.administer!(request) : await provider.dispatch(request);
-          if (!socket.destroyed) socket.end(resultFrame(result));
+          if (!socket.destroyed) socket.end(resultFrame(result, request.kind === 'operation' ? request.operation : undefined));
         } catch (error) {
           if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: false, error: publicError(error) }));
         } finally {
@@ -307,6 +331,10 @@ function remoteOperationError(value: unknown): OperationError {
   if (typeof value.protocol_version === 'number') error.protocolVersion = value.protocol_version;
   if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;
+  if (Array.isArray(value.write_requests)) {
+    const receipts = value.write_requests.filter(isWriteReceipt).map(publicWriteReceipt);
+    if (receipts.length) error.writeRequests = receipts;
+  }
   return error;
 }
 

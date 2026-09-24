@@ -13,7 +13,7 @@ import {
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
   type SqlEngine, type WriteAuthority, type WriteRequest,
 } from './model.ts';
-import { isWriteBlockedReason } from './types.ts';
+import { isWriteBlockedReason, type WriteBlockedReason } from './types.ts';
 
 export interface WriteAdmission {
   principal: Principal;
@@ -174,7 +174,7 @@ export async function renewWriteClaim(engine: SqlEngine, id: string, token: stri
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs], { signal });
   return rows.length === 1;
 }
-export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string): Promise<void> {
+export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: WriteBlockedReason): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
     blocked_reason=$3,updated_at=now() WHERE id=$1::uuid AND execution_token=$2::uuid
     AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason]);
@@ -245,7 +245,7 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string): Pr
     await tx.executeRaw('UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid', [id]);
   });
 }
-export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: string, failure?: {code:string;message:string}): Promise<void> {
+export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: WriteBlockedReason, failure?: {code:string;message:string}): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_requests SET state='recovering',blocked_reason=$3,updated_at=now(),
     error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5)
     WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null]);

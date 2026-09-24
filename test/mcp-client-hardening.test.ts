@@ -210,6 +210,9 @@ describe('extractToolErrorDetail', () => {
       .toEqual({ code: 'unavailable', write_error: 'write_pending', write_request: blocked });
     expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: { ...PENDING_WRITE, blocked_reason: 'newer_reason' } }))
       .write_request).toEqual(PENDING_WRITE);
+    for (const malformed of [null, '', 7])
+      expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: { ...PENDING_WRITE, blocked_reason: malformed } }))
+        .write_request).toEqual(PENDING_WRITE);
   });
 
   test('retains backward compatibility with plain text tool errors', () => {

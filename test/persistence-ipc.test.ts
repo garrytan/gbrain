@@ -5,6 +5,9 @@ import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { ERROR_SCHEMA } from '../src/core/verbs.ts';
+import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
+import type { WriteReceipt } from '../src/core/persistence/types.ts';
 import {
   PERSISTENCE_IPC_MAX_BYTES, PersistenceIpcTransportError,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
@@ -174,6 +177,64 @@ describe('dedicated persistence IPC', () => {
         persistence: { mode: 'filesystem', file_written: true } });
       expect(body.message).toContain('committed');
       expect(body.suggestion).toContain('Do not resubmit');
+    }
+  });
+
+  const committedReceipt = (id: string) => ({ request_id: id, state: 'committed', retry_after_ms: null,
+    outcome: { status: 'inserted', text: 'x'.repeat(64) } });
+  const OTHER = '20000000-0000-4000-8000-000000000002';
+  const THIRD = '20000000-0000-4000-8000-000000000003';
+
+  test('an oversized batch result keeps every receipt, outcome-free, instead of failing receiptless', async () => {
+    const path = socketPath();
+    await bind(path, async () => ({ inserted: 3, write_requests: [committedReceipt(ID), committedReceipt(OTHER), committedReceipt(THIRD)],
+      fact_ids: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }));
+    try { await requestPersistenceOperation(path, { ...request(), operation: 'extract_facts' }); throw new Error('Expected oversized result error.'); }
+    catch (error) {
+      expect(error).toBeInstanceOf(OperationError);
+      const body = (error as OperationError).toJSON();
+      expect(body).toMatchObject({ error: 'response_too_large', write_error: 'response_too_large' });
+      expect(body).not.toHaveProperty('write_request');
+      expect(body.write_requests).toEqual([ID, OTHER, THIRD].map(id => ({ request_id: id, state: 'committed', retry_after_ms: null })));
+      expect(body.message).toContain('3 writes committed');
+    }
+  });
+
+  test('a nested administration receipt (sync managedWrite) survives an oversized result', async () => {
+    const path = socketPath();
+    const pending: WriteReceipt = { request_id: OTHER, state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' };
+    await bind(path, async () => ({ status: 'partial', managedWrite: { reason: 'owner_unavailable', write_request: pending },
+      pagesAffected: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }));
+    try { await requestPersistenceOperation(path, request()); throw new Error('Expected oversized result error.'); }
+    catch (error) {
+      const body = (error as OperationError).toJSON();
+      expect(body.write_request).toEqual(pending);
+      expect(body.message).toContain('queued');
+      expect(body.suggestion).toContain('do not generate replacement IDs');
+    }
+  });
+
+  test('a frozen memory verb keeps the frozen error enum when its result cannot be framed', async () => {
+    const path = socketPath();
+    await bind(path, async () => ({ ...committedReceipt(ID), write_request: committedReceipt(ID), padding: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }));
+    try { await requestPersistenceOperation(path, { ...request(), operation: 'remember' }); throw new Error('Expected oversized result error.'); }
+    catch (error) {
+      const body = (error as OperationError).toJSON();
+      expect(body).toMatchObject({ error: 'unavailable', protocol_version: 1, write_error: 'response_too_large',
+        write_request: { request_id: ID, state: 'committed' } });
+      expect(validateAgainstSchema(body, ERROR_SCHEMA)).toEqual([]);
+    }
+  });
+
+  test('a committed result that cannot be encoded reports storage_error with its receipt', async () => {
+    const path = socketPath();
+    await bind(path, async () => ({ write_request: committedReceipt(ID), count: 1n }));
+    try { await requestPersistenceOperation(path, request()); throw new Error('Expected encoding error.'); }
+    catch (error) {
+      const body = (error as OperationError).toJSON();
+      expect(body).toMatchObject({ error: 'storage_error', write_error: 'storage_error',
+        write_request: { request_id: ID, state: 'committed', retry_after_ms: null } });
+      expect(body.message).toContain('could not be encoded');
     }
   });
 

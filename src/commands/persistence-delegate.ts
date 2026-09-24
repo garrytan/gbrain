@@ -6,22 +6,37 @@ import { finishCliTeardown, setCliExitVerdict, writeStdoutFinal } from '../core/
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
 import { RemoteMcpError } from '../core/mcp-client.ts';
+import type { WriteReceipt } from '../core/persistence/types.ts';
 
 export async function reportPersistenceCliError(error: unknown, json = false,
   out: (payload: string) => Promise<void> = writeStdoutFinal): Promise<boolean> {
   if (!(error instanceof OperationError || error instanceof PersistenceIpcTransportError
     || error instanceof RemoteMcpError && (error.detail?.request_id || error.detail?.write_request))) return false;
   const detail = error.toJSON();
+  const receipts: WriteReceipt[] = [
+    ...('write_request' in detail && detail.write_request ? [detail.write_request] : []),
+    ...('write_requests' in detail && Array.isArray(detail.write_requests) ? detail.write_requests : []),
+  ];
+  // Only a result-framing failure can accompany committed work; the frozen envelope stays unchanged.
+  const writeError = 'write_error' in detail ? detail.write_error : undefined;
+  const committed = committedDespiteFraming(writeError, receipts);
   if (json) await out(JSON.stringify(detail, null, 2) + '\n');
   console.error(error instanceof OperationError || error instanceof RemoteMcpError
-    ? `Error [${'write_error' in detail && detail.write_error || detail.error}]: ${detail.message}` : error.message);
+    ? `${committed ? 'Committed' : 'Error'} [${writeError || detail.error}]: ${detail.message}` : error.message);
   if (detail.suggestion) console.error(`Fix: ${detail.suggestion}`);
-  const receipt = 'write_request' in detail ? detail.write_request : undefined;
-  const requestId = receipt?.request_id ?? ('request_id' in detail ? detail.request_id : undefined);
-  if (requestId) console.error(`Request: ${requestId}${receipt
-    ? ` (${receipt.state}${receipt.blocked_reason ? `, ${receipt.blocked_reason}` : ''})` : ''}`);
-  setCliExitVerdict(1);
+  const requestId = receipts[0]?.request_id ?? ('request_id' in detail ? detail.request_id : undefined);
+  if (!receipts.length && requestId) console.error(`Request: ${requestId}`);
+  for (const receipt of receipts) {
+    console.error(`Request: ${receipt.request_id} (${receipt.state}${receipt.blocked_reason ? `, ${receipt.blocked_reason}` : ''})`);
+  }
+  setCliExitVerdict(committed ? 0 : 1);
   return true;
+}
+
+/** Exit 0 only when every accepted write committed and the sole failure was returning its result. */
+export function committedDespiteFraming(writeError: unknown, receipts: WriteReceipt[]): boolean {
+  return (writeError === 'response_too_large' || writeError === 'storage_error')
+    && receipts.length > 0 && receipts.every(receipt => receipt.state === 'committed');
 }
 
 /** Shared operation CLI lane; false alone authorizes the caller's normal connect path. */

@@ -19,7 +19,12 @@ export const WRITE_ERROR_CODES = [
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];
 
-/** Content-free reasons an accepted request is waiting or recovering; they never change `state`. */
+/**
+ * Content-free reasons an accepted request is waiting or recovering; they never change `state`.
+ * On a terminal receipt only `unexpected_staging_bytes`/`unexpected_file_bytes` can remain: the
+ * outcome is final and immutable, but its retained recovery/staging files block the worktree until
+ * an operator reconciles them. Every value stored by the journal must come from this list.
+ */
 export const WRITE_BLOCKED_REASONS = [
   'writer_busy', 'writer_pool_capacity', 'owner_unavailable', 'writer_lock_unavailable',
   'recovery_required', 'recovery_capacity', 'database_contention', 'database_unavailable',
@@ -51,7 +56,7 @@ export interface WriteReceipt {
   state: WriteRequestState;
   /** Milliseconds until polling is useful; null for terminal outcomes. */
   retry_after_ms: number | null;
-  /** Why accepted work is not progressing, e.g. `owner_unavailable`. Diagnostic only; `state` decides commitment. */
+  /** Why work is blocked, e.g. `owner_unavailable`. Diagnostic only; `state` alone decides commitment. */
   blocked_reason?: WriteBlockedReason;
   revision?: string;
   compacted?: boolean;
@@ -112,8 +117,8 @@ export function isWriteReceipt(value: unknown): value is WriteReceipt {
   const retry = value.retry_after_ms;
   if (retry !== null && (typeof retry !== 'number' || !Number.isSafeInteger(retry) || retry < 0)) return false;
   if (isTerminalWriteState(value.state as WriteRequestState) && retry !== null) return false;
-  // A reason added by a newer server is dropped by publicWriteReceipt, never a reason to lose the receipt.
-  if (value.blocked_reason !== undefined && (typeof value.blocked_reason !== 'string' || !value.blocked_reason)) return false;
+  // blocked_reason is diagnostic: a null, malformed or newer value never invalidates the receipt;
+  // publicWriteReceipt drops anything outside WRITE_BLOCKED_REASONS.
   if (value.revision !== undefined && (typeof value.revision !== 'string' || !value.revision)) return false;
   if (value.compacted !== undefined && typeof value.compacted !== 'boolean') return false;
   if (value.outcome !== undefined && !isRecord(value.outcome)) return false;
