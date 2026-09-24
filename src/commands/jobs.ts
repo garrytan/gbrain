@@ -2386,8 +2386,22 @@ export async function registerBuiltinHandlers(
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     if (!slug || !sourceId) throw new Error('loops_extract job requires data.slug and data.sourceId');
     const threadId = typeof job.data.threadId === 'string' ? job.data.threadId : undefined;
-    const { runLoopsExtract } = await import('../core/google/loops-extract.ts');
-    return await runLoopsExtract(engine, { slug, sourceId, ...(threadId ? { threadId } : {}) });
+    const sourceIncarnation = typeof job.data.sourceIncarnation === 'string'
+      ? job.data.sourceIncarnation
+      : undefined;
+    const payload = {
+      slug,
+      sourceId,
+      ...(threadId ? { threadId } : {}),
+      ...(sourceIncarnation ? { sourceIncarnation } : {}),
+    };
+    const [brain] = await engine.executeRaw<{ enabled: boolean }>(
+      'SELECT enabled FROM persistence_brain WHERE singleton=1',
+    );
+    const { runLoopsExtract, runManagedLoopsExtract } = await import('../core/google/loops-extract.ts');
+    return brain?.enabled
+      ? runManagedLoopsExtract(engine, payload)
+      : runLoopsExtract(engine, payload);
   });
 
   // v0.41.39 (#1700) — enrich. NOT in PROTECTED_JOB_NAMES: per-call cost is

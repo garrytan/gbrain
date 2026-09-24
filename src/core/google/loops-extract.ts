@@ -25,6 +25,10 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { OperationError } from '../ops/contract.ts';
+import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
+import { withCoordinatedWrite } from '../persistence/context.ts';
+import { assertPersistenceAccepting } from '../persistence/service.ts';
 import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
@@ -251,6 +255,11 @@ export interface LoopsExtractPayload {
   slug: string;
   sourceId: string;
   threadId?: string;
+  /**
+   * Durable source identity captured when the managed Google sweep enqueues
+   * this revision. Legacy/unmanaged callers intentionally omit it.
+   */
+  sourceIncarnation?: string;
 }
 
 export interface LoopsExtractResult {
@@ -281,9 +290,80 @@ export class LoopsExtractRetryableError extends Error {
   }
 }
 
-export async function runLoopsExtract(
+type LoopsExtractMode = 'legacy' | 'managed';
+
+interface ManagedLoopSource {
+  incarnation: string;
+  archived: boolean;
+  config: unknown;
+}
+
+function sourceConfigKind(value: unknown): string | null {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { return null; }
+  }
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && typeof (value as Record<string, unknown>).kind === 'string'
+    ? (value as Record<string, unknown>).kind as string
+    : null;
+}
+
+/**
+ * Revalidate the durable application job and exact Google Source identity.
+ * This runs before provider I/O and again under the publication transaction.
+ */
+async function assertManagedLoopsExtractAuthority(
   engine: BrainEngine,
   payload: LoopsExtractPayload,
+  lock = false,
+): Promise<void> {
+  assertPersistenceAccepting(engine);
+  const submission = currentSubmissionAuthority();
+  if (submission?.kind !== 'application') {
+    throw new OperationError(
+      'permission_denied',
+      'Managed loops_extract requires trusted application job authority.',
+    );
+  }
+  if (!payload.sourceIncarnation) {
+    throw new OperationError(
+      'source_changed',
+      'Managed loops_extract is missing its accepted source incarnation.',
+      'Re-candidate this thread through the current Google source sweep.',
+    );
+  }
+  const [brain] = await engine.executeRaw<{ enabled: boolean }>(
+    'SELECT enabled FROM persistence_brain WHERE singleton=1',
+  );
+  if (!brain?.enabled) {
+    throw new OperationError(
+      'writer_coordinator_required',
+      'Managed loops_extract requires Managed Persistence to remain enabled.',
+    );
+  }
+  const [source] = await engine.executeRaw<ManagedLoopSource>(
+    `SELECT incarnation,archived,config FROM sources WHERE id=$1${lock ? ' FOR SHARE' : ''}`,
+    [payload.sourceId],
+  );
+  if (!source || source.archived || source.incarnation !== payload.sourceIncarnation) {
+    throw new OperationError(
+      'source_changed',
+      'The Google source is missing, archived, or was replaced after this job was accepted.',
+      'Re-candidate the current source revision instead of replaying stale authority.',
+    );
+  }
+  if (sourceConfigKind(source.config) !== 'google') {
+    throw new OperationError(
+      'permission_denied',
+      'Managed loops_extract is restricted to an active Google source.',
+    );
+  }
+}
+
+async function runLoopsExtractCore(
+  engine: BrainEngine,
+  payload: LoopsExtractPayload,
+  mode: LoopsExtractMode,
 ): Promise<LoopsExtractResult> {
   const empty: LoopsExtractResult = { status: 'skipped', commitments: 0, decisions: 0, loop_ids: [] };
   if (!(await isLoopsExtractionEnabled(engine))) {
@@ -323,7 +403,8 @@ export async function runLoopsExtract(
     return { ...empty, reason: 'suppressed' };
   }
 
-  await assertUnmanagedCanonicalWriter(engine, 'Google loop extraction');
+  if (mode === 'managed') await assertManagedLoopsExtractAuthority(engine, payload);
+  else await assertUnmanagedCanonicalWriter(engine, 'Google loop extraction');
   const { isAvailable, chat } = await import('../ai/gateway.ts');
   // Keyless install / provider outage: NOT a skip. The sweep already refuses to
   // enqueue while chat is unavailable; a job that reaches here mid-outage must
@@ -394,108 +475,133 @@ export async function runLoopsExtract(
   for (const c of extraction.commitments) c.quote = verbatim(c.quote);
   for (const d of extraction.decisions_pending) d.quote = verbatim(d.quote);
 
-  const loopIds: number[] = [];
-  const messageDate = typeof fm.date === 'string' ? fm.date : new Date().toISOString();
+  const publish = async (writeEngine: BrainEngine): Promise<LoopsExtractResult> => {
+    const loopIds: number[] = [];
+    const messageDate = typeof fm.date === 'string' ? fm.date : new Date().toISOString();
 
-  for (const c of extraction.commitments) {
-    const loopType: LoopType =
-      c.direction === 'owed_by_me' ? 'commitment_owed_by_me' : 'commitment_owed_to_me';
-    const counterpartyRef = c.counterparty_name || c.counterparty_email || null;
+    for (const c of extraction.commitments) {
+      const loopType: LoopType =
+        c.direction === 'owed_by_me' ? 'commitment_owed_by_me' : 'commitment_owed_to_me';
+      const counterpartyRef = c.counterparty_name || c.counterparty_email || null;
 
-    // Projection 1 — facts row (fence-first, deduped/superseding).
-    let factId: number | null = null;
-    try {
-      const { writeSingleFact } = await import('../facts/write-single.ts');
-      const result = await writeSingleFact(engine, payload.sourceId, {
-        fact: c.text,
-        provenance: `email thread "${(page.title ?? '').slice(0, 80)}" (${payload.slug})`,
-        kind: 'commitment',
-        entity: counterpartyRef,
-        visibility: 'private',
-        validUntil: c.due_iso ? new Date(`${c.due_iso}T23:59:59Z`) : null,
+      // Projection 1 — facts row (fence-first, deduped/superseding).
+      let factId: number | null = null;
+      try {
+        const { writeSingleFact } = await import('../facts/write-single.ts');
+        const result = await writeSingleFact(writeEngine, payload.sourceId, {
+          fact: c.text,
+          provenance: `email thread "${(page.title ?? '').slice(0, 80)}" (${payload.slug})`,
+          kind: 'commitment',
+          entity: counterpartyRef,
+          visibility: 'private',
+          validUntil: c.due_iso ? new Date(`${c.due_iso}T23:59:59Z`) : null,
+          confidence: 0.85,
+        }, mode === 'managed' ? { coordinatedDatabaseOnly: true } : undefined);
+        factId = result.id;
+      } catch {
+        /* the loop row still lands; facts projection is best-effort */
+      }
+
+      // Counterparty slug: high-confidence resolutions only. The facts layer's
+      // slugify holding fallback is fine for facts, but a phantom slug on the
+      // loop row would group `gbrain waiting` under a person that doesn't
+      // exist and miss every entity-card lookup.
+      let counterpartySlug: string | null = null;
+      if (counterpartyRef) {
+        try {
+          const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+          const resolved = await resolveEntitySlugWithSource(writeEngine, payload.sourceId, counterpartyRef);
+          if (resolved && resolved.source !== 'fallback_slugify') counterpartySlug = resolved.slug;
+        } catch {
+          /* resolution is best-effort */
+        }
+      }
+
+      // Projection 2 — the loop row itself.
+      const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: c.direction, x: c.text.toLowerCase() }))}`;
+      const { id } = await upsertOpenLoop(writeEngine, {
+        sourceId: payload.sourceId,
+        dedupKey,
+        loopType,
+        counterpartySlug,
+        counterpartyEmail: c.counterparty_email || null,
+        summary: c.text,
+        evidence: [{ page_slug: payload.slug, ...(c.quote ? { quote: c.quote } : {}) }],
+        threadId,
+        pageSlug: payload.slug,
+        dueAt: c.due_iso ? `${c.due_iso}T23:59:59Z` : null,
+        detector: 'llm_extract',
         confidence: 0.85,
+        factId,
+        lastActivityAt: messageDate,
       });
-      factId = result.id;
-    } catch {
-      /* the loop row still lands; facts projection is best-effort */
-    }
+      loopIds.push(id);
 
-    // Counterparty slug: high-confidence resolutions only. The facts layer's
-    // slugify holding fallback is fine for facts, but a phantom slug on the
-    // loop row would group `gbrain waiting` under a person that doesn't
-    // exist and miss every entity-card lookup.
-    let counterpartySlug: string | null = null;
-    if (counterpartyRef) {
-      try {
-        const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-        const resolved = await resolveEntitySlugWithSource(engine, payload.sourceId, counterpartyRef);
-        if (resolved && resolved.source !== 'fallback_slugify') counterpartySlug = resolved.slug;
-      } catch {
-        /* resolution is best-effort */
+      // Projection 3 — typed edge thread-page → person-page, so the relational
+      // arm ("who owes me", "who am I waiting on") can traverse it.
+      if (counterpartySlug) {
+        try {
+          await writeEngine.addLink( // gbrain-allow-direct-insert: loops-extract writes its own provenance-tagged edges (link_source google-loops); auto-link reconciliation never manages these
+            payload.slug,
+            counterpartySlug,
+            (c.quote || c.text).slice(0, 200),
+            c.direction === 'owed_by_me' ? 'owes_to' : 'awaiting_reply_from',
+            'google-loops',
+            undefined,
+            undefined,
+            { fromSourceId: payload.sourceId, toSourceId: payload.sourceId },
+          );
+        } catch {
+          /* edge is best-effort */
+        }
       }
     }
 
-    // Projection 2 — the loop row itself.
-    const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: c.direction, x: c.text.toLowerCase() }))}`;
-    const { id } = await upsertOpenLoop(engine, {
-      sourceId: payload.sourceId,
-      dedupKey,
-      loopType,
-      counterpartySlug,
-      counterpartyEmail: c.counterparty_email || null,
-      summary: c.text,
-      evidence: [{ page_slug: payload.slug, ...(c.quote ? { quote: c.quote } : {}) }],
-      threadId,
-      pageSlug: payload.slug,
-      dueAt: c.due_iso ? `${c.due_iso}T23:59:59Z` : null,
-      detector: 'llm_extract',
-      confidence: 0.85,
-      factId,
-      lastActivityAt: messageDate,
-    });
-    loopIds.push(id);
-
-    // Projection 3 — typed edge thread-page → person-page, so the relational
-    // arm ("who owes me", "who am I waiting on") can traverse it.
-    if (counterpartySlug) {
-      try {
-        await engine.addLink( // gbrain-allow-direct-insert: loops-extract writes its own provenance-tagged edges (link_source google-loops); auto-link reconciliation never manages these
-          payload.slug,
-          counterpartySlug,
-          (c.quote || c.text).slice(0, 200),
-          c.direction === 'owed_by_me' ? 'owes_to' : 'awaiting_reply_from',
-          'google-loops',
-          undefined,
-          undefined,
-          { fromSourceId: payload.sourceId, toSourceId: payload.sourceId },
-        );
-      } catch {
-        /* edge is best-effort */
-      }
+    for (const d of extraction.decisions_pending) {
+      const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: 'decision', x: d.text.toLowerCase() }))}`;
+      const { id } = await upsertOpenLoop(writeEngine, {
+        sourceId: payload.sourceId,
+        dedupKey,
+        loopType: 'decision_pending',
+        summary: d.text,
+        evidence: [{ page_slug: payload.slug, ...(d.quote ? { quote: d.quote } : {}) }],
+        threadId,
+        pageSlug: payload.slug,
+        detector: 'llm_extract',
+        confidence: 0.8,
+        lastActivityAt: messageDate,
+      });
+      loopIds.push(id);
     }
-  }
 
-  for (const d of extraction.decisions_pending) {
-    const dedupKey = `commit:${sha8(JSON.stringify({ t: threadId, d: 'decision', x: d.text.toLowerCase() }))}`;
-    const { id } = await upsertOpenLoop(engine, {
-      sourceId: payload.sourceId,
-      dedupKey,
-      loopType: 'decision_pending',
-      summary: d.text,
-      evidence: [{ page_slug: payload.slug, ...(d.quote ? { quote: d.quote } : {}) }],
-      threadId,
-      pageSlug: payload.slug,
-      detector: 'llm_extract',
-      confidence: 0.8,
-      lastActivityAt: messageDate,
-    });
-    loopIds.push(id);
-  }
-
-  return {
-    status: 'extracted',
-    commitments: extraction.commitments.length,
-    decisions: extraction.decisions_pending.length,
-    loop_ids: loopIds,
+    return {
+      status: 'extracted',
+      commitments: extraction.commitments.length,
+      decisions: extraction.decisions_pending.length,
+      loop_ids: loopIds,
+    };
   };
+
+  if (mode === 'legacy') return publish(engine);
+  return engine.transaction(async (tx) => {
+    // Pin source identity through publication. A source archive/replacement
+    // racing provider I/O loses here before any fact/loop/edge is installed.
+    await assertManagedLoopsExtractAuthority(tx, payload, true);
+    return withCoordinatedWrite(tx, [payload.sourceId], () => publish(tx));
+  });
+}
+
+export async function runLoopsExtract(
+  engine: BrainEngine,
+  payload: LoopsExtractPayload,
+): Promise<LoopsExtractResult> {
+  return runLoopsExtractCore(engine, payload, 'legacy');
+}
+
+export async function runManagedLoopsExtract(
+  engine: BrainEngine,
+  payload: LoopsExtractPayload,
+): Promise<LoopsExtractResult> {
+  await assertManagedLoopsExtractAuthority(engine, payload);
+  return runLoopsExtractCore(engine, payload, 'managed');
 }
