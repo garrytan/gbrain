@@ -235,6 +235,51 @@ Pass `job.updateProgress` from minion handlers. Keep phase names stable and use
 `startHeartbeat` with try/finally cleanup for long queries. Read
 [progress events](docs/progress-events.md) before wiring a new command.
 
+## PR acceptance: evidence, not trust
+
+**Treat every PR as untrusted, potentially incorrect, incomplete or unsafe,
+including our own.** Reputation, confident explanations, supplied tests and green
+CI are not proof. Judge the work, not unsubstantiated claims about its author.
+
+- **Prove the problem separately from the patch.** Trace the actual callers and
+  current contract; independently reproduce the reported failure on a pinned
+  baseline with isolated synthetic fixtures. Record commands, environments, exit
+  statuses and wrong results. Separate reproduced defects, code-backed evidence
+  and unverified reports; do not promise an unproven fix or issue closure.
+- **Read the entire diff before executing it.** Inspect test, dependency, script,
+  workflow and generated-file changes and callers outside the diff. Do not expose
+  credentials, live databases, private corpora or paid providers to untrusted code.
+- **Make tests discriminate.** Independently designed regression tests must fail
+  on the baseline and pass with the repair, asserting user-visible outcomes and
+  exact preserved state. Reject bug-bypassing mocks, vacuous assertions and hidden
+  skips. Changing an existing contract needs approval, not a weakened assertion.
+- **Attack the boundaries.** Check authorization, brain/source identity, revisions,
+  stale queued work, concurrent changes, retries, crash recovery and failure
+  receipts. Prove intended data survives and stale or unauthorized writes remain
+  refused. Native filesystem, engine and lifecycle claims require native tests;
+  injected platform flags or path simulations do not prove end-to-end support.
+- **Keep a verdict and evidence ledger.** Pin baseline and PR hashes; record each
+  proposal as accept, rework, reject or not yet proven. Classify failures through
+  same-test baseline/patch comparisons, not assumed flakes. Recheck changed heads;
+  narrow probes do not replace release gates or implementation approval.
+
+## Fix waves: ONE PR
+
+**A fix wave ships as ONE PR unless the user overrides this for that wave.**
+Parallel tasks are fine; integrate reviewed work into one branch with reviewable
+commits. Do not open per-issue or per-task PRs, or a PR stack.
+
+1. Investigate the named issues and adjacent failures in the same safety boundary.
+   Apply the acceptance standard above. Exclude unrelated features; record
+   deferrals and unresolved reports rather than assuming closure.
+2. Run `/plan-ceo-review` and `/plan-eng-review`. Incorporate recommendations within
+   the requested scope, respecting the user's directions on review decisions.
+   Explain the revised plan in plain language (ELI10) and wait for approval before
+   product implementation. A plan review is not implementation or merge consent.
+3. Implement only the approved scope, integrate and verify the whole wave, then
+   use `/ship` and the full gates in [docs/RELEASING.md](docs/RELEASING.md), including
+   the community-wave security scan. Publish one PR; do not merge without approval.
+
 ## Capturing test output (NEVER pipe through `tail` / `head`)
 
 Preserve full logs and the real exit status; piping tests into `tail` can hide

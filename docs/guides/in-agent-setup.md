@@ -179,7 +179,13 @@ chmod 700 /workspace/gbrain-backups
 
 Each output filename must be new. The command holds the real PGLite writer
 lock, takes a full database dump, checks the managed file inventory for changes,
-and publishes a checksummed archive with mode `0600`. A busy database or a
+and publishes a checksummed archive with POSIX mode `0600`. On Windows, built-in
+Windows PowerShell establishes and verifies access for the current owner and
+SYSTEM before writing backup payloads. It protects only newly created backup
+paths, never changes existing parent permissions, and refuses with
+`private_backup_path_unavailable` if enforcement is unavailable. Use a new private
+destination on a local filesystem with Windows ACL support and permitted
+Windows PowerShell. A busy database or a
 changing file fails the operation instead of publishing a success receipt.
 
 | Included | Excluded or inventoried for reconnection |
@@ -219,6 +225,14 @@ source, page, and known config paths; detaches external source/config paths; and
 cancels every unfinished background job in one transaction, preserving its
 previous status for inspection. Completed history remains. No worker, connector,
 sync, native routine, or paid operation starts.
+
+Archive paths are portable forward-slash names; traversal, reserved Windows
+names and ambiguous case or normalization collisions are rejected. Recognized
+nested paths are rebased using the recorded platform's path rules. Unrecognized
+legacy absolute page origins remain unchanged and appear in the reconnect
+inventory for review before sync. Remembered text is never rewritten to replace
+old paths, and restoration is not a promise that every historical origin is
+portable.
 
 External checkout and API sources keep their remembered pages available, but
 their live connector configuration is quarantined and sync is disabled. The

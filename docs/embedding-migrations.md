@@ -5,7 +5,7 @@
 > transition (all three dim-pinned columns), NULL-signature pages, the
 > reranker companion switch, the query cache, locks, and resume-after-kill,
 > and verifies the database before declaring anything done. Preview with
-> `--dry-run`; inspect state with `--status`. Leaving ZeroEntropy: follow
+> `--dry-run`; inspect state with `--status`. For the explicit-consent playbook, follow
 > `skills/migrations/v0.46.3.0.md`. The manual recipes below remain as the
 > appendix for unusual situations (they are what the dimension-mismatch
 > error messages link to).

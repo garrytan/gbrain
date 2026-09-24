@@ -90,7 +90,7 @@ describe('mounts routing journey (e2e, PGLite, real CLI spawns)', () => {
       'GBRAIN_BRAIN_ID', 'GBRAIN_SOURCE',
       // auth/provider keys — hermetic runs must never authenticate.
       'GBRAIN_REMOTE_CLIENT_SECRET', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
-      'VOYAGE_API_KEY', 'ZEROENTROPY_API_KEY',
+      'VOYAGE_API_KEY',
     ]) delete env[k];
     env.HOME = home;            // homedir() → <home>/.gbrain/mounts.json
     env.GBRAIN_HOME = home;     // configDir() → <home>/.gbrain/config.json

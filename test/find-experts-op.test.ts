@@ -35,10 +35,10 @@ beforeAll(async () => {
 
   // v0.41.8.0: query the schema's actual embedding dim instead of
   // hardcoding 1536. Pre-fix, the test hardcoded 1536 but master's
-  // v0.36.0 default changed to ZeroEntropy 1280d, AND a gateway-
+  // v0.36.0 default changed to Voyage 1024d, AND a gateway-
   // configured local env may resolve to OpenAI 1536d. The dim is
   // resolved at initSchema() time from the configured gateway (with
-  // DEFAULT_EMBEDDING_DIMENSIONS=1280 fallback). Either way, the seed
+  // DEFAULT_EMBEDDING_DIMENSIONS=1024 fallback). Either way, the seed
   // embedding's dim must match the column's dim, so we ask the column.
   const dimRows = await engine.executeRaw<{ atttypmod: number }>(
     "SELECT atttypmod FROM pg_attribute WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'",

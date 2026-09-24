@@ -38,7 +38,7 @@ import { runSchemaTransition, migrationSignature } from '../src/core/embedding-m
 import { currentEmbeddingSignature } from '../src/core/embedding.ts';
 import { embedStaleForSource } from '../src/core/embed-stale.ts';
 
-const DIMS = 1280;
+const DIMS = 1024;
 const PAGES = ['truth-1', 'truth-2', 'truth-3'];
 
 let engine: PGLiteEngine;
@@ -50,9 +50,9 @@ let embedCalls = 0;
  *  after it deliberately unconfigures the gateway. */
 function configureBaselineGateway(): void {
   configureGateway({
-    embedding_model: 'zeroentropyai:zembed-1',
+    embedding_model: 'voyage:voyage-4',
     embedding_dimensions: DIMS,
-    env: { ZEROENTROPY_API_KEY: 'ze-test-fake' },
+    env: { VOYAGE_API_KEY: 'voyage-test-fake' },
   });
 }
 
@@ -79,9 +79,9 @@ beforeAll(async () => {
   mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
   writeFileSync(join(tmpHome, '.gbrain', 'config.json'), JSON.stringify({
     engine: 'pglite',
-    embedding_model: 'zeroentropyai:zembed-1',
+    embedding_model: 'voyage:voyage-4',
     embedding_dimensions: DIMS,
-    zeroentropy_api_key: 'ze-test-fake',
+    voyage_api_key: 'voyage-test-fake',
   }, null, 2));
 
   resetGateway();
@@ -185,8 +185,8 @@ describe('nullable embedding signature (D9 honesty)', () => {
     // Configured path: exact canonical shape, and shape-parity with
     // migrationSignature (embedding-migration.ts documents "must match
     // currentEmbeddingSignature()'s shape").
-    expect(currentEmbeddingSignature()).toBe('zeroentropyai:zembed-1:1280');
-    expect(currentEmbeddingSignature()).toBe(migrationSignature('zeroentropyai:zembed-1', DIMS));
+    expect(currentEmbeddingSignature()).toBe('voyage:voyage-4:1024');
+    expect(currentEmbeddingSignature()).toBe(migrationSignature('voyage:voyage-4', DIMS));
 
     // Null path: plain resetGateway() restores a CONFIGURED test baseline
     // (the #3554 preload), so a truly-unconfigured gateway is only reachable
@@ -200,7 +200,7 @@ describe('nullable embedding signature (D9 honesty)', () => {
       configureBaselineGateway();
       installTransport();
     }
-    expect(currentEmbeddingSignature()).toBe('zeroentropyai:zembed-1:1280');
+    expect(currentEmbeddingSignature()).toBe('voyage:voyage-4:1024');
   });
 
   test('null-signature embed: no embedding_signature stamp; only includeNullSignature widening counts it stale', async () => {

@@ -47,7 +47,6 @@ test/brain-score-breakdown.test.ts	linkable scope — archive pages do not drag 
 test/brainstorm-timeout.test.ts	orchestrator entry-point wrap (CV11 single-point classification)	2	bun-file
 test/build-llms.test.ts	CLAUDE.md restructure content contracts	5	readFileSync
 test/build-llms.test.ts	build-llms generator	7	readFileSync
-test/canonical-migration-command.test.ts	canonical migration command (single home: ai/defaults.ts)	5	doctor-source-helper
 test/canonical-writer-inventory.test.ts	(file-level)	2	readFileSync
 test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source guard)	2	readFileSync
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	10	readFileSync
@@ -214,7 +213,6 @@ test/migrate.test.ts	migration v49 — eval_takes_quality_runs (v0.32)	6	readFil
 test/migrate.test.ts	resolvePoolSize — env var + explicit override	4	readFileSync
 test/migrate.test.ts	resolveSessionTimeouts — env var overrides	5	readFileSync
 test/migrate.test.ts	v117 — context_volunteer_events_table	5	readFileSync
-test/migration-orchestrator-v0_46_3.serial.test.ts	v0.46.3 orchestrator behavior	4	readFileSync
 test/migration-resume.test.ts	Bug 3 — orchestrator no longer writes the ledger directly	6	bun-file
 test/migrations-v0_11_0.test.ts	AGENTS.md marker injection	6	readFileSync
 test/migrations-v0_11_0.test.ts	cron manifest rewrite — gbrain builtins only	8	readFileSync
@@ -229,6 +227,7 @@ test/ocr-run-budget.test.ts	doctor ocr_health surfaces the budget-skip counter (
 test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing bundled points at a non-bundled skill)	1	readFileSync
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
+test/persistence-sync-options.serial.test.ts	(file-level)	1	readFileSync
 test/pg-access-classify.test.ts	marker contract (skill↔binary lockstep, the UPGRADE_AVAILABLE pattern)	3	bun-file
 test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	1	readFileSync
 test/pglite-repair-command.serial.test.ts	gbrain pglite-repair — interactive confirm wiring (#4318 residual)	1	readFileSync
@@ -247,7 +246,7 @@ test/regression-strict-source-id.test.ts	utils.ts no longer carries an inline pe
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	readFileSync
 test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	11	readFileSync
 test/remediation-command-resolution.test.ts	#3697 — remediation text resolves against the live CLI surface	3	readFileSync
-test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)	5	readFileSync
+test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)	3	readFileSync
 test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
 test/resolver.test.ts	Skill example-name validator (D13)	4	readFileSync
 test/retrieval-reflex-recipe-routing.test.ts	retrieval-reflex recipe routing is MECE with the query skill (#4292)	5	readFileSync
@@ -328,13 +327,13 @@ test/upgrade-skill-publish-prompt-race.test.ts	gbrain upgrade — skill-publish 
 test/upgrade.serial.test.ts	detectInstallMethod heuristic (source analysis)	13	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane A — defaults sweep	8	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane B — init paths	3	readFileSync
-test/v0_37_fix_wave.serial.test.ts	v0.37 Lane C.3 — ZE key reaches buildGatewayConfig	3	readFileSync
+test/v0_37_fix_wave.serial.test.ts	v0.37 Lane C.3 — Voyage key reaches buildGatewayConfig	3	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane D.2 — embed pre-flight dim mismatch	1	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane D.4 — sync --help dispatch	1	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 deferred TODO shipped — gbrain reinit-pglite	3	readFileSync
 test/v0_37_gap_fill.serial.test.ts	Lane A.7 — chunk-row INSERT default tracks the gateway-resolved model	1	readFileSync
 test/v0_37_gap_fill.serial.test.ts	Lane B — init precedence chain (CLI > env > existing file > default)	1	readFileSync
-test/v0_37_gap_fill.serial.test.ts	Lane C.3 — env ZEROENTROPY_API_KEY merges into loadConfig	2	readFileSync
+test/v0_37_gap_fill.serial.test.ts	Lane C.3 — env OPENAI_API_KEY merges into loadConfig	2	readFileSync
 test/v0_37_gap_fill.serial.test.ts	Lane D.2 — embed pre-flight catches dim mismatch before worker pool	2	readFileSync
 test/v0_37_gap_fill.serial.test.ts	Lane D.3 — sync surfaces dim-mismatch recipe at incremental AND first-sync catches	2	readFileSync
 test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is provider-aware	1	readFileSync

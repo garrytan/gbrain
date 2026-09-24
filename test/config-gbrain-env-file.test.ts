@@ -72,19 +72,19 @@ describe('loadConfig — ~/.gbrain/.env secrets file (#3893)', () => {
       [
         'ANTHROPIC_API_KEY="sk-quoted-value"',
         "OPENROUTER_API_KEY='sk-single-quoted'",
-        'ZEROENTROPY_API_KEY=sk-inline # trailing comment',
+        'VOYAGE_API_KEY=sk-inline # trailing comment',
         '',
       ].join('\n'),
       {
         ANTHROPIC_API_KEY: undefined,
         OPENROUTER_API_KEY: undefined,
-        ZEROENTROPY_API_KEY: undefined,
+        VOYAGE_API_KEY: undefined,
       },
       () => {
         loadConfig();
         expect(process.env.ANTHROPIC_API_KEY).toBe('sk-quoted-value');
         expect(process.env.OPENROUTER_API_KEY).toBe('sk-single-quoted');
-        expect(process.env.ZEROENTROPY_API_KEY).toBe('sk-inline');
+        expect(process.env.VOYAGE_API_KEY).toBe('sk-inline');
       },
     );
   });

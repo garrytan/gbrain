@@ -6217,15 +6217,6 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 142,
     name: 'takes_embedding_dimension_matches_config',
-    // #2089: takes was created with a hard-coded vector(1536), while the
-    // configured embedding model can emit another width (for example the
-    // default zembed-1 2560d). The vector writer cannot be useful until the
-    // column shares the configured dimension with content_chunks/facts.
-    // Renumbered v141 → v142: the wave-k branch shipped this AS v141 while
-    // master consumed v141 for extract_rollup_expected_limit (#4482), so a
-    // brain that ran the branch pre-merge recorded version 141 and would
-    // skip master's v141 forever. The guarded DDL below re-applies it here
-    // as a redundant first statement — idempotent, a no-op on fresh paths.
     idempotent: true,
     sql: '',
     handler: async (engine) => {

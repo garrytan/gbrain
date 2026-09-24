@@ -2,9 +2,11 @@
 
 ## Disposition
 
-**not-reproduced-with-evidence** on the synthetic Linux fixture below. This is
-not a fix or a claim that the reported macOS failure is resolved. No production
-reindex or engine behavior was changed for this investigation.
+**Original macOS failure unresolved.** The fresh-store controls below did not
+reproduce it. A later bounded mutation-pressure experiment on Linux reproduced
+a COMMIT-tail stall and a subsequent real-CLI reindex stall, documented below;
+their identity with the reported macOS failure is not established. No production
+reindex or engine behavior was changed for these investigations.
 
 Issue #5284 reports PGLite 0.4.3 spinning inside COMMIT after approximately
 2,600–3,300 writes, with a stalled event loop and no recovery after 48 minutes.
@@ -168,14 +170,142 @@ that control, but does not reproduce macOS 27 or the aged large-store condition.
 
 ## Remaining prerequisite
 
-To diagnose the reported wedge rather than this passing workload, run the
-bounded harness on macOS ARM64 with the reported Bun version, or supply a
-**generic synthetic generator** that reproduces the relevant aged-store/WAL
-pressure. The fixture's fresh, compressible text and much smaller store do not
-match the report's 3.6 GB state. No private corpus is needed or requested.
+To establish whether the Linux pressure stalls below explain the original
+report, replay the pressure workload on macOS 27 ARM64 with Bun 1.4.2 and compare
+the failing transaction and WASM ancestry. The fresh controls and the partially
+churned store still do not match the report's aged 3.6 GB state. No private
+corpus is needed or requested.
 
-A failing run must retain its last transaction marker and external process
+A failing macOS run must retain its last transaction marker and external process
 sample. `body_done` without `committed` narrows the failure to the completion
-path; a named WASM stack would be needed to identify the Postgres-side spin.
+path; its WASM frames must be identified before equating that spin with the
+Linux profiles below.
 Until that evidence exists, periodic reconnects or checkpoint commands would
 be speculative mitigations, not an established root-cause fix.
+
+## Bounded mutation-pressure follow-up (`6040075`)
+
+This follow-up used an immutable `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`
+checkout on Linux x86-64, pinned Bun 1.4.2 and PGLite 0.4.3. It reused the
+retained fixture's 5,600-page/eight-section seed, isolated environment, fetch
+refusal and real-CLI transaction preload. Automatic WAL repair was disabled
+(`GBRAIN_PGLITE_WAL_REPAIR=off`). No private corpus or live brain was opened.
+
+The scratch aging workload intended two deterministic cycles followed by
+restoring the small bodies and running reindex. Each page transaction replaced
+its body with 131,072 bytes of base64-encoded deterministic xorshift32 output
+and replaced its chunks with 32 slices of 4,096 bytes. Every fourth page was
+deleted and reinserted, including its synthetic tag; other pages were updated
+in place. This used actual `pages`, `content_chunks` and cascade relationships,
+but raw SQL rather than the importer for aging. The high-entropy payload is a
+write-pressure probe, not representative prose, embeddings or elapsed aging.
+The first cycle stalled early, so neither a complete aging cycle nor the
+intended 3.6 GB condition was achieved.
+
+An independent Python process sampled CPU/RSS, directory sizes and last trace
+every two seconds. The initial aging launcher had a one-hour deadline; follow-up
+commands had individual deadlines. All had an 8 GiB per-store cap and a 6 GiB
+sampled-RSS cap. The four stalls in the table were externally SIGKILLed after
+120 seconds without trace progress, then reaped. Store copies and file hashes
+were retained; the first churn and reindex crash images were copied before
+reopening their working stores. The
+scratch generator and diagnostic scripts were not added to installed tooling.
+
+| Phase | Completed transactions | Last trace before termination | Store / WAL at stop |
+| --- | ---: | --- | ---: |
+| First churn, Bun 1.4.2 | 449 | `body_done`, zero-based page 449 | 905.9 / 528 MiB |
+| Same recovered state, Bun 1.3.14 | 397 additional | `begin`, page 846; no `body_done` | 1,212.0 / 544 MiB |
+| Same recovered state, Bun 1.4.2 | 397 additional | `begin`, page 846; no `body_done` | 1,212.0 / 544 MiB |
+| Real reindex after first recovery, Bun 1.4.2 | 5,519 page transactions | `begin`, transaction 5,520; no `body_done` | 1,072.9 / 544 MiB |
+
+Sizes are sums of logical file lengths, not database row sizes. The first
+churn grew the directory from 97,542,394 to 949,920,385 bytes and WAL from
+48 to 528 MiB (33 segments). Its final `body_done` was at
+`2026-09-23T22:51:11.535Z`; the external kill was 120 seconds later. During
+the stall one thread remained near 100% CPU, directory sizes stopped changing,
+and repeated `/proc/<pid>/io` snapshots were identical. Six of seven separate
+debugger samples contained `clock_gettime`; their unnamed frames did not
+identify the Postgres function. All four rows above ended by SIGKILL, not by
+a returned database error or a successful launcher exit.
+
+The first reopen exited zero with exactly 449 changed pages. Page 449 retained
+its original body and one legacy chunk, while page 448 had its new body and
+32 chunks. All 5,600 pages and tags remained; no chunks were missing or
+orphaned, and concatenating each changed page's ordered chunks recovered its
+body exactly. Both runtime-repeat reopens also exited zero and retained
+exactly 846 changed pages with the same consistency checks passing. These
+checks do not prove every index or every recovery path is healthy.
+
+The measured reindex command remained the real CLI:
+
+```sh
+"$BUN_1_4_2" --no-env-file \
+  --preload "$CHECKOUT/test/fixtures/reindex-markdown-perf.ts" \
+  "$CHECKOUT/src/cli.ts" reindex --markdown --no-embed --json --repo "$ROOT/notes"
+```
+
+It ran on the first recovered, partially churned store, not on a fresh control.
+The last transaction began at 193.12 seconds; the external watchdog terminated
+the child at 315.27 seconds. Reopening found exactly 81 pending pages, with no
+current-version pages missing chunks, mismatched projection revisions or
+missing tags. A new invocation completed all 81 in 14.31 seconds, with one
+additional statistics transaction, zero failures and zero pending pages. A
+fresh inspection passed the same consistency checks; the immediate no-op
+committed zero transactions. There was no connection recycling inside either
+CLI invocation.
+
+A direct PGLite probe on Node 24.18.0, bypassing GBrain's engine wrapper, also
+stalled on a copy of the same recovered state after 397 further transactions.
+Statement markers locate that stop in `INSERT content_chunks`, rather than
+COMMIT. An external V8 CPU profile captured 9,082 samples over 10.05 seconds,
+all at `wasm-function[1298]`. The shipped WASM export table maps index 1298 to
+`XLogFlush`; its sampled ancestry contains two `XLogFlush` frames. The binary
+has no name or source-map section, but exported function indices still allow
+this partial attribution. This names a function in the synthetic follow-up,
+not in the original macOS sample, and does not yet identify the faulty branch
+or justify a checkpoint/reconnect patch.
+
+A second direct-PGLite/Node probe started from a newly seeded store, with no
+prior crash, and stopped at the first churn's same `body_done` boundary on
+page 449. Its 10.08-second profile contains 9,025 samples. The hot ancestry
+maps to `CommitTransactionCommand` → `XLogFlush` → unnamed frames → `pg_usleep`
+→ `nanosleep` → `_emscripten_get_now`. This independently locates a synthetic
+COMMIT clock loop without relying on the recovered-store insertion failure.
+The intermediate unexported functions and the original macOS stack still need
+attribution; these observations do not establish a production fix.
+
+The useful change in evidence is a bounded synthetic pressure failure, including
+an actual reindex stop and successful process-level resume. It is not another
+passing fresh-store benchmark, a reproduction of the complete reported platform
+and store, or proof that all these stops share one cause.
+
+### Schema-free PGLite control
+
+A final bounded control removed GBrain's schema, triggers and engine wrapper.
+It created only `pressure(id integer PRIMARY KEY, payload text NOT NULL)` in a
+fresh PGLite 0.4.3 store, with zero user triggers and only the built-in `plpgsql`
+extension. Each transaction inserted one deterministic 131,072-byte text value.
+Both Node 24.18.0 and Bun 1.4.2 committed exactly 3,905 rows, then stopped after
+`body_done` for row 3,905. Their external watchdogs ended the processes with
+SIGKILL. Both stores stopped at 1,110,343,985 logical bytes, including 528 MiB
+of WAL, and both reopened successfully with rows 0 through 3,904, correct
+payload lengths and matching first/last payload hashes. This is not a full
+payload or index-integrity audit.
+
+The Node profile contains 8,998 samples over 10.04 seconds. Its hot ancestry
+again includes `CommitTransactionCommand`, `XLogFlush`, the same unexported
+intermediate frames, `pg_usleep`, `nanosleep` and `_emscripten_get_now`. The
+minimal reproduction rules out GBrain's schema and wrappers as prerequisites
+for this Linux pressure failure; the second runtime also rules out a
+Bun-only prerequisite.
+
+The PostgreSQL source pinned by PGLite's 0.4.3 release, commit
+`0c98d7c9c9bd3b0d01cb6728c4802b705f05ee54`, provides a concrete upstream lead.
+Its WAL writer can request a checkpoint when a segment completes;
+`RequestCheckpoint` runs `CreateCheckPoint` synchronously under `__PGLITE__`.
+The commit path sets `DELAY_CHKPT_START` before flushing WAL and clears it
+afterward, while checkpoint creation waits on that flag with `pg_usleep`.
+This is consistent with a checkpoint waiting on the transaction that called
+it. The original macOS stack and a direct runtime observation of those flag
+values are still missing, so this wave adds neither an engine patch nor a
+checkpoint/reconnect workaround, and does not close #5284.
