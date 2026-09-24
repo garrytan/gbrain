@@ -2,12 +2,20 @@ name: Native writer locks
 
 on:
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      windows_backup_clock_only:
+        description: Run only the Windows ACL diagnostic cells; full native and full CI are not run
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
 
 jobs:
   openclaw:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.windows_backup_clock_only != true }}
     name: OpenClaw 2026.9.4 native context-engine startup
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -43,6 +51,7 @@ jobs:
         run: bun test --timeout=60000 test/openclaw-context-engine-native.serial.test.ts
 
   native:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.windows_backup_clock_only != true }}
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
@@ -124,6 +133,7 @@ jobs:
           bun scripts/native/cli-persistence-smoke.ts --binary bin/gbrain-native-validation
 
   windows-backup-console:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.windows_backup_clock_only != true }}
     name: Windows PowerShell console probe / ${{ matrix.runner }} / Bun ${{ matrix.bun }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
@@ -160,7 +170,7 @@ jobs:
           grep -Fq 'Windows backup console controls:' "$RUNNER_TEMP/backup-console.log"
 
   windows-backup-dotnet:
-    name: Windows ACL API probe / ${{ matrix.runner }} / Bun ${{ matrix.bun }}
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_backup_clock_only == true && 'Windows ACL clock diagnostic (full CI not run)' || 'Windows ACL API probe' }} / ${{ matrix.runner }} / Bun ${{ matrix.bun }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
     strategy:
@@ -185,6 +195,13 @@ jobs:
         with:
           bun-version: ${{ matrix.bun }}
       - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Compare immediate and idle native ACL subprocess deadlines
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_backup_clock_only == true }}
+        shell: bash
+        env:
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+          GBRAIN_MODEL_DISCOVERY: 'off'
+        run: bun --no-env-file test/fixtures/windows-backup-clock-probe.ts
       - run: bun scripts/native/verify.ts
       - name: Compare cmdlet and direct dotnet ACL programs
         shell: bash
@@ -197,6 +214,7 @@ jobs:
           grep -Fq 'Windows backup dotnet controls: {"kind":"file",' "$RUNNER_TEMP/backup-dotnet.log"
 
   musl:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.windows_backup_clock_only != true }}
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
