@@ -12,6 +12,7 @@ import { reserveCueAttempt, settleCueAttempt } from '../../src/core/memory-cues/
 import type { CueBuildRow } from '../../src/core/memory-cues/builds.ts';
 import { recordFactWithdrawal } from '../../src/core/facts/withdrawal.ts';
 import { runMigrations } from '../../src/core/migrate.ts';
+import { MAX_CUE_WINDOW_BYTES } from '../../src/core/memory-cues/windows.ts';
 
 for (const kind of ['pglite', 'postgres'] as const) {
   const suite = kind === 'postgres' && !process.env.DATABASE_URL ? describe.skip : describe;
@@ -203,7 +204,8 @@ for (const kind of ['pglite', 'postgres'] as const) {
     });
 
     test('large-page coverage resumes bounded passes on the original allowance', async () => {
-      await seedCuePage(engine, 'cue-example', 'default', `${cueEvidence} ${'Window filler. '.repeat(240)}`);
+      const filler = 'Window filler. ';
+      await seedCuePage(engine, 'cue-example', 'default', `${cueEvidence} ${filler.repeat(Math.ceil(MAX_CUE_WINDOW_BYTES * 3 / Buffer.byteLength(filler)))}`);
       const receipt = await startCueBuild(engine, { windowLimit: 2 });
       const providers = { ...cueProviders, generate: async () => ({ output: [], actualUsd: 0.001 }) };
       const first = await runMemoryCueBuild(engine, { buildId: receipt.buildId, providers });
