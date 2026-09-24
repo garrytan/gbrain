@@ -7,7 +7,7 @@ import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts'
 const describePg = hasDatabase() ? describe : describe.skip;
 
 describePg('Postgres fact-withdrawal scope', () => {
-  test('uses indexed evidence to stay inside admission while preserving unrelated pages', async () => {
+  test('stays inside admission with source-scoped evidence while preserving unrelated pages', async () => {
     const fixture = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
     const { engine } = fixture;
     const sourceId = 'withdrawal-postgres-scale';

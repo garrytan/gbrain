@@ -1,7 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { escapeFenceCell, isSeparatorRow, parseRowCells, stripStrikethrough } from '../fence-shared.ts';
-import { getFtsLanguage } from '../fts-language.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { PageWithdrawal } from '../page-state/types.ts';
 import { ambiguousWithdrawalFenceSegments, overlayWithdrawalBody, withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
@@ -40,7 +39,11 @@ export async function recordFactWithdrawal(
       `WITH target AS (
           SELECT regexp_replace(lower(btrim($3::text)),'[[:space:]]+',' ','g') AS claim,
             regexp_replace(lower(btrim($4::text)),'[[:space:]]+',' ','g') AS escaped_claim,
-            plainto_tsquery('${getFtsLanguage()}',$3) AS query
+            -- Language-independent chunk prefilter: every normalized match contains the
+            -- claim's longest pipe/backslash-free token verbatim. Stored FTS vectors may
+            -- use a different configuration than the current one, so they are not used.
+            (SELECT t FROM regexp_split_to_table(regexp_replace(lower(btrim($3::text)),'[[:space:]]+',' ','g'),' ') AS t
+              WHERE t<>'' AND strpos(t,chr(124))=0 AND strpos(t,chr(92))=0 ORDER BY length(t) DESC LIMIT 1) AS anchor
         ), provenance AS (
           SELECT DISTINCT COALESCE(source_markdown_slug,entity_slug) AS slug FROM facts
           WHERE source_id=$1 AND visibility=$2
@@ -50,7 +53,7 @@ export async function recordFactWithdrawal(
         ), chunk_shortlist AS MATERIALIZED (
           SELECT c.page_id,c.chunk_text FROM content_chunks c JOIN pages p ON p.id=c.page_id CROSS JOIN target
           WHERE p.source_id=$1 AND target.claim<>''
-            AND (numnode(target.query)=0 OR c.search_vector IS NULL OR c.search_vector @@ target.query)
+            AND (target.anchor IS NULL OR position(target.anchor in lower(c.chunk_text))>0)
         ), chunk_pages AS MATERIALIZED (
           SELECT c.page_id,bool_or(
             position(target.claim in regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g'))>0 OR
@@ -66,8 +69,7 @@ export async function recordFactWithdrawal(
             position(target.escaped_claim in regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g'))>0
         ), timeline_pages AS MATERIALIZED (
           SELECT p.id FROM pages p CROSS JOIN target
-          WHERE p.source_id=$1 AND target.claim<>''
-            AND (numnode(target.query)=0 OR p.search_vector IS NULL OR p.search_vector @@ target.query) AND (
+          WHERE p.source_id=$1 AND target.claim<>'' AND position('gbrain:facts:begin' in p.timeline)>0 AND (
             position(target.claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0 OR
             position(target.escaped_claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0)
         ), candidate_slugs AS (

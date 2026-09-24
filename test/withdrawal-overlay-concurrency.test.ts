@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { FACTS_FENCE_BEGIN, renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal, preserveWithdrawnFenceRows } from '../src/core/facts/withdrawal.ts';
 import { hasAmbiguousWithdrawalFence, withdrawalFenceBlocks } from '../src/core/facts/withdrawal-overlay.ts';
 import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
+import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import type { PreparedContentImport } from '../src/core/persistence/prepared-import.ts';
@@ -392,6 +394,101 @@ test('an already-struck row inside a malformed fence is neither blocking nor pag
       expect(result.withdrawn).toBe(true);
       expect(result.pages).toEqual([]);
       expect((await engine.readPageSnapshot('malformed-struck-scope', { sourceId: isolatedSourceId }))!.revision).toBe(before.revision);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('a begin marker after same-line prefix text is a live fence, while inline-code mentions stay prose', () => {
+  const prefixed = `Facts: ${renderFactsTable([fact('prefixed fence claim')])}`;
+  expect(withdrawalFenceBlocks(prefixed)).toHaveLength(1);
+  expect(withdrawalFenceBlocks(prefixed)[0].parsed).toMatchObject({ warnings: [], facts: [{ claim: 'prefixed fence claim' }] });
+  expect(hasAmbiguousWithdrawalFence(prefixed)).toBe(false);
+  const documented = `Use \`${FACTS_FENCE_BEGIN}\` to start a table.\nFacts: ${renderFactsTable([fact('documented fence claim')])}`;
+  expect(withdrawalFenceBlocks(documented).map(block => block.parsed.facts.map(f => f.claim))).toEqual([['documented fence claim']]);
+  expect(hasAmbiguousWithdrawalFence(documented)).toBe(false);
+  expect(hasAmbiguousWithdrawalFence(`Inline: \`${FACTS_FENCE_BEGIN} … ${FACTS_FENCE_END}\` is the syntax.`)).toBe(false);
+});
+
+test('a prefixed fence row is overlaid, guarded on import and absent from rebuilt chunks after withdrawal', async () => {
+  const isolatedSourceId = 'withdrawal-prefixed-fence-test';
+  const claim = 'prefixedfencesentinel withdrawn claim';
+  const raced = 'prefixedracesentinel withdrawn claim';
+  const prefixed = (text: string) => `Facts: ${renderFactsTable([fact(text)])}`;
+  // The canonical parser (not the enumerator under test) decides which rows are live.
+  const activeClaims = (body: string) => parseFactsFence(body).facts.filter(f => f.active).map(f => f.claim);
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('prefixed-fence', { type: 'note', title: 'Prefixed facts', compiled_truth: prefixed(claim) },
+        { sourceId: isolatedSourceId });
+      await engine.upsertChunks('prefixed-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: prefixed(claim) }],
+        { sourceId: isolatedSourceId });
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['prefixed-fence']);
+      const snapshot = (await engine.readPageSnapshot('prefixed-fence', { sourceId: isolatedSourceId }))!;
+      expect(snapshot.page.compiled_truth).toStartWith('Facts: ');
+      expect(activeClaims(snapshot.page.compiled_truth)).toEqual([]);
+      expect(sanitizeRemoteBody(snapshot.page.compiled_truth)).not.toContain(claim);
+      await rebuildPendingPageProjections(engine, 100);
+      const chunks = await engine.getChunks('prefixed-fence', { sourceId: isolatedSourceId });
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(activeClaims(chunks.map(chunk => chunk.chunk_text).join('\n'))).toEqual([]);
+      expect(await engine.searchKeyword('prefixedfencesentinel', { sourceId: isolatedSourceId })).toEqual([]);
+
+      const file = `---\ntitle: Prefixed import\ntype: note\n---\n${prefixed(claim)}`;
+      expect((await importFromContent(engine, 'prefixed-import', file, { sourceId: isolatedSourceId, noEmbed: true })).status).toBe('imported');
+      const imported = (await engine.readPageSnapshot('prefixed-import', { sourceId: isolatedSourceId }))!;
+      const [storedBody] = await engine.executeRaw<{ compiled_truth: string }>(
+        'SELECT compiled_truth FROM pages WHERE source_id=$1 AND slug=$2', [isolatedSourceId, 'prefixed-import']);
+      expect(activeClaims(storedBody.compiled_truth)).toEqual([]);
+      expect(activeClaims(imported.page.compiled_truth)).toEqual([]);
+
+      let prepared: PreparedContentImport | undefined;
+      await importFromContent(engine, 'prefixed-race', `---\ntitle: Prefixed race\ntype: note\n---\n${prefixed(raced)}`,
+        { sourceId: isolatedSourceId, noEmbed: true, prepare: async value => { prepared = value; return value.result; } });
+      const racedFact = await engine.insertFact({ fact: raced, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, racedFact.id, isolatedSourceId, true)).withdrawn).toBe(true);
+      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toThrow('withdrawal changed during import preparation');
+      await expect(engine.transaction(tx => prepared!.apply(tx))).rejects.toThrow('withdrawal changed during import preparation');
+      expect(await engine.getPage('prefixed-race', { sourceId: isolatedSourceId })).toBeNull();
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('withdrawal scope does not depend on the FTS configuration that built stored vectors', async () => {
+  const isolatedSourceId = 'withdrawal-fts-config-test';
+  // English stems and drops stopwords; the simple configuration does neither.
+  const claim = 'The runners were running quickly';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('timeline-fence', { type: 'note', title: 'Timeline facts', compiled_truth: 'Safe body',
+        timeline: renderFactsTable([fact(claim)]) }, { sourceId: isolatedSourceId });
+      await engine.putPage('stale-chunk', { type: 'note', title: 'Stale chunk', compiled_truth: 'Current safe body' },
+        { sourceId: isolatedSourceId });
+      await engine.upsertChunks('stale-chunk', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
+        { sourceId: isolatedSourceId });
+      await engine.putPage('unrelated', { type: 'note', title: 'Unrelated', compiled_truth: 'Runners ran quickly elsewhere' },
+        { sourceId: isolatedSourceId });
+      await engine.upsertChunks('unrelated', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Runners ran quickly elsewhere' }],
+        { sourceId: isolatedSourceId });
+      const unrelated = (await engine.readPageSnapshot('unrelated', { sourceId: isolatedSourceId }))!;
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+
+      const result = await withEnv({ GBRAIN_FTS_LANGUAGE: 'simple' }, async () => {
+        resetFtsLanguageCache();
+        try { return await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true); } finally { resetFtsLanguageCache(); }
+      });
+
+      expect(result.pages.map(page => page.slug).sort()).toEqual(['stale-chunk', 'timeline-fence']);
+      expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
+        WHERE p.source_id=$1 AND p.slug='stale-chunk'`, [isolatedSourceId])).toEqual([]);
+      expect((await engine.readPageSnapshot('unrelated', { sourceId: isolatedSourceId }))!.revision).toBe(unrelated.revision);
     } finally {
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
     }

@@ -15,7 +15,7 @@ export function withdrawnFact(fact: ParsedFact, date: string, reason = 'memory w
 export function withdrawalFenceBlocks(body: string): Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> {
   const blocks: Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> = [];
   let open: { start: number } | undefined;
-  for (const marker of standaloneFenceMarkers(body)) {
+  for (const marker of liveFenceMarkers(body)) {
     if (marker.kind === 'begin') {
       open = { start: marker.start };
       continue;
@@ -27,30 +27,37 @@ export function withdrawalFenceBlocks(body: string): Array<{ start: number; end:
   return blocks;
 }
 
-function standaloneFenceMarkers(body: string): Array<{ start: number; end: number; kind: 'begin' | 'end' }> {
+/**
+ * Markers as `parseFactsFence` sees them: anywhere on a line, including after
+ * ordinary prefix text. Only a marker inside an inline code span on its line
+ * is documentation, never a live fence.
+ */
+function liveFenceMarkers(body: string): Array<{ start: number; end: number; kind: 'begin' | 'end' }> {
   const markers: Array<{ start: number; end: number; kind: 'begin' | 'end' }> = [];
   for (const [marker, kind] of [[FACTS_FENCE_BEGIN, 'begin'], [FACTS_FENCE_END, 'end']] as const) {
     let cursor = 0;
     while (cursor < body.length) {
       const start = body.indexOf(marker, cursor);
       if (start < 0) break;
-      const lineStart = body.lastIndexOf('\n', start - 1) + 1;
-      const lineEndAt = body.indexOf('\n', start + marker.length);
-      const lineEnd = lineEndAt < 0 ? body.length : lineEndAt;
-      if (!body.slice(lineStart, start).trim() && !body.slice(start + marker.length, lineEnd).trim()) {
-        markers.push({ start, end: start + marker.length, kind });
-      }
+      if (!insideInlineCode(body, start, start + marker.length)) markers.push({ start, end: start + marker.length, kind });
       cursor = start + marker.length;
     }
   }
   return markers.sort((a, b) => a.start - b.start);
 }
 
-/** Return only malformed standalone fence segments; inline documentation is ordinary prose. */
+function insideInlineCode(body: string, start: number, end: number): boolean {
+  const lineStart = body.lastIndexOf('\n', start - 1) + 1;
+  const lineEndAt = body.indexOf('\n', end);
+  const before = body.slice(lineStart, start), after = body.slice(end, lineEndAt < 0 ? body.length : lineEndAt);
+  return (before.split('`').length - 1) % 2 === 1 && after.includes('`');
+}
+
+/** Return only malformed live fence segments; inline-code documentation is ordinary prose. */
 export function ambiguousWithdrawalFenceSegments(body: string): string[] {
   const segments: string[] = [];
   let open: { start: number } | undefined;
-  for (const marker of standaloneFenceMarkers(body)) {
+  for (const marker of liveFenceMarkers(body)) {
     if (marker.kind === 'begin') {
       if (open) segments.push(body.slice(open.start, marker.start));
       open = { start: marker.start };
@@ -68,7 +75,7 @@ export function ambiguousWithdrawalFenceSegments(body: string): string[] {
   return segments;
 }
 
-/** A shortlisted claim inside an unparseable standalone fence is conservatively page-affecting. */
+/** A shortlisted claim inside an unparseable live fence is conservatively page-affecting. */
 export function hasAmbiguousWithdrawalFence(body: string): boolean {
   return ambiguousWithdrawalFenceSegments(body).length > 0;
 }
