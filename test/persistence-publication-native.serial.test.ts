@@ -7,6 +7,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
+import { recordedPathFromFileUri } from '../src/core/write-through.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
@@ -295,6 +296,22 @@ test('a rejected journal push retains its local commit and retries the same effe
   expect(await getWriteRequestById(engine, row.id)).toEqual(receipt);
   expect((await publicEffectsForRequest(engine, row.id)).find(item => item.kind === 'git'))
     .toEqual({ kind: 'git', state: 'committed', push: 'committed' });
+});
+
+test('captured URI decoding preserves native drives and literal filename characters within the root', () => {
+  const f = gitFixture(); fixtures.push(f);
+  const authored = join('Notes', 'Captured #100%.md');
+  const target = join(f.root, authored);
+  expect(recordedPathFromFileUri(pathToFileURL(target).href, f.root)).toBe(authored);
+  expect(recordedPathFromFileUri(`file://${target}`, f.root)).toBe(authored);
+  expect(recordedPathFromFileUri(pathToFileURL(join(f.home, 'outside.md')).href, f.root)).toBeNull();
+  expect(recordedPathFromFileUri(`${pathToFileURL(f.root).href}/bad%00.md`, f.root)).toBeNull();
+  if (process.platform === 'win32') {
+    const drive = f.root[0].toUpperCase() === 'C' ? 'D' : 'C';
+    expect(recordedPathFromFileUri(`file:///${drive}:/outside.md`, f.root)).toBeNull();
+  } else {
+    expect(recordedPathFromFileUri('file:///C:/brain/Notes/example.md', '/C:/brain')).toBe('Notes/example.md');
+  }
 });
 
 test('mixed-case captured file URI publishes its exact bound file through the journal', async () => {

@@ -158,6 +158,7 @@ export function recordedPathFromFileUri(sourceUri: string | null | undefined, pa
     }
   }
   if (abs.includes('\0') || !abs.toLowerCase().endsWith('.md')) return null;
+  if (process.platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(abs)) abs = abs.slice(1);
   const rel = relative(resolve(pageRoot), resolve(abs));
   if (!rel || isAbsolute(rel) || rel.split(/[\\/]/).some((segment) => segment === '..')) return null;
   return rel;
