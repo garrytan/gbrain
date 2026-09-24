@@ -5,7 +5,7 @@ uploading a workbook does not automatically turn its cells into indexed memories
 Keep a useful summary in the owning page and cite the attachment's ID and SHA-256.
 
 The host needs its normal `storage` configuration (local, S3 or Supabase), and
-migration 163. No server paths or storage credentials are accepted from remote
+migration 165. No server paths or storage credentials are accepted from remote
 callers. Existing host-only `file_*` operations retain their restrictions.
 
 ## Client usage
@@ -26,7 +26,9 @@ the upload command with `--request-id <same-uuid>` and the same file and metadat
 Downloads refuse to overwrite existing files and publish the destination only
 after checksum verification. Byte transfer occurs inside the client process;
 the model only needs to see metadata, not base64 payloads. The CLI uses the
-existing `remote_mcp` connection configuration; no new endpoint or token is needed.
+existing `remote_mcp` configuration with a separately provisioned OAuth client ID
+and secret. A harness connector token is not automatically available to the CLI.
+No additional file server, port or storage credential is needed by the client.
 
 ## MCP protocol
 
@@ -55,16 +57,22 @@ readable. File names are display metadata; storage keys are opaque UUIDs.
 
 ## Limits and lifecycle
 
-- 64 MiB maximum file, 256 KiB decoded chunks: requests fit the default 1 MiB
-  HTTP body limit, including base64 overhead.
+- 64 MiB maximum file, 256 KiB decoded chunks. Base64 stays inside ordinary MCP
+  JSON tool arguments. Transport and reverse-proxy body limits must allow the
+  encoded chunk and envelope; the legacy HTTP transport has a 1 MiB default,
+  while the OAuth server uses a separate transport.
 - Eight pending uploads per source. Pending sessions expire after 24 hours and
   are pruned on the next upload admission. Staging uses the database, so in-flight
   uploads survive service restarts. Completed chunks are removed immediately.
 - Completed and aborted receipts remain for replay safety. A new upload creates
   a new immutable file; the same filename never silently replaces an old file.
 - Completion buffers up to 64 MiB and holds a transaction while writing storage.
-  The current storage interface downloads a full file for each read chunk. This
-  is intended for modest documents/datasets, not large media streaming.
+  New uploads store a versioned SHA-256 manifest for each chunk. Local, S3 and
+  Supabase reads fetch and verify only the requested chunks (at most two for an
+  unaligned offset). An aligned full download reads one file worth of backend
+  bytes. Partial reads cannot detect corruption outside those chunks. The client
+  must verify the final whole-file checksum. Legacy files without a matching
+  manifest retain full-file verification on every read; reads never rewrite metadata.
 - Storage and PostgreSQL have no shared transaction. A process/database failure
   after object upload can leave an unregistered object. Retrying completion uses
   the same immutable key and repairs the registration. Aborting/expiring such an
@@ -79,5 +87,7 @@ readable. File names are display metadata; storage keys are opaque UUIDs.
   bytes. Already-bound legacy files also require the configured backend and a
   verified size/hash to download. Migration never guesses or rewrites ownership.
 
-This branch adds migration 163 to the 0.51.8.0 base. Rebase and allocate the next
-unused migration number before combining it with a newer upstream release.
+Migration 165 adds upload staging without rewriting existing file ownership.
+Operators running an unpublished extension that reused an upstream migration
+number must resolve that collision before upgrading; renumbering source alone
+cannot repair a database migration already marked applied.

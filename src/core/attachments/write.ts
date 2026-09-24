@@ -1,3 +1,4 @@
+import { chunkManifest } from './integrity.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { executeRawJsonb } from '../sql-query.ts';
 import { backend, CHUNK_BYTES, fail, integer, MAX_FILE_BYTES, owner, page, receipt, sha256, storageConfig, storageIdentity, upload, uuid, type Upload } from './context.ts';
@@ -87,7 +88,7 @@ export async function complete(ctx: OperationContext, p: Record<string, unknown>
     await verifyStored(scoped, row, key);
     await executeRawJsonb(tx, `INSERT INTO files (source_id, page_id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) ON CONFLICT (storage_path) DO NOTHING`,
-    [row.source_id, row.page_id, row.slug, row.filename, key, row.mime_type, row.size_bytes, row.sha256], [{ storage: row.storage_backend, upload_method: 'mcp_attachment' }]);
+    [row.source_id, row.page_id, row.slug, row.filename, key, row.mime_type, row.size_bytes, row.sha256], [{ storage: row.storage_backend, upload_method: 'mcp_attachment', attachment_chunks: chunkManifest(bytes, key, row.storage_backend) }]);
     const [file] = await tx.executeRaw<{ id: number }>('SELECT id FROM files WHERE storage_path=$1 AND source_id=$2 AND content_hash=$3', [key, row.source_id, row.sha256]);
     if (!file) fail('conflict', 'The attachment storage key is already registered differently.');
     await tx.executeRaw("UPDATE attachment_uploads SET state='complete', file_id=$2 WHERE id=$1", [row.id, file.id]);

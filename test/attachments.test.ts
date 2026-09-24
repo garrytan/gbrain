@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { LocalStorage } from '../src/core/storage/local.ts';
+import { afterAll, beforeAll, expect, test, spyOn } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,12 +56,16 @@ test('an 8 MiB attachment survives bounded chunks, repeated writes and exact byt
   const saved = await call('attachment_complete', { upload_id: upload.upload_id });
   expect(saved.sha256).toBe(digest(bytes));
   expect((await call('attachment_complete', { upload_id: upload.upload_id })).attachment_id).toBe(saved.attachment_id);
+  const fullReads = spyOn(LocalStorage.prototype, 'download');
   const downloaded: Buffer[] = [];
   for (let offset = 0; offset < bytes.length; offset += upload.chunk_bytes) {
     const chunk = await call('attachment_read', { attachment_id: saved.attachment_id, offset });
     downloaded.push(Buffer.from(chunk.data_base64, 'base64'));
   }
   expect(Buffer.concat(downloaded).equals(bytes)).toBe(true);
+  const readCount = fullReads.mock.calls.length;
+  fullReads.mockRestore();
+  expect(readCount).toBe(0);
   const list = await call('attachment_list', { page_slug: 'notes/audit' });
   expect(list.attachments.map((a: any) => a.attachment_id)).toContain(saved.attachment_id);
   expect(JSON.stringify(list)).not.toContain(dir);
@@ -216,4 +221,51 @@ test('real HTTP MCP accepts multi-request binaries with read/write scopes and de
       expect(readFileSync(output).equals(readFileSync(input))).toBe(true);
     } finally { server.stop(true); }
   });
+});
+
+
+test('retry repairs storage-before-registration failure and preserves bytes after an ambiguous commit', async () => {
+  for (const mode of ['before-register', 'after-commit']) {
+    const bytes = Buffer.from(`recovery-${mode}`);
+    const started = await begin(bytes);
+    await call('attachment_write', { upload_id: started.upload_id, offset: 0, data_base64: bytes.toString('base64') });
+    const ctx = context();
+    ctx.engine = new Proxy(engine, { get(target, key) {
+      if (key === 'transaction') return async (fn: any) => {
+        const result = await target.transaction(tx => fn(new Proxy(tx, { get(inner, method) {
+          if (method === 'executeRaw' && mode === 'before-register') return async (sql: string, ...args: any[]) => {
+            if (sql.includes('INSERT INTO files')) throw new Error('synthetic registration failure');
+            return (inner.executeRaw as any)(sql, ...args);
+          };
+          const value = (inner as any)[method]; return typeof value === 'function' ? value.bind(inner) : value;
+        } })));
+        if (mode === 'after-commit') throw new Error('synthetic lost commit acknowledgement');
+        return result;
+      };
+      const value = (target as any)[key]; return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await expect(call('attachment_complete', { upload_id: started.upload_id }, ctx)).rejects.toThrow('synthetic');
+    const [staged] = await engine.executeRaw<{ storage_key: string }>('SELECT storage_key FROM attachment_uploads WHERE id=$1', [started.upload_id]);
+    expect(readFileSync(join(dir, 'attachments', staged.storage_key))).toEqual(bytes);
+    const saved = await call('attachment_complete', { upload_id: started.upload_id });
+    expect((await call('attachment_complete', { upload_id: started.upload_id })).attachment_id).toBe(saved.attachment_id);
+    expect(await engine.executeRaw('SELECT id FROM files WHERE storage_path=$1', [`attachments/${staged.storage_key}`])).toHaveLength(1);
+    expect(Buffer.from((await call('attachment_read', { attachment_id: saved.attachment_id })).data_base64, 'base64')).toEqual(bytes);
+  }
+});
+
+test('failed storage upload or corrupt read-back never publishes an attachment', async () => {
+  for (const mode of ['write-failure', 'corrupt-read-back']) {
+    const bytes = Buffer.from('original bytes');
+    const started = await begin(bytes);
+    await call('attachment_write', { upload_id: started.upload_id, offset: 0, data_base64: bytes.toString('base64') });
+    const fault = mode === 'write-failure'
+      ? spyOn(LocalStorage.prototype, 'upload').mockRejectedValue(new Error('synthetic storage failure'))
+      : spyOn(LocalStorage.prototype, 'download').mockResolvedValue(Buffer.from('corrupt bytes'));
+    try { await expect(call('attachment_complete', { upload_id: started.upload_id })).rejects.toMatchObject({ code: mode === 'write-failure' ? 'storage_error' : 'checksum_mismatch' }); }
+    finally { fault.mockRestore(); }
+    const [row] = await engine.executeRaw<{ state: string; file_id: number | null }>('SELECT state,file_id FROM attachment_uploads WHERE id=$1', [started.upload_id]);
+    expect(row).toMatchObject({ state: 'pending', file_id: null });
+    expect((await call('attachment_complete', { upload_id: started.upload_id })).state).toBe('complete');
+  }
 });

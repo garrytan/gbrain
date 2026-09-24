@@ -453,5 +453,3 @@ MIT. I built GBrain to run my OpenClaw and Hermes deployments — the production
 Origin story: [`docs/ethos/ORIGIN.md`](docs/ethos/ORIGIN.md).
 
 Community PR contributors are credited in `CHANGELOG.md` per release. ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the ZeroEntropy embedding + reranker integration. Voyage AI for the asymmetric-encoding recipe template. Ramp Labs for the search quality improvements lineage.
-
-For remote original-file transfers, see [Native MCP attachments](docs/attachments.md).

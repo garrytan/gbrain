@@ -30,6 +30,6 @@ export const attachmentsOperations: Operation[] = [
     description: 'List attachment metadata for a readable page, including original filenames, sizes and SHA-256 hashes. Preserves page/source privacy; does not expose server paths. Pass next_after_id as after_id for the next page.',
     params: { ...pageParams, after_id: { type: 'number', description: 'Exclusive attachment-ID cursor; pass next_after_id from the previous response.' }, limit: { type: 'number', description: '1–100; default 100.' } }, handler: list },
   { name: 'attachment_read', scope: 'read',
-    description: 'Download up to 256 KiB of a page attachment as base64. Checks current page/source visibility and full stored checksum. Repeat using next_offset until eof. Maximum file size 64 MiB. Prefer a client-side helper to avoid putting binary data in model context.',
+    description: 'Download up to 256 KiB of a page attachment as base64. Checks current page/source visibility and requested chunk checksums (legacy files use full-file verification). Repeat using next_offset until eof and verify the assembled file SHA-256. Maximum file size 64 MiB. Prefer a client-side helper to avoid putting binary data in model context.',
     params: { attachment_id: { type: 'number', required: true, description: 'Attachment ID returned by attachment_complete or attachment_list.' }, offset: { type: 'number', description: 'Byte offset; default 0.' } }, handler: read },
 ];

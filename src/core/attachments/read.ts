@@ -1,11 +1,12 @@
+import { verifiedSlice } from './integrity.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
-import { backend, CHUNK_BYTES, fail, integer, MAX_FILE_BYTES, page, sha256, storageConfig } from './context.ts';
+import { backend, CHUNK_BYTES, fail, integer, MAX_FILE_BYTES, page, storageConfig } from './context.ts';
 
 interface FileRow {
   id: number; source_id: string; page_id: number | null; page_slug: string | null;
   filename: string; size_bytes: number | string | null; content_hash: string; mime_type: string | null;
-  storage_path: string; storage: string | null;
+  storage_path: string; storage: string | null; metadata: { attachment_chunks?: unknown } | null;
 }
 function metadata(row: FileRow) {
   return { attachment_id: row.id, source_id: row.source_id, page_slug: row.page_slug,
@@ -40,9 +41,11 @@ export async function read(ctx: OperationContext, p: Record<string, unknown>) {
   if (offset > size) fail('invalid_params', 'Offset exceeds the attachment size.');
   if (row.storage !== storageConfig(ctx).backend) fail('storage_error', 'This file is not registered in the configured attachment backend.');
   let bytes: Buffer;
-  try { bytes = await (await backend(ctx)).download(row.storage_path); }
-  catch { return fail('storage_error', 'Attachment bytes could not be read from storage.'); }
-  if (bytes.length !== size || sha256(bytes) !== row.content_hash) fail('checksum_mismatch', 'Stored attachment does not match its registered checksum.');
+  try { bytes = await verifiedSlice(await backend(ctx), row, row.metadata?.attachment_chunks, offset); }
+  catch (error) {
+    if (error instanceof OperationError) throw error;
+    return fail('storage_error', 'Attachment bytes could not be read from storage.');
+  }
   const end = Math.min(size, offset + CHUNK_BYTES);
-  return { ...metadata(row), offset, next_offset: end, eof: end === size, data_base64: bytes.subarray(offset, end).toString('base64') };
+  return { ...metadata(row), offset, next_offset: end, eof: end === size, data_base64: bytes.toString('base64') };
 }
