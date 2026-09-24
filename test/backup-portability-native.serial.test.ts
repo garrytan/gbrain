@@ -54,13 +54,20 @@ function expectPrivate(path: string, directory: boolean, protectedAcl = false) {
     return;
   }
   const script = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-inspect.ps1'), 'utf8');
+  const started = performance.now();
+  let phase = 'subprocess';
+  let output: string | undefined;
   try {
-    const result = JSON.parse(execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    output = execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
         env: { ...process.env, GBRAIN_TEST_ACL_PATH: path }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
-      }));
+      });
+    phase = 'json';
+    const result = JSON.parse(output);
+    phase = 'shape';
     expect(typeof result.user === 'string' && /^S-\d+(?:-\d+)+$/.test(result.user)).toBe(true);
     expect(Array.isArray(result.rules)).toBe(true);
+    phase = 'acl';
     expect(result.owner).toBe(result.user);
     if (protectedAcl) expect(result.protected).toBe(true);
     const expectedSids = [...new Set([result.user, 'S-1-5-18'])].sort();
@@ -73,7 +80,21 @@ function expectPrivate(path: string, directory: boolean, protectedAcl = false) {
       expect(typeof rule.inherited).toBe('boolean');
       if (protectedAcl) expect(rule.inherited).toBe(false);
     }
-  } catch { throw new Error('Windows private ACL verification failed'); }
+  } catch (error) {
+    const details = (typeof error === 'object' && error !== null ? error : {}) as {
+      code?: unknown; status?: unknown; signal?: unknown; stdout?: unknown; stderr?: unknown;
+    };
+    const bytes = (value: unknown) => typeof value === 'string' ? Buffer.byteLength(value) : value instanceof Uint8Array ? value.byteLength : 0;
+    const code = details.code === 'ETIMEDOUT' ? 'ETIMEDOUT'
+      : details.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || details.code === 'ENOBUFS' ? 'MAXBUFFER'
+      : details.code === 'ENOENT' ? 'ENOENT' : details.code === 'EACCES' || details.code === 'EPERM' ? 'ACCESS' : 'other';
+    const signal = details.signal === 'SIGTERM' || details.signal === 'SIGKILL' || details.signal === 'SIGABRT' || details.signal === 'SIGSEGV'
+      ? details.signal : details.signal == null ? null : 'other';
+    process.stderr.write(`Windows backup ACL inspection failure: ${JSON.stringify({ phase, directory, protectedAcl, arch: process.arch, runtime: Bun.version,
+      elapsedMs: Math.round(performance.now() - started), code, status: typeof details.status === 'number' && Number.isInteger(details.status) ? details.status : null,
+      signal, stdoutBytes: bytes(details.stdout ?? output), stderrBytes: bytes(details.stderr) })}\n`);
+    throw new Error('Windows private ACL verification failed');
+  }
 }
 
 async function expectOriginal() {
