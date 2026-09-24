@@ -1,6 +1,7 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { assertPageRevision } from './page-state/types.ts';
 import { executeRawJsonb } from './sql-query.ts';
+import { sanitizeForJsonb } from './batch-rows.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -11,6 +12,8 @@ export interface DerivedLinkOrigin {
 
 export interface DerivedLinkReplacementOptions {
   includeFrontmatter?: boolean;
+  preserveExisting?: boolean;
+  includeLegacyNullProducer?: boolean;
   expectedEndpoints?: Array<{ slug: string; sourceId: string; revision: string }>;
 }
 
@@ -37,9 +40,13 @@ export async function replaceDerivedLinks(
       || (link.origin_source_id && link.origin_source_id !== origin.sourceId)) {
       throw new TypeError('Derived link origin does not match the replacement scope');
     }
-    const row = { ...link, link_source: producer, origin_slug: producer === 'frontmatter' ? origin.slug : undefined, origin_source_id: origin.sourceId,
+    const reversedAttendance = producer === 'markdown' && link.link_type === 'attended'
+      && link.origin_slug === origin.slug && link.origin_source_id === origin.sourceId
+      && (link.from_slug !== origin.slug || (link.from_source_id ?? origin.sourceId) !== origin.sourceId)
+      && link.to_slug === origin.slug && (link.to_source_id ?? origin.sourceId) === origin.sourceId;
+    const row = { ...link, link_source: producer, origin_slug: producer === 'frontmatter' || reversedAttendance ? origin.slug : undefined, origin_source_id: origin.sourceId,
       from_source_id: link.from_source_id ?? origin.sourceId, to_source_id: link.to_source_id ?? origin.sourceId };
-    if (producer !== 'frontmatter' && (row.from_slug !== origin.slug || row.from_source_id !== origin.sourceId)) {
+    if (producer !== 'frontmatter' && !reversedAttendance && (row.from_slug !== origin.slug || row.from_source_id !== origin.sourceId)) {
       throw new TypeError('Markdown links must originate at the replaced page');
     }
     if (row.from_slug !== origin.slug || row.from_source_id !== origin.sourceId) {
@@ -59,7 +66,7 @@ export async function replaceDerivedLinks(
       throw new Error('Derived link origin changed or was deleted');
     }
     const id = snapshot.page.id;
-    if (opts.includeFrontmatter !== false) {
+    if (opts.includeFrontmatter !== false && !opts.preserveExisting) {
       const ambiguous = await tx.executeRaw(`SELECT 1 FROM links WHERE link_source='frontmatter'
         AND origin_page_id IS NULL AND (from_page_id=$1 OR to_page_id=$1) LIMIT 1`, [id]);
       if (ambiguous.length) throw new DerivedLinkRepairRequiredError();
@@ -76,6 +83,54 @@ export async function replaceDerivedLinks(
         LEFT JOIN pages p ON p.slug=v.slug AND p.source_id=v."sourceId" AND p.deleted_at IS NULL
         WHERE p.id IS NULL OR p.knowledge_revision::text <> v.revision LIMIT 1`, [], [{ rows: opts.expectedEndpoints }]);
       if (changed.length) throw new Error('A derived link endpoint changed after type resolution');
+    }
+    const reversed = rows.filter(row => row.link_type === 'attended' && row.origin_slug
+      && row.to_slug === origin.slug && row.to_source_id === origin.sourceId
+      && (row.from_slug !== origin.slug || row.from_source_id !== origin.sourceId));
+    if (reversed.length) {
+      if (snapshot.page.type !== 'meeting' || reversed.some(row => row.link_source === 'markdown' && !opts.expectedEndpoints?.some(endpoint =>
+        endpoint.slug === row.from_slug && endpoint.sourceId === row.from_source_id))) {
+        throw new TypeError('Canonical attendance requires a meeting origin and revision-bound person endpoints');
+      }
+      const invalid = await executeRawJsonb(tx, `SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows')
+        AS v(from_slug text, from_source_id text)
+        JOIN pages p ON p.slug=v.from_slug AND p.source_id=v.from_source_id
+        WHERE p.type <> 'person' LIMIT 1`, [], [{ rows: reversed }]);
+      if (invalid.length) throw new TypeError('Canonical attendance requires person endpoints');
+    }
+    if (opts.preserveExisting) {
+      const existing = await tx.executeRaw<{ id: number; from_slug: string; to_slug: string;
+        from_source_id: string; to_source_id: string; link_type: string; link_source: string | null;
+        origin_slug: string | null; origin_source_id: string | null; context: string; origin_field: string | null }>(`SELECT l.id, f.slug from_slug, t.slug to_slug,
+          f.source_id from_source_id, t.source_id to_source_id, l.link_type, l.link_source,
+          o.slug origin_slug, o.source_id origin_source_id, l.context, l.origin_field
+        FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+        LEFT JOIN pages o ON o.id=l.origin_page_id
+        WHERE (l.link_source=ANY($2::text[]) OR ($3::boolean AND l.link_source IS NULL))
+          AND (l.origin_page_id=$1 OR (l.origin_page_id IS NULL AND l.from_page_id=$1
+            AND (l.link_source IN ('markdown','wikilink-resolved') OR l.link_source IS NULL)))`, [id, producers, opts.includeLegacyNullProducer !== false]);
+      const identity = (row: Pick<LinkBatchInput, 'from_source_id' | 'from_slug' | 'to_source_id' | 'to_slug' | 'link_type'>
+        & { link_source?: string | null; origin_slug?: string | null }) => JSON.stringify([row.from_source_id, row.from_slug,
+        row.to_source_id, row.to_slug, row.link_type ?? '', row.link_source ?? 'markdown', row.origin_slug ?? null]);
+      const wanted = new Map(rows.map(row => [identity(row), row]));
+      const retained = new Set(existing.map(identity));
+      const obsolete = existing.filter(row => !wanted.has(identity(row))).map(row => row.id);
+      if (obsolete.length) await tx.executeRaw('DELETE FROM links WHERE id=ANY($1::bigint[])', [obsolete]);
+      const updates = existing.flatMap(previous => {
+        const desired = wanted.get(identity(previous));
+        if (!desired) return [];
+        const context = sanitizeForJsonb(desired.context || '');
+        const origin_field = desired.origin_field || null;
+        return previous.context !== context || previous.origin_field !== origin_field
+          ? [{ id: previous.id, context, origin_field }] : [];
+      });
+      if (updates.length) await executeRawJsonb(tx, `UPDATE links l SET context=v.context, origin_field=v.origin_field
+        FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(id bigint, context text, origin_field text)
+        WHERE l.id=v.id`, [], [{ rows: updates }]);
+      const additions = rows.filter(row => !retained.has(identity(row)));
+      const created = additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0;
+      if (created !== additions.length) throw new Error('Derived link replacement did not persist every candidate');
+      return { created, removed: obsolete.length };
     }
     const removed = await tx.executeRaw(`DELETE FROM links WHERE link_source=ANY($2::text[])
       AND (origin_page_id=$1 OR (origin_page_id IS NULL AND from_page_id=$1

@@ -1,0 +1,96 @@
+import { expect, test } from 'bun:test';
+import { extractPageLinks, hasAttendanceEvidence, makeResolver } from '../src/core/link-extraction.ts';
+import { extractLinksFromFile } from '../src/commands/extract.ts';
+
+const person = 'people/alice-example';
+const meeting = 'meetings/planning';
+const resolver = { async resolve(value: string) { return value === person ? person : null; } };
+const types = new Map([[person, 'person'], [meeting, 'meeting']]);
+
+for (const fence of ['~~~', '```', '~~~~', '````']) {
+  for (const falseClose of [...new Set([fence.slice(0, 2), fence.slice(0, -1), `${fence} not a closing fence`, fence[0] === '~' ? '```' : '~~~'])]) {
+    test(`attendee sections retain ${fence} state across headings and invalid closer ${falseClose}`, async () => {
+      const body = `## Attendees\n${fence}\n## Example\n${falseClose}\n# Still an example\nAttendees: [Alice](../people/alice-example.md)\n${fence}\n## Notes\nNo attendance evidence.`;
+      const db = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+      const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(types.keys()), { pageTypes: types });
+      expect(db.candidates.filter(row => row.linkType === 'attended')).toEqual([]);
+      expect(fs.filter(row => row.link_type === 'attended')).toEqual([]);
+    });
+    test(`attendance survives after ${fence} ignores invalid closer ${falseClose}`, async () => {
+      const body = `## Attendees\n${fence}\n## Example\n${falseClose}\nAttendees: [[people/hidden-example]]\n${fence}\n## Notes\nAttendees: [[${person}]]`;
+      const db = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+      const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(types.keys()), { pageTypes: types });
+      expect(db.candidates.filter(row => row.linkType === 'attended').map(row => row.targetSlug)).toEqual([person]);
+      expect(fs.filter(row => row.link_type === 'attended').map(row => row.from_slug)).toEqual([person]);
+    });
+  }
+  test(`attendance resumes at exact positions after a valid ${fence} closer`, async () => {
+    const body = `## Attendees\n${fence}\n## Example\nAttendees: [[people/missing-example]]\n${fence}  \n## Notes\nAttendees: [[${person}]]`;
+    const db = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+    const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(types.keys()), { pageTypes: types });
+    expect(db.candidates.filter(row => row.linkType === 'attended').map(row => row.targetSlug)).toEqual([person]);
+    expect(fs.filter(row => row.link_type === 'attended').map(row => row.from_slug)).toEqual([person]);
+  });
+}
+
+test('attendance membership reads logarithmically many ordered ranges with exact boundaries', () => {
+  const ranges: Array<[number, number]> = Array.from({ length: 25_000 }, (_, i) => [i * 4, i * 4 + 2]);
+  let reads = 0;
+  const tracked = new Proxy(ranges, { get(target, key, receiver) {
+    if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
+    return Reflect.get(target, key, receiver);
+  } });
+  for (const [position, expected] of [[-1, false], [0, true], [1, true], [2, false], [99_996, true], [99_998, false], [100_000, false]] as const) {
+    reads = 0;
+    expect(hasAttendanceEvidence(tracked, position)).toBe(expected);
+    expect(reads).toBeLessThanOrEqual(16);
+  }
+  expect(hasAttendanceEvidence([], 0)).toBe(false);
+});
+
+test('many supported attendance entries do not multiply range scans per reference', async () => {
+  const body = Array(25_000).fill(`Attendees: [[${person}]]`).join('\n');
+  let start = performance.now();
+  await extractPageLinks(meeting, body, {}, 'note', resolver, { targetType: slug => types.get(slug) });
+  const noteMs = performance.now() - start;
+  start = performance.now();
+  const result = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+  const meetingMs = performance.now() - start;
+  expect(result.candidates).toHaveLength(1);
+  expect(result.candidates[0]).toMatchObject({ targetSlug: person, linkType: 'attended', canonicalAttendance: true });
+  expect(meetingMs).toBeLessThan(Math.max(2000, noteMs * 8));
+
+  start = performance.now();
+  await extractLinksFromFile(`---\ntype: note\n---\n${body}`, `${meeting}.md`, new Set(types.keys()), { pageTypes: types });
+  const fsNoteMs = performance.now() - start;
+  start = performance.now();
+  const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(types.keys()), { pageTypes: types });
+  const fsMeetingMs = performance.now() - start;
+  expect(fs).toHaveLength(25_000);
+  expect(fs.every(row => row.from_slug === person && row.to_slug === meeting && row.link_type === 'attended')).toBe(true);
+  expect(fsMeetingMs).toBeLessThan(Math.max(2000, fsNoteMs * 8));
+}, 120_000);
+
+test('strict attendance resolution caches repeated lookups separately within a bounded resolver lifetime', async () => {
+  const calls: unknown[][] = [];
+  const engine = {
+    async getPage() { return { slug: person }; },
+    async executeRaw(_sql: string, args: unknown[]) {
+      calls.push(args);
+      return args[2] === person ? [{ slug: person }] : [];
+    },
+  };
+  const live = makeResolver(engine as never, { mode: 'live', sourceId: 'example' });
+  expect(await live.resolve(person)).toBe(person);
+  for (let i = 0; i < 6; i++) expect(await live.resolveAttendance!(person)).toBe(person);
+  expect(calls).toHaveLength(1);
+  expect(calls[0][0]).toBe('example');
+  expect(await live.resolveAttendance!(`other:${person}`)).toBeNull();
+  expect(calls).toHaveLength(1);
+  for (let i = 0; i < 300; i++) expect(await live.resolveAttendance!(`missing-${i}`, 'people')).toBeNull();
+  const before = calls.length;
+  expect(await live.resolveAttendance!(person)).toBe(person);
+  expect(calls).toHaveLength(before + 1);
+  expect(await makeResolver(engine as never, { mode: 'live', sourceId: 'other' }).resolveAttendance!(person)).toBe(person);
+  expect(calls.at(-1)?.[0]).toBe('other');
+});

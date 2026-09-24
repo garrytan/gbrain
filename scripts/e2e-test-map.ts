@@ -134,7 +134,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // differently on real pgvector than on PGLite.
   "src/core/embedding-migration.ts": ["test/e2e/migrate-embeddings-postgres.test.ts"],
   "src/core/retrieval-upgrade-planner.ts": ["test/e2e/migrate-embeddings-postgres.test.ts"],
-  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts"],
+  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts"],
   "src/commands/migrate-engine.ts": [
     "test/e2e/multi-source-bug-class.test.ts",
     "test/e2e/migrate-engine-pglite-to-postgres.test.ts",
@@ -335,7 +335,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Doctor check modules peeled from doctor.ts feed the same e2e surface.
   "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts"],
   // Knowledge graph layer feeds graph-quality.
-  "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts"],
+  "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/core/derived-links.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/core/link-reconciliation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/core/persistence/links-preparation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/core/sweep.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
   // v0.38 ingestion substrate. POST /ingest lives inside serve-http.ts
   // (per the plan-eng-review E1 decision); the daemon + built-in sources
   // + ingest_capture Minion handler all feed the in-process roundtrip

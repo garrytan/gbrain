@@ -71,6 +71,47 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       return { slug, sourceId, expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation };
     }
 
+    test('retained frontmatter identities update and clear evidence metadata', async () => {
+      await seed('meetings/planning', 'meeting');
+      await seed('people/alice-example', 'person');
+      const scope = await origin('meetings/planning');
+      const row = { from_slug: scope.slug, to_slug: 'people/alice-example', link_type: 'attended',
+        link_source: 'frontmatter', from_source_id: sourceId, to_source_id: sourceId,
+        origin_slug: scope.slug, origin_source_id: sourceId, context: 'Original evidence', origin_field: 'attendees' };
+      await engine.replaceDerivedLinks(scope, [row], { preserveExisting: true });
+      const evidence = () => engine.executeRaw<{ id: number; context: string; origin_field: string | null }>(
+        `SELECT id,context,origin_field FROM links WHERE origin_page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)`,
+        [sourceId, scope.slug]);
+      const before = await evidence();
+      expect(before).toHaveLength(1);
+      expect(await engine.replaceDerivedLinks(scope, [{ ...row, context: 'Updated evidence', origin_field: 'participants' }],
+        { preserveExisting: true })).toEqual({ created: 0, removed: 0 });
+      expect(await evidence()).toEqual([{ id: before[0].id, context: 'Updated evidence', origin_field: 'participants' }]);
+      expect(await engine.replaceDerivedLinks(scope, [{ ...row, context: undefined, origin_field: undefined }],
+        { preserveExisting: true })).toEqual({ created: 0, removed: 0 });
+      expect(await evidence()).toEqual([{ id: before[0].id, context: '', origin_field: null }]);
+    });
+
+    test('preserving replacement rolls back deleted and updated evidence when insertion fails', async () => {
+      await seed('meetings/planning', 'meeting');
+      for (const name of ['alice', 'bob', 'charlie']) await seed(`people/${name}-example`, 'person');
+      const scope = await origin('meetings/planning');
+      const row = (name: string, context: string) => ({ from_slug: scope.slug, to_slug: `people/${name}-example`,
+        link_type: 'attended', link_source: 'frontmatter', from_source_id: sourceId, to_source_id: sourceId,
+        origin_slug: scope.slug, origin_source_id: sourceId, origin_field: 'attendees', context });
+      await engine.replaceDerivedLinks(scope, [row('alice', 'Original evidence'), row('bob', 'Removed evidence')], { preserveExisting: true });
+      const evidence = () => engine.executeRaw(`SELECT * FROM links WHERE origin_page_id=(SELECT id FROM pages
+        WHERE source_id=$1 AND slug=$2) ORDER BY id`, [sourceId, scope.slug]);
+      const before = await evidence();
+      const add = engine.addLinksBatch;
+      engine.addLinksBatch = async () => { throw new Error('Injected insertion failure'); };
+      try {
+        await expect(engine.replaceDerivedLinks(scope, [row('alice', 'Updated evidence'), row('charlie', 'New evidence')],
+          { preserveExisting: true })).rejects.toThrow('Injected insertion failure');
+      } finally { engine.addLinksBatch = add; }
+      expect(await evidence()).toEqual(before);
+    });
+
     test('full-source scans resolve new targets and retype unchanged origins without N+1 target reads', async () => {
       await seed('rivals/rival-example', 'competitor', 'competes with [[organizations/company-example]].');
       let result = await reconcileSourceLinks(engine, sourceId, { pack });

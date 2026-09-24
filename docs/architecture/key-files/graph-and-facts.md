@@ -3,6 +3,51 @@
 [Subsystem index](../KEY_FILES.md). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
 
+## Attendance evidence and ownership
+
+The shared and filesystem extractors recognize canonical attendance only from
+supported explicit lists and uniquely resolved person targets when no pack owns
+the relationship. Callers resolve source identities before
+`resolvedLinkCandidate` orients a Markdown claim as person-to-meeting with the
+meeting as its origin.
+Only parsed link targets can make canonical body claims; display-label slugs stay
+ordinary mentions. `hasAttendanceEvidence` indexes the ordered, nonoverlapping
+evidence ranges rather than rescanning them for every reference. Strict
+frontmatter resolution has a separate, source-keyed cache capped at 256 entries
+within one resolver lifetime.
+`replaceDerivedLinks` validates that origin and the locked person/meeting types
+and revisions; its `preserveExisting` path keeps matching row identities while
+refreshing their evidence context and origin field. Ambiguous bare-name spellings
+remain mentions rather than asserted attendees, and nonmatching constrained pack
+rules suppress canonical fallback in both extractors.
+Filesystem attendance reconciliation excludes legacy rows whose producer is
+unknown; existing canonical-write and sweep handling of those rows is unchanged.
+`prepareAutomaticLinks`, DB/stale extraction, filesystem extraction, and sweep
+share that ownership, so attendee re-extraction cannot delete a meeting claim,
+and removing the meeting's evidence can remove it. `link-reconciliation.ts` owns
+the shared source/default/federation resolution policy, re-exported by the extract
+command. Filesystem attendance uses file evidence with database endpoint metadata;
+missing, ambiguous, or denied attendance resolution preserves the prior graph and
+does not advance extraction watermarks. Incomplete local preparation still allows
+`put_page` to commit the note, with auto-link error metadata and retryable extraction.
+The shared Markdown mask preserves positions while respecting backtick and tilde
+fence closing rules. Pack-owned outgoing mappings,
+including the shipped base and company packs, stay unchanged. See
+[explicit attendance evidence](../../guides/attendance-evidence.md) for grammar,
+coverage limits, and the distinction from a historical repair.
+
+## Recall source selection
+
+`recall.source_id` narrows both fact and page arms using the existing authorized
+scope resolver, then checks source liveness. Explicit `default` is not omission.
+With no selector, fact scope and page federation retain their previous behavior.
+The opted-in thin CLI uses engine-free scope resolution and refuses `--brain`;
+its source tests execute the real remote dispatcher, not only a canned response.
+
+## Files
+
+- `src/core/ops/facts.ts` — shared fact/memory operations, including `recall`. Recall keeps source/visibility and fact filters before per-arm candidate limits. Its default/explicit `facts_first` packing preserves the frozen memory-verb contract, including the positive sub-one budget quirk. Optional `query_first` packs the ranked page prefix first only with a nonblank query and positive finite budget; floor-zero and exhausted remainders explicitly return empty arms rather than call the unbounded zero-budget packer. Neither arm skips oversized prefix items or truncates. No-query and inactive-budget paths keep legacy behavior. Only policy-supplied calls add `budget_packing` effective-policy/reason and candidate/kept/dropped/estimated-used accounting. Counter sums match the frozen fields. Do not change the global packer or fact relevance to implement this policy. `test/recall-budget-policy.test.ts` pins numeric boundaries, compatibility, candidate ordering, filters, source/private/safe-projection behavior and shared transport validation.
+
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts `conventions/quality.md` and `_brain-filing-rules.md`). `extractTriggers()` delegates to the shared SKILL.md parser, so MECE gap detection and the trigger index agree on block lists, single-line flow sequences, wrapped flow sequences, and CRLF input. `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`. `parseResolverEntries` accepts BOTH the markdown table AND a compact list format (`- **skill-name**: trigger1 | trigger2 | trigger3` or `- skill-name: trigger1 | trigger2`); shapes can mix in one file, folded by the multi-resolver merge. Skill name MUST be kebab-lowercase (regex `[a-z][a-z0-9-]+`) so prose bullets like `- **Note**:`/`- **Convention**:`/`- **TODO**:` don't false-match as skill rows. `skillPath` is ALWAYS derived as `skills/<name>/SKILL.md`: an optional `→ \`skills/path\`` (or ASCII `->`) suffix is stripped from the trigger but NOT honored as the path — two consumers (`routing-eval.ts:skillSlugFromPath`, the manifest lookup) assume the convention; use the table format for non-conventional paths. Multi-trigger rows fan out to one entry per trigger sharing the same `skillPath`; `checkResolvable` dedupes so the reachability count counts each skill once. Pinned by `test/check-resolvable.test.ts` (resolver shapes plus trigger array syntax cases) + `test/check-resolvable-openclaw-compact.test.ts` (8 cases over `test/fixtures/openclaw-compact-resolver/` and `test/fixtures/openclaw-mixed-merge/`). Tutorial: `docs/guides/scaling-skills.md` (three-tier scaling: ~300-skill agent to ~4K tokens/turn from ~25K). `checkResolvable(skillsDir, opts?)` takes an optional `skillsDirSource` (the detection tier from `autoDetectSkillsDir`, threaded by both callers: doctor.ts and the check-resolvable command; an explicit `--skills-dir` passes `null`). An `unreachable` issue downgrades from `error` to `warning` only when ALL hold: the directory was found via the ungated `cwd_walk_up` tier, no resolver file contributes rows (no `RESOLVER.md`; a generic `AGENTS.md` with zero table rows counts as absent), unreachable skills outnumber reachable ones, and no `manifest.json` exists on disk. This keeps a foreign tool's `skills/` dir walked up to from cwd from being scored as a broken gbrain skillpack, while a real skillpack (RESOLVER.md present, higher-confidence tier, dense trigger coverage, or any manifest.json, even a corrupted one) stays strict. A foreign dir with zero `triggers:` and no resolver file still hard-fails via the `missing_file` branch (separate follow-up).
 
 - `src/core/entities/resolve.ts` — Free-form entity name → canonical slug resolution. `resolveEntitySlug(engine, source_id, raw)`: exact slug → alias-exact (an unambiguous `page_aliases` hit via `resolveAliases`, verified against LIVE pages since `page_aliases` has no FK — a stale alias row can never point at a deleted page; fail-open on pre-v110 brains missing the table; `ResolutionSource` reports `alias_exact`) → unique source-scoped full-basename match for multi-token names across people/companies/hosts/projects/concepts → unambiguous bare-name prefix expansion across `people/<token>-%` + `companies/<token>-%` → high-specificity fuzzy match for multi-token input (pg_trgm @ 0.7 threshold) → deterministic `slugify` holding fallback. Bare-name collisions never use popularity as confidence; shared-token company names below the threshold remain unresolved. Two helpers for the phantom-redirect pass: `resolvePhantomCanonical(engine, sourceId, phantomSlug)` SKIPS the exact-slug step (a phantom slug `'alice'` would exact-match itself and no-op the redirect); returns the canonical only when non-null AND contains `/`. `findPrefixCandidates(engine, sourceId, token)` is a standalone SQL query returning ALL candidates across `PREFIX_EXPANSION_DIRS` (hardcoded `['people', 'companies']`) via `slug LIKE ANY($N::text[])` over patterns `dir/token` + `dir/token-%`, cap of 10 ordered by `connection_count DESC, slug ASC`. Pinned by `test/entity-resolve.test.ts` (explicit, unique, ambiguous-person, and shared-token-company cases) plus `test/phantom-redirect.test.ts` (resolvePhantomCanonical 3 cases + findPrefixCandidates 6 cases incl. multi-dir ambiguity and the `people/aliceberg`-doesn't-match-`alice` false-positive guard).
