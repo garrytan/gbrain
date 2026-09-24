@@ -1,6 +1,9 @@
 import type { BrainEngine } from '../engine.ts';
 import { renderFactsTable, type ParsedFact } from '../facts-fence.ts';
-import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
+import { escapeFenceCell } from '../fence-shared.ts';
+import { OperationError } from '../ops/contract.ts';
+import type { PageWithdrawal } from '../page-state/types.ts';
+import { hasAmbiguousWithdrawalFence, overlayWithdrawalBody, withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 
 export interface WithdrawalCommit {
   withdrawn: boolean;
@@ -16,14 +19,60 @@ export async function recordFactWithdrawal(
     // A managed caller takes this EXCLUSIVE source lock before authority,
     // counters and request rows. Repeating an already-held lock is safe.
     await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    const visible = await tx.executeRaw<{ visibility: string; fact: string }>(
-      `SELECT visibility,fact FROM facts WHERE id=$1 AND source_id=$2
+    const visible = await tx.executeRaw<{ visibility: 'private' | 'world'; fact: string; fact_hash: string }>(
+      `SELECT visibility,fact,gbrain_fact_fingerprint(fact) AS fact_hash FROM facts WHERE id=$1 AND source_id=$2
         AND ($3::boolean=false OR visibility='world')`, [id, sourceId, worldOnly]);
     if (!visible.length) return { withdrawn: false, pages: [] };
-    // Derived provenance can be incomplete or already rebuilt. Conservatively
-    // invalidate this source's pages rather than miss an unindexed duplicate.
-    const pageKeys = await tx.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 ORDER BY slug', [sourceId]);
-    await tx.lockPageKeys(pageKeys.map(page => ({ sourceId, slug: page.slug })));
+    const target = visible[0];
+    // Provenance may be incomplete on legacy rows, so also inspect pages that
+    // actually contain a facts fence. A DB-only subjectless memory has neither
+    // provenance nor a matching fence and must not invalidate unrelated pages.
+    const candidates = await tx.executeRaw<{ slug: string; compiled_truth: string; timeline: string; fingerprint_body: string; fingerprint_timeline: string; provenance: boolean; chunk_match: boolean; body_match: boolean; timeline_match: boolean }>(
+      `WITH target AS (
+          SELECT regexp_replace(lower(btrim($3::text)),'[[:space:]]+',' ','g') AS claim,
+            regexp_replace(lower(btrim($4::text)),'[[:space:]]+',' ','g') AS escaped_claim
+        ), provenance AS (
+          SELECT DISTINCT COALESCE(source_markdown_slug,entity_slug) AS slug FROM facts
+          WHERE source_id=$1 AND visibility=$2
+            AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
+            AND COALESCE(source_markdown_slug,entity_slug) IS NOT NULL
+        ), chunk_pages AS MATERIALIZED (
+          SELECT DISTINCT c.page_id FROM content_chunks c JOIN pages cp ON cp.id=c.page_id CROSS JOIN target
+          WHERE cp.source_id=$1 AND target.claim<>'' AND (
+            position(target.claim in regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g'))>0 OR
+            position(target.escaped_claim in regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g'))>0)
+        ), searchable AS MATERIALIZED (
+          SELECT p.slug,p.compiled_truth,p.timeline,(provenance.slug IS NOT NULL) AS provenance,
+            (chunk_pages.page_id IS NOT NULL) AS chunk_match,
+            regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g') AS body_text,
+            regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g') AS timeline_text
+          FROM pages p LEFT JOIN provenance ON provenance.slug=p.slug LEFT JOIN chunk_pages ON chunk_pages.page_id=p.id
+            CROSS JOIN target
+          WHERE p.source_id=$1 AND (provenance.slug IS NOT NULL OR chunk_pages.page_id IS NOT NULL OR target.claim<>'' AND (
+            position('gbrain:facts:begin' in p.compiled_truth)>0 OR position('gbrain:facts:begin' in p.timeline)>0))
+        ), candidates AS MATERIALIZED (
+          SELECT p.*,
+            (position(target.claim in p.body_text)>0 OR position(target.escaped_claim in p.body_text)>0) AS body_match,
+            (position(target.claim in p.timeline_text)>0 OR position(target.escaped_claim in p.timeline_text)>0) AS timeline_match
+          FROM searchable p CROSS JOIN target
+          WHERE p.provenance OR p.chunk_match OR target.claim<>'' AND (
+            position(target.claim in p.body_text)>0 OR position(target.escaped_claim in p.body_text)>0 OR
+            position(target.claim in p.timeline_text)>0 OR position(target.escaped_claim in p.timeline_text)>0)
+        ) SELECT p.slug,p.compiled_truth,p.timeline,p.provenance,p.chunk_match,p.body_match,p.timeline_match,
+          (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+            FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body,
+          (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
+            FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_timeline
+        FROM candidates p ORDER BY p.slug`, [sourceId, target.visibility, target.fact, escapeFenceCell(target.fact)]);
+    const withdrawal: PageWithdrawal = { visibility: target.visibility, fact_hash: target.fact_hash, withdrawn_at: new Date().toISOString() };
+    const affected = candidates.filter(page =>
+      page.provenance || page.chunk_match ||
+      overlayWithdrawalBody(page.compiled_truth, page.fingerprint_body ?? '', [withdrawal]) !== page.compiled_truth ||
+      overlayWithdrawalBody(page.timeline, page.fingerprint_timeline ?? '', [withdrawal]) !== page.timeline ||
+      page.body_match && hasAmbiguousWithdrawalFence(page.compiled_truth) ||
+      page.timeline_match && hasAmbiguousWithdrawalFence(page.timeline),
+    ).map(page => page.slug);
+    await tx.lockPageKeys(affected.map(slug => ({ sourceId, slug })));
     const rows = await tx.executeRaw<{ visibility: string; fact: string }>(
       `SELECT visibility,fact FROM facts WHERE id=$1 AND source_id=$2
         AND ($3::boolean=false OR visibility='world') FOR UPDATE`, [id, sourceId, worldOnly]);
@@ -37,11 +86,11 @@ export async function recordFactWithdrawal(
     if (!inserted.length) return { withdrawn: false, pages: [] };
     // Logical revision and projection invalidation commit with the withdrawal.
     // The revision trigger queues durable rebuild work even for unmanaged calls.
-    const pages = await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
+    const pages = affected.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
       `UPDATE pages SET knowledge_revision=gen_random_uuid(),text_projection_revision=NULL,embedding_signature=NULL
-        WHERE source_id=$1 RETURNING id,slug,knowledge_revision`, [sourceId]);
-    await tx.executeRaw('DELETE FROM content_chunks WHERE page_id IN (SELECT id FROM pages WHERE source_id=$1)', [sourceId]);
-    if (opts.requestId) {
+        WHERE source_id=$1 AND slug=ANY($2::text[]) RETURNING id,slug,knowledge_revision`, [sourceId, affected]) : [];
+    if (pages.length) await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[])', [pages.map(page => page.id)]);
+    if (opts.requestId && pages.length) {
       await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
         SELECT $1::uuid,k.kind,jsonb_build_object('source_id',s.id,'source_scan',true),s.id,s.incarnation,b.worktree_id
         FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
@@ -80,6 +129,17 @@ export async function preserveWithdrawnFenceRows(engine: BrainEngine, sourceId: 
     body = body.slice(0, block.start) + renderFactsTable(facts) + body.slice(block.end);
   }
   return body;
+}
+
+/** Refuse provider-free preparation that raced a newly committed withdrawal. */
+export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceId: string, body: string, timeline: string): Promise<void> {
+  const changed = await preserveWithdrawnFenceRows(engine, sourceId, body) !== body ||
+    await preserveWithdrawnFenceRows(engine, sourceId, timeline) !== timeline;
+  const ambiguous = hasAmbiguousWithdrawalFence(body) || hasAmbiguousWithdrawalFence(timeline);
+  const blocked = ambiguous && (await engine.executeRaw('SELECT 1 FROM fact_withdrawals WHERE source_id=$1 LIMIT 1', [sourceId])).length > 0;
+  if (changed || blocked) {
+    throw new OperationError('revision_conflict', 'A fact withdrawal changed during import preparation. Retry the import.');
+  }
 }
 
 /** Explicit remember is not an implicit restore operation. */

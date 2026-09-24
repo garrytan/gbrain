@@ -6,6 +6,8 @@ import { recordFactWithdrawal, preserveWithdrawnFenceRows } from '../src/core/fa
 import { withdrawalFenceBlocks } from '../src/core/facts/withdrawal-overlay.ts';
 import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
 import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import type { PreparedContentImport } from '../src/core/persistence/prepared-import.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const engines: BrainEngine[] = [];
@@ -61,5 +63,212 @@ Historical section\n${renderFactsTable([fact(expired, { active: false, validUnti
     expect(chunks.map(chunk => chunk.chunk_text).join('\n')).not.toContain('withdrawal');
     expect(await engine.searchKeyword('withdrawalcontextsentinel', { sourceId })).toEqual([]);
     expect(await engine.searchKeyword('withdrawalhistorysentinel', { sourceId })).toEqual([]);
+  }
+});
+
+test('DB-only subjectless withdrawal leaves unrelated pages and chunks unchanged', async () => {
+  const isolatedSourceId = 'withdrawal-subjectless-test';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('unrelated', {
+        type: 'note',
+        title: 'Unrelated page',
+        compiled_truth: 'This page has no facts fence.',
+      }, { sourceId: isolatedSourceId });
+      await engine.upsertChunks('unrelated', [{
+        chunk_index: 0,
+        chunk_source: 'compiled_truth',
+        chunk_text: 'unrelated chunk sentinel',
+      }], { sourceId: isolatedSourceId });
+      const before = (await engine.readPageSnapshot('unrelated', { sourceId: isolatedSourceId }))!;
+      const factRow = await engine.insertFact({
+        fact: 'A subjectless DB-only memory',
+        source: 'remember',
+        visibility: 'world',
+      }, { source_id: isolatedSourceId });
+
+      const result = await recordFactWithdrawal(engine, factRow.id, isolatedSourceId, true);
+
+      expect(result).toMatchObject({ withdrawn: true, pages: [] });
+      const blank = await engine.insertFact({ fact: '   ', source: 'legacy', visibility: 'world' }, { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, blank.id, isolatedSourceId, true)).pages).toEqual([]);
+      const after = (await engine.readPageSnapshot('unrelated', { sourceId: isolatedSourceId }))!;
+      expect(after.revision).toBe(before.revision);
+      expect(await engine.executeRaw(
+        `SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
+          WHERE p.source_id=$1 AND p.slug='unrelated'`,
+        [isolatedSourceId],
+      )).toHaveLength(1);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('subjectless withdrawal removes an exact stale chunk even when the page body no longer carries the claim', async () => {
+  const isolatedSourceId = 'withdrawal-stale-chunk-test';
+  const claim = 'stale subjectless chunk sentinel';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('stale-projection', { type: 'note', title: 'Stale projection', compiled_truth: 'Current safe body' },
+        { sourceId: isolatedSourceId });
+      await engine.upsertChunks('stale-projection', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
+        { sourceId: isolatedSourceId });
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['stale-projection']);
+      expect(await engine.executeRaw('SELECT id FROM content_chunks WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)',
+        [isolatedSourceId, 'stale-projection'])).toEqual([]);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('withdrawal invalidates a soft-deleted matching page before it can be restored', async () => {
+  const isolatedSourceId = 'withdrawal-soft-deleted-test';
+  const claim = 'withdrawal soft delete sentinel';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('deleted-fence', {
+        type: 'note', title: 'Deleted facts', compiled_truth: renderFactsTable([fact(claim)]),
+      }, { sourceId: isolatedSourceId });
+      await engine.upsertChunks('deleted-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
+        { sourceId: isolatedSourceId });
+      expect(await engine.softDeletePage('deleted-fence', { sourceId: isolatedSourceId })).not.toBeNull();
+      const [before] = await engine.executeRaw<{ knowledge_revision: string }>(
+        'SELECT knowledge_revision FROM pages WHERE source_id=$1 AND slug=$2', [isolatedSourceId, 'deleted-fence']);
+      const stored = await engine.insertFact({ fact: claim, source: 'test', visibility: 'world' }, { source_id: isolatedSourceId });
+
+      const result = await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true);
+
+      expect(result.pages.map(page => page.slug)).toEqual(['deleted-fence']);
+      const [after] = await engine.executeRaw<{ knowledge_revision: string }>(
+        'SELECT knowledge_revision FROM pages WHERE source_id=$1 AND slug=$2', [isolatedSourceId, 'deleted-fence']);
+      expect(after.knowledge_revision).not.toBe(before.knowledge_revision);
+      expect(await engine.executeRaw('SELECT id FROM content_chunks WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)',
+        [isolatedSourceId, 'deleted-fence'])).toEqual([]);
+      expect(await engine.restorePage('deleted-fence', { sourceId: isolatedSourceId })).toBe(true);
+      expect(await engine.searchKeyword('withdrawal soft delete sentinel', { sourceId: isolatedSourceId })).toEqual([]);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('candidate prefilter preserves DB whitespace and escaped-pipe fingerprint semantics', async () => {
+  const isolatedSourceId = 'withdrawal-prefilter-test';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('matching-fence', {
+        type: 'note', title: 'Matching facts', compiled_truth: renderFactsTable([fact('Uses A | B')]),
+      }, { sourceId: isolatedSourceId });
+      await engine.putPage('unrelated-fence', {
+        type: 'note', title: 'Other facts', compiled_truth: renderFactsTable([fact('Keeps this unrelated fact')]),
+      }, { sourceId: isolatedSourceId });
+      await engine.upsertChunks('matching-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Uses A or B' }],
+        { sourceId: isolatedSourceId });
+      await engine.upsertChunks('unrelated-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'unrelated fact chunk' }],
+        { sourceId: isolatedSourceId });
+      const unrelatedBefore = (await engine.readPageSnapshot('unrelated-fence', { sourceId: isolatedSourceId }))!;
+      const stored = await engine.insertFact({ fact: '  uses   a | b  ', source: 'legacy', visibility: 'world' },
+        { source_id: isolatedSourceId });
+
+      const result = await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true);
+
+      expect(result.pages.map(page => page.slug)).toEqual(['matching-fence']);
+      const matching = (await engine.readPageSnapshot('matching-fence', { sourceId: isolatedSourceId }))!;
+      expect(await preserveWithdrawnFenceRows(engine, isolatedSourceId, matching.page.compiled_truth)).toBe(matching.page.compiled_truth);
+      expect((await engine.readPageSnapshot('unrelated-fence', { sourceId: isolatedSourceId }))!.revision).toBe(unrelatedBefore.revision);
+      expect(await engine.executeRaw('SELECT id FROM content_chunks WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)',
+        [isolatedSourceId, 'unrelated-fence'])).toHaveLength(1);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('malformed, timeline-only and provenance-only candidates remain conservatively invalidated', async () => {
+  const isolatedSourceId = 'withdrawal-candidate-shapes-test';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      const malformedClaim = 'malformed withdrawal sentinel';
+      const timelineClaim = 'timeline withdrawal sentinel';
+      const provenanceClaim = 'provenance withdrawal sentinel';
+      await engine.putPage('malformed-fence', { type: 'note', title: 'Malformed facts',
+        compiled_truth: renderFactsTable([fact(malformedClaim)]).replace('| world |', '| impossible |') }, { sourceId: isolatedSourceId });
+      await engine.putPage('timeline-fence', { type: 'note', title: 'Timeline facts', compiled_truth: 'Safe body',
+        timeline: renderFactsTable([fact(timelineClaim)]) }, { sourceId: isolatedSourceId });
+      await engine.putPage('provenance-only', { type: 'note', title: 'Provenance only', compiled_truth: 'No facts fence' },
+        { sourceId: isolatedSourceId });
+      for (const [slug, claim] of [['malformed-fence', malformedClaim], ['timeline-fence', timelineClaim], ['provenance-only', provenanceClaim]]) {
+        await engine.upsertChunks(slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
+          { sourceId: isolatedSourceId });
+      }
+      const malformed = await engine.insertFact({ fact: malformedClaim, source: 'legacy', visibility: 'world' },
+        { source_id: isolatedSourceId });
+      const timeline = await engine.insertFact({ fact: timelineClaim, source: 'legacy', visibility: 'world' },
+        { source_id: isolatedSourceId });
+      const provenance = await engine.insertFact({ fact: provenanceClaim, source: 'legacy', visibility: 'world',
+        entity_slug: 'provenance-only' }, { source_id: isolatedSourceId });
+
+      expect((await recordFactWithdrawal(engine, malformed.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['malformed-fence']);
+      expect((await recordFactWithdrawal(engine, timeline.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['timeline-fence']);
+      expect((await recordFactWithdrawal(engine, provenance.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['provenance-only']);
+      expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
+        WHERE p.source_id=$1 AND p.slug=ANY($2::text[])`, [isolatedSourceId, ['malformed-fence', 'timeline-fence', 'provenance-only']])).toEqual([]);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('prepared import refuses a fence whose matching withdrawal committed during preparation', async () => {
+  const isolatedSourceId = 'withdrawal-prepared-import-test';
+  const claim = 'withdrawal prepared import sentinel';
+  const body = `---\ntitle: Prepared withdrawal\ntype: note\n---\n${renderFactsTable([fact(claim)])}`;
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      let prepared: PreparedContentImport | undefined;
+      await importFromContent(engine, 'prepared-withdrawal', body, { sourceId: isolatedSourceId, noEmbed: true,
+        prepare: async value => { prepared = value; return value.result; } });
+      expect(prepared).toBeDefined();
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages).toEqual([]);
+
+      expect(prepared!.validate).toBeFunction();
+      await expect(engine.transaction(tx => prepared!.validate!(tx))).rejects.toThrow('withdrawal changed during import preparation');
+      await expect(engine.transaction(tx => prepared!.apply(tx))).rejects.toThrow('withdrawal changed during import preparation');
+      expect(await engine.getPage('prepared-withdrawal', { sourceId: isolatedSourceId })).toBeNull();
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('prepared import refuses an ambiguous fence when the source has a withdrawal ledger', async () => {
+  const isolatedSourceId = 'withdrawal-malformed-prepared-test';
+  const claim = 'malformed prepared withdrawal sentinel';
+  const body = `---\ntitle: Malformed prepared withdrawal\ntype: note\n---\n${renderFactsTable([fact(claim)]).replace('| world |', '| impossible |')}`;
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      let prepared: PreparedContentImport | undefined;
+      await importFromContent(engine, 'malformed-prepared-withdrawal', body, { sourceId: isolatedSourceId, noEmbed: true,
+        prepare: async value => { prepared = value; return value.result; } });
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages).toEqual([]);
+
+      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toThrow('withdrawal changed during import preparation');
+      expect(await engine.getPage('malformed-prepared-withdrawal', { sourceId: isolatedSourceId })).toBeNull();
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
   }
 });

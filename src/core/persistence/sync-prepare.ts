@@ -199,7 +199,9 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   if (overlay && p.companyApproval) throw new OperationError('source_writeback_required', 'Canonical preparation requires a source-content correction; this profile never writes repository files.');
   if (overlay && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
   const project = prepareCanonicalProjections(ready.parsedPage, row.slug, row.source_id);
-  return { observedRevision: snapshot?.revision ?? null, validate, deferEmbedding: p.processingOptions?.noEmbed,
+  return { observedRevision: snapshot?.revision ?? null,
+    validate: async tx => { await validate(tx); await ready.validate(tx); },
+    deferEmbedding: p.processingOptions?.noEmbed,
     ...(overlay ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
     apply: async tx => {
       await ready.apply(tx);

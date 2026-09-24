@@ -216,7 +216,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     ? await prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id) : undefined;
   const file = await prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered);
   const sourcePath = file ? scannerSourcePath(file.root, file.path) : undefined;
-  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, apply: async tx => {
+  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, validate: ready.validate, apply: async tx => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     if (!noop) {
       await ready.apply(tx);
