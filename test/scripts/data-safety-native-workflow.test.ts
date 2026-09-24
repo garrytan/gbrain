@@ -170,6 +170,26 @@ describe('data-safety native CI coverage', () => {
     expect(result.stdout.toString().trim().split('\n').filter(arg => arg === 'test/persistence-read-diagnostics.test.ts')).toHaveLength(1);
   });
 
+  for (const exitCode of [0, 1]) test(`read latency is advisory without swallowing invalid workloads (${exitCode})`, () => {
+    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+      jobs: { 'read-performance': { steps: Step[]; 'continue-on-error'?: boolean } };
+    };
+    const job = persistence.jobs['read-performance'];
+    const step = job.steps.find(entry => entry.run?.includes('scripts/persistence/performance.ts'))!;
+    expect(job['continue-on-error']).toBeUndefined();
+    expect(step.if).toBeUndefined();
+    expect(step['continue-on-error']).toBeUndefined();
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { printf '%s\\n' "$@"; return ${exitCode}; }
+      ${step.run!.replaceAll('${{ matrix.engine }}', 'postgres')}
+    `], { env: { PATH: process.env.PATH ?? '', ...step.env } });
+    expect(result.exitCode).toBe(exitCode);
+    expect(result.stdout.toString().trim().split('\n')).toEqual([
+      '--no-env-file', 'scripts/persistence/performance.ts', '--engine=postgres',
+      '--informational', '--manifest=.context/persistence-read-latency.json',
+    ]);
+  });
+
   test('publication and sync safety suites run in separate PostgreSQL-bearing CI processes', () => {
     const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { 'deployment-matrix': { steps: Step[] } };

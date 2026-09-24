@@ -34,12 +34,12 @@ jobs:
         with:
           bun-version: ${{ matrix.bun }}
       - run: bun install --frozen-lockfile --ignore-scripts
-      - name: Require three valid samples, 90 percent overlap and at most 50 percent p99 regression
+      - name: Require valid workloads; report the p99 ratio as advisory
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
         run: >-
           bun --no-env-file scripts/persistence/performance.ts --engine=${{ matrix.engine }}
-          --manifest=.context/persistence-read-latency.json
+          --informational --manifest=.context/persistence-read-latency.json
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

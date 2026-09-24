@@ -350,10 +350,14 @@ The required persistence lane also runs `scripts/persistence/performance.ts`
 on both engines and Bun versions. Three independent instances use the
 existing 500-page/200-query read-latency corpus, with public `put_page`
 mutations and actual in-flight interval coverage of at least 90%. Any read
-or write failure invalidates the sample. Median loaded p99 must be at most
-1.5 times median idle p99 on the same runner. Manifests retain each sample,
-admission/commit latency, queue age, RSS, recovery bytes and pool activity.
-The original heavy shell entry invokes this harness; its optional strict
+or write failure invalidates the sample. CI uses `--informational`: the 50%
+loaded-versus-idle p99 threshold is advisory, not a merge blocker. Loaded
+reads compete with additional write work, so this ratio alone is not evidence
+of a change regressing the same workload. Manifests retain the original
+threshold verdict, each sample, admission/commit latency, queue age, RSS,
+recovery bytes and pool activity.
+The CLI without `--informational` still enforces the threshold. The original
+heavy shell entry invokes this harness; its optional `STRICT_LATENCY=1`
 flag affects only the latency threshold, never validity requirements.
 
 ### PGLite schema snapshot (default-on)

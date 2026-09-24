@@ -99,6 +99,9 @@ installation, paid backfill or live repair is implied.
 - Run native safety contracts and explicit PostgreSQL parity lanes, require
   evidence-backed wave acceptance, and document the bounded Linux PGLite
   pressure reproduction without changing the engine or closing #5284.
+- Report loaded-versus-idle read latency as advisory in CI. Keep measured
+  threshold misses visible, while invalid workloads and failed reads or
+  writes still block the check. Explicit local strict runs remain available.
 
 ## [0.54.1.1] - 2026-09-24
 
