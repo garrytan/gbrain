@@ -5315,11 +5315,6 @@ export class PostgresEngine implements BrainEngine {
       let cancellation: Promise<void> | undefined;
       let retired = false;
       let owner: postgres.TransactionSql | postgres.ReservedSql = conn as unknown as postgres.TransactionSql;
-      const onAbort = () => {
-        if (!pending || cancellation) return;
-        try { cancellation = pending.cancel().catch(() => { retired = true; }); }
-        catch { retired = true; }
-      };
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
         reserved = signal && typeof conn.reserve === 'function' ? await conn.reserve({ signal }) : undefined;
@@ -5335,6 +5330,11 @@ export class PostgresEngine implements BrainEngine {
           if (cancellation) await cancellation;
           if (retired) owner.discard();
         } finally { reserved?.release(); }
+      }
+      function onAbort() {
+        if (!pending || cancellation) return;
+        try { cancellation = pending.cancel().catch(() => { retired = true; }); }
+        catch { retired = true; }
       }
     })();
   }
