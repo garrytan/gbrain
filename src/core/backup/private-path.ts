@@ -47,7 +47,7 @@ export function protectNewBackupPath(path: string, kind: 'directory' | 'file'): 
     const result = execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(protect, 'utf16le').toString('base64')], {
         env: { ...process.env, GBRAIN_BACKUP_PRIVATE_PATH: path, GBRAIN_BACKUP_PRIVATE_KIND: kind },
-        encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
       });
     assertNoSymlinks(path);
     const after = lstatSync(path, { bigint: true });

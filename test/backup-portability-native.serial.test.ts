@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import * as childProcess from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -58,7 +59,7 @@ $r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Fo
 @{user=$u; owner=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value; protected=$a.AreAccessRulesProtected; rules=$r} | ConvertTo-Json -Compress -Depth 4`;
   const result = JSON.parse(execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      env: { ...process.env, GBRAIN_TEST_ACL_PATH: path }, encoding: 'utf8', timeout: 15_000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, GBRAIN_TEST_ACL_PATH: path }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
     }));
   expect(result.owner).toBe(result.user);
   if (protectedAcl) expect(result.protected).toBe(true);
@@ -146,6 +147,60 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(() => { if (temporary) fs.rmSync(temporary, { recursive: true, force: true }); });
+
+for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32')(`private ${kind} ACL setup uses an explicitly closed input pipe`, () => {
+  const observations = [];
+  for (const mode of ['baseline', 'candidate', 'candidate', 'baseline'] as const) {
+    const path = join(temporary, `closed-input-${kind}-${observations.length} [literal] 'é`);
+    if (kind === 'directory') fs.mkdirSync(path);
+    else fs.writeFileSync(path, '');
+    const before = fs.lstatSync(path, { bigint: true });
+    let launches = 0;
+    let productionClosedInput = false;
+    let bounded = false;
+    let nativeError: string | null = null;
+    let protectedPath = false;
+    const execute = childProcess.execFileSync;
+    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+      apply(target, thisArg, args) {
+        const options = args[2] as childProcess.ExecFileSyncOptions | undefined;
+        if (options?.env?.GBRAIN_BACKUP_PRIVATE_PATH !== path) return Reflect.apply(target, thisArg, args);
+        launches++;
+        productionClosedInput = Array.isArray(options.stdio) && options.stdio.length === 3 && options.stdio.every(stream => stream === 'pipe')
+          && Buffer.isBuffer(options.input) && options.input.length === 0;
+        bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && options.shell === undefined;
+        if (mode === 'baseline') args[2] = { ...options, input: undefined, stdio: ['ignore', 'pipe', 'pipe'] };
+        try { return Reflect.apply(target, thisArg, args); }
+        catch (error) {
+          nativeError = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
+          throw error;
+        }
+      },
+    }));
+    const started = performance.now();
+    try { privacy.protectNewBackupPath(path, kind); protectedPath = true; }
+    catch (error) { if (!(error instanceof AgentInstallError) || error.code !== 'private_backup_path_unavailable') throw error; }
+    finally { inspect.mockRestore(); }
+    const after = fs.lstatSync(path, { bigint: true });
+    observations.push({ path, mode, elapsedMs: Math.round(performance.now() - started), launches, productionClosedInput, bounded, nativeError, protectedPath,
+      sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
+      empty: kind === 'directory' ? fs.readdirSync(path).length === 0 : after.size === 0n && after.nlink === 1n });
+  }
+  process.stderr.write(`Windows backup launch controls: ${JSON.stringify({ kind, arch: process.arch, runtime: Bun.version,
+    observations: observations.map(({ path, ...observation }) => observation) })}\n`);
+  for (const observation of observations) {
+    expect(observation.launches).toBe(1);
+    expect(observation.productionClosedInput).toBe(true);
+    expect(observation.bounded).toBe(true);
+    expect(observation.sameIdentity).toBe(true);
+    expect(observation.empty).toBe(true);
+    if (observation.mode === 'candidate') {
+      expect(observation.protectedPath).toBe(true);
+      expect(observation.nativeError).toBeNull();
+      expectPrivate(observation.path, kind === 'directory', true);
+    }
+  }
+}, 120_000);
 
 test('native create, verify, absent-root restore and fresh-process reopen preserve exact data and nested paths', async () => {
   const protect = privacy.protectNewBackupPath;
@@ -370,14 +425,14 @@ test('backup paths exclude inherited public access without changing the existing
   const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const inspectParent = () => process.platform === 'win32'
     ? execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH).Sddl'], {
-      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, encoding: 'utf8', timeout: 15_000, windowsHide: true,
+      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
     }).trim() : fs.statSync(parent).mode;
   if (process.platform === 'win32') {
     const script = `$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH;
 $r=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow);
 $a.AddAccessRule($r); Set-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH -AclObject $a`;
     execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, timeout: 15_000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
     });
   } else fs.chmodSync(parent, 0o777);
   const before = inspectParent();
