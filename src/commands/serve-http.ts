@@ -2017,8 +2017,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
+  // Hint every scope a client may ask for; grantScopes still caps the grant to the client row's `scope`.
+  // Clients that request exactly the hinted scope and never step up (claude.ai connectors) otherwise stay read-only.
   app.post('/mcp', withBearerScopeHint(
-    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read'],
+    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
   ), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;

@@ -24,10 +24,14 @@ grant authority: profiles, token scopes, operation snapshots, sources, and write
 fences still restrict requests. A `memory-writer` thin client gains neither
 administration nor delegation from its full surface.
 
-OAuth bootstrap challenges advertise `scope="read"` without enforcing it as a
-literal transport requirement. Existing writer, administrator, and delegated
-tokens keep their granted authority. New generic connections following the
-hint start read-only; writing requires an explicit authorized scope request.
+OAuth bootstrap challenges advertise `scope="read write"` without enforcing it
+as a literal transport requirement. Existing writer, administrator, and
+delegated tokens keep their granted authority. A connection following the hint
+receives only what its client row allows (`grantScopes` caps every request to
+the row's `scope`), so a read-only row still yields a read-only token. The hint
+lists `write` because some authorization_code clients (claude.ai custom
+connectors) request exactly the hinted scope and never step up after an
+`insufficient_scope` tool error, which left writer rows permanently read-only.
 Discovery excludes `agent`, which DCR cannot grant, while explicit DCR requests
 for delegation remain rejected.
 
