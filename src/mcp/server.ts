@@ -16,7 +16,7 @@ import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
 import { createPersistenceIpcProvider } from '../core/persistence/provider.ts';
 import { resolveMcpInstructions } from './instructions.ts';
-import { installCapabilitiesResource } from './capabilities.ts';
+import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources } from './skill-resources.ts';
 import { operationScopesAllowed } from '../core/scope.ts';
 import { readLocalWriter, verifyLocalWriter } from '../core/persistence/identity.ts';
@@ -249,6 +249,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     }
     return { transport: 'stdio', scopes, surface, source_id: scope.sourceId,
       available_operations: available,
+      administration: mcpAdministrationGuidance(),
       shared_skills: { protocol_version: 2, catalog: available.includes('list_skills') && available.includes('get_skill'),
         can_join: available.includes('join_brain'), can_edit: available.includes('put_skill') && available.includes('delete_skill'), native_activation: 'unverified' },
       worker: { status: 'unknown' }, note: 'This local MCP pipe has no OAuth profile; agent-facing operation restrictions still apply.' };

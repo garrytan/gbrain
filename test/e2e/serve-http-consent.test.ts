@@ -10,10 +10,8 @@ import { TEST_PKCE_CHALLENGE, TEST_PKCE_VERIFIER } from '../helpers/oauth.ts';
 let child: ChildProcess;
 let home: string;
 let base: string;
-// ONE admin login for the whole file (the shared admin auth limiter is
-// 10/min/IP and the consent routes draw from the same bucket), taken in
-// beforeAll so every test is order-independent. `adminSetCookie` keeps the
-// raw header for the attribute assertions.
+// Shared owner session for API tests. Authentication and consent limiters
+// have independent allowances. Keep the raw cookie for attribute assertions.
 let adminCookie = '';
 let adminSetCookie = '';
 const BOOTSTRAP = 'synthetic-consent-admin-test-token';
@@ -165,4 +163,57 @@ test('OAuth discovery advertises the self-registration ceiling and a client that
   const refused = await register('read write admin');
   expect(refused.status).toBe(400);
   expect((await refused.json() as any).error).toBe('invalid_client_metadata');
+}, 15_000);
+
+const owner = (body?: unknown) => ({ method: body === undefined ? 'GET' : 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+test('twenty successful owner commands and valid-owner expired continuations do not consume failed authentication allowance', async () => {
+  for (let i = 0; i < 20; i++) {
+    const login = await fetch(`${base}/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: BOOTSTRAP }) });
+    expect(login.status).toBe(200);
+    expect(login.headers.get('cache-control')).toBe('no-store');
+    expect(login.headers.get('referrer-policy')).toBe('no-referrer');
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    expect((await fetch(`${base}/admin/api/clients`, { headers: { Cookie: cookie } })).status).toBe(200);
+    const expired = await fetch(`${base}/admin/api/issue-magic-link`, { method: 'POST', headers: { Authorization: `Bearer ${BOOTSTRAP}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ oauth_request: 'a'.repeat(64) }) });
+    expect(expired.status).toBe(410);
+    expect((await expired.json() as any).next_action).toContain('native client');
+  }
+}, 15_000);
+
+test('owner registration, safe lookup, delivery recovery and lifecycle work for both native client types', async () => {
+  for (const method of ['none', 'client_secret_post', 'client_secret_basic']) {
+    const registration = { name: `native-${method}`, source: 'default', scopes: ['read'], redirectUris: [`${base}/callback`], grantTypes: ['authorization_code', 'refresh_token'], tokenEndpointAuthMethod: method };
+    const bad = await fetch(`${base}/admin/api/register-client`, owner({ ...registration, redirectUris: [] }));
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as any).error).toBe('redirect_uri_required');
+    const preview = await fetch(`${base}/admin/api/register-client`, owner({ ...registration, dryRun: true }));
+    expect(preview.status).toBe(200);
+    expect((await preview.json() as any).tokenEndpointAuthMethod).toBe(method);
+    const response = await fetch(`${base}/admin/api/register-client`, owner(registration));
+    expect(response.status).toBe(200);
+    const created = await response.json() as any;
+    expect(created.oauthSetup.kind).toBe('oauth-client-setup');
+    expect(created.clientSecret === undefined).toBe(method === 'none');
+    expect((await fetch(`${base}/admin/api/register-client`, owner(registration))).status).toBe(409);
+    const found = await fetch(`${base}/admin/api/clients/${created.clientId}/setup?harness=generic`, owner());
+    expect(found.status).toBe(200);
+    const text = await found.text();
+    expect(text).not.toContain('client_secret_hash');
+    expect(text).not.toContain('gbrain_cs_');
+    const recovered = await fetch(`${base}/admin/api/recover-client`, owner({ clientId: created.clientId }));
+    expect(recovered.status).toBe(200);
+    const artifact = await recovered.json() as any;
+    expect(artifact.credentials).toBeUndefined();
+    expect(artifact.oauthSetup.client.client_secret).toBe(created.clientSecret);
+    const endpoint = `${base}/admin/api/clients/${created.clientId}/lifecycle`;
+    expect((await fetch(endpoint, owner({ action: 'delete', dryRun: false, yes: true }))).status).toBe(400);
+    const lifecycle = await (await fetch(endpoint, owner({ action: 'invalidate-tokens' }))).json() as any;
+    expect(lifecycle.dry_run).toBe(true);
+    const invalidated = await fetch(endpoint, owner({ action: 'invalidate-tokens', dryRun: false, yes: true, expectedRevision: lifecycle.before.revision }));
+    expect(invalidated.status).toBe(200);
+    expect((await fetch(endpoint, owner({ action: 'delete', dryRun: false, yes: true, expectedRevision: lifecycle.before.revision }))).status).toBe(409);
+    const current = await (await fetch(`${base}/admin/api/clients/${created.clientId}`, owner())).json() as any;
+    expect((await fetch(endpoint, owner({ action: 'delete', dryRun: false, yes: true, expectedRevision: current.grant.revision }))).status).toBe(200);
+    expect((await fetch(`${base}/admin/api/clients/${created.clientId}`, owner())).status).toBe(404);
+  }
 }, 15_000);

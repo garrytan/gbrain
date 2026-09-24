@@ -98,6 +98,14 @@ Start with keyless recall and explicit remembering:
    the correction. `forget` withdraws active memory; history and backups may remain.
 4. Verify with `recall`, `entity`, or `get_page` before claiming the change landed.
 
+Choose verification that can read the intended visibility: trusted local CLI
+can recall private facts; MCP (including stdio) and a thin CLI connected to MCP
+currently recall and withdraw world-visible facts only. Preserve the user's intended privacy.
+A committed remote private-write receipt confirms storage, not private recall; explain
+when trusted local readback is unavailable rather than claiming verification or
+widening access. Use only harmless synthetic world-visible facts for an
+authorized MCP connection test, then withdraw them.
+
 After explicit automatic-capture opt-in, apply the bundled `signal-detector`
 contract to substantive messages. Delegation and paid enrichment require their
 own authority. Reading context, installing skills, or possessing an API key does

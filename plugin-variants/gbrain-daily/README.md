@@ -3,7 +3,7 @@
 
 Personal knowledge-brain daily use: meetings, tasks, briefings, reading, research. Published as the gbrain-daily marketplace variant.
 
-19 skills curated from the gbrain plugin lane (persona
+20 skills curated from the gbrain plugin lane (persona
 `daily-driver` in `skills/plugin-lanes.json#personas`, one recorded
 reason per skill). Install exactly ONE gbrain plugin per machine — every
 variant serves the same `gbrain` MCP server name, so two installed variants

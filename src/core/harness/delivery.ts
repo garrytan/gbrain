@@ -17,7 +17,7 @@ export function retainCredentialDelivery(credentials: HarnessCredentials): void 
 export function recoverCredentialDelivery(clientId: string, endpoint: string): HarnessCredentials {
   let credentials: HarnessCredentials;
   try { credentials = readCredentials(deliveryPath(clientId)); }
-  catch { throw new Error(`client_secret_delivery_unavailable: ${clientId}. If you still have its private handoff, use that. Otherwise explicitly rotate this client's secret; access-token reissuance cannot recover a lost client secret.`); }
+  catch { throw new Error(`client_secret_delivery_unavailable: ${clientId}. Use its retained private setup or explicit rotation output. Inspect the client with gbrain mcp admin client before choosing replacement. Legacy host-side agent register --reissue only supports confidential clients with client_credentials and rotates authority; it is not a repeated download. Native-only clients without retained delivery require an explicitly approved replacement.`); }
   if (credentials.client_id !== clientId || credentials.mcp_url !== endpoint) throw new Error('credential_delivery_conflict: client or endpoint differs from the original delivery');
   return credentials;
 }

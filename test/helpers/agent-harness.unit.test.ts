@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import {
   parseClaudeStream,
   parseCodexJsonl,
+  codexMcpApprovalArgs,
   hermeticChildEnv,
   hermesChildEnv,
   grokChildEnv,
@@ -42,6 +43,22 @@ import {
   runOneShotSpawn,
 } from './agent-harness.ts';
 import { withEnv } from './with-env.ts';
+
+describe('fixture MCP approvals', () => {
+  test('the default changes no policy; explicit tools stay in their server/plugin scope', () => {
+    expect(codexMcpApprovalArgs()).toEqual([]);
+    const args = codexMcpApprovalArgs([
+      { server: 'fixture', tools: ['query', 'query'] },
+      { plugin: 'fixture@marketplace', server: 'gbrain', tools: ['recall'] },
+    ]);
+    expect(args).toEqual([
+      '-c', 'mcp_servers.fixture.tools.query.approval_mode="approve"',
+      '-c', 'plugins.fixture@marketplace.mcp_servers.gbrain.tools.recall.approval_mode="approve"',
+    ]);
+    expect(() => codexMcpApprovalArgs([{ server: 'fixture.tools', tools: ['query'] }])).toThrow('single config-path segments');
+    expect(() => codexMcpApprovalArgs([{ server: 'fixture', tools: ['query.approval_mode'] }])).toThrow('single config-path segments');
+  });
+});
 
 // A captured claude stream-json turn: a system init line, an assistant text +
 // tool_use turn, a tool_result user line, a second assistant text turn, and the

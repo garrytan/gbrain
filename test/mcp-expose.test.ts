@@ -589,6 +589,11 @@ describe('happy path: linux-systemd', () => {
     expect(prose).toContain('fail with `live_serve`');
     expect(prose).not.toContain('wait on this server');
     expect(prose).toContain('gbrain mcp expose --status');
+    expect(prose).toContain('owner session required');
+    expect(prose).toContain('Native OAuth');
+    expect(prose).toContain('Machine install');
+    expect(doc.next_actions).toContain(`gbrain mcp admin login-link --url https://${DNS}/mcp --admin-token-file ${adminTokenPath(f.serveDir)}`);
+    expect(doc.next_actions).toContain('gbrain mcp admin register --help');
     expect(doc.next_actions.join('\n')).toContain(`--url https://${DNS}/mcp`);
   });
   test('PGLite banner: local agents get the pre-mint + --token guidance and the scoped grant path, never a bare bootstrap harness', async () => {
@@ -793,6 +798,9 @@ describe('service edge cases', () => {
     expect(checkOf(doc, 'verify.local')?.status).toBe('skipped');
     expect(checkOf(doc, 'verify.tailnet')?.status).toBe('skipped');
     expect(f.stderr.join('\n')).toContain('Nothing listens on 127.0.0.1:3131 yet');
+    expect(f.stderr.join('\n')).toContain('--no-service does not change it');
+    expect(doc.next_actions).toContain(`gbrain mcp admin login-link --url https://${DNS}/mcp --admin-token-file <existing-server-admin-token-file>`);
+    expect(doc.next_actions.filter((action: string) => action.includes('--admin-token-file')).every((action: string) => action.includes('<existing-server-admin-token-file>'))).toBe(true);
   });
   test('--no-service re-run after a full install keeps the service block and does not rewrite the wrapper', async () => {
     const f = fakeTailnet();
@@ -1436,7 +1444,7 @@ describe('runMcp dispatch regression', () => {
     try {
       _resetCliExitVerdictForTests();
       await runMcp(['bogus']);
-      expect(JSON.parse(out.join('').trim())).toEqual({ status: 'error', reason: 'mcp_setup_failed', message: 'Expected mcp grant, verify, adapters, profiles or expose' });
+      expect(JSON.parse(out.join('').trim())).toEqual({ status: 'error', reason: 'mcp_setup_failed', message: 'Expected mcp admin, grant, verify, adapters, profiles or expose' });
       expect(currentExitCode()).toBe(1);
       out.length = 0;
       _resetCliExitVerdictForTests();
@@ -1445,6 +1453,7 @@ describe('runMcp dispatch regression', () => {
       expect(help).toContain('gbrain mcp expose --status [--json]');
       expect(help).toContain('gbrain mcp expose --remove [--yes] [--json]');
       expect(help).toContain('See: gbrain mcp expose --help');
+      expect(help).toContain('gbrain mcp admin --help');
       expect(currentExitCode()).toBe(0);
     } finally {
       logSpy.mockRestore();

@@ -55,8 +55,8 @@ describe('register-client route wiring (structural)', () => {
     // the hardcoded 'default') would pass every unit test and still ship
     // clients bound to the wrong source.
     const { readFileSync } = require('fs');
-    const src = readFileSync(new URL('../src/commands/serve-http.ts', import.meta.url), 'utf-8');
-    expect(src).toContain('sourceId = normalizeSourceInput(source)');
+    const src = readFileSync(new URL('../src/commands/serve-http-registration.ts', import.meta.url), 'utf-8');
+    expect(src).toContain('sourceId = normalizeSourceInput(req.body.sourceId ?? source)');
     expect(src).toContain('federatedReadIds = normalizeFederatedReadInput(federatedRead)');
     // cathedral-6: the route composes registerScopedClient (the CLI's core)
     // instead of calling registerClientManual directly — now on the

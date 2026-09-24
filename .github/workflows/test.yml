@@ -595,8 +595,33 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     uses: ./.github/workflows/persistence-validation.yml
 
-  # The stable aggregate succeeds only when every required lane ran successfully.
-  # Coverage percentages remain advisory until their separate graduation.
+  admin-browser:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts
+        working-directory: admin
+      - name: Install the pinned Chromium browser and OS dependencies
+        run: bunx playwright install --with-deps chromium
+      - name: Build the shipped admin assets
+        run: bun run build:admin
+      - name: Exercise owner administration and native OAuth in Chromium
+        run: bun run test:admin
+      - name: Retain browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: admin-browser-failures
+          path: .context/admin-browser-results
+          include-hidden-files: true
+          retention-days: 7
+
   shared-skills-compatibility:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     runs-on: ubuntu-latest
@@ -612,9 +637,11 @@ jobs:
       - name: Reject old consumers before they change shared skill state
         run: GBRAIN_TEST_OLD_BINARY="$RUNNER_TEMP/gbrain-before-shared-skills" bun test --timeout 180000 test/persistence-skill-old-binary.slow.test.ts
 
+  # The stable aggregate succeeds only when every required lane ran successfully.
+  # Coverage percentages remain advisory until their separate graduation.
   test-status:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && 'full-suite-not-run' || 'test-status' }}
-    needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation, shared-skills-compatibility]
+    needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation, admin-browser, shared-skills-compatibility]
     if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -633,10 +660,11 @@ jobs:
           TEST="${{ needs.test.result }}"
           NATIVE_LOCKS="${{ needs.native-locks.result }}"
           PERSISTENCE="${{ needs.persistence-validation.result }}"
+          ADMIN_BROWSER="${{ needs.admin-browser.result }}"
           SKILL_COMPATIBILITY="${{ needs.shared-skills-compatibility.result }}"
-          echo "gitleaks=$GITLEAKS  security-regressions=$SECURITY  dependency-audit=$AUDIT  verify=$VERIFY  serial-tests=$SERIAL  slow-eval-longmemeval=$SLOW_EVAL  slow-entity-resolve-perf=$SLOW_PERF  slow-brainbench-e2e=$SLOW_BRAINBENCH  brainbench=$BRAINBENCH  test=$TEST  native-locks=$NATIVE_LOCKS  persistence=$PERSISTENCE"
+          echo "gitleaks=$GITLEAKS  security-regressions=$SECURITY  dependency-audit=$AUDIT  verify=$VERIFY  serial-tests=$SERIAL  slow-eval-longmemeval=$SLOW_EVAL  slow-entity-resolve-perf=$SLOW_PERF  slow-brainbench-e2e=$SLOW_BRAINBENCH  brainbench=$BRAINBENCH  test=$TEST  native-locks=$NATIVE_LOCKS  persistence=$PERSISTENCE  admin-browser=$ADMIN_BROWSER"
           echo "shared-skills-compatibility=$SKILL_COMPATIBILITY"
-          for r in "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$SERIAL" "$SLOW_EVAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST" "$NATIVE_LOCKS" "$PERSISTENCE" "$SKILL_COMPATIBILITY"; do
+          for r in "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$SERIAL" "$SLOW_EVAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST" "$NATIVE_LOCKS" "$PERSISTENCE" "$ADMIN_BROWSER" "$SKILL_COMPATIBILITY"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated job did not succeed (got $r) — CI fail"
               exit 1
