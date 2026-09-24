@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { privateWrite } from '../src/core/agent-install/state.ts';
 import { readBackupArchive, writeBackupArchive } from '../src/core/backup/archive.ts';
+import * as privacy from '../src/core/backup/private-path.ts';
 
 for (const platform of ['linux', 'win32'] as const) {
   test(`backup file durability preserves fsync while directory opens follow the ${platform} guard`, () => {
@@ -26,6 +27,7 @@ for (const platform of ['linux', 'win32'] as const) {
       }
       return open(path, flags, mode);
     });
+    const acl = spyOn(privacy, 'protectNewBackupPath').mockImplementation(() => {});
     try {
       Object.defineProperty(process, 'platform', { ...descriptor, value: platform });
       const input = join(tmp, 'memory.md');
@@ -41,7 +43,7 @@ for (const platform of ['linux', 'win32'] as const) {
       expect(directorySyncs).toBe(platform === 'win32' ? 0 : 2);
     } finally {
       Object.defineProperty(process, 'platform', descriptor);
-      opened.mockRestore(); sync.mockRestore();
+      opened.mockRestore(); sync.mockRestore(); acl.mockRestore();
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
