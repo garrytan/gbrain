@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, describe, expect, test } from 'bun:test';
+import { beforeAll, afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -25,6 +25,7 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
   let env: Record<string, string>;
   let base: string;
   let server: ChildProcess | undefined;
+  let restoreOwner = false;
   const clients: Client[] = [];
   const tokens: string[] = [];
   let oauthId: string;
@@ -113,6 +114,11 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
     await connect(tokens[0]); await connect(tokens[1]);
   }, 120000);
   afterAll(async () => { await stop(); await pg?.close(); if (home) rmSync(home, { recursive: true, force: true }); }, 30000);
+  afterEach(async () => {
+    if (!restoreOwner) return;
+    restoreOwner = false;
+    await stop('SIGKILL'); await start(); await connect(tokens[0]); await connect(tokens[1]);
+  }, 30000);
 
   for (const [index, auth] of ['legacy', 'oauth'].entries()) test(`${auth} put_page and remember preserve UUIDs through contention and restart`, async () => {
     const client = clients[index];
@@ -247,6 +253,7 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
   });
 
   test.skipIf(!oldBinary)('compatible old and new owners drain original UUIDs after quiesced handoffs', async () => {
+    restoreOwner = true;
     const source = (await fixtures(pg.engine, config))[0];
     for (const oldFirst of [true, false]) {
       await stop();
@@ -281,18 +288,24 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
       writeFileSync(join(clientHome, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres', remote_mcp: {
         issuer_url: base, mcp_url: `${base}/mcp`, oauth_client_id: oauthId,
       } }), { mode: 0o600 });
-      const result = spawnSync(oldBinary!, ['write-request', request.request_id, '--json'], {
-        env: keylessBrainEnv(env, clientHome, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
-          GBRAIN_REMOTE_CLIENT_SECRET: oauthSecret }), encoding: 'utf8', timeout: 30000,
+      await pg.engine.transaction(async tx => {
+        await waitFor(async () => (await tx.executeRaw(`SELECT id FROM persistence_requests
+          WHERE request_id=$1::uuid AND state='queued' FOR SHARE SKIP LOCKED`, [request.request_id])).length === 1,
+        { label: 'retained client queued receipt' });
+        const result = spawnSync(oldBinary!, ['write-request', request.request_id, '--json'], {
+          env: keylessBrainEnv(env, clientHome, { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
+            GBRAIN_REMOTE_CLIENT_SECRET: oauthSecret }), encoding: 'utf8', timeout: 30000,
+        });
+        if (result.status !== 0) throw new Error(fixtureDiagnostic('retained HTTP client failed', result.stderr, [...tokens, oauthSecret]));
+        expect(JSON.parse(result.stdout)).toMatchObject({ request_id: request.request_id, state: 'queued' });
       });
-      if (result.status !== 0) throw new Error(fixtureDiagnostic('retained HTTP client failed', result.stderr, [...tokens, oauthSecret]));
-      expect(JSON.parse(result.stdout)).toMatchObject({ request_id: request.request_id, state: 'queued' });
     } finally { await lock!.release(); }
     await committed(clients[1], request.request_id);
   }, 120000);
 
   for (const oldFirst of [true, false]) for (const boundary of ['running', 'recovery'] as const) {
     test.skipIf(!oldBinary)(`${oldFirst ? 'old-to-new' : 'new-to-old'} owner handoff retains a real ${boundary} row`, async () => {
+      restoreOwner = true;
       const source = (await fixtures(pg.engine, config))[0];
       await stop(); await start(oldFirst ? oldBinary : undefined);
       const producer = await connect(tokens[0]);
@@ -314,7 +327,7 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
         expect((await call(producer, 'put_page', args)).body.write_request.request_id).toBe(args.request_id);
         holding = pg.engine.transaction(async tx => {
           if (boundary === 'running') await tx.executeRaw('LOCK TABLE pages IN ACCESS EXCLUSIVE MODE');
-          else await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [source.binding.worktree_id]);
+          else await tx.lockPageKeys([{ sourceId: source.id, slug }]);
           held.resolve(); await release.promise;
         });
         await Promise.race([held.promise, holding]);
@@ -359,7 +372,6 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
       expect(await pg.engine.executeRaw('SELECT id FROM page_versions WHERE page_id=$1', [before.page.id])).toHaveLength(versions.length + 1);
       expect(await pg.engine.executeRaw('SELECT key,lifetime_ids,terminal_bytes FROM persistence_counters ORDER BY key')).toEqual(counters);
       await assertConservation(pg.engine);
-      await stop(); await start(); await connect(tokens[0]); await connect(tokens[1]);
     }, 90000);
   }
 
