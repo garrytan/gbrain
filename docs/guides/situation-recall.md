@@ -27,7 +27,7 @@ Administration is trusted-local only. HTTP and stdio agent-facing callers cannot
 
 ## Window policy and pipeline upgrades
 
-The `situation-v5` pipeline constructs windows of at most 8,192 UTF-8 bytes,
+The `situation-v6` pipeline constructs windows of at most 8,192 UTF-8 bytes,
 including carried speaker attribution. It retains up to 640 bytes of overlap
 and preserves Unicode code-point boundaries, splitting long turns as needed.
 Each window spans at most three original chunks. The full eligible history is
@@ -59,6 +59,24 @@ fields, extra slots, duplicate keys, missing slots and malformed selections are
 rejected rather than dropped or relabeled. All-null explicitly means no cues.
 Injected quote-based providers and downstream semantic validation are unchanged.
 
+On the verified `openrouter:anthropic/claude-sonnet-4.6` route, cue generation
+also sends `response_format: {type: "json_schema", json_schema: {strict: true, ...}}`
+and `provider.require_parameters: true`. The schema requires every slot and
+association `kind`, restricts kinds by bridge consent, and restricts integer
+references to supplied excerpts with at least three trimmed characters. With
+no eligible references it permits only all-null slots. Text length remains a
+local check because the upstream schema subset does not support length bounds.
+Configured provider allow/deny lists, privacy, price and fallback constraints
+remain merged. Configured weaker response formats cannot alter this schema,
+and schema rejection does not retry without it. Other generation routes retain
+the prompt-only protocol; endpoint schema enforcement is not universal.
+
+Strict-route reservations cover serialized schema, routing, message framing
+and nested JSON escaping, plus the existing margin. Provider/model option
+framing is counted conservatively even when fields overlap. Requests whose
+calculated wire bound exceeds 64 KiB are refused before sending. These are
+upper bounds, not tokenizer measurements or provider charges.
+
 This is a prospective construction-cost policy, not a measured retrieval gain.
 Larger windows can reduce request overhead and serial build time, but increase
 each window's reservation and make more evidence compete for the same four-cue
@@ -68,7 +86,7 @@ chosen profile's cost and quality checks before enabling it.
 
 Pipeline identity is part of both the cue signature and the independent read
 and push calibration bindings. Earlier pipeline cues are not reused by
-v5, and old builds cannot resume as v5 builds. Explicitly approve a new build
+v6, and old builds cannot resume as v6 builds. Explicitly approve a new build
 to regenerate cues, then recalibrate retrieval and reminders separately, even
 when the embedding model is unchanged. There is no automatic backfill, budget
 transfer, or refill of an old build's allowance. Canonical memories are unchanged.

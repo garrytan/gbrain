@@ -136,14 +136,15 @@ describe('bounded situation cue validation', () => {
     expect(unsupportedCueColumn({ ...column, type: 'halfvec', dimensions: 3072 })).toBeUndefined();
   });
 
-  test('v5 signature binds pipeline identity as well as the embedding descriptor', () => {
+  test('v6 signature binds pipeline identity as well as the embedding descriptor', () => {
     const column = { name: 'embedding', type: 'vector' as const, dimensions: 1536, embeddingModel: 'openai:text-embedding-3-small' };
     const descriptor = [column.name, column.type, column.dimensions, column.embeddingModel];
-    expect(MEMORY_CUE_PROMPT_VERSION).toBe('situation-v5');
+    expect(MEMORY_CUE_PROMPT_VERSION).toBe('situation-v6');
     expect(cueSignature(column)).toBe(digest([MEMORY_CUE_PROMPT_VERSION, ...descriptor]));
     expect(cueSignature(column)).not.toBe(digest(descriptor));
     expect(cueSignature(column)).not.toBe(digest(['situation-v2', ...descriptor]));
     expect(cueSignature(column)).not.toBe(digest(['situation-v3', ...descriptor]));
     expect(cueSignature(column)).not.toBe(digest(['situation-v4', ...descriptor]));
+    expect(cueSignature(column)).not.toBe(digest(['situation-v5', ...descriptor]));
   });
 });

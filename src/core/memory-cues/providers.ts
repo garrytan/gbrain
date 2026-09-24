@@ -1,11 +1,18 @@
-import { chat, embed, getChatModel, configureGatewayIfUninitialized } from '../ai/gateway.ts';
+import { chat, embed, getChatModel, configureGatewayIfUninitialized, requireConfig } from '../ai/gateway.ts';
 import { canonicalLookup } from '../model-pricing.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { MemoryCueProviders } from './types.ts';
-import { loadConfigWithEngine } from '../config.ts';
+import { loadConfig, loadConfigWithEngine } from '../config.ts';
 import { visit } from 'jsonc-parser';
 import { CUE_SYSTEM_PROMPT, formatCueEvidence, resolveCueEvidence } from './evidence.ts';
 export { CUE_SYSTEM_PROMPT } from './evidence.ts';
+
+export function formatCueRequest(evidence: string, includeBridge: boolean, model: string) {
+  let configuredOptions;
+  try { configuredOptions = requireConfig().provider_chat_options; }
+  catch { configuredOptions = loadConfig()?.provider_chat_options; }
+  return formatCueEvidence(evidence, includeBridge, model, configuredOptions);
+}
 
 export async function cueGenerationModel(engine: BrainEngine): Promise<string> {
   const value = (await loadConfigWithEngine(engine))?.chat_model;
@@ -17,9 +24,9 @@ export async function cueGenerationModel(engine: BrainEngine): Promise<string> {
 export const liveMemoryCueProviders: MemoryCueProviders = {
   async generate({ evidence, includeBridge, model, signal }) {
     configureGatewayIfUninitialized();
-    const formatted = formatCueEvidence(evidence, includeBridge);
+    const formatted = formatCueRequest(evidence, includeBridge, model);
     const response = await chat({ model, system: CUE_SYSTEM_PROMPT, maxTokens: 1200, temperature: 0,
-      messages: [{ role: 'user', content: formatted.content }], abortSignal: signal });
+      messages: [{ role: 'user', content: formatted.content }], providerOptions: formatted.providerOptions, abortSignal: signal });
     if (response.stopReason !== 'end') throw new Error(response.stopReason === 'refusal' ? 'provider_refusal' : 'incomplete_output');
     const price = canonicalLookup(response.model);
     if (!price || response.model !== model) throw new Error('generation_model_changed');

@@ -8,8 +8,7 @@ import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { MEMORY_CUE_PROMPT_VERSION, MEMORY_CUE_SOURCE_LIMIT, type MemoryCueBuildOptions, type MemoryCueBuildReceipt } from './types.ts';
 import { loadMemoryCueSettings, memoryCueColumn, cueSignature, unsupportedCueColumn, missingCueSchema } from './settings.ts';
 import { provisionCueIndex, cueSnapshotSql, cueIndexExists } from './storage.ts';
-import { cueGenerationModel } from './providers.ts';
-import { formatCueEvidence } from './evidence.ts';
+import { cueGenerationModel, formatCueRequest } from './providers.ts';
 import { canonicalLookup } from '../model-pricing.ts';
 import { lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { maximumInvocationCents } from '../minions/delegated-spend.ts';
@@ -67,14 +66,14 @@ export async function previewMemoryCueBuild(engine: BrainEngine, opts: MemoryCue
     : sources.length !== limits.sourceIds.length ? 'source_unavailable' : unsupportedCueColumn(column)
       ?? (!canonicalLookup(generationModel) || lookupEmbeddingPrice(column.embeddingModel).kind !== 'known' ? 'pricing_unknown' : undefined);
   const chatCents = maximumInvocationCents({ operation: 'memory-cues-preview', kind: 'chat', model: generationModel,
-    maxInputTokens: formatCueEvidence('', limits.includeBridge).maximumInputTokenCeiling, maxOutputTokens: 1200 });
+    maxInputTokens: formatCueRequest('', limits.includeBridge, generationModel).maximumInputTokenCeiling, maxOutputTokens: 1200 });
   const embeddingCents = maximumInvocationCents({ operation: 'memory-cues-preview', kind: 'embedding', model: column.embeddingModel,
     maxInputTokens: 4096, maxOutputTokens: 0 });
   const perWindow = chatCents === null || embeddingCents === null ? null : (Math.max(1, Math.ceil(chatCents)) + Math.max(1, Math.ceil(embeddingCents))) / 100;
   return { ...limits, eligiblePages: pages.length, signature: cueSignature(column), embeddingColumn: column, generationModel,
     ready: !reason, ...(reason ? { reason } : {}), sourceIncarnations: Object.fromEntries(sources.map(s => [s.id, s.incarnation])),
     costPreview: { maximumReservationUsdPerWindow: perWindow, maximumReservationUsdPerPass: perWindow === null ? null : perWindow * limits.windowLimit,
-      maxWindowsPerPass: limits.windowLimit, assumptions: `Upper reservation bound, not measured cost: ${MAX_CUE_WINDOW_BYTES}-byte evidence with worst-case JSON escaping, 1200 output tokens, four 240-character cues; unknown calls retain their reservation. Retries consume the original cap.` } };
+      maxWindowsPerPass: limits.windowLimit, assumptions: `Upper reservation bound, not measured cost: ${MAX_CUE_WINDOW_BYTES}-byte evidence with worst-case JSON escaping, strict-route response schema and configured routing framing, 1200 output tokens, four 240-character cues; unknown calls retain their reservation. Retries consume the original cap.` } };
 }
 
 export async function submitMemoryCueBuild(engine: BrainEngine, opts: MemoryCueBuildOptions & { trustedLocal: true; maxUsd: number }): Promise<MemoryCueBuildReceipt> {

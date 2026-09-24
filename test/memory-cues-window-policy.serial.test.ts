@@ -4,7 +4,7 @@ import { __setChatTransportForTests, __setEmbedTransportForTests, configureGatew
 import { cueSignature, getMemoryCueStatus, loadMemoryCueSettings, memoryCueColumn, previewMemoryCueBuild,
   recallMemoryCues, resumeMemoryCueBuild, revalidateMemoryCueCandidates, runMemoryCueBuild } from '../src/core/memory-cues/index.ts';
 import { MAX_CUE_WINDOW_BYTES } from '../src/core/memory-cues/windows.ts';
-import { formatCueEvidence } from '../src/core/memory-cues/evidence.ts';
+import { formatCueRequest } from '../src/core/memory-cues/providers.ts';
 import { MEMORY_CUE_PROMPT_VERSION } from '../src/core/memory-cues/types.ts';
 import { scheduleMemoryCuePage } from '../src/core/memory-cues/scheduling.ts';
 import { maximumInvocationCents } from '../src/core/minions/delegated-spend.ts';
@@ -51,8 +51,8 @@ async function legacySignature(version: string) {
 const configure = (params: Record<string, unknown>) => memoryCueOperations[0]!.handler(ctx, { action: 'configure', apply: true, ...params });
 const recall = async () => recallMemoryCues(engine, cueVector(), { embeddingColumn: await memoryCueColumn(engine), sourceIds: ['default'] });
 
-for (const version of ['situation-v2', 'situation-v3', 'situation-v4']) {
-test(`${version} calibrations fail closed and read/push must be renewed independently for v5`, async () => {
+for (const version of ['situation-v2', 'situation-v3', 'situation-v4', 'situation-v5']) {
+test(`${version} calibrations fail closed and read/push must be renewed independently for v6`, async () => {
   const old = await legacySignature(version);
   await engine.setConfig('memory.cues.read_calibration_signature', old);
   await engine.setConfig('memory.cues.push', 'true');
@@ -125,7 +125,7 @@ test('preview bounds include full JSON framing and worst-case escaping at the ac
   for (const includeBridge of [false, true]) {
     const preview = await previewMemoryCueBuild(engine, { sourceIds: ['default'], includeBridge });
     const chat = maximumInvocationCents({ operation: 'fixture', kind: 'chat', model,
-      maxInputTokens: formatCueEvidence(evidence, includeBridge).inputTokenCeiling, maxOutputTokens: 1200 });
+      maxInputTokens: formatCueRequest(evidence, includeBridge, model).inputTokenCeiling, maxOutputTokens: 1200 });
     const embedding = maximumInvocationCents({ operation: 'fixture', kind: 'embedding', model: column.embeddingModel, maxInputTokens: 4096, maxOutputTokens: 0 });
     expect(preview.costPreview.maximumReservationUsdPerWindow).toBeGreaterThanOrEqual((Math.max(1, Math.ceil(chat!)) + Math.max(1, Math.ceil(embedding!))) / 100);
     expect(preview.costPreview.maximumReservationUsdPerPass).toBe(preview.costPreview.maximumReservationUsdPerWindow! * 8);
@@ -137,10 +137,12 @@ for (const kind of ['custom', 'live'] as const) {
   test(`${kind} provider reservation uses the exact serialized evidence-ref input including IDs and escaping`, async () => {
     const evidence = ('A fictional note with \\"quoted\\" content.\n').repeat(150);
     await seedCuePage(engine, 'cue-example', 'default', evidence);
-    const formatted = formatCueEvidence(evidence, false);
     let generated = 0;
     configureGateway({ chat_model: model, embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536,
+      provider_chat_options: { openrouter: { provider: { only: ['anthropic'], zdr: true, data_collection: 'deny',
+        allow_fallbacks: false, max_price: { prompt: 3, completion: 15 } } } },
       env: { OPENROUTER_API_KEY: 'test-fixture-not-a-key', OPENAI_API_KEY: 'test-fixture-not-a-key' } });
+    const formatted = formatCueRequest(evidence, false, model);
     __setChatTransportForTests(async opts => {
       generated++;
       expect(opts.messages[0]!.content).toBe(formatted.content);

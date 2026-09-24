@@ -64,4 +64,4 @@ export interface CueGroundingSpan {
 }
 export const MAX_CUE_GROUNDING_CHUNKS = 3;
 export const MAX_CUE_GROUNDING_SPANS = 4;
-export const MEMORY_CUE_PROMPT_VERSION = 'situation-v5';
+export const MEMORY_CUE_PROMPT_VERSION = 'situation-v6';

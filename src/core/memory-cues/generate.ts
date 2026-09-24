@@ -7,8 +7,7 @@ import { memoryCueColumn } from './settings.ts';
 import { cueSnapshotSql } from './storage.ts';
 import { assertCueBuildAuthority, enqueueCueBuild, type CueBuildRow } from './builds.ts';
 import { buildCueWindows, validateCueOutput, groundCueQuote } from './windows.ts';
-import { liveMemoryCueProviders } from './providers.ts';
-import { formatCueEvidence } from './evidence.ts';
+import { formatCueRequest, liveMemoryCueProviders } from './providers.ts';
 import { reserveCueAttempt, settleCueAttempt, withCueSpend, type CueBudgetContext } from './budget.ts';
 import type { MemoryCueProviders, CueOutput, CueWindow } from './types.ts';
 
@@ -108,7 +107,7 @@ export async function runMemoryCueBuild(engine: BrainEngine, opts: { buildId: st
         opts.signal?.throwIfAborted();
         await engine.executeRaw("UPDATE memory_cue_builds SET lease_until=now()+interval '2 minutes' WHERE id=$1::uuid AND execution_token=$2::uuid", [build.id, token]);
         const context: CueBudgetContext = { build, token, pageId: page.page_id, snapshot: captured.digest, windowIndex: window.index,
-          inputTokenCeiling: formatCueEvidence(window.text, build.include_bridge).inputTokenCeiling };
+          inputTokenCeiling: formatCueRequest(window.text, build.include_bridge, build.generation_model).inputTokenCeiling };
         if (completed.has(window.index)) {
           await engine.executeRaw(`UPDATE memory_cue_pages SET cursor=$3::int,status=CASE WHEN $3::int>=total_windows THEN 'complete' ELSE 'pending' END
             WHERE build_id=$1::uuid AND page_id=$2 AND snapshot=$4`, [build.id, page.page_id, window.index + 1, captured.digest]);

@@ -33,8 +33,35 @@ an episode. Unsupported relations must produce no cue. Only output JSON.`;
 const MAX_EXCERPTS = 64;
 const TARGET_UNITS = 512;
 const MAX_UNITS = 640;
+export const STRUCTURED_CUE_MODEL = 'openrouter:anthropic/claude-sonnet-4.6';
+export const MAX_CUE_WIRE_BYTES = 65536;
 
-export function formatCueEvidence(evidence: string, includeBridge: boolean) {
+class CueResponseFormat {
+  readonly type = 'json_schema';
+  constructor(readonly json_schema: { name: string; strict: boolean; schema: Record<string, unknown> }) {}
+}
+
+function cueResponseFormat(refs: number[], includeBridge: boolean) {
+  const properties = Object.fromEntries(CUE_OUTPUT_SLOTS.map(slot => {
+    if (!refs.length) return [slot, { type: 'null' }];
+    const association = slot !== 'scene';
+    return [slot, { anyOf: [{ type: 'null' }, {
+      type: 'object', additionalProperties: false,
+      properties: {
+        ...(association ? { kind: { type: 'string', enum: Object.entries(CUE_ASSOCIATION_PAIRS)
+          .filter(([, pair]) => includeBridge || pair.family === 'horizon').map(([kind]) => kind) } } : {}),
+        evidence_ref: { type: 'integer', enum: refs },
+        text: { type: 'string', description: 'Concrete situation, 1..240 UTF-16 units; validated locally.' },
+      },
+      required: association ? ['kind', 'evidence_ref', 'text'] : ['evidence_ref', 'text'],
+    }] }];
+  }));
+  return new CueResponseFormat({ name: 'situation_cues', strict: true,
+    schema: { type: 'object', properties, required: [...CUE_OUTPUT_SLOTS], additionalProperties: false } });
+}
+
+export function formatCueEvidence(evidence: string, includeBridge: boolean, model?: string,
+  configuredOptions?: Record<string, Record<string, unknown>>) {
   if (Buffer.byteLength(evidence) > MAX_CUE_WINDOW_BYTES) throw new Error('unsupported_window');
   const excerpts: Array<{ id: number; text: string }> = [];
   for (let start = 0; start < evidence.length;) {
@@ -57,11 +84,30 @@ export function formatCueEvidence(evidence: string, includeBridge: boolean) {
   const serialize = (items: typeof excerpts) => JSON.stringify({ includeBridge, evidence: items });
   const content = serialize(excerpts);
   const framing = serialize(Array.from({ length: MAX_EXCERPTS }, (_, i) => ({ id: i + 1, text: '' })));
+  const strict = model === STRUCTURED_CUE_MODEL;
+  const providerOptions = strict ? { openrouter: {
+    response_format: cueResponseFormat(excerpts.filter(excerpt => excerpt.text.trim().length >= 3).map(excerpt => excerpt.id), includeBridge),
+    provider: { require_parameters: true },
+  } } : undefined;
+  const configuredBytes = strict ? ['openrouter', STRUCTURED_CUE_MODEL].reduce((bytes, scope) => bytes + Buffer.byteLength(JSON.stringify(
+    Object.fromEntries(Object.entries(configuredOptions?.[scope] ?? {}).filter(([key]) => key !== 'response_format')))), 0) : 0;
+  const wireBytes = (input: string, responseFormat: CueResponseFormat) => Buffer.byteLength(JSON.stringify({
+    model: 'anthropic/claude-sonnet-4.6', max_tokens: 1200, temperature: 0,
+    response_format: responseFormat, provider: { require_parameters: true },
+    messages: [{ role: 'system', content: CUE_SYSTEM_PROMPT }, { role: 'user', content: input }],
+  })) + configuredBytes;
+  const wireByteCeiling = providerOptions ? wireBytes(content, providerOptions.openrouter.response_format) : undefined;
+  if (wireByteCeiling !== undefined && wireByteCeiling > MAX_CUE_WIRE_BYTES) throw new Error('unsupported_window');
+  const maximumWireByteCeiling = strict ? Math.min(MAX_CUE_WIRE_BYTES,
+    wireBytes(framing, cueResponseFormat(Array.from({ length: MAX_EXCERPTS }, (_, i) => i + 1), includeBridge)) + MAX_CUE_WINDOW_BYTES * 7) : undefined;
   return {
     excerpts,
     content,
-    inputTokenCeiling: Buffer.byteLength(CUE_SYSTEM_PROMPT + content) + 1024,
-    maximumInputTokenCeiling: Buffer.byteLength(CUE_SYSTEM_PROMPT + framing) + MAX_CUE_WINDOW_BYTES * 6 + 1024,
+    providerOptions,
+    wireByteCeiling,
+    maximumWireByteCeiling,
+    inputTokenCeiling: (wireByteCeiling ?? Buffer.byteLength(CUE_SYSTEM_PROMPT + content)) + 1024,
+    maximumInputTokenCeiling: (maximumWireByteCeiling ?? Buffer.byteLength(CUE_SYSTEM_PROMPT + framing) + MAX_CUE_WINDOW_BYTES * 6) + 1024,
   };
 }
 
