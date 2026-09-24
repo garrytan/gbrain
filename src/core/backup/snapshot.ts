@@ -144,7 +144,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
   const engine = new PGLiteEngine();
   try {
     work = mkdtempSync(join(dirname(output), '.gbrain-backup-')); chmodSync(work, 0o700);
-    protectNewBackupPath(work, 'directory');
+    await protectNewBackupPath(work, 'directory');
     const receipt = readInstallReceipt(root);
     // The engine holds its real PGLite writer lock until publication completes.
     await engine.connect({ engine: 'pglite', database_path: dbPath });
@@ -191,7 +191,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
         'Native harness skills/routines must be reattached and verified; no platform account state is included.',
       ],
     };
-    const manifest = writeBackupArchive(output, { ...metadata }, files);
+    const manifest = await writeBackupArchive(output, { ...metadata }, files);
     return { archive: output, manifest };
   } finally {
     try { await engine.disconnect(); } finally {
@@ -228,7 +228,7 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new AgentInstallError('restore_target_exists', 'Restore only into a new, absent root. Existing state is never overwritten.');
     throw error;
   }
-  protectNewBackupPath(root, 'directory');
+  await protectNewBackupPath(root, 'directory');
   const restoreId = randomUUID();
   const receiptPath = join(root, 'restore-receipt.json');
   privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'restoring', mode }) + '\n');

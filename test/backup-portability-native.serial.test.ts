@@ -48,16 +48,49 @@ function protectedFiles(): string[] {
     .map(path => sha256(fs.readFileSync(join(root, path))));
 }
 
-function expectPrivate(path: string, directory: boolean, protectedAcl = false) {
+function collectChild(executable: string, args: string[], options: childProcess.ExecFileOptionsWithStringEncoding): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let watchdog = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let cleanup: ReturnType<typeof setTimeout> | undefined;
+    let child: childProcess.ChildProcess | undefined;
+    const finish = (error: Error | null, stdout = '') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline); clearTimeout(cleanup);
+      if (watchdog) error = Object.assign(new Error('asynchronous completion deadline'), { code: 'GBRAIN_TEST_COMPLETION_TIMEOUT' });
+      if (error) {
+        if (child?.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        child?.stdin?.destroy(); child?.stdout?.destroy(); child?.stderr?.destroy();
+        reject(error);
+      } else resolve(stdout);
+    };
+    child = childProcess.execFile(executable, args, options, (error, stdout) => finish(error, stdout));
+    child.on('error', error => finish(error));
+    deadline = setTimeout(() => {
+      watchdog = true;
+      cleanup = setTimeout(() => finish(new Error('asynchronous termination not confirmed')), 1_000);
+      child!.kill('SIGKILL');
+    }, 15_000);
+    const inputFailure = () => finish(Object.assign(new Error('asynchronous input unavailable'), { code: 'GBRAIN_TEST_INPUT_FAILURE' }));
+    if (!child.stdin) { inputFailure(); return; }
+    child.stdin.on('error', inputFailure);
+    try { child.stdin.end(); }
+    catch { inputFailure(); }
+  });
+}
+
+async function expectPrivate(path: string, directory: boolean, protectedAcl = false) {
   if (process.platform !== 'win32') {
     expect(fs.statSync(path).mode & 0o777).toBe(directory ? 0o700 : 0o600);
     return;
   }
   const script = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-inspect.ps1'), 'utf8');
   try {
-    const result = JSON.parse(execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    const result = JSON.parse(await collectChild(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-        env: { ...process.env, GBRAIN_TEST_ACL_PATH: path }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, GBRAIN_TEST_ACL_PATH: path }, encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
       }));
     expect(typeof result.user === 'string' && /^S-\d+(?:-\d+)+$/.test(result.user)).toBe(true);
     expect(Array.isArray(result.rules)).toBe(true);
@@ -82,15 +115,15 @@ async function expectOriginal() {
   expect(sha256(fs.readFileSync(archive))).toBe(archiveHash);
 }
 
-function expectIncomplete(into: string) {
+async function expectIncomplete(into: string) {
   expect(JSON.parse(fs.readFileSync(join(into, 'restore-receipt.json'), 'utf8'))).toMatchObject({ state: 'failed', original_preserved: true });
   expect(fs.existsSync(join(into, 'bin', 'gbrain'))).toBe(false);
   const stages = fs.readdirSync(into).filter(name => name.startsWith('.restore-'));
   expect(stages).toHaveLength(1);
-  expectPrivate(into, true, true);
-  expectPrivate(join(into, stages[0]), true);
+  await expectPrivate(into, true, true);
+  await expectPrivate(join(into, stages[0]), true);
   const payload = join(into, stages[0], 'payload', 'database.tar');
-  if (fs.existsSync(payload)) expectPrivate(payload, false);
+  if (fs.existsSync(payload)) await expectPrivate(payload, false);
 }
 
 function rawArchive(file: string, paths: string[]) {
@@ -153,7 +186,7 @@ beforeAll(async () => {
 
 afterAll(() => { if (temporary) fs.rmSync(temporary, { recursive: true, force: true }); });
 
-test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSOLE_PROBE !== '1')('private ACL setup compares hidden and visible PowerShell windows', () => {
+test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSOLE_PROBE !== '1')('private ACL setup compares hidden and visible PowerShell windows', async () => {
   const observations = [];
   for (const mode of ['hidden', 'visible', 'visible', 'hidden'] as const) {
     const path = join(temporary, `console-${observations.length} [literal] 'é`);
@@ -166,10 +199,10 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSO
     let productionHidden = false;
     let nativeError: string | null = null;
     let inspectionError: string | null = null;
-    const execute = childProcess.execFileSync;
-    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+    const execute = childProcess.execFile;
+    const inspect = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(execute, {
       apply(target, thisArg, args) {
-        const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+        const options = args[2] as childProcess.ExecFileOptionsWithStringEncoding;
         const protection = options?.env?.GBRAIN_BACKUP_PRIVATE_PATH === path;
         const inspection = options?.env?.GBRAIN_TEST_ACL_PATH === path;
         if (!protection && !inspection) return Reflect.apply(target, thisArg, args);
@@ -179,22 +212,29 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSO
           bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && !options.shell;
           productionHidden = options.windowsHide === true;
         } else inspections++;
-        try { return Reflect.apply(target, thisArg, [args[0], args[1], mode === 'hidden' ? options : { ...options, windowsHide: false }]); }
-        catch (error) {
+        const recordError = (error: unknown) => {
           const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
           if (protection) nativeError = code;
           else inspectionError = code;
-          throw error;
+        };
+        const callback = args[3];
+        try {
+          return Reflect.apply(target, thisArg, [args[0], args[1], mode === 'hidden' ? options : { ...options, windowsHide: false },
+            (error: childProcess.ExecFileException | null, stdout: string, stderr: string) => {
+              if (error) recordError(error);
+              callback(error, stdout, stderr);
+            }]);
         }
+        catch (error) { recordError(error); throw error; }
       },
     }));
     let protectedPath = false;
     let privateAcl = false;
     const started = performance.now();
     try {
-      try { privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
+      try { await privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
       if (mode === 'visible' && protectedPath) {
-        try { expectPrivate(path, true, true); privateAcl = true; } catch {}
+        try { await expectPrivate(path, true, true); privateAcl = true; } catch {}
       }
     } finally { inspect.mockRestore(); }
     const after = fs.lstatSync(path, { bigint: true });
@@ -220,7 +260,7 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSO
   }
 }, 120_000);
 
-for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')(`private ${kind} ACL setup compares cmdlet and direct dotnet calls`, () => {
+for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')(`private ${kind} ACL setup compares cmdlet and direct dotnet calls`, async () => {
   const legacyProgram = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-cmdlet-protect.ps1'), 'utf8').replace(/\r\n/g, '\n');
   const inspectProgram = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-inspect.ps1'), 'utf8');
   const observations = [];
@@ -235,13 +275,14 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     let bounded = false;
     let fixedExecutable = false;
     let stableProgram = false;
-    let protectionOptions: childProcess.ExecFileSyncOptionsWithStringEncoding | undefined;
+    let protectionOptions: childProcess.ExecFileOptionsWithStringEncoding | undefined;
+    let protectionChild: childProcess.ChildProcess | undefined;
     let nativeError: string | null = null;
     let inspectionError: string | null = null;
-    const execute = childProcess.execFileSync;
-    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+    const execute = childProcess.execFile;
+    const inspect = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(execute, {
       apply(target, thisArg, args) {
-        const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+        const options = args[2] as childProcess.ExecFileOptionsWithStringEncoding;
         const protection = options?.env?.GBRAIN_BACKUP_PRIVATE_PATH === path;
         const inspection = options?.env?.GBRAIN_TEST_ACL_PATH === path;
         if (!protection && !inspection) return Reflect.apply(target, thisArg, args);
@@ -249,23 +290,28 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
         if (protection) {
           launches++;
           fixedExecutable = args[0] === join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-          bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && !options.shell && options.windowsHide === true
-            && Buffer.isBuffer(options.input) && options.input.length === 0
-            && Array.isArray(options.stdio) && options.stdio.length === 3 && options.stdio.every(stream => stream === 'pipe');
+          bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && !options.shell && options.windowsHide === true;
           originalProgram ??= command.at(-1);
           stableProgram = command.at(-1) === originalProgram;
           protectionOptions = options;
         } else inspections++;
-        try {
-          expect(command.slice(0, -1)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
-          return Reflect.apply(target, thisArg, mode === 'cmdlet' && protection ? [args[0], [...command.slice(0, -1),
-            Buffer.from(legacyProgram, 'utf16le').toString('base64')], options] : args);
-        } catch (error) {
+        const recordError = (error: unknown) => {
           const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
           if (protection) nativeError = code;
           else inspectionError = code;
-          throw error;
-        }
+        };
+        const callback = args[3];
+        try {
+          expect(command.slice(0, -1)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
+          const child = Reflect.apply(target, thisArg, [args[0], mode === 'cmdlet' && protection
+            ? [...command.slice(0, -1), Buffer.from(legacyProgram, 'utf16le').toString('base64')] : command, options,
+            (error: childProcess.ExecFileException | null, stdout: string, stderr: string) => {
+              if (error) recordError(error);
+              callback(error, stdout, stderr);
+            }]);
+          if (protection) protectionChild = child;
+          return child;
+        } catch (error) { recordError(error); throw error; }
       },
     }));
     let protectedPath = false;
@@ -274,13 +320,13 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     let inspectionElapsedMs: number | null = null;
     const started = performance.now();
     try {
-      try { privacy.protectNewBackupPath(path, kind); protectedPath = true; } catch {}
+      try { await privacy.protectNewBackupPath(path, kind); protectedPath = true; } catch {}
       protectionElapsedMs = Math.round(performance.now() - started);
       if (mode === 'dotnet' && protectedPath) {
         const inspectionStarted = performance.now();
         try {
           if (!protectionOptions) throw new Error('Missing original launch options');
-          const actual = JSON.parse(childProcess.execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+          const actual = JSON.parse(await collectChild(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
             ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(inspectProgram, 'utf16le').toString('base64')],
             { ...protectionOptions, env: { ...process.env, GBRAIN_TEST_ACL_PATH: path } }));
           privateAcl = typeof actual.user === 'string' && /^S-\d+(?:-\d+)+$/.test(actual.user)
@@ -295,6 +341,8 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     const after = fs.lstatSync(path, { bigint: true });
     observations.push({ mode, protectionElapsedMs, inspectionElapsedMs, launches, inspections,
       bounded, fixedExecutable, stableProgram, nativeError, inspectionError, protectedPath, privateAcl,
+      closedInput: protectionChild?.stdin?.writableEnded === true,
+      pipedOutput: Boolean(protectionChild?.stdout && protectionChild?.stderr),
       sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
       empty: kind === 'directory' ? after.isDirectory() && fs.readdirSync(path).length === 0 : after.isFile() && after.size === 0n && after.nlink === 1n });
   }
@@ -304,6 +352,8 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     expect(observation.bounded).toBe(true);
     expect(observation.fixedExecutable).toBe(true);
     expect(observation.stableProgram).toBe(true);
+    expect(observation.closedInput).toBe(true);
+    expect(observation.pipedOutput).toBe(true);
     expect(observation.sameIdentity).toBe(true);
     expect(observation.empty).toBe(true);
     if (observation.mode !== 'dotnet') continue;
@@ -315,7 +365,7 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   }
 }, 120_000);
 
-test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in Windows PowerShell modules from the inherited environment', () => {
+test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in Windows PowerShell modules from the inherited environment', async () => {
   const observations = [];
   for (const mode of ['ambient', 'builtin', 'builtin', 'ambient'] as const) {
     const path = join(temporary, `module-path-${observations.length} [literal] 'é`);
@@ -329,10 +379,10 @@ test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in W
     let forcedSystemModules = false;
     let nativeError: string | null = null;
     let inspectionError: string | null = null;
-    const execute = childProcess.execFileSync;
-    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+    const execute = childProcess.execFile;
+    const inspect = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(execute, {
       apply(target, thisArg, args) {
-        const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+        const options = args[2] as childProcess.ExecFileOptionsWithStringEncoding;
         const protection = options?.env?.GBRAIN_BACKUP_PRIVATE_PATH === path;
         const inspection = options?.env?.GBRAIN_TEST_ACL_PATH === path;
         if (!protection && !inspection) return Reflect.apply(target, thisArg, args);
@@ -348,22 +398,29 @@ test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in W
             PSModulePath: join(dirname(args[0]), 'Modules') };
           forcedSystemModules = Object.keys(env).filter(key => key.toLowerCase() === 'psmodulepath').length === 1;
         }
-        try { return Reflect.apply(target, thisArg, [args[0], args[1], { ...options, env }]); }
-        catch (error) {
+        const recordError = (error: unknown) => {
           const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
           if (protection) nativeError = code;
           else inspectionError = code;
-          throw error;
+        };
+        const callback = args[3];
+        try {
+          return Reflect.apply(target, thisArg, [args[0], args[1], { ...options, env },
+            (error: childProcess.ExecFileException | null, stdout: string, stderr: string) => {
+              if (error) recordError(error);
+              callback(error, stdout, stderr);
+            }]);
         }
+        catch (error) { recordError(error); throw error; }
       },
     }));
     let protectedPath = false;
     let privateAcl = false;
     const started = performance.now();
     try {
-      try { privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
+      try { await privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
       if (mode === 'builtin' && protectedPath) {
-        try { expectPrivate(path, true, true); privateAcl = true; } catch {}
+        try { await expectPrivate(path, true, true); privateAcl = true; } catch {}
       }
     } finally { inspect.mockRestore(); }
     const after = fs.lstatSync(path, { bigint: true });
@@ -389,7 +446,28 @@ test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in W
   }
 }, 120_000);
 
-for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32')(`private ${kind} ACL setup uses an explicitly closed input pipe`, () => {
+for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32')(`private ${kind} ACL setup uses an explicitly closed input pipe`, async () => {
+  const capturePath = join(temporary, `input-capture-${kind}`);
+  if (kind === 'directory') fs.mkdirSync(capturePath);
+  else fs.writeFileSync(capturePath, '');
+  let launch: { executable: string; args: string[]; options: childProcess.ExecFileOptionsWithStringEncoding; child: childProcess.ChildProcess } | undefined;
+  const capture = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(childProcess.execFile, {
+    apply(target, thisArg, args) {
+      const child = Reflect.apply(target, thisArg, args);
+      if (args[2]?.env?.GBRAIN_BACKUP_PRIVATE_PATH === capturePath) {
+        expect(launch).toBeUndefined();
+        launch = { executable: args[0], args: [...args[1]], options: { ...args[2] }, child };
+      }
+      return child;
+    },
+  }));
+  try { await privacy.protectNewBackupPath(capturePath, kind); }
+  finally { capture.mockRestore(); }
+  expect(launch).toBeDefined();
+  const captured = launch!;
+  expect(captured.child.stdin?.writableEnded).toBe(true);
+  expect(Boolean(captured.child.stdout && captured.child.stderr)).toBe(true);
+  await expectPrivate(capturePath, kind === 'directory', true);
   const observations = [];
   for (const mode of ['baseline', 'candidate', 'candidate', 'baseline'] as const) {
     const path = join(temporary, `closed-input-${kind}-${observations.length} [literal] 'é`);
@@ -397,31 +475,44 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     else fs.writeFileSync(path, '');
     const before = fs.lstatSync(path, { bigint: true });
     let launches = 0;
-    let productionClosedInput = false;
-    let bounded = false;
+    let productionClosedInput = captured.child.stdin?.writableEnded === true && Boolean(captured.child.stdout && captured.child.stderr);
+    let bounded = captured.options.timeout === 15_000 && captured.options.maxBuffer === 64 * 1024 && captured.options.shell === undefined;
     let nativeError: string | null = null;
     let protectedPath = false;
-    const execute = childProcess.execFileSync;
-    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+    let launchedChild: childProcess.ChildProcess | undefined;
+    const execute = childProcess.execFile;
+    const inspect = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(execute, {
       apply(target, thisArg, args) {
-        const options = args[2] as childProcess.ExecFileSyncOptions | undefined;
+        const options = args[2] as childProcess.ExecFileOptionsWithStringEncoding | undefined;
         if (options?.env?.GBRAIN_BACKUP_PRIVATE_PATH !== path) return Reflect.apply(target, thisArg, args);
         launches++;
-        productionClosedInput = Array.isArray(options.stdio) && options.stdio.length === 3 && options.stdio.every(stream => stream === 'pipe')
-          && Buffer.isBuffer(options.input) && options.input.length === 0;
         bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && options.shell === undefined;
-        if (mode === 'baseline') args[2] = { ...options, input: undefined, stdio: ['ignore', 'pipe', 'pipe'] };
-        try { return Reflect.apply(target, thisArg, args); }
-        catch (error) {
-          nativeError = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
-          throw error;
-        }
+        const callback = args[3];
+        launchedChild = Reflect.apply(target, thisArg, [args[0], args[1], options,
+          (error: childProcess.ExecFileException | null, stdout: string, stderr: string) => {
+            if (error) nativeError = error.code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
+            callback(error, stdout, stderr);
+          }]);
+        return launchedChild;
       },
     }));
     const started = performance.now();
-    try { privacy.protectNewBackupPath(path, kind); protectedPath = true; }
-    catch (error) { if (!(error instanceof AgentInstallError) || error.code !== 'private_backup_path_unavailable') throw error; }
+    try {
+      if (mode === 'baseline') {
+        launches++;
+        protectedPath = execFileSync(captured.executable, captured.args, { ...captured.options,
+          env: { ...captured.options.env, GBRAIN_BACKUP_PRIVATE_PATH: path }, input: undefined, stdio: ['ignore', 'pipe', 'pipe'],
+        }) === 'private';
+      } else {
+        await privacy.protectNewBackupPath(path, kind);
+        protectedPath = true;
+      }
+    } catch (error) {
+      nativeError ??= (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
+      if (mode === 'candidate' && (!(error instanceof AgentInstallError) || error.code !== 'private_backup_path_unavailable')) throw error;
+    }
     finally { inspect.mockRestore(); }
+    if (mode === 'candidate') productionClosedInput = launchedChild?.stdin?.writableEnded === true && Boolean(launchedChild?.stdout && launchedChild?.stderr);
     const after = fs.lstatSync(path, { bigint: true });
     observations.push({ path, mode, elapsedMs: Math.round(performance.now() - started), launches, productionClosedInput, bounded, nativeError, protectedPath,
       sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
@@ -438,7 +529,7 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     if (observation.mode === 'candidate') {
       expect(observation.protectedPath).toBe(true);
       expect(observation.nativeError).toBeNull();
-      expectPrivate(observation.path, kind === 'directory', true);
+      await expectPrivate(observation.path, kind === 'directory', true);
     }
   }
 }, 120_000);
@@ -447,21 +538,33 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   const capturePath = join(temporary, `capture-${kind}`);
   if (kind === 'directory') fs.mkdirSync(capturePath);
   else fs.writeFileSync(capturePath, '');
-  let launch: { executable: string; args: string[]; options: childProcess.ExecFileSyncOptionsWithStringEncoding } | undefined;
+  let launch: { executable: string; args: string[]; options: childProcess.ExecFileOptionsWithStringEncoding } | undefined;
+  let capturedChild: childProcess.ChildProcess | undefined;
+  let capturedError: childProcess.ExecFileException | null | undefined;
+  let capturedOutput: string | undefined;
   let capturedCalls = 0;
   const execute = childProcess.execFileSync;
-  const capture = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+  const capture = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(childProcess.execFile, {
     apply(target, thisArg, args) {
-      const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+      const options = args[2] as childProcess.ExecFileOptionsWithStringEncoding;
       if (options.env?.GBRAIN_BACKUP_PRIVATE_PATH !== capturePath) return Reflect.apply(target, thisArg, args);
       capturedCalls++;
       launch = { executable: args[0], args: [...args[1]], options: { ...options } };
-      throw new Error('captured launch without executing');
+      const callback = args[3];
+      capturedChild = Reflect.apply(target, thisArg, [args[0], args[1], options,
+        (error: childProcess.ExecFileException | null, stdout: string, stderr: string) => {
+          capturedError = error;
+          capturedOutput = stdout;
+          callback(error ?? new Error('injected captured-launch callback failure'), stdout, stderr);
+        }]);
+      return capturedChild;
     },
   }));
-  try { expect(() => privacy.protectNewBackupPath(capturePath, kind)).toThrow(AgentInstallError); }
+  try { await expect(privacy.protectNewBackupPath(capturePath, kind)).rejects.toThrow(AgentInstallError); }
   finally { capture.mockRestore(); }
   expect(capturedCalls).toBe(1);
+  expect(capturedError).toBeNull();
+  expect(capturedOutput).toBe('private');
   expect(launch !== undefined).toBe(true);
   const captured = launch!;
   expect(captured.executable === join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')).toBe(true);
@@ -469,45 +572,14 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   expect(captured.options.maxBuffer).toBe(64 * 1024);
   expect(captured.options.shell).toBeUndefined();
   expect(captured.options.windowsHide).toBe(true);
-  expect(Buffer.isBuffer(captured.options.input) && captured.options.input.length === 0).toBe(true);
-  expect(Array.isArray(captured.options.stdio) && captured.options.stdio.length === 3 && captured.options.stdio.every(stream => stream === 'pipe')).toBe(true);
+  expect(capturedChild?.stdin?.writableEnded).toBe(true);
+  expect(Boolean(capturedChild?.stdout && capturedChild?.stderr)).toBe(true);
   const classify = (error: unknown) => {
     const code = (error as NodeJS.ErrnoException).code;
     return code === 'ETIMEDOUT' ? 'ETIMEDOUT' : code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'MAXBUFFER'
       : code === 'GBRAIN_TEST_COMPLETION_TIMEOUT' ? 'WATCHDOG' : code === 'GBRAIN_TEST_INPUT_FAILURE' ? 'INPUT' : 'other';
   };
-  const collect = (args: string[], env: NodeJS.ProcessEnv) => new Promise<string>((resolve, reject) => {
-    const { input, stdio, ...options } = captured.options;
-    let settled = false;
-    let watchdog = false;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
-    let cleanup: ReturnType<typeof setTimeout> | undefined;
-    const finish = (error: Error | null, stdout = '') => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(deadline); clearTimeout(cleanup);
-      if (watchdog) error = Object.assign(new Error('asynchronous completion deadline'), { code: 'GBRAIN_TEST_COMPLETION_TIMEOUT' });
-      if (error) {
-        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-        child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
-        reject(error);
-      } else resolve(stdout);
-    };
-    const child = childProcess.execFile(captured.executable, args, { ...options, env }, (error, stdout) => {
-      finish(error, stdout);
-    });
-    child.on('error', error => finish(error));
-    deadline = setTimeout(() => {
-      watchdog = true;
-      cleanup = setTimeout(() => finish(new Error('asynchronous termination not confirmed')), 1_000);
-      child.kill('SIGKILL');
-    }, 15_000);
-    const inputFailure = () => finish(Object.assign(new Error('asynchronous input unavailable'), { code: 'GBRAIN_TEST_INPUT_FAILURE' }));
-    if (!child.stdin) { inputFailure(); return; }
-    child.stdin.on('error', inputFailure);
-    try { child.stdin.end(input); }
-    catch { inputFailure(); }
-  });
+  const collect = (args: string[], env: NodeJS.ProcessEnv) => collectChild(captured.executable, args, { ...captured.options, env });
   const observations = [];
   for (const mode of ['sync', 'async', 'async', 'sync'] as const) {
     const path = join(temporary, `collection-${kind}-${observations.length} [literal] 'é`);
@@ -520,7 +592,9 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
     let killed = false;
     const started = performance.now();
     try {
-      const result = mode === 'sync' ? execute(captured.executable, captured.args, { ...captured.options, env }) : await collect(captured.args, env);
+      const result = mode === 'sync' ? execute(captured.executable, captured.args, {
+        ...captured.options, env, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
+      }) : await collect(captured.args, env);
       completed = result === 'private';
     } catch (error) {
       const failure = error as NodeJS.ErrnoException & { killed?: boolean };
@@ -574,7 +648,8 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   const stagedStarted = performance.now();
   try {
     stagedCompleted = execute(captured.executable, [...captured.args.slice(0, -1), Buffer.from(stagedProgram, 'utf16le').toString('base64')],
-      { ...captured.options, env: { ...captured.options.env, GBRAIN_BACKUP_PRIVATE_PATH: stagedPath, GBRAIN_TEST_ACL_STAGE: tracePath } }) === 'private';
+      { ...captured.options, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...captured.options.env, GBRAIN_BACKUP_PRIVATE_PATH: stagedPath, GBRAIN_TEST_ACL_STAGE: tracePath } }) === 'private';
   } catch (error) { stagedError = classify(error); }
   const stagedElapsedMs = Math.round(performance.now() - stagedStarted);
   const stagedAfter = fs.lstatSync(stagedPath, { bigint: true });
@@ -613,12 +688,61 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   }
 }, 120_000);
 
+for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32')(`private ${kind} protection and independent ACL inspection survive idle beyond the child timeout`, async () => {
+  const reference = join(temporary, `idle-reference-${kind} [literal] 'é`);
+  if (kind === 'directory') fs.mkdirSync(reference);
+  else fs.writeFileSync(reference, '');
+  await privacy.protectNewBackupPath(reference, kind);
+  await expectPrivate(reference, kind === 'directory', true);
+  const observations = [];
+  for (const operation of ['protection', 'inspection'] as const) {
+    for (const idleMs of [0, 16_000, 0]) {
+      const path: string = operation === 'inspection' ? reference : join(temporary, `idle-${kind}-${observations.length} [literal] 'é`);
+      if (operation === 'protection') {
+        if (kind === 'directory') fs.mkdirSync(path);
+        else fs.writeFileSync(path, '');
+      }
+      const before = fs.lstatSync(path, { bigint: true });
+      const idleStarted = performance.now();
+      if (idleMs) await Bun.sleep(idleMs);
+      const idleObservedMs = performance.now() - idleStarted;
+      const started = performance.now();
+      let completed = false;
+      let privateAcl = false;
+      let nativeError: string | null = null;
+      try {
+        if (operation === 'protection') await privacy.protectNewBackupPath(path, kind);
+        completed = true;
+        await expectPrivate(path, kind === 'directory', true);
+        privateAcl = true;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        nativeError = code === 'private_backup_path_unavailable' ? code : code === 'ETIMEDOUT' ? code : 'other';
+      }
+      const after = fs.lstatSync(path, { bigint: true });
+      observations.push({ operation, idleMs, idleObservedMs, elapsedMs: Math.round(performance.now() - started), completed, privateAcl, nativeError,
+        sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
+        empty: kind === 'directory' ? after.isDirectory() && fs.readdirSync(path).length === 0 : after.isFile() && after.size === 0n && after.nlink === 1n });
+    }
+  }
+  process.stderr.write(`Windows backup idle controls: ${JSON.stringify({ kind, arch: process.arch, runtime: Bun.version, observations })}\n`);
+  expect(observations).toHaveLength(6);
+  for (const observation of observations) {
+    if (observation.idleMs) expect(observation.idleObservedMs).toBeGreaterThan(15_000);
+    expect(observation.completed).toBe(true);
+    expect(observation.privateAcl).toBe(true);
+    expect(observation.nativeError).toBeNull();
+    expect(observation.sameIdentity).toBe(true);
+    expect(observation.empty).toBe(true);
+  }
+}, 120_000);
+
 test('native create, verify, absent-root restore and fresh-process reopen preserve exact data and nested paths', async () => {
   const protect = privacy.protectNewBackupPath;
   const protectedKinds: string[] = [];
-  const inspected = spyOn(privacy, 'protectNewBackupPath').mockImplementation((path, kind) => {
-    protect(path, kind);
-    expectPrivate(path, kind === 'directory', true);
+  const inspected = spyOn(privacy, 'protectNewBackupPath').mockImplementation(async (path, kind) => {
+    await protect(path, kind);
+    await expectPrivate(path, kind === 'directory', true);
     protectedKinds.push(kind);
   });
   let created: Awaited<ReturnType<typeof createPgliteBackup>>;
@@ -626,7 +750,7 @@ test('native create, verify, absent-root restore and fresh-process reopen preser
   finally { inspected.mockRestore(); }
   expect(protectedKinds).toEqual(['directory', 'file']);
   archiveHash = sha256(fs.readFileSync(archive));
-  expectPrivate(archive, false, true);
+  await expectPrivate(archive, false, true);
   expect(created.manifest.entries.length).toBeGreaterThanOrEqual(5);
   expect(created.manifest.entries.every(entry => !entry.path.includes('\\'))).toBe(true);
   expect(created.manifest.sources).toContainEqual({ id: 'nested', local_path: join(root, 'memory', 'nested'), managed_relative_path: 'memory/nested' });
@@ -638,8 +762,8 @@ test('native create, verify, absent-root restore and fresh-process reopen preser
   for (const directory of emptyDirectories) expect(fs.readdirSync(join(cluster, directory))).toEqual([]);
   const into = join(temporary, 'restored'); expect(fs.existsSync(into)).toBe(false);
   const result = await restorePgliteBackup({ archive, into });
-  expectPrivate(into, true, true);
-  expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
+  await expectPrivate(into, true, true);
+  await expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
   expect(result.quarantined_jobs).toBe(1);
   expect(result.reconnect_required.some(line => line.includes('2 legacy absolute page origins were preserved unchanged'))).toBe(true);
   const program = `import {PGLiteEngine} from ${JSON.stringify(pathToFileURL(resolve(import.meta.dir, '../src/core/pglite-engine.ts')).href)};
@@ -669,7 +793,7 @@ try { const state = {}; for (const [key, sql] of Object.entries(${JSON.stringify
   expect(config.mcp.skills_dir).toBe(join(into, 'instructions', 'nested'));
   expect(config.autopilot.auto_drain.enabled).toBe(false);
   expect(fs.readFileSync(join(config.storage.localPath, 'bytes.bin'))).toEqual(attachment);
-  expectPrivate(join(config.storage.localPath, 'bytes.bin'), false);
+  await expectPrivate(join(config.storage.localPath, 'bytes.bin'), false);
   expect(fs.readFileSync(join(into, 'memory', 'nested', 'note.md'))).toEqual(fs.readFileSync(join(root, 'memory', 'nested', 'note.md')));
   for (const directory of emptyDirectories) expect(fs.readdirSync(join(into, '.gbrain', 'brain.pglite', directory))).toEqual([]);
   expect(readInstallReceipt(into)).toMatchObject({ state: 'installing', native: { verification: 'unverified' } });
@@ -693,14 +817,14 @@ test('recorded Windows and POSIX path semantics rebase only provably managed pat
   expect(() => confinedPath(join(root, 'memory') + '/../instructions', 'nested')).toThrow('traversal');
 });
 
-test('portable manifests reject traversal, absolute names and Windows aliases before extraction', () => {
+test('portable manifests reject traversal, absolute names and Windows aliases before extraction', async () => {
   const into = join(temporary, 'unsafe-entries'); fs.mkdirSync(into);
   const input = join(root, 'memory', 'nested', 'note.md');
   for (const name of ['../escape', '/absolute', 'C:/absolute', 'C:relative', '//server/share', '\\\\server\\share', 'a\\b', 'a//b', './a', 'a/../b', 'a/./b', 'a/', 'a\0b', 'a\nb', 'a:stream', 'a.', 'a ', 'CON', 'nul.txt', 'com1', 'LPT9.log', 'x/aux', 'conin$', 'conout$.txt', 'CON .txt', 'a?b', 'a*b']) {
     const bad = join(temporary, 'bad-entry'); rawArchive(bad, [name]);
     expect(() => readBackupArchive(bad, into)).toThrow();
     expect(fs.readdirSync(into)).toEqual([]);
-    expect(() => writeBackupArchive(join(temporary, 'bad-output'), {}, [{ path: name, file: input }])).toThrow();
+    await expect(writeBackupArchive(join(temporary, 'bad-output'), {}, [{ path: name, file: input }])).rejects.toThrow();
     expect(fs.existsSync(join(temporary, 'bad-output'))).toBe(false);
   }
   expect(() => checkedManagedPaths(null, ['Memory', 'memory/nested'])).toThrow();
@@ -721,7 +845,7 @@ test('a colliding restore inventory preserves its archive and never publishes re
   const hash = sha256(fs.readFileSync(bad));
   const into = join(temporary, 'duplicate-restore');
   await expect(restorePgliteBackup({ archive: bad, into })).rejects.toThrow('conflicting');
-  expectIncomplete(into);
+  await expectIncomplete(into);
   expect(sha256(fs.readFileSync(bad))).toBe(hash);
   expect(fs.existsSync(join(into, '.gbrain'))).toBe(false);
   await expectOriginal();
@@ -735,7 +859,7 @@ for (const kind of ['corrupt', 'truncated'] as const) test(`${kind} archive pres
   const hash = sha256(fs.readFileSync(bad));
   const into = join(temporary, kind + '-restore');
   await expect(restorePgliteBackup({ archive: bad, into })).rejects.toThrow(kind === 'corrupt' ? 'checksum' : 'length');
-  expectIncomplete(into);
+  await expectIncomplete(into);
   expect(fs.existsSync(join(into, '.gbrain'))).toBe(false);
   expect(sha256(fs.readFileSync(bad))).toBe(hash);
   await expectOriginal();
@@ -794,7 +918,7 @@ for (const boundary of ['file-fsync', 'publication'] as const) test(`unexpected 
   try { await expect(restorePgliteBackup({ archive, into })).rejects.toMatchObject({ code: 'EIO' }); }
   finally { fault.mockRestore(); }
   expect(injected).toBe(true);
-  expectIncomplete(into);
+  await expectIncomplete(into);
   await expect(restorePgliteBackup({ archive, into })).rejects.toMatchObject({ code: 'restore_target_exists' });
   await expectOriginal();
 });
@@ -804,14 +928,14 @@ for (const boundary of ['backup-directory', 'restore-root', 'archive-file'] as c
   const output = join(temporary, boundary + '-archive');
   const protect = privacy.protectNewBackupPath;
   let refused = false;
-  const fault = spyOn(privacy, 'protectNewBackupPath').mockImplementation((path, kind) => {
+  const fault = spyOn(privacy, 'protectNewBackupPath').mockImplementation(async (path, kind) => {
     if (boundary === 'restore-root' ? path === into : boundary === 'archive-file' ? kind === 'file' : kind === 'directory') {
       expect(kind === 'directory' ? fs.readdirSync(path) : fs.readFileSync(path)).toEqual(kind === 'directory' ? [] : Buffer.alloc(0));
       refused = true;
       if (process.platform === 'win32') {
         const systemRoot = process.env.SystemRoot;
         process.env.SystemRoot = join(temporary, 'unavailable-windows-tools');
-        try { return protect(path, kind); }
+        try { return await protect(path, kind); }
         finally {
           if (systemRoot === undefined) delete process.env.SystemRoot;
           else process.env.SystemRoot = systemRoot;
@@ -819,7 +943,7 @@ for (const boundary of ['backup-directory', 'restore-root', 'archive-file'] as c
       }
       throw new AgentInstallError('private_backup_path_unavailable', 'injected unavailable Windows privacy enforcement');
     }
-    protect(path, kind);
+    await protect(path, kind);
   });
   try {
     await expect(boundary === 'restore-root' ? restorePgliteBackup({ archive, into }) : createPgliteBackup({ root, output })).rejects.toMatchObject({ code: 'private_backup_path_unavailable' });
@@ -831,30 +955,102 @@ for (const boundary of ['backup-directory', 'restore-root', 'archive-file'] as c
   await expectOriginal();
 });
 
+for (const boundary of ['backup-directory', 'restore-root'] as const) for (const permitted of [true, false]) test(`pending ${boundary} privacy prevents payload publication before ${permitted ? 'success' : 'refusal'}`, async () => {
+  const into = join(temporary, `pending-${boundary}-${permitted}-restore`);
+  const output = join(temporary, `pending-${boundary}-${permitted}-archive`);
+  let release!: (permitted: boolean) => void;
+  const permission = new Promise<boolean>(resolve => { release = resolve; });
+  let entered!: () => void;
+  const pending = new Promise<void>(resolve => { entered = resolve; });
+  let privatePath = '';
+  let protectionReleased = false;
+  let prematureOpen = false;
+  let settled = false;
+  const protect = privacy.protectNewBackupPath;
+  const connect = PGLiteEngine.prototype.connect;
+  const opened = spyOn(PGLiteEngine.prototype, 'connect').mockImplementation(async function (this: PGLiteEngine, config) {
+    if (!protectionReleased) { prematureOpen = true; throw new Error('database opened before privacy completed'); }
+    return connect.call(this, config);
+  });
+  const paused = spyOn(privacy, 'protectNewBackupPath').mockImplementation(async (path, kind) => {
+    if (!privatePath && (boundary === 'restore-root' ? path === into : kind === 'directory')) {
+      privatePath = path;
+      entered();
+      if (!await permission) throw new AgentInstallError('private_backup_path_unavailable', 'injected delayed privacy refusal');
+      await protect(path, kind);
+      protectionReleased = true;
+      return;
+    }
+    await protect(path, kind);
+  });
+  const result = (boundary === 'restore-root' ? restorePgliteBackup({ archive, into }) : createPgliteBackup({ root, output }))
+    .then(value => ({ value, error: null }), error => ({ value: null, error }))
+    .finally(() => { settled = true; });
+  try {
+    await Promise.race([pending, result.then(() => { throw new Error('operation finished without pending privacy'); })]);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(prematureOpen).toBe(false);
+    expect(fs.readdirSync(privatePath)).toEqual([]);
+    expect(fs.existsSync(output)).toBe(false);
+    expect(fs.existsSync(join(into, 'restore-receipt.json'))).toBe(false);
+    expect(fs.existsSync(join(into, '.gbrain'))).toBe(false);
+    expect(protectedFiles()).toEqual(originalFiles);
+    expect(sha256(fs.readFileSync(archive))).toBe(archiveHash);
+    release(permitted);
+    const outcome = await result;
+    if (permitted) {
+      expect(outcome.error).toBeNull();
+      expect(outcome.value).not.toBeNull();
+      expect(protectionReleased).toBe(true);
+      if (boundary === 'restore-root') {
+        expect(JSON.parse(fs.readFileSync(join(into, 'restore-receipt.json'), 'utf8'))).toMatchObject({ state: 'ready', launcher_ready: false });
+        await expectPrivate(into, true, true);
+      } else {
+        expect(fs.statSync(output).size).toBeGreaterThan(0);
+        await expectPrivate(output, false, true);
+      }
+    } else {
+      expect(outcome.error).toMatchObject({ code: 'private_backup_path_unavailable' });
+      expect(outcome.value).toBeNull();
+      expect(fs.existsSync(output)).toBe(false);
+      expect(fs.existsSync(join(into, 'restore-receipt.json'))).toBe(false);
+      if (boundary === 'restore-root') expect(fs.readdirSync(into)).toEqual([]);
+      else expect(fs.existsSync(privatePath)).toBe(false);
+    }
+    expect(prematureOpen).toBe(false);
+  } finally {
+    release(false);
+    await result;
+    paused.mockRestore(); opened.mockRestore();
+  }
+  await expectOriginal();
+});
+
 test('backup paths exclude inherited public access without changing the existing parent', async () => {
   const parent = join(temporary, 'public-parent'); fs.mkdirSync(parent);
   const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const inspectParent = () => process.platform === 'win32'
-    ? execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '[IO.Directory]::GetAccessControl($env:GBRAIN_TEST_ACL_PATH).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All)'], {
-      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim() : fs.statSync(parent).mode;
+  const inspectParent = async () => process.platform === 'win32'
+    ? (await collectChild(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '[IO.Directory]::GetAccessControl($env:GBRAIN_TEST_ACL_PATH).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All)'], {
+      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
+    })).trim() : fs.statSync(parent).mode;
   if (process.platform === 'win32') {
     const script = `$ErrorActionPreference='Stop'; $a=[IO.Directory]::GetAccessControl($env:GBRAIN_TEST_ACL_PATH);
 $r=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow);
 $a.AddAccessRule($r); [IO.Directory]::SetAccessControl($env:GBRAIN_TEST_ACL_PATH, $a)`;
-    execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
+    await collectChild(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+      env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
     });
   } else fs.chmodSync(parent, 0o777);
-  const before = inspectParent();
+  const before = await inspectParent();
   const output = join(parent, 'snapshot.gbrain-backup');
   const protect = privacy.protectNewBackupPath;
-  const inspected = spyOn(privacy, 'protectNewBackupPath').mockImplementation((path, kind) => {
-    protect(path, kind); expectPrivate(path, kind === 'directory', true);
+  const inspected = spyOn(privacy, 'protectNewBackupPath').mockImplementation(async (path, kind) => {
+    await protect(path, kind); await expectPrivate(path, kind === 'directory', true);
   });
   try { await createPgliteBackup({ root, output }); }
   finally { inspected.mockRestore(); }
-  expectPrivate(output, false, true);
+  await expectPrivate(output, false, true);
   const into = join(parent, 'retained-failure');
   const rename = fs.renameSync;
   let interrupted = false;
@@ -868,13 +1064,13 @@ $a.AddAccessRule($r); [IO.Directory]::SetAccessControl($env:GBRAIN_TEST_ACL_PATH
   try { await expect(restorePgliteBackup({ archive: output, into })).rejects.toThrow('injected public-parent restore interruption'); }
   finally { fault.mockRestore(); }
   expect(interrupted).toBe(true);
-  expectIncomplete(into);
-  expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
+  await expectIncomplete(into);
+  await expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
   expect(fs.readFileSync(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), 'utf8').trim()).toBe('17');
   const [stage] = fs.readdirSync(into).filter(name => name.startsWith('.restore-'));
-  expectPrivate(join(into, stage, 'payload', 'database.tar'), false);
+  await expectPrivate(join(into, stage, 'payload', 'database.tar'), false);
   expect(fs.statSync(join(into, stage, 'payload', 'database.tar')).size).toBeGreaterThan(0);
-  expect(inspectParent()).toBe(before);
+  expect(await inspectParent()).toBe(before);
   await expectOriginal();
 }, 120_000);
 
@@ -918,16 +1114,16 @@ for (const failureCode of [null, 'EPERM', 'EIO'] as const) test(failureCode
   expect(flushes).toBe(1);
   expect(closes).toBe(1);
   if (flushError) {
-    expectIncomplete(into);
+    await expectIncomplete(into);
     expect(fs.existsSync(join(into, '.gbrain'))).toBe(false);
-    expectPrivate(versionPath, false);
+    await expectPrivate(versionPath, false);
     expect(fs.readFileSync(versionPath, 'utf8').trim()).toBe('17');
     const [stage] = fs.readdirSync(into).filter(name => name.startsWith('.restore-'));
-    expectPrivate(join(into, stage, 'payload', 'database.tar'), false);
+    await expectPrivate(join(into, stage, 'payload', 'database.tar'), false);
     expect(fs.statSync(join(into, stage, 'payload', 'database.tar')).size).toBeGreaterThan(0);
   } else {
     expect(JSON.parse(fs.readFileSync(join(into, 'restore-receipt.json'), 'utf8')).state).toBe('ready');
-    expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
+    await expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
     expect(fs.readFileSync(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), 'utf8').trim()).toBe('17');
     expect(fs.readFileSync(join(into, 'memory', 'nested', 'note.md'))).toEqual(fs.readFileSync(join(root, 'memory', 'nested', 'note.md')));
     expect(fs.readFileSync(join(into, 'memory', 'attachments', 'nested', 'bytes.bin'))).toEqual(attachment);

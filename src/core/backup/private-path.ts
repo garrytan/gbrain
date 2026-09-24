@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentInstallError, assertNoSymlinks } from '../agent-install/state.ts';
@@ -42,17 +42,24 @@ foreach ($rule in $rules) {
 [Console]::Write('private')
 `;
 
-export function protectNewBackupPath(path: string, kind: 'directory' | 'file'): void {
+export async function protectNewBackupPath(path: string, kind: 'directory' | 'file'): Promise<void> {
   if (process.platform !== 'win32') return;
   try {
     assertNoSymlinks(path);
     const before = lstatSync(path, { bigint: true });
     if (!before.ino || (kind === 'directory' ? !before.isDirectory() || readdirSync(path).length !== 0 : !before.isFile() || before.size !== 0n || before.nlink !== 1n)) throw new Error('Expected a new empty path with stable identity');
-    const result = execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(protect, 'utf16le').toString('base64')], {
-        env: { ...process.env, GBRAIN_BACKUP_PRIVATE_PATH: path, GBRAIN_BACKUP_PRIVATE_KIND: kind },
-        encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
-      });
+    const result = await new Promise<string>((resolve, reject) => {
+      let inputFailed = false;
+      const child = execFile(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+        ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(protect, 'utf16le').toString('base64')], {
+          env: { ...process.env, GBRAIN_BACKUP_PRIVATE_PATH: path, GBRAIN_BACKUP_PRIVATE_KIND: kind },
+          encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
+        }, (error, stdout) => error || inputFailed ? reject(error ?? new Error('Private path input failed')) : resolve(stdout));
+      const inputFailure = () => { inputFailed = true; child.kill(); };
+      if (!child.stdin) { inputFailure(); return; }
+      child.stdin.once('error', inputFailure);
+      try { child.stdin.end(); } catch { inputFailure(); }
+    });
     assertNoSymlinks(path);
     const after = lstatSync(path, { bigint: true });
     if (result !== 'private' || before.dev !== after.dev || before.ino !== after.ino

@@ -58,7 +58,7 @@ export function hashFile(file: string): { size: number; sha256: string } {
 }
 
 /** Publication uses link(2), which refuses an existing target atomically. */
-export function writeBackupArchive(output: string, metadata: Record<string, unknown>, files: ArchiveInput[]): ArchiveManifest {
+export async function writeBackupArchive(output: string, metadata: Record<string, unknown>, files: ArchiveInput[]): Promise<ArchiveManifest> {
   assertNoSymlinks(output);
   const entries = files.map(input => {
     checkedRelativePath(input.path);
@@ -74,7 +74,7 @@ export function writeBackupArchive(output: string, metadata: Record<string, unkn
   const temporary = `${output}.partial-${randomUUID()}`;
   const fd = openSync(temporary, 'wx', 0o600);
   try {
-    protectNewBackupPath(temporary, 'file');
+    await protectNewBackupPath(temporary, 'file');
     writeAll(fd, MAGIC); writeAll(fd, sizeHeader); writeAll(fd, encoded);
     const buffer = Buffer.alloc(1024 * 1024);
     for (let i = 0; i < files.length; i++) {
