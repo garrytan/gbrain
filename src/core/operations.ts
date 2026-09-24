@@ -84,6 +84,7 @@ import { chunksOperations } from './ops/chunks.ts';
 import { ingestLogOperations } from './ops/ingest-log.ts';
 import { usageOperations } from './ops/usage.ts';
 import { filesOperations } from './ops/files.ts';
+import { attachmentsOperations } from './ops/attachments.ts';
 import { jobsOperations } from './ops/jobs.ts';
 import { orphansOperations } from './ops/orphans.ts';
 import { calibrationOperations } from './ops/calibration.ts';
@@ -163,6 +164,7 @@ export const operations: Operation[] = [
   ...usageOperations,
   // Files (file_list, file_upload, file_url) — ops/files.ts
   ...filesOperations,
+  ...attachmentsOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
   // get_job_progress, pause_job, resume_job, replay_job, send_job_message)
   // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts
@@ -282,8 +284,10 @@ const OP_AREAS: Record<string, string> = {
   // ingest log
   log_ingest: 'ingest', get_ingest_log: 'ingest',
   get_usage: 'admin',
-  // files (localOnly)
+  // files (legacy localOnly + scoped remote attachments)
   file_list: 'files', file_upload: 'files', file_url: 'files',
+  attachment_begin: 'files', attachment_write: 'files', attachment_complete: 'files',
+  attachment_abort: 'files', attachment_list: 'files', attachment_read: 'files',
   // jobs (Minions + agent lane)
   submit_job: 'jobs', get_job: 'jobs', list_jobs: 'jobs', cancel_job: 'jobs',
   retry_job: 'jobs', get_job_progress: 'jobs', pause_job: 'jobs',

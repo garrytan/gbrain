@@ -43,6 +43,8 @@ const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Flags that live deeper than the one-level module scan. Keep commented. */
 const EXTRA_FLAGS: Record<string, string[]> = {
+  // Native remote attachments are routed before the host files command.
+  files: ['--request-id', '--output', '--after-id'],
   // embed's pace knobs resolve inside src/core/pace-mode.ts (two levels deep).
   embed: ['--pace', '--pace-max-concurrency'],
   // sync shares the same pace surface via env/config plus CLI passthrough.

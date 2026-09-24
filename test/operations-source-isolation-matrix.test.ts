@@ -158,6 +158,8 @@ const MATRIX: Row[] = [
   { name: 'get_timeline', mode: 'isolated', args: { slug: 'people/beta-person' } },
   { name: 'get_versions', mode: 'isolated', args: { slug: 'notes/beta-note' } },
   { name: 'get_raw_data', mode: 'isolated', args: { slug: 'notes/beta-note' } },
+  { name: 'attachment_list', mode: 'isolated', args: { page_slug: 'notes/beta-note' } },
+  { name: 'attachment_read', mode: 'skip', reason: 'Requires a real binary backend; test/attachments.test.ts exercises byte retrieval and cross-source/privacy refusals over real storage.' },
   { name: 'resolve_slugs', mode: 'isolated', args: { partial: 'beta' } },
   { name: 'get_chunks', mode: 'isolated', args: { slug: 'notes/beta-note' } },
   { name: 'get_ingest_log', mode: 'isolated', args: { limit: 50 } },
@@ -233,6 +235,9 @@ beforeAll(async () => {
       timeline: `- ${TODAY}: ${MARK} timeline entry`, frontmatter: { marker: MARK },
     }, { sourceId: src });
     // Typeless page: schema_review_orphans lists pages with NULL/empty type.
+    await engine.executeRaw(`INSERT INTO files (source_id,page_id,page_slug,filename,storage_path,content_hash)
+      SELECT source_id,id,slug,$3,$3,'fixture' FROM pages WHERE source_id=$1 AND slug=$2`,
+    [src, `notes/${name}-note`, `${MARK}-attachment`]);
     await engine.putPage(`misc/${name}-orphan`, {
       type: 'note', title: `${MARK} Orphan`, compiled_truth: `${MARK} orphan`, frontmatter: {},
     }, { sourceId: src });

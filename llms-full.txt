@@ -7782,3 +7782,5 @@ should match your expectations for the corpus.
 ---
 
 # Migrations
+
+For remote original-file transfers, see [Native MCP attachments](docs/attachments.md).

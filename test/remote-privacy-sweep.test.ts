@@ -154,6 +154,7 @@ async function sweepCall(name: string, params: Record<string, unknown>, shape: S
 // A few explicit `{}` entries remain as "considered, takes no params"
 // documentation — behaviorally identical to the fallback.
 const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
+  attachment_list: { page_slug: WORLD_PAGE_SLUG },
   get_page: { slug: WORLD_FENCE_SLUG, include_content: true },
   fetch: { id: WORLD_FENCE_SLUG },
   list_pages: {},
@@ -213,6 +214,7 @@ const COORDINATED_WRITES = new Set(['put_page', 'capture', 'delete_page', 'resto
   'get_write_request', 'list_write_requests', 'cancel_write_request']);
 
 const EXPECTED_BY_SHAPE: Record<string, Partial<Record<Shape, Outcome>>> = {
+  attachment_list: { scalar: 'error' }, // HTTP without an authenticated owner fails closed.
   whoami: { scalar: 'error', federated: 'ok' },
   list_jobs: { scalar: 'error', federated: 'ok' },
 };
@@ -230,6 +232,9 @@ const EXPECTED_BY_SHAPE: Record<string, Partial<Record<Shape, Outcome>>> = {
 //              permission_denied with the mcp.* config key)
 type Outcome = 'data' | 'ok' | 'error' | 'denied';
 const EXPECTED_OUTCOME: Record<string, Outcome> = {
+  attachment_list: 'data',
+  attachment_read: 'error', // Private-page attachment fixture below; no bytes/metadata may escape.
+  attachment_begin: 'error', attachment_write: 'error', attachment_complete: 'error', attachment_abort: 'error',
   // reads that must prove corpus contact
   get_page: 'data',
   fetch: 'data',
@@ -500,6 +505,11 @@ ${PRIV.pageBody}
   });
   // 4. Facts hot memory: one world, one private (also feeds the
   //    _meta.brain_hot_memory channel the metaHook injects).
+  for (const [slug, filename] of [[WORLD_PAGE_SLUG, WORLD.pageTitle], [PRIV_PAGE_SLUG, PRIV.pageTitle]]) {
+    const [file] = await engine.executeRaw<{ id: number }>(`INSERT INTO files (source_id,page_id,page_slug,filename,storage_path,content_hash)
+      SELECT source_id,id,slug,$2,$2,'fixture' FROM pages WHERE source_id='default' AND slug=$1 RETURNING id`, [slug, filename]);
+    if (slug === PRIV_PAGE_SLUG) PARAM_FACTORY.attachment_read = { attachment_id: file.id };
+  }
   const remember = operationsByName['remember'];
   await remember.handler(localCtx(), {
     fact: WORLD.fact,
