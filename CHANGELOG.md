@@ -10,6 +10,64 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.56.3.0] - 2026-09-24
+
+**Spend less time rebuilding test fixtures without dropping database coverage.**
+
+Contributors can check the same behavior with less repeated setup. Shared
+database checks keep their local and server-backed coverage, but no longer
+repeat the local half inside the server-backed lane. Ordinary database resets
+reuse an already-current migration history; tests of migration behavior still
+replay it explicitly.
+
+The complete nightly database collection now runs across four independent
+workers. A final check requires every expected file to be accounted for once,
+on the same revision, before accepting the run. Cancelled workers cannot report
+success, and one coverage run cannot overwrite another run's output.
+
+This release changes test infrastructure, not your stored memories or normal
+GBrain commands. It does not enable paid-provider tests or reduce the sustained
+durability workload.
+
+### For contributors
+
+Run the complete local gate with `bun run ci:local`. To exercise the complete
+scheduled coverage profile on demand, dispatch the E2E workflow with
+`full_corpus=true`; ordinary dispatches keep their existing scope.
+
+| Work | What changes | What stays covered |
+| --- | --- | --- |
+| Shared database contracts | Each backend has its own execution owner | Both PGLite and PostgreSQL assertions |
+| Database setup | Current migration history survives ordinary resets | Explicit cold replay, cleanup and embedding identity |
+| Large fixtures | Reuse setup and analyze the original seeded data | Original sizes, assertions and performance thresholds |
+| Nightly database checks | Four isolated workers with exact file receipts | The complete discovered collection |
+
+The matched sequential E2E benchmark on the audited baseline improved from
+43m05.91s to 37m48.30s, a 12.28% reduction. Both timing runs retained the same
+two host-environment failures; they are timing evidence, not passing gates.
+The integrated changes separately passed the complete clean Docker gate.
+The four-worker nightly benefit is not yet measured, and a 50% reduction in
+overall test time is not established.
+
+## To take advantage of v0.56.3.0
+
+No database migration, service change or user configuration is required.
+Contributors should use the updated runners and the coverage ownership guidance
+in [Testing](docs/TESTING.md).
+
+### Itemized changes
+
+- Select PostgreSQL before registering shared E2E suites, retaining local-only
+  cases in their unit owners and refusing missing or unsafe test databases.
+- Preserve the migration ledger and stored embedding identity during ordinary
+  fixture resets. Explicit legacy-width setup aligns both columns and identity.
+- Reuse the embedded admin fixture, batch configured-root fixtures, and analyze
+  dense graph and entity-card data without shrinking their workloads.
+- Validate native test reports, cancellation status, exclusive coverage roots
+  and exact same-revision nightly execution receipts.
+- Refresh full-profile scheduling weights from complete recorded runs and
+  document the separate unit, integration, durability and native coverage owners.
+
 ## [0.56.2.0] - 2026-09-24
 
 **Keep valid search data, publish the right file, and restore backups safely.**
