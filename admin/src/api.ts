@@ -1,5 +1,15 @@
 const BASE = '';
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly outcome?: 'failed' | 'unknown') { super(message); }
+}
+
+export function mutationOutcomeUnknown(cause: unknown): boolean {
+  if (!(cause instanceof ApiError)) return true;
+  if (cause.outcome) return cause.outcome === 'unknown';
+  return cause.status >= 500 || cause.status === 408;
+}
+
 // v0.26.3 trust model (D11 + D12): the admin UI does NOT cache the
 // bootstrap token in browser JS state. On 401, redirect to login —
 // no auto-reauth via saved token, no localStorage/sessionStorage read.
@@ -10,14 +20,14 @@ async function apiFetch(path: string, options?: RequestInit) {
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
   });
-  if (res.status === 401) {
-    // No token cache to retry from. Redirect to login.
-    window.location.hash = '#login';
-    throw new Error('Unauthorized');
-  }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || body.error || `HTTP ${res.status}`);
+    const body = await res.json().catch(() => null);
+    if (res.status === 401) window.location.hash = '#login';
+    const retry = res.status === 429 ? ` Wait ${res.headers.get('retry-after') || '60'} seconds before retrying.` : '';
+    const message = typeof body?.message === 'string' ? body.message : typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`;
+    const remedy = typeof body?.next_action === 'string' ? ` ${body.next_action}` : '';
+    const outcome = body?.outcome === 'unknown' || body?.outcome === 'failed' ? body.outcome : undefined;
+    throw new ApiError(message + remedy + retry, res.status, outcome);
   }
   return res.json();
 }
@@ -46,8 +56,15 @@ export const api = {
   sources: () => apiFetch('/admin/api/sources'),
   grantCatalog: () => apiFetch('/admin/api/grant-catalog'),
   clientGrant: (clientId: string) => apiFetch(`/admin/api/grants/${encodeURIComponent(clientId)}`),
+  clientDetails: (clientId: string) => apiFetch(`/admin/api/clients/${encodeURIComponent(clientId)}`),
+  clientSetup: (clientId: string, harness: string, flow?: string) => {
+    const query = new URLSearchParams({ harness });
+    if (flow) query.set('flow', flow);
+    return apiFetch(`/admin/api/clients/${encodeURIComponent(clientId)}/setup?${query}`);
+  },
+  clientLifecycle: (clientId: string, body: Record<string, unknown>) => apiFetch(`/admin/api/clients/${encodeURIComponent(clientId)}/lifecycle`, { method: 'POST', body: JSON.stringify(body) }),
   registerClient: (body: Record<string, unknown>) => apiFetch('/admin/api/register-client', { method: 'POST', body: JSON.stringify(body) }),
-  recoverClient: (clientId: string) => apiFetch('/admin/api/recover-client', { method: 'POST', body: JSON.stringify({ clientId }) }),
+  recoverClient: (clientId: string, harness?: string, flow?: string) => apiFetch('/admin/api/recover-client', { method: 'POST', body: JSON.stringify({ clientId, harness, flow }) }),
   updateClientGrant: (clientId: string, body: Record<string, unknown>) => apiFetch('/admin/api/rescope-client', { method: 'POST', body: JSON.stringify({ ...body, clientId }) }),
   requests: (page = 1, qs = '') => apiFetch(`/admin/api/requests?page=${page}${qs}`),
   apiKeys: () => apiFetch('/admin/api/api-keys'),

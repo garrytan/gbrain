@@ -346,6 +346,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // E2E AND the HTTP contract E2E for the webhook route.
   "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts"],
   "src/core/oauth-grants.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
+  "src/core/grants/lifecycle.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-clients.ts": ["test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-grants.ts": ["test/e2e/serve-http-consent.test.ts", "test/e2e/serve-http-source-grant.test.ts"],
+  "src/commands/serve-http-registration.ts": ["test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-admin-limits.ts": ["test/e2e/serve-http-consent.test.ts"],
+  "src/core/harness/client-setup.ts": ["test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http-oauth.ts": ["test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http.ts": [
     "test/e2e/serve-http-consent.test.ts",

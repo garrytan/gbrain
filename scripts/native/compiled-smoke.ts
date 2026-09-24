@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 /** Native addon packaging and two-process exclusion in a real compiled binary. */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { nativeLockCapability } from '../../src/core/persistence/native-lock.ts';
+import { removeCompiledSmokeDirectory } from './compiled-smoke-cleanup.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'gbrain-native-compiled-'));
 const arg = process.argv.indexOf('--binary');
@@ -41,5 +42,5 @@ try {
   console.log(`Compiled native lock smoke passed: ${target}`);
 } finally {
   for (const child of children) { if (child.exitCode === null) child.kill(9); await child.exited; }
-  rmSync(root, { recursive: true, force: true });
+  await removeCompiledSmokeDirectory(root);
 }

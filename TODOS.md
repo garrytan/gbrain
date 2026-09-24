@@ -6429,18 +6429,6 @@ patterns.
 
 ## OAuth/MCP hardening (v0.26.7 follow-up)
 
-### F11 — `auth register-client --redirect-uri` flag
-**Priority:** P3
-
-**What:** `gbrain auth register-client` always passes `[]` for redirect URIs; there is no CLI flag to set them. Operators who want to register an `authorization_code` client without DCR have to hand-edit the database.
-
-**Why:** Operator UX gap, not a trust-boundary issue. Codex C11 correctly flagged it as scope creep on the v0.26.7 hardening pass — kept out of that PR but worth doing.
-
-**Pros:** Closes the operator-experience gap. Validates `https://` or loopback per RFC 6749 §3.1.2.1 at registration time. Repeatable flag.
-**Cons:** ~30 lines of argv parsing + URL validation. Adds one more flag to the `auth register-client` surface. Low value relative to the OAuth provider hardening that already shipped.
-**Context:** Eva-brain has the implementation under `src/commands/auth.ts:registerClient`. Lift verbatim — the `localhost`/`127.0.0.1`/`::1` exact-match validation is correct; codex spot-check confirmed it does NOT match `localhost.evil.com`. v0.27 candidate.
-**Depends on:** Nothing.
-
 ### F13 — `gbrain serve --http` argv positive-int validator
 **Priority:** P3
 
@@ -7261,6 +7249,24 @@ keeping both skills' triggers intact for chaining.
 **Found:** 2026-04-24 during v0.19.0 production-readiness review.
 
 ## Completed
+
+### ~~F11 — manual native OAuth registration~~
+**Completed:** v0.54.1.1 (2026-09-24), with the original command proposal superseded.
+
+**Resolution:** `gbrain mcp admin register NAME --redirect-uri URI [--redirect-uri URI ...]` provides validated manual native OAuth registration through the running server and owner authentication. It supports public and confidential PKCE with authorization-code and refresh grants, without direct database edits. The legacy `auth register-client` command remains unchanged. See [MCP administration](docs/mcp/ADMIN.md).
+
+**Original proposal and context:**
+
+**Priority:** P3
+
+**What:** `gbrain auth register-client` always passes `[]` for redirect URIs; there is no CLI flag to set them. Operators who want to register an `authorization_code` client without DCR have to hand-edit the database.
+
+**Why:** Operator UX gap, not a trust-boundary issue. Codex C11 correctly flagged it as scope creep on the v0.26.7 hardening pass — kept out of that PR but worth doing.
+
+**Pros:** Closes the operator-experience gap. Validates `https://` or loopback per RFC 6749 §3.1.2.1 at registration time. Repeatable flag.
+**Cons:** ~30 lines of argv parsing + URL validation. Adds one more flag to the `auth register-client` surface. Low value relative to the OAuth provider hardening that already shipped.
+**Context:** Eva-brain has the implementation under `src/commands/auth.ts:registerClient`. Lift verbatim — the `localhost`/`127.0.0.1`/`::1` exact-match validation is correct; codex spot-check confirmed it does NOT match `localhost.evil.com`. v0.27 candidate.
+**Depends on:** Nothing.
 
 - [x] **v0.42+: `bun run ci:local` should run `bun run verify`** (codex finding #10 from /plan-eng-review).
   **Original task:** ci:local ran guards + typecheck + unit + E2E but NOT verify, so the new `check:resolver` gate (and others added to verify) did not fire in local pre-push. Deferred as a separate UX decision after measuring how often verify-only failures landed in CI.

@@ -22,6 +22,13 @@ with HTTPS and keeps it running as a user service — see
 tailscale"* — the `remote-mcp` skill runs `gbrain mcp expose` for you after
 you confirm the printed plan.
 
+For **owner login, client registration, setup instructions, permission edits,
+token invalidation, revocation, or deletion**, start with
+[MCP administration](ADMIN.md). For the connecting harness, use
+[hosted setup](../guides/hosted-harness-access.md). The owner bootstrap credential
+is separate from OAuth `admin` scope; only the former authenticates the owner
+dashboard and client-management API.
+
 Authorization-code connections require owner approval in the admin dashboard.
 Existing sessions are preserved. Before upgrading an installation with queued
 work, follow the [authorization and worker upgrade guide](../guides/authorization-upgrade.md)
@@ -42,10 +49,10 @@ client back to its registered redirect URI with `error=too_many_requests`
 (and no code) until earlier requests are decided or expire; a `429` status on
 `/authorize` comes only from the MCP SDK's per-IP rate limit.
 
-**Say to your agent:** *"Start the brain server over HTTP with self-service
-registration, then approve my client in the admin dashboard — your agent runs
-`gbrain serve --http --enable-dcr` and you finish the connection by approving
-it at `/admin/`."*
+**Say to the server-hosting harness:** *"Expose my existing brain over HTTPS,
+configure a protected owner credential, and help connect my native OAuth client.
+Use manual registration unless I request self-service registration. Preserve
+the OAuth request when issuing my owner login link."*
 
 ## Three Paths
 
@@ -77,8 +84,7 @@ prompt), signs in, publishes `gbrain serve --http` on your MagicDNS name with
 Tailscale-terminated TLS, provisions the admin bootstrap token in a private
 file, installs a launchd / systemd user service so the server survives
 reboots, and prints the MCP URL
-(`https://your-machine.your-tailnet.ts.net/mcp`) plus the grant command for
-each client. Engine-free — it works while a PGLite brain's `serve` holds the
+(`https://your-machine.your-tailnet.ts.net/mcp`) plus separate owner-login, native OAuth, and machine-client next steps. Engine-free — it works while a PGLite brain's `serve` holds the
 write lock. Default reach is your tailnet only; `--funnel` is the explicit
 opt-in for agents that run in a vendor's cloud. Steps, flags, `--remove`,
 and the troubleshooting table: [remote MCP guide](../guides/remote-mcp.md).
@@ -90,8 +96,10 @@ Your AI client
   → Postgres or PGLite
 ```
 
-Then provision clients through the running server (the only way on PGLite
-while `serve` is live):
+Then choose the intended client's connection method. Native OAuth/PKCE uses
+[owner registration](ADMIN.md#native-oauth-with-pkce). For a private machine
+handoff, provision through the running server (the only way on PGLite while
+`serve` is live):
 
 ```bash
 gbrain mcp grant agent-example --harness codex --profile memory-writer --source default \
@@ -111,8 +119,13 @@ matches what clients hit (RFC 8414 §3.3).
 #### Remote over OAuth 2.1
 
 ```bash
-gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ngrok http 3131 --url your-brain.ngrok.app
+```
+
+Keep the tunnel running in its own terminal, then start the brain server once:
+
+```bash
+gbrain serve --http --port 3131 --public-url https://your-brain.ngrok.app
 ```
 
 Built-in HTTP transport with OAuth 2.1, scoped operations, an admin dashboard
@@ -133,7 +146,7 @@ See the [OAuth 2.1 setup](#oauth-21-setup) section below.
 ```
 Your AI client (Claude Desktop, Perplexity, etc.)
   → HTTPS front (Tailscale name, ngrok domain, or cloud host)
-  → gbrain serve --http  (built-in transport with bearer auth)
+  → gbrain serve --http  (MCP bearer access; separate owner administration)
   → Postgres or PGLite
 ```
 
@@ -151,6 +164,14 @@ tokens.
 
 ### 1. Start the HTTP server
 
+If `gbrain mcp expose` already started the service, keep using it and its
+configured MCP URL. Continue to owner login or client registration; do not
+start another server or repeat the publishing step.
+
+For a manually managed server, choose the HTTPS front and `--public-url` from
+[step 3](#3-expose-the-server) before starting it. This local-only example
+starts one foreground process:
+
 ```bash
 gbrain serve --http --port 3131
 ```
@@ -164,10 +185,13 @@ Open http://localhost:3131/admin and paste it to log in.
 ```
 
 On a non-TTY start (systemd, Docker, any piped or captured logs) the generated
-token is hidden so it never lands in log storage. For headless deploys either
-set `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` to a value you control before starting, or
-run `gbrain serve --http --print-admin-token` once on a trusted terminal to
-force printing.
+token is hidden so it never lands in log storage. For headless deploys,
+set `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` through the service's protected environment
+before starting. `--print-admin-token` can force printing at that process's
+startup on a trusted terminal; starting a separate process with this flag does
+not recover the existing server's token. If the existing process's generated
+credential was lost, restart that service through the normal maintenance path
+with a configured credential. See [owner credential recovery](ADMIN.md#set-up-or-recover-the-owner-credential).
 
 Save this token. Open `http://localhost:3131/admin` and paste it to access the
 dashboard. The dashboard shows live activity, registered clients, request logs,
@@ -184,14 +208,26 @@ and per-client config export.
 
 ### Owner login links for AI agents
 
-**Say to your agent:** *"Give me the GBrain admin login link"* — the agent
-uses the existing HTTP mint endpoint described below.
+**Say to the server-hosting or authorized administrator harness:** *"Give me
+the GBrain admin login link"*. The recommended command wraps the existing HTTP
+mint endpoint:
+
+```bash
+gbrain mcp admin login-link --url https://brain.example.com/mcp \
+  --admin-token-file /absolute/private/admin-token --json
+```
+
+During OAuth connection, add `--oauth-request REQUEST_ID` from the pending
+browser URL. This preserves consent when the owner opens the login link in a
+fresh tab or browser. Expired/restarted requests require a new connection from
+the native client; its PKCE verifier stays in that client. Full commands and
+recovery instructions: [MCP administration](ADMIN.md).
 
 When an authenticated owner asks **"Give me the GBrain admin login link"**,
 use the existing single-use login flow. A static `/admin/` URL opens the login
 page; it does not authenticate the owner.
 
-1. Confirm the requesting owner and a private destination for the login link.
+1. Use the requesting owner's authorization and a private destination for the login link.
 2. Obtain the running server's bootstrap credential through the host's existing
    protected credential mechanism. `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` is the supported
    deployment setting. Never expose its value in chat, logs, shell arguments,
@@ -216,50 +252,55 @@ cannot be replayed, and is invalidated by a server restart. Successful redemptio
 establishes the admin browser session and redirects to `/admin/`.
 
 This logs the owner into the dashboard; it does not create, reveal, or rotate an
-MCP client credential. Register the intended OAuth client separately in the
-credential-reveal screen below. For unattended deployments, provision the
+MCP client credential. Register the intended OAuth client separately on the
+[Agents page](#2-register-oauth-clients), then use its setup instructions and
+explicit private download when needed. For unattended deployments, provision the
 bootstrap credential through the operator's protected configuration before
 starting the server; generated secrets are deliberately hidden in captured logs.
 
 ### 2. Register OAuth clients
 
-Register clients from the **`/admin` dashboard**:
+Register from the **`/admin` dashboard's Agents page**. Choose machine
+credentials, public PKCE (`none`), or confidential PKCE (POST/Basic) according
+to the intended harness. Native OAuth requires its actual redirect URI. Review
+permissions and connection metadata before registration, then use the setup
+instructions for that client. Public clients have no secret; confidential
+delivery is explicit and recoverable from the protected host journal while
+the live secret still matches.
 
-1. Click **Register client**.
-2. Enter a name (e.g. `perplexity`, `chatgpt`).
-3. Pick scopes: `read`, `write`, `admin` (checkboxes).
-4. Pick grant type: `client_credentials` for machine-to-machine (Perplexity,
-   Claude Desktop bearer mode) or `authorization_code` for browser-based
-   clients with PKCE (ChatGPT).
-5. For `authorization_code` clients, paste the redirect URI.
-6. Hit **Register**. The credential-reveal modal shows the `client_id` (and
-   `client_secret` for confidential clients) once. Copy or Download JSON
-   immediately — secrets are hashed on storage and never shown again.
-
-Or from the CLI — faster for scripting:
+For a running server, use the owner HTTP CLI:
 
 ```bash
-gbrain auth register-client perplexity \
-  --grant-types client_credentials \
-  --scopes "read write"
+gbrain mcp admin register agent-example \
+  --redirect-uri https://client.example.com/oauth/callback \
+  --token-endpoint-auth-method none --scopes read,write --source default \
+  --url https://brain.example.com/mcp \
+  --admin-token-file /absolute/private/admin-token --dry-run --json
 ```
+
+Review and repeat without `--dry-run`. Machine credentials use `gbrain mcp
+grant … --credentials-out PRIVATE_FILE` instead. See [registration and
+setup](ADMIN.md#register-and-connect-a-client) for both flows. The legacy
+`gbrain auth register-client` command remains a local database-maintenance path;
+do not open an already running PGLite brain through it.
 
 **Source-scoped clients.** Multi-source brains can scope a client's write
 authority to one source and its read scope to a curated set with the
 `--source` and `--federated-read` flags:
 
 ```bash
-gbrain auth register-client dept-x-agent \
-  --grant-types client_credentials \
-  --scopes "read write" \
-  --source dept-x \
-  --federated-read dept-x,shared,parent-canon
+gbrain mcp grant dept-x-agent --harness generic --profile memory-writer \
+  --source dept-x --federated-read dept-x,shared,parent-canon \
+  --url https://brain.example.com/mcp \
+  --admin-token-file /absolute/private/admin-token \
+  --credentials-out /absolute/private/dept-x-agent.json --json
 ```
 
 `--source` controls the write authority — `put_page` / `add_link` / etc only
 land in `dept-x`. `--federated-read` controls the read axis independently;
-queries return rows from any of the listed sources. Omit both flags for an
-unscoped super-client. A client with no recorded source is backfilled to
+queries return rows from any of the listed sources. New registrations that omit
+both flags use source `default`; omission does not create an unscoped
+super-client. A client with no recorded source is backfilled to
 `source_id='default'` on `gbrain upgrade`. Within a source,
 slug-level write fencing is also available: `--bound-slug-prefixes p1/,p2/`
 rejects slug-mutating writes outside the listed prefixes (update later with
@@ -275,6 +316,8 @@ await oauthProvider.registerClientManual(
   [],  // redirect_uris, empty for CC
 );
 ```
+
+### Dynamic client registration (DCR)
 
 For self-service client registration (Dynamic Client Registration, RFC 7591),
 start the server with `--enable-dcr`. DCR is off by default.
@@ -306,10 +349,12 @@ A self-registered client goes through three gates:
    client's current registered scope, so a later `rescope-client` takes effect
    on the next request.
 
-To give a self-registered client more than `read write`, widen it yourself
-after the fact — `gbrain auth rescope-client <client_id> --scopes read,write,sources_admin`
-(or the admin dashboard's Agents page) — or pre-register it with
-`gbrain auth register-client` / the admin API, which accept every scope.
+To give a self-registered client more than `read write`, use the
+[owner permission-edit path](ADMIN.md#inspect-clients-and-edit-access)
+(or the admin dashboard's Agents page), then reconnect for fresh authorization.
+Alternatively, pre-register through `gbrain mcp admin register` with the intended
+scopes. The legacy `gbrain auth rescope-client` / `register-client` commands are
+local database-maintenance paths; do not open a live PGLite database through them.
 `gbrain doctor` warns about active clients that hold a privileged scope but
 look self-registered.
 
@@ -344,6 +389,11 @@ its default loopback bind, because Tailscale terminates TLS on the tailnet
 and forwards to `127.0.0.1`. The manual equivalent is the
 [Tailnet / LAN-only](#tailnet--lan-only-no-public-tunnel) shape below. Full
 walkthrough: [remote MCP guide](../guides/remote-mcp.md).
+
+Choose this managed-service path before starting a manual server. If a server
+already answers at the intended HTTPS endpoint, use that deployment. Publishing
+an independently managed server with `--no-service` requires that server's own
+configured owner credential; an expose-created file does not change it.
 
 **ngrok (alternative).** ngrok also connects to loopback on the same
 machine, so the default bind is right there too:
@@ -453,7 +503,7 @@ Remote agents cannot reach local filesystem surface area.
 |-------|---------------|
 | `read` | `search`, `query`, `get_page`, `list_pages`, graph traversal |
 | `write` | `put_page`, `delete_page`, `add_link`, `add_timeline_entry` |
-| `admin` | Client management, token revocation, sweep; local-only restrictions still apply |
+| `admin` | Eligible admin-tagged brain operations; local-only restrictions still apply. Does not grant dashboard or client-management authority. |
 
 Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 (see [Register OAuth clients](#2-register-oauth-clients) above).
@@ -478,6 +528,11 @@ ngrok http 8787 --url your-brain.ngrok.app  # Hobby tier for fixed domain
 ```
 
 ### 2. Create access tokens
+
+These commands open the database. On PGLite, mint the token before publishing
+the service in step 1, or use the running server's owner API to provision a
+scoped machine handoff. A second database process fails with `live_serve`;
+do not remove its lock. Postgres supports concurrent local maintenance.
 
 ```bash
 # Create a token for each client

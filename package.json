@@ -47,6 +47,7 @@
     "weights:mine": "bun run scripts/mine-shard-weights.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "test": "bash scripts/run-unit-parallel.sh",
+    "test:admin": "playwright test --config admin/playwright.config.ts",
     "eval:autocut": "bun test test/search/autocut-eval.test.ts",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && (if [ -n \"$DATABASE_URL\" ]; then bash scripts/run-e2e.sh; else echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2; fi)",
     "verify": "bash scripts/run-verify-parallel.sh",
@@ -163,6 +164,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/bun": "latest",
     "@types/cookie-parser": "^1.4.7",
     "@types/cors": "^2.8.19",

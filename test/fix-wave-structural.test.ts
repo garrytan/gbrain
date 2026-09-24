@@ -65,7 +65,7 @@ describe('v0.36.1.x #1090 — admin embed two-tier resolution', () => {
 
 describe('v0.36.1.x #1077 — admin register-client supports PKCE public clients', () => {
   test('admin endpoint reads grantTypes / redirectUris / tokenEndpointAuthMethod from request body', () => {
-    const src = readFileSync('src/commands/serve-http.ts', 'utf8');
+    const src = readFileSync('src/commands/serve-http-registration.ts', 'utf8');
     // The destructure must surface name / tokenTtl / grantTypes /
     // redirectUris / tokenEndpointAuthMethod from req.body. v0.39.3.0
     // WARN-9 (PR #1308) moved `scopes` to a separate read line that

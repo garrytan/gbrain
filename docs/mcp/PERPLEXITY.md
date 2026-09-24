@@ -31,11 +31,17 @@ actually hits (RFC 8414 §3.3). Consent prompt, flags and troubleshooting:
 ## 2. Alternative: ngrok
 
 Run the server yourself with the ngrok issuer and start the tunnel on the same
-machine (ngrok connects to loopback, so the default bind is right):
+machine (ngrok connects to loopback, so the default bind is right). Start the
+tunnel in one terminal:
+
+```bash
+ngrok http 3131 --url YOUR-DOMAIN.ngrok.app
+```
+
+Keep it running, then start the brain server once in another terminal:
 
 ```bash
 gbrain serve --http --port 3131 --public-url https://YOUR-DOMAIN.ngrok.app
-ngrok http 3131 --url YOUR-DOMAIN.ngrok.app
 ```
 
 Only when the tunnel agent or reverse proxy runs on a different host does the
@@ -43,52 +49,49 @@ server need `--bind 0.0.0.0` (otherwise the front reaches the machine but the
 connection is refused, `ECONNREFUSED`). Full detail in
 [DEPLOY.md — Expose the server](DEPLOY.md#3-expose-the-server) and the
 [ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md). The examples below use
-the Tailscale name; substitute your ngrok domain.
+the Tailscale name and expose-managed owner credential file; substitute your
+configured endpoint and protected owner credential for another deployment.
 
 ## 3. Create credentials
 
-Two supported auth paths. (Full client-registration mechanics — the `/admin`
-dashboard flow, grant types, scope format — live in
-[DEPLOY.md — Register OAuth clients](DEPLOY.md#2-register-oauth-clients);
-below is the Perplexity-specific shape.)
+Choose the authentication flow actually offered by the intended Perplexity
+connection. For native OAuth/PKCE, follow
+[native hosted setup](../guides/hosted-harness-access.md#native-oauth-path), using
+its exact callback and authentication method. Do not assume every Perplexity
+product uses the same settings.
 
-**OAuth 2.1 client credentials (recommended).** Perplexity is a cloud
-service, so it holds whatever credential you give it. OAuth is the correct choice:
-least-privilege scopes + short-lived rotating access tokens instead of a
-long-lived full-access secret. Mint a client and print the connector fields in
-one step (on the brain host):
+For a connection that accepts **machine client credentials**, the authorized
+administrator provisions a scoped handoff through the existing server:
 
 ```bash
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --agent perplexity --oauth --register
+gbrain mcp grant perplexity-example --harness perplexity \
+  --profile memory-writer --source default \
+  --url https://your-machine.your-tailnet.ts.net/mcp \
+  --admin-token-file ~/.gbrain/serve/admin-token \
+  --credentials-out /absolute/private/perplexity-example.json --json
 ```
 
-Or register separately and pass the creds (works anywhere, no DB needed):
+Use `--dry-run` first to review the grant. Generate instructions for that actual
+registration:
 
 ```bash
-gbrain auth register-client perplexity --grant-types client_credentials --scopes "read write"
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --agent perplexity --oauth \
-  --client-id gbrain_cl_xxx --client-secret gbrain_cs_xxx
+gbrain mcp admin setup CLIENT_ID --harness perplexity --flow client-credentials \
+  --url https://your-machine.your-tailnet.ts.net/mcp \
+  --admin-token-file ~/.gbrain/serve/admin-token --json
 ```
 
-`connect --oauth` prints the **Issuer URL + Client ID + Client Secret** to paste
-in step 4.
+Keep the client secret in the private handoff and enter it only in the intended
+authentication settings. Ordinary setup output is redacted; explicit recovery
+uses `--credentials-out PRIVATE_FILE`. Never pass the owner credential to
+Perplexity. For legacy bearer connections, see [legacy setup](DEPLOY.md#legacy-bearer-token-setup).
+The generic/manual adapter produces instructions; it does not claim to install
+or activate Perplexity's native settings.
 
-**Legacy bearer token (simplest, best for local/personal):**
-
-```bash
-gbrain auth create "perplexity"
-gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --agent perplexity
-```
-
-> **PGLite brains:** `gbrain auth create` opens the database, which fails with
-> `live_serve` while the expose-managed service holds it. Mint the token
-> **before** the service runs (ahead of `gbrain mcp expose`, or while the service
-> is stopped briefly), or provision through the running server instead —
-> `gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
-> `/admin` dashboard. Postgres brains mint fine while the server runs.
-
-(Perplexity is a GUI connector, so there's no `--install` — `connect` prints the
-exact values to paste in step 4.)
+For legacy bearer settings on PGLite, mint a scoped token before the server
+runs (`gbrain auth create perplexity-example --scopes read,write`), or provision
+through the running server's owner API. `gbrain auth create` opens the database
+and fails with `live_serve` while the service holds its single-writer lock.
+Postgres allows concurrent local maintenance commands.
 
 ## 4. Add the connector in Perplexity
 
@@ -96,8 +99,10 @@ exact values to paste in step 4.)
 2. Go to **Settings → Connectors** (or **MCP Servers**).
 3. Add a new remote connector:
    - **URL:** `https://your-machine.your-tailnet.ts.net/mcp`
-   - **Authentication:** API Key / Bearer Token, or OAuth client credentials
-   - Paste the token (bearer) or `client_id` + `client_secret` (OAuth).
+   - **Authentication:** the supported method selected in step 3.
+   - For native OAuth, enter the owner-issued client metadata, initiate PKCE in
+     Perplexity, and obtain owner consent. For machine client credentials or a
+     bearer connection, enter the corresponding private handoff fields.
 4. Save.
 
 ## Verify
@@ -110,6 +115,9 @@ Use my GBrain to search for [topic]
 
 Have it call `get_brain_identity` (whose brain this is), then `list_skills`
 (everything it can do).
+
+Observe an authenticated call in the actual Perplexity session. A generated
+setup file or a successful server probe does not establish native activation.
 
 ## Notes
 

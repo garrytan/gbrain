@@ -14,6 +14,7 @@ import { join } from 'path';
 
 const REPO = join(__dirname, '..');
 const SCRIPT = join(REPO, 'scripts', 'skillify-check.ts');
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 async function run(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const child = Bun.spawn([process.execPath, 'run', SCRIPT, ...args], {
@@ -100,6 +101,9 @@ describe('skillify-check CLI', () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed).toHaveLength(targets.length);
     expect(parsed.map((item: { path: string }) => item.path)).toEqual(targets);
+    const anyFailed = parsed.some((entry: { items: { passed: boolean; required: boolean }[] }) =>
+      entry.items.some(item => !item.passed && item.required));
+    expect(result.exitCode).toBe(anyFailed ? 1 : 0);
   });
 });
 
@@ -120,7 +124,7 @@ function runWithPath(opts: { path: string }): { stdout: string; stderr: string }
     encoding: 'utf-8',
     cwd: REPO,
     env: { ...process.env, PATH: opts.path },
-    maxBuffer: 10 * 1024 * 1024,
+    maxBuffer: MAX_OUTPUT_BYTES,
   });
   return {
     stdout: res.stdout ?? '',

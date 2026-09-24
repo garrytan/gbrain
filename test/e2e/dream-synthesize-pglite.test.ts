@@ -12,7 +12,8 @@
  * Run: bun test test/e2e/dream-synthesize-pglite.test.ts
  */
 
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, expect, afterEach } from 'bun:test';
+import { keylessDreamTest as test } from '../helpers/keyless-dream-test.ts';
 import { __setChatTransportForTests, resetGateway } from '../../src/core/ai/gateway.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -177,7 +178,7 @@ describe('E2E synthesize — gateway-adapter mid-run AIConfigError catch (v0.41 
 });
 
 describe('E2E synthesize — no API key skip path', () => {
-  test('without ANTHROPIC_API_KEY, every transcript verdict is "no key" and zero pages written', async () => {
+  test('without provider credentials, every transcript verdict is "no key" and zero pages written', async () => {
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('dream.synthesize.enabled', 'true');

@@ -564,6 +564,25 @@ export interface CodexTurnOpts {
    *  to thread GBRAIN_BIN/GBRAIN_HOME/GBRAIN_SOURCE through codex's env_vars
    *  passthrough into the plugin-launched MCP server. */
   extraEnv?: Record<string, string>;
+  /** Explicit approvals for tools on fixture-owned MCP servers only. Neither
+   * global approval policy nor shell sandbox permissions are changed. */
+  mcpToolApprovals?: Array<{ server: string; plugin?: string; tools: readonly string[] }>;
+  /** Wait for the fixture server's bounded startup before presenting tools. */
+  waitForMcpStartup?: boolean;
+}
+
+/** Codex's -c paths use literal dot-separated segments, not TOML quoted keys.
+ * Reject separators so fixture names cannot change the override's scope. */
+export function codexMcpApprovalArgs(approvals: CodexTurnOpts['mcpToolApprovals'] = []): string[] {
+  return approvals.flatMap(({ server, plugin, tools }) => {
+    for (const name of [server, ...(plugin === undefined ? [] : [plugin]), ...tools]) {
+      if (!/^[A-Za-z0-9_@-]+$/.test(name)) throw new Error('Fixture MCP approval names must be single config-path segments');
+    }
+    const prefix = plugin === undefined ? 'mcp_servers' : `plugins.${plugin}.mcp_servers`;
+    return [...new Set(tools)].flatMap((tool) => [
+      '-c', `${prefix}.${server}.tools.${tool}.approval_mode="approve"`,
+    ]);
+  });
 }
 
 export interface CodexTurnResult {
@@ -573,6 +592,7 @@ export interface CodexTurnResult {
   /** MCP tool invocations ({server, tool}) — see ParsedCodexJsonl.mcpToolCalls. */
   mcpToolCalls: Array<{ server: string; tool: string }>;
   rawLines: string[];
+  stderrText: string;
   exitCode: number | null;
   timedOut: boolean;
 }
@@ -604,7 +624,8 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
 
   // EV12: spawn the RESOLVED binary (see claudeHeadlessTurn).
   const codexBin = resolveCodexBinary() ?? 'codex';
-  const proc = Bun.spawn([codexBin, 'exec', opts.prompt, '--json', '-s', sandbox], {
+  const startupArgs = opts.waitForMcpStartup ? ['-c', 'mcp_optional_startup_grace_ms=0'] : [];
+  const proc = Bun.spawn([codexBin, ...codexMcpApprovalArgs(opts.mcpToolApprovals), ...startupArgs, 'exec', opts.prompt, '--json', '-s', sandbox], {
     cwd: opts.cwd,
     env: hermeticChildEnv({ HOME: opts.home, ...opts.extraEnv }, { extraAllow: ['OPENAI_API_KEY', 'CODEX_*'] }),
     stdout: 'pipe',
@@ -622,7 +643,7 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
   }, timeoutMs);
 
   await stdoutDone;
-  await stderrDone.catch(() => '');
+  const stderrText = await stderrDone.catch(() => '');
   const exitCode = await proc.exited;
   clearTimeout(timer);
 
@@ -633,6 +654,7 @@ export async function codexExecTurn(opts: CodexTurnOpts): Promise<CodexTurnResul
     reasoning: parsed.reasoning,
     mcpToolCalls: parsed.mcpToolCalls,
     rawLines,
+    stderrText,
     exitCode: timedOut ? 124 : exitCode,
     timedOut,
   };

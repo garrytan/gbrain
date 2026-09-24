@@ -20,3 +20,8 @@ export function clearOAuthRequest(): void {
   url.searchParams.delete('oauth_request');
   window.history.replaceState(null, '', url);
 }
+
+export function ownerLoginPrompt(mcpUrl: string, requestId?: string): string {
+  const continuation = requestId ? ` --oauth-request ${requestId}` : '';
+  return `Give me an owner admin login link for ${mcpUrl}. On the brain host, run gbrain mcp admin login-link --url ${mcpUrl}${continuation} using its protected owner credential. Deliver the single-use link privately and do not open it before I do.`;
+}

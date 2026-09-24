@@ -344,13 +344,17 @@ describe.skipIf(!PLUGIN_CAPABLE || !hasCodexAuth())('codex plugin door — SMOKE
       let lastEvidence = '';
       for (let attempt = 1; attempt <= maxAttempts && !passed; attempt++) {
         if (attempt > 1) await new Promise((r) => setTimeout(r, 3_000));
-        const turn = await codexExecTurn({ prompt, cwd: home, home, timeoutMs: 230_000, extraEnv });
+        const turn = await codexExecTurn({
+          prompt, cwd: home, home, timeoutMs: 230_000, extraEnv,
+          mcpToolApprovals: [{ plugin: 'gbrain@gbrain', server: 'gbrain', tools: ['whoami', 'query', 'search', 'recall', 'get_page'] }],
+          waitForMcpStartup: true,
+        });
         const usedMcp = turn.mcpToolCalls.some((c) => c.server === 'gbrain');
         const gotFact = turn.finalText.toLowerCase().includes(fact);
         lastEvidence =
           `[plugin smoke attempt ${attempt}/${maxAttempts}] exit=${turn.exitCode} timedOut=${turn.timedOut} ` +
           `usedMcp=${usedMcp} gotFact=${gotFact}\nmcpToolCalls=${JSON.stringify(turn.mcpToolCalls)}\n` +
-          `finalText=${turn.finalText.slice(0, 800)}`;
+          `finalText=${turn.finalText.slice(0, 800)}\nstderr=${turn.stderrText.slice(-800)}`;
         console.log(lastEvidence);
         if (usedMcp && gotFact) passed = true;
       }

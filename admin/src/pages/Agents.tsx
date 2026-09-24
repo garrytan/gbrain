@@ -1,486 +1,245 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '../api';
-import { ClientGrantEditor, GrantFields, GrantPreview, HarnessGuides, grantDraft, grantRequest, reviewedGrantRequest, type GrantCatalog, type GrantPreviewResult } from '../components/ClientGrant';
-
-function timeAgo(date: Date): string {
-  const s = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
+import { useState, useEffect, useRef, type FormEvent } from 'react';
+import { api, ApiError, mutationOutcomeUnknown } from '../api';
+import { ClientGrantEditor, GrantFields, GrantPreview, grantDraft, grantRequest, reviewedGrantRequest, type Grant, type GrantCatalog, type GrantPreviewResult } from '../components/ClientGrant';
+import { ClientSetup } from '../components/ClientSetup';
+import { ClientLifecycle } from '../components/ClientLifecycle';
+import { Dialog } from '../components/Dialog';
+import { oauthRegistrationRequest, type ConnectionKind, type OAuthRegistrationDraft } from '../lib/oauth-registration';
 
 interface Agent {
-  id: string;
-  name: string;
-  auth_type: 'oauth' | 'api_key';
-  client_id?: string;  // compat
-  client_name?: string; // compat
-  grant_types: string[];
-  scope: string;
-  source_id: string | null;
-  federated_read: string[];
-  created_at: string;
-  last_used_at: string | null;
-  total_requests: number;
-  requests_today: number;
-  token_ttl: number | null;
-  status: 'active' | 'revoked';
+  id: string; name: string; auth_type: 'oauth' | 'api_key'; client_id?: string; client_name?: string;
+  grant_types: string[]; scope: string; source_id: string | null; federated_read: string[];
+  created_at: string; last_used_at: string | null; total_requests: number; requests_today: number;
+  token_ttl: number | null; status: 'active' | 'revoked';
 }
-
-interface Source {
-  id: string;
-  name: string;
-  federated: boolean;
-}
-
-interface ApiKey {
-  id: string;
-  name: string;
-  created_at: string;
-  last_used_at: string | null;
-  status: 'active' | 'revoked';
-}
-
-interface ClientCredentials {
-  clientId: string;
-  clientSecret: string;
-  name: string;
-  credentials?: Record<string, unknown>;
+interface Source { id: string; name: string; federated: boolean }
+interface RegisteredClient { clientId: string; name: string; grantTypes: string[] }
+function timeAgo(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+  return Math.floor(seconds / 86400) + 'd ago';
 }
 
 export function AgentsPage() {
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [hideRevoked, setHideRevoked] = useState(true);
-  const [showRegister, setShowRegister] = useState(false);
-  const [showCredentials, setShowCredentials] = useState<ClientCredentials | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]); const [sources, setSources] = useState<Source[]>([]);
+  const [agentsLoaded, setAgentsLoaded] = useState(false); const [sourcesReady, setSourcesReady] = useState(false);
+  const [agentsError, setAgentsError] = useState(''); const [sourcesError, setSourcesError] = useState('');
+  const [loadingAgents, setLoadingAgents] = useState(true); const [loadingSources, setLoadingSources] = useState(true);
+  const [hideRevoked, setHideRevoked] = useState(false);
+  const [showRegister, setShowRegister] = useState(false); const [registered, setRegistered] = useState<RegisteredClient>();
+  const [selectedAgent, setSelectedAgent] = useState<Agent>();
   const [showApiKeyCreate, setShowApiKeyCreate] = useState(false);
-  const [showApiKeyToken, setShowApiKeyToken] = useState<{ name: string; token: string } | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-
+  const [apiKeyToken, setApiKeyToken] = useState<{ name: string; token: string }>();
+  const agentsRequest = useRef(0); const sourcesRequest = useRef(0);
+  const loadAgents = async () => {
+    const request = ++agentsRequest.current; setLoadingAgents(true);
+    try {
+      const rows = await api.agents();
+      if (request !== agentsRequest.current) return;
+      setAgents(rows); setAgentsLoaded(true); setAgentsError('');
+    } catch (cause) { if (request === agentsRequest.current) setAgentsError(cause instanceof Error ? cause.message : 'Clients are unavailable.'); }
+    finally { if (request === agentsRequest.current) setLoadingAgents(false); }
+  };
+  const loadSources = async () => {
+    const request = ++sourcesRequest.current; setLoadingSources(true);
+    try {
+      const rows = await api.sources();
+      if (request !== sourcesRequest.current) return;
+      setSources(rows); setSourcesReady(true); setSourcesError('');
+    } catch (cause) { if (request === sourcesRequest.current) { setSourcesReady(false); setSourcesError(cause instanceof Error ? cause.message : 'Sources are unavailable.'); } }
+    finally { if (request === sourcesRequest.current) setLoadingSources(false); }
+  };
   useEffect(() => {
-    loadAgents();
-    api.sources().then(setSources).catch(() => {});
+    void loadAgents(); void loadSources();
+    return () => { agentsRequest.current++; sourcesRequest.current++; };
   }, []);
-
-  const loadAgents = () => { api.agents().then(setAgents).catch(() => {}); };
-
-  return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 className="page-title" style={{ marginBottom: 0 }}>Agents</h1>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <label style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input type="checkbox" checked={hideRevoked} onChange={e => setHideRevoked(e.target.checked)} /> Hide revoked
-          </label>
-          <button className="btn btn-secondary" onClick={() => setShowApiKeyCreate(true)}>+ API Key</button>
-          <button className="btn btn-primary" onClick={() => setShowRegister(true)}>+ OAuth Client</button>
-        </div>
+  const visibleAgents = agents.filter(agent => !hideRevoked || agent.status !== 'revoked');
+  return <>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 24 }}>
+      <h1 className="page-title" style={{ marginBottom: 0 }}>Agents</h1>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label className="checkbox-label"><input type="checkbox" checked={hideRevoked} onChange={event => setHideRevoked(event.target.checked)} />Hide revoked</label>
+        <button type="button" className="btn btn-secondary" disabled={loadingAgents} onClick={() => void loadAgents()}>Refresh clients</button>
+        <button type="button" className="btn btn-secondary" onClick={() => setShowApiKeyCreate(true)}>+ API Key</button>
+        <button type="button" className="btn btn-primary" disabled={!sourcesReady || !sources.length || loadingSources} onClick={() => setShowRegister(true)}>+ OAuth Client</button>
       </div>
-
-      {(() => {
-        // Filter once and reuse, so the empty-state guard sees the same
-        // rows the table renders. Pre-fix: agents.length === 0 used the
-        // unfiltered array, so an all-revoked dataset with hideRevoked=on
-        // showed a header-only table with no placeholder.
-        const visibleAgents = agents.filter(a => !hideRevoked || a.status !== 'revoked');
-        if (agents.length === 0) {
-          return (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
-              No agents registered. Register your first agent to get started.
-            </div>
-          );
-        }
-        if (visibleAgents.length === 0) {
-          return (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-muted)' }}>
-              All agents are revoked. Uncheck "Hide revoked" to view them.
-            </div>
-          );
-        }
-        return (
-        <>
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Scopes</th>
-                <th>Sources</th>
-                <th>Status</th>
-                <th>Requests</th>
-                <th>Last Used</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleAgents.map(a => (
-                <tr key={a.id} onClick={() => setSelectedAgent(a)}
-                    style={{ cursor: 'pointer' }}>
-                  <td style={{ fontWeight: 500 }}>{a.name || a.client_name}</td>
-                  <td>
-                    <span className={`badge ${a.auth_type === 'oauth' ? 'badge-read' : 'badge-write'}`} style={{ fontSize: 11 }}>
-                      {a.auth_type === 'oauth' ? 'OAuth' : 'API Key'}
-                    </span>
-                  </td>
-                  <td>
-                    {(a.scope || '').split(' ').filter(Boolean).map(s => (
-                      <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
-                    ))}
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                    {a.auth_type === 'oauth'
-                      ? `${a.source_id || 'none'} · ${(a.federated_read || []).length} readable`
-                      : 'Unscoped'}
-                  </td>
-                  <td>
-                    <span className={`badge ${a.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{a.status}</span>
-                  </td>
-                  <td>
-                    <span style={{ fontWeight: 500 }}>{a.requests_today || 0}</span>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}> / {a.total_requests || 0}</span>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)' }}>
-                    {a.last_used_at ? timeAgo(new Date(a.last_used_at)) : 'Never'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 12 }}>
-            {agents.filter(a => a.status === 'active').length} active / {agents.length} total
-          </div>
-        </>
-        );
-      })()}
-
-      {showRegister && (
-        <RegisterModal
-          sources={sources}
-          onClose={() => setShowRegister(false)}
-          onRegistered={(creds) => { setShowRegister(false); setShowCredentials(creds); loadAgents(); }}
-        />
-      )}
-
-      {showCredentials && (
-        <CredentialsModal
-          credentials={showCredentials}
-          onClose={() => setShowCredentials(null)}
-        />
-      )}
-
-      {selectedAgent && (
-        <AgentDrawer
-          key={selectedAgent.id}
-          agent={selectedAgent}
-          sources={sources}
-          onClose={() => setSelectedAgent(null)}
-          onRevoked={loadAgents}
-          onRecovered={(credentials) => { setSelectedAgent(null); setShowCredentials(credentials); }}
-          onRescoped={({ sourceId, federatedRead }) => {
-            setSelectedAgent(current => current ? {
-              ...current,
-              source_id: sourceId,
-              federated_read: federatedRead,
-            } : current);
-            loadAgents();
-          }}
-        />
-      )}
-
-      {showApiKeyCreate && (
-        <ApiKeyCreateModal
-          onClose={() => setShowApiKeyCreate(false)}
-          onCreated={(result) => { setShowApiKeyCreate(false); setShowApiKeyToken(result); loadAgents(); }}
-        />
-      )}
-
-      {showApiKeyToken && (
-        <ApiKeyTokenModal token={showApiKeyToken} onClose={() => setShowApiKeyToken(null)} />
-      )}
-    </>
-  );
+    </div>
+    <p className="grant-help" style={{ marginBottom: 16 }}>Owner administration uses this dashboard’s login. An OAuth client’s admin scope allows eligible brain operations; it does not open this dashboard.</p>
+    {agentsError && <p role="alert" style={{ marginBottom: 16, color: 'var(--error)' }}>{agentsLoaded ? 'Showing previously loaded clients. ' : 'Could not load clients. '}{agentsError} <button type="button" className="btn btn-secondary" disabled={loadingAgents} onClick={() => void loadAgents()}>Retry clients</button></p>}
+    {sourcesError && <p role="alert" style={{ marginBottom: 16, color: 'var(--error)' }}>Could not load current sources. Registration and permission changes are unavailable. {sourcesError} <button type="button" className="btn btn-secondary" disabled={loadingSources} onClick={() => void loadSources()}>Retry sources</button></p>}
+    {!sourcesError && !sourcesReady && <p role="status">Loading sources before registration…</p>}
+    {sourcesReady && !sources.length && <p role="status">No active sources are available. Add or unarchive a source on the host before registering a client.</p>}
+    {!agentsLoaded && !agentsError && <p role="status">Loading clients…</p>}
+    {agentsLoaded && !agents.length && <p style={{ textAlign: 'center', padding: 48 }}>No clients registered. Register a client to grant access to a harness.</p>}
+    {agentsLoaded && agents.length > 0 && !visibleAgents.length && <p style={{ textAlign: 'center', padding: 48 }}>All clients are revoked. Uncheck “Hide revoked” to view them.</p>}
+    {visibleAgents.length > 0 && <div style={{ overflowX: 'auto' }}><table>
+      <thead><tr><th>Name</th><th>Type</th><th>Scopes</th><th>Sources</th><th>Status</th><th>Requests</th><th>Last used</th></tr></thead>
+      <tbody>{visibleAgents.map(agent => <tr key={agent.auth_type + ':' + agent.id} onClick={() => setSelectedAgent(agent)} style={{ cursor: 'pointer' }}>
+        <td><button type="button" className="client-name-button" onClick={event => { event.stopPropagation(); setSelectedAgent(agent); }}>{agent.name || agent.client_name}</button></td>
+        <td><span className={'badge ' + (agent.auth_type === 'oauth' ? 'badge-read' : 'badge-write')}>{agent.auth_type === 'oauth' ? 'OAuth' : 'API key'}</span></td>
+        <td>{(agent.scope || '').split(' ').filter(Boolean).map(scope => <span key={scope} className={'badge badge-' + scope} style={{ marginRight: 4 }}>{scope}</span>)}</td>
+        <td>{agent.auth_type === 'oauth' ? (agent.source_id || 'none') + ' · ' + (agent.federated_read || []).length + ' readable' : 'Unscoped'}</td>
+        <td><span className={'badge ' + (agent.status === 'active' ? 'badge-success' : 'badge-danger')}>{agent.status}</span></td>
+        <td>{agent.requests_today || 0}<span style={{ color: 'var(--text-muted)' }}> / {agent.total_requests || 0}</span></td>
+        <td>{agent.last_used_at ? timeAgo(new Date(agent.last_used_at)) : 'Never'}</td>
+      </tr>)}</tbody>
+    </table><p className="grant-help" style={{ marginTop: 12 }}>{agents.filter(agent => agent.status === 'active').length} active / {agents.length} total</p></div>}
+    {showRegister && <RegisterModal sources={sources} sourcesReady={sourcesReady} onClose={() => setShowRegister(false)} onRegistered={client => { setShowRegister(false); setRegistered(client); void loadAgents(); }} />}
+    {registered && <Dialog title="Client registered" titleId="registered-client-title" onClose={() => setRegistered(undefined)}>
+      <p role="status" style={{ marginBottom: 16 }}>{registered.name} is registered. Its harness connection has not been verified.</p>
+      <ClientSetup clientId={registered.clientId} grantTypes={registered.grantTypes} />
+    </Dialog>}
+    {selectedAgent && <AgentDrawer key={selectedAgent.id} agent={selectedAgent} sources={sources} sourcesReady={sourcesReady} onClose={() => setSelectedAgent(undefined)}
+      onChanged={() => { setSelectedAgent(undefined); void loadAgents(); }} onRescoped={grant => { setSelectedAgent(current => current ? { ...current, source_id: grant.sourceId, federated_read: grant.federatedRead, scope: grant.scopes.join(' '), token_ttl: grant.tokenTtlSeconds } : current); void loadAgents(); }} />}
+    {showApiKeyCreate && <ApiKeyCreateModal onClose={() => setShowApiKeyCreate(false)} onCreated={token => { setShowApiKeyCreate(false); setApiKeyToken(token); void loadAgents(); }} />}
+    {apiKeyToken && <ApiKeyTokenModal token={apiKeyToken} onClose={() => setApiKeyToken(undefined)} />}
+  </>;
 }
 
-function ApiKeyCreateModal({ onClose, onCreated }: {
-  onClose: () => void;
-  onCreated: (result: { name: string; token: string }) => void;
-}) {
-  const [name, setName] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) { setError('Name required'); return; }
-    setLoading(true);
+function RegisterModal({ sources, sourcesReady, onClose, onRegistered }: { sources: Source[]; sourcesReady: boolean; onClose: () => void; onRegistered: (client: RegisteredClient) => void }) {
+  const [name, setName] = useState(''); const [draft, setDraft] = useState(() => grantDraft());
+  const [connection, setConnection] = useState<OAuthRegistrationDraft>({ kind: 'machine', redirectUris: '', confidentialMethod: 'client_secret_post' });
+  const [catalog, setCatalog] = useState<GrantCatalog>(); const [catalogError, setCatalogError] = useState('');
+  const [preview, setPreview] = useState<{ grant: GrantPreviewResult; oauth: ReturnType<typeof oauthRegistrationRequest>; name: string }>();
+  const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  const [recovery, setRecovery] = useState<RegisteredClient>(); const [uncertain, setUncertain] = useState(false);
+  const loadCatalog = () => { setCatalogError(''); void api.grantCatalog().then(setCatalog).catch(cause => setCatalogError(cause instanceof Error ? cause.message : 'Permission catalog unavailable.')); };
+  useEffect(loadCatalog, []);
+  const changeConnection = (next: OAuthRegistrationDraft) => { setConnection(next); setPreview(undefined); };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!sourcesReady || !catalog || uncertain) return;
+    if (!name.trim()) { setError('Enter a client name.'); return; }
+    setLoading(true); setError('');
     try {
-      const data = await api.createApiKey(name.trim());
-      onCreated({ name: data.name, token: data.token });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed');
+      const oauth = preview?.oauth ?? oauthRegistrationRequest(connection);
+      const submittedName = preview?.name ?? name.trim();
+      const result = await api.registerClient({ ...(preview ? reviewedGrantRequest(preview.grant.after) : grantRequest(draft)), ...oauth, name: submittedName, dryRun: !preview });
+      if (!preview) setPreview({ grant: result, oauth, name: submittedName });
+      else onRegistered({ clientId: result.clientId, name: submittedName, grantTypes: oauth.grantTypes });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Registration failed.');
+      const unknown = !!preview && mutationOutcomeUnknown(cause);
+      setUncertain(unknown);
+      if (preview && (unknown || (cause instanceof ApiError && cause.status === 409))) {
+        // A lost mutation response can follow a committed registration. Do not create twice.
+        try {
+          const rows = (await api.agents() as Agent[]).filter(agent => agent.auth_type === 'oauth' && agent.status === 'active' && (agent.name || agent.client_name) === preview.name);
+          if (rows.length === 1) {
+            setRecovery({ clientId: rows[0].id || rows[0].client_id!, name: preview.name, grantTypes: rows[0].grant_types });
+            setUncertain(true);
+          }
+        } catch { /* Show the uncertain result and require client-list reconciliation. */ }
+      }
+      setPreview(undefined);
     } finally { setLoading(false); }
   };
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-        <div className="modal-title">Create API Key</div>
-        <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 16 }}>
-          API keys use simple bearer token auth. They grant full read+write+admin access.
-          For scoped access, use OAuth clients instead.
-        </p>
-        <div style={{ marginBottom: 16 }}>
-          <label>Key Name</label>
-          <input placeholder="e.g. claude-code-local" value={name} onChange={e => setName(e.target.value)} autoFocus />
-        </div>
-        {error && <div style={{ color: 'var(--error)', fontSize: 13, marginBottom: 12 }}>{error}</div>}
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={loading}>
-            {loading ? 'Creating...' : 'Create Key'}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function ApiKeyTokenModal({ token, onClose }: {
-  token: { name: string; token: string };
-  onClose: () => void;
-}) {
-  const copy = (text: string) => navigator.clipboard.writeText(text);
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" style={{ maxWidth: 560 }}>
-        <div style={{ textAlign: 'center', marginBottom: 16 }}>
-          <div style={{ fontSize: 36, color: 'var(--success)', marginBottom: 8 }}>&#10003;</div>
-          <div style={{ fontSize: 20, fontWeight: 600 }}>API Key Created</div>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>Name</label>
-          <div className="code-block"><span>{token.name}</span></div>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>Bearer Token</label>
-          <div className="code-block">
-            <span>{token.token}</span>
-            <button className="copy-btn" onClick={() => copy(token.token)}>Copy</button>
-          </div>
-        </div>
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>Usage</label>
-          <div className="code-block">
-            <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{`Authorization: Bearer ${token.token}`}</pre>
-            <button className="copy-btn" onClick={() => copy(`Authorization: Bearer ${token.token}`)}>Copy</button>
-          </div>
-        </div>
-        <div className="warning-bar">Save this token now. It will not be shown again.</div>
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 20 }}>
-          <button className="btn btn-primary" onClick={onClose}>Done</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RegisterModal({ sources, onClose, onRegistered }: {
-  sources: Source[];
-  onClose: () => void;
-  onRegistered: (creds: ClientCredentials) => void;
-}) {
-  const [name, setName] = useState('');
-  const [draft, setDraft] = useState(() => grantDraft());
-  const [catalog, setCatalog] = useState<GrantCatalog>();
-  const [preview, setPreview] = useState<GrantPreviewResult>();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [recovery, setRecovery] = useState<{ clientId: string; name: string }>();
-  useEffect(() => { void api.grantCatalog().then(setCatalog).catch(e => setError(e.message)); }, []);
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) { setError('Name required'); return; }
-    setLoading(true); setError('');
-    try {
-      const result = await api.registerClient({ ...(preview ? reviewedGrantRequest(preview.after) : grantRequest(draft)), name: name.trim(), dryRun: !preview });
-      if (!preview) setPreview(result);
-      else onRegistered({ clientId: result.clientId, clientSecret: result.clientSecret, name: name.trim(), credentials: result.credentials });
-    } catch (err) {
-      setPreview(undefined);
-      setError(err instanceof Error ? err.message : 'Registration failed');
-      if (preview) {
-        // A lost response may follow a committed registration. Reconcile by
-        // the submitted name before offering a distinct credential recovery.
-        try {
-          const existing = (await api.agents() as Agent[]).filter(agent => agent.auth_type === 'oauth' && agent.status === 'active' && (agent.name || agent.client_name) === name.trim());
-          if (existing.length === 1) setRecovery({ clientId: existing[0].id || existing[0].client_id!, name: name.trim() });
-        } catch { /* Retain the registration error; the Agents list also offers recovery. */ }
-      }
-    }
-    finally { setLoading(false); }
-  };
-  const recover = async () => {
-    if (!recovery) return;
-    setLoading(true); setError('');
-    try { onRegistered(await api.recoverClient(recovery.clientId)); }
-    catch (err) { setError(err instanceof Error ? err.message : 'Credential recovery failed'); }
-    finally { setLoading(false); }
-  };
-  return <div className="modal-overlay" onClick={onClose}>
-    <form className="modal" style={{ maxWidth: 700, width: '90vw', minWidth: 0, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()} onSubmit={handleSubmit}>
-      <div className="modal-title">Register agent</div>
-      <fieldset disabled={loading || !!recovery} style={{ border: 0, padding: 0, margin: 0 }}>
-        <div style={{ marginBottom: 16 }}><label htmlFor="agent-name">Agent name</label><input id="agent-name" placeholder="muse-personal-example" value={name} onChange={e => { setName(e.target.value); setPreview(undefined); }} autoFocus /></div>
-        {catalog && <GrantFields draft={draft} setDraft={next => { setDraft(next); setPreview(undefined); }} catalog={catalog} sources={sources} />}
+  return <Dialog title="Register OAuth client" titleId="register-client-title" onClose={onClose} busy={loading}>
+    <form onSubmit={submit}>
+      <fieldset disabled={loading || uncertain} style={{ border: 0, padding: 0 }}>
+        <label htmlFor="agent-name">Client name</label><input id="agent-name" data-autofocus value={name} placeholder="agent-example" onChange={event => { setName(event.target.value); setPreview(undefined); }} />
+        <label htmlFor="oauth-connection-kind" style={{ marginTop: 16 }}>Connection type</label>
+        <select id="oauth-connection-kind" value={connection.kind} onChange={event => changeConnection({ ...connection, kind: event.target.value as ConnectionKind })}>
+          <option value="machine">Machine credentials</option><option value="public-pkce">Browser sign-in: public client with PKCE</option><option value="confidential-pkce">Browser sign-in: confidential client with PKCE</option>
+        </select>
+        <p className="grant-help">Choose the method required by your MCP client. Browser sign-in requires the owner’s approval. Public clients use PKCE without a client secret.</p>
+        {connection.kind !== 'machine' && <><label htmlFor="oauth-redirect-uris">Exact redirect URIs (one per line)</label>
+          <textarea id="oauth-redirect-uris" rows={3} value={connection.redirectUris} onChange={event => changeConnection({ ...connection, redirectUris: event.target.value })} placeholder="https://client.example.com/oauth/callback" />
+          <p className="grant-help">Copy these from the client’s OAuth settings. Keep the complete path and query. GBrain uses S256 PKCE.</p></>}
+        {connection.kind === 'confidential-pkce' && <><label htmlFor="oauth-client-auth">Client secret authentication</label>
+          <select id="oauth-client-auth" value={connection.confidentialMethod} onChange={event => changeConnection({ ...connection, confidentialMethod: event.target.value as OAuthRegistrationDraft['confidentialMethod'] })}>
+            <option value="client_secret_post">client_secret_post (request body)</option><option value="client_secret_basic">client_secret_basic (HTTP Basic)</option>
+          </select></>}
+        {connection.kind === 'machine' && <p className="grant-help">Machine handoffs use client_secret_post to renew their access tokens.</p>}
+        <div style={{ marginTop: 24 }}>{catalog && <GrantFields draft={draft} setDraft={next => { setDraft(next); setPreview(undefined); }} catalog={catalog} sources={sources} />}</div>
       </fieldset>
-      {preview && <GrantPreview preview={preview} />}
-      {error && <p role="alert" style={{ color: 'var(--error)' }}>{error}</p>}
-      {recovery && <div role="status">
-        <p>A registered client named {recovery.name} exists. Recover its saved credential delivery before retrying registration. This preserves its permissions and secret.</p>
-        <button type="button" className="btn btn-secondary" disabled={loading} onClick={() => void recover()}>Recover credentials</button>
-      </div>}
-      <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-        <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button type="submit" className="btn btn-primary" disabled={loading || !catalog || !!recovery}>{loading ? 'Checking…' : preview ? 'Register with reviewed permissions' : 'Preview permissions'}</button>
+      {catalogError && <p role="alert" style={{ color: 'var(--error)' }}>{catalogError} <button type="button" className="btn btn-secondary" onClick={loadCatalog}>Retry permissions</button></p>}
+      {!sourcesReady && <p role="alert">Current sources are unavailable. Close this form and retry sources before registration.</p>}
+      {preview && <><GrantPreview preview={preview.grant} /><div aria-live="polite"><h3>Review connection</h3>
+        <dl className="oauth-consent-details"><dt>Client name</dt><dd>{preview.name}</dd><dt>Grant types</dt><dd>{preview.oauth.grantTypes.join(', ')}</dd><dt>Authentication</dt><dd>{preview.oauth.tokenEndpointAuthMethod}</dd>
+          {preview.oauth.redirectUris.length > 0 && <><dt>Exact redirect URIs</dt><dd>{preview.oauth.redirectUris.map(uri => <div key={uri}><code>{uri}</code></div>)}</dd></>}
+        </dl></div></>}
+      {error && <p role="alert" style={{ color: 'var(--error)', margin: '16px 0' }}>{error}</p>}
+      {recovery && <div role="status"><p>A client named {recovery.name} is registered. Open its setup instructions and recover its existing download.</p>
+        <button type="button" className="btn btn-secondary" onClick={() => onRegistered(recovery)}>Open existing client setup</button></div>}
+      {uncertain && !recovery && <p role="status">Registration may have completed. Close this form and refresh clients before trying again. No automatic retry was made.</p>}
+      <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 20 }}>
+        <button type="button" className="btn btn-secondary" disabled={loading} onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={loading || !catalog || !sourcesReady || uncertain}>{loading ? 'Checking…' : preview ? 'Register with reviewed permissions' : 'Preview permissions'}</button>
       </div>
     </form>
-  </div>;
+  </Dialog>;
 }
 
-function CredentialsModal({ credentials, onClose }: {
-  credentials: ClientCredentials;
-  onClose: () => void;
-}) {
-  const copy = (text: string) => navigator.clipboard.writeText(text);
-  const downloadJson = () => {
-    const handoff = credentials.credentials ?? { version: 1, mcp_url: `${window.location.origin}/mcp`, issuer_url: window.location.origin, client_id: credentials.clientId, client_secret: credentials.clientSecret };
-    const blob = new Blob([JSON.stringify(handoff, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `${credentials.name}-credentials.json`; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="modal-overlay">
-      <div className="modal" style={{ maxWidth: 560 }}>
-        <div style={{ textAlign: 'center', marginBottom: 16 }}>
-          <div style={{ fontSize: 36, color: 'var(--success)', marginBottom: 8 }}>&#10003;</div>
-          <div style={{ fontSize: 20, fontWeight: 600 }}>Agent Registered</div>
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>Client ID</label>
-          <div className="code-block">
-            <span>{credentials.clientId}</span>
-            <button className="copy-btn" onClick={() => copy(credentials.clientId)}>Copy</button>
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 12 }}>Client Secret</label>
-          <div className="code-block">
-            <span>{credentials.clientSecret}</span>
-            <button className="copy-btn" onClick={() => copy(credentials.clientSecret)}>Copy</button>
-          </div>
-        </div>
-
-        <div className="warning-bar">
-          Download the credential file now. Keep it private, set its permissions to 0600 on the target computer, and use it with gbrain connect. If delivery is lost, use Recover credentials in this client's Agents entry.
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 20 }}>
-          <button className="btn btn-secondary" onClick={downloadJson}>Download as JSON</button>
-          <button className="btn btn-primary" onClick={onClose}>Done</button>
-        </div>
-      </div>
-    </div>
-  );
+function AgentDrawer({ agent, sources, sourcesReady, onClose, onChanged, onRescoped }: { agent: Agent; sources: Source[]; sourcesReady: boolean; onClose: () => void; onChanged: () => void; onRescoped: (grant: Grant) => void }) {
+  const clientId = agent.id || agent.client_id || ''; const name = agent.name || agent.client_name || clientId;
+  const [detail, setDetail] = useState<{ client: { grant_types: string[]; token_endpoint_auth_method: string; redirect_uris: string[] }; grant: Grant }>();
+  const [error, setError] = useState(''); const [reload, setReload] = useState(0);
+  const [confirmApiKeyRevoke, setConfirmApiKeyRevoke] = useState(false); const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (agent.auth_type !== 'oauth') return;
+    let active = true; setError('');
+    void api.clientDetails(clientId).then(value => { if (active) setDetail(value); }).catch(cause => { if (active) setError(cause instanceof Error ? cause.message : 'Client details unavailable.'); });
+    return () => { active = false; };
+  }, [clientId, agent.auth_type, reload]);
+  return <Dialog title={name} titleId="client-details-title" onClose={onClose} drawer busy={busy}>
+    <span className={'badge ' + (agent.status === 'active' ? 'badge-success' : 'badge-danger')}>{agent.status}</span>
+    <dl className="oauth-consent-details" style={{ marginTop: 16 }}><dt>Client ID</dt><dd><code>{clientId}</code></dd><dt>Scopes</dt><dd>{agent.scope || 'None'}</dd>
+      <dt>Registered</dt><dd>{new Date(agent.created_at).toLocaleString()}</dd><dt>Token lifetime</dt><dd>{agent.token_ttl ? agent.token_ttl + ' seconds' : 'Server default (future tokens)'}</dd>
+      {detail && <><dt>Grant types</dt><dd>{detail.client.grant_types.join(', ')}</dd><dt>Authentication</dt><dd>{detail.client.token_endpoint_auth_method}</dd></>}
+    </dl>
+    {agent.auth_type === 'oauth' ? <>
+      {error && <p role="alert" style={{ color: 'var(--error)' }}>{error} <button type="button" className="btn btn-secondary" onClick={() => setReload(value => value + 1)}>Retry client details</button></p>}
+      {!detail && !error && <p role="status">Loading client details…</p>}
+      {detail && <>
+        <ClientSetup clientId={clientId} grantTypes={detail.client.grant_types} revoked={agent.status === 'revoked'} grantRevision={detail.grant.revision} />
+        {agent.status === 'active' && <details style={{ marginTop: 24 }}><summary style={{ cursor: 'pointer', fontWeight: 600 }}>Edit access levels</summary>
+          <ClientGrantEditor clientId={clientId} sources={sources} sourcesReady={sourcesReady} onRescoped={grant => {
+            setDetail(current => current ? { ...current, grant } : current);
+            onRescoped(grant);
+          }} />
+        </details>}
+        <ClientLifecycle clientId={clientId} name={name} revoked={agent.status === 'revoked'} onChanged={onChanged} onBusyChange={setBusy} />
+      </>}
+    </> : <>
+      <h3 className="section-title">API key</h3><p>Use this key as a bearer token in a client that supports static authentication. Its value is available only in the original private handoff.</p>
+      {agent.status === 'active' && <div style={{ marginTop: 20 }}>
+        {!confirmApiKeyRevoke ? <button type="button" className="btn btn-secondary" onClick={() => setConfirmApiKeyRevoke(true)}>Revoke API key</button> : <>
+          <p>Revoke all active API keys named {name}? Keys with the same name will stop working. Memory remains.</p>
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setConfirmApiKeyRevoke(false)}>Cancel</button>{' '}
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => { setBusy(true); void api.revokeApiKey(name).then(onChanged).catch(cause => setError(cause instanceof Error ? cause.message : 'Revoke failed. Refresh the client list before retrying.')).finally(() => setBusy(false)); }}>Confirm revoke</button>
+        </>}
+        {error && <p role="alert">{error}</p>}
+      </div>}
+    </>}
+  </Dialog>;
 }
 
-
-function AgentDrawer({ agent, sources, onClose, onRevoked, onRescoped, onRecovered }: {
-  agent: Agent;
-  sources: Source[];
-  onClose: () => void;
-  onRevoked: () => void;
-  onRecovered: (credentials: ClientCredentials) => void;
-  onRescoped: (scope: { sourceId: string; federatedRead: string[] }) => void;
-}) {
-  const serverUrl = window.location.origin;
-
-  const cid = agent.id || agent.client_id || '';
-  const isOAuth = agent.auth_type === 'oauth';
-  const [recovering, setRecovering] = useState(false);
-  const [recoveryError, setRecoveryError] = useState('');
-  const recoverCredentials = async () => {
-    setRecovering(true); setRecoveryError('');
-    try { onRecovered(await api.recoverClient(cid)); }
-    catch (error) { setRecoveryError(error instanceof Error ? error.message : 'Credential recovery failed'); }
-    finally { setRecovering(false); }
+function ApiKeyCreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (result: { name: string; token: string }) => void }) {
+  const [name, setName] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); if (!name.trim()) { setError('Enter a key name.'); return; }
+    setBusy(true); setError('');
+    try { const result = await api.createApiKey(name.trim()); onCreated({ name: result.name, token: result.token }); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Key creation failed. Inspect the clients list before retrying.'); }
+    finally { setBusy(false); }
   };
+  return <Dialog title="Create API key" titleId="create-api-key-title" onClose={onClose} busy={busy}><form onSubmit={submit}>
+    <p className="grant-help">API keys created here allow full read, write, and admin brain operations. Choose an OAuth client for scoped access. This key cannot log into the owner dashboard.</p>
+    <label htmlFor="api-key-name">Key name</label><input id="api-key-name" data-autofocus value={name} disabled={busy} onChange={event => setName(event.target.value)} />
+    {error && <p role="alert">{error}</p>}<div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 20 }}>
+      <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Creating…' : 'Create key'}</button>
+    </div></form></Dialog>;
+}
 
-  return (
-    <>
-      <div className="drawer-overlay" onClick={onClose} />
-      <div className="drawer">
-        <button className="drawer-close" onClick={onClose}>&#10005;</button>
-        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>{agent.name || agent.client_name}</div>
-        <span className={`badge ${agent.status === 'active' ? 'badge-success' : 'badge-danger'}`}>{agent.status}</span>
-
-        <div className="section-title">Details</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '6px 12px', fontSize: 13 }}>
-          <span style={{ color: 'var(--text-secondary)' }}>Client ID</span>
-          <span className="mono">{(agent.id || agent.id || agent.client_id || '').substring(0, 24)}...</span>
-          <span style={{ color: 'var(--text-secondary)' }}>Scopes</span>
-          <span>{(agent.scope || '').split(' ').filter(Boolean).map(s => (
-            <span key={s} className={`badge badge-${s}`} style={{ marginRight: 4 }}>{s}</span>
-          ))}</span>
-          <span style={{ color: 'var(--text-secondary)' }}>Registered</span>
-          <span>{new Date(agent.created_at).toLocaleDateString()}</span>
-          <span style={{ color: 'var(--text-secondary)' }}>Token TTL</span>
-          <span>{agent.token_ttl ? (agent.token_ttl >= 86400 ? `${Math.floor(agent.token_ttl / 86400)}d` : agent.token_ttl >= 3600 ? `${Math.floor(agent.token_ttl / 3600)}h` : `${agent.token_ttl}s`) : '1h (default)'}</span>
-        </div>
-
-        {isOAuth && (
-          <ClientGrantEditor
-            clientId={cid}
-            sources={sources}
-            onRescoped={onRescoped}
-          />
-        )}
-
-        <HarnessGuides serverUrl={serverUrl} clientId={cid} credentialFile={isOAuth && agent.grant_types.includes('client_credentials')} />
-        {isOAuth && agent.status === 'active' && agent.grant_types.includes('client_credentials') && <div>
-          <p className="grant-help">If registration finished but its download was lost, recover the saved credential delivery. Existing permissions and credentials stay unchanged.</p>
-          <button type="button" className="btn btn-secondary" disabled={recovering} onClick={() => void recoverCredentials()}>{recovering ? 'Recovering…' : 'Recover credentials'}</button>
-          {recoveryError && <p role="alert" style={{ color: 'var(--error)' }}>{recoveryError}</p>}
-        </div>}
-
-        <div style={{ marginTop: 32 }}>
-          {agent.status === 'active' && (
-            <button className="btn btn-danger" onClick={async () => {
-              if (!confirm(`Revoke ${agent.name || agent.client_name}? All active tokens will be invalidated.`)) return;
-              try {
-                if (agent.auth_type === 'oauth') {
-                  await api.revokeClient(agent.id || agent.client_id || '');
-                } else {
-                  await api.revokeApiKey(agent.name || '');
-                }
-                onRevoked();
-                onClose();
-              } catch (e) {
-                alert('Revoke failed: ' + (e instanceof Error ? e.message : 'unknown error'));
-              }
-            }}>Revoke Agent</button>
-          )}
-          {agent.status === 'revoked' && (
-            <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>This agent has been revoked.</span>
-          )}
-        </div>
-      </div>
-    </>
-  );
+function ApiKeyTokenModal({ token, onClose }: { token: { name: string; token: string }; onClose: () => void }) {
+  const [copied, setCopied] = useState(false); const [error, setError] = useState('');
+  return <Dialog title="API key created" titleId="api-key-created-title" onClose={onClose}>
+    <p>{token.name}</p><label htmlFor="new-api-key">Bearer token</label><textarea id="new-api-key" rows={3} readOnly value={token.token} />
+    <p className="grant-help">Save this token privately now. It will not be shown again. A key’s creation does not verify your harness connection.</p>
+    <button type="button" className="btn btn-secondary" onClick={() => { void navigator.clipboard.writeText(token.token).then(() => setCopied(true)).catch(() => setError('Clipboard unavailable. Select and copy the token above.')); }}>{copied ? 'Copied' : 'Copy token'}</button>
+    {error && <p role="alert">{error}</p>}<button type="button" className="btn btn-primary" style={{ marginLeft: 12 }} onClick={onClose}>Done</button>
+  </Dialog>;
 }
