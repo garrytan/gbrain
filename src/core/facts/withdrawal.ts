@@ -135,7 +135,10 @@ function ambiguousFenceClaims(body: string): Array<{ claim: string; visibility: 
     for (const line of segment.split('\n')) {
       const cells = parseRowCells(line);
       if (!cells || isSeparatorRow(cells) || cells[1]?.trim().toLowerCase() === 'claim') continue;
-      const claim = stripStrikethrough(cells[1] ?? '').text.trim();
+      // A struck row is already textually withdrawn; only active rows can block or be rewritten.
+      const { text, struck } = stripStrikethrough((cells[1] ?? '').trim());
+      if (struck) continue;
+      const claim = text.trim();
       const visibility = ['private', 'world'].includes(cells[4]?.trim().toLowerCase()) ? cells[4].trim().toLowerCase() : null;
       if (claim) claims.set(`${visibility}:${claim}`, { claim, visibility });
     }

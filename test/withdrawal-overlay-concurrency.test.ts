@@ -358,3 +358,42 @@ test('prepared import accepts inline marker documentation after an unrelated wit
     }
   }
 });
+
+test('an already-struck row inside a malformed fence is neither blocking nor page-affecting', async () => {
+  const isolatedSourceId = 'withdrawal-malformed-struck-test';
+  const claim = 'malformed struck withdrawal sentinel';
+  const struckClaim = 'malformed struck scope sentinel';
+  const malformedStruck = (text: string) => renderFactsTable([fact(text)])
+    .replace('| fact |', '| impossible |').replace(`| ${text} |`, `| ~~${text}~~ |`);
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).withdrawn).toBe(true);
+      const body = `---\ntitle: Malformed struck withdrawal\ntype: note\n---\n${malformedStruck(claim)}`;
+      expect(body).toContain(`~~${claim}~~`);
+      expect(hasAmbiguousWithdrawalFence(body)).toBe(true);
+
+      let prepared: PreparedContentImport | undefined;
+      await importFromContent(engine, 'malformed-struck-prepared', body, { sourceId: isolatedSourceId, noEmbed: true,
+        prepare: async value => { prepared = value; return value.result; } });
+      await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
+      expect((await importFromContent(engine, 'malformed-struck', body, { sourceId: isolatedSourceId, noEmbed: true })).status)
+        .toBe('imported');
+      const active = body.replace(`~~${claim}~~`, claim);
+      await expect(importFromContent(engine, 'malformed-active', active, { sourceId: isolatedSourceId, noEmbed: true }))
+        .rejects.toThrow('malformed fact fence contains a withdrawn claim');
+
+      await engine.putPage('malformed-struck-scope', { type: 'note', title: 'Malformed struck scope',
+        compiled_truth: malformedStruck(struckClaim) }, { sourceId: isolatedSourceId });
+      const before = (await engine.readPageSnapshot('malformed-struck-scope', { sourceId: isolatedSourceId }))!;
+      const later = await engine.insertFact({ fact: struckClaim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+      const result = await recordFactWithdrawal(engine, later.id, isolatedSourceId, true);
+      expect(result.withdrawn).toBe(true);
+      expect(result.pages).toEqual([]);
+      expect((await engine.readPageSnapshot('malformed-struck-scope', { sourceId: isolatedSourceId }))!.revision).toBe(before.revision);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
