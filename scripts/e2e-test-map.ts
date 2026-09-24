@@ -163,6 +163,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts", "test/e2e/managed-connector-fencing.test.ts", "test/e2e/managed-connector-recovery.test.ts"],
   "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
   "src/core/persistence/**": [
+    "test/e2e/persistence-http-liveness.test.ts",
+    "test/e2e/persistence-phase-liveness.test.ts",
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/persistence-runtime-matrix.test.ts",
     "test/e2e/persistence-admin-intent.test.ts",

@@ -1,7 +1,7 @@
 import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-schema.ts';
 import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
 import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
-import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL } from './persistence/schema.ts';
+import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL, PERSISTENCE_DATABASE_PENDING_INDEX_SQL } from './persistence/schema.ts';
 import { PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
 import { PAGE_PROJECTION_SCHEMA_SQL, PAGE_PROJECTION_ACTIVATION_SQL } from './page-state/projection-schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
@@ -6658,6 +6658,15 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
           EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
             AND table_name='persistence_requests' AND column_name='target_kind') AS protocol`);
       return Boolean(row?.heads && row?.members && row?.protocol);
+    },
+  },
+  {
+    version: 165, name: 'index_database_only_pending_writes', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 165, 'persistence_requests_database_pending');
+      await engine.runMigration(165, engine.kind === 'postgres'
+        ? PERSISTENCE_DATABASE_PENDING_INDEX_SQL.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')
+        : PERSISTENCE_DATABASE_PENDING_INDEX_SQL);
     },
   },
 ];

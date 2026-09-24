@@ -95,12 +95,14 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
 
 /** Providers and parsing run before the OS lock and before any publication transaction. */
 export async function preparePageMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig,
-  preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }): Promise<PreparedMutation> {
+  preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }, signal?: AbortSignal): Promise<PreparedMutation> {
+  signal?.throwIfAborted();
   if (!row.intent) throw new OperationError('storage_error', 'A pending write lost its normalized intent.');
   await assertKnowledgePublicationAllowed(engine, row);
   const p = row.intent;
   const source = { sourceId: row.source_id };
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+  signal?.throwIfAborted();
   assertPageRevision(snapshot, preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(p)));
   if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
@@ -183,6 +185,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     prepareFrontmatter: page => { provenance = putProvenance(row, snapshot, page); },
     prepare: async value => { prepared = value; return value.result; },
   });
+  signal?.throwIfAborted();
   if (!prepared) {
     const oversized = result.error?.startsWith('Content too large') === true;
     throw new OperationError(oversized ? 'request_too_large' : 'invalid_params', oversized ? result.error!
