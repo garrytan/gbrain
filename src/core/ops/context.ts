@@ -321,6 +321,7 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
   // authority. They are not meta-op exemptions: degraded fences still deny.
   'get_write_request', 'list_write_requests', 'cancel_write_request',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
+  'put_skill', 'delete_skill',
 ]);
 
 /**
@@ -334,7 +335,7 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
  * tools/list filter and the dispatch fence consume the identical carve-out
  * (ENG-3 drift-proofing).
  */
-export const BOUND_CLIENT_META_OPS: ReadonlySet<string> = new Set(['request_tools']);
+export const BOUND_CLIENT_META_OPS: ReadonlySet<string> = new Set(['request_tools', 'join_brain', 'sync_brain_skills', 'leave_brain']);
 
 /**
  * Single source of truth for "may a slug-bound client use this op" (ENG-3).
@@ -364,7 +365,7 @@ export function opAllowedForBoundClient(
   if (!degraded && !auth?.boundSlugPrefixes) return true;
   const isRead = op.scope === 'read' && op.mutating !== true;
   if (isRead) return true;
-  if (BOUND_CLIENT_META_OPS.has(op.name)) return true;
+  if (BOUND_CLIENT_META_OPS.has(op.name)) return op.name === 'request_tools' || !degraded;
   if (degraded) return false;
   return CLIENT_FENCED_WRITE_OPS.has(op.name);
 }

@@ -7,6 +7,41 @@ permissions:
   contents: read
 
 jobs:
+  openclaw:
+    name: OpenClaw 2026.9.4 native context-engine startup
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gbrain_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24.18.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: npm install --prefix "${{ runner.temp }}/openclaw-host" --ignore-scripts --omit=optional --no-audit --no-fund openclaw@2026.9.4
+      - name: Exercise real plugin load and fresh conversations with a loopback-only provider
+        env:
+          GBRAIN_TEST_OPENCLAW_BIN: ${{ runner.temp }}/openclaw-host/node_modules/.bin/openclaw
+          GBRAIN_TEST_OPENCLAW_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/gbrain_test
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+        run: bun test --timeout=60000 test/openclaw-context-engine-native.serial.test.ts
+
   native:
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
     runs-on: ${{ matrix.runner }}
@@ -14,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.3.11', '1.3.13']
+        bun: ['1.3.11', '1.3.13', '1.4.2']
         target: [linux-x64-glibc, linux-arm64-glibc, darwin-arm64, darwin-x64, win32-x64, win32-arm64]
         include:
           - runner: ubuntu-24.04
@@ -48,6 +83,9 @@ jobs:
         timeout-minutes: 8
         run: |
           bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain-native-validation src/cli.ts
+          if [ "${{ runner.os }}" = "macOS" ] && [ "${{ matrix.bun }}" = "1.4.2" ]; then
+            codesign --verify --strict --verbose=2 bin/gbrain-native-validation
+          fi
           bun scripts/native/compiled-smoke.ts --binary bin/gbrain-native-validation
           bun scripts/native/cli-persistence-smoke.ts --binary bin/gbrain-native-validation
 
@@ -58,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.3.11', '1.3.13']
+        bun: ['1.3.11', '1.3.13', '1.4.2']
         target: [linux-x64-musl, linux-arm64-musl]
         include:
           - runner: ubuntu-24.04

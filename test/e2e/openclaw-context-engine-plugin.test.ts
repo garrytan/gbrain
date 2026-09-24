@@ -61,9 +61,11 @@ describe('openclaw-context-engine plugin entry', () => {
 
     (pluginEntry as PluginEntryShape).register(stubApi);
 
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0].id).toBe(ENGINE_ID);
     expect(typeof calls[0].factory).toBe('function');
+    expect(calls[1].id).toBe('gbrain-context-engine');
+    expect(typeof calls[1].factory).toBe('function');
   });
 
   it('factory returns a working ContextEngine bound to the workspace', async () => {
@@ -90,6 +92,13 @@ describe('openclaw-context-engine plugin entry', () => {
       expect(engine).toBeDefined();
       expect(engine.info.id).toBe(ENGINE_ID);
       expect(engine.info.ownsCompaction).toBe(false);
+      expect(engine.info.transcriptSemantics).toEqual({
+        currentTurnFence: 'before-current-turn-entry-v1',
+        turnAdvancementIdempotency: 'atomic-idempotent-v1',
+      });
+      const acceptedTurn = { advancementKey: 'accepted-once', messages: [{ role: 'user', content: 'hello' }] };
+      expect(await engine.commitTurn(acceptedTurn)).toEqual({ status: 'committed' });
+      expect(await engine.commitTurn(acceptedTurn)).toEqual({ status: 'committed' });
 
       // First method call exercises the full assemble path through the
       // factory-built engine — same code the OpenClaw runtime will hit.
@@ -97,6 +106,61 @@ describe('openclaw-context-engine plugin entry', () => {
       expect(result.systemPromptAddition).toContain('Live Context');
       // The mocked memory-addition SDK call lands in the prompt too.
       expect(result.systemPromptAddition).toContain('[mock memory addition]');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('zero-argument factories construct without guessing the gateway workspace', async () => {
+    const factories = new Map<string, (ctx?: { workspaceDir?: string }) => ReturnType<typeof import('../../src/core/context-engine.ts').createGBrainContextEngine>>();
+    const warnings: string[] = [];
+    pluginEntry.register({
+      registerContextEngine: (id, factory) => { factories.set(id, factory); },
+      logger: { warn: (message) => { warnings.push(message); } },
+    });
+    for (const [id, factory] of factories) {
+      const engine = factory();
+      expect(engine.info.id).toBe(id);
+      const messages = [{ role: 'user', content: 'hello' }];
+      const result = await engine.assemble({ sessionId: 'fresh-session', messages });
+      expect(result.messages).toBe(messages);
+      expect(result.estimatedTokens).toBe(2);
+      expect(result.systemPromptAddition).toContain('No brain source was selected');
+      expect(await engine.compact({ sessionId: 'fresh-session', sessionFile: '/unused' })).toEqual({
+        ok: false, compacted: false, reason: 'workspace-unavailable',
+      });
+    }
+    expect(warnings).toHaveLength(2);
+  });
+
+  it('uses explicit legacy workspace configuration but never a multi-agent default or empty context', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'gbrain-plugin-legacy-'));
+    try {
+      mkdirSync(join(tmp, 'ops'));
+      writeFileSync(join(tmp, 'ops', 'tasks.md'), '## Today\n- [ ] workspace-bound-canary\n');
+      for (const config of [
+        { pluginConfig: { workspaceDir: tmp } },
+        { config: { agents: { defaults: { workspace: tmp } } } },
+      ]) {
+        let factory!: Parameters<Parameters<typeof pluginEntry.register>[0]['registerContextEngine']>[1];
+        pluginEntry.register({ ...config, registerContextEngine: (_id, fn) => { factory = fn; } });
+        const result = await factory().assemble({ sessionId: '', messages: [] });
+        expect(result.systemPromptAddition).toContain('workspace-bound-canary');
+        for (const workspaceDir of ['', 'relative-workspace', '   ']) {
+          const empty = await factory({ workspaceDir }).assemble({ sessionId: '', messages: [] });
+          expect(empty.systemPromptAddition).toContain('No brain source was selected');
+          expect(empty.systemPromptAddition).not.toContain('workspace-bound-canary');
+        }
+      }
+      let factory!: Parameters<Parameters<typeof pluginEntry.register>[0]['registerContextEngine']>[1];
+      for (const roster of [{ list: [{ id: 'main' }, { id: 'other' }] }, { entries: { main: {}, other: {} } }]) {
+        pluginEntry.register({
+          config: { agents: { defaults: { workspace: tmp }, ...roster } },
+          registerContextEngine: (_id, fn) => { factory = fn; },
+        });
+        expect((await factory().assemble({ sessionId: '', messages: [] })).systemPromptAddition).toContain('No brain source was selected');
+        expect((await factory({ workspaceDir: tmp }).assemble({ sessionId: '', messages: [] })).systemPromptAddition).toContain('workspace-bound-canary');
+      }
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

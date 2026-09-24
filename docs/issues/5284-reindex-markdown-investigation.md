@@ -130,6 +130,42 @@ runtime, embedding-enabled mode, or the reported large aged store. This is
 focused local evidence for the named revisions, not a claim that the upstream
 issue is resolved.
 
+## Larger-corpus control
+
+A later run on `34c71ef6` used 5,600 pages with eight sections each on Linux
+x86-64, Bun 1.3.14 and PGLite 0.4.3. The checkout was isolated from workspace
+setup and its revision was checked before and after the run. The command was:
+
+```sh
+bun --no-env-file scripts/bench-reindex-markdown.ts . 5600 8
+```
+
+| Phase | Page transactions | Wall time | COMMIT tail p99 | Maximum COMMIT tail |
+| --- | ---: | ---: | ---: | ---: |
+| Full sweep | 5,600 | 114.06 s | 0.319 ms | 17.07 ms |
+| Resume after interruption | 5,500 | 101.02 s | 0.311 ms | 1.18 ms |
+
+Each sweep also committed one separately classified planner-statistics
+transaction. The immediate no-op committed none. The intentional SIGKILL at
+the 101st page body left exactly 100 pages committed and 5,500 pending; resume
+completed with no failed pages, missing chunks, mismatched projection revisions
+or missing tags. No fetch was attempted. The complete launcher exited zero.
+
+The resulting store occupied approximately 191 MiB. This matches the reported
+page count but still does not match the aged 3.6 GB store or macOS 27 runtime.
+These are single-run control measurements, not a speed comparison or evidence
+that the reported failure is fixed.
+
+The same immutable source revision was also exercised on native ARM64 macOS
+26.2 with a scratch-local Bun 1.4.2 runtime, isolated HOME and no inherited
+provider credentials. The 5,600-page full sweep completed in 95.20 seconds
+(COMMIT tail p99 0.509 ms, maximum 10.48 ms). After the injected kill, exactly
+100 pages were committed and the remaining 5,500 completed in 74.05 seconds
+(p99 0.385 ms, maximum 12.08 ms). The no-op, reopened-store, tags, chunks and
+projection assertions all passed. The retained launcher exit was zero, and no
+fixture processes remained. This removes Linux and the older Bun runtime from
+that control, but does not reproduce macOS 27 or the aged large-store condition.
+
 ## Remaining prerequisite
 
 To diagnose the reported wedge rather than this passing workload, run the

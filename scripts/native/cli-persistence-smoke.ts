@@ -111,7 +111,7 @@ async function stopOwner() {
 try {
   mkdirSync(checkout); mkdirSync(childTemp); mkdirSync(dirname(database), { recursive: true });
   copyFileSync(resolve(args[1]), binary); chmodSync(binary, 0o700);
-  await run(['init', '--pglite', '--path', database, '--non-interactive', '--no-embedding', '--json'], 0, 120000);
+  await run(['init', '--pglite', '--path', database, '--db-only', '--non-interactive', '--no-embedding', '--json'], 0, 120000);
   const config = JSON.parse(readFileSync(join(root, '.gbrain', 'config.json'), 'utf8'));
   assert.equal(config.engine, 'pglite'); assert.equal(config.database_path, database); assert.equal(config.embedding_disabled, true);
   await run(['auth', 'local-writer', 'register', 'cli', '--json']);

@@ -4,6 +4,17 @@
 [page-operation entries](core-services-2.md) when changing source identity,
 snapshot selection, or deliberate ownership administration.
 
+Binding owner epochs and topology generations are cast to exact decimal strings
+before resident IPC serialization, preserving values above JavaScript's safe
+integer range. Reviewed admin-state fingerprints include legacy-lock identity.
+Self-transfer preparation records physical before-state and intended repair in
+a durable manifest; acceptance checks root, epoch, manifest and coordination
+path under the native lock from the database binding. A private token-bound
+temporary stamp is byte-verified before rename; changed tokens and malformed
+records refuse without deleting uncertain state. Regression coverage:
+`test/persistence-admin-recovery.test.ts`, `test/persistence-onboarding.test.ts`,
+`test/persistence-container-preflight.test.ts`.
+
 - `src/core/deep-research-id.ts` — canonical `gbrain-page:v1:` handles encode a
   JSON pair of source ID and slug in unpadded base64url. The decoder rejects
   malformed or noncanonical encodings rather than treating them as legacy

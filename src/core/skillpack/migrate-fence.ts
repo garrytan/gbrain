@@ -20,6 +20,7 @@
  * directly. Loud stderr warning when fallback fires.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
@@ -214,6 +215,7 @@ export function stripFence(content: string, parsed: ParsedFence): string {
 
 export function runMigrateFence(opts: MigrateFenceOptions): MigrateFenceResult {
   const dryRun = opts.dryRun ?? false;
+  if (!dryRun) assertLegacySkillFilesystemWrite(opts.targetWorkspace);
 
   // Find the resolver file (prefer skills-dir variant; fall back to
   // workspace root).
@@ -292,6 +294,7 @@ export function runMigrateFence(opts: MigrateFenceOptions): MigrateFenceResult {
   // Rewrite the resolver file with the fence stripped.
   if (!dryRun) {
     const rewritten = stripFence(content, parsed);
+    assertLegacySkillFilesystemWrite(resolverFile);
     writeFileSync(resolverFile, rewritten);
   }
 

@@ -474,3 +474,12 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+## Shared knowledge and skills
+
+New local brains keep knowledge and a useful memory skillpack in one recorded content
+root. Shared publication, own-principal following and editing have separate authority;
+ordinary memory writes never imply skill editing or script execution. Native router
+installation is not proof of native use. Read
+[shared brain skills](docs/guides/shared-brain-skills.md) and its
+[key-file contracts](docs/architecture/key-files/shared-skills.md) before changing this lifecycle.

@@ -13,6 +13,7 @@
  * target-models.
  */
 
+import { assertLegacySkillFilesystemWrite, assertLegacySkillWriter } from '../skillpack/writer-guard.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -186,6 +187,7 @@ export interface FleetResult {
  * `skills/<name>/skillopt/` path, so the receipts don't clobber each other.
  */
 export async function runFleet(opts: FleetOpts): Promise<FleetResult> {
+  await assertLegacySkillWriter(opts.engine, path.join(opts.skillsDir, opts.skillName));
   if (opts.targetModels.length === 0) {
     throw new Error('runFleet: targetModels must be non-empty');
   }
@@ -201,12 +203,15 @@ export async function runFleet(opts: FleetOpts): Promise<FleetResult> {
     // store work inside it. Copy the SKILL.md into the per-model dir
     // up-front so each fleet run sees the same baseline.
     const fleetDir = path.join(opts.skillsDir, opts.skillName, 'skillopt', 'fleet', slug);
+    assertLegacySkillFilesystemWrite(fleetDir);
     fs.mkdirSync(fleetDir, { recursive: true });
     // Per-model "skills dir" sees only this one skill.
     const perModelSkillsDir = path.join(opts.skillsDir, opts.skillName, 'skillopt', 'fleet', slug, 'staging');
+    assertLegacySkillFilesystemWrite(path.join(perModelSkillsDir, opts.skillName));
     fs.mkdirSync(path.join(perModelSkillsDir, opts.skillName), { recursive: true });
     const stagingSkillPath = path.join(perModelSkillsDir, opts.skillName, 'SKILL.md');
     const baselinePath = path.join(opts.skillsDir, opts.skillName, 'SKILL.md');
+    assertLegacySkillFilesystemWrite(stagingSkillPath);
     fs.copyFileSync(baselinePath, stagingSkillPath);
 
     const skillOptOpts: SkillOptOpts = {

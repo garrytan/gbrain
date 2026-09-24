@@ -13,6 +13,8 @@ import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core
 import { runInitEmbedCheck } from '../core/init-embed-check.ts';
 import { PgliteBusyError } from '../core/pglite-lock.ts';
 import { inspectRemoteInitState, preserveConversionConfig, readInitConfigState, printInAgentReady } from '../core/agent-install/init-state.ts';
+import { isNewContentDatabase, setupSharedBrainContent, type SharedContentOptions } from '../core/shared-skills/setup.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
 
 export async function runInit(args: string[]) {
   // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
@@ -45,6 +47,14 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  const contentRootIndex = args.indexOf('--content-root');
+  if (args.includes('--git') && args.includes('--no-git')) failInitFlag('Choose --git or --no-git, not both.', jsonOutput);
+  if (args.includes('--db-only') && (contentRootIndex !== -1 || args.includes('--git'))) failInitFlag('--db-only cannot be combined with --content-root or --git.', jsonOutput);
+  const content: SharedContentOptions = {
+    ...(contentRootIndex !== -1 ? { root: args[contentRootIndex + 1] } : {}),
+    dbOnly: args.includes('--db-only'), git: args.includes('--git') ? 'init' : 'none',
+    fresh: fileState.kind === 'absent',
+  };
   // v0.42 (T17): pack selection on fresh installs. New brains default to
   // gbrain-base-v2 (the 15-type canonical taxonomy); --schema-pack
   // gbrain-base opts back to the legacy 24-type pack for users who don't
@@ -127,6 +137,7 @@ export async function runInit(args: string[]) {
       aiOpts,
       schemaPack,
       skipEmbedCheck,
+      content,
       allowDocker: args.includes('--allow-docker'),
       allowCreateDb: args.includes('--allow-create-db'),
       localPostgres: args.includes('--local-postgres'),
@@ -169,7 +180,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck });
+    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, schemaPack, skipEmbedCheck, content });
   }
 
   // Supabase/Postgres mode
@@ -196,7 +207,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, schemaPack, skipEmbedCheck });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, schemaPack, skipEmbedCheck, content });
 }
 
 const INIT_BOOLEAN_FLAGS = new Set([
@@ -209,6 +220,9 @@ const INIT_BOOLEAN_FLAGS = new Set([
   '--json',
   '--no-embedding',
   '--skip-embed-check',
+  '--db-only',
+  '--git',
+  '--no-git',
   // db-availability loop (5a): Postgres-first ladder for harness installs.
   '--prefer-postgres',
   '--allow-docker',
@@ -220,6 +234,7 @@ const INIT_VALUE_FLAGS = new Set([
   '--url',
   '--key',
   '--path',
+  '--content-root',
   '--schema-pack',
   '--embedding-model',
   '--model',
@@ -1180,6 +1195,7 @@ export async function initPGLite(opts: {
   schemaPack?: string;
   /** v0.42 (#1780 Gap 2): skip the init-time embedding-key validation. */
   skipEmbedCheck?: boolean;
+  content?: SharedContentOptions;
 }) {
   const dbPath = opts.customPath || gbrainPath('brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -1261,6 +1277,7 @@ export async function initPGLite(opts: {
   const engine = await createEngine({ engine: 'pglite' });
   try {
     await engine.connect({ database_path: dbPath, engine: 'pglite' });
+    const freshContentDatabase = await isNewContentDatabase(engine);
 
     // v0.28.5 (A4) + v0.37.11.0 Lane B.5: refuse to silently re-template an
     // existing brain with a mismatched embedding dimension. Catches both the
@@ -1357,7 +1374,7 @@ export async function initPGLite(opts: {
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
-    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
+    config.mcp = { ...(freshContentDatabase && !existingFile.engine ? { publish_skills: true } : {}), ...(config.mcp ?? {}) };
     // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
@@ -1367,6 +1384,11 @@ export async function initPGLite(opts: {
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
     preserveConversionConfig(false);
     saveConfig(config);
+    const contentReceipt = await setupSharedBrainContent({ engine, config, sourceId: await resolveSourceId(engine, undefined), remote: false, dryRun: false, logger: { info: console.error, warn: console.error, error: console.error } }, {
+      ...opts.content, fresh: freshContentDatabase,
+      ...(process.env.GBRAIN_IN_AGENT_SETUP === '1' && !opts.content?.root ? { root: join(dirname(configPath()), '..', 'memory') } : {}),
+    });
+    if (!opts.jsonOutput) console.error(`[init] Content: ${contentReceipt.root ?? contentReceipt.repository_kind} (${contentReceipt.repository_kind}; ${contentReceipt.status}). ${contentReceipt.pending_actions.join(' ')}`);
     if (opts.schemaPack) {
       process.stderr.write(
         `[init] Using schema pack: ${opts.schemaPack} (override with --schema-pack <name>)\n`,
@@ -1390,7 +1412,7 @@ export async function initPGLite(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck }));
+      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt }));
     } else if (process.env.GBRAIN_IN_AGENT_SETUP === '1') {
       printInAgentReady(dbPath);
     } else {
@@ -1494,6 +1516,7 @@ export async function initPostgresCore(opts: {
   schemaPack?: string;
   /** v0.42 (#1780 Gap 2): skip the init-time embedding-key validation. */
   skipEmbedCheck?: boolean;
+  content?: SharedContentOptions;
 }) {
   const { databaseUrl } = opts;
 
@@ -1588,6 +1611,8 @@ export async function initPostgresCore(opts: {
       }
       throw e;
     }
+
+    const freshContentDatabase = await isNewContentDatabase(engine);
 
     // Check and auto-create pgvector extension
     try {
@@ -1697,7 +1722,7 @@ export async function initPostgresCore(opts: {
     }
     // PR1: new installs publish their skill catalog over MCP by default
     // (existing config wins on re-init, so a prior opt-out is preserved).
-    config.mcp = { publish_skills: true, ...(config.mcp ?? {}) };
+    config.mcp = { ...(freshContentDatabase && !existingFile.engine ? { publish_skills: true } : {}), ...(config.mcp ?? {}) };
     // v0.42: new installs default self-upgrade to NOTIFY (a nudge on every
     // gbrain invocation). mode_prompted=true so the upgrade-time banner doesn't
     // also fire on a fresh install. Hands-off: gbrain config set self_upgrade.mode auto
@@ -1706,6 +1731,8 @@ export async function initPostgresCore(opts: {
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
     preserveConversionConfig(false);
     saveConfig(config);
+    const contentReceipt = await setupSharedBrainContent({ engine, config, sourceId: await resolveSourceId(engine, undefined), remote: false, dryRun: false, logger: { info: console.error, warn: console.error, error: console.error } }, { ...opts.content, fresh: freshContentDatabase });
+    if (!opts.jsonOutput) console.error(`[init] Content: ${contentReceipt.root ?? contentReceipt.repository_kind} (${contentReceipt.repository_kind}; ${contentReceipt.status}). ${contentReceipt.pending_actions.join(' ')}`);
     console.log('Config saved to ~/.gbrain/config.json');
     if (opts.schemaPack) {
       process.stderr.write(
@@ -1727,7 +1754,7 @@ export async function initPostgresCore(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count, embedding_check: embedCheck }));
+      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt }));
     } else {
       console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
       if (stats.page_count > 0) {
@@ -2016,6 +2043,10 @@ OPTIONS
   --migrate-only        Apply pending schema migrations against the configured engine
                         without re-saving config (used by post-upgrade and orchestrators)
   --json                JSON output for status reporting
+  --content-root <path> Use a new owned content directory (existing source roots win)
+  --db-only             Keep memory database-only; shared publication needs export/adoption
+  --git                 Authorize Git init in the new owned empty content directory
+  --no-git              Keep a content directory without Git (default)
   --path <DIR>          Override default brain path (PGLite only)
   --key <APIKEY>        Provide an API key non-interactively (Supabase only)
   --embedding-model <PROVIDER:MODEL>

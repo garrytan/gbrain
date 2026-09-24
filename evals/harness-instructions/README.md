@@ -63,6 +63,24 @@ Muse. Runtime suites provide separate evidence for actual writes and recovery.
 For real observed calls, cleanup, persistence, and cross-conversation acceptance,
 follow [harness validation](../../docs/guides/harness-validation.md).
 
+## Shared brain skills
+
+`shared-skills-cases.jsonl` adds twelve independent cases for enrollment, editor
+permissions, legacy prose consent, offline freshness, parent shadow copies,
+qualified identities, changed requirements, durable replay, native evidence,
+shared dependencies, leaving and incomplete catalog reads. Run them alongside
+the original setup and MCP administration cases, withholding `required` and `forbidden` as above.
+
+Include the complete original input set, plus the current operating contract in
+`src/mcp/instructions.ts`, packaged instruction text in
+`src/core/shared-skills/setup-bundle.ts`, and
+`docs/guides/shared-brain-skills.md`. Record exact input and response hashes;
+an evaluation that omits a referenced instruction cannot certify that instruction.
+Keep response interpretation separate from actual MCP tests and native sessions.
+No provider call, automatic capture or production mutation is needed to prepare
+these fictional cases; model evaluations still follow the operator's cost and
+privacy choices.
+
 ## Maintenance ownership cases
 
 `maintenance-cases.jsonl` adds five independent, fictional ownership-recovery

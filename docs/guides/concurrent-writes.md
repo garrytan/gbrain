@@ -60,6 +60,135 @@ Changing the operation or arguments with the same UUID produces
 Relative times, generated capture slugs, and trusted owner/resolver defaults
 are frozen at admission so retries cannot drift.
 
+## Repair a file/database disagreement
+
+**Say to your agent:** *"Preview the disagreement between this page's file and
+database record. Preserve both originals, show me conflicting fields, and don't
+apply the repair until I've reviewed it. Then retry my original memory request
+separately and verify the fact, visibility, and provenance."*
+
+`source_changed` can mean the file and database disagree even when Git reports a
+clean checkout. `sources reconcile` is an exact-page repair, not a force-write
+bypass. It works with an already-claimed active owner before or after managed
+activation. It never claims, transfers, activates, changes source checkpoints,
+or repairs an absent owner. Run it on the canonical host with an existing trusted
+CLI write registration. Both its original and current grants must permit
+`put_page` for the selected source and exact slug. A CLI can delegate to its
+resident PGLite owner; ordinary
+HTTP/MCP tokens and stdio credentials cannot administer reconciliation.
+
+Select the brain, source, and exact slug explicitly. Store the preview outside the
+canonical repository:
+
+```bash
+mkdir -p -m 700 ~/.gbrain/repair
+gbrain sources reconcile workspace people/example --brain host \
+  --preview --out ~/.gbrain/repair/example.preview.json --json
+```
+
+Without `--out`, preview returns a summary only. Preview never changes canonical
+content. The private artifact includes both originals and the proposed result;
+keep it out of Git, shared directories, and public reports. Output files use mode
+0600 and never overwrite existing files. Inspect the artifact locally in a private
+editor, or use `jq '.conflicts' ~/.gbrain/repair/example.preview.json`. This output
+contains private content; do not paste it into shared logs or public reports.
+
+Fields present on only one side are preserved. Disjoint nested fields combine;
+different values require explicit choices. Absence is not a deletion, timestamps
+do not decide which side wins, and arrays are whole values. Tags stay add-only.
+Provenance, visibility, withdrawals, protected takes, and safety metadata retain
+their existing policies rather than accepting merge overrides.
+
+For conflicts, create a decisions file containing a JSON array:
+
+```json
+[
+  { "path": "/frontmatter/profile/role", "action": "take_file" },
+  { "path": "/frontmatter/obsolete_note", "action": "delete" }
+]
+```
+
+Other actions are `take_database` and `set_value` (with a `value`). Paths use JSON
+Pointer escaping: `~0` for `~`, `~1` for `/` inside a field name. Unknown,
+duplicate, overlapping, and protected-field decisions are rejected. Render the
+final policy-checked result before applying:
+
+```bash
+gbrain sources reconcile workspace people/example --brain host --preview \
+  --from ~/.gbrain/repair/example.preview.json \
+  --decisions ~/.gbrain/repair/decisions.json \
+  --out ~/.gbrain/repair/example.resolved.json --json
+```
+
+The command prints only a summary. Inspect the actual resolved content locally
+with `jq '.result' ~/.gbrain/repair/example.resolved.json` before approving it.
+
+After reviewing a `ready` preview, generate and retain one UUID:
+
+```bash
+REQUEST_ID="$(bun -e 'console.log(crypto.randomUUID())')"
+gbrain sources reconcile workspace people/example --brain host \
+  --apply ~/.gbrain/repair/example.resolved.json \
+  --request-id "$REQUEST_ID" --json
+```
+
+If the initial preview was already `ready`, apply that artifact instead. GBrain
+rechecks the revision, raw bytes, source identity, owner epoch/binding, and safety
+policy before publishing. Changed inputs require a fresh preview, not automatic
+overwrite. Lost response or pending receipt: retry the same artifact and UUID.
+Terminal conflict: make a corrected preview and use a new UUID. Inspect
+`get_write_request` until committed; accepted is not the same as saved. That
+helper requires its own operation grant. If it is not granted, replay the same
+apply artifact and UUID to inspect the original request without widening grants.
+
+Both originals are retained privately in `~/.gbrain/reconciliation-previews/`,
+independently of temporary recovery records and receipt compaction. Backups use
+bounded local capacity; capacity or disk failures refuse the repair before
+publication. Local history does not protect against disk loss, and forgetting an
+active fact does not erase historical backups.
+
+Inspect backups for the exact page using `sources reconcile workspace
+people/example --brain host --backups --json`. After reviewing retention needs
+and copying any history you want to keep to another private location, remove an
+exact returned reference with `--remove-backup <reference>`. Removal is explicit
+and refuses nonterminal or recovering requests. It never deletes the page or
+changes its immutable receipt. Backups from an interrupted pre-admission attempt
+remain private and require operator inspection rather than automatic removal.
+
+After commitment, submit the originally blocked `remember`, capture, or other
+edit separately with its own new UUID. Read back the fact, visibility, and
+provenance. Repair never silently replays a failed memory intent.
+
+For bounded, read-only verification after sync:
+
+```bash
+gbrain sources reconcile workspace --brain host --audit --limit 25 --json
+```
+
+Continue with `--after` and the returned `next_after`. `complete` means the end of
+the source was reached, not that it is drift-free. Results name scoped slugs and
+reasons without page content. Whole-source audit requires a CLI grant without a
+slug-prefix restriction. `sources writer activate --dry-run` includes a bounded
+drift sample and identifies incomplete samples without authorizing repairs.
+
+Atom scan/failure bookkeeping now lives outside canonical note metadata so
+processing progress does not create new disagreements. Managed atom extraction
+checks trusted local source-wide authority and, for filesystem writes, owner
+readiness before model work, then journals publication and completion. Retained
+accepted output replays without
+another model call. This does not restore every legacy maintenance writer; see
+[supported managed work and explicit repair](../architecture/topologies.md#supported-managed-work-and-explicit-repair).
+
+### Roll back safely
+
+Stop submitting new reconciliation requests first. Keep a compatible upgraded
+owner running until all accepted requests are terminal and recovery has drained;
+inspect the durable receipts before disabling the new command or reverting the
+binary. Never downgrade an active reconciliation queue to a version that does
+not understand its intents. Leave the additive processing-state table and private
+backups in place. Do not automatically restore an old preimage over later edits,
+and do not disable guards or change ownership as part of rollback.
+
 ## Receipt states and errors
 
 | State | Meaning |
@@ -135,16 +264,17 @@ files. An unconfigured remote is reported as a skipped push. Embeddings wait
 for an enabled, configured provider and install only if the page revision and
 its text projection still match.
 
-Before managed activation, eligible `put_page` and `capture` writes also
+Before and after managed activation, eligible `put_page` and `capture` writes
 record durable facts-extraction intent. `facts_backstop.queued` means that
 intent committed with the page; the `facts-backstop` effect becomes
 `dispatched` when its durable worker job is accepted. Extraction availability
 is checked by that worker. The handoff is idempotent and rechecks the source,
 page revision and current writer grant. Confined writers, unchanged pages,
 disabled extraction and dream-generated content do not enqueue work.
-After activation the legacy extractor reports `writer_coordinator_required`
-and skips; it cannot bypass canonical publication. Activation also causes
-previously queued extraction jobs to skip. Canonical receipts remain unchanged.
+Managed jobs retain the committed page request as their authority and publish
+through the coordinator. Legacy jobs without that request skip with
+`missing_write_authority`; raw queue/fence paths remain unsupported. Activation
+does not by itself skip authorized durable jobs. Canonical receipts remain unchanged.
 
 ## Receipt access and explicit grant migration
 

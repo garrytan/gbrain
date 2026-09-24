@@ -10,38 +10,34 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { execFileSync } from 'child_process';
 import { join } from 'path';
 
 const REPO = join(__dirname, '..');
 const SCRIPT = join(REPO, 'scripts', 'skillify-check.ts');
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
-function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
+async function run(args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const child = Bun.spawn([process.execPath, 'run', SCRIPT, ...args], {
+    stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', cwd: REPO,
+  });
+  const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
   try {
-    const stdout = execFileSync('bun', ['run', SCRIPT, ...args], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: REPO,
-      maxBuffer: MAX_OUTPUT_BYTES,
-    });
-    return { exitCode: 0, stdout, stderr: '' };
-  } catch (err: any) {
-    // Transport failures (for example ENOBUFS) are not audit verdicts.
-    if (typeof err.status !== 'number') throw err;
-    return {
-      exitCode: err.status ?? 1,
-      stdout: err.stdout?.toString?.() ?? '',
-      stderr: err.stderr?.toString?.() ?? '',
-    };
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    return { exitCode, stdout, stderr };
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await child.exited;
   }
 }
 
 describe('skillify-check CLI', () => {
-  test('text mode runs against a known-skilled file', () => {
+  test('text mode runs against a known-skilled file', async () => {
     // publish is one of the gbrain commands with SKILL.md + tests +
     // resolver entry. Should get a non-zero score.
-    const result = run(['src/commands/publish.ts']);
+    const result = await run(['src/commands/publish.ts']);
     expect(result.stdout).toContain('[publish]');
     expect(result.stdout).toContain('SKILL.md exists');
     expect(result.stdout).toContain('Unit tests');
@@ -50,8 +46,8 @@ describe('skillify-check CLI', () => {
     expect(result.stdout).toMatch(/\d+\/\d+/);
   });
 
-  test('--json emits a parseable array with the expected shape', () => {
-    const result = run(['src/commands/publish.ts', '--json']);
+  test('--json emits a parseable array with the expected shape', async () => {
+    const result = await run(['src/commands/publish.ts', '--json']);
     expect(result.stdout.trim()).toMatch(/^\[/);
     const parsed = JSON.parse(result.stdout);
     expect(Array.isArray(parsed)).toBe(true);
@@ -72,8 +68,9 @@ describe('skillify-check CLI', () => {
     }
   });
 
-  test('--recent produces JSON with results for recent files', () => {
-    const result = run(['--recent', '--json']);
+  test('--recent produces JSON with results for recent files', async () => {
+    const result = await run(['--recent', '--json']);
+    expect([0, 1]).toContain(result.exitCode);
     // --recent may find zero files on a cold clone; either way JSON must parse.
     const parsed = JSON.parse(result.stdout);
     expect(Array.isArray(parsed)).toBe(true);
@@ -84,20 +81,8 @@ describe('skillify-check CLI', () => {
     }
   });
 
-  test('captures a complete report larger than the subprocess default buffer', () => {
-    const targets = Array.from({ length: 700 }, () => 'src/commands/publish.ts');
-    const result = run([...targets, '--json']);
-    expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(1024 * 1024);
-    const parsed = JSON.parse(result.stdout);
-    expect(parsed).toHaveLength(targets.length);
-    expect(parsed.every((entry: { path: string }) => entry.path === targets[0])).toBe(true);
-    const anyFailed = parsed.some((entry: { items: { passed: boolean; required: boolean }[] }) =>
-      entry.items.some(item => !item.passed && item.required));
-    expect(result.exitCode).toBe(anyFailed ? 1 : 0);
-  });
-
-  test('bogus target reports `Code file exists: false` as a required gap', () => {
-    const result = run(['src/definitely-not-a-real-file.ts', '--json']);
+  test('bogus target reports `Code file exists: false` as a required gap', async () => {
+    const result = await run(['src/definitely-not-a-real-file.ts', '--json']);
     const parsed = JSON.parse(result.stdout);
     const codeCheck = parsed[0].items.find((i: any) => i.name === 'Code file exists');
     expect(codeCheck.passed).toBe(false);
@@ -106,6 +91,19 @@ describe('skillify-check CLI', () => {
     expect(parsed[0].recommendation).toMatch(/skillify|create|missing/);
     // Exit code non-zero
     expect(result.exitCode).toBe(1);
+  });
+
+  test('large JSON audits retain every result beyond the synchronous capture limit', async () => {
+    const targets = Array.from({ length: 1000 }, () => 'src/commands/publish.ts');
+    const result = await run([...targets, '--json']);
+    expect([0, 1]).toContain(result.exitCode);
+    expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(1024 * 1024);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toHaveLength(targets.length);
+    expect(parsed.map((item: { path: string }) => item.path)).toEqual(targets);
+    const anyFailed = parsed.some((entry: { items: { passed: boolean; required: boolean }[] }) =>
+      entry.items.some(item => !item.passed && item.required));
+    expect(result.exitCode).toBe(anyFailed ? 1 : 0);
   });
 });
 

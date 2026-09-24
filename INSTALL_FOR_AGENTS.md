@@ -104,8 +104,21 @@ gbrain init --pglite --no-embedding     # keyless memory, no server needed
 gbrain doctor --json                   # inspect diagnostics and any warnings
 ```
 
-The user's markdown files (notes, docs, brain repo) are SEPARATE from this tool repo.
-Use the user's chosen notes directory, or a separate managed memory directory. A Git repository is optional; do not create a private personal-agent repo for a memory-only install.
+The user's markdown files and canonical skills are SEPARATE from this tool repo.
+Fresh local init creates a combined source at
+`configDir()/content/<persistent-brain-id>/default`, normally
+`~/.gbrain/content/<persistent-brain-id>/default`, with the release-pinned
+`gbrain-memory` pack. `GBRAIN_HOME` is the parent of `.gbrain`, not `.gbrain`
+itself. Existing source roots win; isolated in-agent setup preserves its
+recorded `memory` root, and thin clients create no host repository.
+
+Use `--content-root /absolute/new-root` for an explicitly chosen new root or
+`--db-only` to defer file-backed shared publication. Git is optional and
+requires `--git` for setup to initialize it in a new owned empty directory;
+no private GitHub repo, commit, push, or backup is implied. Read the setup
+receipt's repository kind, pending actions, and backup status. Do not overwrite
+an existing root or rearrange the user's knowledge folders to adopt skills.
+See [shared brain skills](docs/guides/shared-brain-skills.md).
 
 Read `~/gbrain/docs/GBRAIN_RECOMMENDED_SCHEMA.md` and set up the MECE directory
 structure (people/, companies/, concepts/, etc.) inside the user's brain repo,
@@ -309,6 +322,40 @@ local `put_page`. Remote writes still need the maintenance described above.
 
 ## Step 5: Load Skills
 
+For a shared-brain connection, use the canonical catalog instead of silently
+scaffolding another independent copy. New `gbrain mcp grant` connections follow
+published skills by default; disclose this and offer `--skills memory-only`.
+Existing grants and publication opt-outs stay unchanged. The host owner must
+approve the source's follow/disclosure policy on an existing brain. Fresh
+owned-root setup establishes a limited prose-only policy for the packaged
+memory skills when publication is enabled; it does not replace an existing
+policy. Memory write access is not
+`skill_editor` or `skill_publisher` authority. Each independent installation,
+including the parent, needs its own principal and private handoff.
+
+Discover with `list_skills` using `schema_version: 2`, then fetch only relevant
+`get_skill` revisions and approved `get_skill_asset` dependencies. Starter
+supports these tools subject to grants; the `--surface verbs` examples below
+are deliberately memory-only. MCP resources at `gbrain://skills` offer the same
+authorized catalog, not a promise that every client loads native skills.
+
+Managed Claude Code/Codex/opencode routers report `restart_required` and native
+unverified. Follow each adapter's pending action and verify a new conversation;
+generated files and server tests are not activation evidence. The
+[generated adapter reference](docs/guides/harness-adapters.md) covers all 13
+registry IDs without claiming identical native support. No shared skill enables
+scripts, additional tools, paid calls, or capture automatically. The remaining
+scaffolding instructions apply to explicitly independent local copies, not
+managed canonical skills or caches.
+
+Isolated Grok Bot/Muse setup uses its own installation-bound router and private
+CLI registration; existing/adopted roots require explicit follow approval in
+the upgraded setup helper. Native saved-skill loading stays manual. Legacy
+full/stub harness scaffolds return a pending migration plan for an active shared
+brain rather than making another bundled copy. Follow the
+[in-agent and bridge migration steps](docs/guides/shared-brain-skills.md#existing-in-agent-installations-and-legacy-bridges)
+and preserve edited files.
+
 If you're running an agent platform (OpenClaw, Hermes, or any repo with a workspace),
 scaffold the bundled skills into it:
 
@@ -379,7 +426,8 @@ memory permanently.
 
 The three most important skills to adopt immediately:
 
-1. **Signal detector** (`skills/signal-detector/SKILL.md`) — fire this on EVERY
+1. **Signal detector** (`skills/signal-detector/SKILL.md`) — only after explicit
+   automatic-capture opt-in, fire this on EVERY
    inbound message. It captures ideas and entities in parallel. The brain compounds.
 
 2. **Brain-ops** (`skills/brain-ops/SKILL.md`) — brain-first lookup on every response.
@@ -456,6 +504,17 @@ See "The onboard surface" below for what the recommendations mean and the
 consent gates around unattended remediation.
 
 ## Upgrade
+
+For v0.53.0.0, follow the
+[mechanical shared-skills migration](skills/migrations/v0.53.0.0.md) on the host,
+starting with `gbrain apply-migrations --dry-run --json`. Stop/exclude old writers,
+review writer status, and use the checklist's action-specific `--admin-intent`
+and reviewed `--expected-state` when activating shared skills. Quiescence flags
+are attestations, not process shutdown or administration authority. Preserve
+operational DB and content backups, consent, edited files, and grant fences.
+DB-only export, explicit regrants, parent/client reconnection, and native
+verification are separate stages; report pending stages rather than claiming
+the whole migration completed.
 
 For memory-only upgrades, keep services and paid reindexing opt-in. If you
 installed via `bun install -g`:

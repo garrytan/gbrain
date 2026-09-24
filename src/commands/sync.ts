@@ -1,4 +1,5 @@
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
+import { formatManagedSyncFailure, readManagedSyncFailures, syncFailureJsonFields, type ManagedSyncFailure } from '../core/persistence/sync-failures.ts';
 import { readSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
 import { currentJobSignal } from '../core/minions/submission-authority.ts';
 import { existsSync, readFileSync, writeFileSync, statSync, lstatSync, realpathSync } from 'fs';
@@ -72,6 +73,7 @@ import { loadStorageConfig, findDbOnlyCollisions } from '../core/storage-config.
 // time. integrations.ts is side-effect-free at module load (pure recipe I/O
 // helpers), so a static import is safe here.
 import { getConfiguredCollectorOutputs } from './integrations.ts';
+import { printManagedSyncDiagnostic } from './sync-diagnostics.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 // v0.41.32.0: stamp the durable newest-COMMIT timestamp at sync time so the
 // remote staleness path reads a column instead of shelling out to git.
@@ -244,6 +246,9 @@ export function shouldNudgeAfterSync(status: SyncResult['status']): boolean {
 }
 
 export interface SyncResult {
+  failures?: ManagedSyncFailure[];
+  runId?: string;
+  managedWrite?: import('../core/persistence/sync-run.ts').ManagedSyncWriteDiagnostic;
   status: 'up_to_date' | 'synced' | 'first_sync' | 'dry_run' | 'blocked_by_failures' | 'partial';
   fromCommit: string | null;
   toCommit: string;
@@ -616,12 +621,44 @@ See also:
 // (pure move). Re-exported so existing importers keep working.
 export { SyncLockBusyError, runBreakLock } from '../core/sync-lock.ts';
 
+async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, managed: boolean): Promise<SyncResult | null> {
+  if (!opts.sourceId && !opts.githubItem) return null;
+  const sourceId = opts.sourceId ?? 'default';
+  const [source] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
+    'SELECT local_path,config FROM sources WHERE id=$1', [sourceId]);
+  if (!source) {
+    if (opts.githubItem) throw new Error(`github_item refresh requires a github-kind source; source "${sourceId}" not found.`);
+    return null;
+  }
+  const config = typeof source.config === 'string' ? JSON.parse(source.config) : source.config ?? {};
+  if (config.kind !== 'google' && config.kind !== 'github') {
+    if (opts.githubItem) throw new Error(`github_item refresh requires a github-kind source, but "${sourceId}" is not github-kind.`);
+    return null;
+  }
+  if (opts.githubItem && config.kind !== 'github') throw new Error(`github_item refresh requires a github-kind source, but "${sourceId}" is not github-kind.`);
+  const signals = [opts.signal, currentJobSignal(), currentSourceFilesystemSignal()].filter((signal): signal is AbortSignal => !!signal);
+  const signal = signals.length ? AbortSignal.any(signals) : undefined;
+  if (signal?.aborted) throw signal.reason ?? new Error('Sync job cancelled');
+  const options = signal ? { ...opts, signal } : opts;
+  const fallbackDir = source.local_path ?? (managed ? '' : (await import('../core/sources-ops.ts')).defaultCloneDir(`${sourceId}-${config.kind}`));
+  serr(`[gbrain phase] sync.${config.kind}_materialize`);
+  if (config.kind === 'github') {
+    const { parseGitHubSourceConfig, runGitHubSync } = await import('../core/github-source.ts');
+    return runGitHubSync(engine, sourceId, parseGitHubSourceConfig(config, fallbackDir), options);
+  }
+  const { parseGoogleSourceConfig, runGoogleSync } = await import('../core/google/google-source.ts');
+  return runGoogleSync(engine, sourceId, parseGoogleSourceConfig(config, fallbackDir), options);
+}
+
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   if (opts.sourceId && !currentCompanyBrainSync(opts.sourceId) && await getCompanyBrainProfile(engine, opts.sourceId)) {
     return (await import('../core/company-brain/runtime.ts')).performCompanyBrainSync(engine, opts);
   }
   const [managed] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (managed?.enabled) return (await import('../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
+  if (managed?.enabled) {
+    const connector = await runConnectorSync(engine, opts, true);
+    return connector ?? (await import('../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
+  }
   assertSourceFilesystemActive(true);
   const jobSignal = currentJobSignal();
   if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
@@ -1351,49 +1388,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     syncActivePack = undefined;
   }
 
-  // v0.46: github source kind. A source registered with kind=github is
-  // API-backed, not git-backed: the sync engine materializes issues/PRs
-  // into the managed dir and hands off to the standard import pipeline.
-  // Everything below (git anchors, diff, reconcile) is git-specific and
-  // does not apply. Also handles opts.githubItem (webhook single-item
-  // refresh) when the source is github-kind.
-  if (opts.sourceId || opts.githubItem) {
-    const srcId = opts.sourceId ?? 'default';
-    const cfgRows = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
-      `SELECT local_path, config FROM sources WHERE id = $1`,
-      [srcId],
-    );
-    if (cfgRows.length > 0) {
-      const rawCfg = typeof cfgRows[0].config === 'string'
-        ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
-        : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
-      if (rawCfg.kind === 'github') {
-        serr(`[gbrain phase] sync.github_materialize`);
-        const { parseGitHubSourceConfig, runGitHubSync } = await import('../core/github-source.ts');
-        const { defaultCloneDir } = await import('../core/sources-ops.ts');
-        const fallbackDir = cfgRows[0].local_path ?? defaultCloneDir(`${srcId}-github`);
-        const cfg = parseGitHubSourceConfig(rawCfg, fallbackDir);
-        return await runGitHubSync(engine, srcId, cfg, opts);
-      }
-      // v0.47: google source kind (Gmail/Calendar/Contacts). Same shape as
-      // the github branch: API-backed materializer, standard import pipeline.
-      if (rawCfg.kind === 'google') {
-        serr(`[gbrain phase] sync.google_materialize`);
-        const { parseGoogleSourceConfig, runGoogleSync } = await import('../core/google/google-source.ts');
-        const { defaultCloneDir } = await import('../core/sources-ops.ts');
-        const fallbackDir = cfgRows[0].local_path ?? defaultCloneDir(`${srcId}-google`);
-        const cfg = parseGoogleSourceConfig(rawCfg, fallbackDir);
-        return await runGoogleSync(engine, srcId, cfg, opts);
-      }
-      if (opts.githubItem) {
-        throw new Error(
-          `github_item refresh requires a github-kind source, but "${srcId}" is not github-kind.`,
-        );
-      }
-    } else if (opts.githubItem) {
-      throw new Error(`github_item refresh requires a github-kind source; source "${srcId}" not found.`);
-    }
-  }
+  const connector = await runConnectorSync(engine, opts, false);
+  if (connector) return connector;
 
   // v0.28: source-aware re-clone branch. When the source has a remote_url
   // recorded (i.e. it was registered via `sources add --url`), the on-disk
@@ -5227,11 +5223,12 @@ See also:
         const r = results[i];
         const src = runnableSources[i];
         if (r.status === 'fulfilled') {
-          writeHuman(`  ✓ ${src.name}: ${r.value.result.status} (added=${r.value.result.added}, modified=${r.value.result.modified}, deleted=${r.value.result.deleted})`);
+          writeHuman(`  ${r.value.result.managedWrite || r.value.result.status === 'blocked_by_failures' ? '✗' : '✓'} ${src.name}: ${r.value.result.status} (added=${r.value.result.added}, modified=${r.value.result.modified}, deleted=${r.value.result.deleted})`);
+          if (r.value.result.managedWrite || r.value.result.status === 'blocked_by_failures') printSyncResult(r.value.result, humanSink);
           perSourceResults.push({
             sourceId: src.id,
             sourceName: src.name,
-            status: 'ok',
+            status: r.value.result.managedWrite || r.value.result.status === 'blocked_by_failures' ? 'error' : 'ok',
             result: r.value.result,
           });
         } else {
@@ -5254,7 +5251,7 @@ See also:
           perSourceResults.push({
             sourceId: src.id,
             sourceName: src.name,
-            status: 'ok',
+            status: result.managedWrite || result.status === 'blocked_by_failures' ? 'error' : 'ok',
             result,
           });
         } catch (e: unknown) {
@@ -5288,10 +5285,12 @@ See also:
           status: r.status,
           ...(r.localPath ? { local_path: r.localPath } : {}),
           ...(r.result ? {
+            ...syncFailureJsonFields(r.result),
             sync_status: r.result.status,
             // #3068: surface the partial reason (e.g. pull_failed) so JSON
             // consumers can distinguish a self-healing timeout from a wedge.
             ...(r.result.reason ? { reason: r.result.reason } : {}),
+            ...(r.result.managedWrite ? { managed_write: r.result.managedWrite } : {}),
             added: r.result.added,
             modified: r.result.modified,
             deleted: r.result.deleted,
@@ -5398,20 +5397,16 @@ See also:
     }
   }
 
-  // Bug 9 — --retry-failed: before running normal sync, clear acknowledgment
-  // flags so the sync picks them up as fresh work. The actual re-attempt
-  // happens inside the regular incremental/full loop because once the commit
-  // pointer is behind the failures, the diff naturally revisits them.
   if (retryFailed) {
     // v0.42.42.0 (#2139, D13C): scope the retry count to THIS source — rows
     // carry source_id (#1939), so a single-source retry shouldn't report
     // another source's failures.
-    const failures = unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
+    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+    const failures = brain?.enabled ? await readManagedSyncFailures(engine, [sourceId]) : unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
     if (failures.length === 0) {
-      slog('No unacknowledged sync failures to retry.');
+      slog('No local ledger entries; checking the durable sync cursor for unfinished or failed writes.');
     } else {
       slog(`Retrying ${failures.length} previously-failed file(s)...`);
-      // Don't acknowledge them yet — they must succeed to clear.
     }
   }
 
@@ -5433,7 +5428,7 @@ See also:
     // Routed through the owned verdict channel (NOT bare `process.exitCode`,
     // which PGLite's Emscripten runtime clobbers mid-run — see
     // src/core/cli-force-exit.ts).
-    if (result.status === 'partial' && result.reason === 'pull_failed') {
+    if (result.managedWrite || result.status === 'blocked_by_failures' || (result.status === 'partial' && result.reason === 'pull_failed')) {
       const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
       setCliExitVerdict(1);
     }
@@ -5485,7 +5480,8 @@ See also:
       }
     }
     if (jsonOut) {
-      console.log(JSON.stringify(buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill, singleCostGate)));
+      console.log(JSON.stringify({ ...buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill, singleCostGate),
+        ...(result.managedWrite ? { managed_write: result.managedWrite } : {}) }));
     }
     return;
   }
@@ -5919,6 +5915,10 @@ async function maybeExtractionNudge(engine: BrainEngine, sourceId?: string): Pro
  * JSON envelope pipes cleanly through `jq` (D4).
  */
 export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.stdout) {
+  if (printManagedSyncDiagnostic(result, sink)) {
+    if (result.runId) sink.write(`  Committed counts are cumulative for run ${result.runId}: added=${result.added}, modified=${result.modified}, deleted=${result.deleted}.\n`);
+    return;
+  }
   const write = (line: string) => sink.write(line + '\n');
   const writeUncommittedNote = (u: NonNullable<SyncResult['uncommitted']>) =>
     write(
@@ -5944,6 +5944,12 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
     case 'dry_run':
       break; // already printed in performSync
     case 'blocked_by_failures': {
+      if (result.runId) {
+        write(`Sync BLOCKED at ${result.toCommit}: committed counts are cumulative for run ${result.runId}.`);
+        for (const failure of result.failures ?? []) write(`  ${formatManagedSyncFailure(failure)}`);
+        write('  Fix the cause, then run gbrain sync --no-pull --retry-failed with the same source and options; this admits a fresh run after active work drains.');
+        break;
+      }
       write(`Sync BLOCKED at ${result.toCommit.slice(0, 8)}: ${result.failedFiles ?? 0} file(s) failed.`);
       write(`  See ~/.gbrain/sync-failures.jsonl for details, or run 'gbrain doctor'.`);
       // #3875: code-aware recovery hint — provider-infra failures are not

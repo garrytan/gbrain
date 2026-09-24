@@ -34,6 +34,7 @@ test/book-mirror.test.ts	gbrain book-mirror — source file invariants	7	readFil
 test/bootstrap-codex-door.test.ts	Codex door — rendered AGENTS.md pull protocol (Gate 3)	2	readFileSync
 test/bootstrap-contract.test.ts	bootstrap same-turn write-back contract	6	readFileSync
 test/bootstrap-opencode-door.serial.test.ts	opencode door — rendered AGENTS.md pull protocol	1	readFileSync
+test/bootstrap-shared-skills.test.ts	(file-level)	18	readFileSync
 test/brain-durability-hook.serial.test.ts	#4682 — push-lock timeout is fail-loud for the helper only	1	readFileSync
 test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4	readFileSync
 test/brain-durability-hook.serial.test.ts	durability schedule (installCron:true) [D2/D12]	0	readFileSync
@@ -244,7 +245,7 @@ test/register-client-source-normalize.test.ts	register-client route wiring (stru
 test/regression-strict-source-id.test.ts	cycle reverse-write call sites use the consolidated path	4	readFileSync
 test/regression-strict-source-id.test.ts	utils.ts no longer carries an inline permissive regex	2	readFileSync
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	readFileSync
-test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	10	readFileSync
+test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	11	readFileSync
 test/remediation-command-resolution.test.ts	#3697 — remediation text resolves against the live CLI surface	3	readFileSync
 test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)	5	readFileSync
 test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
@@ -273,10 +274,20 @@ test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	readFileSyn
 test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	readFileSync
 test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two defects of the original PR)	2	readFileSync
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
+test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
+test/shared-skills-export.serial.test.ts	(file-level)	7	readFileSync
+test/shared-skills-init.serial.test.ts	real combined brain initialization	4	readFileSync
+test/shared-skills-migration-cli.serial.test.ts	(file-level)	1	readFileSync
+test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
+test/shared-skills-publication-sparse.test.ts	(file-level)	4	readFileSync
+test/shared-skills-setup.serial.test.ts	packaged default skills	2	readFileSync
+test/shared-skills-setup.serial.test.ts	staged skill migration	7	readFileSync
+test/shared-skills-writer-boundary.serial.test.ts	(file-level)	5	readFileSync
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync
 test/skillopt/deadline-and-hermetic.test.ts	#4741 — hermetic-config docs make no platform-survives-logout claim	2	readFileSync
+test/skillpack-check-report-only.test.ts	(file-level)	2	readFileSync
 test/skillpack-harness-bridge.test.ts	review-driven hardening (ship pre-landing findings)	5	readFileSync
 test/skillpack-harvest.test.ts	addToBundleManifest	1	readFileSync
 test/skillpack-harvest.test.ts	runHarvest — happy path	2	readFileSync
@@ -289,6 +300,7 @@ test/skillpack-migrate-fence.test.ts	runMigrateFence	8	readFileSync
 test/skillpack-scaffold.test.ts	runScaffold — IRON-RULE regressions (R1, R2)	3	readFileSync
 test/skillpack-scaffold.test.ts	runScaffold — happy path	3	readFileSync
 test/skillpack-scrub-legacy.test.ts	runScrubLegacy	8	readFileSync
+test/skillpack-writer-guard.test.ts	(file-level)	6	readFileSync
 test/snapshot-shape-guard.test.ts	(file-level)	10	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file

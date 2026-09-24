@@ -1,5 +1,6 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { assertImportBase, sameCanonicalImport } from './page-state/import-guard.ts';
+import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
 import { basename, extname } from 'path';
@@ -553,11 +554,9 @@ export async function importFromContent(
   // would not change, and tag reconciliation would silently no-op
   // (this function returns early on hash-match).
   //
-  // v0.42 (#1699): the content-sanity gate runs on EVERY import and stamps
-  // GATE-DERIVED markers (quarantine / content_flag / embed_skip) carrying a
-  // fresh `assessed_at` timestamp. Those markers are derived from the body,
-  // not source content, so they must be EXCLUDED from the hash — otherwise
-  // every re-sync of a flagged/quarantined page sees a changed hash and
+  // v0.42 (#1699): gate-derived quarantine/content_flag/embed_skip markers
+  // carry assessed_at timestamps. They describe the assessment, not source
+  // content, so they must be EXCLUDED from the hash — otherwise re-sync
   // re-chunks + re-embeds forever (a markup-heavy page keeps chunks, so this
   // is real, unbounded embedding spend). Same bug class as the captured_at /
   // ingested_at fix above; the gate re-derives the markers deterministically
@@ -571,6 +570,7 @@ export async function importFromContent(
   // unscoped-check/scoped-write bug class).
   const existingSnapshot = opts.prepare ? await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }) : null;
   const existing = opts.prepare ? existingSnapshot?.page ?? null : await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true });
+  if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
 
   // #2044 / #4548: remote get_page/fetch intentionally strip non-'world'
   // facts rows before an untrusted caller ever sees them. A documented
@@ -1638,7 +1638,7 @@ export type ImportFileResult = ImportResult;
 export const SUPPORTED_IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif', '.avif'] as const;
 
 /** Voyage caps each multimodal input at 20MB. We honor that as the size limit. */
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /** Extensions that need WASM decode before Voyage embedding. */
 const NEEDS_DECODE = new Set(['.heic', '.heif', '.avif']);
@@ -1680,39 +1680,41 @@ export async function withImportTransaction(
   engine: BrainEngine,
   spec: ImportTransactionSpec,
 ): Promise<void> {
+  await engine.transaction(tx => applyImportTransaction(tx, spec));
+}
+
+async function applyImportTransaction(tx: BrainEngine, spec: ImportTransactionSpec): Promise<void> {
   const sourceId = spec.sourceId ?? 'default';
   const txOpts = spec.sourceId ? { sourceId: spec.sourceId } : undefined;
-  await engine.transaction(async (tx) => {
-    if (spec.basePage !== undefined) await assertImportBase(tx, spec.slug, sourceId, spec.basePage);
-    else await tx.lockPageKeys([{ sourceId, slug: spec.slug }]);
-    if (spec.hadExisting) await tx.createVersion(spec.slug, txOpts);
-    await tx.putPage(spec.slug, spec.page,
-      spec.allowEmptyOverwrite === true ? { ...txOpts, allowEmptyOverwrite: true } : txOpts);
-    if (spec.file) {
-      // page_id resolution after putPage so the new row's id is available.
-      const stored = await tx.getPage(spec.slug, txOpts);
-      await tx.upsertFile({
-        ...spec.file,
-        source_id: sourceId,
-        page_slug: spec.slug,
-        page_id: stored?.id ?? null,
-      });
-    }
-    if (spec.chunks !== undefined) {
+  if (spec.basePage !== undefined) await assertImportBase(tx, spec.slug, sourceId, spec.basePage);
+  else await tx.lockPageKeys([{ sourceId, slug: spec.slug }]);
+  if (spec.hadExisting) await tx.createVersion(spec.slug, txOpts);
+  await tx.putPage(spec.slug, spec.page,
+    spec.allowEmptyOverwrite === true ? { ...txOpts, allowEmptyOverwrite: true } : txOpts);
+  if (spec.file) {
+    // page_id resolution after putPage so the new row's id is available.
+    const stored = await tx.getPage(spec.slug, txOpts);
+    await tx.upsertFile({
+      ...spec.file,
+      source_id: sourceId,
+      page_slug: spec.slug,
+      page_id: stored?.id ?? null,
+    });
+  }
+  if (spec.chunks !== undefined) {
+    await tx.deleteChunks(spec.slug, txOpts);
+    if (spec.chunks.length > 0) {
+      await tx.upsertChunks(spec.slug, spec.chunks, txOpts);
+    } else {
       await tx.deleteChunks(spec.slug, txOpts);
-      if (spec.chunks.length > 0) {
-        await tx.upsertChunks(spec.slug, spec.chunks, txOpts);
-      } else {
-        await tx.deleteChunks(spec.slug, txOpts);
-      }
     }
-    if (spec.safeChunks && spec.chunks !== undefined) {
-      await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
-        [MARKDOWN_CHUNKER_VERSION, sourceId, spec.slug]);
-      await sealPageTextProjection(tx, spec.slug, sourceId);
-    }
-    if (spec.after) await spec.after(tx);
-  });
+  }
+  if (spec.safeChunks && spec.chunks !== undefined) {
+    await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
+      [MARKDOWN_CHUNKER_VERSION, sourceId, spec.slug]);
+    await sealPageTextProjection(tx, spec.slug, sourceId);
+  }
+  if (spec.after) await spec.after(tx);
 }
 
 /**
@@ -1984,6 +1986,8 @@ async function maybeOcrGated(
 }
 
 export interface ImportImageOptions {
+  prepare?: (prepared: Omit<import('./persistence/prepared-import.ts').PreparedContentImport, 'parsedPage'>) => Promise<ImportResult>;
+  bytes?: Buffer;
   /** Override default OCR concurrency for tests. */
   ocrConcurrency?: number;
   /** Skip the embed call (for tests that want fast metadata-only inserts). */
@@ -2011,7 +2015,7 @@ export async function importImageFile(
   relativePath: string,
   opts: ImportImageOptions = {},
 ): Promise<ImportResult> {
-  await assertUnmanagedCanonicalWriter(engine, 'direct file import');
+  if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import');
   // Defense-in-depth: reject symlinks before reading bytes.
   const lstat = lstatSync(filePath);
   if (lstat.isSymbolicLink()) {
@@ -2041,7 +2045,8 @@ export async function importImageFile(
   const linkOpts = opts.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;
-  const buf = readSourceFileSync(filePath);
+  const buf = opts.prepare && opts.bytes ? opts.bytes : readSourceFileSync(filePath);
+  if (buf.byteLength > MAX_IMAGE_BYTES) return { slug: imageSlug, status: 'error', chunks: 0, error: `Image too large (max ${MAX_IMAGE_BYTES} bytes).` };
   const hash = createHash('sha256').update(buf).digest('hex');
 
   const existing = await engine.getPage(imageSlug, { ...sourceOpts, includeDeleted: true });
@@ -2057,6 +2062,8 @@ export async function importImageFile(
     const sealed = await engine.executeRaw(`SELECT id FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${safeChunksFilter('p')}`,
       [sourceOpts.sourceId, imageSlug]);
     if (sealed.length && !existing.deleted_at && existing.text_projection_revision === existing.knowledge_revision) {
+      if (opts.prepare) return opts.prepare({ slug: imageSlug, observedRevision: existing.knowledge_revision ?? null, noop: true,
+        result: { slug: imageSlug, status: 'skipped', chunks: 0 }, apply: async () => {} });
       await engine.transaction(tx => assertImportBase(tx, imageSlug, sourceOpts.sourceId, existing));
       return { slug: imageSlug, status: 'skipped', chunks: 0 };
     }
@@ -2114,7 +2121,7 @@ export async function importImageFile(
     type: 'image',
     title: filename,
     mime_type: decoded.mime,
-    bytes: stat.size,
+    bytes: buf.byteLength,
     ...exif,
   };
 
@@ -2133,11 +2140,11 @@ export async function importImageFile(
     filename,
     storage_path: relativePath.replace(/[\\\/]/g, '/'),
     mime_type: decoded.mime,
-    size_bytes: stat.size,
+    size_bytes: buf.byteLength,
     content_hash: hash,
   };
 
-  await withImportTransaction(engine, {
+  const spec: ImportTransactionSpec = {
     slug: imageSlug,
     hadExisting: !!existing,
     basePage: existing,
@@ -2150,6 +2157,7 @@ export async function importImageFile(
       timeline: '',
       frontmatter,
       content_hash: hash,
+      ...(opts.prepare ? { source_path: relativePath } : {}),
     },
     // The image bytes are the source of truth and the body is OCR-derived:
     // a changed image whose OCR yields nothing legitimately blanks the body.
@@ -2179,7 +2187,11 @@ export async function importImageFile(
         }
       }
     },
-  });
+  };
+
+  if (opts.prepare) return opts.prepare({ slug: imageSlug, observedRevision: existing?.knowledge_revision ?? null, noop: false,
+    result: { slug: imageSlug, status: 'imported', chunks: 1 }, apply: tx => applyImportTransaction(tx, spec) });
+  await withImportTransaction(engine, spec);
 
   return { slug: imageSlug, status: 'imported', chunks: 1 };
 }

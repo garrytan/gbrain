@@ -47,7 +47,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { verbOperations } from '../src/core/verbs.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
-import { hasScope } from '../src/core/scope.ts';
+import { hasScope, operationScopesAllowed } from '../src/core/scope.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 let engine: PGLiteEngine;
@@ -110,6 +110,14 @@ describe('operations contract — every op has scope + correct mutability shape'
     const REMOTE_READ_ONLY_MUTATING_OPS = new Set(['think', 'request_tools']);
     for (const op of operations) {
       if (op.mutating === true) {
+        if (['join_brain', 'sync_brain_skills', 'leave_brain'].includes(op.name)) {
+          expect(op.scope).toBe('read');
+          expect(op.requiredScopes).toEqual(['skills_member_self']);
+          expect(operationScopesAllowed(['read'], op)).toBe(false);
+          expect(operationScopesAllowed(['admin'], op)).toBe(false);
+          expect(operationScopesAllowed(['read', 'skills_member_self'], op)).toBe(true);
+          continue;
+        }
         if (REMOTE_READ_ONLY_MUTATING_OPS.has(op.name)) {
           expect(op.scope, `remote-gated mutating op "${op.name}" should be read-scoped`).toBe('read');
           continue;
@@ -230,8 +238,12 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'file_upload',
       'file_url',
       'get_recent_transcripts',
+      'get_skill_retention',
+      'import_skill_proposal',
       'migrate_embeddings',
+      'prune_skill_revisions',
       'purge_deleted_pages',
+      'retain_skill_revision',
       'sources_inspect',
       'sync_brain',
     ];

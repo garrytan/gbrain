@@ -21,9 +21,10 @@ import { expandQuery } from '../search/expansion.ts';
 import { dedupResults } from '../search/dedup.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
-import type { HybridSearchMeta } from '../types.ts';
+import type { HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS } from '../search/snippet-cap.ts';
+import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { expandEngineTypeFilters } from '../schema-pack/query-types.ts';
@@ -63,6 +64,12 @@ async function resolveEffectiveLimit(ctx: OperationContext, p: Record<string, un
 // --- Search ---
 
 type SourceScope = { sourceId?: string; sourceIds?: string[] };
+
+function searchOutput(ctx: OperationContext, results: SearchResult[], meta: Record<string, unknown>, snippetCap: number): SearchResult[] {
+  const output = redactRetrievalOutput(results, meta);
+  ctx.emitResponseMeta?.('retrieval', output.meta);
+  return applySnippetCap(output.results, snippetCap);
+}
 
 /**
  * #5004: does the caller's read scope still hold markdown pages below the
@@ -292,7 +299,7 @@ const search: Operation = {
         if (types?.length === 0) return [];
       }
       const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope });
-      const results = dedupResults(raw);
+      const results = dedupResults(raw).map(r => ({ ...r }));
       // #3783 — every row here IS a keyword hit (direct FTS path); mark
       // before stamping so evidence still reads keyword_exact.
       markKeywordHits(results);
@@ -308,15 +315,14 @@ const search: Operation = {
       await stampUnverifiedExtractions(ctx.engine, results, { ...scope, excludePrivate });
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
-      ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, null, { conceptHint: true, types }));
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
-      return applySnippetCap(results, snippetCap);
+      return searchOutput(ctx, results, await buildRetrievalResponseMeta(ctx, scope, queryText, results, null, { conceptHint: true, types }), snippetCap);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
     // expansion OFF (no per-call LLM cost). `query` op is the full-control variant.
     let capturedMeta: HybridSearchMeta | null = null;
-    const results = await hybridSearchCached(ctx.engine, queryText, {
+    const results = (await hybridSearchCached(ctx.engine, queryText, {
       limit,
       offset,
       expansion: false,
@@ -330,14 +336,13 @@ const search: Operation = {
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
       onMeta: (m) => { capturedMeta = m; },
-    });
+    })).map(r => ({ ...r }));
     stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
-    ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, scope, queryText, results, capturedMeta, { conceptHint: true, types }));
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
-    return applySnippetCap(results, snippetCap);
+    return searchOutput(ctx, results, await buildRetrievalResponseMeta(ctx, scope, queryText, results, capturedMeta, { conceptHint: true, types }), snippetCap);
   },
   scope: 'read',
   cliHints: { name: 'search', positional: ['query'] },
@@ -521,7 +526,7 @@ const query: Operation = {
       // resolution, so its default limit didn't honor the active search
       // mode. resolveEffectiveLimit applies the same chain (and the same
       // remote trust gate) hybridSearch does.
-      const results = await ctx.engine.searchVector(vec, {
+      const results = (await ctx.engine.searchVector(vec, {
         limit: await resolveEffectiveLimit(ctx, p),
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
@@ -538,11 +543,10 @@ const query: Operation = {
           imageMeta.degraded = [{ stage: 'vector_candidates_incomplete',
             reason: info.reason === 'deadline' ? 'timeout' : info.reason ?? 'candidate_budget' }];
         },
-      });
+      })).map(r => ({ ...r }));
       stampDeepResearchIds(results);
       imageMeta.retrieved_count = results.length;
-      ctx.emitResponseMeta?.('retrieval', await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }));
-      return applySnippetCap(results, snippetCap);
+      return searchOutput(ctx, results, await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }), snippetCap);
     }
 
     if (!queryText) {
@@ -750,6 +754,7 @@ const query: Operation = {
     }
     const latency_ms = Date.now() - startedAt;
 
+    results = results.map(r => ({ ...r }));
     stampDeepResearchIds(results);
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
@@ -784,13 +789,13 @@ const query: Operation = {
 
     // WP2/D3: query never nudges toward itself — no concept hint here.
     // #1663: the CRAG grade rides the same retrieval meta channel.
-    ctx.emitResponseMeta?.('retrieval', {
+    const responseMeta = {
       ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, results, capturedMeta, { types })),
       crag,
-    });
+    };
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
-    return applySnippetCap(results, snippetCap);
+    return searchOutput(ctx, results, responseMeta, snippetCap);
   },
   scope: 'read',
   cliHints: { name: 'query', positional: ['query'] },

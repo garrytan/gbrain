@@ -22,6 +22,7 @@ import { unpackToolResult } from '../../src/core/mcp-client.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 import { cliDiagnostic, fixtureDiagnostic, toolDiagnostic } from '../helpers/fixture-diagnostics.ts';
 import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
+import { createManagedFixtureSource, withManagedFixtureWrite } from '../helpers/managed-e2e-fixture-write.ts';
 
 const PUBLIC = 'privacyjourneypublic';
 const PRIVATE = 'PRIVATE_PAGE_JOURNEY_CANARY';
@@ -66,7 +67,7 @@ async function seed(home: string): Promise<void> {
   configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
   await engine.connect({ database_path: config.database_path });
   try {
-    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('private-source', 'private-source', '{\"federated\":true}'::jsonb)");
+    await createManagedFixtureSource(engine, 'private-source', { federated: true });
     await engine.setConfig('search.cache.enabled', 'true');
     for (const [slug, source, hidden] of [
       [SHARED, 'default', false],
@@ -77,21 +78,28 @@ async function seed(home: string): Promise<void> {
       const imported = await importFromContent(engine, slug, serializeMarkdown(
         { visibility: hidden ? 'private' : 'world' }, body, '',
         { type: 'note', title: hidden ? PRIVATE : PUBLIC, tags: [] },
-      ), { sourceId: source, noEmbed: true, forceRechunk: true });
+      ), { sourceId: source, noEmbed: true, forceRechunk: true,
+        prepare: async prepared => {
+          await withManagedFixtureWrite(engine, [source], tx => prepared.apply(tx));
+          return prepared.result;
+        },
+      });
       expect(imported.status).toBe('imported');
-      const rows = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [slug, source]);
-      const id = Number(rows[0].id);
-      // The real import path must build safe chunks from repeated protected
-      // fences before the MCP transport starts reading this persistent brain.
-      const chunks = JSON.stringify(await engine.getChunks(slug, { sourceId: source }));
-      expect(chunks).toContain(hidden ? PRIVATE : PUBLIC);
-      expect(chunks).not.toContain(PRIVATE_FACT);
-      expect(chunks).not.toContain(PRIVATE_TAKE);
-      await engine.executeRaw("INSERT INTO raw_data (page_id, source, data) VALUES ($1, 'fixture', $2::text::jsonb)", [id, JSON.stringify({ body: hidden ? PRIVATE : PUBLIC })]);
-      await engine.executeRaw("INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-08-01', $2)", [id, hidden ? PRIVATE : PUBLIC]);
-      await engine.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter) VALUES ($1, $2, '{\"visibility\":\"world\"}'::jsonb)", [id, body]);
-      // A public current page must not make its formerly-private snapshot public.
-      if (!hidden) await engine.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter) VALUES ($1, $2, '{\"visibility\":\"private\"}'::jsonb)", [id, PRIVATE]);
+      await withManagedFixtureWrite(engine, [source], async tx => {
+        const rows = await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [slug, source]);
+        const id = Number(rows[0].id);
+        // The real import path must build safe chunks from repeated protected
+        // fences before the MCP transport starts reading this persistent brain.
+        const chunks = JSON.stringify(await tx.getChunks(slug, { sourceId: source }));
+        expect(chunks).toContain(hidden ? PRIVATE : PUBLIC);
+        expect(chunks).not.toContain(PRIVATE_FACT);
+        expect(chunks).not.toContain(PRIVATE_TAKE);
+        await tx.executeRaw("INSERT INTO raw_data (page_id, source, data) VALUES ($1, 'fixture', $2::text::jsonb)", [id, JSON.stringify({ body: hidden ? PRIVATE : PUBLIC })]);
+        await tx.executeRaw("INSERT INTO timeline_entries (page_id, date, summary) VALUES ($1, '2026-08-01', $2)", [id, hidden ? PRIVATE : PUBLIC]);
+        await tx.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter) VALUES ($1, $2, '{\"visibility\":\"world\"}'::jsonb)", [id, body]);
+        // A public current page must not make its formerly-private snapshot public.
+        if (!hidden) await tx.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter) VALUES ($1, $2, '{\"visibility\":\"private\"}'::jsonb)", [id, PRIVATE]);
+      });
     }
     const finding = { severity: 'high', axis: PRIVATE_REPORT, a: { slug: SHARED }, b: { slug: SHARED } };
     await engine.writeContradictionsRun({

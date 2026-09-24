@@ -8,26 +8,47 @@ import { getWriteRequestById, receiptFor } from './journal.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { isWriteErrorCode, type WriteReceipt } from './types.ts';
 import { registerPgliteReopen } from '../pglite-lifecycle.ts';
+import { assertMutationProtocol } from './protocol.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
-const preparers = new Map<string, PrepareMutation>();
-export function registerMutationPreparer(operation: string, prepare: PrepareMutation): void { preparers.set(operation, prepare); }
+const preparers = new Map<string, { prepare: PrepareMutation; target: 'page' | 'skill_bundle' }>();
+export function registerMutationPreparer(operation: string, prepare: PrepareMutation, target: 'page' | 'skill_bundle' = 'page'): void {
+  preparers.set(operation, { prepare, target });
+}
+export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest, cfg: GBrainConfig) {
+  assertMutationProtocol(row);
+  const registered = preparers.get(row.operation);
+  if (registered) {
+    if (registered.target !== (row.target_kind ?? 'page')) throw new OperationError('unsupported_mutation_protocol', 'The registered preparer does not support this mutation target.');
+    return registered.prepare(e, row, cfg);
+  }
+  if (row.target_kind === 'skill_bundle') {
+    if (['put_skill', 'delete_skill'].includes(row.operation)) return (await import('../shared-skills/publication.ts')).prepareSharedSkillMutation(e, row, cfg);
+    throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.');
+  }
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_atom_')) return (await import('./atom-maintenance.ts')).prepareManagedAtomMutation(e, row, cfg);
+  if (row.operation === 'extract_facts' && String(row.intent?.kind).startsWith('managed_facts_')) return (await import('./facts-prepare.ts')).prepareManagedFactsMutation(e, row, cfg);
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_connector_')) return (await import('./connector-sync.ts')).prepareConnectorMutation(e, row);
+  if (row.operation === 'put_page' && row.intent?.kind === 'canonical_reconcile') return (await import('./reconcile-prepare.ts')).prepareReconcileMutation(e, row, cfg);
+  if (row.operation === 'put_page' && row.intent?.kind === 'managed_grandfather') return (await import('./grandfather.ts')).prepareGrandfatherMutation(e, row);
+  if (row.operation === 'submit_job' && row.intent?.kind === 'code_projection_reindex') return (await import('./projection-reindex.ts')).prepareCodeReindex(e, row);
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_sync_')) return (await import('./sync-prepare.ts')).prepareManagedSyncMutation(e, row, cfg);
+  if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_maintenance_')) return (await import('./prepared-maintenance.ts')).prepareMaintenanceMutation(e, row, cfg);
+  if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_import') return (await import('./import-prepare.ts')).prepareManagedImportMutation(e, row, cfg);
+  if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg);
+  if (['takes_add','takes_update','takes_supersede','takes_resolve'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
+  if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
+  if (['put_page','capture','delete_page','restore_page','revert_version'].includes(row.operation)) return preparePageMutation(e, row, cfg);
+  throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.');
+}
 export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {
   const prior = services.get(engine);
   if (prior) {
     if (prior.stopping) throw new OperationError('unavailable', 'The persistence owner is closing.');
     return prior.consumer;
   }
-  const consumer = new PersistenceConsumer(engine, config, async (e, row, cfg) => {
-    const registered = preparers.get(row.operation);
-    if (registered) return registered(e, row, cfg);
-    if (row.operation === 'submit_job' && row.intent?.kind === 'code_projection_reindex') return (await import('./projection-reindex.ts')).prepareCodeReindex(e, row);
-    if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_sync_')) return (await import('./sync-prepare.ts')).prepareManagedSyncMutation(e, row, cfg);
-    if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg);
-    if (['takes_add','takes_update','takes_supersede','takes_resolve'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
-    return (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation) ? prepareSemanticPageMutation : preparePageMutation)(e, row, cfg);
-  });
+  const consumer = new PersistenceConsumer(engine, config, preparePersistedMutation);
   const service: Service = { consumer, stopping: false };
   services.set(engine, service);
   const lifecycle = engine as BrainEngine & { registerBeforeDisconnect?: (run: () => Promise<void>) => unknown };

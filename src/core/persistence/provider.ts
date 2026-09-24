@@ -2,7 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { operations } from '../operations.ts';
 import { OperationError, type AuthInfo } from '../ops/contract.ts';
-import { hasScope } from '../scope.ts';
+import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
@@ -26,7 +26,10 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     assertPersistenceAccepting(engine);
     if (request.brain_id !== brain.brain_id) throw new OperationError('permission_denied', 'This registration belongs to a different brain.');
     const operation = operations.find(op => op.name === request.operation);
-    if (!operation || !hasScope(verified.grant.scopes, operation.scope ?? 'read')
+    const localSkillAdministration = !verified.remote && verified.principal.kind === 'local_cli'
+      && ['get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions', 'retain_skill_revision', 'import_skill_proposal'].includes(request.operation);
+    if (!operation || (!localSkillAdministration && !hasScope(verified.grant.scopes, operation.scope ?? 'read'))
+      || (verified.remote && !operationScopesAllowed(verified.grant.scopes, operation))
       || (verified.grant.operations !== null && !verified.grant.operations.includes(operation.name))) {
       throw new OperationError('permission_denied', 'The local writer grant excludes this operation.');
     }
@@ -61,6 +64,6 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     if (request.brain_id !== brain.brain_id || verified.remote || verified.principal.kind !== 'local_cli') {
       throw new OperationError('permission_denied', 'Local administration requires this brain’s current trusted CLI registration.');
     }
-    return runPersistenceAdministration(engine, request.operation, request.params);
+    return runPersistenceAdministration(engine, request.operation, request.params, config);
   }) };
 }

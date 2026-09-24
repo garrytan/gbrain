@@ -25,6 +25,7 @@ import { join, resolve, dirname } from 'path';
 import { execSync } from 'child_process';
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { savePreferences, loadPreferences } from '../../core/preferences.ts';
+import { loadConfig } from '../../core/config.ts';
 // Bug 3 — appendCompletedMigration moved to the runner (apply-migrations.ts).
 import { promptLine } from '../../core/cli-util.ts';
 import { VERSION } from '../../version.ts';
@@ -403,11 +404,12 @@ function phaseFInstall(opts: OrchestratorOpts): OrchestratorPhaseResult {
   if (opts.dryRun) return { name: 'install', status: 'skipped', detail: 'dry-run' };
   if (opts.noAutopilotInstall) return { name: 'install', status: 'skipped', detail: '--no-autopilot-install' };
   try {
+    if (loadConfig()?.engine === 'pglite') {
+      return { name: 'install', status: 'skipped', detail: 'PGLite is single-writer; use gbrain serve for background maintenance' };
+    }
     execSync('gbrain autopilot --install --yes', { stdio: 'inherit', timeout: 60_000, env: process.env });
     return { name: 'install', status: 'complete' };
   } catch (e) {
-    // Install is best-effort — log but don't fail the whole migration. User
-    // can re-run `gbrain autopilot --install` manually.
     return { name: 'install', status: 'failed', detail: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -452,7 +454,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
   // Bug 3 — Phase G (record in completed.jsonl) moved to the runner. The
   // runner in apply-migrations.ts persists the result after orchestrator
   // returns, so we just decide the status here.
-  const status: 'complete' | 'partial' = (pending_host_work > 0) ? 'partial' : 'complete';
+  const status: 'complete' | 'partial' = pending_host_work > 0 || phases.some(p => p.status === 'failed') ? 'partial' : 'complete';
   phases.push({ name: 'record', status: opts.dryRun ? 'skipped' : 'complete', detail: `status=${status} (ledger write in runner)` });
 
   // Post-run: print pending-host-work summary if anything needs host action.

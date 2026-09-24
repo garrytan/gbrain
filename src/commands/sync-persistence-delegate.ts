@@ -14,6 +14,8 @@ import { reportPersistenceCliError } from './persistence-delegate.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import type { SyncResult } from './sync.ts';
 import { buildSingleSyncJsonEnvelope } from '../core/sync-embed-backfill.ts';
+import { printManagedSyncDiagnostic } from './sync-diagnostics.ts';
+import { parseDurationSeconds } from '../core/sync-concurrency.ts';
 
 export async function parsePersistenceSyncArgs(args:string[],cwd=process.cwd()) {
   const options:Record<string,unknown>={};
@@ -32,7 +34,10 @@ export async function parsePersistenceSyncArgs(args:string[],cwd=process.cwd()) 
   const source=resolveSourceIdEngineFree(typeof options.sourceId==='string'?options.sourceId:null,cwd);
   if(source==='__all__')throw new OperationError('invalid_params','Owner-delegated sync requires one explicit source.');
   if(source)options.sourceId=source;
-  return validateSyncWireParams({options,cwd,timeoutSeconds:await deriveDelegatedTimeoutSeconds(args)});
+  const softTimeout=parseDurationSeconds(args.find((_,i)=>args[i-1]==='--timeout'),'--timeout');
+  const hardTimeout=await deriveDelegatedTimeoutSeconds(args);
+  const timeoutSeconds=softTimeout && softTimeout>0 ? hardTimeout>0 ? Math.min(softTimeout,hardTimeout) : softTimeout : hardTimeout;
+  return validateSyncWireParams({options,cwd,timeoutSeconds});
 }
 /** Any resident native owner may proxy; its durable registration, not a process label, authorizes work. */
 export async function maybeDelegateSyncToPersistence(hostConfig:GBrainConfig|null,args:string[]):Promise<boolean> {
@@ -55,14 +60,18 @@ export async function maybeDelegateSyncToPersistence(hostConfig:GBrainConfig|nul
       if(performance.now()>=deadline){result={...result,reason:'timeout'};break;}
       await new Promise(resolve=>setTimeout(resolve,result.reason==='writer_pending'?250:0));
     }
-    if(args.includes('--json'))await writeStdoutFinal(JSON.stringify(buildSingleSyncJsonEnvelope(result.source_id??params.options.sourceId??'default',result))+'\n');
+    if(args.includes('--json')) {
+      await writeStdoutFinal(JSON.stringify({ ...buildSingleSyncJsonEnvelope(result.source_id??params.options.sourceId??'default',result),
+        ...(result.managedWrite ? { managed_write: result.managedWrite } : {}) })+'\n');
+      printManagedSyncDiagnostic(result, process.stderr);
+    }
     else {
       (await import('./sync.ts')).printSyncResult(result);
       if(!params.options.dryRun&&!params.options.noEmbed&&result.added+result.modified>0) {
         console.error('[sync] embeds deferred — the owner drains them using its configured provider and keys.');
       }
     }
-    if(result.status==='blocked_by_failures'||result.reason==='pull_failed')setCliExitVerdict(1);
+    if(result.managedWrite||result.status==='blocked_by_failures'||result.reason==='pull_failed')setCliExitVerdict(1);
     return true;
   }catch(error){
     if(error instanceof PersistenceIpcTransportError&&error.sent)error=new OperationError('write_pending','The sync acknowledgment was lost; accepted page requests retain their IDs.','Repeat the same sync options to resume the durable cursor.');

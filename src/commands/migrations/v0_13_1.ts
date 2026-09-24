@@ -35,13 +35,16 @@
  * config; it never writes config.
  */
 
-import { existsSync, mkdirSync, appendFileSync } from 'fs';
+import { existsSync, mkdirSync, appendFileSync, chmodSync } from 'fs';
 import { join } from 'path';
 
 import type { Migration, OrchestratorOpts, OrchestratorResult, OrchestratorPhaseResult } from './types.ts';
 import { loadConfig, toEngineConfig, gbrainPath } from '../../core/config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 import type { BrainEngine } from '../../core/engine.ts';
+import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
+import { grandfatherCanonicalPage } from '../../core/persistence/grandfather.ts';
+import { OperationError } from '../../core/ops/contract.ts';
 // Bug 3 — ledger writes moved to the runner (apply-migrations.ts).
 
 // Lazy: GBRAIN_HOME may be set after module load.
@@ -141,10 +144,29 @@ export async function phaseCGrandfather(
       `SELECT id FROM pages WHERE ${GRANDFATHER_WHERE} ORDER BY id`,
     );
     const ids = idRows.map(r => Number(r.id));
+    const managed = await managedPersistenceEnabled(engine);
 
     for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
       const chunk = ids.slice(i, i + CHUNK_SIZE);
       try {
+        if (managed) {
+          const selected = await engine.executeRaw<{ id: number; slug: string; source_id: string; source_incarnation: string }>(
+            'SELECT p.id,p.slug,p.source_id,s.incarnation AS source_incarnation FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.id=ANY($1::int[]) AND NOT s.archived ORDER BY p.id', [chunk]);
+          gf.skipped += chunk.length - selected.length;
+          for (const page of selected) {
+            try {
+              if (await grandfatherCanonicalPage(engine, page, snapshot => appendRollbackBatch([snapshot])) === 'touched') gf.touched++;
+              else gf.skipped++;
+            } catch (error) {
+              gf.failed++;
+              const reason = error instanceof OperationError
+                ? `${error.code}${error.writeRequest ? ` request_id=${error.writeRequest.request_id}` : ''}`
+                : error instanceof Error ? error.message : String(error);
+              gf.failures.push(`page#${page.id}: ${reason}`.slice(0, 120));
+            }
+          }
+          continue;
+        }
         // Rollback log BEFORE mutation: one SELECT per chunk (bounded memory),
         // one appendFileSync per chunk. Carries source_id so rollback is
         // unambiguous across same-slug-different-source pages.
@@ -185,7 +207,7 @@ export async function phaseCGrandfather(
   }
 
   const status: OrchestratorPhaseResult['status'] = gf.failed > 0 ? 'failed' : 'complete';
-  const detailStr = `touched=${gf.touched} skipped=${gf.skipped} failed=${gf.failed}`;
+  const detailStr = `touched=${gf.touched} skipped=${gf.skipped} failed=${gf.failed}${gf.failed ? `; ${gf.failures.slice(0, 2).join('; ')}` : ''}`;
   return {
     result: { name: 'grandfather', status, detail: detailStr },
     detail: gf,
@@ -274,14 +296,15 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
 
 function ensureRollbackDir(): void {
   const dir = getRollbackDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 // v0.41.37.0 #1581: batch rollback writer. One appendFileSync per chunk, bounded
 // memory. Each line carries id + slug + source_id so a rollback is unambiguous
 // across same-slug-different-source pages (pages.slug is not globally unique).
 function appendRollbackBatch(
-  rows: ReadonlyArray<{ id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null }>,
+  rows: ReadonlyArray<{ id: number; slug: string; source_id: string | null; frontmatter: Record<string, unknown> | null;
+    source_incarnation?: string; knowledge_revision?: string; request_id?: string }>,
 ): void {
   if (rows.length === 0) return;
   const ts = new Date().toISOString();
@@ -291,9 +314,13 @@ function appendRollbackBatch(
     id: r.id,
     slug: r.slug,
     source_id: r.source_id ?? 'default',
+    source_incarnation: r.source_incarnation,
+    knowledge_revision: r.knowledge_revision,
+    request_id: r.request_id,
     pre_frontmatter: r.frontmatter ?? {},
   })).join('\n') + '\n';
-  appendFileSync(getRollbackFile(), lines, 'utf-8');
+  appendFileSync(getRollbackFile(), lines, { encoding: 'utf-8', mode: 0o600 });
+  chmodSync(getRollbackFile(), 0o600);
 }
 
 // ---------------------------------------------------------------------------

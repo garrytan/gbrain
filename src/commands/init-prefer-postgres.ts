@@ -54,6 +54,7 @@ export interface PreferPostgresOpts {
   allowDocker: boolean;
   allowCreateDb: boolean;
   localPostgres: boolean;
+  content?: Parameters<typeof initPostgresCore>[0]['content'];
 }
 
 type LadderRung = 'env_url' | 'supabase_token' | 'local_postgres' | 'docker' | 'pglite';
@@ -142,6 +143,7 @@ async function initPostgresRung(
       aiOpts: o.aiOpts,
       schemaPack: o.schemaPack,
       skipEmbedCheck: o.skipEmbedCheck,
+      content: o.content,
     } as Parameters<typeof initPostgresCore>[0]));
     return rung;
   } catch (e) {
@@ -393,6 +395,7 @@ export async function runPreferPostgresLadder(o: PreferPostgresOpts): Promise<vo
       aiOpts: o.aiOpts,
       schemaPack: o.schemaPack,
       skipEmbedCheck: o.skipEmbedCheck,
+      content: o.content,
     } as Parameters<typeof initPGLite>[0]));
     rung = 'pglite';
     urlSource = null;

@@ -74,9 +74,13 @@ describe('native lock distribution integrity', () => {
       jobs: Record<string, NativeJob>;
     };
     const pairs: string[] = [];
-    for (const job of Object.values(workflow.jobs)) {
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      if (name === 'openclaw') {
+        expect(job.steps.some(step => step.run?.includes('test/openclaw-context-engine-native.serial.test.ts'))).toBe(true);
+        continue;
+      }
       const matrix = job.strategy.matrix;
-      expect(matrix.bun).toEqual(['1.3.11', '1.3.13']);
+      expect(matrix.bun).toEqual(['1.3.11', '1.3.13', '1.4.2']);
       const script = job.steps.map(step => step.run ?? '').join('\n');
       expect(script).toContain('bun install --frozen-lockfile --ignore-scripts');
       const lockTests = script.split('\n').find(line => /\bbun test\b/.test(line) && line.includes('test/native-lock.test.ts'));
@@ -92,7 +96,7 @@ describe('native lock distribution integrity', () => {
       }
     }
     expect(pairs.sort()).toEqual(Object.keys(manifest.artifacts)
-      .flatMap(target => ['1.3.11', '1.3.13'].map(bun => `${target}/${bun}`)).sort());
-    expect(new Set(pairs).size).toBe(16);
+      .flatMap(target => ['1.3.11', '1.3.13', '1.4.2'].map(bun => `${target}/${bun}`)).sort());
+    expect(new Set(pairs).size).toBe(24);
   });
 });

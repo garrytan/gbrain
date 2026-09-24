@@ -1,11 +1,11 @@
 import { hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal } from '../core/minions/source-filesystem.ts';
 import { readdirSync, lstatSync, existsSync, mkdirSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
-import { currentCompanyBrainSync, importCompanyBrainFile } from '../core/company-brain/profile.ts';
+import { currentCompanyBrainSync, getCompanyBrainProfile, importCompanyBrainFile } from '../core/company-brain/profile.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -32,6 +32,7 @@ import {
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
+import { importManagedFile } from '../core/persistence/import-mutations.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -368,6 +369,10 @@ export async function runImport(
       }
     }
   }
+  if (!currentCompanyBrainSync(sourceId) && await getCompanyBrainProfile(engine, sourceId ?? 'default')) {
+    console.error('This source accepts only its approved committed company-brain manifest. Use sources resume or sync; ordinary import cannot write back to this read-only repository.');
+    throw new ImportAbortError('company-brain sources require approved committed ingestion');
+  }
   let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
   try {
     const { loadActivePackForEngine } = await import('../core/schema-pack/engine-resolution.ts');
@@ -419,7 +424,13 @@ export async function runImport(
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
-  if (!hasSourceFilesystemLock(dir)) {
+  const [persistence] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  const managedImport = persistence?.enabled === true;
+  if (managedImport && dir !== resolve(dirArg)) throw new ImportAbortError('managed import refuses a symlinked input root');
+  const singleFile = managedImport && lstatSync(dir).isFile();
+  const importRoot = singleFile ? dirname(dir) : dir;
+
+  if (!managedImport && !hasSourceFilesystemLock(dir)) {
     let entered = false;
     try {
       return await withSourceFilesystemLock(engine, dir, () => {
@@ -472,7 +483,8 @@ export async function runImport(
   console.error(`[gbrain phase] import.collect_files start dir=${dir} strategy=${strategy}`);
   const malformedExcluded: string[] = [];
   const company = currentCompanyBrainSync(sourceId);
-  let allFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => join(dir, entry.path)) : collectSyncableFiles(dir, {
+  let allFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => join(dir, entry.path))
+    : singleFile ? [dir] : collectSyncableFiles(dir, {
     strategy, includeGitignored,
     includeHidden: opts.includeHidden,
     onExcluded: (rel) => { malformedExcluded.push(rel); },
@@ -522,7 +534,7 @@ export async function runImport(
     await company.protect([{ op: 'company-brain-content', fingerprint: company.receiptId, kind: 'content' }]);
     const [row] = await engine.executeRaw<{ completed_keys: string[] }>("SELECT completed_keys FROM op_checkpoints WHERE op='company-brain-content' AND fingerprint=$1", [company.receiptId]);
     for (const path of row?.completed_keys ?? []) completed.add(path);
-  } else if (!fresh) {
+  } else if (!fresh && !managedImport) {
     const cp = loadCheckpoint(checkpointPath, dir);
     if (cp) {
       for (const p of cp.completedPaths) completed.add(p);
@@ -609,12 +621,12 @@ export async function runImport(
 
   async function processFile(eng: BrainEngine, filePath: string) {
     if (signal?.aborted) return;
-    const relativePath = relative(dir, filePath);
+    const relativePath = singleFile ? basename(filePath) : relative(dir, filePath);
     // #753/#774: slug + source_path base. When performFullSync syncs a
     // monorepo subdir, slugRoot is the git root so slugs stay git-root-
     // relative (matching the incremental path's git-diff paths). The
     // checkpoint (`completed`) stays dir-relative — resumeFilter's contract.
-    const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relativePath;
+    const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relative(importRoot, filePath);
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.
@@ -624,7 +636,9 @@ export async function runImport(
       // multimodal is enabled. The walker (collectMarkdownFiles) only picks
       // up images when GBRAIN_EMBEDDING_MULTIMODAL=true so this branch is
       // unreachable when the gate is off; defense-in-depth check anyway.
-      const result = company ? await importCompanyBrainFile(eng, filePath, sourceId!) : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
+      const result = company ? await importCompanyBrainFile(eng, filePath, sourceId!) : managedImport
+        ? await importManagedFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack, signal, slugRoot: opts.slugRoot })
+        : isImageFilePath(relativePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true'
         ? await importImageFile(eng, filePath, importRelPath, { noEmbed, sourceId })
         : await importFile(eng, filePath, importRelPath, { noEmbed, sourceId, activePack: importActivePack });
       // An import that landed while cancellation arrived is still complete.
@@ -915,7 +929,7 @@ export async function runImport(
   // ledger + bookmark via the shared gate (applySyncFailureGate). Skipping the
   // internal handling here prevents double-recording (which would double-count
   // the auto-skip `attempts` streak) and a competing bookmark write.
-  if (gitHead && !opts.managedBookmark) {
+  if (gitHead && !opts.managedBookmark && !managedImport) {
     // Record failures into the central JSONL so doctor can surface them.
     // Use gitHead as the commit so a later sync can tell "same broken
     // state as last time" from "new broken state." Source-scoped (#1939 #2).
@@ -1002,7 +1016,7 @@ export async function runImport(
   // that silently dropped files isn't "clean" for freshness purposes even
   // with zero recorded failures.
   const totalMalformed = malformedExcluded.length + malformedFileSkips;
-  if (sourceId && failures.length === 0 && totalMalformed === 0 && !opts.managedBookmark) {
+  if (sourceId && failures.length === 0 && totalMalformed === 0 && !opts.managedBookmark && !managedImport) {
     try {
       const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
         `SELECT local_path, config FROM sources WHERE id = $1`,

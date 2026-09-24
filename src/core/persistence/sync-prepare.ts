@@ -19,6 +19,7 @@ import { validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { loadActivePackForEngine, checkApprovedSchemaForEngine } from '../schema-pack/engine-resolution.ts';
 import type { CompanyBrainPlan } from '../company-brain/types.ts';
 import { companyBrainProfile } from '../company-brain/profile.ts';
@@ -29,6 +30,7 @@ export interface SyncIntent extends Record<string, unknown> {
   kind: 'managed_sync_import' | 'managed_sync_delete' | 'managed_sync_checkpoint';
   expected_revision: string | null; sourcePath: string | null; path: string | null;
   rawHash: string | null; content: string | null; ownerEpoch: string;
+  lineEndingOnly?: boolean;
   syncAuthority: SyncAuthority; cursorKey: string; runId: string; index: number;
   from: string | null; target: string; total: number; slugMode: 'git-root' | 'source-root';
 }
@@ -39,10 +41,17 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   const binding = await getWorktreeBinding(engine, row.source_id);
   if (!binding?.local_path || String(binding.owner_epoch) !== p.ownerEpoch) throw new OperationError('owner_unavailable', 'The accepted sync owner changed.');
   const root = join(binding.local_path, binding.relative_path);
+  if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(engine, row,
+    p.path === null ? undefined : { root, path: join(root, p.path) });
   const validate = async (tx: BrainEngine) => {
     await validateSyncAuthority(tx, p.syncAuthority, row.slug);
+    const [cursor] = await tx.executeRaw<{ run_id: string; request_id: string | null }>(
+      "SELECT completed_keys->0->>'runId' AS run_id,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR SHARE", [p.cursorKey]);
+    if (cursor && (cursor.run_id !== p.runId || cursor.request_id !== row.request_id)) throw new OperationError('revision_conflict', 'The accepted sync cursor changed before publication.');
     const current = await getWorktreeBinding(tx, row.source_id);
     if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw new OperationError('owner_unavailable', 'The accepted sync owner epoch changed.');
+    if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(tx, row,
+      p.path === null ? undefined : { root, path: join(root, p.path) });
     if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw new OperationError('source_changed', 'The imported file changed after sync admission.');
     if (p.companyApproval) {
       const [source] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [row.source_id]);
@@ -63,8 +72,10 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     }
     const [manifest] = await tx.executeRaw<{ count: number }>("SELECT jsonb_array_length(completed_keys) AS count FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId]);
     if (!manifest || Number(manifest.count) !== p.total) throw new OperationError('storage_error', 'The immutable sync manifest is incomplete.');
-    const [incomplete] = await tx.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND
-      (recovery IS NOT NULL OR (intent->>'runId'=$2 AND intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND state<>'committed')) LIMIT 1`,
+    const [incomplete] = await tx.executeRaw(`SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND
+      (r.recovery IS NOT NULL OR (r.intent->>'runId'=$2 AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.state<>'committed'
+        AND (r.state IN ('queued','running','recovering') OR NOT EXISTS (SELECT 1 FROM persistence_requests committed
+          WHERE committed.source_id=r.source_id AND committed.intent->>'runId'=$2 AND committed.intent->>'index'=r.intent->>'index' AND committed.state='committed')))) LIMIT 1`,
       [row.worktree_id, p.runId]);
     if (incomplete) throw new OperationError('recovery_required', 'An incomplete page receipt still blocks the sync checkpoint.');
     const changed = await tx.executeRaw(`UPDATE sources SET last_commit=$3,last_sync_at=now(),config=jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($5::text)),
@@ -89,7 +100,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   if (typeof p.content !== 'string' || typeof p.sourcePath !== 'string' || typeof p.path !== 'string') throw new OperationError('storage_error', 'The frozen import content is missing.');
   if (isCodeFilePath(p.sourcePath)) {
     if (p.companyApproval) throw new OperationError('profile_incompatible', 'Company source approval permits only committed Markdown content.');
-    if (snapshot && p.rawHash !== sha256(p.content) && snapshot.page.compiled_truth !== p.content) {
+    if (snapshot && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && snapshot.page.compiled_truth !== p.content) {
       throw new OperationError('source_changed', 'Newer code file bytes disagree with the pinned import.');
     }
     let prepared: PreparedContentImport | undefined;
@@ -112,7 +123,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   if (expectedSlug && parsedInput.slug !== expectedSlug && slugifyPath(parsedInput.slug) !== expectedSlug) {
     throw new OperationError('invalid_params', 'The file frontmatter slug conflicts with its physical origin.');
   }
-  if (!p.companyApproval && snapshot && p.rawHash !== sha256(p.content) && !sameCanonicalImport(snapshot, parsedInput)) {
+  if (!p.companyApproval && snapshot && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(snapshot, parsedInput)) {
     throw new OperationError('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.');
   }
   let importContent = p.content;
@@ -143,7 +154,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     timeline: page.timeline ?? '', frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() });
   const overlay = digest(canonical(parsed, parsed.tags)) !== digest(canonical(ready.parsedPage, tags));
   if (overlay && p.companyApproval) throw new OperationError('source_writeback_required', 'Canonical preparation requires a source-content correction; this profile never writes repository files.');
-  if (overlay && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
+  if (overlay && !p.lineEndingOnly && p.rawHash !== sha256(p.content)) throw new OperationError('source_changed', 'Canonical sanitization cannot overwrite newer working-tree bytes.');
   const project = prepareCanonicalProjections(ready.parsedPage, row.slug, row.source_id);
   return { observedRevision: snapshot?.revision ?? null, validate,
     ...(overlay ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),

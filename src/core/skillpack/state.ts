@@ -16,6 +16,7 @@
  * read/write helpers.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 
@@ -131,10 +132,13 @@ export function loadState(opts: { statePath?: string } = {}): SkillpackState {
  */
 export function saveState(state: SkillpackState, opts: { statePath?: string } = {}): void {
   const path = opts.statePath ?? defaultStatePath();
+  assertLegacySkillFilesystemWrite(path);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = path + '.tmp';
+  assertLegacySkillFilesystemWrite(tmp);
   try {
     writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o644 });
+    assertLegacySkillFilesystemWrite(path);
     renameSync(tmp, path);
   } catch (err) {
     try {

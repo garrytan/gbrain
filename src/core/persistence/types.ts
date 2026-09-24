@@ -13,6 +13,8 @@ export const WRITE_ERROR_CODES = [
   'page_identity_changed', 'write_claim_lost', 'request_too_large', 'response_too_large',
   'writer_registration_required', 'writer_identity_invalid', 'writer_not_initialized',
   'writer_coordinator_required', 'fact_already_expired', 'source_writeback_required',
+  'unsupported_mutation_protocol', 'writer_upgrade_required', 'writer_not_quiesced',
+  'skill_bundle_required',
 ] as const;
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];

@@ -60,7 +60,6 @@ test/e2e/extract-atoms-discovery-sql.test.ts
 test/e2e/extraction-review-postgres.test.ts
 test/e2e/facts-context-injection-postgres.test.ts
 test/e2e/facts-cross-source-isolation.test.ts
-test/e2e/facts-fence-reconcile-postgres.test.ts
 test/e2e/facts-forget.test.ts
 test/e2e/facts-notability-roundtrip.test.ts
 test/e2e/facts-recall-event-time-postgres.test.ts

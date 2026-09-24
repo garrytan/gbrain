@@ -1793,6 +1793,10 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
 export async function runSources(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
+  if (sub === 'reconcile') {
+    const { runReconcileCli } = await import('./source-reconcile.ts');
+    return runReconcileCli(rest, engine);
+  }
   if (sub === 'inspect') {
     const { runCompanyBrainInspection } = await import('./company-brain-inspect.ts');
     return runCompanyBrainInspection(rest);
@@ -1904,6 +1908,7 @@ Subcommands:
                                     with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.
   writer status|claim|activate|transfer  Inspect, activate or transfer canonical ownership (see writer --help).
+  reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
                                     Shows impact preview. Requires --confirm-destructive

@@ -1196,7 +1196,7 @@ deferred M-effort issues above are NOT repeated here.
   checklist below. **Why:** prove-before-publish — the claude lane got a
   real-binary door; these two shipped gated instead. **Effort:** M.
   **Priority:** P2.
-- [ ] **P2 — STARTER_OPS question: should get_skill/list_skills join the
+- [x] **P2 — STARTER_OPS question: should get_skill/list_skills join the
   starter surface?** **What:** the stub lane is dead on unmodified plugin
   installs (starter surface hides skills ops; stdio can't persist a
   request_tools widening). Decide whether the starter set grows the two
@@ -1206,7 +1206,9 @@ deferred M-effort issues above are NOT repeated here.
   test/skillpack-harness-bridge.test.ts (get_skill ∉ STARTER_OPS) and the
   warn text in src/commands/skillpack/harness.ts must move with it. **Why:**
   the biggest single unlock for cold-pull stubs. **Effort:** S (decision) +
-  S (change). **Priority:** P2.
+  S (change). **Priority:** P2. Completed in v0.53.0.0: starter includes
+  authorized shared discovery, assets, and own-principal membership; publication
+  gates and explicit capabilities still apply. The verbs surface is unchanged.
 - [ ] **P3 — duplicate-skill-name coexistence doctor check.** **What:** a
   doctor probe that detects the same skill name loadable from two lanes at
   once (marketplace plugin snapshot + a bridge install in
@@ -4050,6 +4052,12 @@ deliberately scoped out of the wave (see plan + GSTACK REVIEW REPORT at
 
 - [ ] **#1569-followup: root-cause the 56K-file sync wedge with the reporter's repro.** v0.41.37.0 shipped ReDoS hardening (input-length cap + star-height lint + `--no-schema-pack` escape) + diagnostics (`GBRAIN_SYNC_TRACE=1` begin-heartbeat + PGLite serve/sync concurrency doc), but did NOT root-cause the deterministic wedge at ~3100 files — the reporter's redos-guard hypothesis didn't hold (it's not on the sync path). Get the reporter's sample files (`/tmp/gbrain-hang-sample.txt`, `/tmp/gbrain-prewedge-sample.txt`), reproduce, and pin the resume-mode deep-recursion pre-import phase (prime suspect: the walk/diff/checkpoint path). Priority: P1 once a repro exists; tracked on the #1569 thread.
 ## MCP skillpack distribution — PR2 (v0.41.37+)
+
+Shared-brain distribution is implemented in v0.53.0.0 through source-qualified
+sealed revisions, approved `get_skill_asset` delivery, and enrolled local caches.
+This subsumes the shared-brain catalog/bundle use case without an archive endpoint.
+The older third-party tarball installation and host-global merge proposals below
+remain separate work; they are not prerequisites for shared-brain following.
 
 Filed from the v0.41.36.0 skill-catalog wave (`list_skills` / `get_skill`).
 PR1 shipped the read-only catalog; PR2 is the download-and-install surface,
@@ -7243,7 +7251,7 @@ keeping both skills' triggers intact for chaining.
 ## Completed
 
 ### ~~F11 — manual native OAuth registration~~
-**Completed:** v0.52.1.1 (2026-09-22), with the original command proposal superseded.
+**Completed:** v0.54.1.1 (2026-09-24), with the original command proposal superseded.
 
 **Resolution:** `gbrain mcp admin register NAME --redirect-uri URI [--redirect-uri URI ...]` provides validated manual native OAuth registration through the running server and owner authentication. It supports public and confidential PKCE with authorization-code and refresh grants, without direct database edits. The legacy `auth register-client` command remains unchanged. See [MCP administration](docs/mcp/ADMIN.md).
 

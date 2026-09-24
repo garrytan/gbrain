@@ -698,23 +698,25 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // One-time, gated by `mcp.publish_skills_prompted`. Strongly recommended.
         try {
           const prompted = await engine.getConfig('mcp.publish_skills_prompted');
-          const current = await engine.getConfig('mcp.publish_skills');
+          const { loadConfigFileOnly } = await import('../core/config.ts');
+          const filePublication = loadConfigFileOnly()?.mcp?.publish_skills;
+          const current = await engine.getConfig('mcp.publish_skills') ?? (filePublication == null ? null : String(filePublication));
           if (prompted !== 'true' && current == null) {
-            const { autoDetectSkillsDir } = await import('../core/repo-root.ts');
-            const det = autoDetectSkillsDir();
-            const dirLine = det.dir
-              ? `Skills dir: ${det.dir} (source: ${det.source})`
-              : 'Skills dir: not auto-detected — set $GBRAIN_SKILLS_DIR or mcp.skills_dir before enabling.';
+            const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived AND local_path IS NOT NULL');
+            const dirLine = sources.length
+              ? `${sources.length} registered content source(s); shared skills require reviewed source-local publication.`
+              : 'No registered content root: choose a canonical source and complete host content migration first.';
             console.log('');
             console.log('═══════════════════════════════════════════════════════════════');
             console.log('[gbrain] Publish your skills to MCP clients?');
             console.log('[gbrain] Codex desktop, Claude Code/Cowork, and Perplexity can then');
-            console.log("[gbrain] DISCOVER and FOLLOW your agent's skills over `gbrain serve`.");
+            console.log('[gbrain] DISCOVER approved source-scoped skill prose over `gbrain serve`.');
             console.log('[gbrain] This makes your MCP server dramatically more useful.');
             console.log('[gbrain]');
             console.log(`[gbrain] ${dirLine}`);
             console.log('[gbrain] Effect: the CONTENTS of your SKILL.md files become readable by');
             console.log('[gbrain] remote MCP callers you have authorized. Source code is NOT exposed.');
+            console.log('[gbrain] Following updates, bundle bytes and skill editing require separate approval.');
             console.log('═══════════════════════════════════════════════════════════════');
             const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
             let enabled = false;

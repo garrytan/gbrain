@@ -11,6 +11,8 @@ import { readInstallReceipt, writeInstallReceipt } from '../src/core/agent-insta
 import { createPgliteBackup, rebaseManagedConfig, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
 import { writeBackupArchive } from '../src/core/backup/archive.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { acquireLock, releaseLock, PgliteBusyError } from '../src/core/pglite-lock.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -26,6 +28,10 @@ async function withBrain<T>(at: string, fn: (engine: PGLiteEngine) => Promise<T>
   const engine = new PGLiteEngine();
   await engine.connect({ engine: 'pglite', database_path: join(at, '.gbrain', 'brain.pglite') });
   try { return await fn(engine); } finally { await engine.disconnect(); }
+}
+
+async function withFixtureWrite<T>(at: string, sourceIds: string[], fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
+  return withBrain(at, engine => engine.transaction(tx => withCoordinatedWrite(tx, sourceIds, () => fn(tx))));
 }
 
 async function launched(args: string[], at = root): Promise<string> {
@@ -54,7 +60,7 @@ beforeAll(async () => {
   writeFileSync(join(pkg, 'src', 'core', 'agent-install', 'entry.ts'), '// Fixture entrypoint; service is exercised directly.\n');
   copyFileSync(join(repo, 'scripts', 'setup-in-agent.sh'), join(pkg, 'scripts', 'setup-in-agent.sh'));
   await withEnv({ DATABASE_URL: 'postgres://wrong.invalid/foreign', GBRAIN_DATABASE_URL: 'postgres://wrong.invalid/foreign', OPENAI_API_KEY: 'must-not-persist', GBRAIN_BRAIN_ID: 'foreign', GBRAIN_SOURCE: 'foreign' }, () => setupInAgent({ root, harness: 'grok-bot', bundle, sourceRef }));
-  await withBrain(root, async engine => {
+  await withFixtureWrite(root, ['default', 'external'], async engine => {
     await engine.executeRaw(`INSERT INTO facts (fact, source, source_id) VALUES ($1, 'fixture', 'default')`, ['unique DB-only durable fact']);
     const queue = new MinionQueue(engine);
     for (const status of ['waiting', 'active', 'delayed', 'waiting-children', 'paused', 'completed']) {
@@ -66,6 +72,7 @@ beforeAll(async () => {
         [status, job.id],
       );
     }
+    await engine.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
     await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('external', 'External fixture', $1)`, [join(temporary, 'outside')]);
     await engine.executeRaw(`INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, source_id, source_path) VALUES ('recovery-note', 'note', 'Recovery fixture', '', '', '{}', 'fixture', 'default', $1)`, [join(root, 'memory', 'note.md')]);
   });
@@ -130,7 +137,7 @@ const child = Bun.spawn([process.execPath, '--no-env-file', ${JSON.stringify(joi
 process.exit(await child.exited);
 `);
   await setupInAgent({ root: upgradingRoot, harness: 'muse', bundle: upgradingBundle, sourceRef });
-  await withBrain(upgradingRoot, e => e.executeRaw(`INSERT INTO facts (fact, source, source_id) VALUES ('upgrade recovery fixture', 'fixture', 'default')`));
+  await withFixtureWrite(upgradingRoot, ['default'], e => e.executeRaw(`INSERT INTO facts (fact, source, source_id) VALUES ('upgrade recovery fixture', 'fixture', 'default')`));
   const original = readInstallReceipt(upgradingRoot)!;
   const configBefore = readFileSync(join(upgradingRoot, '.gbrain', 'config.json'), 'utf8');
   writeFileSync(failure, 'fail once');
@@ -167,7 +174,7 @@ test('existing database files after an interrupted init do not certify unfinishe
   const interruptedRoot = join(temporary, 'interrupted-root');
   await setupInAgent({ root: interruptedRoot, harness: 'grok-bot', bundle, sourceRef });
   const receipt = readInstallReceipt(interruptedRoot)!;
-  const schema = await withBrain(interruptedRoot, async engine => {
+  const schema = await withFixtureWrite(interruptedRoot, ['default'], async engine => {
     await engine.executeRaw("INSERT INTO facts (fact, source, source_id) VALUES ('interrupted init durable fact', 'fixture', 'default')");
     const current = Number(await engine.getConfig('version'));
     await engine.setConfig('version', String(current - 1));
@@ -237,7 +244,8 @@ test('full backup restores DB-only facts/files, rebases sources, quarantines all
   writeBackupArchive(renamedArchive, {}, [{ path: 'private-record', file: join(root, 'memory', 'prior.gbrain-backup') }]);
   writeFileSync(join(root, 'memory', 'credentials.md'), '# Remembered credential rotation procedure\nNo actual credential.\n');
   const connectorCommandMarker = join(temporary, 'connector-command-ran');
-  await withBrain(root, async engine => {
+  await withFixtureWrite(root, ['google-fixture'], async engine => {
+    await engine.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
     await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $2, $3, $4::text::jsonb)', [
       'google-fixture', 'Google fixture', join(root, 'memory', 'google'),
       JSON.stringify({ kind: 'google', federated: true, g_account: 'fixture-account', g_services: 'gmail', g_access: 'command', g_token_command: `touch '${connectorCommandMarker}'`, syncEnabled: true }),
@@ -288,10 +296,10 @@ test('full backup restores DB-only facts/files, rebases sources, quarantines all
     expect(await e.getConfig('sync.repo_path')).toBe(join(restored, 'memory'));
     expect(await e.getConfig('dream.synthesize.session_corpus_dir')).toBeNull();
     const { performSync } = await import('../src/commands/sync.ts');
-    await expect(performSync(e, { sourceId: 'google-fixture' })).rejects.toThrow('no local_path');
+    await expect(performSync(e, { sourceId: 'google-fixture', noPull: true })).rejects.toMatchObject({ code: 'owner_unavailable' });
     // An explicit repo override must not revive the archived API kind or its
-    // credential command. The ordinary non-git directory then fails locally.
-    await expect(performSync(e, { sourceId: 'google-fixture', repoPath: join(restored, 'memory') })).rejects.toThrow();
+    // credential command. The restored source still has no canonical owner.
+    await expect(performSync(e, { sourceId: 'google-fixture', repoPath: join(restored, 'memory'), noPull: true })).rejects.toMatchObject({ code: 'owner_unavailable' });
     expect(existsSync(connectorCommandMarker)).toBe(false);
   });
   const detached = JSON.parse(readFileSync(join(restored, '.gbrain', 'restore-detached.json'), 'utf8'));

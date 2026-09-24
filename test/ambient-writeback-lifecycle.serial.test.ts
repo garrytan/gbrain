@@ -34,6 +34,7 @@ import {
   renderAmbientInstructionBlock,
 } from '../src/core/bootstrap/instructions-block.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
 
 const REPO = join(import.meta.dir, '..');
 let parent: string;      // GBRAIN_HOME parent
@@ -251,7 +252,8 @@ describe('ambient writeback — hermetic 5-step lifecycle', () => {
       const all = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM facts`);
       expect(Number(all[0].n)).toBe(2);
 
-      await engine.executeRaw(`UPDATE facts SET valid_until = now() - interval '1 hour' WHERE id = $1`, [Number(coughId)]);
+      await withManagedFixtureWrite(engine, ['default'], tx =>
+        tx.executeRaw(`UPDATE facts SET valid_until = now() - interval '1 hour' WHERE id = $1`, [Number(coughId)]));
       const active = await engine.listFactsByEntity('default', 'people/alice-example', { activeOnly: true });
       const texts = active.map((f) => f.fact);
       expect(texts.some((t) => t.includes('dark mode'))).toBe(true);

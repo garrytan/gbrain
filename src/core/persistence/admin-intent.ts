@@ -6,12 +6,15 @@ export const WRITER_INSPECTION_HINT = 'Inspect gbrain sources writer status --js
 
 export async function writerAdminState(engine: SqlEngine): Promise<string> {
   const [row] = await engine.executeRaw<{ state: string }>(`SELECT jsonb_build_object(
-    'brain', (SELECT jsonb_build_object('id',brain_id,'enabled',enabled) FROM persistence_brain WHERE singleton=1),
-    'sources', (SELECT jsonb_agg(jsonb_build_array(id,incarnation,archived,local_path) ORDER BY id) FROM sources),
+    'brain', (SELECT jsonb_build_object('id',brain_id,'enabled',enabled,
+      'skill_bundles_enabled',to_jsonb(persistence_brain)->'skill_bundles_enabled',
+      'writer_protocol_floor',to_jsonb(persistence_brain)->'writer_protocol_floor') FROM persistence_brain WHERE singleton=1),
+    'sources', (SELECT jsonb_agg(jsonb_build_array(id,incarnation,archived,local_path,config->>'kind') ORDER BY id) FROM sources),
     'fallback', (SELECT value FROM config WHERE key='sync.repo_path'),
     'worktrees', (SELECT jsonb_agg(jsonb_build_array(id,owner_host_id,owner_epoch::text,topology_generation::text,state,manifest) ORDER BY id) FROM persistence_worktrees),
     'bindings', (SELECT jsonb_agg(jsonb_build_array(source_id,source_incarnation,worktree_id,relative_path,topology_generation::text) ORDER BY source_id) FROM persistence_source_bindings),
-    'hosts', (SELECT jsonb_agg(jsonb_build_array(worktree_id,host_id,local_path,coordination_path) ORDER BY worktree_id,host_id) FROM persistence_host_bindings)
+    'hosts', (SELECT jsonb_agg(jsonb_build_array(worktree_id,host_id,local_path,coordination_path) ORDER BY worktree_id,host_id) FROM persistence_host_bindings),
+    'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id) FROM gbrain_cycle_locks)
   )::text AS state`);
   return sha256(row.state);
 }
@@ -20,7 +23,7 @@ export async function assertWriterAdminState(engine: SqlEngine, expected: string
   if (expected === undefined) return;
   if (lock) {
     await engine.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-    await engine.executeRaw('LOCK TABLE sources, config, persistence_worktrees, persistence_source_bindings, persistence_host_bindings IN SHARE ROW EXCLUSIVE MODE');
+    await engine.executeRaw('LOCK TABLE sources, config, persistence_worktrees, persistence_source_bindings, persistence_host_bindings, gbrain_cycle_locks IN SHARE ROW EXCLUSIVE MODE');
   }
   if (await writerAdminState(engine) !== expected) {
     throw new OperationError('writer_admin_state_changed', 'Writer topology changed since inspection; the administrative request was not applied.', WRITER_INSPECTION_HINT);

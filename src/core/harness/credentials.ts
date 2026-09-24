@@ -18,6 +18,7 @@ export interface HarnessCredentials {
   profile?: string;
   harness?: string;
   source_id?: string;
+  shared_skills?: { follow: boolean; source_ids?: string[] };
 }
 
 export function validateCredentials(value: unknown): HarnessCredentials {
@@ -41,6 +42,9 @@ export function validateCredentials(value: unknown): HarnessCredentials {
     if (v[key] !== undefined && (typeof v[key] !== 'string' || !validateToken(v[key] as string).ok)) throw new Error('Invalid private credential');
   }
   if (v.expires_at !== undefined && (typeof v.expires_at !== 'number' || !Number.isFinite(v.expires_at))) throw new Error('Invalid credential expiration');
+  const shared = v.shared_skills as HarnessCredentials['shared_skills'];
+  if (shared !== undefined && (!shared || typeof shared.follow !== 'boolean' ||
+    (shared.source_ids !== undefined && (!Array.isArray(shared.source_ids) || shared.source_ids.length > 64 || shared.source_ids.some(s => typeof s !== 'string' || !s || s.length > 128))))) throw new Error('Invalid shared-skills follow policy');
   return { version: 1, mcp_url: url.url, issuer_url: issuer, client_id: v.client_id,
     ...(typeof v.client_secret === 'string' ? { client_secret: v.client_secret } : {}),
     ...(v.token_endpoint_auth_method !== undefined ? { token_endpoint_auth_method: v.token_endpoint_auth_method } : {}),
@@ -49,6 +53,7 @@ export function validateCredentials(value: unknown): HarnessCredentials {
     ...(typeof v.profile === 'string' ? { profile: v.profile } : {}),
     ...(typeof v.harness === 'string' ? { harness: v.harness } : {}),
     ...(typeof v.source_id === 'string' ? { source_id: v.source_id } : {}),
+    ...(shared ? { shared_skills: { follow: shared.follow, ...(shared.source_ids ? { source_ids: [...shared.source_ids] } : {}) } } : {}),
   };
 }
 

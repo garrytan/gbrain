@@ -26,6 +26,8 @@ import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
 import { isAborted } from '../../abort-check.ts';
+import { maintenancePreflight, submitMaintenanceConsolidation } from '../../persistence/prepared-maintenance.ts';
+import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -43,6 +45,7 @@ export interface ConsolidatePhaseOpts {
   minFactsPerBucket?: number;
   /** Minimum age (ms) of the OLDEST fact in a bucket before consolidation. Default 24h. */
   minOldestAgeMs?: number;
+  sourceId?: string;
 }
 
 export async function runPhaseConsolidate(
@@ -50,6 +53,7 @@ export async function runPhaseConsolidate(
   opts: ConsolidatePhaseOpts = {},
 ): Promise<PhaseResult> {
   const dryRun = opts.dryRun === true;
+  const managed = await managedPersistenceEnabled(engine);
   const threshold = opts.clusterThreshold ?? 0.85;
   const minPerBucket = opts.minFactsPerBucket ?? 3;
   const minOldestAgeMs = opts.minOldestAgeMs ?? 24 * 60 * 60 * 1000;
@@ -58,6 +62,7 @@ export async function runPhaseConsolidate(
   let takesWritten = 0;
   let bucketsProcessed = 0;
   let bucketsSkipped = 0;
+  let clustersSkippedRetired = 0;
 
   // Pull every (source_id, entity_slug) bucket of unconsolidated facts.
   // Uses the partial idx_facts_unconsolidated index.
@@ -72,9 +77,11 @@ export async function runPhaseConsolidate(
         AND expired_at IS NULL
         AND (valid_until IS NULL OR valid_until > now())
         AND entity_slug IS NOT NULL
+        AND ($2::boolean=false OR visibility='world')
+        AND ($1::text IS NULL OR source_id=$1)
       GROUP BY source_id, entity_slug
-      HAVING COUNT(*) >= ${minPerBucket}
-    `);
+      HAVING COUNT(*) >= $3
+    `, [opts.sourceId ?? null, managed, minPerBucket]);
   } catch (err) {
     return {
       phase: 'consolidate',
@@ -100,11 +107,14 @@ export async function runPhaseConsolidate(
       try { await opts.yieldDuringPhase(); } catch { /* keepalive errors non-fatal */ }
     }
 
-    const unconsolidated = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
+    const maintenance = managed && !dryRun ? await maintenancePreflight(engine, b.source_id) : null;
+    const candidates = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
       activeOnly: true,
       unconsolidatedOnly: true,
+      visibility: managed ? ['world'] : undefined,
       limit: 100,
     });
+    const unconsolidated = managed ? candidates.filter(f => f.visibility === 'world') : candidates;
     if (unconsolidated.length < minPerBucket) {
       bucketsSkipped += 1;
       continue;
@@ -156,6 +166,15 @@ export async function runPhaseConsolidate(
         takesWritten += 1;
         factsConsolidated += cluster.length;
         nextRowNum += 1;
+        continue;
+      }
+
+      if (maintenance) {
+        const receipt = await submitMaintenanceConsolidation(engine, maintenance, b.entity_slug, cluster,
+          { claim: best.fact, weight: clamp01(avgWeight), source: sources.slice(0, 200), since: sinceISO });
+        factsConsolidated += Number(receipt.facts_consolidated ?? 0);
+        takesWritten += Number(receipt.takes_written ?? 0);
+        if (receipt.reason === 'retired_take') clustersSkippedRetired++;
         continue;
       }
 
@@ -278,17 +297,20 @@ export async function runPhaseConsolidate(
 
   return {
     phase: 'consolidate',
-    status: factsConsolidated > 0 ? 'ok' : 'ok',
+    status: factsConsolidated === 0 && clustersSkippedRetired > 0 ? 'skipped' : 'ok',
     duration_ms: 0,
     summary: dryRun
       ? `(dry-run) would promote ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`
-      : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets`,
+      : `promoted ${factsConsolidated} facts into ${takesWritten} takes across ${bucketsProcessed} buckets` +
+        (clustersSkippedRetired ? `; skipped ${clustersSkippedRetired} clusters with retired takes` : ''),
     details: {
       dryRun,
       facts_consolidated: factsConsolidated,
       takes_written: takesWritten,
       buckets_processed: bucketsProcessed,
       buckets_skipped: bucketsSkipped,
+      clusters_skipped_retired: clustersSkippedRetired,
+      ...(factsConsolidated === 0 && clustersSkippedRetired > 0 ? { reason: 'retired_take' } : {}),
     },
   };
 }

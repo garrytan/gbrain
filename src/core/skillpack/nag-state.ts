@@ -16,6 +16,7 @@
  * escalation logic is unit-testable without touching disk.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 
@@ -92,10 +93,13 @@ export function loadNagState(opts: { statePath?: string } = {}): NagState {
 
 export function saveNagState(state: NagState, opts: { statePath?: string } = {}): void {
   const path = opts.statePath ?? defaultNagStatePath();
+  assertLegacySkillFilesystemWrite(path);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = path + '.tmp';
+  assertLegacySkillFilesystemWrite(tmp);
   try {
     writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o644 });
+    assertLegacySkillFilesystemWrite(path);
     renameSync(tmp, path);
   } catch (err) {
     try {

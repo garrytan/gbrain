@@ -6,6 +6,7 @@ import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import type { BrainEngine } from '../engine.ts';
 import { readJournalLimits } from './limits.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 
 export interface RecoveryStagingFile { path: string; hash: string; bytes: number }
 export interface RecoveryStaging { publication?: RecoveryStagingFile; restoration?: RecoveryStagingFile }
@@ -88,6 +89,7 @@ export async function upgradeRecoveryStaging(engine: BrainEngine, table: 'persis
   const limits = await readJournalLimits(engine);
   const { lockCounters } = await import('./journal.ts');
   await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     const counters = await lockCounters(tx, ['brain', `worktree:${worktreeId}`]);
     const [row] = await tx.executeRaw<{ recovery_bytes: number | string; recovery: (StagedRecovery & { before?: string | null; after?: string }) | null }>(

@@ -1281,63 +1281,11 @@ export async function buildChecks(
   // Without this doctor check, users see "sync blocked" and have no
   // surface showing which files to fix.
   try {
-    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode, decideSyncFailureSeverity } = await import('../core/sync.ts');
-    const all = loadSyncFailures();
-    // issue #1939: "unresolved" = open + auto_skipped. Severity (ok/warn/fail)
-    // comes from the SAME shared decision the remote surface uses, so a stuck
-    // bookmark blocked past the fail cadence (or a large unresolved count)
-    // escalates to FAIL instead of staying a quiet WARN forever.
-    const unresolved = unacknowledgedSyncFailures();
-    if (unresolved.length > 0) {
-      const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
-      const sev = decideSyncFailureSeverity({ entries: all, nowMs: Date.now(), failHours });
-      const codeSummary = summarizeFailuresByCode(unresolved);
-      const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
-      const preview = unresolved.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
-      // v0.40.3.0 T8b (D8 + D12 Bug 3): emit a single sync-retry-failed
-      // step. sync-skip-failed is DELIBERATELY NOT emitted as a remediation
-      // — auto-skipping failed syncs hides data loss. Operators can still
-      // run `gbrain sync --skip-failed` manually.
-      const { makeRemediationStep } = await import('../core/remediation-step.ts');
-      const oldestTs = unresolved.reduce(
-        (acc, f) => (acc === '' || f.ts < acc ? f.ts : acc),
-        '',
-      );
-      const retryStep = makeRemediationStep({
-        id: 'sync-retry-failed',
-        job: 'sync-retry-failed',
-        // Content-stable per codex D12 Bug 2: count + oldest_ts captures
-        // the relevant state without using a real timestamp.
-        params: { failure_count: unresolved.length, oldest_failure: oldestTs },
-        severity: sev.status === 'fail' ? 'high' : 'medium',
-        est_seconds: 30,
-        est_usd_cost: 0,
-        rationale: `Retry ${unresolved.length} unresolved sync failure(s) (codes: ${codeBreakdown})`,
-      });
-      checks.push({
-        name: 'sync_failures',
-        status: sev.status,
-        message:
-          `${unresolved.length} unresolved sync failure(s) [${codeBreakdown}]` +
-          (sev.auto_skipped > 0 ? ` — ${sev.auto_skipped} auto-skipped (pages NOT indexed)` : '') +
-          `. ${preview}` +
-          `${unresolved.length > 3 ? `, and ${unresolved.length - 3} more` : ''}. ` +
-          `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
-        remediation: [retryStep],
-        remediation_status: 'remediable',
-      });
-    } else if (all.length > 0) {
-      // Acknowledged-only: show code breakdown for visibility.
-      const ackedSummary = summarizeFailuresByCode(all);
-      const ackedBreakdown = ackedSummary.map(s => `${s.code}=${s.count}`).join(', ');
-      checks.push({
-        name: 'sync_failures',
-        status: 'ok',
-        message: `${all.length} historical sync failure(s), all acknowledged [${ackedBreakdown}].`,
-      });
-    }
+    const { checkSyncFailures } = await import('./doctor/checks/sync-failures.ts');
+    const check = await checkSyncFailures(engine, { remote: false, sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined });
+    if (check) checks.push(check);
   } catch {
-    // Best-effort. A broken JSONL should not stop doctor.
+    checks.push({ name: 'sync_failures', status: 'warn', message: 'Durable sync failure state could not be read; health is unknown.' });
   }
 
   // 3d. Slug-fallback audit (v0.32.7 CJK wave, codex C7). Informational
@@ -3998,6 +3946,8 @@ export async function buildChecks(
     // default (false) — that's the trust-boundary preservation Codex
     // P0-1 flagged.
     checks.push(await checkSyncFreshness(engine, { localOnly: true }));
+    const contentWrites = await (await import('./doctor/checks/canonical-content.ts')).checkCanonicalContentWrites(engine);
+    if (contentWrites) checks.push(contentWrites);
     // Monthly backup-coverage check (same D4 trust stance as sync_freshness:
     // localOnly:true probes git; the remote path stays a cache-only reader).
     progress.heartbeat('backup_coverage');

@@ -52,6 +52,7 @@ import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -275,6 +276,7 @@ export async function writeFactsToFence(
   target: FenceTarget,
   facts: FenceInputFact[],
 ): Promise<FenceWriteResult> {
+  await assertUnmanagedCanonicalWriter(engine, 'direct facts fence write');
   if (target.localPath === null) {
     return { inserted: 0, ids: [], legacyFallback: true };
   }

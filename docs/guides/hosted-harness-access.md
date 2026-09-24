@@ -29,6 +29,9 @@ available; otherwise have the owner provision a private machine handoff and
 install it here. Keep secrets out of chat, command arguments, and Git.
 Use the actual harness adapter, verify a unique memory round trip, and report
 server checks separately from observed recall in a new harness conversation.
+Explain that a new machine grant through mcp grant follows the brain's published
+skills by default; offer --skills memory-only. Preserve existing grants and publication opt-outs. Shared
+skills do not authorize scripts, additional tools, spending, or automatic capture.
 Do not claim that generated instructions or a job ID prove a working integration.
 ```
 
@@ -94,6 +97,17 @@ brain. Do not open the live PGLite database from a second process.
 
 Use `--dry-run` first to inspect a proposed grant without creating a client. Default output is redacted. The credential handoff is written with private permissions before any optional client installation or verification. Transfer it through a private file channel, then retain only the copies you need. Uploading credentials or backups is never automatic.
 
+New grants default to **`--skills follow`** within their approved read sources.
+Use **`--skills memory-only`** to opt out of enrollment; catalog reads can still
+be available. Following adds the explicit `skills_member_self` scope and
+catalog/membership operations, not `skill_editor` or `skill_publisher` authority.
+Fresh owned-root setup approves a limited prose-only follow policy for the
+packaged memory skills when publication is enabled. Existing brains still need
+owner approval of their source's follow/disclosure policy; migration and grant
+creation do not expand existing publication consent. Give each independent harness,
+including the parent, its own principal and private handoff. Shared credentials
+are one principal. See [shared brain skills](shared-brain-skills.md).
+
 | Profile | Access | Native MCP surface |
 | --- | --- | --- |
 | `memory-reader` | Read selected memory | Starter |
@@ -103,7 +117,7 @@ Use `--dry-run` first to inspect a proposed grant without creating a client. Def
 | `delegating-agent` | Memory plus explicitly bound delegation | Starter |
 | `full` | All eligible remote capabilities at grant time, including bound delegation | Full |
 
-A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation or owner dashboard/client-management authority. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
+A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation, the named shared-skill scopes, or owner dashboard/client-management authority. Starter includes authorized skill discovery and membership; the exact seven-tool `verbs` surface is memory-only. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
 
 New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. Explicitly regrant to include them. Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
 
@@ -123,6 +137,21 @@ For Grok Bot, Muse, or another supported thin CLI adapter, also supply `--root /
 The installer preserves unrelated configuration and refuses an unowned or edited connection. Codex, Claude Code, and opencode receive private managed configuration. Generic adapters supply endpoint/authentication guidance; there is no universal configuration file. [Adapter reference](harness-adapters.md) lists supported mechanisms and reload steps.
 
 A configured server is only one step. Follow the adapter's reload instructions and enable the GBrain standing instruction through the harness's actual controls. Thin CLI installations write that instruction to `<ROOT>/GBRAIN-INSTRUCTIONS.md`. Grok Bot/Muse native skill activation remains a separate, visible step until observed in that harness. Generated files alone do not activate a skill.
+
+With an approved follow handoff, managed Claude Code, Codex, and opencode
+connections also install an owned, namespaced shared-brain router. Successful
+installation reports `restart_required` and `native: unverified`, not universal
+activation. Manual clients remain pending native registration. Read the
+`shared_skills` result and its `next_action`; a policy, grant, server-version,
+or ownership conflict can leave memory working while skill enrollment is pending.
+The router's freshness instruction is advisory, not a vendor-enforced hook.
+
+Inspect this connection's local skill receipt without credentials or a live
+host using `gbrain connect --harness codex --status --json`. Supply the actual
+adapter, connection `--name`, and the recorded `--root` for thin CLI adapters.
+It reports desired/installed/acknowledged views and pending cleanup, but keeps
+`current_authority: unprobed` and `native_use: unverified`; reconnect and test
+the native session separately.
 
 ## 3. Prove a memory round trip
 
@@ -201,6 +230,17 @@ you supply. An explicit profile selection regrants its eligible operations.
 Advanced local-maintenance repairs remain available through `gbrain auth
 rescope-client CLIENT_ID --help`; omitted restrictions are retained.
 
+Omitting `--skills` preserves the existing follow choice, including previously
+approved membership when reapplying a profile. Explicit custom scope/operation
+lists are respected instead of silently repaired. To explicitly
+enroll an old memory client, preview `mcp grant` with its client ID, current
+revision, and `--skills follow`, without `--profile`. Apply the reviewed change.
+For a machine client, recover its private handoff, issue a token carrying the
+added scope, and reconnect. For native OAuth, restart authorization in the
+harness to request the added scope. Exact follow and dedicated-editor examples are
+in [shared-skills permissions](shared-brain-skills.md#connect-each-installation).
+Do not grant editing merely because the client can write memory.
+
 Scope removals affect existing tokens immediately. Added scopes need a newly issued access token; refresh cannot expand its original scope grant. Source, operation, fence, binding, and surface changes apply on the next authenticated request. Repairing bindings benefits an existing token that already carries `agent`. TTL changes apply only to newly issued tokens. New renewable connections use one-hour access tokens; static-token adapters use 30 days. Check the receipt for the selected expiry.
 
 ## Recover an interrupted handoff
@@ -257,6 +297,17 @@ settings. Disable saved skills/routines through the harness controls. Use
 [token invalidation, revocation, or deletion](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete)
 when server authority should change. Removing configuration alone does not
 revoke access or delete memory.
+
+Managed removal also attempts to leave its shared-skills enrollment and removes
+only unchanged owned artifacts. `left_with_retained_files` requires review of
+the preserved edits and a native restart/disable step. A server-side
+`leave_brain` alone cannot remove files on the client. Offline or revoked access
+does not prevent local following from being disabled: inspect
+`remote_membership_pending` to distinguish local cleanup from host-acknowledged
+departure and retry the latter when possible. Back up operational DB
+state as well as canonical content; Git alone cannot restore memberships,
+policy history, revocations, or receipts. See
+[shared-skills recovery limits](shared-brain-skills.md#troubleshoot-leave-and-recover).
 
 | Symptom | Next action |
 | --- | --- |

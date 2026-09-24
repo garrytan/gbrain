@@ -15,6 +15,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 import { cliDiagnostic, fixtureDiagnostic, toolDiagnostic } from '../helpers/fixture-diagnostics.ts';
+import { createManagedFixtureSource, withManagedFixtureWrite } from '../helpers/managed-e2e-fixture-write.ts';
 
 const MATCH = 'http-readiness-public-match';
 const PRIVATE_PENDING = 'http-readiness-private-pending-canary';
@@ -77,35 +78,41 @@ describe('search projection readiness over legacy bearer HTTP MCP', () => {
     await engine.connect({ engine: 'pglite', database_path: config.database_path });
     try {
       await engine.setConfig('search.mcp_keyword_only', 'true');
-      await engine.executeRaw('INSERT INTO sources(id, name) VALUES ($1, $1)', ['foreign-readiness-source']);
+      await createManagedFixtureSource(engine, 'foreign-readiness-source');
 
       await importFromContent(engine, 'notes/current', [
         '---', 'title: Current public fixture', 'type: note', '---', MATCH,
-      ].join('\n'), { sourceId: 'default', noEmbed: true });
-
-      await engine.putPage('notes/pending-visible', {
-        type: 'code', page_kind: 'code', title: 'Pending visible fixture', compiled_truth: 'unprojected visible fixture',
-      }, { sourceId: 'default' });
-      await engine.putPage('notes/pending-private', {
-        type: 'code', page_kind: 'code', title: PRIVATE_PENDING, compiled_truth: PRIVATE_PENDING,
-        frontmatter: { visibility: 'private' },
-      }, { sourceId: 'default' });
-      await engine.putPage('notes/pending-foreign', {
-        type: 'code', page_kind: 'code', title: FOREIGN_PENDING, compiled_truth: FOREIGN_PENDING,
-      }, { sourceId: 'foreign-readiness-source' });
-      await engine.executeRaw(
-        'UPDATE pages SET text_projection_revision = NULL WHERE slug = ANY($1::text[])',
-        [['notes/pending-visible', 'notes/pending-private', 'notes/pending-foreign']],
-      );
-      const pending = await engine.executeRaw<{ slug: string; pending: boolean }>(
-        `SELECT slug, text_projection_revision IS DISTINCT FROM knowledge_revision AS pending
-         FROM pages WHERE slug LIKE 'notes/pending-%' ORDER BY slug`,
-      );
-      expect(pending).toEqual([
-        { slug: 'notes/pending-foreign', pending: true },
-        { slug: 'notes/pending-private', pending: true },
-        { slug: 'notes/pending-visible', pending: true },
-      ]);
+      ].join('\n'), { sourceId: 'default', noEmbed: true,
+        prepare: async prepared => {
+          await withManagedFixtureWrite(engine, ['default'], tx => prepared.apply(tx));
+          return prepared.result;
+        },
+      });
+      await withManagedFixtureWrite(engine, ['default', 'foreign-readiness-source'], async tx => {
+        await tx.putPage('notes/pending-visible', {
+          type: 'code', page_kind: 'code', title: 'Pending visible fixture', compiled_truth: 'unprojected visible fixture',
+        }, { sourceId: 'default' });
+        await tx.putPage('notes/pending-private', {
+          type: 'code', page_kind: 'code', title: PRIVATE_PENDING, compiled_truth: PRIVATE_PENDING,
+          frontmatter: { visibility: 'private' },
+        }, { sourceId: 'default' });
+        await tx.putPage('notes/pending-foreign', {
+          type: 'code', page_kind: 'code', title: FOREIGN_PENDING, compiled_truth: FOREIGN_PENDING,
+        }, { sourceId: 'foreign-readiness-source' });
+        await tx.executeRaw(
+          'UPDATE pages SET text_projection_revision = NULL WHERE slug = ANY($1::text[])',
+          [['notes/pending-visible', 'notes/pending-private', 'notes/pending-foreign']],
+        );
+        const pending = await tx.executeRaw<{ slug: string; pending: boolean }>(
+          `SELECT slug, text_projection_revision IS DISTINCT FROM knowledge_revision AS pending
+           FROM pages WHERE slug LIKE 'notes/pending-%' ORDER BY slug`,
+        );
+        expect(pending).toEqual([
+          { slug: 'notes/pending-foreign', pending: true },
+          { slug: 'notes/pending-private', pending: true },
+          { slug: 'notes/pending-visible', pending: true },
+        ]);
+      });
     } finally {
       await engine.disconnect();
     }

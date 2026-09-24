@@ -174,6 +174,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_runbook_skew',
   'bootstrap_serve_lock',
   'batch_retry_health',
+  'canonical_content_writes',
   'brainstorm_health',
   'connectors',
   'chat_fallback_chain_inert',

@@ -25,6 +25,9 @@ expose publishes the gbrain HTTP MCP server on your Tailscale tailnet (--funnel:
 and keeps it running as a user service. Engine-free. See: gbrain mcp expose --help
 
 --profile defaults to memory-writer for new clients; omitted profiles preserve existing grants.
+New connections follow this brain's published skills within their approved read sources.
+--skills follow|memory-only         Follow shared skills (new default) or use memory only; existing grants are unchanged when omitted
+Following never grants skill editing, script execution, additional tools, or paid calls.
 Delegation requires --bound-tools T1,T2.
 --federated-read S1,S2              Explicit read sources
 --bound-slug-prefixes P1/,P2/       Direct write fence
@@ -73,8 +76,10 @@ export function parseMcpGrant(args: string[]): ProvisionGrantInput {
   if (value('--token-ttl') !== undefined) patch.tokenTtlSeconds = Number(value('--token-ttl'));
   const expectedRevision = value('--if-version') === undefined ? undefined : Number(value('--if-version'));
   if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) throw new Error('--if-version must be a nonnegative integer');
+  const sharedSkills = value('--skills');
+  if (sharedSkills !== undefined && sharedSkills !== 'follow' && sharedSkills !== 'memory-only') throw new Error('--skills must be follow or memory-only');
   return { name: args[1] ?? '', harness: value('--harness') ?? value('--agent') ?? 'generic', profile: value('--profile') as GrantProfileId | undefined,
-    sourceId: value('--source'), url: value('--url') ?? '', clientId: value('--client'), expectedRevision, dryRun: args.includes('--dry-run'), resume: args.includes('--resume'), patch };
+    sourceId: value('--source'), url: value('--url') ?? '', clientId: value('--client'), expectedRevision, dryRun: args.includes('--dry-run'), resume: args.includes('--resume'), patch, sharedSkills };
 }
 
 export async function runMcp(args: string[], engine?: BrainEngine): Promise<void> {

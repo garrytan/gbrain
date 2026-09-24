@@ -262,19 +262,11 @@ export async function doctorReportRemote(
   // trust boundary. Escalates to FAIL when a stuck bookmark has blocked past the
   // sync-freshness fail cadence or unresolved count is large.
   try {
-    const { loadSyncFailures, decideSyncFailureSeverity } = await import('../../core/sync.ts');
-    const entries = loadSyncFailures();
-    const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
-    const sev = decideSyncFailureSeverity({ entries, nowMs: Date.now(), failHours });
-    const msg =
-      sev.unresolved === 0
-        ? 'No unresolved sync failures'
-        : `${sev.unresolved} unresolved sync failure(s)` +
-          (sev.auto_skipped > 0 ? ` (${sev.auto_skipped} auto-skipped — pages NOT indexed)` : '') +
-          ` — run \`gbrain sync --skip-failed\` on the host to acknowledge`;
-    checks.push({ name: 'sync_failures', status: sev.status, message: msg });
+    const { checkSyncFailures } = await import('./checks/sync-failures.ts');
+    const check = await checkSyncFailures(engine, { sourceIds: opts.sourceIds, remote: true });
+    checks.push(check ?? { name: 'sync_failures', status: 'ok', message: 'No unresolved sync failures' });
   } catch {
-    checks.push({ name: 'sync_failures', status: 'ok', message: 'No failures recorded' });
+    checks.push({ name: 'sync_failures', status: 'warn', message: 'Durable sync failure state could not be read; health is unknown.' });
   }
 
   // 4b. Multi-source drift (v0.31.8 — D8 + D14). Same shape as the local
@@ -383,6 +375,8 @@ export async function doctorReportRemote(
 
   // 6. Sync freshness check
   checks.push(await checkSyncFreshness(engine));
+  const contentWrites = await (await import('./checks/canonical-content.ts')).checkCanonicalContentWrites(engine, opts.sourceIds);
+  if (contentWrites) checks.push(contentWrites);
 
   // v0.41.19.0 (Issue 5): sync --all consolidation nudge for multi-source brains.
   checks.push(await checkSyncConsolidation(engine));

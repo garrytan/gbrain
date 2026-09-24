@@ -123,6 +123,7 @@ const INTERFACE_METHODS: readonly string[] = [
  */
 const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   'db',
+  'connectForRestore',
   'applyForwardReferenceBootstrap',
   'getBulkRetryOpts',
   'batchRetry',

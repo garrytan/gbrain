@@ -20,6 +20,7 @@
  * blocks an install.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 
@@ -127,8 +128,11 @@ export function saveBridgeState(state: BridgeState, opts: { statePath?: string }
   // other's half-written tmp into place.
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   try {
+    assertLegacySkillFilesystemWrite(path);
+    assertLegacySkillFilesystemWrite(tmp);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o644 });
+    assertLegacySkillFilesystemWrite(path);
     renameSync(tmp, path);
   } catch (err) {
     try {

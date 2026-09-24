@@ -52,7 +52,8 @@ describe('stdioVisibleTools (B1)', () => {
   test('both gates on: full surfaced set returned unchanged', async () => {
     const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'true' });
     const visible = await stdioVisibleTools(engine, operations);
-    expect(visible.length).toBe(operations.length);
+    expect(visible.map(op => op.name)).toEqual(operations.filter(op => !op.requiredScopes?.length).map(op => op.name));
+    for (const op of operations.filter(op => op.requiredScopes?.length)) expect(visible).not.toContain(op);
   });
 
   test('gate resolver failure hides every gated op (fail-closed), never throws', async () => {
@@ -66,7 +67,7 @@ describe('stdioVisibleTools (B1)', () => {
   });
 
   test('surfaced set without gated ops passes through untouched (no gate read needed)', async () => {
-    const ungated = operations.filter(op => !op.publishGateKey);
+    const ungated = operations.filter(op => !op.publishGateKey && !op.requiredScopes?.length);
     let reads = 0;
     const engine = {
       getConfig: async () => { reads += 1; return null; },

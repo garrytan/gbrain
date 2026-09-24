@@ -14,11 +14,11 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   const detail = error.toJSON();
   if (json) await out(JSON.stringify(detail, null, 2) + '\n');
   console.error(error instanceof OperationError || error instanceof RemoteMcpError
-    ? `Error [${detail.error}]: ${detail.message}` : error.message);
+    ? `Error [${'write_error' in detail && detail.write_error || detail.error}]: ${detail.message}` : error.message);
   if (detail.suggestion) console.error(`Fix: ${detail.suggestion}`);
-  if (!json && error instanceof RemoteMcpError) {
-    console.error(`Request: ${error.detail?.request_id ?? error.detail?.write_request?.request_id}`);
-  }
+  const receipt = 'write_request' in detail ? detail.write_request : undefined;
+  const requestId = receipt?.request_id ?? ('request_id' in detail ? detail.request_id : undefined);
+  if (requestId) console.error(`Request: ${requestId}${receipt ? ` (${receipt.state})` : ''}`);
   setCliExitVerdict(1);
   return true;
 }
@@ -56,7 +56,10 @@ export async function runDeferredPersistenceCommand(
       const { runTakesMutation } = await import('./takes-mutation.ts');
       await runTakesMutation(getEngine, args);
     } else if (command === 'sources') {
-      if (args[0] === 'writer') {
+      if (args[0] === 'reconcile') {
+        const { runReconcileCli } = await import('./source-reconcile.ts');
+        await runReconcileCli(args.slice(1));
+      } else if (args[0] === 'writer') {
         const { runPersistenceAdminCli } = await import('./persistence-admin.ts');
         await runPersistenceAdminCli('writer', args.slice(1));
       } else {

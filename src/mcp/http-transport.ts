@@ -26,12 +26,15 @@
  */
 
 import { createHash } from 'crypto';
-import { hasScope } from '../core/scope.ts';
+import { hasScope, operationScopesAllowed } from '../core/scope.ts';
+import { createSkillResources } from './skill-resources.ts';
+import { CAPABILITIES_URI } from './capabilities.ts';
+import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { resolveMcpInstructions } from './instructions.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
-import { operations, operationsByName } from '../core/operations.ts';
+import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall, requestLogStatusForResult } from './dispatch.ts';
@@ -45,7 +48,7 @@ import { degradedLastError, isEngineDegraded } from '../core/degraded-marker.ts'
 import { classifyPgAccessError } from '../core/pg-access-classify.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
-import { normalizeTokenScopes, parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
+import { normalizeTokenScopes, parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, parseLegacyOperationGrant } from '../core/legacy-token-scope.ts';
 export { parseLegacyTokenScope };
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
@@ -281,6 +284,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         clientName: rowName,
         scopes: normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'],
         sourceId,
+        ...(perms?.allowed_operations === undefined ? {} : { allowedOperations: parseLegacyOperationGrant(perms.allowed_operations) }),
         ...(allowedSources ? { allowedSources } : {}),
       };
       return {
@@ -434,7 +438,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
             result: {
               protocolVersion: '2025-03-26',
               serverInfo: { name: 'gbrain', version: VERSION },
-              capabilities: { tools: {} },
+              capabilities: { tools: {}, resources: {} },
               // #4748: contract (+ opt-in writeback section) + deployment identity.
               instructions: resolveMcpInstructions(fileConfig, process.env, {
                 writeback: ambientOptsFrom(writeback, {
@@ -455,6 +459,23 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         return new Response(null, { status: 204, headers: corsHeaders(origin) });
       }
 
+      if (method === 'resources/list' || method === 'resources/read') {
+        const resources = createSkillResources(engine, async () => ({ remote: true, transport: 'http',
+          auth: auth.auth!, sourceId: auth.sourceId ?? 'default', allowedOps: surfaceAllowedOps, surface, config: fileConfig ?? undefined }));
+        try {
+          const result = method === 'resources/list'
+            ? { resources: [{ uri: CAPABILITIES_URI, name: 'GBrain capabilities', mimeType: 'application/json' }, ...await resources.list()] }
+            : params?.uri === CAPABILITIES_URI
+              ? { contents: [{ uri: CAPABILITIES_URI, mimeType: 'application/json', text: JSON.stringify(await resolveAuthCapabilities(auth.auth!, engine, fileConfig ?? { engine: engine.kind })) }] }
+              : await resources.read(params?.uri);
+          logRequest(auth.tokenName!, method, 'success', Date.now() - startedMs);
+          return Response.json({ jsonrpc: '2.0', id, result }, { headers: corsHeaders(origin) });
+        } catch {
+          logRequest(auth.tokenName!, method, 'error', Date.now() - startedMs);
+          return Response.json({ jsonrpc: '2.0', id, error: { code: -32602, message: 'Unknown or unavailable resource' } }, { headers: corsHeaders(origin) });
+        }
+      }
+
       // tools/list
       if (method === 'tools/list') {
         // WP1/E5 truthful catalog on THIS transport too: publish-gated ops
@@ -470,8 +491,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const gateDisabled = await disabledOpsForPublishGates(engine, fileConfig);
         const visibleTools = tools.filter(t => {
           const op = operationsByName[t.name];
-          return op && !gateDisabled.has(t.name) && (hasScope(auth.auth!.scopes, op.scope ?? 'read')
-            || (op.agentCallable === true && hasScope(auth.auth!.scopes, 'agent')));
+          return op && !gateDisabled.has(t.name) && operationScopesAllowed(auth.auth!.scopes, op) && opAllowedForBoundClient(auth.auth!, op);
         });
         logRequest(auth.tokenName!, 'tools/list', 'success', Date.now() - startedMs);
         return Response.json(
@@ -485,8 +505,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const toolName: string = params?.name ?? 'unknown';
         const args: Record<string, unknown> = params?.arguments ?? {};
         const op = operationsByName[toolName];
-        if (op && !op.localOnly && !hasScope(auth.auth!.scopes, op.scope ?? 'read') &&
-            !(op.agentCallable === true && hasScope(auth.auth!.scopes, 'agent'))) {
+        if (op && !op.localOnly && !operationScopesAllowed(auth.auth!.scopes, op)) {
           logRequest(auth.tokenName!, `tools/call:${toolName}`, 'denied_after_list', Date.now() - startedMs);
           return Response.json({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text',
             text: JSON.stringify({ error: 'permission_denied', message: `Tool requires ${op.scope ?? 'read'} scope` }) }] } },

@@ -162,7 +162,7 @@ vars — incident-time escape hatches, not everyday knobs.
    server is down when a push happens, that sync is missed. Pair webhooks
    with a cron fallback that catches anything the webhook missed.
 
-4. **A single un-parseable file can't wedge all indexing.** When a file fails
+4. **A single un-parseable file can't wedge legacy indexing.** When a file fails
    to import (malformed YAML frontmatter, an unquoted colon, etc.), sync holds
    the bookmark and tells you exactly which file broke — a *fresh* failure
    fails closed so nothing is silently dropped. But a file that fails the same
@@ -170,8 +170,23 @@ vars — incident-time escape hatches, not everyday knobs.
    disable) is auto-skipped so the rest of the brain keeps indexing past it.
    Skipped files don't disappear: `gbrain doctor` keeps warning until you fix
    or delete them, and fixing the file clears it on the next sync. A repository
-   history rewrite still hard-blocks even with `--skip-failed`. Run
-   `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
+   history rewrite still hard-blocks even with `--skip-failed`. For legacy
+   sync only, `gbrain sync --skip-failed` acknowledges a known-bad set.
+   **Managed sync never acknowledges or auto-skips failed cursors.** Its
+   durable failed receipt remains immutable on ordinary replay. Correct and
+   commit the source, inspect local `gbrain doctor`, then explicitly retry an
+   idle ordinary-source cursor with the same full/working-tree/filter options:
+
+   ```bash
+   gbrain sync --source <source-id> --no-pull --retry-failed
+   ```
+
+   This retries with fresh admission; do not add `--skip-failed`. A successful
+   full run does not clear a separate failed incremental cursor. Doctor reports
+   the remaining run; CLI blocked results exit nonzero and local diagnostics
+   include source/path/code/request/run/target. Counts are cumulative for the
+   run, not evidence of repeated deletions. Remote doctor exposes only
+   source-scoped aggregate diagnostics, not paths or receipt identifiers.
 
 5. **Staleness can't read "fresh" forever.** A source whose content stopped
    moving (or whose local clone vanished) would otherwise report fresh

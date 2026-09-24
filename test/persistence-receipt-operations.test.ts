@@ -63,7 +63,7 @@ describe('own-principal write receipt operations', () => {
   test('get_write_request returns public metadata and never journal payload, execution or recovery bytes', async () => {
     const row = await accept();
     await engine.executeRaw('UPDATE persistence_requests SET execution_token=$2,recovery=$3::jsonb,error_message=$4,error_code=$5 WHERE id=$1',
-      [row.id, randomUUID(), JSON.stringify({ before: 'PRIVATE_RECOVERY_MARKER' }), 'PRIVATE_DRIVER_MARKER', 'revision_conflict']);
+      [row.id, randomUUID(), JSON.stringify({ version: 1, before: 'PRIVATE_RECOVERY_MARKER' }), 'PRIVATE_DRIVER_MARKER', 'revision_conflict']);
     const receipt = await call('get_write_request', { request_id: row.request_id });
     expect(receipt).toMatchObject({ request_id: row.request_id, state: 'queued', operation: 'put_page', source_id: source, slug: 'allowed/page', write_error: 'revision_conflict' });
     expect(JSON.stringify(receipt)).not.toContain('PRIVATE_');

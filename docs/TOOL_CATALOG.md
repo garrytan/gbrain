@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 125 tools across 23 areas. **Starter** marks membership in the ~29-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 133 tools across 23 areas. **Starter** marks membership in the ~38-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -204,9 +204,17 @@ Every non-localOnly operation on the MCP surface: 125 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `get_skill` | Fetch one skill's full instructions by name. | read |  | `mcp.publish_skills` |
-| `list_brain_skillpack` | List brain-resident skillpacks this brain ships (per-source). | read |  | `mcp.publish_skills` |
-| `list_skills` | List the skills this agent's brain publishes. | read |  | `mcp.publish_skills` |
+| `delete_skill` | CAS-delete a canonical shared skill and revoke future managed activation. | write + skill_editor | yes |  |
+| `get_skill` | Fetch one skill's full instructions by name. | read | yes | `mcp.publish_skills` |
+| `get_skill_asset` | Read a bounded, owner-approved file from an exact sealed skill revision. | read | yes | `mcp.publish_skills` |
+| `get_skill_policy` | Read the owner publication policy and CAS epoch, including when sharing is disabled. | admin + skill_publisher |  |  |
+| `join_brain` | Enroll this authenticated principal to follow approved shared skills. | read + skills_member_self | yes |  |
+| `leave_brain` | Stop only this principal’s enrollment. | read + skills_member_self | yes |  |
+| `list_brain_skillpack` | List brain-resident skillpacks this brain ships (per-source). | read | yes | `mcp.publish_skills` |
+| `list_skills` | List the skills this agent's brain publishes. | read | yes | `mcp.publish_skills` |
+| `put_skill` | Publish a complete file-canonical skill revision with CAS and a durable receipt. | write + skill_editor | yes |  |
+| `set_skill_policy` | Explicitly approve a versioned shared-skill disclosure and follow policy. | admin + skill_publisher |  |  |
+| `sync_brain_skills` | Get a complete authorized shared-skills view and optionally record an own issued-batch delivery acknowledgment. | read + skills_member_self | yes |  |
 
 ## sources
 

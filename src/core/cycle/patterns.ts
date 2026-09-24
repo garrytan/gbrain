@@ -1,4 +1,6 @@
-import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
+import { maintenancePreflight, verifyMaintenanceOutputs } from '../persistence/prepared-maintenance.ts';
+import { digest } from '../persistence/digest.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 /**
  * Patterns phase (v0.23) — cross-session theme detection.
  *
@@ -132,7 +134,6 @@ export async function runPhasePatterns(
   engine: BrainEngine,
   opts: PatternsPhaseOpts,
 ): Promise<PhaseResult> {
-  if (!opts.dryRun) await assertUnmanagedCanonicalWriter(engine, 'dream patterns');
   const start = Date.now();
   let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
   try {
@@ -149,8 +150,12 @@ export async function runPhasePatterns(
       );
     }
 
+    const [source] = await managedPersistenceEnabled(engine)
+      ? await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [opts.sourceId ?? 'default']) : [];
+    const evidenceKey = source ? `${LAST_EVIDENCE_KEY}.${opts.sourceId ?? 'default'}.${source.incarnation}` : LAST_EVIDENCE_KEY;
+
     // Gather reflections within lookback window.
-    const reflections = await gatherReflections(engine, config.lookbackDays, config.sourceSlugPrefix);
+    const reflections = await gatherReflections(engine, config.lookbackDays, config.sourceSlugPrefix, opts.sourceId ?? 'default');
     if (reflections.length < config.minEvidence) {
       return skipped(
         'insufficient_evidence',
@@ -167,7 +172,7 @@ export async function runPhasePatterns(
     // synthesize's checkCooldown; `--once` forces past it.
     const newestEvidenceMs = reflections[0].updatedAt.getTime();
     if (!opts.once) {
-      const stampMs = Date.parse((await engine.getConfig(LAST_EVIDENCE_KEY)) ?? '');
+      const stampMs = Date.parse((await engine.getConfig(evidenceKey)) ?? '');
       if (Number.isFinite(stampMs) && newestEvidenceMs <= stampMs) {
         return skipped(
           'no_new_evidence',
@@ -196,6 +201,7 @@ export async function runPhasePatterns(
     // unknown provider/model or Anthropic-without-key skips cheaply; other
     // providers' auth is checked lazily at dispatch and surfaces in the job
     // outcome. (Takeover of PR #2279's intent by @brettdavies.)
+    const maintenance = await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir);
     const probe = probeChatModel(normalizeModelId(config.model));
     if (!probe.ok) {
       return skipped('no_provider', `pattern detection skipped: ${probe.detail}`);
@@ -259,6 +265,8 @@ export async function runPhasePatterns(
       ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
     };
     const submitOpts: Partial<MinionJobInput> = {
+      ...(maintenance ? { idempotency_key: `dream:patterns:${digest({ source: maintenance.writer.sourceIncarnation,
+        authority: maintenance.writer, reflections, model: config.model, output: config.outputSlugPrefix })}` } : {}),
       max_stalled: 3,
       timeout_ms: budgets.timeoutMs,
       queue: childQueueName,
@@ -337,7 +345,8 @@ export async function runPhasePatterns(
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
+    const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, writtenRefs)
+      : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
     const details = {
       reflections_considered: reflections.length,
@@ -384,7 +393,7 @@ export async function runPhasePatterns(
     // edited between gather and here has updated_at > stamp, so the next run
     // still fires. Zero writes stamps too: the model saw this evidence and
     // named nothing; re-running it is exactly the spend bug.
-    await engine.setConfig(LAST_EVIDENCE_KEY, new Date(newestEvidenceMs).toISOString());
+    await engine.setConfig(evidenceKey, new Date(newestEvidenceMs).toISOString());
 
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, details);
   } catch (e) {
@@ -514,6 +523,7 @@ async function gatherReflections(
   engine: BrainEngine,
   lookbackDays: number,
   sourceSlugPrefix = 'wiki/personal/reflections',
+  sourceId = 'default',
 ): Promise<ReflectionRef[]> {
   const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
   // Reflections live under the configured source slug prefix (bound as a
@@ -524,10 +534,11 @@ async function gatherReflections(
     `SELECT slug, title, compiled_truth, updated_at
        FROM pages
       WHERE slug LIKE $2
+        AND source_id = $3 AND deleted_at IS NULL AND COALESCE(frontmatter->>'visibility','') <> 'private'
         AND updated_at >= $1::timestamptz
       ORDER BY updated_at DESC
       LIMIT 100`,
-    [since, `${sourceSlugPrefix}/%`],
+    [since, `${sourceSlugPrefix}/%`, sourceId],
   );
   return rows.map(r => ({
     slug: r.slug,

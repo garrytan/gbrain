@@ -15,6 +15,7 @@ import { parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal } from './model.ts';
 import { normalizeSubagentPageInput } from './page-input.ts';
+import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -39,7 +40,13 @@ export function pageMutationSource(ctx: OperationContext, params: Record<string,
   return sourceId;
 }
 export async function submitPageMutation(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; waitMs?: number }): Promise<Record<string, unknown>> {
+  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true }): Promise<Record<string, unknown>> {
+  if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
+    if (ctx.remote !== false || input.managedFileImport !== true || input.params.kind !== 'managed_file_import' ||
+      ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
+      throw new OperationError('invalid_params', 'Reserved persistence fields cannot be submitted through put_page. Use trusted local reconciliation administration.');
+    }
+  }
   assertPersistenceAccepting(ctx.engine);
   const p: Record<string, unknown> = { ...input.params, ...parseMutationPrecondition(input.params) };
   const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
@@ -93,6 +100,7 @@ export async function submitPageMutation(ctx: OperationContext,
   intent.slug = slug;
   if (ctx.remote !== false) Object.assign(intent, { source_kind: `mcp:${input.operation}`, source_uri: null, ingested_via: `mcp:${input.operation}` });
   const authority = await submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug);
+  await assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug });
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   let binding = await getWorktreeBinding(ctx.engine, sourceId);
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
