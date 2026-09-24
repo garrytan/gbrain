@@ -1,9 +1,10 @@
-import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import * as childProcess from 'node:child_process';
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { SyncOpts } from '../src/commands/sync.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -299,7 +300,50 @@ check('a genuine committed Git deletion commits one deletion and the exact check
   expect(await engine.readPageSnapshot(f.slug, { sourceId: f.id })).toEqual(f.snapshot);
   expect(await engine.getVersions(f.slug, { sourceId: f.id })).toEqual(history);
   expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toEqual([]);
-  expect(await performManagedSync(engine, { ...f.opts, full: false })).toMatchObject({ status: 'synced', deleted: 1, filesImported: 1, fromCommit: f.head, toCommit: target });
+  const observations: Record<string, unknown>[] = [];
+  let dropped = 0;
+  const sameRoot = (left: string, right: string) => {
+    try { return Boolean(left && right) && realpathSync.native(left) === realpathSync.native(right); }
+    catch { return false; }
+  };
+  const execute = childProcess.execFileSync;
+  const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+    apply(call, thisArg, args) {
+      const argv = args[1];
+      const inspectRoot = args[0] === 'git' && Array.isArray(argv) && argv.includes('--show-toplevel');
+      let probeFd: number | null = null;
+      if (inspectRoot && process.platform === 'darwin') {
+        try { probeFd = openSync('/dev/null', 'r'); closeSync(probeFd); }
+        catch { probeFd = null; }
+      }
+      const result = Reflect.apply(call, thisArg, args);
+      if (inspectRoot) {
+        const commandRoot = argv[argv.indexOf('-C') + 1];
+        const output = typeof result === 'string' ? result.trim() : '';
+        if (observations.length === 32) dropped++;
+        else observations.push({ probeFd, outputBytes: typeof result === 'string' ? Buffer.byteLength(result) : null, blank: !output,
+          absolute: isAbsolute(output), commandRootIsFixture: typeof commandRoot === 'string' && sameRoot(commandRoot, f.root),
+          outputMatchesCommandRoot: typeof commandRoot === 'string' && sameRoot(output, commandRoot) });
+      }
+      return result;
+    },
+  }));
+  let result: Awaited<ReturnType<typeof performManagedSync>>;
+  try { result = await performManagedSync(engine, { ...f.opts, full: false }); }
+  finally { inspect.mockRestore(); }
+  if (result.status !== 'synced' || process.env.GBRAIN_TEST_SYNC_ORIGIN_TRACE === '1') {
+    const current = await engine.readPageSnapshot(f.slug, { sourceId: f.id, includeDeleted: true });
+    const origin = current?.page.source_path;
+    const requests = await engine.executeRaw<{ intent: SyncIntent }>('SELECT intent FROM persistence_requests WHERE source_id=$1 ORDER BY sequence LIMIT 4', [f.id]);
+    process.stderr.write(`Native sync deletion inspection: ${JSON.stringify({ platform: process.platform, arch: process.arch, runtime: Bun.version, synced: result.status === 'synced',
+      observations, dropped, intents: requests.map(({ intent }) => ({ isDeletion: intent?.kind === 'managed_sync_delete',
+        sourceMatchesFixture: intent?.sourcePath === 'notes/example.md', pathMatchesFixture: intent?.path === 'notes/example.md',
+        revisionMatches: intent?.expected_revision === f.snapshot.revision, targetMatches: intent?.target === target })),
+      pageIdentityMatches: current?.page.id === f.snapshot.page.id, revisionMatches: current?.revision === f.snapshot.revision,
+      originMatchesFixture: origin === 'notes/example.md', originType: typeof origin, originLength: typeof origin === 'string' ? origin.length : null,
+      originAbsolute: typeof origin === 'string' && isAbsolute(origin), originHasDotComponents: typeof origin === 'string' && origin.split('/').some(part => part === '.' || part === '..') })}\n`);
+  }
+  expect(result).toMatchObject({ status: 'synced', deleted: 1, filesImported: 1, fromCommit: f.head, toCommit: target });
   const deleted = (await engine.readPageSnapshot(f.slug, { sourceId: f.id, includeDeleted: true }))!;
   expect(deleted.page.id).toBe(f.snapshot.page.id);
   expect(deleted.page.deleted_at).not.toBeNull();
