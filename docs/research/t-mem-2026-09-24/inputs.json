@@ -1,0 +1,13 @@
+{
+  "upstream_commit": "dd9e1527bc75908485809580c9520af5a9a42879",
+  "datasets": {
+    "locomo10.json": {
+      "url": "https://raw.githubusercontent.com/snap-research/LoCoMo/3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376/data/locomo10.json",
+      "sha256": "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
+    },
+    "locomo_plus.json": {
+      "url": "https://raw.githubusercontent.com/xjtuleeyf/Locomo-Plus/059f4e3d38f7f1f96765e8e2cb7de3097551bffb/data/locomo_plus.json",
+      "sha256": "af2fc6e5e0e88735e28d8dd1ef474b718861a73beb21779809e3b9e1a4fe3d23"
+    }
+  }
+}
