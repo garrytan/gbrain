@@ -3534,7 +3534,8 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — why schemas matter: 7 killer use cases, the structural argument for typed page kinds, the agent-co-curates pattern
 - [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md) — 5-minute walkthrough: fork the bundled pack, add a custom type, backfill existing pages, prove the wiring via `gbrain whoknows`
 - [`docs/architecture/`](docs/architecture/) — system design, topologies, retrieval theory
-- [`docs/guides/`](docs/guides/) — how-to runbooks (google connect, open loops, sub-agent routing, minion deployment, skill development, brain-first lookup, idea capture, diligence ingestion)
+- [`docs/guides/`](docs/guides/) — operational and agent workflow runbooks
+- [MCP attachments](docs/attachments.md) — preserve and retrieve original files beside notes
 - [`docs/integrations/`](docs/integrations/) — connecting external data sources (voice, email, calendar, embedding providers)
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
@@ -7782,5 +7783,3 @@ should match your expectations for the corpus.
 ---
 
 # Migrations
-
-For remote original-file transfers, see [Native MCP attachments](docs/attachments.md).
