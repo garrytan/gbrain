@@ -20,7 +20,7 @@ export type ManagedPhaseClass = 'writes' | 'no_coordinated_write' | 'managed_ski
 export interface ManagedPhaseEntry { class: ManagedPhaseClass; reason: string }
 
 export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>> = {
-  lint: { class: 'no_coordinated_write', reason: 'On a managed brain lint reports issues and skips its file fixes; canonical markdown changes go through page mutations.' },
+  lint: { class: 'writes', reason: 'Lint repairs publish through the maintenance coordinator, one page per repair; a file with no indexed page is reported and left for the next cycle.' },
   backlinks: { class: 'no_coordinated_write', reason: 'Audit-only: counts missing back-links and never writes files.' },
   sync: { class: 'writes', reason: 'Managed sync admits each changed file through the coordinator.' },
   synthesize: { class: 'writes', reason: 'Dream synthesis publishes pages through the maintenance coordinator.' },
