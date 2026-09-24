@@ -8,7 +8,8 @@ import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { MEMORY_CUE_PROMPT_VERSION, MEMORY_CUE_SOURCE_LIMIT, type MemoryCueBuildOptions, type MemoryCueBuildReceipt } from './types.ts';
 import { loadMemoryCueSettings, memoryCueColumn, cueSignature, unsupportedCueColumn, missingCueSchema } from './settings.ts';
 import { provisionCueIndex, cueSnapshotSql, cueIndexExists } from './storage.ts';
-import { cueGenerationModel, CUE_SYSTEM_PROMPT } from './providers.ts';
+import { cueGenerationModel } from './providers.ts';
+import { formatCueEvidence } from './evidence.ts';
 import { canonicalLookup } from '../model-pricing.ts';
 import { lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { maximumInvocationCents } from '../minions/delegated-spend.ts';
@@ -66,8 +67,7 @@ export async function previewMemoryCueBuild(engine: BrainEngine, opts: MemoryCue
     : sources.length !== limits.sourceIds.length ? 'source_unavailable' : unsupportedCueColumn(column)
       ?? (!canonicalLookup(generationModel) || lookupEmbeddingPrice(column.embeddingModel).kind !== 'known' ? 'pricing_unknown' : undefined);
   const chatCents = maximumInvocationCents({ operation: 'memory-cues-preview', kind: 'chat', model: generationModel,
-    maxInputTokens: Buffer.byteLength(CUE_SYSTEM_PROMPT + JSON.stringify({ includeBridge: limits.includeBridge, evidence: '' }))
-      + MAX_CUE_WINDOW_BYTES * 6 + 1024, maxOutputTokens: 1200 });
+    maxInputTokens: formatCueEvidence('', limits.includeBridge).maximumInputTokenCeiling, maxOutputTokens: 1200 });
   const embeddingCents = maximumInvocationCents({ operation: 'memory-cues-preview', kind: 'embedding', model: column.embeddingModel,
     maxInputTokens: 4096, maxOutputTokens: 0 });
   const perWindow = chatCents === null || embeddingCents === null ? null : (Math.max(1, Math.ceil(chatCents)) + Math.max(1, Math.ceil(embeddingCents))) / 100;

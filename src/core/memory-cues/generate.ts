@@ -7,7 +7,8 @@ import { memoryCueColumn } from './settings.ts';
 import { cueSnapshotSql } from './storage.ts';
 import { assertCueBuildAuthority, enqueueCueBuild, type CueBuildRow } from './builds.ts';
 import { buildCueWindows, validateCueOutput, groundCueQuote } from './windows.ts';
-import { CUE_SYSTEM_PROMPT, liveMemoryCueProviders } from './providers.ts';
+import { liveMemoryCueProviders } from './providers.ts';
+import { formatCueEvidence } from './evidence.ts';
 import { reserveCueAttempt, settleCueAttempt, withCueSpend, type CueBudgetContext } from './budget.ts';
 import type { MemoryCueProviders, CueOutput, CueWindow } from './types.ts';
 
@@ -47,7 +48,7 @@ async function publish(engine: BrainEngine, context: CueBudgetContext, captured:
       const column = await memoryCueColumn(tx);
       for (let i = 0; i < cues.length; i++) {
         const cue = cues[i]!;
-        const grounding = groundCueQuote(window, cue.quote);
+        const grounding = groundCueQuote(window, cue.quote, cue.quoteStart);
         if (!grounding) throw new Error('unsupported_cue');
         const chunkId = grounding[0]!.chunk_id;
         const vectorColumn = column.type === 'halfvec' ? 'embedding_half' : 'embedding';
@@ -107,7 +108,7 @@ export async function runMemoryCueBuild(engine: BrainEngine, opts: { buildId: st
         opts.signal?.throwIfAborted();
         await engine.executeRaw("UPDATE memory_cue_builds SET lease_until=now()+interval '2 minutes' WHERE id=$1::uuid AND execution_token=$2::uuid", [build.id, token]);
         const context: CueBudgetContext = { build, token, pageId: page.page_id, snapshot: captured.digest, windowIndex: window.index,
-          inputTokenCeiling: Buffer.byteLength(CUE_SYSTEM_PROMPT + JSON.stringify({ includeBridge: build.include_bridge, evidence: window.text })) + 1024 };
+          inputTokenCeiling: formatCueEvidence(window.text, build.include_bridge).inputTokenCeiling };
         if (completed.has(window.index)) {
           await engine.executeRaw(`UPDATE memory_cue_pages SET cursor=$3::int,status=CASE WHEN $3::int>=total_windows THEN 'complete' ELSE 'pending' END
             WHERE build_id=$1::uuid AND page_id=$2 AND snapshot=$4`, [build.id, page.page_id, window.index + 1, captured.digest]);

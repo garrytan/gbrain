@@ -6,7 +6,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { memoryCueOperations } from '../src/core/ops/memory-cues.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { __setChatTransportForTests, __setEmbedTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
-import { cueEvidence, cueProviders, cueVector, enrollCues, seedCuePage } from './helpers/memory-cues.ts';
+import { cueEvidence, cueVector, enrollCues, seedCuePage } from './helpers/memory-cues.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runPendingMemoryCueJob, submitMemoryCueBuild } from '../src/core/memory-cues/index.ts';
 
@@ -43,8 +43,7 @@ async function withProviders(run: (calls: { chat: number; embed: number }) => Pr
   await withEnv({ GBRAIN_HOME: home, OPENAI_API_KEY: 'test-fixture-not-a-key' }, async () => {
     __setChatTransportForTests(async opts => {
       calls.chat++;
-      const output = await cueProviders.generate({ evidence: cueEvidence, includeBridge: false, model: opts.model! });
-      return { text: JSON.stringify(output.output), blocks: [], stopReason: 'end',
+      return { text: JSON.stringify([{ family: 'horizon', relation: 'explicit_constraint_applies', evidence_ref: 1, text: 'Scheduling an early meeting' }]), blocks: [], stopReason: 'end',
         usage: { input_tokens: 20, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
         model: opts.model!, providerId: 'openai' };
     });

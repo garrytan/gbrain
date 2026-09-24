@@ -4,7 +4,7 @@ import { __setChatTransportForTests, __setEmbedTransportForTests, configureGatew
 import { cueSignature, getMemoryCueStatus, loadMemoryCueSettings, memoryCueColumn, previewMemoryCueBuild,
   recallMemoryCues, resumeMemoryCueBuild, revalidateMemoryCueCandidates, runMemoryCueBuild } from '../src/core/memory-cues/index.ts';
 import { MAX_CUE_WINDOW_BYTES } from '../src/core/memory-cues/windows.ts';
-import { CUE_SYSTEM_PROMPT } from '../src/core/memory-cues/providers.ts';
+import { formatCueEvidence } from '../src/core/memory-cues/evidence.ts';
 import { MEMORY_CUE_PROMPT_VERSION } from '../src/core/memory-cues/types.ts';
 import { scheduleMemoryCuePage } from '../src/core/memory-cues/scheduling.ts';
 import { maximumInvocationCents } from '../src/core/minions/delegated-spend.ts';
@@ -42,15 +42,17 @@ afterEach(() => {
 });
 afterAll(async () => { await engine.disconnect(); });
 
-async function legacySignature() {
+async function legacySignature(version: string) {
   const column = await memoryCueColumn(engine);
-  return digest([column.name, column.type, column.dimensions, column.embeddingModel]);
+  const descriptor = [column.name, column.type, column.dimensions, column.embeddingModel];
+  return digest(version === 'situation-v2' ? descriptor : [version, ...descriptor]);
 }
 const configure = (params: Record<string, unknown>) => memoryCueOperations[0]!.handler(ctx, { action: 'configure', apply: true, ...params });
 const recall = async () => recallMemoryCues(engine, cueVector(), { embeddingColumn: await memoryCueColumn(engine), sourceIds: ['default'] });
 
-test('v2 calibrations fail closed and read/push must be renewed independently for v3', async () => {
-  const old = await legacySignature();
+for (const version of ['situation-v2', 'situation-v3']) {
+test(`${version} calibrations fail closed and read/push must be renewed independently for v4`, async () => {
+  const old = await legacySignature(version);
   await engine.setConfig('memory.cues.read_calibration_signature', old);
   await engine.setConfig('memory.cues.push', 'true');
   await engine.setConfig('memory.cues.push_min_similarity', '0.5');
@@ -65,14 +67,14 @@ test('v2 calibrations fail closed and read/push must be renewed independently fo
   expect(await loadMemoryCueSettings(engine)).toMatchObject({ minSimilarity: 0.6, pushMinSimilarity: 0.7 });
 });
 
-test('v2 windows cannot return after recalibration; a fresh explicitly budgeted build is required', async () => {
+test(`${version} windows cannot return after recalibration; a fresh explicitly budgeted build is required`, async () => {
   const build = await startCueBuild(engine);
   expect((await runMemoryCueBuild(engine, { buildId: build.buildId, providers: cueProviders })).status).toBe('complete');
   const candidates = (await recall()).candidates;
   expect(candidates).toHaveLength(1);
-  const old = await legacySignature();
-  await engine.executeRaw("UPDATE memory_cue_builds SET signature=$2,prompt_version='situation-v2' WHERE id=$1::uuid", [build.buildId, old]);
-  await engine.executeRaw("UPDATE memory_cue_windows SET signature=$2,prompt_version='situation-v2' WHERE build_id=$1::uuid", [build.buildId, old]);
+  const old = await legacySignature(version);
+  await engine.executeRaw('UPDATE memory_cue_builds SET signature=$2,prompt_version=$3 WHERE id=$1::uuid', [build.buildId, old, version]);
+  await engine.executeRaw('UPDATE memory_cue_windows SET signature=$2,prompt_version=$3 WHERE build_id=$1::uuid', [build.buildId, old, version]);
   await engine.executeRaw('UPDATE memory_cues SET signature=$1', [old]);
   await engine.setConfig('memory.cues.read_calibration_signature', old);
   expect((await recall()).candidates).toHaveLength(0);
@@ -94,12 +96,12 @@ test('v2 windows cannot return after recalibration; a fresh explicitly budgeted 
   expect((await engine.getPage('cue-example', { sourceId: 'default' }))!.compiled_truth).toBe(cueEvidence);
 });
 
-test('old build signatures and pipeline versions reject resume and execution without spending or resetting budgets', async () => {
-  const old = await legacySignature();
+test(`${version} build signatures and pipeline versions reject resume and execution without spending or resetting budgets`, async () => {
+  const old = await legacySignature(version);
   const current = cueSignature(await memoryCueColumn(engine));
-  for (const [signature, version] of [[old, 'situation-v2'], [current, 'situation-v2'], [old, MEMORY_CUE_PROMPT_VERSION]]) {
+  for (const [signature, promptVersion] of [[old, version], [current, version], [old, MEMORY_CUE_PROMPT_VERSION]]) {
     const build = await startCueBuild(engine);
-    await engine.executeRaw('UPDATE memory_cue_builds SET signature=$2,prompt_version=$3 WHERE id=$1::uuid', [build.buildId, signature, version]);
+    await engine.executeRaw('UPDATE memory_cue_builds SET signature=$2,prompt_version=$3 WHERE id=$1::uuid', [build.buildId, signature, promptVersion]);
     await expect(resumeMemoryCueBuild(engine, { buildId: build.buildId, trustedLocal: true })).rejects.toThrow('model_changed');
     let generated = 0;
     expect(await runMemoryCueBuild(engine, { buildId: build.buildId, providers: { ...cueProviders, generate: async input => {
@@ -114,6 +116,7 @@ test('old build signatures and pipeline versions reject resume and execution wit
   }
   expect(await engine.executeRaw('SELECT id FROM minion_jobs')).toHaveLength(3);
 });
+}
 
 test('preview bounds include full JSON framing and worst-case escaping at the active window size', async () => {
   const evidence = '\u0001'.repeat(MAX_CUE_WINDOW_BYTES);
@@ -121,7 +124,7 @@ test('preview bounds include full JSON framing and worst-case escaping at the ac
   for (const includeBridge of [false, true]) {
     const preview = await previewMemoryCueBuild(engine, { sourceIds: ['default'], includeBridge });
     const chat = maximumInvocationCents({ operation: 'fixture', kind: 'chat', model,
-      maxInputTokens: Buffer.byteLength(CUE_SYSTEM_PROMPT + JSON.stringify({ includeBridge, evidence })) + 1024, maxOutputTokens: 1200 });
+      maxInputTokens: formatCueEvidence(evidence, includeBridge).inputTokenCeiling, maxOutputTokens: 1200 });
     const embedding = maximumInvocationCents({ operation: 'fixture', kind: 'embedding', model: column.embeddingModel, maxInputTokens: 4096, maxOutputTokens: 0 });
     expect(preview.costPreview.maximumReservationUsdPerWindow).toBeGreaterThanOrEqual((Math.max(1, Math.ceil(chat!)) + Math.max(1, Math.ceil(embedding!))) / 100);
     expect(preview.costPreview.maximumReservationUsdPerPass).toBe(preview.costPreview.maximumReservationUsdPerWindow! * 8);
@@ -130,6 +133,33 @@ test('preview bounds include full JSON framing and worst-case escaping at the ac
 });
 
 for (const kind of ['custom', 'live'] as const) {
+  test(`${kind} provider reservation uses the exact serialized evidence-ref input including IDs and escaping`, async () => {
+    const evidence = ('A fictional note with \\"quoted\\" content.\n').repeat(150);
+    await seedCuePage(engine, 'cue-example', 'default', evidence);
+    const formatted = formatCueEvidence(evidence, false);
+    let generated = 0;
+    configureGateway({ chat_model: model, embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536,
+      env: { OPENROUTER_API_KEY: 'test-fixture-not-a-key', OPENAI_API_KEY: 'test-fixture-not-a-key' } });
+    __setChatTransportForTests(async opts => {
+      generated++;
+      expect(opts.messages[0]!.content).toBe(formatted.content);
+      return { text: '[]', blocks: [], stopReason: 'end', model, providerId: 'openrouter',
+        usage: { input_tokens: 20, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 } };
+    });
+    const build = await startCueBuild(engine);
+    const providers = kind === 'custom' ? { generate: async ({ evidence: original }: { evidence: string }) => {
+      generated++;
+      expect(original).toBe(evidence);
+      return { output: [], actualUsd: 0 };
+    }, embed: async () => { throw new Error('unexpected_embedding'); } } : undefined;
+    expect(await runMemoryCueBuild(engine, { buildId: build.buildId, providers })).toMatchObject({ status: 'complete', windowsProcessed: 1 });
+    const expected = maximumInvocationCents({ operation: 'fixture', kind: 'chat', model,
+      maxInputTokens: formatted.inputTokenCeiling, maxOutputTokens: 1200 });
+    expect(await engine.executeRaw('SELECT reserved_cents FROM memory_cue_attempts WHERE build_id=$1::uuid', [build.buildId]))
+      .toEqual([{ reserved_cents: Math.max(1, Math.ceil(expected!)) }]);
+    expect(generated).toBe(1);
+  });
+
   test(`${kind} provider path denies an escaped large input before invocation using the exact JSON reservation ceiling`, async () => {
     const evidence = '\u0001'.repeat(MAX_CUE_WINDOW_BYTES - 40) + 'Complete source suffix.';
     await seedCuePage(engine, 'cue-example', 'default', evidence);

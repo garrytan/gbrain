@@ -122,7 +122,7 @@ describe('durable memory cue generation', () => {
     configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'test-fixture-not-a-key' } });
     __setChatTransportForTests(async opts => {
       generated++;
-      return { text: JSON.stringify((await cueProviders.generate({ evidence: cueEvidence, includeBridge: false, model: opts.model! })).output),
+      return { text: JSON.stringify([{ family: 'horizon', relation: 'explicit_constraint_applies', evidence_ref: 1, text: 'Scheduling an early meeting' }]),
         blocks: [], stopReason: 'end', usage: { input_tokens: 20, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
         model: opts.model!, providerId: 'anthropic' };
     });

@@ -27,7 +27,7 @@ Administration is trusted-local only. HTTP and stdio agent-facing callers cannot
 
 ## Window policy and pipeline upgrades
 
-The `situation-v3` pipeline constructs windows of at most 8,192 UTF-8 bytes,
+The `situation-v4` pipeline constructs windows of at most 8,192 UTF-8 bytes,
 including carried speaker attribution. It retains up to 640 bytes of overlap
 and preserves Unicode code-point boundaries, splitting long turns as needed.
 Each window spans at most three original chunks. The full eligible history is
@@ -35,16 +35,31 @@ windowed rather than trimmed. Grounding
 still allows at most four spans, and generation still emits at most four cues
 with a 1,200-token output limit. Windows execute serially.
 
+Live generation receives the complete window once as numbered source excerpts,
+not a second copy of the full window. Excerpts are deterministic, nonoverlapping
+original substrings, targeting 512 UTF-16 units with a 640-unit maximum and at
+most 64 excerpts. The model selects one integer evidence reference per
+cue instead of reproducing quote text. Trusted code restores the exact original
+substring, trimming only whitespace at excerpt edges so synthetic chunk
+separators cannot prevent grounding. The selected UTF-16 source offset survives
+validation and publication, so repeated text is attributed to the chosen
+occurrence, not its first match. Existing grounding bounds, relation and
+sensitive-profile checks still apply. Different cues may select the same excerpt.
+Unknown references, duplicate fields, extra fields and
+malformed output fail closed; no cue is silently discarded. This prevents quote
+transcription errors, not semantic generation errors, and makes no quality-gain
+claim. Injected providers keep the existing quote-based output contract.
+
 This is a prospective construction-cost policy, not a measured retrieval gain.
 Larger windows can reduce request overhead and serial build time, but increase
 each window's reservation and make more evidence compete for the same four-cue
-output limit. Preview bounds include JSON framing and worst-case escaping;
+output limit. Preview bounds include excerpt IDs, JSON framing and worst-case escaping;
 they are not measured provider charges or a whole-corpus cost estimate. Run the
 chosen profile's cost and quality checks before enabling it.
 
 Pipeline identity is part of both the cue signature and the independent read
-and push calibration bindings. Existing `situation-v2` cues are not reused by
-v3, and old builds cannot resume as v3 builds. Explicitly approve a new build
+and push calibration bindings. Earlier pipeline cues are not reused by
+v4, and old builds cannot resume as v4 builds. Explicitly approve a new build
 to regenerate cues, then recalibrate retrieval and reminders separately, even
 when the embedding model is unchanged. There is no automatic backfill, budget
 transfer, or refill of an old build's allowance. Canonical memories are unchanged.

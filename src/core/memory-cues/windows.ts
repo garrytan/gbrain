@@ -99,10 +99,13 @@ export function buildCueWindows(chunks: Pick<Chunk, 'id' | 'chunk_text' | 'modal
   return windows;
 }
 
-export function groundCueQuote(window: CueWindow, quote: string): CueGroundingSpan[] | null {
-  const first = window.text.indexOf(quote);
-  if (first < 0) return null;
+export function groundCueQuote(window: CueWindow, quote: string, quoteStart?: number): CueGroundingSpan[] | null {
+  const first = quoteStart === undefined ? window.text.indexOf(quote) : quoteStart;
+  if (!Number.isInteger(first) || first < 0 || first + quote.length > window.text.length
+    || window.text.slice(first, first + quote.length) !== quote) return null;
   const last = first + quote.length;
+  if ([first, last].some(offset => offset > 0 && offset < window.text.length
+    && /[\uD800-\uDBFF]/.test(window.text[offset - 1]!) && /[\uDC00-\uDFFF]/.test(window.text[offset]!))) return null;
   const grounding: CueGroundingSpan[] = [];
   let cursor = 0;
   let covered = first;
@@ -140,9 +143,10 @@ export function validateCueOutput(output: unknown, window: CueWindow, includeBri
     if (!['scene', 'horizon', ...(includeBridge ? ['bridge'] : [])].includes(cue.family)
       || typeof cue.text !== 'string' || !cue.text.trim() || cue.text.length > 240
       || typeof cue.quote !== 'string' || cue.quote.length < 3 || cue.quote.length > 640
-      || !groundCueQuote(window, cue.quote) || PROFILE.test(cue.text)) throw new Error('unsupported_cue');
+      || !groundCueQuote(window, cue.quote, cue.quoteStart) || PROFILE.test(cue.text)) throw new Error('unsupported_cue');
     const allowed = cue.family === 'scene' ? ['situation_description'] : [...APPLICATION_RELATIONS, ...(cue.family === 'bridge' ? ['category_generalization'] : [])];
     if (!allowed.includes(cue.relation) || (cue.family === 'scene' ? ++scenes > 1 : ++associative > 3)) throw new Error('unsupported_relation');
-    return { family: cue.family, relation: cue.relation, quote: cue.quote, text: cue.text.trim() };
+    return { family: cue.family, relation: cue.relation, quote: cue.quote, text: cue.text.trim(),
+      ...(cue.quoteStart === undefined ? {} : { quoteStart: cue.quoteStart }) };
   });
 }
