@@ -391,14 +391,23 @@ $a.AddAccessRule($r); Set-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH -AclObject 
   expectPrivate(output, false, true);
   const into = join(parent, 'retained-failure');
   const rename = fs.renameSync;
+  let interrupted = false;
   const fault = spyOn(fs, 'renameSync').mockImplementation((from, to) => {
-    if (String(to) === join(into, 'memory')) throw new Error('injected public-parent restore interruption');
     rename(from, to);
+    if (String(to) === join(into, '.gbrain')) {
+      interrupted = true;
+      throw new Error('injected public-parent restore interruption');
+    }
   });
   try { await expect(restorePgliteBackup({ archive: output, into })).rejects.toThrow('injected public-parent restore interruption'); }
   finally { fault.mockRestore(); }
+  expect(interrupted).toBe(true);
   expectIncomplete(into);
   expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
+  expect(fs.readFileSync(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), 'utf8').trim()).toBe('17');
+  const [stage] = fs.readdirSync(into).filter(name => name.startsWith('.restore-'));
+  expectPrivate(join(into, stage, 'payload', 'database.tar'), false);
+  expect(fs.statSync(join(into, stage, 'payload', 'database.tar')).size).toBeGreaterThan(0);
   expect(inspectParent()).toBe(before);
   await expectOriginal();
 }, 120_000);
