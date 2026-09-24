@@ -458,6 +458,7 @@ $r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Fo
   const checkpoints = [
     ["$ErrorActionPreference = 'Stop'", 'entry'],
     ['$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User', 'identity'],
+    ["$sids = @($user.Value, 'S-1-5-18' | Select-Object -Unique)", 'principals'],
     ['$item = Get-Item -LiteralPath $path -Force', 'item'],
     ['Set-Acl -LiteralPath $path -AclObject $acl', 'after-set'],
     ['$actual = Get-Acl -LiteralPath $path', 'read-back'],
@@ -482,7 +483,7 @@ $r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Fo
   const stagedSameIdentity = stagedBefore.dev === stagedAfter.dev && stagedBefore.ino === stagedAfter.ino && stagedBefore.birthtimeNs === stagedAfter.birthtimeNs;
   const stagedEmpty = kind === 'directory' ? stagedAfter.isDirectory() && fs.readdirSync(stagedPath).length === 0
     : stagedAfter.isFile() && stagedAfter.size === 0n && stagedAfter.nlink === 1n;
-  const allowedStages = ['entry', 'identity', 'item', 'before-set', 'after-set', 'read-back', 'verified', 'output-write-returned'];
+  const allowedStages = ['entry', 'identity', 'principals', 'item', 'before-set', 'after-set', 'read-back', 'verified', 'output-write-returned'];
   const traceBytes = fs.readFileSync(tracePath);
   const recordedStages = traceBytes.length <= 128 ? traceBytes.toString('utf8').split(/\r?\n/).filter(Boolean) : [];
   const validTrace = traceBytes.length <= 128 && recordedStages.every(stage => allowedStages.includes(stage))
