@@ -15,7 +15,7 @@ import { priorTopologyChange, recordTopologyChange, topologyReceipt } from './to
 import { isWriteRequestId } from './types.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { canonicalFilesystemPath } from './root-registry.ts';
+import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { flushTopologyDirectory } from './topology-filesystem.ts';
 import { claimPhysicalRoot } from './physical-root.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
@@ -46,7 +46,8 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
   const others=await tx.executeRaw<{source_id:string;relative_path:string;local_path:string}>(`SELECT b.source_id,b.relative_path,h.local_path
     FROM persistence_source_bindings b JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
     WHERE b.source_id<>$2`,[localHostId(),sourceId]);
-  if(others.some(other=>{const path=join(other.local_path,other.relative_path);return containsPath(path,root.source)||containsPath(root.source,path);}))
+  const sourcePath=nativeFilesystemPath(root.source);
+  if(others.some(other=>{const path=nativeFilesystemPath(join(other.local_path,other.relative_path));return containsPath(path,sourcePath)||containsPath(sourcePath,path);}))
     throw new OperationError('overlapping_path','Sources cannot claim overlapping canonical directories.');
   const compatible=bindings.find(binding=>binding.local_path && containsPath(binding.local_path,root.worktree));
   const overlapping=bindings.find(binding=>binding.local_path && containsPath(root.worktree,binding.local_path));
@@ -59,7 +60,7 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
   if(!existing)await tx.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch) VALUES($1::uuid,$2::uuid,1)',[id,localHostId()]);
   await tx.executeRaw(`INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4)
     ON CONFLICT(worktree_id,host_id) DO NOTHING`,[id,localHostId(),worktree,physical.coordinationPath]);
-  const rel=relative(worktree,root.source).split(sep).join('/');
+  const rel=relative(nativeFilesystemPath(worktree),nativeFilesystemPath(root.source)).split(sep).join('/');
   await tx.executeRaw(`INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id,relative_path,topology_generation)
     SELECT $1,$2::uuid,$3::uuid,$4,topology_generation FROM persistence_worktrees WHERE id=$3::uuid
     ON CONFLICT(source_id) DO UPDATE SET source_incarnation=EXCLUDED.source_incarnation,worktree_id=EXCLUDED.worktree_id,
@@ -122,13 +123,15 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(['remove','purge'].includes(input.operation)&&!input.confirmDestructive) throw new OperationError('invalid_params','Source removal requires explicit destructive confirmation.');
     const worktrees=bindings.map(binding=>binding.worktree_id);
     const currentBinding=bindings.find(binding=>binding.source_id===input.sourceId);
-    if(input.operation==='claim'&&currentBinding&&(currentBinding.local_path!==root!.worktree||join(currentBinding.local_path,currentBinding.relative_path)!==root!.source))
+    const sameBinding=!!root&&!!currentBinding?.local_path&&currentBinding.local_path===root.worktree
+      &&nativeFilesystemPath(join(currentBinding.local_path,currentBinding.relative_path))===nativeFilesystemPath(root.source);
+    if(input.operation==='claim'&&currentBinding&&!sameBinding)
       throw new OperationError('writer_transfer_required','The source already has a different canonical binding. Use rebind or verified ownership transfer.');
     if(input.operation==='claim'&&!currentBinding&&source?.local_path&&realpathSync(source.local_path)!==root!.source)
       throw new OperationError('source_changed','The requested claim path differs from the configured source root.');
     const expired=input.expiredOnly?await tx.executeRaw('SELECT id FROM sources WHERE id=$1 AND archived=true AND archive_expires_at<=now()',[input.sourceId]):null;
     const noop=expired?.length===0 || input.operation==='archive'&&source?.archived || input.operation==='restore'&&!source?.archived
-      || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&currentBinding?.local_path===root!.worktree&&join(currentBinding.local_path,currentBinding.relative_path)===root!.source;
+      || input.operation==='claim'&&!!currentBinding || input.operation==='rebind'&&sameBinding;
     if(noop){
       await lockTopologyPrincipal(tx,principal);
       return topologyReceipt(await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source!.incarnation,worktrees},

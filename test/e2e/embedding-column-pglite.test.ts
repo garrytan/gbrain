@@ -5,7 +5,7 @@
  *   - Multi-column search: same query against `embedding` and against an
  *     ad-hoc `embedding_voyage` column produces different orderings
  *     consistent with the seeded vectors.
- *   - Halfvec column: ALTER TABLE ADD `embedding_ze halfvec(2560)` and
+ *   - Halfvec column: ALTER TABLE ADD `embedding_fixture halfvec(2560)` and
  *     confirm the `$1::halfvec(2560)` cast works.
  *   - Image branch unaffected: `embedding_image` still works via the
  *     existing operations.ts path.
@@ -47,13 +47,13 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
 
-  // Add the ad-hoc Voyage + ZE columns the way a user with a multi-provider
+  // Add the ad-hoc Voyage + synthetic columns the way a user with a multi-provider
   // brain has done it (outside the committed schema, per-instance ALTER).
   await (engine as any).db.exec(
     `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_voyage vector(1024)`,
   );
   await (engine as any).db.exec(
-    `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_ze halfvec(2560)`,
+    `ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_fixture halfvec(2560)`,
   );
 
   // Two pages with one chunk each.
@@ -133,20 +133,20 @@ describe('PGLite engine: searchVector accepts ResolvedColumn descriptor (D11)', 
     const ze1 = `[${new Array(2560).fill(0.5).join(',')}]`;
     const ze2 = `[${new Array(2560).fill(0.6).join(',')}]`;
     await (engine as any).db.query(
-      `UPDATE content_chunks SET embedding_ze = $1::halfvec WHERE id = $2`,
+      `UPDATE content_chunks SET embedding_fixture = $1::halfvec WHERE id = $2`,
       [ze1, chunkIdA],
     );
     await (engine as any).db.query(
-      `UPDATE content_chunks SET embedding_ze = $1::halfvec WHERE id = $2`,
+      `UPDATE content_chunks SET embedding_fixture = $1::halfvec WHERE id = $2`,
       [ze2, chunkIdB],
     );
 
     const queryVec = new Float32Array(2560).fill(0.5);
     const descriptor: ResolvedColumn = {
-      name: 'embedding_ze',
+      name: 'embedding_fixture',
       type: 'halfvec',
       dimensions: 2560,
-      embeddingModel: 'zeroentropyai:zembed-1',
+      embeddingModel: 'fixture-provider:embedding-v1',
     };
     const results = await engine.searchVector(queryVec, {
       embeddingColumn: descriptor,
@@ -221,12 +221,12 @@ describe('hybridSearch + resolver — unknown column at entry (D11)', () => {
 describe('upsertChunks — model provenance uses gateway-resolved model, not compiled default', () => {
   // Regression (zbrain-rfi): when a caller builds ChunkInputs without an
   // explicit `model` (as src/commands/embed.ts does), the engine used to
-  // stamp the compile-time DEFAULT_EMBEDDING_MODEL ('zeroentropyai:zembed-1')
+  // stamp the compile-time DEFAULT_EMBEDDING_MODEL ('fixture-provider:embedding-v1')
   // onto content_chunks.model — even though the vector was produced by the
   // config-resolved model. That corrupted provenance the signature-drift +
   // dim-migration logic trusts. The engine must fall back to the model the
   // gateway ACTUALLY resolves at write time.
-  test('unspecified chunk.model records the resolved model, not zeroentropyai:zembed-1', async () => {
+  test('unspecified chunk.model records the resolved model, not fixture-provider:embedding-v1', async () => {
     configureGateway({
       embedding_model: 'openai:text-embedding-3-large',
       embedding_dimensions: 1536,
@@ -250,7 +250,7 @@ describe('upsertChunks — model provenance uses gateway-resolved model, not com
     );
     expect(rows.length).toBe(1);
     expect(rows[0].model).toBe('openai:text-embedding-3-large');
-    expect(rows[0].model).not.toBe('zeroentropyai:zembed-1');
+    expect(rows[0].model).not.toBe('fixture-provider:embedding-v1');
 
     resetGateway();
   });
@@ -357,13 +357,13 @@ describe('buildVectorCastFragment — engine SQL composer (D3)', () => {
 
   test('halfvec descriptor emits $1::halfvec(N) with parenthesized N', () => {
     const r: ResolvedColumn = {
-      name: 'embedding_ze',
+      name: 'embedding_fixture',
       type: 'halfvec',
       dimensions: 2560,
-      embeddingModel: 'zeroentropyai:zembed-1',
+      embeddingModel: 'fixture-provider:embedding-v1',
     };
     const { col, castSql } = buildVectorCastFragment(r);
-    expect(col).toBe('"embedding_ze"');
+    expect(col).toBe('"embedding_fixture"');
     expect(castSql).toBe('$1::halfvec(2560)');
   });
 });

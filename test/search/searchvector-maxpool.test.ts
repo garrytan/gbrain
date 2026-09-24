@@ -51,7 +51,7 @@ beforeAll(async () => {
   // hardcoded 1536-d basis vectors. initSchema runs in beforeAll (before
   // any preload beforeEach can re-pin), so we cannot rely on the legacy
   // preload default surviving a sibling shard file that reconfigured the
-  // gateway to the v0.37 ZE/1280 default and didn't reset.
+  // gateway to the v0.37 Voyage/1024 default and didn't reset.
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
     embedding_dimensions: DIM,

@@ -322,7 +322,7 @@ jobs:
     # PARALLEL with tier1 (own postgres service — the old `needs: tier1`
     # serialized ~2min for no shared state). The jsonb-parity gate (~40s)
     # stays in front as the broken-build SPEND gate: this job burns real
-    # OpenAI/Anthropic/ZeroEntropy tokens and must not fire when the build
+    # OpenAI/Anthropic tokens and must not fire when the build
     # can't even pass the cheapest DB guard.
     needs: jsonb-parity
     runs-on: ubuntu-latest
@@ -408,18 +408,13 @@ jobs:
           }
           EOF
       - name: Run Tier 2 skill tests
-        run: bun test --timeout=60000 test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts
+        run: bun test --timeout=60000 test/e2e/skills.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           # #3485 preload guard: this job intentionally tests against a DB.
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # v0.33.3.0: ZE live API tests skip gracefully when this is unset,
-          # so forks without the secret stay green. The test exercises the
-          # zeroEntropyCompatFetch response-rewriter + URL rewrite + flexible
-          # dim handling + gateway.rerank against the real provider.
-          ZEROENTROPY_API_KEY: ${{ secrets.ZEROENTROPY_API_KEY }}
 
   # ──────────────────────────────────────────────────────────────────────
   # Nightly coverage-full pipeline (schedule-only). The honest
@@ -554,7 +549,6 @@ jobs:
           E2E_FILE_TIMEOUT_SECS: '300'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ZEROENTROPY_API_KEY: ${{ secrets.ZEROENTROPY_API_KEY }}
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4

@@ -152,7 +152,7 @@ describe('v0.39 T21 — cache pack isolation in knobsHash', () => {
       expansion: false,
       searchLimit: 25,
       reranker_enabled: false,
-      reranker_model: 'zerank-2',
+      reranker_model: 'rerank-2.5',
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,

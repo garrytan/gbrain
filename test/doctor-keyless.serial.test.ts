@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
-import { buildChecks, checkProviderSunset } from '../src/commands/doctor.ts';
+import { buildChecks } from '../src/commands/doctor.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 describe('keyless installation diagnostics', () => {
@@ -22,7 +22,7 @@ describe('keyless installation diagnostics', () => {
     await engine.connect({});
     await engine.initSchema();
     await engine.setConfig('search.mode', 'conservative');
-    configureGateway({ embedding_model: 'zeroentropyai:zembed-1', embedding_dimensions: 1280, env: {} });
+    configureGateway({ embedding_model: 'fixture-provider:embedding-v1', embedding_dimensions: 1280, env: {} });
   });
 
   afterAll(async () => {
@@ -34,26 +34,11 @@ describe('keyless installation diagnostics', () => {
   test('does not prescribe provider migration or destructive resizing for disabled embeddings', async () => {
     await withEnv({ GBRAIN_HOME: home }, async () => {
       const checks = await buildChecks(engine, []);
-      for (const name of ['embedding_width_consistency', 'embedding_column_registry', 'ze_embedding_health', 'provider_sunset']) {
+      for (const name of ['embedding_width_consistency', 'embedding_column_registry']) {
         const check = checks.find(c => c.name === name);
         expect(check, name).toBeDefined();
         expect(check!.status, `${name}: ${check!.message}`).toBe('ok');
         expect(check!.message).not.toMatch(/reinit-pglite|ALTER TABLE|migrate embeddings/);
-      }
-    });
-  });
-
-  test('still reports an independently enabled sunset reranker', async () => {
-    await withEnv({ GBRAIN_HOME: home }, async () => {
-      await engine.setConfig('search.reranker.enabled', 'true');
-      await engine.setConfig('search.reranker.model', 'zeroentropyai:zerank-2');
-      try {
-        const check = await checkProviderSunset(engine);
-        expect(check.status).toBe('warn');
-        expect(check.message).toContain('reranker');
-        expect(check.message).not.toContain('embedding_model=');
-      } finally {
-        await engine.setConfig('search.reranker.enabled', 'false');
       }
     });
   });

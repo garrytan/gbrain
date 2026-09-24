@@ -41,7 +41,7 @@ describe('detectCapabilities — matrix', () => {
 
   test('env-only anthropic key → extraction keyed, embeddings still keyword-only', () => {
     // Default chat model is anthropic; default embedding model is
-    // zeroentropyai — an Anthropic key alone unlocks extraction but NOT
+    // Voyage — an Anthropic key alone unlocks extraction but NOT
     // semantic search.
     const caps = detectCapabilities({
       config: null,

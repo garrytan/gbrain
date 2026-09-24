@@ -21,6 +21,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { configureGateway } from '../core/ai/gateway.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { loadConfig } from '../core/config.ts';
 import { runEval, DEFAULT_MODEL_PANEL } from '../core/takes-quality-eval/runner.ts';
 import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
@@ -128,7 +129,7 @@ export async function runEvalTakesQuality(engine: BrainEngine, args: string[]): 
   // Self-configure the AI gateway (mirrors eval-cross-modal pattern). The
   // gateway needs config.ai_gateway + env vars; configureGateway reads both.
   const cfg = loadConfig();
-  configureGateway({ ...cfg, ...(process.env as Record<string, string>) } as any);
+  configureGateway(cfg ? buildGatewayConfig(cfg) : { env: { ...process.env } });
 
   const { subcmd, argv, json } = parseSubcmd(args);
 

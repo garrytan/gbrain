@@ -111,7 +111,7 @@ calmly and memory comes from agent-authored `## Facts` fences and the
 
 For the autopilot daemon specifically, keys and process-level env (`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs) belong in `~/.gbrain/env` — a 0600 file created by `gbrain autopilot --install` and sourced by the daemon wrapper (interactive shell rc files never reach daemon shells; the path honors `GBRAIN_HOME`). Re-run `gbrain autopilot --install` after editing it so the daemon reloads.
 
-`ZEROENTROPY_API_KEY` is still honored but deprecated — the ZeroEntropy hosted API shuts down 2026-09-04. Off-ramp: the agent playbook at [`skills/migrations/v0.46.3.0.md`](../skills/migrations/v0.46.3.0.md) (one command migrates embeddings + reranker) with the full reference in [`docs/guides/embedding-migration.md`](guides/embedding-migration.md).
+To change an existing brain's embedding provider, follow the explicit-consent playbook at [`skills/migrations/v0.46.3.0.md`](../skills/migrations/v0.46.3.0.md), with the full reference in [`docs/guides/embedding-migration.md`](guides/embedding-migration.md). Preview the work and cost before approving a migration; do not repoint existing vectors at a different model.
 
 Common follow-ups:
 

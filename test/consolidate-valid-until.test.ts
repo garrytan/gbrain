@@ -20,11 +20,11 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
-  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1280 (ZE Matryoshka).
+  // v0.36.2.0: DEFAULT_EMBEDDING_DIMENSIONS flipped to 1024 (Voyage Matryoshka).
   // This test inserts 1536-dim unit vectors (line ~38). If another test file
   // in the shard configured the gateway before us, initSchema() would size
-  // facts.embedding at vector(1280) and the inserts below would throw
-  // "expected 1280 dimensions, not 1536". Pin the gateway to 1536d so this
+  // facts.embedding at vector(1024) and the inserts below would throw
+  // "expected 1024 dimensions, not 1536". Pin the gateway to 1536d so this
   // file is hermetic against cross-file state.
   resetGateway();
   configureGateway({

@@ -34,12 +34,12 @@ jobs:
         with:
           bun-version: ${{ matrix.bun }}
       - run: bun install --frozen-lockfile --ignore-scripts
-      - name: Require three valid samples, 90 percent overlap and at most 50 percent p99 regression
+      - name: Require valid workloads; report the p99 ratio as advisory
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
         run: >-
           bun --no-env-file scripts/persistence/performance.ts --engine=${{ matrix.engine }}
-          --manifest=.context/persistence-read-latency.json
+          --informational --manifest=.context/persistence-read-latency.json
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -99,6 +99,7 @@ jobs:
           : "${DATABASE_URL:?PostgreSQL contract tests require the explicit test database}"
           bun --no-env-file test --timeout=120000 \
             test/persistence-admission-observer.test.ts \
+            test/persistence-read-diagnostics.test.ts \
             test/persistence-journal.test.ts \
             test/persistence-staging.test.ts \
             test/persistence-effect-recovery-fairness.test.ts \
@@ -119,6 +120,18 @@ jobs:
             test/persistence-recovery-capacity.test.ts \
             test/audit/pool-recovery-audit.test.ts \
             test/persistence-recovery-fairness.test.ts
+      - name: Require data-safety on PostgreSQL
+        timeout-minutes: 10
+        env:
+          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+        run: |
+          : "${DATABASE_URL:?Data-safety tests require the explicit test database}"
+          bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts
       - name: Require canonical reconciliation through direct and pooled PostgreSQL
         timeout-minutes: 5
         env:

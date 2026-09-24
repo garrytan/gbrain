@@ -308,36 +308,6 @@ export function applyBacklinkBoost(
   }
 }
 
-/**
- * v0.35.6.0 — floor-ratio threshold computation.
- *
- * Returns the absolute score floor below which boost stages skip a result.
- * Returns `Number.NEGATIVE_INFINITY` (no gate) when:
- *   - `floorRatio` is undefined (default — preserves prior behavior bit-for-bit)
- *   - `floorRatio` is NaN, infinite, negative, or > 1 (out-of-range silently
- *     disables the gate; range validation lives at the config-parse layer)
- *   - No result has a positive, finite score (all-NaN, all-negative, or empty
- *     input arrays produce no positive signal — gate stays off)
- *
- * Otherwise returns `topScore * floorRatio`, where `topScore` is the largest
- * finite score in `results`. Callers compute this ONCE before any boost stage
- * runs, then pass the resulting threshold to every stage. Single-baseline
- * semantic — order-independent across the three metadata-axis boosts.
- *
- * Why this exists: gbrain's bounded boosts (`[1.0, ~1.6]` log-compressed
- * salience clip, log-scaled backlinks, half-life recency) keep any single
- * boost from catastrophically flipping rankings on curated small corpora.
- * On larger corpora indexed with dense embedders (text-embedding-3-large,
- * Voyage 3+, ZeroEntropy zembed-1), weak-overlap candidates can land in
- * top-K via baseline vector overlap and accumulate metadata boost until
- * they leapfrog the legitimate primary hit. The gate restricts each
- * metadata boost to the head of the candidate pool so the long tail keeps
- * its unboosted relevance ranking.
- *
- * 0.85 is a reasonable starting value for dense-embedder corpora. Default
- * stays undefined (no gate) until per-corpus ablation evidence supports a
- * default flip (see `TODOS.md` floor-ratio ablation entry).
- */
 export function computeFloorThreshold(
   results: SearchResult[],
   floorRatio: number | undefined,
@@ -1122,11 +1092,6 @@ export interface HybridSearchOpts extends SearchOpts {
   _searchModeInput?: ResolveSearchModeInput;
 }
 
-/**
- * v0.42.20.0 (Fix 3, #1775) — bound the query-time embed so a stalled provider
- * (the user's zeroentropy case) fails over to keyword instead of hanging past
- * the CLI's 10s force-exit. Default 6s leaves headroom under that deadline.
- */
 const QUERY_EMBED_TIMEOUT_MS = (() => {
   const n = Number(process.env.GBRAIN_QUERY_EMBED_TIMEOUT_MS);
   return Number.isFinite(n) && n > 0 ? n : 6_000;
@@ -1559,11 +1524,6 @@ export async function hybridSearch(
     });
   }
 
-  // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
-  // v0.36 (D10): ask "is the RESOLVED column's provider reachable?" rather
-  // than "is the global default reachable?" — otherwise an unreachable
-  // global default disables vector search even when the active column's
-  // provider (Voyage, ZE) works fine.
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
   // Image/both/unified routing embeds via the MULTIMODAL provider, not the
@@ -1695,27 +1655,6 @@ export async function hybridSearch(
     return noEmbedBudgeted;
   }
 
-  // v0.36 cross-modal wave: determine the effective modality once.
-  //
-  // Precedence (D22-1 normalization): literal 'auto' is normalized to
-  // undefined so it doesn't reach the modality branch directly. Resolution:
-  //   explicit opts.crossModal ('text'|'image'|'both') wins
-  //   else suggestions.suggestedModality (regex-driven)
-  //   else (Commit 4) opt-in LLM tie-break for genuinely ambiguous queries
-  //   else 'text' (default)
-  //
-  // D9 mode-bundle override matrix: when effectiveModality === 'image',
-  // cross-modal path overrides bundle knobs (expansion=false, no keyword
-  // search). Voyage handles synonyms in-space; zerank-2 can't rerank image
-  // embeddings.
-  //
-  // Phase 3 (D8): when search.unified_multimodal is true, ALL queries
-  // route through the multimodal model + embedding_multimodal column,
-  // regardless of detected modality.
-  //
-  // Commit 4 (LLM intent escalation): when search.cross_modal.llm_intent
-  // is true AND regex returned 'text' AND isAmbiguousModalityQuery fires,
-  // await a Haiku tie-break. Fail-open to regex result on any error.
   const explicitModality =
     opts?.crossModal && opts.crossModal !== 'auto' ? opts.crossModal : undefined;
   let regexModality = explicitModality ?? suggestions.suggestedModality ?? 'text';
@@ -2293,7 +2232,7 @@ export async function hybridSearch(
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
-  // v0.48.2: a SKIPPED reranker (no provider key / provider past its sunset)
+
   // is stamped `reranker_skipped` (ranking-only — never shortens the cache TTL
   // or turns an empty result into a degraded miss), and a success-shaped
   // pass-through (#4648: provider answered 200 with an empty/malformed result
@@ -2603,15 +2542,6 @@ export async function hybridSearchCached(
       metadata_boost_gate: normalizeMetadataBoostGate(opts?.metadataBoostGate),
     },
   });
-  // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
-  // decision. The query_cache.embedding column has one fixed pgvector dim
-  // sized at brain init; storing a 1024d Voyage or 2560d ZE cache
-  // embedding fails or corrupts results. Name-based check ("is it the
-  // default `embedding` column?") is insufficient — the registry
-  // explicitly allows overriding builtin `embedding` to a different
-  // provider/dim. isCacheSafe compares the resolved column's full
-  // embedding space (name + dim + model) against cfg and returns true
-  // only when ALL match. Otherwise skip.
   const mergedCfgCached = await loadConfigWithEngine(engine).catch(() => null);
   const cfgCached = mergedCfgCached ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
   const resolvedColCached = resolveEmbeddingColumn(opts, cfgCached);

@@ -241,7 +241,7 @@ test('full backup restores DB-only facts/files, rebases sources, quarantines all
   // Neither may recursively include an older installation's private payload.
   const renamedArchive = join(root, 'memory', 'renamed-prior-snapshot');
   rmSync(renamedArchive);
-  writeBackupArchive(renamedArchive, {}, [{ path: 'private-record', file: join(root, 'memory', 'prior.gbrain-backup') }]);
+  await writeBackupArchive(renamedArchive, {}, [{ path: 'private-record', file: join(root, 'memory', 'prior.gbrain-backup') }]);
   writeFileSync(join(root, 'memory', 'credentials.md'), '# Remembered credential rotation procedure\nNo actual credential.\n');
   const connectorCommandMarker = join(temporary, 'connector-command-ran');
   await withFixtureWrite(root, ['google-fixture'], async engine => {

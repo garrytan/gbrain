@@ -7,9 +7,7 @@
  *  - the HTTP call is skipped and RerankError('no_key') is thrown;
  *  - ONE audit row per process per model across repeated calls, and NO
  *    stderr line (a shell-per-query agent must not see a line per search);
- *  - `_resetSunsetWarningsForTest()` clears the memo (test seam);
- *  - sunset keeps precedence over no_key (explicit ZE model after the date,
- *    no ZE key → sunset_short_circuit);
+ *  - `configureGateway()` clears the memo (test seam);
  *  - HTTP 401/403 with the key present stays `auth` (key present but rejected);
  *  - applyReranker passes results through unchanged, adds no per-query row,
  *    and fires `onSkip('no_key')` so hybrid.ts can stamp `reranker_skipped`.
@@ -26,8 +24,6 @@ import {
   rerank,
   RerankError,
   __setRerankTransportForTests,
-  __setSunsetClockForTests,
-  _resetSunsetWarningsForTest,
 } from '../src/core/ai/gateway.ts';
 import { applyReranker } from '../src/core/search/rerank.ts';
 import { BudgetTracker, BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
@@ -35,13 +31,10 @@ import { withBudgetTracker } from '../src/core/ai/gateway.ts';
 import { readRecentRerankFailures } from '../src/core/rerank-audit.ts';
 import {
   DEFAULT_RERANKER_MODEL,
-  LEGACY_DEFAULT_RERANKER_MODEL,
-  ZEROENTROPY_SUNSET_DATE,
 } from '../src/core/ai/defaults.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const AFTER_SUNSET = new Date(Date.parse(`${ZEROENTROPY_SUNSET_DATE}T00:00:00Z`) + 86_400_000);
 
 /** Gateway config with an OpenAI embedding key and NO reranker key. */
 function keylessGw(overrides: Record<string, unknown> = {}): any {
@@ -99,16 +92,15 @@ function mkResults(): SearchResult[] {
 }
 
 beforeEach(() => {
-  _resetSunsetWarningsForTest();
+  configureGateway(keylessGw());
 });
 
 afterEach(() => {
   __setRerankTransportForTests(null);
-  __setSunsetClockForTests(null);
 });
 
 afterAll(() => {
-  _resetSunsetWarningsForTest();
+  configureGateway(keylessGw());
   resetGateway();
 });
 
@@ -161,21 +153,9 @@ describe('gateway.rerank no_key preflight (v0.48.2)', () => {
       await expect(rerank({ query: 'q', documents: ['d'], model: 'voyage:rerank-2.5-lite' })).rejects.toMatchObject({ reason: 'no_key' });
       expect(readRecentRerankFailures(7).filter((r) => r.reason === 'no_key')).toHaveLength(2);
 
-      _resetSunsetWarningsForTest();
+      configureGateway(keylessGw());
       await expect(rerank({ query: 'q', documents: ['d'] })).rejects.toMatchObject({ reason: 'no_key' });
       expect(readRecentRerankFailures(7).filter((r) => r.reason === 'no_key')).toHaveLength(3);
-    });
-  });
-
-  test('sunset keeps precedence: explicit ZE model after the date with no ZE key → sunset_short_circuit, not no_key', async () => {
-    await withFreshAuditDir(async () => {
-      configureGateway(keylessGw({ reranker_model: LEGACY_DEFAULT_RERANKER_MODEL }));
-      installCountingTransport();
-      __setSunsetClockForTests(() => AFTER_SUNSET);
-
-      await expect(rerank({ query: 'q', documents: ['d'] })).rejects.toMatchObject({ reason: 'sunset_short_circuit' });
-      const rows = readRecentRerankFailures(7);
-      expect(rows.map((r) => r.reason)).toEqual(['sunset_short_circuit']);
     });
   });
 

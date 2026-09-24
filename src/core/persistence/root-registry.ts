@@ -71,10 +71,16 @@ export function hasManagedRootMarker(path: string): boolean {
 }
 /** Resolve existing ancestors too, so an alias to a managed tree cannot bypass the fence. */
 export function canonicalFilesystemPath(path: string): string {
+  return resolveFilesystemPath(path, realpathSync);
+}
+export function nativeFilesystemPath(path: string): string {
+  return resolveFilesystemPath(path, realpathSync.native);
+}
+function resolveFilesystemPath(path: string, realpath: (path: string) => string): string {
   let current = resolve(path);
   const missing: string[] = [];
   for (;;) {
-    try { return resolve(realpathSync(current), ...missing.reverse()); }
+    try { return resolve(realpath(current), ...missing.reverse()); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       const parent = dirname(current);

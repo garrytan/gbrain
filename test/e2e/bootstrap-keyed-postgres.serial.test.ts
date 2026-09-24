@@ -26,7 +26,7 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { loadCorpusPages } from '../helpers/bootstrap-corpus.ts';
 import { runEmbedCore } from '../../src/commands/embed.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
-import { runSchemaTransition } from '../../src/core/retrieval-upgrade-planner.ts';
+import { runSchemaTransition } from '../../src/core/embedding-migration.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { extractTakesFromPages } from '../../src/core/extract-takes-from-pages.ts';
 import {

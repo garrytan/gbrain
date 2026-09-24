@@ -33,18 +33,7 @@ export interface AutocutConfig {
   jumpRatio: number;
   /** Failsafe: never return fewer than this when candidates exist (≥1). */
   minKeep: number;
-  /**
-   * v0.46.15 (#1863) — weak-top floor. When the TOP rerank score is below this
-   * absolute value, the whole list is low-confidence and gap normalization is
-   * meaningless (a 0.317 top makes ordinary decay look like a confident
-   * cliff → spurious 1-result collapse on rare cross-source queries). Below
-   * the floor autocut no-ops and the full cluster survives.
-   *
-   * SCALE CAVEAT: 0.35 is calibrated for the current default reranker's
-   * relevance scale. The September reranker default flip (zerank-2 →
-   * voyage rerank-2.5) MUST re-tune this knob — see the v0.47 removal
-   * checklist. Config: `search.autocut_min_top`.
-   */
+
   minTopScore: number;
 }
 

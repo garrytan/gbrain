@@ -234,7 +234,7 @@ test.each([false, true])('raw bytes changing after preparation conflict without 
     const original='Original source observation before admission.\n';
     const f=await fixture(engine,{'a.md':original}); const binding=(await getWorktreeBinding(engine,f.id))!;
     const authority=await managedSyncAuthority(engine,f.id,binding.source_incarnation,f.root);
-    const intent:SyncIntent={kind:'managed_sync_import',expected_revision:null,sourcePath:'a.md',path:'a.md',rawHash:sha256(original),content:original,...(newlineOnly?{lineEndingOnly:true}:{}),
+    const intent:SyncIntent={kind:'managed_sync_import',processingOptions:{noEmbed:false,noExtract:false,noSchemaPack:false},expected_revision:null,sourcePath:'a.md',path:'a.md',rawHash:sha256(original),content:original,...(newlineOnly?{lineEndingOnly:true}:{}),
       ownerEpoch:String(binding.owner_epoch),syncAuthority:authority,cursorKey:'test-cursor',runId:randomUUID(),index:0,total:1,from:null,target:f.head,slugMode:'git-root'};
     const requestId=randomUUID();
     const admission={requestId,operation:'submit_job',sourceId:f.id,sourceIncarnation:binding.source_incarnation,slug:'a',pageId:null,
@@ -271,6 +271,7 @@ test.each([false, true])('managed terminal receipts survive a missing ledger and
         const authority = await managedSyncAuthority(engine, f.id, discovery.incarnation, discovery.root);
         const runId = randomUUID(), requestId = randomUUID(), entry = entries[0];
         const legacyIntent: SyncIntent = { kind: 'managed_sync_import', expected_revision: entry.revision ?? null,
+          processingOptions: { noEmbed: false, noExtract: false, noSchemaPack: false },
           sourcePath: entry.sourcePath, path: entry.path, rawHash: sha256(working), content: pinned,
           ownerEpoch: String(discovery.binding.owner_epoch), syncAuthority: authority, cursorKey: previous.fingerprint,
           runId, index: 0, total: entries.length, from: discovery.from, target: discovery.target, slugMode: discovery.slugMode };

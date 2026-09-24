@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { overlapPercent, summarizeReadRuns } from '../scripts/persistence/read-metrics.ts';
 import { runReadPerformance } from '../scripts/persistence/performance.ts';
 import { WriteTimingRecorder } from '../scripts/persistence/read-admission.ts';
+import { childEnvironment } from '../scripts/persistence/validate.ts';
 
 describe('read-load evidence', () => {
   test('rejects invalid workload sizes before opening a datastore', async () => {
@@ -40,6 +44,32 @@ describe('read-load evidence', () => {
     expect(summarizeReadRuns(results).verdict).toBe('pass');
     expect(summarizeReadRuns([run(10, 15.01), run(10, 15.01), run(10, 15.01)]).verdict).toBe('fail');
   });
+  for (const [informational, valid, exit] of [[false, true, 1], [true, true, 0], [true, false, 1]] as const) {
+    test(`CLI advisory policy preserves measured failure and rejects invalid work (${informational}, ${valid})`, () => {
+      const home = mkdtempSync(join(tmpdir(), 'gbrain-read-policy-'));
+      try {
+        const preload = join(home, 'preload.ts');
+        const manifest = join(home, 'manifest.json');
+        const fixture = { ...run(10, 30), ok: valid };
+        writeFileSync(preload, `Bun.spawn = () => ({
+          stdout: new Blob([${JSON.stringify(`${JSON.stringify(fixture)}\n`)}]).stream(),
+          exited: Promise.resolve(0), exitCode: 0, kill() {},
+        });`);
+        const result = Bun.spawnSync([process.execPath, '--no-env-file', '--preload', preload,
+          resolve(import.meta.dir, '../scripts/persistence/performance.ts'), `--manifest=${manifest}`,
+          ...(informational ? ['--informational'] : [])], { env: childEnvironment(home), timeout: 30_000 });
+        expect(result.exitCode).toBe(exit);
+        const recorded = JSON.parse(readFileSync(manifest, 'utf8'));
+        expect(recorded.ok).toBe(valid);
+        expect(recorded.verdict).toBe('fail');
+        expect(recorded.status).toBe('failed');
+        expect(recorded.full_gate).toBe(false);
+        expect(recorded.delta_p99_pct).toBe(200);
+        expect(recorded.threshold_pct).toBe(50);
+        expect(recorded.runs).toHaveLength(3);
+      } finally { rmSync(home, { recursive: true, force: true }); }
+    }, 40_000);
+  }
   test('a fast invalid or incomplete sample always fails', () => {
     for (const mutate of [
       (r: any) => { r.ok = false; }, (r: any) => { r.overlap_pct = 89.99; },
