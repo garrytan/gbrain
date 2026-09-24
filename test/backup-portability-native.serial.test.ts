@@ -148,6 +148,73 @@ beforeAll(async () => {
 
 afterAll(() => { if (temporary) fs.rmSync(temporary, { recursive: true, force: true }); });
 
+test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSOLE_PROBE !== '1')('private ACL setup compares hidden and visible PowerShell windows', () => {
+  const observations = [];
+  for (const mode of ['hidden', 'visible', 'visible', 'hidden'] as const) {
+    const path = join(temporary, `console-${observations.length} [literal] 'é`);
+    fs.mkdirSync(path);
+    const before = fs.lstatSync(path, { bigint: true });
+    let launches = 0;
+    let inspections = 0;
+    let bounded = false;
+    let fixedExecutable = false;
+    let productionHidden = false;
+    let nativeError: string | null = null;
+    let inspectionError: string | null = null;
+    const execute = childProcess.execFileSync;
+    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+      apply(target, thisArg, args) {
+        const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+        const protection = options?.env?.GBRAIN_BACKUP_PRIVATE_PATH === path;
+        const inspection = options?.env?.GBRAIN_TEST_ACL_PATH === path;
+        if (!protection && !inspection) return Reflect.apply(target, thisArg, args);
+        if (protection) {
+          launches++;
+          fixedExecutable = args[0] === join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+          bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && !options.shell;
+          productionHidden = options.windowsHide === true;
+        } else inspections++;
+        try { return Reflect.apply(target, thisArg, [args[0], args[1], mode === 'hidden' ? options : { ...options, windowsHide: false }]); }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
+          if (protection) nativeError = code;
+          else inspectionError = code;
+          throw error;
+        }
+      },
+    }));
+    let protectedPath = false;
+    let privateAcl = false;
+    const started = performance.now();
+    try {
+      try { privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
+      if (mode === 'visible' && protectedPath) {
+        try { expectPrivate(path, true, true); privateAcl = true; } catch {}
+      }
+    } finally { inspect.mockRestore(); }
+    const after = fs.lstatSync(path, { bigint: true });
+    observations.push({ mode, elapsedMs: Math.round(performance.now() - started), launches, inspections,
+      bounded, fixedExecutable, productionHidden, nativeError, inspectionError, protectedPath, privateAcl,
+      sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
+      empty: after.isDirectory() && fs.readdirSync(path).length === 0 });
+  }
+  process.stderr.write(`Windows backup console controls: ${JSON.stringify({ arch: process.arch, runtime: Bun.version, observations })}\n`);
+  for (const observation of observations) {
+    expect(observation.launches).toBe(1);
+    expect(observation.bounded).toBe(true);
+    expect(observation.fixedExecutable).toBe(true);
+    expect(observation.productionHidden).toBe(true);
+    expect(observation.sameIdentity).toBe(true);
+    expect(observation.empty).toBe(true);
+    if (observation.mode !== 'visible') continue;
+    expect(observation.protectedPath).toBe(true);
+    expect(observation.nativeError).toBeNull();
+    expect(observation.inspections).toBe(1);
+    expect(observation.privateAcl).toBe(true);
+    expect(observation.inspectionError).toBeNull();
+  }
+}, 120_000);
+
 test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in Windows PowerShell modules from the inherited environment', () => {
   const observations = [];
   for (const mode of ['ambient', 'builtin', 'builtin', 'ambient'] as const) {

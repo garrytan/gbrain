@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { safeLoad } from 'js-yaml';
 
@@ -12,7 +13,11 @@ type Step = {
   'continue-on-error'?: boolean;
 };
 const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/native-locks.yml'), 'utf8')) as {
-  jobs: { native: { steps: Step[]; strategy: { matrix: { target: string[]; bun: string[] } } } };
+  jobs: {
+    native: { steps: Step[]; strategy: { matrix: { target: string[]; bun: string[] } } };
+    'windows-backup-console': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
+      strategy: { 'fail-fast': boolean; matrix: { include: { runner: string; bun: string }[] } } };
+  };
 };
 const suites = [
   'test/persistence-publication-native.serial.test.ts',
@@ -22,6 +27,41 @@ const suites = [
 ];
 
 describe('data-safety native CI coverage', () => {
+  test('the opt-in console diagnostic has an isolated Windows matrix without filtering the acceptance suites', () => {
+    const job = workflow.jobs['windows-backup-console'];
+    expect(job['runs-on']).toBe('${{ matrix.runner }}');
+    expect(job['timeout-minutes']).toBe(5);
+    expect(job.strategy['fail-fast']).toBe(false);
+    expect(job.strategy.matrix.include).toEqual(['windows-2022', 'windows-11-arm'].flatMap(runner =>
+      ['1.3.11', '1.3.13', '1.4.2'].map(bun => ({ runner, bun }))));
+    expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
+    const step = job.steps.find(entry => entry.name === 'Compare native hidden-window launch behavior');
+    expect(step).toBeDefined();
+    expect(step!.if).toBeUndefined();
+    expect(step!['continue-on-error']).toBeUndefined();
+    expect(step!.shell).toBe('bash');
+    expect(step!.env).toEqual({ GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1', GBRAIN_TEST_BACKUP_CONSOLE_PROBE: '1' });
+    expect(step!.run!.trim().split('\n')).toEqual([
+      "bun --no-env-file test --timeout=180000 --test-name-pattern '^private ACL setup compares hidden and visible PowerShell windows$' test/backup-portability-native.serial.test.ts 2>&1 | tee \"$RUNNER_TEMP/backup-console.log\"",
+      "grep -Fq 'Windows backup console controls:' \"$RUNNER_TEMP/backup-console.log\"",
+    ]);
+    const fixture = readFileSync(join(import.meta.dir, '../backup-portability-native.serial.test.ts'), 'utf8');
+    expect(fixture).toContain("test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSOLE_PROBE !== '1')('private ACL setup compares hidden and visible PowerShell windows'");
+    expect(workflow.jobs.native.steps.some(entry => entry.env?.GBRAIN_TEST_BACKUP_CONSOLE_PROBE !== undefined)).toBe(false);
+  });
+
+  for (const [exitCode, observation] of [[0, true], [1, true], [0, false]] as const) test(`console probe refuses failed or unexecuted diagnostics (${exitCode}, ${observation})`, () => {
+    const temporary = mkdtempSync(join(tmpdir(), 'gbrain-console-workflow-'));
+    try {
+      const step = workflow.jobs['windows-backup-console'].steps.find(entry => entry.name === 'Compare native hidden-window launch behavior')!;
+      const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+        bun() { if [[ "$GBRAIN_TEST_OBSERVATION" == 1 ]]; then printf '%s\\n' 'Windows backup console controls: synthetic'; fi; return "$GBRAIN_TEST_EXIT"; }
+        ${step.run}
+      `], { env: { PATH: process.env.PATH ?? '', RUNNER_TEMP: temporary, GBRAIN_TEST_OBSERVATION: observation ? '1' : '0', GBRAIN_TEST_EXIT: String(exitCode) } });
+      expect(result.exitCode).toBe(exitCode === 0 && observation ? 0 : 1);
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
+  });
+
   test('real publication, sync and backup contracts run on every native matrix target', () => {
     const job = workflow.jobs.native;
     expect(job.strategy.matrix.target).toContain('win32-x64');
