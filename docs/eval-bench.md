@@ -42,7 +42,9 @@ Before repeating an approach, read its measured outcome and limitations:
   500-question, four-condition published reading comparison. The completed
   [GBrain results](eval/READING_NOTES_RESULTS.md) improved from 308/361 to
   324/361 under automated judging, with source-verified wins, grading caveats
-  and nine truncated notes responses. The paper replication is still running.
+  and nine truncated notes responses. The completed paper replication improved
+  from 424/500 to 463/500; notes helped in both formats, while JSON alone did
+  not demonstrate a benefit.
 
 ## The eval gate loop
 

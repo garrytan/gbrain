@@ -1,21 +1,100 @@
 # Reading notes: real gains, with grading and output-limit caveats
 
-**Keeping the evidence intact and asking for notes improved the automated
-GBrain score, and source inspection confirms real examples of better answers.**
-It also produced truncated responses and grading artifacts. This supports
-further work on the reader, not switching the production default yet.
+**Keeping the evidence intact and asking for notes helped in both completed
+comparisons.** We reproduced the paper's positive reading effect and measured
+a smaller positive transfer to the existing GBrain reader. Source inspection
+confirms real improvements, but grading artifacts and nine truncated GBrain
+responses mean this is not a production-default recommendation.
 
-The 361-question GBrain comparison is complete. The separate 500-question
-paper replication is still running. The [frozen protocol](READING_NOTES_REPLICATION.md)
-records the cohorts, treatment, original prompt functions, model snapshots,
-date differences, controls and receipt hashes. Neither this experiment nor
-the earlier [failed excerpt selector](ANSWER_PACKET_RESULTS.md) changed
-retrieval or production settings.
+Both frozen experiments completed: 361 fresh GBrain comparisons and all 500
+questions in the four-condition paper replication. The
+[protocol](READING_NOTES_REPLICATION.md) records the cohorts, treatment,
+original prompt functions, model snapshots, date differences, controls and
+receipt hashes. Neither this experiment nor the earlier
+[failed excerpt selector](ANSWER_PACKET_RESULTS.md) changed retrieval or
+production settings.
 
 The [public paired-label receipt](reading-notes-transfer.ndjson) contains all
 361 original comparisons, 12 baseline repeats and 28 repeat-graded
 discordances, without conversation or answer text. Its SHA-256 is
 `fe54ecf5193aab80005d330fa9173961f6c62da31b374e3a75159fa2fa296a9d`.
+
+## Published reading experiment: effect reproduced
+
+Using only the published oracle supporting sessions, the authors' original
+prompt builder and grader, and the pinned GPT-4o snapshot:
+
+| Format and reading method | Published Figure 6 | This run | Correct / 500 |
+|---|---:|---:|---:|
+| Natural language, direct | 86.2% | 84.8% | 424 |
+| JSON, direct | 82.2% | 85.0% | 425 |
+| Natural language, notes | 91.0% | 92.2% | 461 |
+| JSON, notes | 92.4% | 92.6% | 463 |
+
+The primary combined contrast improved by **7.8 percentage points**, with
+**49 judged wins and 10 losses**. Its paired 95% bootstrap interval was
+**[+5.0, +10.8] percentage points**. This reproduces the direction and rough
+size of the published effect, not every historical percentage or completion.
+
+The factorial controls matter more than the best single cell:
+
+| Matched contrast | Net answers | Difference | Paired 95% interval |
+|---|---:|---:|---:|
+| Notes versus direct, natural language | +37 | +7.4 points | [+4.4, +10.6] |
+| Notes versus direct, JSON | +38 | +7.6 points | [+4.8, +10.4] |
+| JSON versus natural language, direct | +1 | +0.2 points | [-1.4, +1.8] |
+| JSON versus natural language, notes | +2 | +0.4 points | [-1.8, +2.6] |
+
+**Notes helped in both formats; JSON alone did not demonstrate a benefit.**
+There is no evidence here that GBrain needs a new JSON memory representation.
+All intervals describe question sampling, not grader validity or generation
+variability. The corpora and readers differ across phases, and the full
+oracle set overlaps the fresh transfer cohort; these are not two independent
+confirmation datasets.
+
+All 2,000 primary oracle responses finished without hitting the 800-token
+output limit. Regrading the 59 primary discordances changed **0/118 labels**.
+The 12 identical-prompt baseline controls went **10/12 → 9/12**; nine outputs
+were byte-identical, and the score-changing case had different output text.
+Stable repeat grading still does not establish factual correctness.
+
+The [oracle paired-label receipt](reading-notes-oracle.ndjson) records all four
+grades on every question, plus controls and repeat grading. Its SHA-256 is
+`f411f222d003f71240d8fcccc6c1677baad67971dba9618a8789797bc0e70cb3`.
+
+### Every initial oracle regression
+
+The following observations retain all original labels. They distinguish real
+reasoning problems from reference/rubric ambiguity, rather than discarding
+unfavorable rows.
+
+| Question ID | Source-aware observation |
+|---|---|
+| `c8090214_abs` | Notes assume an unmentioned tablet purchase occurred alongside a recorded phone purchase, then fabricate the requested interval. The baseline correctly says the date is unavailable. |
+| `9a707b81` | Notes use the session date instead of “yesterday” and answer 20 rather than 21 days. That is an actual one-day reasoning error, but rejecting it conflicts with the official grader's stated off-by-one tolerance. |
+| `00ca467f` | Notes add a physical-therapy visit to the count of doctor appointments. This changes the category rather than finding an omitted doctor appointment. |
+| `ec81a493` | Both answers contain 500, but the source's limited-edition object is a poster, while the question asks about album copies. Notes expose that distinction and still infer the album count. This is a source/reference ambiguity, not a clean numeric regression. |
+| `71017277` | The source names a chandelier, not jewelry. Notes reject the question's premise; the baseline gives the reference relative while describing the chandelier. A lower benchmark score does not establish a worse source-grounded answer. |
+| `8077ef71` | Notes make a one-day calendar arithmetic error, 25 instead of 26. As with `9a707b81`, the negative grade is inconsistent with the stated off-by-one tolerance. |
+| `gpt4_7bc6cf22` | Notes answer the interval between publication and reading, rather than between reading and the question date. This is a genuine wrong-interval failure. |
+| `d24813b1` | Notes omit the previously successful cake that anchors the personalization rubric; the baseline includes a related option. Rubric sensitivity limits a binary interpretation. |
+| `gpt4_15e38248` | Notes infer a recent sofa purchase merely from interest in matching cushions, inflating the count from four to five. |
+| `46a3abf7` | Notes stop counting an older tank without evidence that it was disposed of. The reference retains all three tanks; “old” versus “currently have” leaves a wording caveat. |
+
+Concrete oracle gains include recovering the two purchases totaling $300,
+applying the update from 37 to 38 coins, using the correct audiobook start
+date to total eight rather than nine weeks, and explicitly distinguishing
+tennis from table tennis in `f685340e_abs`. That last case is a real oracle
+improvement but a false-positive transfer grade: a shared question ID does
+not make outputs from different reader conditions equivalent.
+
+Not every oracle win is equally convincing. In `a2f3aa27`, both outputs say
+the count is near 1,300, yet only notes receive credit; that is not a verified
+information gain. In `37f165cf`, the page counts fit the reference, but notes
+assign unrecorded completion months to the books. In `gpt4_d9af6064`, notes
+treat a device-acquisition date as its setup date. The latter inference is
+plausible, but not explicitly established. These findings remain caveats,
+not a post-hoc replacement score.
 
 ## Completed GBrain comparison
 
@@ -141,19 +220,37 @@ reader calls**. The long, unchanged input accounts for most reader spending.
 That extra generation is intended work, not evidence of a same-work latency
 regression; no latency claim is made here.
 
-The completed transfer phase, including its judges, repeated baselines and
-repeat grading, used **1,524 settled calls and $36.609600** at the pinned
-canonical prices. There were no recorded call errors or unknown-usage
-settlements. Adding the earlier $8.0127305 pilot gives **$44.6223305** through
-this completed phase, before the ongoing paper replication. The operator
-removed the spending ceiling before this follow-up began. These are
-usage-priced accounting estimates, not provider invoices.
+| Experiment phase, including its grading and controls | Settled calls | Usage-priced USD |
+|---|---:|---:|
+| Earlier excerpt pilot | 348 | $8.0127305 |
+| GBrain notes transfer | 1,524 | $36.6096000 |
+| Full four-condition oracle replication | 4,142 | $34.5237000 |
+| **Total** | **6,014** | **$79.1460305** |
 
-## Remaining work
+All **5,666 follow-up calls** have exactly one admission, known-usage
+settlement and accepted response, with no error events. The recorded physical
+models are Sonnet 4.6 and the specified GPT-4o snapshot. The operator removed
+the spending ceiling before the follow-up began. Prices are pinned canonical
+accounting estimates, not provider invoices.
 
-Finish the frozen four-condition, 500-question paper replication and report
-its results separately. A separate model has now audited every transfer
-discordance and cutoff without inspecting oracle outcomes; its source-level
-findings were checked against the stored records, not treated as replacement
-labels. Keep full-session presentation as the production default; do not
-infer rollout approval from a positive benchmark comparison.
+The final follow-up call journal hashes to
+`effa6227e63abc1c07342cbd7f8e40f3c9e8cd6903dcfcfcf21e48d4b5b45680`;
+the outcome journal hashes to
+`1a43f83b4613c729120001e9603709cf20d60cf0c2e8b9f28cae51811dfcbd43`.
+
+## Decision
+
+Pursue intact-evidence reading, not another excerpt selector or a JSON memory
+rewrite. The original selector still failed; notes now have positive matched
+evidence and concrete source-verified wins. The experiment does not isolate
+notes from extra deliberation, prove every automated label, or authorize a
+production rollout.
+
+A separate model audited every transfer discordance and cutoff without
+inspecting oracle outcomes; its findings were checked against the stored
+sources, not treated as replacement labels. A separate pass then audited all
+59 oracle discordances. Public scores, repeat grades and source-aware
+qualifications are kept separate. Keep the existing direct-answer,
+full-session production prompt unchanged for now. A subsequent reader change
+needs bounded output and fresh validation, not tuning on this now-inspected
+benchmark and calling it confirmation.

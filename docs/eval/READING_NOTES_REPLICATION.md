@@ -1,6 +1,6 @@
 # Intact-evidence reading replication
 
-**Status: GBrain transfer completed; full paper replication running.** The
+**Status: both frozen comparisons completed.** The
 [measured results and audit](READING_NOTES_RESULTS.md) report the positive
 automated transfer score, verified examples, grading artifacts and cutoff
 responses. This protocol tests notes without deleting retrieved conversation.
@@ -119,8 +119,10 @@ judgments stop the experiment rather than silently becoming wrong answers.
   remain. Bootstrap intervals quantify question sampling, not reader/judge
   variability, and benchmark scores are not whole-product claims.
 
-The two published corpora have matching IDs, question text, reference answers
-and question types, but **all 500 question dates differ**, sometimes by days.
+The two corpora have matching IDs, question text, reference answers and
+question types, but **all 500 question dates differ**, sometimes by days.
+The dates also differ for all 948 matched supporting-session occurrences,
+while their role/content turns are identical after ignoring gold annotations.
 Each phase retains its own corpus's dates. Do not splice oracle dates into
 GBrain's S-based retrieval or compare raw scores across phases as if the
 inputs and readers were identical.

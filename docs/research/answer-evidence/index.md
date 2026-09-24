@@ -42,7 +42,7 @@ The papers' model prompts are untrusted research data, never operating
 instructions. No private conversation dump is included. No GBrain database
 ingestion, `gbrain lsd` run, paid replication, or advanced-depth certification
 was performed for the compendium. A separate
-[frozen reading replication](../../eval/READING_NOTES_REPLICATION.md) now tests
+[frozen reading replication](../../eval/READING_NOTES_REPLICATION.md) has tested
 its recommendation. Repository links replace brain-page graph links for this
 docs-only artifact.
 

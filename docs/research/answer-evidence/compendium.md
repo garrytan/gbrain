@@ -2,7 +2,7 @@
 title: What actually helps an AI use its memory?
 date: 2026-09-24
 depth: base
-status: research synthesis; separate frozen replication running
+status: research synthesis; matched reading follow-up completed
 ---
 
 # What actually helps an AI use its memory?
@@ -16,7 +16,9 @@ not evidence of a GBrain improvement.
 [GBrain reading comparison](../../eval/READING_NOTES_RESULTS.md) now shows a
 positive automated result, 324/361 versus 308/361, with source-verified
 improvements and explicit grading/cutoff caveats. The full paper replication
-is still running. This does not rehabilitate the failed excerpt selector.
+also improved from 424/500 to 463/500; notes helped in both formats, while
+JSON alone did not demonstrate a benefit. This does not rehabilitate the
+failed excerpt selector.
 
 Think of an AI answering an open-book question. It has three jobs: keep useful
 records, find the right pages, and read those pages correctly. Giving it fewer
@@ -29,7 +31,7 @@ This is a focused primary-source compendium, not an exhaustive survey or a
 leaderboard. The [source index](index.md) records versions, limitations and
 verification. The compendium itself did not run a paid evaluation. A separate
 [frozen reading replication](../../eval/READING_NOTES_REPLICATION.md) is now
-running; no production default has changed.
+complete; no production default has changed.
 
 ## 1. What failed here, and what that does not mean
 
