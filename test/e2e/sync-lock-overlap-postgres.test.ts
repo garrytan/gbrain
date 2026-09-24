@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import postgres from 'postgres';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { makeGitFixture } from '../helpers/git-fixture.ts';
+import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const cli = resolve(import.meta.dir, '../../src/cli.ts');
@@ -19,12 +20,16 @@ describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
     mkdirSync(repo);
     const source = `lock-test-${crypto.randomUUID().slice(0, 8)}`;
     const lockKey = `gbrain-sync:${source}`;
-    const sql = postgres(databaseUrl!, { max: 2, onnotice: () => {} });
+    const database = await isolatedPersistencePostgres(databaseUrl!);
+    const [{ name }] = await database.engine.executeRaw<{ name: string }>('SELECT current_database() AS name');
+    const isolatedUrl = new URL(databaseUrl!);
+    isolatedUrl.pathname = `/${name}`;
+    const sql = postgres(isolatedUrl.toString(), { max: 2, onnotice: () => {} });
     const children: ReturnType<typeof Bun.spawn>[] = [];
     let barrier: Awaited<ReturnType<typeof sql.reserve>> | undefined;
     const env = {
       PATH: process.env.PATH!, HOME: home, GBRAIN_HOME: home,
-      DATABASE_URL: databaseUrl!, GBRAIN_DATABASE_URL: databaseUrl!,
+      DATABASE_URL: isolatedUrl.toString(), GBRAIN_DATABASE_URL: isolatedUrl.toString(),
       GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_NO_GITIGNORE: '1',
     };
     const spawn = (args: string[]) => {
@@ -56,7 +61,7 @@ describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
         writeFileSync(join(repo, `${name}.md`), `---\ntitle: Lock fixture ${name}\ntype: note\n---\n\nGeneric lock fixture ${name}.\n`);
       }
       fixture.commitAll('seed lock fixtures');
-      await run(['init', '--non-interactive', '--no-embedding', '--url', databaseUrl!]);
+      await run(['init', '--non-interactive', '--no-embedding', '--url', isolatedUrl.toString()]);
       await run(['sources', 'add', source, '--path', repo, '--no-federated']);
 
       barrier = await sql.reserve();
@@ -121,6 +126,7 @@ describe.skipIf(!databaseUrl)('sync lock overlap on Postgres', () => {
       await sql`DELETE FROM facts WHERE source_id = ${source}`;
       await sql`DELETE FROM sources WHERE id = ${source}`;
       await sql.end();
+      await database.close();
       rmSync(home, { recursive: true, force: true });
     }
   }, 180_000);
