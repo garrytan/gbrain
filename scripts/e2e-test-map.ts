@@ -17,6 +17,12 @@
 export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/company-brain/receipts.ts": ["test/e2e/company-brain-receipts.test.ts"],
   "src/core/company-brain/receipt-schema.ts": ["test/e2e/company-brain-receipts.test.ts"],
+  "src/core/attachments/integrity.ts": ["test/e2e/attachments.test.ts", "test/e2e/attachments-oauth.test.ts"],
+  "src/core/attachments/schema.ts": ["test/e2e/attachments.test.ts"],
+  "src/core/attachments/context.ts": ["test/e2e/attachments.test.ts"],
+  "src/core/attachments/write.ts": ["test/e2e/attachments.test.ts", "test/e2e/attachments-oauth.test.ts"],
+  "src/core/attachments/read.ts": ["test/e2e/attachments.test.ts"],
+  "src/core/ops/attachments.ts": ["test/e2e/attachments.test.ts"],
   "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
   "src/core/harness/**": ["test/e2e/harness-access.test.ts", "test/e2e/shared-skills-transports.test.ts"],
   "src/core/shared-skills/**": ["test/e2e/shared-skills-transports.test.ts", "test/e2e/shared-skills-rls.test.ts", "test/e2e/persistence-skill-bundles-postgres.test.ts"],

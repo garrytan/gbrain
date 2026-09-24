@@ -106,6 +106,7 @@ test('memo: stale hash is terminal — tar never read, repeat calls short-circui
 const schemaInputs = [
   'migrate.ts', 'pglite-schema.ts', 'fts-language.ts', 'vector-index.ts', 'ai/defaults.ts',
   'search/projection-statistics.ts',
+    'attachments/schema.ts',
   'company-brain/receipt-schema.ts',
   'shared-skills/schema-all.ts', 'shared-skills/schema.ts', 'shared-skills/membership-schema.ts', 'shared-skills/persistence-schema.ts',
   'shared-skills/access-schema.ts',

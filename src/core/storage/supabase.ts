@@ -1,3 +1,4 @@
+import { boundedBody, checkContentRange, rangeBounds } from './range.ts';
 import type { StorageBackend, StorageConfig } from '../storage.ts';
 
 /** Size thresholds for upload method selection */
@@ -150,6 +151,24 @@ export class SupabaseStorage implements StorageBackend {
         }
       }
     }
+  }
+
+  async downloadRange(path: string, offset: number, length: number, size: number): Promise<Buffer> {
+    rangeBounds(offset, length, size);
+    const res = await this.fetchImpl(this.url(path), { method: length ? 'GET' : 'HEAD',
+      headers: { ...this.headers(), ...(length ? { Range: `bytes=${offset}-${offset + length - 1}` } : {}) } });
+    try {
+      if (!length) {
+        if (!res.ok || res.headers.get('content-length') !== String(size)) throw new Error('Storage object size changed');
+        await res.body?.cancel();
+        return Buffer.alloc(0);
+      }
+      if (res.status !== 206 || !res.body) throw new Error('Storage did not return the requested range');
+      checkContentRange(res.headers.get('content-range'), offset, length, size);
+      const declared = res.headers.get('content-length');
+      if (declared !== null && declared !== String(length)) throw new Error('Unexpected storage range length');
+    } catch (error) { await res.body?.cancel().catch(() => {}); throw error; }
+    return boundedBody(res.body!, length);
   }
 
   async download(path: string): Promise<Buffer> {

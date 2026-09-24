@@ -1,3 +1,5 @@
+import { open } from 'node:fs/promises';
+import { rangeBounds } from './range.ts';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import type { StorageBackend } from '../storage.ts';
@@ -32,6 +34,25 @@ export class LocalStorage implements StorageBackend {
     const full = this.contained(path);
     if (!existsSync(full)) throw new Error(`File not found in storage: ${path}`);
     return readFileSync(full);
+  }
+
+  async downloadRange(path: string, offset: number, length: number, size: number): Promise<Buffer> {
+    rangeBounds(offset, length, size);
+    const full = realpathSync(this.contained(path));
+    this.contained(full);
+    const file = await open(full, 'r');
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || stat.size !== size) throw new Error('Storage object size changed');
+      const data = Buffer.alloc(length);
+      let total = 0;
+      while (total < length) {
+        const { bytesRead } = await file.read(data, total, length - total, offset + total);
+        if (!bytesRead) throw new Error('Truncated storage range');
+        total += bytesRead;
+      }
+      return data;
+    } finally { await file.close(); }
   }
 
   async delete(path: string): Promise<void> {

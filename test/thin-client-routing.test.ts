@@ -84,6 +84,15 @@ function soleCall(): { tool: string; args: Record<string, unknown> } {
 }
 
 describe('routeThinClientCommand — (a) op name + param mapping per route', () => {
+  test('files list routes page/source and cursor to the native attachment catalogue', async () => {
+    expect(await routeThinClientCommand(cfg, 'files', ['list', 'notes/report', '--source', 'research', '--after-id', '42'])).toBe(true);
+    expect(soleCall()).toEqual({ tool: 'attachment_list', args: { page_slug: 'notes/report', source_id: 'research', after_id: 42 } });
+  });
+
+  test('host file administration does not fall through to remote attachment mutation', async () => {
+    expect(await routeThinClientCommand(cfg, 'files', ['verify'])).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
   test('takes list: positional slug → page_slug, --who → holder, --kind passthrough', async () => {
     expect(await routeThinClientCommand(cfg, 'takes', ['list', 'people/alice-example', '--who', 'world', '--kind', 'fact'])).toBe(true);
     expect(soleCall()).toEqual({

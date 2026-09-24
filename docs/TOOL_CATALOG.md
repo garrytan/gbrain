@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 133 tools across 23 areas. **Starter** marks membership in the ~38-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 139 tools across 24 areas. **Starter** marks membership in the ~44-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -59,6 +59,17 @@ Every non-localOnly operation on the MCP surface: 133 tools across 23 areas. **S
 | `entity_identity_list` | List cross-source entity identity groups and their member pages. | read |  |  |
 | `extract_entities` | Extract entity names (people, companies) from text and create/update their brain stub pages. | write |  |  |
 | `extraction_pending` | List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). | read |  |  |
+
+## files
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `attachment_abort` | Cancel your pending attachment upload and discard its staged chunks. | write | yes |  |
+| `attachment_begin` | Begin a resumable binary attachment upload (maximum 64 MiB) to an existing page. | write | yes |  |
+| `attachment_complete` | Verify every chunk and the complete SHA-256, write to configured storage, read back and verify, then publish attachment metadata. | write | yes |  |
+| `attachment_list` | List attachment metadata for a readable page, including original filenames, sizes and SHA-256 hashes. | read | yes |  |
+| `attachment_read` | Download up to 256 KiB of a page attachment as base64. | read | yes |  |
+| `attachment_write` | Store one attachment chunk. | write | yes |  |
 
 ## identity
 

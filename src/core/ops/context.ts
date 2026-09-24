@@ -305,6 +305,8 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
   'put_page', 'delete_page', 'restore_page', 'add_tag', 'remove_tag',
   'add_link', 'remove_link', 'add_timeline_entry', 'revert_version',
   'put_raw_data', 'think',
+  // Every attachment write resolves its current owning page and checks both fences.
+  'attachment_begin', 'attachment_write', 'attachment_complete', 'attachment_abort',
   // submit_agent enforces bound_slug_prefixes itself (it is the op the column
   // was introduced for — see its bound_* binding check), so denying it here
   // would break the original feature for clients that legitimately hold both

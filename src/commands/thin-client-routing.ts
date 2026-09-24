@@ -62,6 +62,30 @@ export async function routeThinClientCommand(
   const sub = args[0];
   const rest = args.slice(1);
 
+  if (command === 'files' && ['upload', 'download', 'list'].includes(sub)) {
+    const { uploadAttachment, downloadAttachment } = await import('./attachment-transfer.ts');
+    const invoke = (name: string, params: Record<string, unknown>) => call(cfg, name, params);
+    const source = flagValue(rest, '--source');
+    if (sub === 'upload') {
+      const slug = flagValue(rest, '--page');
+      if (!rest[0] || rest[0].startsWith('-') || !slug) usageExit('Usage: gbrain files upload <file> --page <slug> [--request-id <uuid>] [--source <id>]');
+      const id = flagValue(rest, '--request-id') ?? crypto.randomUUID();
+      console.error(`Attachment request ID: ${id} (reuse --request-id on retry)`);
+      printJson(await uploadAttachment(invoke, rest[0], slug, id, source));
+    } else if (sub === 'download') {
+      const output = flagValue(rest, '--output');
+      const id = Number(rest[0]);
+      if (!output || !Number.isSafeInteger(id) || id < 1) usageExit('Usage: gbrain files download <attachment-id> --output <new-file>');
+      printJson(await downloadAttachment(invoke, id, output));
+    } else {
+      const slug = flagValue(rest, '--page') ?? (rest[0] && !rest[0].startsWith('-') ? rest[0] : undefined);
+      if (!slug) usageExit('Usage: gbrain files list <page-slug> [--source <id>] [--after-id <id>]');
+      printJson(await invoke('attachment_list', { page_slug: slug, ...(source ? { source_id: source } : {}),
+        ...(flagValue(rest, '--after-id') ? { after_id: Number(flagValue(rest, '--after-id')) } : {}) }));
+    }
+    return true;
+  }
+
   if (command === 'takes') {
     switch (sub) {
       case 'list': {

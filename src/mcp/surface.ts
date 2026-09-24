@@ -99,6 +99,8 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   'get_write_request', 'list_write_requests', 'cancel_write_request',
   'list_skills', 'get_skill', 'list_brain_skillpack', 'get_skill_asset',
   'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',
+  'attachment_begin', 'attachment_write', 'attachment_complete',
+  'attachment_abort', 'attachment_list', 'attachment_read',
 ]);
 
 /**
@@ -122,6 +124,8 @@ export const ALWAYS_INCLUDED_STARTER_OPS: ReadonlySet<string> = new Set([
   'get_write_request', 'list_write_requests', 'cancel_write_request',
   'list_skills', 'get_skill', 'list_brain_skillpack', 'get_skill_asset',
   'join_brain', 'sync_brain_skills', 'leave_brain', 'put_skill', 'delete_skill',
+  'attachment_begin', 'attachment_write', 'attachment_complete',
+  'attachment_abort', 'attachment_list', 'attachment_read',
 ]);
 
 /** Strict flag parser — unknown values reject loudly (parseStdioIdleTimeout pattern). */

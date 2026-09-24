@@ -8,6 +8,8 @@
 export interface StorageBackend {
   upload(path: string, data: Buffer, mime?: string): Promise<void>;
   download(path: string): Promise<Buffer>;
+  /** Exact range from an object of the expected size; reject changed size or ignored ranges. */
+  downloadRange?(path: string, offset: number, length: number, size: number): Promise<Buffer>;
   delete(path: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   list(prefix: string): Promise<string[]>;

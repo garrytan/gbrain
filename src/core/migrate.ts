@@ -1,3 +1,4 @@
+import { ATTACHMENT_SCHEMA_SQL } from './attachments/schema.ts';
 import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-schema.ts';
 import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
 import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
@@ -6660,6 +6661,7 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
       return Boolean(row?.heads && row?.members && row?.protocol);
     },
   },
+  { version: 165, name: 'resumable_mcp_attachments', idempotent: true, sql: ATTACHMENT_SCHEMA_SQL },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

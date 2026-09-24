@@ -1,3 +1,4 @@
+import { boundedBody, checkContentRange, rangeBounds } from './range.ts';
 import {
   S3Client,
   PutObjectCommand,
@@ -61,6 +62,24 @@ export class S3Storage implements StorageBackend {
     }));
     if (!res.Body) throw new Error(`S3 download returned empty body: ${path}`);
     return Buffer.from(await res.Body.transformToByteArray());
+  }
+
+  async downloadRange(path: string, offset: number, length: number, size: number): Promise<Buffer> {
+    rangeBounds(offset, length, size);
+    if (!length) {
+      const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: path }));
+      if (head.ContentLength !== size) throw new Error('Storage object size changed');
+      return Buffer.alloc(0);
+    }
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: path,
+      Range: `bytes=${offset}-${offset + length - 1}` }));
+    if (!res.Body) throw new Error('Empty storage range body');
+    const stream = res.Body.transformToWebStream();
+    try {
+      if (res.$metadata.httpStatusCode !== 206 || res.ContentLength !== length) throw new Error('Storage did not return the exact requested range');
+      checkContentRange(res.ContentRange, offset, length, size);
+    } catch (error) { await stream.cancel().catch(() => {}); throw error; }
+    return boundedBody(stream, length);
   }
 
   async delete(path: string): Promise<void> {

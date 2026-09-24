@@ -2053,7 +2053,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'compile-context': 'compile-context compiles from the local brain; run it on the host install.',
   // v0.32 audit additions
   pages: '`pages purge-deleted` is admin+localOnly (hard-deletes from the local DB). Run on the host.',
-  files: '`files list` and `files url` MCP ops are localOnly (paths live on the host filesystem). Use `gbrain files` on the host machine.',
+  files: 'Remote files supports upload <file> --page <slug>, list <slug>, and download <id> --output <file> via native attachment MCP tools. Other files commands require the host.',
   eval: '`eval` export/prune/replay touch the local engine and have no MCP equivalents. Run `gbrain eval` on the host.',
   'code-def': '`code-def` needs symbol-aware lookup that has no MCP op yet. Run on the host or use `search` from your agent with a symbol-shaped query.',
   'code-refs': '`code-refs` has no MCP op yet. Run on the host.',
