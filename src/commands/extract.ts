@@ -450,6 +450,13 @@ function inferTypeByDir(fromDir: string, toDir: string, frontmatter?: Record<str
   return 'mentions';
 }
 
+async function loadSourceLinkPacks(engine: BrainEngine, sourceIds: string[], packs: Map<string, LinkExtractionPack | null>) {
+  for (const sourceId of new Set(sourceIds)) {
+    if (packs.has(sourceId)) continue;
+    packs.set(sourceId, (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null);
+  }
+}
+
 function loadFsPageTypes(files: ReadonlyArray<{ path: string; relPath: string }>, pack: LinkExtractionPack | null): Map<string, string> {
   const types = new Map<string, string>();
   const activePack = pack?.page_types ? { page_types: pack.page_types } : undefined;
@@ -1248,7 +1255,7 @@ async function extractForSlugs(
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: active pack loaded once per run for pack-aware link typing +
   // pack frontmatter_links.
-  const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  const pack = (await loadActivePackForLocalEngine(engine, { sourceId: sourceId ?? 'default' }))?.manifest ?? null;
   if (doLinks && !pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(allFiles, pack);
   const ownership = !dryRun && doLinks ? await fileLinkOwnership(engine, sourceId ?? 'default') : undefined;
@@ -1405,7 +1412,7 @@ async function extractLinksFromDir(
   // match for bare wikilinks like `[[struktura]]`.
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware typing + pack frontmatter_links (loaded once per walk).
-  const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  const pack = (await loadActivePackForLocalEngine(engine, { sourceId: sourceId ?? 'default' }))?.manifest ?? null;
   if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(files, pack);
   const ownership = dryRun ? undefined : await fileLinkOwnership(engine, sourceId ?? 'default');
@@ -1619,10 +1626,10 @@ export async function extractLinksForSlugs(
   // Issue #972: same flag as the standalone extract path.
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware typing on the sync inline hook too.
-  const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  const sourceId = opts?.sourceId ?? 'default';
+  const pack = (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null;
   if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(allFiles, pack);
-  const sourceId = opts?.sourceId ?? 'default';
   const ownership = await fileLinkOwnership(engine, sourceId);
   // #4999: resolved HERE, like isGlobalBasenameEnabled above, so every caller
   // (sync, GitHub/Google source inline extracts) honours the configured
@@ -1737,11 +1744,6 @@ async function extractLinksFromDB(
   // Issue #972: opt-in global-basename wikilink resolution. Read once
   // per extract run; threaded into each extractPageLinks call.
   const globalBasename = await isGlobalBasenameEnabled(engine);
-  // #3190: active schema pack, loaded ONCE per run — pack-declared link
-  // verbs (link_types[].inference) + frontmatter_links apply during
-  // extraction instead of being silently ignored.
-  const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
-  if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   // Issue #2589: opt-in cross-source edges (deterministic to_source_id pick);
   // off, cross-source-only candidates are counted, never silently dropped.
   const crossSource = await isCrossSourceLinksEnabled(engine);
@@ -1785,6 +1787,7 @@ async function extractLinksFromDB(
   // The resolver maps above are built from the UNFILTERED refs — link
   // targets outside the window must still resolve.
   const walkRefs = filterRefsSince(allRefs, since);
+  const packs = new Map<string, LinkExtractionPack | null>();
   // #3478: the 'default' fallback in resolveCandidateSources is a federation
   // feature — an isolated source must not regrow cross-source edges on every
   // sweep. Sources absent from the table (or archived) fail closed to isolated.
@@ -1792,6 +1795,9 @@ async function extractLinksFromDB(
     (await loadAllSources(engine, { federatedOnly: true })).map(source => source.id),
   );
   const targetMetadata = new Map((await loadLinkPageMetadata(engine)).map(p => [`${p.source_id}\0${p.slug}`, p]));
+  await loadSourceLinkPacks(engine, walkRefs.filter(ref => !typeFilter
+    || targetMetadata.get(`${ref.source_id}\0${ref.slug}`)?.type === typeFilter).map(ref => ref.source_id), packs);
+  if ([...packs.values()].some(pack => !pack)) throw new Error('Cannot extract links: active schema pack is unavailable.');
   let processed = 0, created = 0;
   let skippedAttendanceIncomplete = 0;
   // #2576: skipped-candidate counter — see extractStaleFromDB's twin.
@@ -1817,6 +1823,9 @@ async function extractLinksFromDB(
     if (!snapshot) continue;
     const page = snapshot.page;
     if (typeFilter && page.type !== typeFilter) continue;
+    await loadSourceLinkPacks(engine, [source_id], packs);
+    const pack = packs.get(source_id);
+    if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
     const batch: LinkBatchInput[] = [];
     if (!resolvers.has(source_id)) resolvers.set(source_id, makeResolver(engine, { mode: 'batch', sourceId: source_id }));
     const resolver = resolvers.get(source_id)!;
@@ -2109,9 +2118,7 @@ export async function extractStaleFromDB(
   // extractLinksFromDB (including the codex-[P1] `sourceId` scoping).
   const resolvers = new Map<string, ReturnType<typeof makeResolver>>();
   const globalBasename = await isGlobalBasenameEnabled(engine);
-  // #3190: pack-aware verbs + frontmatter_links (see extractLinksFromDB).
-  const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
-  if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
+  const packs = new Map<string, LinkExtractionPack | null>();
   // Issue #2589: mirrors extractLinksFromDB (see resolveCandidateSources).
   const crossSource = await isCrossSourceLinksEnabled(engine);
   // #4611: mirrors extractLinksFromDB — configured default, resolved once.
@@ -2140,6 +2147,7 @@ export async function extractStaleFromDB(
   let linksCreated = 0, timelineCreated = 0, pagesProcessed = 0;
   let skippedAttendanceIncomplete = 0;
   let budgetHit = false;
+  let packUnavailable = false;
   // #2576: candidates whose endpoint pages don't exist are skipped, not
   // persisted. Counted so a dropped reference is observable in the summary
   // instead of vanishing silently (the failure mode that hid bug 2).
@@ -2155,11 +2163,18 @@ export async function extractStaleFromDB(
       batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
     });
     if (rows.length === 0) break;
+    await loadSourceLinkPacks(engine, rows.map(page => page.source_id), packs);
 
     const timelineRows: TimelineBatchInput[] = [];
     const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
 
     for (const page of rows) {
+      const pack = packs.get(page.source_id);
+      if (!pack) {
+        if (sourceIdFilter) throw new Error('Cannot extract links: active schema pack is unavailable.');
+        packUnavailable = true;
+        continue;
+      }
       const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
       if (!snapshot) throw new Error('Link extraction origin changed during the stale scan');
       const fullContent = snapshot.page.compiled_truth + '\n' + snapshot.page.timeline;
@@ -2230,14 +2245,15 @@ export async function extractStaleFromDB(
     // failure surfaces instead of looping forever.
     await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
 
-    pagesProcessed += rows.length;
-    progress.tick(rows.length);
+    pagesProcessed += processedRefs.length;
+    progress.tick(processedRefs.length);
     afterPageId = rows[rows.length - 1]!.id;
 
     if (!catchUp && Date.now() - startMs > timeBudgetMs) { budgetHit = true; break; }
   }
 
   progress.finish();
+  if (packUnavailable) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
 
   if (!jsonMode) {

@@ -57,6 +57,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       rmSync(root, { recursive: true, force: true });
       mkdirSync(root, { recursive: true });
       await engine.setConfig('schema_pack', 'attendance-fixture');
+      await engine.setConfig(`schema_pack.source.${sourceId}`, '');
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]);
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [sourceId]);
       await seed(person, 'person', 'An example engineer.');
@@ -114,6 +115,40 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       });
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch', 'prepare', 'sweep', 'db', 'stale']) {
+      for (const [globalPack, sourcePack, incoming] of [
+        ['attendance-fixture', 'gbrain-base', false],
+        ['gbrain-base', 'attendance-fixture', true],
+        ['missing-example-pack', 'attendance-fixture', true],
+      ] as const) test(`${lane}: source-selected ${sourcePack} overrides global ${globalPack}`, async () => {
+        await engine.setConfig('schema_pack', globalPack);
+        await engine.setConfig(`schema_pack.source.${sourceId}`, sourcePack);
+        await seed(meeting, 'meeting', positive);
+        const exit = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`Extraction exited with code ${code}`); });
+        try { await extract(lane, true); } finally { exit.mockRestore(); }
+        expect((await engine.getBacklinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 1 : 0);
+        expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 0 : 1);
+      });
+      test(`${lane}: unavailable source-selected ontology preserves graph and watermark`, async () => {
+        await engine.setConfig('schema_pack', 'gbrain-base');
+        await seed(meeting, 'meeting', positive);
+        await extract('db');
+        const rows = () => engine.executeRaw('SELECT l.* FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 ORDER BY l.id', [sourceId]);
+        const before = await rows();
+        expect(before).toHaveLength(1);
+        await engine.setConfig('schema_pack', 'attendance-fixture');
+        await engine.setConfig(`schema_pack.source.${sourceId}`, 'missing-example-pack');
+        await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1 AND slug=$2', [sourceId, meeting]);
+        if (lane === 'db') {
+          const diagnostic = spyOn(console, 'error').mockImplementation(() => {});
+          const exit = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`Extraction exited with code ${code}`); });
+          try { await expect(extract(lane, true)).rejects.toThrow('Extraction exited with code 1'); }
+          finally { exit.mockRestore(); diagnostic.mockRestore(); }
+        } else if (['stale', 'fs-sync', 'fs-incremental', 'fs-batch'].includes(lane)) {
+          await expect(extract(lane, true)).rejects.toThrow('schema pack');
+        } else await extract(lane, true);
+        expect(await rows()).toEqual(before);
+        expect((await engine.executeRaw<{ value: string | null }>('SELECT links_extracted_at AS value FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, meeting]))[0].value).toBeNull();
+      });
       test(`${lane}: inline commented people do not become attendees`, async () => {
         await seed('people/hidden-example', 'person', 'A hidden reference, not attendance.');
         await seed(meeting, 'meeting', `${positive} <!-- [Hidden](../people/hidden-example.md) -->`);
@@ -300,6 +335,146 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         await seed(meeting, 'meeting', 'No attendance evidence remains.');
         await extract(lane);
         expect(await attendees()).toEqual([]);
+      });
+    }
+    for (const lane of ['db', 'stale']) {
+      test(`${lane}: mixed-source extraction resolves each origin's pack for identical slugs`, async () => {
+        const other = 'attendance-other-example';
+        await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [other]);
+        try {
+          await engine.setConfig(`schema_pack.source.${sourceId}`, 'gbrain-base');
+          await engine.setConfig(`schema_pack.source.${other}`, 'attendance-fixture');
+          await seed(meeting, 'meeting', positive);
+          await engine.putPage(person, { type: 'person', title: 'Alice Example', compiled_truth: 'Other source.' }, { sourceId: other });
+          await engine.putPage(meeting, { type: 'meeting', title: 'Planning', compiled_truth: positive }, { sourceId: other });
+          const output = spyOn(console, 'log').mockImplementation(() => {});
+          try {
+            if (lane === 'db') await runExtract(engine, ['all', '--source', 'db', '--json']);
+            else await extractStaleFromDB(engine, { quiet: true, dryRun: false, jsonMode: false, catchUp: true });
+          } finally { output.mockRestore(); }
+          expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toHaveLength(1);
+          expect((await engine.getBacklinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toEqual([]);
+          expect((await engine.getLinks(meeting, { sourceId: other })).filter(row => row.link_type === 'attended')).toEqual([]);
+          expect((await engine.getBacklinks(meeting, { sourceId: other })).filter(row => row.link_type === 'attended')).toHaveLength(1);
+          await engine.setConfig(`schema_pack.source.${other}`, 'missing-example-pack');
+          await seed(meeting, 'meeting', `${positive}\nAn unrelated edit.`);
+          await extract(lane, true);
+          expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toHaveLength(1);
+        } finally {
+          await engine.executeRaw('DELETE FROM sources WHERE id=$1', [other]);
+          await engine.setConfig(`schema_pack.source.${other}`, '');
+        }
+      });
+    }
+    test('db: type-filtered extraction does not load an unrelated source pack', async () => {
+      const other = 'attendance-other-example';
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [other]);
+      const output = spyOn(console, 'log').mockImplementation(() => {});
+      const diagnostic = spyOn(console, 'error').mockImplementation(() => {});
+      const exit = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`Extraction exited with code ${code}`); });
+      try {
+        await seed(meeting, 'meeting', positive);
+        await engine.putPage(person, { type: 'person', title: 'Alice Example', compiled_truth: 'Other source.' }, { sourceId: other });
+        await engine.setConfig(`schema_pack.source.${other}`, 'missing-example-pack');
+        await runExtract(engine, ['links', '--source', 'db', '--type', 'meeting', '--json']);
+        expect(await attendees()).toEqual([person]);
+      } finally {
+        output.mockRestore(); diagnostic.mockRestore(); exit.mockRestore();
+        await engine.executeRaw('DELETE FROM sources WHERE id=$1', [other]);
+        await engine.setConfig(`schema_pack.source.${other}`, '');
+      }
+    });
+    test('db: unavailable selected source fails preflight before any healthy graph or combined watermark changes', async () => {
+      const other = 'attendance-other-example';
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [other]);
+      const output = spyOn(console, 'log').mockImplementation(() => {});
+      const diagnostic = spyOn(console, 'error').mockImplementation(() => {});
+      const exit = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`Extraction exited with code ${code}`); });
+      try {
+        await seed(meeting, 'meeting', positive);
+        await engine.putPage(meeting, { type: 'meeting', title: 'Planning', compiled_truth: 'Other source.' }, { sourceId: other });
+        await engine.setConfig(`schema_pack.source.${other}`, 'missing-example-pack');
+        await expect(runExtract(engine, ['all', '--source', 'db', '--json'])).rejects.toThrow('Extraction exited with code 1');
+        expect(await attendees()).toEqual([]);
+        expect((await engine.executeRaw<{ value: string | null }>('SELECT links_extracted_at AS value FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, meeting]))[0].value).toBeNull();
+      } finally {
+        output.mockRestore(); diagnostic.mockRestore(); exit.mockRestore();
+        await engine.executeRaw('DELETE FROM sources WHERE id=$1', [other]);
+        await engine.setConfig(`schema_pack.source.${other}`, '');
+      }
+    });
+    test('stale: an unavailable first source does not starve healthy later batches or become successful', async () => {
+      const other = 'attendance-other-example';
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [other]);
+      const list = engine.listStalePagesForExtraction.bind(engine);
+      const batches = spyOn(engine, 'listStalePagesForExtraction').mockImplementation(opts => list({ ...opts, batchSize: 1 }));
+      try {
+        await seed(meeting, 'meeting', positive);
+        await engine.addLinksBatch([{ from_slug: meeting, to_slug: person, from_source_id: sourceId, to_source_id: sourceId,
+          link_type: 'attended', link_source: 'markdown', origin_slug: meeting, origin_source_id: sourceId }]);
+        const before = await engine.getLinks(meeting, { sourceId });
+        await engine.setConfig(`schema_pack.source.${sourceId}`, 'missing-example-pack');
+        await engine.putPage(person, { type: 'person', title: 'Alice Example', compiled_truth: 'Other source.' }, { sourceId: other });
+        await engine.putPage(meeting, { type: 'meeting', title: 'Planning', compiled_truth: positive }, { sourceId: other });
+        const drain = () => extractStaleFromDB(engine, { quiet: true, dryRun: false, jsonMode: false, catchUp: true });
+        await expect(drain()).rejects.toThrow('schema pack');
+        expect(await engine.getLinks(meeting, { sourceId })).toEqual(before);
+        expect((await engine.executeRaw<{ value: string | null }>('SELECT links_extracted_at AS value FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, meeting]))[0].value).toBeNull();
+        expect((await engine.getBacklinks(meeting, { sourceId: other })).filter(row => row.link_type === 'attended')).toHaveLength(1);
+        expect((await engine.executeRaw<{ value: string | null }>('SELECT links_extracted_at AS value FROM pages WHERE source_id=$1 AND slug=$2', [other, meeting]))[0].value).not.toBeNull();
+        await engine.putPage(meeting, { type: 'meeting', title: 'Planning', compiled_truth: 'The supported evidence was removed.' }, { sourceId: other });
+        await expect(drain()).rejects.toThrow('schema pack');
+        expect((await engine.getBacklinks(meeting, { sourceId: other })).filter(row => row.link_type === 'attended')).toEqual([]);
+      } finally {
+        batches.mockRestore();
+        await engine.executeRaw('DELETE FROM sources WHERE id=$1', [other]);
+        await engine.setConfig(`schema_pack.source.${other}`, '');
+      }
+    });
+    for (const origin of [sourceId, 'default']) {
+      for (const [globalPack, sourcePack, incoming] of [
+        ['attendance-fixture', 'gbrain-base', false],
+        ['gbrain-base', 'attendance-fixture', true],
+        ['missing-example-pack', 'attendance-fixture', true],
+      ] as const) test(`local publication: source-selected ${origin}/${sourcePack} overrides global ${globalPack}`, async () => {
+        await engine.setConfig('schema_pack', globalPack);
+        await engine.setConfig(`schema_pack.source.${origin}`, sourcePack);
+        try {
+          await engine.putPage(person, { type: 'person', title: 'Alice Example', compiled_truth: 'An example.' }, { sourceId: origin });
+          const op = operations.find(op => op.name === 'put_page')!;
+          const result = await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId: origin,
+            dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting,
+            content: `---\ntype: meeting\ntitle: Planning\nattendees: ["${person}"]\n---\n${positive}` }) as { auto_links: { errors: number } };
+          expect(result.auto_links.errors).toBe(0);
+          expect((await engine.getBacklinks(meeting, { sourceId: origin })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 2 : 0);
+          expect((await engine.getLinks(meeting, { sourceId: origin })).filter(row => row.link_type === 'attended')).toHaveLength(incoming ? 0 : 2);
+        } finally {
+          await engine.setConfig(`schema_pack.source.${origin}`, '');
+          if (origin === 'default') await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [origin]);
+        }
+      });
+      test(`local publication: unavailable source-selected ${origin} pack saves the note but preserves the graph`, async () => {
+        await engine.setConfig(`schema_pack.source.${origin}`, 'gbrain-base');
+        try {
+          await engine.putPage(person, { type: 'person', title: 'Alice Example', compiled_truth: 'An example.' }, { sourceId: origin });
+          const op = operations.find(op => op.name === 'put_page')!;
+          const ctx = { engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId: origin,
+            dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+          const content = `---\ntype: meeting\ntitle: Planning\nattendees: ["${person}"]\n---\n${positive}`;
+          await op.handler(ctx, { slug: meeting, content });
+          const before = await engine.getLinks(meeting, { sourceId: origin });
+          expect(before.filter(row => row.link_type === 'attended')).toHaveLength(2);
+          const snapshot = (await engine.readPageSnapshot(meeting, { sourceId: origin }))!;
+          await engine.setConfig(`schema_pack.source.${origin}`, 'missing-example-pack');
+          const result = await op.handler(ctx, { slug: meeting, expected_revision: snapshot.revision,
+            content: `${content}\nThe note must survive.` }) as { auto_links: { errors: number; created: number; removed: number } };
+          expect(result.auto_links).toMatchObject({ errors: 1, created: 0, removed: 0 });
+          expect(await engine.getLinks(meeting, { sourceId: origin })).toEqual(before);
+          expect((await engine.getPage(meeting, { sourceId: origin }))!.compiled_truth).toContain('The note must survive.');
+        } finally {
+          await engine.setConfig(`schema_pack.source.${origin}`, '');
+          if (origin === 'default') await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [origin]);
+        }
       });
     }
     test('local publication discovers typed pack frontmatter before admitting edges and preserves unchanged row identity', async () => {

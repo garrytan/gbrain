@@ -9,7 +9,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>, sourceId: string) {
   const resolver = makeResolver(engine, { mode: 'live', sourceId });
   const opts = { globalBasename: await isGlobalBasenameEnabled(engine),
-    pack: (await loadActivePackForLocalEngine(engine))?.manifest ?? null };
+    pack: (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null };
   if (!opts.pack) return { pageKeys: [{ sourceId, slug }],
     apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };
   const content = `${page.compiled_truth}\n${page.timeline}`;
