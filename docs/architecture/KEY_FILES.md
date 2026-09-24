@@ -81,6 +81,3 @@ See [Agent bootstrap cluster (the paste-in desktop-agent install)](key-files/age
 ## Google connector + open-loop engine (key files cluster)
 
 See [Google connector + open-loop engine (key files cluster)](key-files/google-and-loops.md).
-
-- `src/core/attachments/` — scoped resumable attachment upload, verification and download.
-- `src/commands/attachment-transfer.ts` — verified thin-client file transfer loops.

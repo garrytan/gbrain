@@ -2,6 +2,46 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.57.0.0] - 2026-09-24
+
+**Keep original files beside your notes, even when your brain lives on another machine.**
+
+You can upload a workbook, PDF or dataset through your existing MCP connection and attach it to a readable page. The original bytes remain available for download, alongside the summary your agent writes. Uploading a workbook does not automatically index its cells.
+
+Transfers use resumable chunks and verify the complete file before acknowledging a save. If a connection drops, repeat the upload with the same request ID. Downloads verify the assembled file before creating the destination and refuse to overwrite an existing file.
+
+### How to use it
+
+Configure host attachment storage and a thin client's `remote_mcp` OAuth credentials, then run:
+
+```sh
+gbrain files upload './research.xlsx' --page wiki/research
+gbrain files list wiki/research
+gbrain files download 123 --output './restored.xlsx'
+```
+
+Existing clients need the six attachment operations added to their saved grants. The starter MCP surface includes them. See [Native MCP attachments](docs/attachments.md) for configuration, permissions and retry details.
+
+| Limit | Behavior |
+|---|---|
+| File size | Up to 64 MiB |
+| Transfer chunk | Up to 256 KiB decoded |
+| Pending uploads | Eight per source, expiring after 24 hours |
+| New-file downloads | Verified range reads; aligned transfers read one file worth of backend bytes |
+
+Keep both the database and attachment storage in your backups. Partial reads verify the returned chunks; the download client verifies the whole file. Existing files without a matching chunk manifest retain full-file verification. Storage failures can leave unregistered objects for operator reconciliation, so retry completion before abandoning an upload.
+
+## To take advantage of v0.57.0.0
+
+Upgrade normally and verify that database migration 165 has applied. Configure storage before uploading, preserve each client's existing grant restrictions when adding attachment operations, and test an upload/download round trip. Existing host-only file tools keep their restrictions; old slug-only records are not automatically exposed remotely.
+
+### Itemized changes
+
+- Add page/source-scoped resumable attachment operations over MCP and matching thin-client upload/list/download commands.
+- Verify requested ranges on local, S3-compatible and Supabase storage using chunk manifests recorded at upload completion.
+- Preserve upload ownership across token renewal and server restart; safely replay chunks and completion after uncertain outcomes.
+- Add backend bounds, corruption, privacy, migration, concurrency, failure recovery and OAuth transport tests.
+
 ## [0.56.1.0] - 2026-09-24
 
 **Meeting imports tell you what they could read, and crowded timelines no longer stall extraction.**
