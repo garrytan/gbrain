@@ -124,7 +124,7 @@ ones. They narrow the claim: there are real improvements, but the automated
 | `9aaed6a3` | Notes correctly distinguish the question's “last Thursday” from the older source's Thursday; the fixed reference does not. |
 | `gpt4_e05b82a6` | Notes extract an additional ride as at least one, then omit it from the final total of nine rather than ten. Unnecessary uncertainty discards useful evidence already identified. |
 | `81507db6` | Notes correctly exclude a missed ceremony. The third attended ceremony is in an unretrieved supporting session; the baseline reaches the reference count by including the wrong event. |
-| `6d550036` | Supporting sessions for an academic project are missing, while an unrelated retrieved session contributes work projects. The baseline reaches the reference number using the wrong projects; notes count three from the mixed context. This is not a clean, complete-evidence reader regression. |
+| `6d550036` | Supporting sessions for an academic project are missing, while a non-gold retrieved session contributes work projects. The baseline reaches the reference number using those work projects; notes count three from the mixed context. Matching the number does not demonstrate the expected supporting reasoning. |
 
 ## Response quality and cost
 
@@ -152,6 +152,8 @@ usage-priced accounting estimates, not provider invoices.
 ## Remaining work
 
 Finish the frozen four-condition, 500-question paper replication and report
-its results separately. Complete the independent source audit of every
-discordance and cutoff. Keep full-session presentation as the production
-default; do not infer rollout approval from a positive benchmark comparison.
+its results separately. A separate model has now audited every transfer
+discordance and cutoff without inspecting oracle outcomes; its source-level
+findings were checked against the stored records, not treated as replacement
+labels. Keep full-session presentation as the production default; do not
+infer rollout approval from a positive benchmark comparison.
