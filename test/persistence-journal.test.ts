@@ -133,6 +133,56 @@ describe('durable mutation journal', () => {
     await cancelWriteRequest(engine, a.principal, a.requestId!);
   });
 
+  test('contended admissions release PostgreSQL pool capacity for reads before the counter unlocks', async () => {
+    const engine = engines.find(candidate => candidate.kind === 'postgres');
+    if (!engine) return;
+    const inputs = await Promise.all(Array.from({ length: 3 }, (_, i) => admission(engine, `admission-reader-capacity-${i}`)));
+    await engine.executeRaw("INSERT INTO persistence_counters(key) VALUES('brain') ON CONFLICT DO NOTHING");
+    const [before] = await engine.executeRaw<{ lifetime_ids: string }>("SELECT lifetime_ids::text FROM persistence_counters WHERE key='brain'");
+    let release!: () => void; let held!: () => void; let attempted!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { held = resolve; });
+    const attemptsReady = new Promise<void>(resolve => { attempted = resolve; });
+    const attempts = new Set<string>();
+    const blocker = engine.transaction(async tx => {
+      await tx.executeRaw("SELECT key FROM persistence_counters WHERE key='brain' FOR UPDATE");
+      held(); await released;
+    });
+    const writes: Promise<Awaited<ReturnType<typeof admitWrite>>>[] = [];
+    let read: Promise<unknown> | undefined;
+    try {
+      await ready;
+      for (const input of inputs) {
+        const observed = new Proxy(engine, { get(target, property) {
+          if (property === 'transaction') return (run: (tx: BrainEngine) => Promise<unknown>) => target.transaction(tx => run(new Proxy(tx, { get(t, p) {
+            if (p === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
+              if (sql.startsWith('INSERT INTO persistence_counters') && params?.[0] === 'brain') {
+                attempts.add(input.requestId!);
+                if (attempts.size === inputs.length) attempted();
+              }
+              return t.executeRaw(sql, params, opts);
+            };
+            const value = Reflect.get(t, p); return typeof value === 'function' ? value.bind(t) : value;
+          } })));
+          const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+        } });
+        writes.push(admitWrite(observed, input));
+      }
+      expect(await Promise.race([attemptsReady.then(() => true), Bun.sleep(2000).then(() => false)])).toBe(true);
+      read = engine.executeRaw('SELECT 1 AS reader_progress');
+      expect(await Promise.race([read.then(() => true), Bun.sleep(200).then(() => false)])).toBe(true);
+    } finally { release(); await blocker; await Promise.allSettled(writes); await read; }
+    const accepted = await Promise.all(writes);
+    const [after] = await engine.executeRaw<{ lifetime_ids: string }>("SELECT lifetime_ids::text FROM persistence_counters WHERE key='brain'");
+    expect(Number(after.lifetime_ids) - Number(before.lifetime_ids)).toBe(inputs.length);
+    for (let i = 0; i < inputs.length; i++) {
+      expect(accepted[i].request_id).toBe(inputs[i].requestId!);
+      expect(accepted[i].state).toBe('queued');
+      expect((await admitWrite(engine, inputs[i])).id).toBe(accepted[i].id);
+      await cancelWriteRequest(engine, inputs[i].principal, inputs[i].requestId!);
+    }
+  }, 15000);
+
   test('activation rejects legacy canonical writers but accepts guarded publication', async () => {
     for (const engine of engines) {
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');

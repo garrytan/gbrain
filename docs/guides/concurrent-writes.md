@@ -262,8 +262,15 @@ serializes startup and remains held until the listener has actually closed.
 
 
 Admission retries confirmed database lock/serialization aborts for up to five
-seconds using the same UUID. Persistent contention returns a storage error with
-that UUID and no fabricated queued receipt. Keep the ID for the next attempt.
+seconds using the same UUID. Standalone journal admission limits each database
+lock wait to 10ms and backs off after rollback releases the connection. Confirmed
+lock-contention aborts use 5–25ms retry jitter; other retryable aborts retain
+25–100ms jitter. Waiting page writers release pool capacity between attempts
+instead of holding connections through long counter-lock waits.
+Persistent contention returns a storage error with that UUID and no fabricated
+queued receipt. Keep the ID for the next attempt. Admission inside a caller-owned
+transaction retains that transaction's lock policy; its caller is responsible for
+retrying the whole transaction after a confirmed abort.
 
 ## Frozen memory verbs
 
