@@ -261,10 +261,13 @@ test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	18	bun-file,doctor-source-helper,exec-scan,readFileSync
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
+test/scripts/e2e-runner.test.ts	second	2	readFileSync
+test/scripts/e2e-runner.test.ts	sequential E2E runner	7	readFileSync
 test/scripts/e2e-wiring.test.ts	e2e file claim ratchet	5	readFileSync
 test/scripts/e2e-wiring.test.ts	selected-e2e job wiring	6	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	4	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
+test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	3	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	6	readFileSync

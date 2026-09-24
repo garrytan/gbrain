@@ -12,9 +12,11 @@ const loadWorkflow = (name: string) => safeLoad(readFileSync(join(root, '.github
 const unit = loadWorkflow('test.yml');
 const e2e = loadWorkflow('e2e.yml');
 
-function aggregate(workflow: Workflow, name: string, event: string, results: Record<string, string>) {
+const fullProfile = "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)";
+function aggregate(workflow: Workflow, name: string, event: string, results: Record<string, string>, fullCorpus = false) {
   const script = workflow.jobs[name].steps.find(step => step.name === 'Aggregate result')!.run!
     .replace(/\$\{\{ needs\.([\w-]+)\.result \}\}/g, (_, job) => results[job] ?? 'success')
+    .replaceAll('${{ ' + fullProfile + ' }}', String(event === 'schedule' || (event === 'workflow_dispatch' && fullCorpus)))
     .replace(/\$\{\{ github.event_name \}\}/g, event);
   expect(script).not.toContain('${{');
   return spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8' }).status;
@@ -64,8 +66,10 @@ describe('CI execution evidence', () => {
     for (const job of needs) {
       for (const result of ['failure', 'cancelled', 'skipped']) {
         expect(aggregate(e2e, 'e2e-status', 'schedule', { [job]: result }), `${job}: ${result}`).toBe(1);
+        expect(aggregate(e2e, 'e2e-status', 'workflow_dispatch', { [job]: result }, true), `manual full ${job}: ${result}`).toBe(1);
       }
     }
+    expect(aggregate(e2e, 'e2e-status', 'workflow_dispatch', {}, true)).toBe(0);
   });
 
   test('admin manifest changes trigger the security scan and CI installs are frozen', () => {

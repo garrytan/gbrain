@@ -247,7 +247,22 @@ describe('required PgBouncer execution through run-e2e', () => {
         writeFileSync(join(bin, 'psql'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
         writeFileSync(join(bin, 'bun'), `#!/bin/sh
 printf '%s\\n' "$GBRAIN_PGBOUNCER_URL" "$GBRAIN_PGBOUNCER_DIRECT_URL" "$GBRAIN_CI_REQUIRE_PGBOUNCER" "$GBRAIN_TEST_DB" "\${GBRAIN_SOURCE-unset}" "\${COVERAGE_DIR:-disabled}" > "$ENV_REPORT"
-printf ' %s pass\\n 0 fail\\n' "$FAKE_PASSES"
+for arg do case "$arg" in --reporter-outfile=*) report="\${arg#*=}" ;; esac; done
+skips=0
+if [ "$FAKE_PASSES" -eq 0 ]; then skips=4; fi
+tests=$((FAKE_PASSES + skips))
+{
+  printf '<testsuites tests="%s" failures="0" skipped="%s">\\n  <testsuite file="test/e2e/pgbouncer-teardown.test.ts" tests="%s" failures="0" skipped="%s">\\n' "$tests" "$skips" "$tests" "$skips"
+  i=0
+  while [ "$i" -lt "$tests" ]; do
+    printf '<testcase name="pooler-%s">' "$i"
+    if [ "$FAKE_PASSES" -eq 0 ]; then printf '<skipped />'; fi
+    printf '</testcase>\\n'
+    i=$((i + 1))
+  done
+  printf '</testsuite>\\n</testsuites>\\n'
+} > "$report"
+printf 'bun test v1.3.13\\n\\ntest/e2e/pgbouncer-teardown.test.ts:\\n %s pass\\n %s skip\\n 0 fail\\nRan %s tests across 1 file. [1.00ms]\\n' "$FAKE_PASSES" "$skips" "$tests"
 if [ "$FAKE_OUTPUT_BYTES" -gt 0 ]; then printf '%*s\\n' "$FAKE_OUTPUT_BYTES" ''; fi
 exit "$FAKE_EXIT"
 `, { mode: 0o755 });

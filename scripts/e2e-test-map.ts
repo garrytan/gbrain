@@ -203,6 +203,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/connection-manager.ts": ["test/e2e/persistence-runtime-matrix.test.ts", "test/e2e/pgbouncer-teardown.test.ts"],
   "src/core/postgres-engine.ts": [
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
+    "test/e2e/fixture-reset-postgres.test.ts",
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/db-lock-acquisition-token.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
