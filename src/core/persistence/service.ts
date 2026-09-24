@@ -13,7 +13,7 @@ import { pendingWriteHint } from './health.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
-const receiptReads = new WeakMap<BrainEngine, { id: string; read: Promise<WriteRequest | null>; abort: AbortController }>();
+const receiptReads = new WeakMap<BrainEngine, Map<string, { read: Promise<WriteRequest | null>; abort: AbortController }>>();
 const preparers = new Map<string, { prepare: PrepareMutation; target: 'page' | 'skill_bundle' }>();
 export function registerMutationPreparer(operation: string, prepare: PrepareMutation, target: 'page' | 'skill_bundle' = 'page'): void {
   preparers.set(operation, { prepare, target });
@@ -69,10 +69,10 @@ export async function stopPersistenceConsumer(engine: BrainEngine): Promise<void
   const service = services.get(engine);
   if (!service) return;
   service.stopping = true;
-  const pending = receiptReads.get(engine);
-  pending?.abort.abort();
+  const pending = [...(receiptReads.get(engine)?.values() ?? [])];
+  for (const entry of pending) entry.abort.abort();
   await service.consumer.stop();
-  await pending?.read;
+  await Promise.all(pending.map(entry => entry.read));
 }
 /** Reset fixtures and drained lifecycle owners may discard a stopped service. */
 export async function disposePersistenceConsumer(engine: BrainEngine): Promise<void> {
@@ -99,27 +99,30 @@ export async function waitForWrite(engine: BrainEngine, row: WriteRequest, confi
   if (isTerminal(row)) return row;
   startPersistenceConsumer(engine, config);
   const service = services.get(engine)!;
+  let reads = receiptReads.get(engine);
+  if (!reads) { reads = new Map(); receiptReads.set(engine, reads); }
   const deadline = performance.now() + waitMs;
-  let delayNextRead = true;
   while (!service.stopping && performance.now() < deadline) {
-    if (delayNextRead) await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - performance.now()))));
+    await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - performance.now()))));
     const remaining = deadline - performance.now();
     if (service.stopping || remaining <= 0) break;
-    let pending = receiptReads.get(engine);
+    let pending = reads.get(row.id);
+    const ownsRead = !pending;
     if (!pending) {
+      if (reads.size >= 4) continue;
       const abort = new AbortController();
+      const id = row.id;
       const read = getWriteRequestById(engine, row.id, engine.kind === 'postgres' ? abort.signal : undefined)
-        .catch(() => null).finally(() => { if (receiptReads.get(engine)?.read === read) receiptReads.delete(engine); });
-      pending = { id: row.id, read, abort };
-      receiptReads.set(engine, pending);
+        .catch(() => null).finally(() => { if (reads.get(id)?.read === read) reads.delete(id); });
+      pending = { read, abort };
+      reads.set(id, pending);
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const found = await Promise.race([
       pending.read,
-      new Promise<null>(resolve => { timer = setTimeout(() => { pending.abort.abort(); resolve(null); }, remaining); }),
+      new Promise<null>(resolve => { timer = setTimeout(() => { if (ownsRead) pending.abort.abort(); resolve(null); }, remaining); }),
     ]).finally(() => { if (timer) clearTimeout(timer); });
-    delayNextRead = pending.id === row.id;
-    if (found && pending.id === row.id) row = found;
+    if (found) row = found;
     if (isTerminal(row)) return row;
   }
   return row;

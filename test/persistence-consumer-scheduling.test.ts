@@ -110,6 +110,93 @@ test.each(['queued', 'committed'] as const)('coalesced receipt reads preserve ea
   } finally { await disposePersistenceConsumer(proxy); }
 }), 5000);
 
+test('a stalled receipt read does not hide another request that already committed', async () => withEnv(env, async () => {
+  const release = Promise.withResolvers<never[]>();
+  const rows = Array.from({ length: 2 }, () => ({ id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest));
+  let entered = false;
+  const proxy = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+      if (sql === 'SELECT * FROM persistence_requests WHERE id=$1::uuid') {
+        if (params?.[0] === rows[0].id) { entered = true; return release.promise; }
+        return [{ ...rows[1], state: 'committed' }];
+      }
+      return target.executeRaw(sql, params);
+    };
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const consumer = startPersistenceConsumer(proxy, { engine: 'pglite' });
+  (consumer as unknown as { doTick(): Promise<void> }).doTick = async () => {};
+  const stalled = waitForWrite(proxy, rows[0], { engine: 'pglite' }, 1000);
+  try {
+    await waitFor(() => entered);
+    const found = await waitForWrite(proxy, rows[1], { engine: 'pglite' }, 250);
+    expect(found.id).toBe(rows[1].id);
+    expect(found.state).toBe('committed');
+  } finally { release.resolve([]); await disposePersistenceConsumer(proxy); await stalled; }
+}), 5000);
+
+test.each([false, true])('a shorter receipt waiter cannot abort another caller\'s read (same ID=%s)', sameId => withEnv(env, async () => {
+  const release = Promise.withResolvers<never[]>();
+  const row = { id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest;
+  const other = sameId ? row : { ...row, id: randomUUID(), request_id: randomUUID() };
+  let ownerSignal: AbortSignal | undefined;
+  const proxy = new Proxy(engine, { get(target, key) {
+    if (key === 'kind') return 'postgres';
+    if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+      if (args[0] === 'SELECT * FROM persistence_requests WHERE id=$1::uuid') {
+        if (args[1]?.[0] === row.id) ownerSignal = args[2]?.signal;
+        return release.promise;
+      }
+      return target.executeRaw(...args);
+    };
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const consumer = startPersistenceConsumer(proxy, { engine: 'postgres' });
+  (consumer as unknown as { doTick(): Promise<void> }).doTick = async () => {};
+  const owner = waitForWrite(proxy, row, { engine: 'postgres' }, 1000);
+  try {
+    await waitFor(() => ownerSignal !== undefined);
+    expect(await waitForWrite(proxy, other, { engine: 'postgres' }, 100)).toBe(other);
+    expect(ownerSignal!.aborted).toBe(false);
+  } finally { release.resolve([]); await disposePersistenceConsumer(proxy); await owner; }
+}), 5000);
+
+test('distinct stalled receipt reads stay capped and shutdown drains every retained read', async () => withEnv(env, async () => {
+  const releases = Array.from({ length: 4 }, () => Promise.withResolvers<never[]>());
+  let reads = 0, stopped = false;
+  const proxy = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+      if (sql === 'SELECT * FROM persistence_requests WHERE id=$1::uuid') {
+        const release = releases[reads++];
+        expect(release).toBeDefined();
+        return release.promise;
+      }
+      return target.executeRaw(sql, params);
+    };
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const consumer = startPersistenceConsumer(proxy, { engine: 'pglite' });
+  (consumer as unknown as { doTick(): Promise<void> }).doTick = async () => {};
+  const rows = Array.from({ length: 20 }, () => ({ id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest));
+  try {
+    expect(await Promise.all(rows.map(row => waitForWrite(proxy, row, { engine: 'pglite' }, 100)))).toEqual(rows);
+    expect(reads).toBe(4);
+    await waitForWrite(proxy, rows.at(-1)!, { engine: 'pglite' }, 100);
+    expect(reads).toBe(4);
+    const stopping = disposePersistenceConsumer(proxy).then(() => { stopped = true; });
+    for (const release of releases.slice(0, -1)) release.resolve([]);
+    await Bun.sleep(30);
+    expect(stopped).toBe(false);
+    releases.at(-1)!.resolve([]);
+    await stopping;
+    expect(stopped).toBe(true);
+    expect(reads).toBe(4);
+  } finally { for (const release of releases) release.resolve([]); await disposePersistenceConsumer(proxy); }
+}), 5000);
+
 for (const cooperates of [true, false]) test(`preparation deadline retains tracking and fences late results (cooperative=${cooperates})`, async () => withEnv(env, async () => {
   const sources = await fixtures(engine, config);
   const row = await admitWrite(engine, admission(config, sources[0], `deadline-${cooperates}`, 'deadline body'));

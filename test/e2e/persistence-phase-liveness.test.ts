@@ -10,6 +10,7 @@ import { waitFor } from '../helpers/wait-for.ts';
 import { admission, assertCommittedSnapshot, assertConservation, fixtures, initializeFixtures, prepared, selectFixtureHost, type HarnessConfig } from '../../scripts/persistence/harness.ts';
 import { admitWrite, claimNextWrite, getWriteRequestById, prepareRecovery, renewWriteClaim } from '../../src/core/persistence/journal.ts';
 import { PersistenceConsumer } from '../../src/core/persistence/consumer.ts';
+import { disposePersistenceConsumer, startPersistenceConsumer, waitForWrite } from '../../src/core/persistence/service.ts';
 import { sha256 } from '../../src/core/persistence/digest.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 
@@ -28,6 +29,41 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
       });
     } finally { await pg.close(); rmSync(root, { recursive: true, force: true }); }
   }
+
+  test('a slow PostgreSQL receipt read cannot hide an independently committed request', () => fixture(async ({ engine }, config) => {
+    const sources = await fixtures(engine, config);
+    const first = await admitWrite(engine, admission(config, sources[0], 'slow-receipt', 'first body'));
+    const second = await admitWrite(engine, admission(config, sources[1], 'independent-receipt', 'second body'));
+    const publisher = new PersistenceConsumer(engine, { engine: 'postgres' }, async (_e, row) => prepared(row, sources),
+      { hostId: config.hostId });
+    try {
+      publisher.start();
+      await waitFor(async () => (await getWriteRequestById(engine, second.id))?.state === 'committed', { timeoutMs: 5000 });
+    } finally { await publisher.stop(); }
+    let entered = false;
+    const proxy = new Proxy(engine, { get(target, key) {
+      if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+        if (args[0] === 'SELECT * FROM persistence_requests WHERE id=$1::uuid' && args[1]?.[0] === first.id) {
+          entered = true;
+          return target.executeRaw('SELECT r.* FROM persistence_requests r CROSS JOIN pg_sleep(20) WHERE r.id=$1::uuid', args[1], args[2]);
+        }
+        return target.executeRaw(...args);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const consumer = startPersistenceConsumer(proxy, { engine: 'postgres' });
+    (consumer as unknown as { doTick(): Promise<void> }).doTick = async () => {};
+    const stalled = waitForWrite(proxy, first, { engine: 'postgres' });
+    try {
+      await waitFor(() => entered);
+      const found = await waitForWrite(proxy, second, { engine: 'postgres' }, 1000);
+      expect(found.id).toBe(second.id);
+      expect(found.state).toBe('committed');
+      await assertCommittedSnapshot(engine, found);
+    } finally { await disposePersistenceConsumer(proxy); await stalled; }
+    await assertConservation(engine);
+  }), 30000);
 
   test('an expired locked head does not stall independent roots or skip its own follower', () => fixture(async ({ engine }, config) => {
     const sources = await fixtures(engine, config);
