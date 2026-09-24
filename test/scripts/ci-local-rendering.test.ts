@@ -24,7 +24,7 @@ describe('ci-local command rendering', () => {
   const cases = [
     { phaseExit: 0, missingTool: '' },
     { phaseExit: 7, missingTool: '' },
-    ...['git', 'python3', 'ps', 'psql'].map(missingTool => ({ phaseExit: 0, missingTool })),
+    ...['git', 'python3', 'ps', 'psql', 'jq'].map(missingTool => ({ phaseExit: 0, missingTool })),
   ];
   for (const { phaseExit, missingTool } of cases) {
     test(`preserves stderr and exit ${phaseExit}; missing prerequisite ${missingTool || 'none'}`, () => {
@@ -36,7 +36,7 @@ describe('ci-local command rendering', () => {
         mkdirSync(bin);
         // Execute the actual runner template, with installation/configuration
         // commands stubbed so this regression needs neither Docker nor root.
-        for (const name of ['bun', 'git', 'python3', 'ps', 'psql']) {
+        for (const name of ['bun', 'git', 'python3', 'ps', 'psql', 'jq']) {
           writeFileSync(join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
         }
         writeFileSync(join(bin, 'apt-get'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$INSTALL_LOG"\n', { mode: 0o755 });
@@ -71,7 +71,7 @@ describe('ci-local command rendering', () => {
         expect(result.stdout.includes('phase completed')).toBe(phaseExit === 0);
         expect(existsSync(join(home, '__RUN_PHASES__1'))).toBe(false);
         if (missingTool) {
-          expect(readFileSync(installLog, 'utf8')).toBe('update -qq\ninstall -y -qq git ca-certificates python3 procps postgresql-client\n');
+          expect(readFileSync(installLog, 'utf8')).toBe('update -qq\ninstall -y -qq git ca-certificates python3 procps postgresql-client jq\n');
         } else {
           expect(existsSync(installLog)).toBe(false);
         }
@@ -226,14 +226,16 @@ describe('ci-local execution coverage', () => {
 });
 
 describe('required PgBouncer execution through run-e2e', () => {
-  for (const [required, passes, testExit, expectedExit, parentCoverageExists] of [
+  for (const [required, passes, testExit, expectedExit, parentCoverageExists, outputBytes = 0] of [
     [true, 2, 0, 0, false],
     [true, 0, 0, 1, false],
     [true, 0, 3, 1, false],
     [false, 0, 0, 0, false],
     [true, 2, 0, 0, true],
+    [true, 2, 0, 0, false, 262144],
+    [true, 0, 0, 1, false, 262144],
   ] as const) {
-    test(`required=${required}, executed=${passes}, Bun exit=${testExit}, parent coverage exists=${parentCoverageExists}`, () => {
+    test(`required=${required}, executed=${passes}, Bun exit=${testExit}, parent coverage exists=${parentCoverageExists}${outputBytes ? `, diagnostic bytes=${outputBytes}` : ''}`, () => {
       const home = mkdtempSync(join(tmpdir(), 'gbrain-ci-pooler-'));
       try {
         const bin = join(home, 'bin');
@@ -246,6 +248,7 @@ describe('required PgBouncer execution through run-e2e', () => {
         writeFileSync(join(bin, 'bun'), `#!/bin/sh
 printf '%s\\n' "$GBRAIN_PGBOUNCER_URL" "$GBRAIN_PGBOUNCER_DIRECT_URL" "$GBRAIN_CI_REQUIRE_PGBOUNCER" "$GBRAIN_TEST_DB" "\${GBRAIN_SOURCE-unset}" "\${COVERAGE_DIR:-disabled}" > "$ENV_REPORT"
 printf ' %s pass\\n 0 fail\\n' "$FAKE_PASSES"
+if [ "$FAKE_OUTPUT_BYTES" -gt 0 ]; then printf '%*s\\n' "$FAKE_OUTPUT_BYTES" ''; fi
 exit "$FAKE_EXIT"
 `, { mode: 0o755 });
         const report = join(home, 'environment');
@@ -272,7 +275,7 @@ exit "$FAKE_EXIT"
             DATABASE_URL: direct, GBRAIN_PGBOUNCER_URL: pooled, GBRAIN_PGBOUNCER_DIRECT_URL: direct,
             GBRAIN_CI_REQUIRE_PGBOUNCER: required ? '1' : '0', GBRAIN_SOURCE: 'ambient-must-be-removed',
             GBRAIN_TEST_DB: '1',
-            ENV_REPORT: report, FAKE_PASSES: String(passes), FAKE_EXIT: String(testExit),
+            ENV_REPORT: report, FAKE_PASSES: String(passes), FAKE_EXIT: String(testExit), FAKE_OUTPUT_BYTES: String(outputBytes),
           },
         });
         expect(result.status, result.stdout + result.stderr).toBe(expectedExit);

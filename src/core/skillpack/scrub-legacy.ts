@@ -15,6 +15,7 @@
  * the migration shouldn't touch.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
@@ -101,6 +102,7 @@ export function runScrubLegacy(opts: ScrubLegacyOptions): ScrubLegacyResult {
   }
 
   if (!dryRun && removed.length > 0) {
+    assertLegacySkillFilesystemWrite(resolverFile);
     writeFileSync(resolverFile, outLines.join('\n'));
   }
 

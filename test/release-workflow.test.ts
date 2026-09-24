@@ -26,6 +26,25 @@ const EXPECTED_ASSETS = (
 ).map(([p, a]) => expectedAssetName(p, a) as string);
 
 describe('release.yml ↔ binary-self-update asset contract', () => {
+  test('release compiler is covered by the required native runtime matrix', () => {
+    const build = WORKFLOW.slice(WORKFLOW.indexOf('  build:'), WORKFLOW.indexOf('  release:'));
+    const compiler = build.match(/bun-version:\s*(\S+)/)?.[1];
+    expect(compiler).toBe('1.4.2');
+    const native = readFileSync(join(ROOT, '.github/workflows/native-locks.yml'), 'utf8');
+    const matrices = [...native.matchAll(/bun:\s*\[([^\]]+)\]/g)];
+    expect(matrices).toHaveLength(2);
+    for (const matrix of matrices) {
+      expect(matrix[1]).toContain(`'${compiler}'`);
+    }
+    expect(native).toContain('scripts/native/cli-persistence-smoke.ts');
+    expect(native).toContain('GBRAIN_TEST_OPENCLAW_BIN:');
+    expect(native).toContain("job.services.postgres.ports['5432']");
+    expect(native).toContain('openclaw@2026.9.4');
+    expect(native).toContain('bun test --timeout=60000 test/openclaw-context-engine-native.serial.test.ts');
+    expect(build).toContain('codesign --verify --strict --verbose=2');
+    expect(build.indexOf('codesign --verify')).toBeLessThan(build.indexOf('Smoke-test the compiled binary'));
+  });
+
   test('workflow build matrix produces exactly the assets the updater requests', () => {
     const artifacts = [...WORKFLOW.matchAll(/artifact:\s*(\S+)/g)].map((m) => m[1]).sort();
     expect(artifacts).toEqual([...EXPECTED_ASSETS].sort());

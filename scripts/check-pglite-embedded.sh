@@ -42,6 +42,7 @@ cp -R "$REPO_ROOT/native" "$BUILD_DIR/native"
 cp -R "$REPO_ROOT/templates" "$BUILD_DIR/templates"
 cp -R "$REPO_ROOT/skills" "$BUILD_DIR/skills"
 cp "$REPO_ROOT/package.json" "$BUILD_DIR/package.json"
+cp "$REPO_ROOT/LICENSE" "$BUILD_DIR/LICENSE"
 cp "$REPO_ROOT/scripts/pglite-embedded-smoketest.ts" "$BUILD_DIR/scripts/pglite-embedded-smoketest.ts"
 ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 

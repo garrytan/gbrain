@@ -75,6 +75,26 @@ containing subprocess stdout/stderr, environment state, and any captured
 metrics. The CI workflow uploads these as artifacts on failure for triage
 without re-running locally.
 
+## Sync lock regression
+
+`sync_lock_regression.sh` runs `test/e2e/sync-lock-overlap-postgres.test.ts`
+against an isolated test database. A reserved Postgres connection holds a
+write barrier on `pages`; a real CLI sync must acquire its source lease and
+reach that barrier before contenders start. Every contender must fail with
+lock-busy while the owner and its acquisition tokens remain unchanged.
+Only then does the test release the barrier, verify the import and lock
+cleanup, and allow a later sync to succeed. `NUM_PARALLEL` defaults to 4
+(allowed range 2–32). Fixtures use a unique source, not the default source.
+
+Counting successful exits from tiny concurrent syncs without a barrier is
+not an exclusion test: several can legitimately finish sequentially. The
+current source key is `gbrain-sync:<source>`, alongside the filesystem lease,
+not the obsolete global `gbrain-sync` key. The existing crash/recovery tests
+remain separate. This script prints its complete log path in a fresh temporary
+directory, leaving the operator's real brain untouched. Set
+`GBRAIN_HEAVY_LOG_DIR` to choose a retained output directory. CI uses its runner
+temporary directory and stages that output with the other heavy artifacts.
+
 ## Style
 
 - `#!/usr/bin/env bash`

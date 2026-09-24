@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { journalLimitKey, readJournalLimits } from './limits.ts';
 import type { JournalLimits } from './model.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
+import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 
 export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   unexpected_staging_bytes: 'Keep the worktree blocked and retain its staging files and recovery capacity. Compare the recorded staging size and hash, then reconcile unexpected bytes explicitly before retrying; never discard unverified staging files.',
@@ -11,7 +12,7 @@ export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   database_contention: 'Keep the same request_id; the owner will retry after the SQL lock or connection contention clears.',
   revision_changed_repreparing: 'Keep the same request_id while the owner recomputes this supported semantic mutation against the latest revision.',
   writer_pool_capacity: 'Configure the ordinary Postgres pool with at least two connections, then restart the resident writer.',
-  owner_unavailable: 'Start the designated owner. Transfer ownership only after draining recovery and verifying the successor checkout; fence an unreachable owner externally first.',
+  owner_unavailable: WRITER_INSPECTION_HINT,
   writer_busy: 'Keep the same request_id and wait for the current worktree publication to finish.',
   writer_lock_unavailable: 'Verify the bundled native addon and coordination directory permissions on the owner; never delete a live coordination lock.',
   recovery_required: 'Inspect the recorded publication fingerprints on the designated owner and settle recovery before publishing this worktree.',

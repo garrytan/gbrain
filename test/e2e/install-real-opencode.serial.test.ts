@@ -17,9 +17,9 @@
  *   - keyless tier (T1 version pin, T2 INSTALL + list handshake, T2b
  *     spawn-gate canary, T3 writer parity + preservation, T4 free-tier
  *     SMOKE): GBRAIN_REAL_OPENCODE_E2E=1 + resolvable binary.
- *   - paid tier (T5 anthropic leg): additionally hasOpencodeAuth()
- *     (non-empty ANTHROPIC_API_KEY; blank CI secret ⇒ skip, never a paid
- *     failure). Self-validating: the authed `opencode models` list must
+ *   - paid tier (T5 anthropic leg): additionally GBRAIN_REAL_OPENCODE_PAID_E2E=1
+ *     and hasOpencodeAuth(). Unrequested coverage skips; requested coverage
+ *     without credentials fails. The authed `opencode models` list must
  *     carry the pinned model id BEFORE any spend.
  *
  * Isolation: every child gets HOME=<tmp> + XDG_CONFIG_HOME + XDG_DATA_HOME
@@ -73,7 +73,12 @@ const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
 const OPENCODE_BIN = resolveOpencodeBinary();
 const CAN_RUN_KEYLESS = process.env.GBRAIN_REAL_OPENCODE_E2E === '1' && !!OPENCODE_BIN;
-const CAN_RUN_PAID = CAN_RUN_KEYLESS && hasOpencodeAuth();
+const PAID_REQUESTED = process.env.GBRAIN_REAL_OPENCODE_PAID_E2E === '1';
+const CAN_RUN_PAID = CAN_RUN_KEYLESS && PAID_REQUESTED && hasOpencodeAuth();
+
+if (CAN_RUN_KEYLESS && PAID_REQUESTED && !hasOpencodeAuth()) {
+  throw new Error('OpenCode paid tier explicitly requested but ANTHROPIC_API_KEY is missing; no paid turn ran');
+}
 
 /** Pinned anthropic model for the paid leg (provider/model, models.dev
  *  convention). PROVISIONAL until the authed models list confirms it — the
@@ -86,7 +91,7 @@ if (!CAN_RUN_KEYLESS) {
     : 'opencode binary not found';
   console.warn(`[install-real-opencode] SKIP (keyless tier): ${why}`);
 } else if (!CAN_RUN_PAID) {
-  console.warn('[install-real-opencode] keyless tier runs; SKIP paid tier: no non-empty ANTHROPIC_API_KEY');
+  console.warn('[install-real-opencode] keyless tier runs; SKIP paid tier: GBRAIN_REAL_OPENCODE_PAID_E2E=1 and a non-empty ANTHROPIC_API_KEY are required');
 }
 
 const ENV_KEYS = [
@@ -217,6 +222,7 @@ function runOpencode(
   cwd: string,
   argv: string[],
   binDir?: string,
+  paid = false,
 ): { code: number | null; stdout: string; stderr: string } {
   // `--pure` must land on OPENCODE's argv, never inside a `--`-delimited
   // server command (a trailing append after `mcp add … -- gbrain serve`
@@ -225,7 +231,7 @@ function runOpencode(
   const withPure = sep === -1 ? [...argv, '--pure'] : [...argv.slice(0, sep), '--pure', ...argv.slice(sep)];
   const res = spawnSync(OPENCODE_BIN!, withPure, {
     cwd,
-    env: opencodeChildEnv(home, binDir ? { binDir } : undefined),
+    env: opencodeChildEnv(home, { binDir, paid }),
     encoding: 'utf8',
     timeout: 180_000,
   });
@@ -467,7 +473,7 @@ describe.skipIf(!CAN_RUN_PAID)('install real-opencode door — paid tier (anthro
 
     // Self-validating gate: never spend against a guessed model id. When
     // this fails, update PAID_MODEL from this authed list + the PIN doc.
-    const models = runOpencode(home, ws, ['models']);
+    const models = runOpencode(home, ws, ['models'], undefined, true);
     expect(models.code).toBe(0);
     if (!models.stdout.includes(PAID_MODEL)) {
       throw new Error(
@@ -497,6 +503,7 @@ describe.skipIf(!CAN_RUN_PAID)('install real-opencode door — paid tier (anthro
       timeoutMs: 240_000,
       model: PAID_MODEL,
       binDir,
+      paid: true,
     });
     expect(turn.exitCode).toBe(0);
     expect(turn.finalText).toContain(nonce);

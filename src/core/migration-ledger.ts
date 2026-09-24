@@ -23,7 +23,7 @@ import { loadCompletedMigrations, type CompletedMigrationEntry } from './prefere
 export const MIGRATION_VERSIONS: readonly string[] = [
   '0.11.0', '0.12.0', '0.12.2', '0.13.0', '0.13.1', '0.14.0', '0.16.0',
   '0.18.0', '0.18.1', '0.21.0', '0.22.4', '0.28.0', '0.29.1', '0.31.0',
-  '0.32.2', '0.43.0', '0.46.3',
+  '0.32.2', '0.43.0', '0.46.3', '0.53.0',
 ];
 
 /** Bug 3 attempt cap — consecutive partials before a version counts wedged. */

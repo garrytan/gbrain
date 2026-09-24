@@ -23,7 +23,7 @@ import { withFactsAbsorbHaltCooldown } from '../core/minions/llm-halt-cooldown.t
 import { runChildJobEntry } from '../core/minions/run-child.ts';
 import type { MinionHandler, MinionJob, MinionJobStatus } from '../core/minions/types.ts';
 import type { PaceKeyOverrides } from '../core/pace-mode.ts';
-import { loadConfig, isThinClient } from '../core/config.ts';
+import { loadConfig, loadConfigWithEngine, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { parseNiceValue, applyNiceness, getEffectiveNiceness, formatNice } from '../core/minions/niceness.ts';
 import { defaultTimeoutMsFor, defaultLockDurationMsFor, clampLockDurationMs } from '../core/minions/handler-timeouts.ts';
@@ -2559,9 +2559,10 @@ export async function registerBuiltinHandlers(
         frontmatter: (page.frontmatter ?? {}) as Record<string, unknown>,
       },
       {
-        engine,
+        engine, config: await loadConfigWithEngine(engine, loadConfig() ?? { engine: engine.kind }) ?? { engine: engine.kind },
         sourceId,
         sessionId: typeof job.data.sessionId === 'string' ? job.data.sessionId : null,
+        persistenceRequestId: typeof job.data.persistence_request_id === 'string' ? job.data.persistence_request_id : undefined,
         source,
         mode: 'inline',
         notabilityFilter: coerceNotabilityFilter(job.data.notabilityFilter),
@@ -2981,6 +2982,11 @@ export async function registerBuiltinHandlers(
   // the per-source lock) the job completes `{ deferred: true }` and retries
   // next tick instead of failing — cooperative interleave (CODEX accepted).
   registerBuiltinJob(worker, engine, 'extract-atoms-drain', async (job) => {
+    if (job.data.retryRequestId !== undefined) {
+      if (typeof job.data.retryRequestId !== 'string' || typeof job.data.sourceId !== 'string') throw new Error('Atom retry requires sourceId and retryRequestId strings.');
+      const { retryManagedAtomBatch } = await import('../core/persistence/atom-retry.ts');
+      return retryManagedAtomBatch(engine, job.data.sourceId, job.data.retryRequestId, `job:${job.id}`);
+    }
     const { formatDrainProviderFailure, runExtractAtomsDrainForSource } =
       await import('../core/cycle/extract-atoms-drain.ts');
     const { LockUnavailableError } = await import('../core/db-lock.ts');

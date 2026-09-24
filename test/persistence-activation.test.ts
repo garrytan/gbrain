@@ -17,6 +17,7 @@ import { createPersistenceIpcProvider } from '../src/core/persistence/provider.t
 import { persistenceSocketPathForConfig, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 
 let memoryEngine: PGLiteEngine;
 let diskEngine: PGLiteEngine;
@@ -78,7 +79,7 @@ test('activation fsyncs source and selected datastore refusal records before bec
   const selected = join(home, 'selected-datastore'); mkdirSync(selected);
   await registerManagedFilesystemEngine(engine, selected);
   await registerLocalWriter(engine, 'cli');
-  expect(await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true })).toMatchObject({ enabled: true, activated: true });
+  expect(await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, ...await reviewedWriterIntent(engine, 'writer_activate') })).toMatchObject({ enabled: true, activated: true });
   expect(registeredManagedRoots()).toContain(root);
   expect(registeredManagedRoots()).toContain(selected);
   expect(JSON.parse(readFileSync(join(root, '.gbrain-managed'), 'utf8'))).toMatchObject({ managed: true, version: 1 });
@@ -123,7 +124,8 @@ test('actual CLI activation delegates through the verified owner while disk PGLi
   const provider = await createPersistenceIpcProvider(engine, config);
   const ipc = (await startPersistenceIpcServer(persistenceSocketPathForConfig(config)!, provider))!;
   try {
-    const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), 'sources', 'writer', 'activate', '--confirm-quiesced', '--json'], {
+    const intent = await reviewedWriterIntent(engine, 'writer_activate');
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), 'sources', 'writer', 'activate', '--confirm-quiesced', '--admin-intent', intent.admin_intent, '--expected-state', String(intent.expected_state), '--json'], {
       cwd: home, env: { ...process.env, GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0' }, stdout: 'pipe', stderr: 'pipe',
     });
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);

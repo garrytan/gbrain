@@ -22,10 +22,10 @@
 // pack-load problem) — not silent (results look normal but contradict
 // user intent).
 
-import { loadConfig, loadConfigFileOnly } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../operations.ts';
-import { loadActivePack } from './load-active.ts';
+import { loadActivePackForEngine } from './engine-resolution.ts';
+export { readDbSchemaPack } from './engine-resolution.ts';
 import type { ResolvedPack } from './registry.ts';
 
 /**
@@ -49,15 +49,9 @@ export async function loadActivePackBestEffort(
   ctx: OperationContext,
 ): Promise<ResolvedPack | null> {
   try {
-    return await loadActivePack({
-      cfg: loadConfig(),
+    return await loadActivePackForEngine(ctx.engine, {
       remote: ctx.remote ?? true,
       sourceId: ctx.sourceId,
-      // #4653: tier-4 DB-plane schema_pack. Without it every caller here fell
-      // through to the file/default tiers while `schema active` and
-      // get_active_schema_pack honored the DB tier — a split resolution
-      // inside one process.
-      dbConfig: await readDbSchemaPack(ctx.engine),
     });
   } catch {
     return null;
@@ -65,56 +59,20 @@ export async function loadActivePackBestEffort(
 }
 
 /**
- * Read the DB-plane `schema_pack` key (tier 4) from a live engine. Null-safe
- * and never throws: callers without an engine (tests pass `engine: null`) or
- * on brains predating the config table get undefined and fall through to
- * env/file resolution. ONE spelling of the tier-4 read, shared by the CLI
- * inspection verbs, the MCP schema ops and both loaders in this module.
- */
-export async function readDbSchemaPack(
-  engine: Pick<BrainEngine, 'getConfig'> | null | undefined,
-): Promise<string | undefined> {
-  try {
-    return (await engine?.getConfig?.('schema_pack'))?.trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
  * Resolve the active pack for a LOCAL, engine-backed surface.
- *
- * Prefer this over `loadActivePackBestEffort` anywhere you hold a live engine
- * and are running locally. It differs in the two ways that bite such callers:
- *
- *   - **`remote: false`.** `loadActivePackBestEffort` defaults
- *     `remote: ctx.remote ?? true`, so a caller that has no real
- *     OperationContext (and passes something like `{ engine } as never`)
- *     silently runs under REMOTE trust gating. A tier-1 trust rejection then
- *     returns null — indistinguishable from "there is no pack".
- *   - **FILE-ONLY config.** Pairs the engine's `schema_pack` config key with
- *     `loadConfigFileOnly()`, matching the onboard checks. Full `loadConfig()`
- *     merges transient env/database state and can resolve a DIFFERENT pack
- *     than the onboard checks do — which is how a recommender and its handler
- *     end up disagreeing about the same brain.
  *
  * Same null contract as `loadActivePackBestEffort` (D4): null means the pack
  * could not be resolved and is NOT a license to fall back to hardcoded
  * defaults. Callers acting on a *capability* question must additionally
  * surface null DISTINCTLY from "resolved, but lacks the capability" —
  * collapsing the two converts a loud failure into a silent one.
- *
- * Does not thread tier-3 `sourceId`: the callers here ask a brain-wide
- * question, and the previous `{ engine } as never` shape passed no sourceId
- * either, so this is behavior-neutral on that tier.
  */
 export async function loadActivePackForLocalEngine(
   engine: Pick<BrainEngine, 'getConfig'>,
+  options: { sourceId?: string } = {},
 ): Promise<ResolvedPack | null> {
   try {
-    const dbConfig = await readDbSchemaPack(engine);
-    return await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig })
-      .catch(() => null);
+    return await loadActivePackForEngine(engine, { remote: false, ...options });
   } catch {
     return null;
   }

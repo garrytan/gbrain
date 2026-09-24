@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
+import { withManagedFixtureWrite } from '../helpers/managed-e2e-fixture-write.ts';
 import {
   configureGateway,
   resetGateway,
@@ -379,14 +380,16 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     try {
       // Seed a page + chunk (the import + chunker path is tested
       // elsewhere; this E2E focuses on dim alignment).
-      await engine.putPage('test/e2e-page', {
-        type: 'note',
-        title: 'E2E Test',
-        compiled_truth: 'fresh install end-to-end happy path',
+      await withManagedFixtureWrite(engine, ['default'], async tx => {
+        await tx.putPage('test/e2e-page', {
+          type: 'note',
+          title: 'E2E Test',
+          compiled_truth: 'fresh install end-to-end happy path',
+        });
+        await installFixtureChunks(tx, 'test/e2e-page', [
+          { chunk_index: 0, chunk_text: 'fresh install end-to-end happy path', chunk_source: 'compiled_truth' },
+        ]);
       });
-      await installFixtureChunks(engine, 'test/e2e-page', [
-        { chunk_index: 0, chunk_text: 'fresh install end-to-end happy path', chunk_source: 'compiled_truth' },
-      ]);
 
       // Run embed --stale via the public CLI entry point. This goes
       // through runEmbedCore including the pre-flight dim check.

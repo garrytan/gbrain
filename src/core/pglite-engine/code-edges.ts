@@ -4,6 +4,7 @@
  * never the whole engine class.
  */
 import type { PGlite } from '@electric-sql/pglite';
+import { currentCodeEdgeFilter } from '../code-intel/read-scope.ts';
 
 // PGLite's parameter bridge corrupts the current engine session when a single
 // statement crosses the signed-int16 bind ceiling (32,767 parameters). Keep
@@ -104,11 +105,13 @@ export async function getCallersOf(
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
          WHERE to_symbol_qualified = $1 ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_chunk', true)}
        UNION ALL
        SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, false as resolved
          FROM code_edges_symbol
          WHERE to_symbol_qualified = $1 ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_symbol', false)}
        LIMIT $2`,
       [qualifiedName, limit],
     );
@@ -129,11 +132,13 @@ export async function getCalleesOf(
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
          WHERE ${fromPredicate} ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_chunk', true)}
        UNION ALL
        SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, false as resolved
          FROM code_edges_symbol
          WHERE ${fromPredicate} ${sourceClause}
+           AND ${currentCodeEdgeFilter('code_edges_symbol', false)}
        LIMIT $2`,
       [qualifiedName, limit],
     );

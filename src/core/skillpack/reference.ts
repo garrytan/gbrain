@@ -13,6 +13,7 @@
  * local edits are intentional; do not blindly overwrite."
  */
 
+import { assertLegacySkillFilesystemWrite, confinedSkillChildWrite } from './writer-guard.ts';
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
@@ -201,6 +202,7 @@ export function runReferenceApply(opts: ReferenceApplyOptions): ReferenceApplyRe
   });
 
   const files: ReferenceApplyFileResult[] = [];
+  if (!opts.dryRun) for (const entry of entries) confinedSkillChildWrite(opts.targetWorkspace, entry.relWorkspaceTarget);
   for (const entry of entries) {
     files.push(applyOne(opts.targetWorkspace, entry, opts.dryRun ?? false));
   }
@@ -271,6 +273,7 @@ function applyOne(
   base.hunksConflicted = result.conflicted;
 
   if (!dryRun && result.applied > 0) {
+    assertLegacySkillFilesystemWrite(target);
     writeFileSync(target, result.text);
   }
 

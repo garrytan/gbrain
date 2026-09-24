@@ -16,6 +16,7 @@
 //   `<pack-name>@<version>+<manifest-sha8>` (E10).
 
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 
 export const SCHEMA_PACK_API_VERSION = 'gbrain-schema-pack-v1' as const;
 
@@ -449,11 +450,7 @@ export function parseSchemaPackManifest(
 export async function computeManifestSha8(manifest: SchemaPackManifest): Promise<string> {
   // Canonical JSON: sorted keys for determinism (E10 + codex F6 hash-determinism).
   const canonical = canonicalJSONStringify(manifest);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
-  return Array.from(new Uint8Array(hashBuffer))
-    .slice(0, 4)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 8);
 }
 
 function canonicalJSONStringify(value: unknown): string {

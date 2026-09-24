@@ -17,6 +17,9 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
 let engine: PGLiteEngine;
 let repoPath: string;
@@ -50,7 +53,7 @@ afterAll(async () => {
 });
 
 /** runSync with stdout and stderr split-captured (console.* AND the raw streams). */
-async function run(args: string[]): Promise<{ stdout: string[]; stderr: string[] }> {
+async function run(args: string[], expectedExit?: number): Promise<{ stdout: string[]; stderr: string[] }> {
   const { runSync } = await import('../src/commands/sync.ts');
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -60,16 +63,19 @@ async function run(args: string[]): Promise<{ stdout: string[]; stderr: string[]
   const origOut = process.stdout.write.bind(process.stdout);
   const origErrWrite = process.stderr.write.bind(process.stderr);
   const origExit = process.exit;
+  let exitCode: number | undefined;
   console.log = (...a: unknown[]) => { stdout.push(a.map(str).join(' ') + '\n'); };
   console.error = (...a: unknown[]) => { stderr.push(a.map(str).join(' ') + '\n'); };
   process.stdout.write = ((c: unknown) => { stdout.push(String(c)); return true; }) as typeof process.stdout.write;
   process.stderr.write = ((c: unknown) => { stderr.push(String(c)); return true; }) as typeof process.stderr.write;
-  process.exit = ((code?: number) => { throw new Error(`__exit__${code}`); }) as typeof process.exit;
+  process.exit = ((code?: number) => { exitCode = code; throw new Error(`__exit__${code}`); }) as typeof process.exit;
   try {
     await withEnv(
       { GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: undefined },
       () => runSync(engine, args),
     );
+  } catch (error) {
+    if (expectedExit === undefined || exitCode !== expectedExit || !(error instanceof Error) || error.message !== `__exit__${expectedExit}`) throw error;
   } finally {
     process.exit = origExit;
     console.log = origLog;
@@ -77,6 +83,7 @@ async function run(args: string[]): Promise<{ stdout: string[]; stderr: string[]
     process.stdout.write = origOut;
     process.stderr.write = origErrWrite;
   }
+  if (expectedExit !== undefined) expect(exitCode).toBe(expectedExit);
   return { stdout, stderr };
 }
 
@@ -135,7 +142,8 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
     rmSync(join(home, 'sync-failures.jsonl'), { force: true });
     const { stdout, stderr } = await run(['--retry-failed', '--dry-run', '--no-pull', '--no-embed', '--json']);
     for (const l of lines(stdout)) expect(() => JSON.parse(l)).not.toThrow();
-    expect(stderr.join('')).toContain('No unacknowledged sync failures to retry.');
+    expect(stderr.join('')).toContain('No local ledger entries; checking the durable sync cursor');
+    expect(stderr.join('')).not.toContain('No unacknowledged sync failures to retry.');
   }, 60_000);
 
   test('--retry-failed --json with a pending failure: the "Retrying N" line is stderr, stdout parses', async () => {
@@ -182,6 +190,42 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
     const out = lines(stdout);
     expect(out).toHaveLength(1);
     expect(typeof JSON.parse(out[0]).job_id).toBe('number');
+  }, 60_000);
+
+  test('managed failures keep one clean JSON receipt with scoped diagnostics even without a ledger', async () => {
+    await run(['--no-pull', '--no-embed']);
+    await withEnv({ GBRAIN_HOME: home }, () => claimWorktree(engine, 'default', repoPath));
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      writeFileSync(join(repoPath, 'topics/foo.md'), FOO('A new committed source observation.'));
+      execSync('git add -A && git commit -q -m diagnostic-fixture', { cwd: repoPath, stdio: 'pipe' });
+      writeFileSync(join(repoPath, 'topics/foo.md'), FOO('PRIVATE_DIAGNOSTIC_CONTENT_CANARY'));
+      rmSync(join(home, 'sync-failures.jsonl'), { force: true });
+      const { stdout, stderr } = await run(['--retry-failed', '--no-pull', '--no-embed', '--json']);
+      const out = lines(stdout);
+      expect(out).toHaveLength(1);
+      const body = JSON.parse(out[0]);
+      expect(body).toMatchObject({ sync_status: 'blocked_by_failures', managed_write: {
+        source_id: 'default', slug: 'topics/foo', path: 'topics/foo.md', write_error: 'source_changed',
+        reason: 'pinned_git_worktree_conflict', write_request: { state: 'conflict' },
+      } });
+      expect(body.managed_write.write_request.request_id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(stderr.join('')).toContain(body.managed_write.write_request.request_id);
+      expect(stderr.join('')).toContain('No local ledger entries; checking the durable sync cursor');
+      expect(stderr.join('')).not.toContain('No unacknowledged sync failures');
+      expect([...stdout, ...stderr].join('')).not.toContain('PRIVATE_DIAGNOSTIC_CONTENT_CANARY');
+      expect(out[0]).not.toContain(repoPath);
+      expect(currentExitCode()).toBe(1);
+      const all = await run(['--all', '--serial', '--no-pull', '--no-embed', '--json'], 1);
+      const aggregate = JSON.parse(all.stdout.join(''));
+      expect(aggregate).toMatchObject({ ok_count: 0, error_count: 1, sources: [{ source_id: 'default', status: 'error',
+        managed_write: { write_request: { request_id: body.managed_write.write_request.request_id } } }] });
+      expect(all.stderr.join('')).toContain(body.managed_write.write_request.request_id);
+    } finally {
+      _resetCliExitVerdictForTests(); process.exitCode = 0;
+      await withEnv({ GBRAIN_HOME: home }, () => disposePersistenceConsumer(engine));
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    }
   }, 60_000);
 });
 

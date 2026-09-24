@@ -19,6 +19,7 @@
  *     expected to strengthen.
  */
 
+import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chat as gatewayChat } from '../ai/gateway.ts';
@@ -92,6 +93,7 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
   }
 
   const outputPath = path.join(skillsDir, skillName, 'skillopt-benchmark.jsonl');
+  assertLegacySkillFilesystemWrite(outputPath);
   assertBenchmarkAbsent(outputPath, !!force);
 
   // Read the skill body for context.
@@ -220,6 +222,7 @@ export async function runBootstrapFromSkill(opts: BootstrapFromSkillOpts): Promi
   const chat = opts.chatFn ?? gatewayChat;
 
   const outputPath = path.join(skillsDir, skillName, 'skillopt-benchmark.jsonl');
+  assertLegacySkillFilesystemWrite(outputPath);
   assertBenchmarkAbsent(outputPath, !!opts.force);
 
   const skillPath = path.join(skillsDir, skillName, 'SKILL.md');

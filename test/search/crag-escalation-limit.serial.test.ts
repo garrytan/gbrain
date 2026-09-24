@@ -23,6 +23,7 @@ const actualHybrid = await import(HYBRID_PATH);
 function row(i: number, rerankScore: number): SearchResult {
   return {
     slug: `notes/n${i}`,
+    source_id: 'default',
     page_id: 900000 + i,
     title: `n${i}`,
     type: 'note',

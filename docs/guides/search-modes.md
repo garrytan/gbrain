@@ -4,7 +4,7 @@ Two decisions shape every gbrain lookup, and this guide covers both:
 
 1. **Which mode bundle** your brain runs — `conservative` / `balanced` /
    `tokenmax`, the named cost-knob presets that control cache, token budget,
-   query expansion, and result count. This is the config-level decision you
+   core-library expansion defaults, and result count. This is the config-level decision you
    make once (at `gbrain init` or via `gbrain config set search.mode`).
 2. **Which lookup verb** to use per call — `gbrain search` (keyword),
    `gbrain query` (hybrid), or `gbrain get` (direct). This is the
@@ -12,7 +12,8 @@ Two decisions shape every gbrain lookup, and this guide covers both:
 
 ## The three mode bundles
 
-A search mode is a named preset that sets every search-cost knob at once.
+A search mode is a named preset for retrieval knobs. Operation-level options
+can override it, so the bundle alone does not describe provider calls.
 The bundles are frozen in `src/core/search/mode.ts` (`MODE_BUNDLES`).
 
 Semantic result caching is temporarily disabled in every mode, regardless of
@@ -41,21 +42,33 @@ The `expansion` row is not decisive for any shipped verb today: `gbrain query`
 (the only verb that can expand) expands by default in every mode — pass
 `--no-expand` / `expand: false` to opt out — while `gbrain search`, the memory
 verbs and the eval harnesses pin expansion per call. The bundle value (and the
-`search.expansion` config key) only reaches a caller that leaves `expansion`
+`search.expansion` config key) only reaches a core-library caller that leaves `expansion`
 unset AND wires an `expandFn`; none ship today. `gbrain search modes` reports
-the bundle value, not what `query` does.
+the bundle value and prints the operation-level exception before its knob table.
+
+This preserves the existing query contract: changing modes does not silently
+enable or disable expansion. `query` defaults to `expand: true`; explicit
+`expand: false` (CLI `--no-expand`) wins even in `tokenmax`. `search` never
+expands, even with `search.expansion=true`. Keyless retrieval takes the
+keyword-only path before expansion; configured embedding and expansion
+providers are prerequisites. Image-only retrieval also skips expansion.
+Check response metadata `expansion_applied` for actual variant use, not just
+the requested setting. A configured cloud expander receives the query;
+its model's input/output charges are separate from downstream reading costs.
 
 - **`conservative`** — smallest payloads. Pairs naturally with a cheap
   downstream model (Haiku-class) or a high query volume.
 - **`balanced`** — the default and the fallback when no mode is set.
-- **`tokenmax`** — no token budget, LLM query expansion on, 50 results.
+- **`tokenmax`** — no token budget, 50 results by default.
   Pairs with an expensive downstream model you want fully fed.
 
 Seven of the knobs deserve a sentence:
 
 - **`expansion`** rewrites your query into multiple variants via a cheap
-  LLM call per search (adds roughly $1.50 per 1K queries) — better recall,
-  small extra cost. `gbrain query` expands in every mode unless `--no-expand`;
+  LLM call when available (the historical Haiku estimate is roughly $1.50 per
+  1K queries; actual charges depend on model and token counts). It can recover
+  alternate phrasings but can also hurt precision. `gbrain query` requests
+  expansion in every mode unless `--no-expand`;
   this knob does not turn it off (see the caption under the table).
 - **`expansion_variant_budget`** (config key
   `search.expansion_variant_budget`) is the total RRF weight the expansion
@@ -143,8 +156,8 @@ reports effective `cache_enabled: false`, and `cache stats` reports
 
 ### Cost intuition
 
-gbrain's own cost is rounding error; what the mode really controls is how
-many tokens your *downstream agent* pays to read per query. The
+The table estimates only the tokens your *downstream agent* pays to read
+per query. Embedding, reranking and expansion calls can add separate charges. The
 corner-to-corner spread is ~25x once you pair mode with downstream model.
 Rough anchors at 10K queries/month, full payload, no cache savings:
 
@@ -188,7 +201,12 @@ brain's reranker is actually running"* — *"turn reranking off for now"* —
 your agent runs `gbrain search modes` / `gbrain doctor`, then either exports
 `VOYAGE_API_KEY` or runs `gbrain config set search.reranker.enabled false`.
 
-The mode picker runs inside `gbrain init` (non-TTY auto-selects `balanced`).
+The mode picker runs inside `gbrain init`. Non-TTY initialization tentatively
+applies its recommendation: `conservative` for a Haiku subagent or no detected
+expansion-capable key, otherwise `tokenmax`. Existing valid selections are
+preserved. This differs from retrieval's `balanced` fallback when no valid
+`search.mode` is stored; the picker asks agents to confirm the choice with
+their operator before continuing a real setup.
 
 ## Choosing a lookup verb (search vs query vs get)
 

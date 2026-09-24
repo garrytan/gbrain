@@ -60,6 +60,7 @@ async function runAndCapture(engine: BrainEngine, extraArgs: string[] = []): Pro
 
 function stubEngine(rollupRow: Record<string, unknown>, capturedSql?: string[]): BrainEngine {
   return {
+    getConfig: async () => null,
     executeRaw: async (sql: string) => {
       capturedSql?.push(sql);
       return [rollupRow];
@@ -71,6 +72,7 @@ function stubEngine(rollupRow: Record<string, unknown>, capturedSql?: string[]):
  * extract_rollup_7d table yet) the command's try/catch exists for. */
 function failingRollupEngine(): BrainEngine {
   return {
+    getConfig: async () => null,
     executeRaw: async () => { throw new Error('relation "extract_rollup_7d" does not exist'); },
   } as unknown as BrainEngine;
 }

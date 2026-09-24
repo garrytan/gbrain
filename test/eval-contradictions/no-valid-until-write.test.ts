@@ -56,6 +56,7 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/facts/withdrawal.ts',
   'src/core/facts/withdrawal-schema.ts',
   'src/core/persistence/canonical-projections.ts',
+  'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',
   'src/core/pglite-engine.ts',
 ]);

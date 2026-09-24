@@ -15,8 +15,13 @@
 // No brace expansion, no ?, no [ ].
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  "src/core/company-brain/receipts.ts": ["test/e2e/company-brain-receipts.test.ts"],
+  "src/core/company-brain/receipt-schema.ts": ["test/e2e/company-brain-receipts.test.ts"],
   "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
-  "src/core/harness/**": ["test/e2e/harness-access.test.ts"],
+  "src/core/harness/**": ["test/e2e/harness-access.test.ts", "test/e2e/shared-skills-transports.test.ts"],
+  "src/core/shared-skills/**": ["test/e2e/shared-skills-transports.test.ts", "test/e2e/shared-skills-rls.test.ts", "test/e2e/persistence-skill-bundles-postgres.test.ts"],
+  "src/mcp/skill-resources.ts": ["test/e2e/shared-skills-transports.test.ts"],
+  "src/core/scope.ts": ["test/e2e/client-grants.test.ts", "test/e2e/shared-skills-transports.test.ts"],
   "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
   "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts"],
   "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
@@ -44,11 +49,16 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Concrete content and derived-information read policy parity.
   "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
-  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts"],
+  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts", "test/e2e/deep-research-source-id.test.ts", "test/e2e/deep-research-http.test.ts"],
   "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
   "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
   "src/core/search/**": [
+    "test/e2e/projection-statistics-postgres.test.ts",
+    "test/e2e/search-query-contract-postgres.test.ts",
+    "test/e2e/vector-candidate-safety-postgres.test.ts",
+    "test/e2e/search-readiness-http.test.ts",
+    "test/e2e/projection-readiness-currency.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
@@ -56,6 +66,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/search-exclude.test.ts",
     "test/e2e/search-swamp.test.ts",
   ],
+  "src/core/page-state/**": ["test/e2e/projection-recovery-parity.test.ts", "test/e2e/projection-readiness-currency.test.ts"],
+  "src/core/code-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
+  "src/core/markdown-chunks.ts": ["test/e2e/projection-recovery-parity.test.ts"],
   // Tree-sitter chunkers feed code-indexing E2E.
   "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   // OpenClaw context-engine plugin: engine + entry feed the plugin-shape E2E
@@ -78,13 +91,13 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // dream.ts is a thin alias over runCycle in cycle.ts.
   "src/core/cycle.ts": ["test/e2e/cycle.test.ts", "test/e2e/dream.test.ts"],
   // Multi-source sync writes share the per-source bookmark anchor.
-  "src/core/sync.ts": ["test/e2e/sync.test.ts", "test/e2e/multi-source.test.ts", "test/e2e/sync-reconcile-postgres.test.ts"],
+  "src/core/sync.ts": ["test/e2e/sync.test.ts", "test/e2e/multi-source.test.ts", "test/e2e/sync-reconcile-postgres.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts"],
   // F7: real SIGKILL mid-sync on live Postgres — checkpoint banking
   // (op_checkpoint_paths), the frozen last_commit bookmark, stranded-lock
   // reclaim via TTL + steal grace, and exactly-once convergence on resume.
   // The peeled sync-* core modules (anchor/lock/reconcile/delta/git/…) all
   // feed that kill/resume journey.
-  "src/core/sync-*.ts": ["test/e2e/sync-sigkill-resume-postgres.test.ts"],
+  "src/core/sync-*.ts": ["test/e2e/sync-sigkill-resume-postgres.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts"],
   // v0.32.8 multi-source bug class regression suite — fires on any cycle
   // phase, extract, integrity, embed, or migrate-engine change.
   "src/core/cycle/extract-takes.ts": ["test/e2e/multi-source-bug-class.test.ts"],
@@ -147,9 +160,40 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Agent-job scope fences over real Postgres.
   "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
-  "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
+  "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts", "test/e2e/managed-connector-fencing.test.ts", "test/e2e/managed-connector-recovery.test.ts"],
   "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
-  "src/core/persistence/**": ["test/e2e/persistence-chaos.test.ts", "test/e2e/persistence-runtime-matrix.test.ts"],
+  "src/core/persistence/**": [
+    "test/e2e/persistence-chaos.test.ts",
+    "test/e2e/persistence-runtime-matrix.test.ts",
+    "test/e2e/persistence-admin-intent.test.ts",
+    "test/e2e/persistence-recovery.test.ts",
+    "test/e2e/managed-sync-failures.test.ts",
+    "test/e2e/managed-connector-routing.test.ts",
+    "test/e2e/managed-connector-retry.test.ts",
+    "test/e2e/managed-connector-fencing.test.ts",
+    "test/e2e/managed-connector-recovery.test.ts",
+    "test/e2e/managed-facts-backstop.test.ts",
+    "test/e2e/managed-facts-embedding.test.ts",
+    "test/e2e/managed-facts-compaction.test.ts",
+    "test/e2e/facts-worker-config.test.ts",
+    "test/e2e/managed-extract-atoms.test.ts",
+    "test/e2e/managed-atom-regressions.test.ts",
+    "test/e2e/managed-atom-compaction.test.ts",
+    "test/e2e/managed-maintenance.test.ts",
+    "test/e2e/managed-synthesis-postprocess.test.ts",
+    "test/e2e/persistence-embedding-effects.test.ts",
+    "test/e2e/fact-backfill-resident.test.ts",
+    "test/e2e/reconcile-crash.test.ts",
+    "test/e2e/reconcile-crash-unactivated.test.ts",
+    "test/e2e/reconcile-pgbouncer.test.ts",
+    "test/e2e/persistence-skill-bundles-postgres.test.ts",
+    "test/e2e/shared-skills-transports.test.ts",
+  ],
+  "src/commands/source-reconcile.ts": ["test/e2e/reconcile-crash.test.ts", "test/e2e/reconcile-crash-unactivated.test.ts", "test/e2e/reconcile-pgbouncer.test.ts"],
+  "src/core/cycle/extract-atoms.ts": ["test/e2e/extract-atoms-page-state.test.ts", "test/e2e/cycle.test.ts", "test/e2e/dream.test.ts", "test/e2e/multi-source-bug-class.test.ts", "test/e2e/managed-extract-atoms.test.ts", "test/e2e/managed-atom-regressions.test.ts", "test/e2e/managed-atom-compaction.test.ts"],
+  "src/core/cycle/synthesize*.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/managed-synthesis-postprocess.test.ts"],
+  "src/core/cycle/extract-atoms-page-state.ts": ["test/e2e/extract-atoms-page-state.test.ts", "test/e2e/reconcile-crash.test.ts", "test/e2e/reconcile-crash-unactivated.test.ts", "test/e2e/reconcile-pgbouncer.test.ts"],
+  "src/commands/migrations/v0_13_1.ts": ["test/e2e/grandfather-projection-postgres.test.ts"],
   "src/core/pool-budget.ts": ["test/e2e/persistence-runtime-matrix.test.ts"],
   "src/core/connection-manager.ts": ["test/e2e/persistence-runtime-matrix.test.ts", "test/e2e/pgbouncer-teardown.test.ts"],
   "src/core/postgres-engine.ts": [
@@ -274,6 +318,16 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/migration-flow.test.ts",
     "test/e2e/upgrade-bun-link-arc.serial.test.ts",
   ],
+  "src/commands/apply-migrations.ts": [
+    "test/e2e/migration-preview-safety.test.ts",
+    "test/e2e/migrate-chain.test.ts",
+    "test/e2e/migration-flow.test.ts",
+  ],
+  "src/commands/migrations/**": [
+    "test/e2e/migration-preview-safety.test.ts",
+    "test/e2e/migrate-chain.test.ts",
+    "test/e2e/migration-flow.test.ts",
+  ],
   // Autopilot linux install/uninstall lifecycle (PATH-shimmed crontab +
   // systemctl; the ubuntu CI runner's only behavioral pin on those arms).
   "src/commands/autopilot.ts": ["test/e2e/autopilot-linux-lifecycle.serial.test.ts"],
@@ -288,6 +342,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // E2E AND the HTTP contract E2E for the webhook route.
   "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts"],
   "src/core/oauth-grants.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
+  "src/core/grants/lifecycle.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-clients.ts": ["test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-grants.ts": ["test/e2e/serve-http-consent.test.ts", "test/e2e/serve-http-source-grant.test.ts"],
+  "src/commands/serve-http-registration.ts": ["test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-admin-limits.ts": ["test/e2e/serve-http-consent.test.ts"],
+  "src/core/harness/client-setup.ts": ["test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http-oauth.ts": ["test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http.ts": [
     "test/e2e/serve-http-consent.test.ts",
@@ -307,4 +367,17 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/ingestion-roundtrip.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
   ],
+  "src/core/embed-facts*.ts": ["test/e2e/fact-embedding-backfill-parity.test.ts", "test/e2e/fact-backfill-resident.test.ts"],
+  "src/commands/embed-facts-delegate.ts": ["test/e2e/fact-backfill-resident.test.ts"],
+  "src/core/cycle/extract-facts.ts": ["test/e2e/fact-vector-repair-parity.test.ts", "test/e2e/facts-fence-reconcile-postgres.test.ts"],
+  "src/core/cycle/phases/consolidate.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/cycle.test.ts"],
+  "src/core/ops/facts.ts": ["test/e2e/managed-facts-backstop.test.ts"],
+  "src/core/facts/backstop.ts": ["test/e2e/managed-facts-backstop.test.ts", "test/e2e/facts-worker-config.test.ts", "test/e2e/managed-facts-embedding.test.ts", "test/e2e/managed-facts-compaction.test.ts"],
+  "src/core/facts/extract.ts": ["test/e2e/managed-facts-embedding.test.ts"],
+  "src/core/github-source.ts": ["test/e2e/managed-connector-routing.test.ts", "test/e2e/managed-connector-retry.test.ts", "test/e2e/managed-connector-fencing.test.ts", "test/e2e/managed-connector-recovery.test.ts"],
+  "src/core/google/google-source.ts": ["test/e2e/managed-connector-routing.test.ts", "test/e2e/managed-connector-retry.test.ts", "test/e2e/managed-connector-fencing.test.ts", "test/e2e/managed-connector-recovery.test.ts"],
+  "src/core/backup/**": ["test/e2e/backup-coverage-parity.test.ts"],
+  "src/commands/backup.ts": ["test/e2e/backup-coverage-parity.test.ts"],
+  "src/commands/doctor/checks/backup-coverage.ts": ["test/e2e/backup-coverage-parity.test.ts"],
+  "src/commands/doctor/checks/sync-failures.ts": ["test/e2e/managed-sync-failures.test.ts"],
 };

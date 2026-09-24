@@ -168,7 +168,7 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
 
     expect(check.name).toBe('backup_coverage');
     expect(check.status).toBe('ok');
-    expect(check.message).toContain('1 knowledge repo(s) git-backed');
+    expect(check.message).toContain('1 knowledge repo(s) have verified remote commits');
     expect(check.message).toContain('last checked');
 
     const details = check.details as { totals: BackupStatus['totals'] };
@@ -183,7 +183,7 @@ describe('checkBackupCoverage — remote surface (no localOnly)', () => {
   test('no cache → ok, "not checked from this surface", engine untouched', async () => {
     const check = await checkBackupCoverage(makeThrowingEngine(), {});
     expect(check.name).toBe('backup_coverage');
-    expect(check.status).toBe('ok');
+    expect(check.status).toBe('warn');
     expect(check.message).toContain('not checked from this surface');
     expect(check.message).toContain('gbrain backup check');
   });
@@ -219,8 +219,9 @@ describe('checkBackupCoverage — remote surface (no localOnly)', () => {
       assets: [{ kind: 'source_repo', id: 'unused', state: 'ok' }],
     });
     const check = await checkBackupCoverage(makeThrowingEngine(), {});
-    expect(check.status).toBe('ok');
-    expect(check.message).toContain('1 knowledge repo(s) git-backed');
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('not verified');
+    expect((check.details as { totals: BackupStatus['totals'] }).totals.recoverable_repos).toBe(0);
     expect((check.details as { note?: string }).note).toBe(
       'cache-only (remote surface never probes git; aggregate counts only)',
     );

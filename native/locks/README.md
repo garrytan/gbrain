@@ -41,9 +41,9 @@ that an arbitrary filesystem entry may be removed.
 All eight addons are checked in, so source installs work with
 `bun install --frozen-lockfile --ignore-scripts`. They support x64 and arm64
 on Linux glibc (2.17 ABI baseline), Linux musl, macOS (13.0 deployment
-target), and Windows. Supported Bun versions are tested at the repository's
-minimum, 1.3.11, and release version, 1.3.13. OS compatibility also requires
-the selected Bun version's own platform minimums.
+target), and Windows. The required CI matrix covers the repository's minimum
+Bun 1.3.11, Bun 1.3.13, and the release compiler, Bun 1.4.2. OS compatibility
+also requires the selected Bun version's own platform minimums.
 
 Node-API headers and their upstream license are vendored from Node
 v22.15.0. `darwin-abi.h` declares the narrow public Darwin LP64 ABI needed
@@ -81,7 +81,7 @@ directories. CI rebuilds each target on its platform and compares bytes.
 retained-inode checks, cancellation, deadline cleanup, live-holder staleness,
 SIGKILL recovery, and fail-closed missing-addon/invalid-path cases.
 `test/scripts/native-lock-prebuilds.test.ts` proves source/binary tampering
-fails verification and checks that the required CI matrix covers all sixteen
+fails verification and checks that the required CI matrix covers all twenty-four
 target/runtime pairs. Native CI also runs the tests in native musl userspace.
 
 `bun scripts/native/compiled-smoke.ts` builds a focused executable importing

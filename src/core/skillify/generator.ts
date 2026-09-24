@@ -11,6 +11,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';
 
 import {
   resolverRow,
@@ -177,7 +178,10 @@ function buildResolverAppend(resolverFile: string, vars: ScaffoldVars): string {
  * and just render the plan.
  */
 export function applyScaffold(plan: ScaffoldPlan): void {
+  for (const f of plan.files) assertLegacySkillFilesystemWrite(f.path);
+  if (plan.resolverFile && plan.resolverAppend !== null) assertLegacySkillFilesystemWrite(plan.resolverFile);
   for (const f of plan.files) {
+    assertLegacySkillFilesystemWrite(f.path);
     mkdirSync(dirname(f.path), { recursive: true });
     writeFileSync(f.path, f.content);
   }
@@ -185,6 +189,7 @@ export function applyScaffold(plan: ScaffoldPlan): void {
     const current = existsSync(plan.resolverFile)
       ? readFileSync(plan.resolverFile, 'utf-8')
       : '';
+    assertLegacySkillFilesystemWrite(plan.resolverFile);
     writeFileSync(plan.resolverFile, current + plan.resolverAppend);
   }
 }

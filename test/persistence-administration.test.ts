@@ -15,6 +15,7 @@ import { startPersistenceIpcServer, requestPersistenceAdministration, requestPer
 import { acquireLock, releaseLock } from '../src/core/pglite-lock.ts';
 import { parsePersistenceAdminArgs } from '../src/commands/persistence-admin.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 
 let engine: PGLiteEngine;
 let brainId: string;
@@ -86,18 +87,21 @@ describe('local writer administration', () => {
     writeFileSync(join(initial, 'page.md'), 'canonical bytes');
     writeFileSync(join(successor, 'page.md'), 'different bytes');
     await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, initial]);
-    const claim = await runPersistenceAdministration(engine, 'writer_claim', { source_id: sourceId, path: initial });
+    const claim = await runPersistenceAdministration(engine, 'writer_claim', { source_id: sourceId, path: initial, ...await reviewedWriterIntent(engine, 'writer_claim') });
     expect(claim.claimed).toBe(true);
-    const prepared = await runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: sourceId }) as any;
+    const prepared = await runPersistenceAdministration(engine, 'writer_transfer_prepare', { source_id: sourceId, ...await reviewedWriterIntent(engine, 'writer_transfer_prepare') }) as any;
     await expect(runPersistenceAdministration(engine, 'writer_transfer_accept', {
       source_id: sourceId, path: successor, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest,
+      ...await reviewedWriterIntent(engine, 'writer_transfer_accept'),
     })).rejects.toMatchObject({ code: 'writer_manifest_mismatch' });
     writeFileSync(join(successor, 'page.md'), 'canonical bytes');
     await expect(runPersistenceAdministration(engine, 'writer_transfer_accept', {
       source_id: sourceId, path: successor, expected_epoch: '99', manifest: prepared.manifest.digest,
+      ...await reviewedWriterIntent(engine, 'writer_transfer_accept'),
     })).rejects.toMatchObject({ code: 'writer_transfer_conflict' });
     const accepted = await runPersistenceAdministration(engine, 'writer_transfer_accept', {
       source_id: sourceId, path: successor, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest,
+      ...await reviewedWriterIntent(engine, 'writer_transfer_accept'),
     }) as any;
     expect(accepted.binding.local_path).toBe(successor);
     expect(String(accepted.binding.owner_epoch)).toBe('2');

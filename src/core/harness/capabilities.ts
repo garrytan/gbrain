@@ -1,5 +1,5 @@
 import type { AuthInfo } from '../ops/contract.ts';
-import { hasScope } from '../scope.ts';
+import { hasScope, operationScopesAllowed } from '../scope.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { normalizeGrantBrain, validGrantPrefixes } from '../grants/model.ts';
@@ -59,7 +59,7 @@ export async function resolveAuthCapabilities(auth: AuthInfo, engine: BrainEngin
   const surface = isMcpSurface(selected) ? selected : 'full';
   const disabled = await disabledOpsForPublishGates(engine, config);
   const visibleOperations = filterOpsForSurface(operations.filter(op => !op.localOnly), surface).filter(op =>
-    (hasScope(auth.scopes, op.scope ?? 'read') || (op.agentCallable === true && hasScope(auth.scopes, 'agent')))
+    operationScopesAllowed(auth.scopes, op)
     && opAllowedForBoundClient(auth, op) && !disabled.has(op.name)).map(op => op.name);
   return describeAuthCapabilities(auth, { surface, visibleOperations, delegatedTools: grantCatalog().delegateToolNames });
 }
@@ -99,6 +99,14 @@ export function describeAuthCapabilities(auth: AuthInfo, options: { surface?: st
     federated_read: auth.allowedSources ?? [],
     allowed_operations: auth.allowedOperations ?? null,
     ...(options.visibleOperations ? { available_operations: options.visibleOperations } : {}),
+    shared_skills: {
+      protocol_version: 2,
+      catalog: options.visibleOperations ? ['list_skills', 'get_skill'].every(name => options.visibleOperations!.includes(name)) : null,
+      can_join: options.visibleOperations ? options.visibleOperations.includes('join_brain') : null,
+      can_edit: options.visibleOperations ? ['put_skill', 'delete_skill'].every(name => options.visibleOperations!.includes(name)) : null,
+      can_publish_policy: options.visibleOperations ? options.visibleOperations.includes('set_skill_policy') : null,
+      native_activation: 'unverified',
+    },
     direct_write: { prefixes: auth.boundSlugPrefixes ?? null },
     delegation: {
       tools: auth.boundTools ?? [], effective_tools: effectiveTools, source_id: auth.boundSourceId ?? null,

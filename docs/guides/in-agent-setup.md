@@ -116,6 +116,11 @@ separately, including the date and app version when visible.
 
 ## 4. Make memory useful
 
+Save durable preferences and facts with provenance; keep transient task state,
+credentials, configuration, and harness activation state local. See
+[memory boundaries](memory-boundaries.md) for the graph-maintenance, provider
+disclosure, and backup limits shared by every installation path.
+
 The generated skill is intentionally small: recall relevant context before
 personal or continuing-work questions; save requested durable facts with a
 source and date; preserve uncertainty; correct stale facts; verify the result.

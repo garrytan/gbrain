@@ -14,8 +14,10 @@ import { persistenceFileHash, publishPersistenceFile } from './coordinator.ts';
 import type { EffectRecovery, PersistenceEffect } from './effect-model.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, upgradeRecoveryStaging } from './staging.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 
 export async function guardEffectSource(tx: BrainEngine, effect: PersistenceEffect, hostId: string): Promise<WorktreeBinding | null> {
+  await declarePersistenceProtocol(tx);
   if (effect.worktree_id) {
     const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [effect.worktree_id]);
     if (!owner || owner.owner_host_id !== hostId || owner.state !== 'active') throw new OperationError('owner_unavailable', 'The effect requires its active canonical owner.');

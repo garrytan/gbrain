@@ -1,8 +1,10 @@
+import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-schema.ts';
 import { PERSISTENCE_SCHEMA_STATEMENTS } from './persistence/schema.ts';
 import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
 import { PAGE_PROJECTION_SCHEMA_SQL } from './page-state/projection-schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
 import { PAGE_STATE_SCHEMA_SQL } from './page-state/schema.ts';
+import { SHARED_SKILLS_SCHEMA_SQL } from './shared-skills/schema-all.ts';
 /**
  * PGLite schema — derived from schema-embedded.ts (Postgres schema).
  *
@@ -1263,6 +1265,21 @@ ${PAGE_STATE_SCHEMA_SQL}
 ${PERSISTENCE_SCHEMA_STATEMENTS.join(';\n')};
 ${PAGE_PROJECTION_SCHEMA_SQL}
 ${PERSISTENCE_TOPOLOGY_SCHEMA_SQL}
+${SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL}
+${SHARED_SKILLS_SCHEMA_SQL}
+
+CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
+  source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  content_hash TEXT NOT NULL,
+  fail_count INTEGER NOT NULL DEFAULT 0 CHECK (fail_count >= 0),
+  tombstoned BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_incarnation, page_id, content_hash)
+);
+CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
+  ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
+CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
 
 `;
 

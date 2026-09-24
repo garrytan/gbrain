@@ -73,6 +73,7 @@ import {
   type ExtractedFact,
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
+import { assertUnmanagedCanonicalWriter } from '../core/persistence/maintenance.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -1287,6 +1288,7 @@ export async function runExtractConversationFactsCore(
   if (!sourceId) {
     throw new Error('runExtractConversationFactsCore: opts.sourceId is required');
   }
+  await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
 
   const result: ExtractConversationFactsResult = {
     pages_considered: 0,
@@ -1904,6 +1906,7 @@ export async function runExtractConversationFacts(
     console.log(HELP);
     return;
   }
+  await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
 
   // --background path.
   const backgrounded = await maybeBackground({

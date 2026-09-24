@@ -8,6 +8,10 @@ If no computer of yours can stay online, install a small local GBrain in that
 durable area instead. Either way, establish the durable path first and start
 keyless.
 
+Durable preferences can be shared; local harness configuration cannot. Read
+[memory boundaries](memory-boundaries.md) for provider text disclosure, remote
+graph maintenance, and full-backup limits before enabling capabilities.
+
 **Say to your agent:** *"connect muse to my brain"* — *"use my brain over
 mcp"*. On your computer, the `remote-mcp` skill publishes and grants; inside
 Muse, the paste-in prompt below installs the connection.

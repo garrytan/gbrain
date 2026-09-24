@@ -131,6 +131,19 @@ beforeAll(() => {
     );
   }
 
+  const sourceResult = spawnSync(
+    SHIM_PATH,
+    ['sources', 'add', 'exit-fixture', '--path', repoSourceDir, '--no-federated'],
+    { cwd: REPO_ROOT, env: runEnv, encoding: 'utf-8', timeout: 60_000 },
+  );
+  if (sourceResult.status !== 0) {
+    throw new Error(
+      `gbrain sources add failed (code=${sourceResult.status}):\n` +
+        `STDOUT:\n${sourceResult.stdout}\nSTDERR:\n${sourceResult.stderr}`,
+    );
+  }
+  runEnv.GBRAIN_SOURCE = 'exit-fixture';
+
   // Sync to import the pages (no-embed: skip the embedding step so
   // the test doesn't need any provider key).
   const syncResult = spawnSync(

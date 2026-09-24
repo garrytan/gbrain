@@ -26,6 +26,7 @@ import { preserveProtectedTakes } from './protected-takes.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { preparePageAdvisories, remoteLinkHint, pageNoopAdvisories } from './page-advisories.ts';
+import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 
 const PURGE_RESIDUALS = 'Brain-repo git history, synced working-tree copies, exports, compiled context files and slug-keyed derived rows (takes, open loops, file records) may still hold the content — rotate the credential and rewrite or regenerate those copies.';
 
@@ -96,6 +97,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
 export async function preparePageMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig,
   preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }): Promise<PreparedMutation> {
   if (!row.intent) throw new OperationError('storage_error', 'A pending write lost its normalized intent.');
+  await assertKnowledgePublicationAllowed(engine, row);
   const p = row.intent;
   const source = { sourceId: row.source_id };
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
@@ -205,7 +207,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const rendered = serializePageToMarkdown(renderedPage, tags);
   const logicalNoop = snapshot !== null && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(ready.parsedPage, tags));
   const noop = logicalNoop && (snapshot?.page.deleted_at != null) === targetDeleted;
-  const project = row.operation === 'remember' || row.operation.startsWith('takes_') ? undefined
+  const project = row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity') ? undefined
     : prepareCanonicalProjections(ready.parsedPage,row.slug,row.source_id);
   const ordinaryPage = ['put_page','capture','restore_page','revert_version'].includes(row.operation);
   const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage);

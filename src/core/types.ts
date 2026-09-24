@@ -1100,6 +1100,16 @@ export interface ResolvedColumn {
   embeddingModel: string;
 }
 
+export interface VectorPoolMeta {
+  underfilled: boolean;
+  escalations: number;
+  innerLimit: number;
+  incomplete?: boolean;
+  reason?: 'candidate_budget' | 'iterative_scan_unavailable' | 'deadline';
+  candidatePool?: number;
+  exactFallback?: boolean;
+}
+
 export interface SearchOpts extends PageReadPolicy {
   limit?: number;
   offset?: number;
@@ -1109,10 +1119,9 @@ export interface SearchOpts extends PageReadPolicy {
    * candidate pool before the per-page DISTINCT collapse, underfilling the
    * result). Engines have no telemetry sink; the HYBRID layer passes a
    * collector here and owns the emit. Called at most once per searchVector
-   * call, only when the escalation loop ended with the page set still
-   * underfilled at the HNSW substrate cap (ef_search hard ceiling).
+   * call, only when bounded work ended before exhaustion could be proved.
    */
-  onVectorPoolMeta?: (m: { underfilled: boolean; escalations: number; innerLimit: number }) => void;
+  onVectorPoolMeta?: (m: VectorPoolMeta) => void;
   /**
    * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
    * default caps; an object overrides caps per-call; omitted/`false` = off
@@ -1238,11 +1247,13 @@ export interface SearchOpts extends PageReadPolicy {
    * v0.27.0: filter results to pages updated/created after this date. ISO-8601 string.
    */
   afterDate?: string;
+  afterDateInclusive?: boolean;
   /**
    * @deprecated v0.29.1: use `until` instead. Removed in v0.30.
    * v0.27.0: filter results to pages updated/created before this date. ISO-8601 string.
    */
   beforeDate?: string;
+  beforeDateInclusive?: boolean;
   /**
    * @deprecated v0.29.1: use `recency` ('off' | 'on' | 'strong') instead. Removed in v0.30.
    * v0.27.0: recency boost strength. 0 = off, 1 = moderate, 2 = aggressive.
@@ -1899,6 +1910,9 @@ export const DEGRADED_STAGES = [
   'rerank_passthrough',
   'keyword_relaxed_carried',
   'safe_index_pending',
+  'vector_candidates_incomplete',
+  'projection_pending',
+  'projection_status_unknown',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 
@@ -1920,6 +1934,8 @@ export const DEGRADED_REASONS = [
   // #4648 — rerank_passthrough reasons (mirror RerankPassThroughReason).
   'empty_result_set',
   'malformed_shape',
+  'candidate_budget',
+  'iterative_scan_unavailable',
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 
@@ -1983,7 +1999,7 @@ export interface HybridSearchMeta {
    * the caller asked for more distinct pages than the candidate pool could
    * yield). Omitted on clean runs. Exhaustion is VISIBLE, not silent.
    */
-  vector_pool_underfilled?: { escalations: number; innerLimit: number };
+  vector_pool_underfilled?: Omit<VectorPoolMeta, 'underfilled'>;
   /**
    * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
    * Omitted when autocut didn't run (no reranker). Surfaced for

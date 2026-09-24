@@ -23,6 +23,10 @@ on:
         description: 'Run the grok-door job (pre-secret posture: label or this input only)'
         type: boolean
         default: false
+      run_opencode_paid:
+        description: 'Run the credentialed OpenCode lane (requires ANTHROPIC_API_KEY; may incur API cost)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -74,6 +78,7 @@ jobs:
       - name: Run heavy tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_HEAVY_LOG_DIR: ${{ runner.temp }}/gbrain-heavy-logs
           # #3485 preload guard: this job intentionally tests against a DB.
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
         run: bun run test:heavy
@@ -104,6 +109,7 @@ jobs:
         run: |
           mkdir -p heavy-artifacts
           cp -r "$HOME/.gbrain/audit"/heavy-* heavy-artifacts/ 2>/dev/null || true
+          cp -r "$RUNNER_TEMP/gbrain-heavy-logs"/. heavy-artifacts/ 2>/dev/null || true
           cp tests/heavy/rss-baseline.json heavy-artifacts/ 2>/dev/null || true
       - name: Upload heavy-test artifacts
         if: always()
@@ -191,7 +197,7 @@ jobs:
   # the PR shard matrix. Loud-fail throughout: a runner that cannot install or
   # auth hermes fails this job rather than skipping.
   hermes-door:
-    name: Hermes door e2e (real binary, loud-fail)
+    name: Hermes door e2e (credentialed, real binary, loud-fail)
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
@@ -245,7 +251,7 @@ jobs:
       - name: Install hermes (pinned installer digest)
         timeout-minutes: 15
         run: |
-          curl -fsSL --retry 3 -o hermes-install.sh https://hermes-agent.nousresearch.com/install.sh
+          curl -fsSL --retry 3 -o hermes-install.sh https://raw.githubusercontent.com/NousResearch/hermes-agent/95d42656021a22f20201c618a67da07a618d16f3/scripts/install.sh
           if ! echo "$HERMES_INSTALL_SHA256  hermes-install.sh" | sha256sum -c -; then
             echo "::error::hermes installer digest drift — re-pin deliberately: update HERMES_INSTALL_SHA256 + HERMES_VERSION in this workflow and docs/mcp/HERMES-CLI-PIN.md after reviewing upstream changes" >&2
             exit 1
@@ -733,24 +739,17 @@ jobs:
   # verified — both pins live in docs/mcp/OPENCODE-CLI-PIN.md, enforced
   # against this file by scripts/check-opencode-pin.sh in `bun run verify`).
   #
-  # DAY-ONE FULL POSTURE (a step past grok's pre-secret gating, deliberate):
-  # opencode's anonymous free tier drives MCP tool calls keyless (observed,
-  # load-bearing — OPENCODE-CLI-PIN.md §One-shot), so the ENTIRE core door —
-  # including the nonce SMOKE — runs with no secret; and the paid anthropic
-  # leg rides the ANTHROPIC_API_KEY secret that already exists (hermes-door
-  # consumes it). So this job takes the hermes-door triggers (nightly +
-  # labels + dispatch, cadence policy: nightly for the NEWEST door agent)
-  # with grok-door's internals (keyless-first ordering, secretless pinned
-  # provisioning, sentinels, scrub triple, unconditional credential removal).
-  # No dedicated dispatch input: any workflow_dispatch already passes the
-  # non-PR arm, so an input would be dead yaml.
   opencode-door:
-    name: opencode door e2e (real binary, keyless SMOKE)
+    name: opencode door e2e (${{ matrix.lane }})
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON((inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == '1') && '["keyless","credentialed"]' || '["keyless"]') }}
     # Measured local door wall-time: full 6-test run 35.8s + one-time
     # compiled gbrain build (~2-4 min) + npm install (~15s); free-tier +
     # paid turn budgets 2 x 240s each. 20 min = measured + >50% headroom.
@@ -781,8 +780,7 @@ jobs:
           echo "GBRAIN_E2E_EVIDENCE_DIR=$RUNNER_TEMP/opencode-door-evidence" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/opencode-door-evidence"
 
-      # Compile gbrain ONCE for both bun test invocations below.
-      - name: Build gbrain (compile once for both door runs)
+      - name: Build gbrain (compile once per lane)
         run: |
           bun build --compile --no-compile-autoload-bunfig --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
           echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
@@ -844,6 +842,7 @@ jobs:
       # (free tier). ANTHROPIC_API_KEY is absent from this step by
       # construction, so the paid describe self-skips.
       - name: Run opencode door tests (keyless tier — SMOKE included)
+        if: matrix.lane == 'keyless'
         run: |
           EXIT=0
           bun test --timeout=600000 test/e2e/install-real-opencode.serial.test.ts > door-keyless.txt 2>&1 || EXIT=$?
@@ -856,49 +855,41 @@ jobs:
           # T2b, T3, T4-SMOKE), the 1 paid test skips. Zero/partial-pass
           # refuses green.
           pass_count=$(grep -Eo '[0-9]+ pass' door-keyless.txt | tail -1 | grep -Eo '^[0-9]+' || true)
-          if [ -z "$pass_count" ] || [ "$pass_count" -lt 5 ]; then
+          if [ "$pass_count" != "5" ]; then
             echo "::error::opencode door keyless tier expected 5 passing tests, summary shows '${pass_count:-none}' — refusing to go green (see docs/mcp/OPENCODE-CLI-PIN.md triage table)" >&2
             exit 1
           fi
 
-      - name: Preconditions (secret present)
+      - name: Report credentialed coverage not run in keyless lane
+        if: matrix.lane == 'keyless'
+        run: |
+          echo "## OpenCode: keyless coverage only" >> "$GITHUB_STEP_SUMMARY"
+          echo "No paid turn ran in this lane. Request run_opencode_paid on dispatch or set GBRAIN_OPENCODE_PAID_E2E=1 to enable the separate credentialed lane." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preconditions (credentialed lane requires secret)
+        if: matrix.lane == 'credentialed'
         id: paidgate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            # Keyless coverage (incl. the SMOKE) is already banked above.
-            # Split posture: on pull_request the missing paid leg is a
-            # VISIBLE SKIP (fork PRs never receive secrets, and branch-PR
-            # authors cannot fix repo secrets either — a permanently-red
-            # check just trains reviewers to ignore this door); the nightly
-            # schedule + dispatch stay loud-fail so the owner sees red until
-            # the secret exists.
-            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-              echo "paid=false" >> "$GITHUB_OUTPUT"
-              echo "::warning::opencode door PAID LEG SKIPPED — ANTHROPIC_API_KEY secret is empty (owner-only fix: gh secret set ANTHROPIC_API_KEY). Keyless tier (5 tests incl. the SMOKE) is banked above." >&2
-              {
-                echo "## opencode door: paid anthropic leg skipped"
-                echo "Keyless tier (5 tests, SMOKE included) passed; the paid leg needs the ANTHROPIC_API_KEY secret."
-                echo "The nightly schedule stays loud-fail until the owner sets the secret."
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "::error::ANTHROPIC_API_KEY secret is empty — the keyless tier above already ran (its coverage, including the SMOKE, is banked); the paid anthropic leg needs the secret hermes-door already consumes (owner-only fix: gh secret set ANTHROPIC_API_KEY)." >&2
+          key="${ANTHROPIC_API_KEY:-}"
+          if [ -z "${key//[[:space:]]/}" ]; then
+            echo "::error::OpenCode credentialed lane was explicitly requested but ANTHROPIC_API_KEY is empty. No paid turn ran." >&2
             exit 1
           fi
           echo "paid=true" >> "$GITHUB_OUTPUT"
 
-      # Full run (paid anthropic leg included). The T5 models-gate inside the
+      # The T5 models-gate inside the
       # suite is the named bad-pin tripwire: it validates the pinned model id
       # against the AUTHED `opencode models` list BEFORE any spend.
-      - name: Run opencode door tests (full — paid anthropic leg included)
+      - name: Run opencode door tests (credentialed tier only)
         if: steps.paidgate.outputs.paid == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GBRAIN_REAL_OPENCODE_PAID_E2E: '1'
         run: |
           EXIT=0
-          bun test --timeout=600000 test/e2e/install-real-opencode.serial.test.ts > door.txt 2>&1 || EXIT=$?
+          bun test --timeout=600000 --test-name-pattern 'paid tier' test/e2e/install-real-opencode.serial.test.ts > door.txt 2>&1 || EXIT=$?
           tail -40 door.txt
           cp door.txt "$GBRAIN_E2E_EVIDENCE_DIR/" 2>/dev/null || true
           if [ "$EXIT" -ne 0 ]; then
@@ -913,8 +904,8 @@ jobs:
             exit 1
           fi
           pass_count=$(grep -Eo '[0-9]+ pass' door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
-          if [ -z "$pass_count" ] || [ "$pass_count" -lt 6 ]; then
-            echo "::error::opencode door full run expected 6 passing tests, summary shows '${pass_count:-none}'" >&2
+          if [ "$pass_count" != "1" ]; then
+            echo "::error::opencode credentialed lane expected 1 passing paid test, summary shows '${pass_count:-none}'" >&2
             exit 1
           fi
 
@@ -935,7 +926,7 @@ jobs:
       - name: Scrub credentials from evidence (defensive)
         if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ matrix.lane == 'credentialed' && secrets.ANTHROPIC_API_KEY || '' }}
         run: |
           # Same triple as the sibling doors, RE-KEYED for this lane: the
           # credential file candidate is opencode's auth.json and the content
@@ -954,7 +945,7 @@ jobs:
         if: failure() && env.GBRAIN_E2E_EVIDENCE_DIR != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: opencode-door-evidence
+          name: opencode-door-${{ matrix.lane }}-evidence
           path: ${{ env.GBRAIN_E2E_EVIDENCE_DIR }}
           retention-days: 14
           if-no-files-found: ignore

@@ -296,7 +296,7 @@ for f in "${files[@]}"; do
   if [ "$rc" -eq 0 ]; then
     if [ "$f" = "test/e2e/pgbouncer-teardown.test.ts" ] && \
        [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ] && \
-       ! printf '%s\n' "$output" | grep -qE '^[[:space:]]*[1-9][0-9]* pass$'; then
+       ! grep -qE '^[[:space:]]*[1-9][0-9]* pass$' <<< "$output"; then
       fail_files=$((fail_files + 1))
       fail_list+=("$name")
       echo "$output"

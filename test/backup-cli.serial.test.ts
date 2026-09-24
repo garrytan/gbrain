@@ -308,7 +308,7 @@ describe('runBackupCli — PGLite lock fallback', () => {
     const r = await run(['status'], connect);
 
     expect(calls()).toBe(1);
-    expect(r.exitCode).toBe(0);
+    expect(r.exitCode).toBe(1);
     expect(r.log).toContain('no cached verdict; DB locked by serve');
     expect(existsSync(statusPath)).toBe(false);
   });
@@ -393,7 +393,8 @@ describe('runBackupCli --json', () => {
     expect(payload.overall).toBe('ok');
     expect(payload.recovery.recoverable_repos).toBe(0);
     expect(payload.recovery.pages_at_risk).toBe(0);
-    expect(payload.recovery.statement).toContain('What survives a disk loss today');
+    expect(payload.recovery.statement).toContain('recently verified remote commits');
+    expect(payload.recovery.statement).toContain('not a full database backup');
   });
 
   test('degraded compute passes degraded:true through and is never persisted', async () => {
@@ -407,7 +408,7 @@ describe('runBackupCli --json', () => {
     const payload = JSON.parse(r.stdout) as { degraded?: boolean };
     expect(payload.degraded).toBe(true);
     expect(existsSync(statusPath)).toBe(false); // degraded verdicts never persist
-    expect(r.exitCode).toBe(0); // degraded suppresses the db_content warn
+    expect(r.exitCode).toBe(1);
   });
 });
 

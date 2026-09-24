@@ -33,6 +33,59 @@ attributed reservations. It does not contact a paid model provider or run inside
 a vendor harness. Tests with a fake MCP peer cover failure and reconciliation
 behavior; the PostgreSQL/PGLite journeys provide the separate real-server proof.
 
+## Shared-skills evidence boundaries
+
+The dated results above predate shared-brain enrollment. They do not prove
+shared-skill distribution or native activation. Use the
+[shared-skills guide](shared-brain-skills.md) and the checklist below for this
+feature; record executed checks in the change's validation record rather than
+treating the existence of a test file as a passing result.
+
+The [generated adapter reference](harness-adapters.md) is the inventory of all
+13 registered harness IDs; `gbrain mcp adapters` exposes current metadata.
+Connection support is not a blanket native-skills claim. Managed Claude Code,
+Codex, and opencode connections can install a router but report
+`restart_required` and native-unverified. Manual adapters remain pending.
+Router prose is advisory: only calls using the adapter's enforced `admit` seam
+have its current-authority check and revision pin. Do not claim vendor-wide
+offline freshness or invocation enforcement.
+
+For every installation tested, record these three evidence levels separately:
+
+1. **Protocol:** independent parent and child principals see only approved
+   sources. V2 tools and `gbrain://skills` resources return the same authorized
+   immutable revision; legacy shapes remain source-scoped after activation.
+   A committed edit reaches a second client and the parent. Denied sources,
+   revoked grants, and unavailable catalogs cannot become successful empty views.
+2. **Files and lifecycle:** inspect hashes, ownership receipts, absolute launcher
+   or named connection, and pending/retained files. Exercise an edited-copy
+   conflict, reconnect, and leave without overwriting user changes. A delivery
+   acknowledgment is a client report, not a native observation. Back up both
+   content and operational DB state before migration/recovery tests.
+   Check offline/revoked leave disables local following while honestly retaining
+   `remote_membership_pending`. Local `connect --status` must not claim a fresh
+   authority probe. Restore a synthetic PGLite archive into an absent root and
+   verify a new unpublished identity, revoked archived authority, detached
+   owners, preserved knowledge/history/floor, and no restarted automation;
+   unresolved file recovery must block restoration.
+3. **Actual native conversation:** record harness/adapter version, session,
+   qualified skill identity, and revision. In a fresh conversation, ask for a
+   matching task without naming the skill and observe selection/use. Publish
+   an approved edit through another principal, refresh/restart, and observe
+   the new revision in the parent too. Verify a safely disabled shadow copy
+   cannot still win routing. Missing platform access remains unverified.
+
+Use synthetic fixtures and obtain any required execution/spending consent.
+Neither a catalog fetch nor a router file proves native activation, and no
+draft Skills-over-MCP extension conformance is asserted. A committed publication
+receipt is not proof that every member has received the revision.
+
+For isolated Grok Bot/Muse setup, inspect the installation's own shared-skills
+receipt and manual native-registration step; it is not a `connect` receipt.
+For legacy full/stub bridges, verify pending migration plans preserve edited
+copies and do not fall back to bundled bodies when the shared brain is unavailable.
+These are acceptance requirements, not additional dated passing results.
+
 ## Reproduce the focused lifecycle checks
 
 Run from a development checkout with dependencies installed:

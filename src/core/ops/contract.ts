@@ -485,6 +485,7 @@ export interface Operation {
    * because the trust boundary there is the OS, not OAuth scopes.
    */
   scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
+  requiredScopes?: readonly string[];
   localOnly?: boolean;
   /**
    * WP1 honest catalog: the op is callable by remote callers only when this

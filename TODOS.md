@@ -43,8 +43,9 @@
   **What:** a remote `sources_admin` caller may add a source outside its own grant; with `sources_list` / `sources_status` / `sources_remove` all confined to the grant, the new source stays invisible to its creator until the operator rescopes the client (`gbrain auth rescope-client <id> --federated-read ...`). Consistent with the e2e "stays hidden until rescope" contract but surprising. **Fix:** auto-grant the creator read access, or name the rescope step in the op result hint. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — Doctor `oauth_client_scope_health` arm (c) signature also matches pre-audit operator clients.**
   **What:** the "privileged self-registered client" WARN keys on `grant_revision = 0` + no `oauth_grant_audit` 'register' row, which operator clients created before the grant audit log also satisfy; the message is worded as advisory for that reason. **Fix:** a one-time backfill of `register` audit rows for existing operator-created clients would make the DCR signature exact. **Effort:** S. **Priority:** P3.
-- [ ] **P3 — Confirm the Postgres arm of the `getRawData` soft-delete parity describe on the first CI run.**
+- [x] **P3 — Confirm the Postgres arm of the `getRawData` soft-delete parity describe on the first CI run.**
   **What:** `test/e2e/engine-parity.test.ts` gained a standalone describe whose PGLite arm ran in the implementation sandbox; the Postgres arm needs `DATABASE_URL` (no Docker there). **Effort:** XS. **Priority:** P3.
+  **Verified v0.52.1.0:** the real Postgres arm passed in the isolated local Docker gate. This is local verification, not a claim of remote CI execution.
 - [ ] **P3 — Unify the `bearer` floors between secret-scan (20 chars) and the PII family (10 chars).**
   **What:** `sensitivity-scan.ts` bridges the gap by fingerprint dedupe so short bearer tokens still surface as `pii:bearer`; making secret-scan the single owner would let the PII family drop `jwt` / `bearer` entirely. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — Bulk purge for a leaked transcript session.**
@@ -108,7 +109,8 @@
   **What:** re-extraction writes via `addLinksBatch … ON CONFLICT DO NOTHING` and never prunes, so the 2026-09-09 `LINK_EXTRACTOR_VERSION_TS` bump adds `mentions` rows beside prior-typed `works_at`/`advises` edges from machine-written list sections instead of demoting them. A doctor `--fix` that deletes prior-typed markdown edges whose anchor sits in a suppressed range is the cleanup; needs the maintainer's call on evidence. **Effort:** M. **Priority:** P3.
 - [ ] **P3 — brainstorm `--resume` from a pre-0.50.1.0 checkpoint still mints a fresh idea slug.**
   **What:** checkpoints written before the wave carry no `idea_slug`, so one legacy resume can still create a second idea page (the bug #4766's follow-up fixed for new checkpoints). A one-line stderr note or a slug back-derivation would close it. **Effort:** S. **Priority:** P3.
-- [ ] **P3 — hermes-door: pin the installer bootstrapper by upstream commit instead of sha-pinning the served `install.sh`.**
+- [x] **P3 — hermes-door: pin the installer bootstrapper by upstream commit instead of sha-pinning the served `install.sh`.**
+  **Completed v0.52.1.0:** the installer URL names reviewed upstream commit `95d42656021a22f20201c618a67da07a618d16f3` while retaining checksum enforcement. Isolated installation verified the pinned payload and version; paid nightly coverage remains credential-dependent.
   **What:** `.github/workflows/heavy-tests.yml` pins `HERMES_INSTALL_SHA256` against the bytes served at the vendor's stable install URL, which upstream edits often: the pin has needed four refreshes in four weeks (latest #4991, fixes #4990) and one was stale within hours of being observed, so every upstream edit is a red nightly until someone re-reviews the upstream diff and re-pins the two homes (the workflow constant + `docs/mcp/HERMES-CLI-PIN.md`). The door also stays red at its Preconditions step until the `ANTHROPIC_API_KEY` repo secret is set; the re-pin restores digest + payload + version verification, not a green job. **How (maintainer design call):** fetch the bootstrapper from the upstream repo at a reviewed commit (the door already commit-pins the PAYLOAD via `HERMES_GIT_COMMIT`, so a commit-pinned bootstrapper is consistent; the served-URL door was kept deliberately as the real user install path — weigh that against a roughly weekly re-pin chore), or keep the served-URL pin and accept the chore. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — `extract_facts`: heal an attribute-only fence edit in place instead of wipe+reinsert.**
   **What:** since #4870 the reconcile treats a `visibility` / `notability` cell edit as drift and re-syncs the page through the same atomic wipe+reinsert the other drift classes use. That transports the edit but re-embeds every row on the page (a paid call when an embedding key is configured; NULL embeddings until re-embedded when it is not) and rotates the rows' ids. **Why:** the v0.50.1.0 ship found the keyless case through `test/e2e/phantom-redirect.test.ts` round 12 (the seed disagreed with its fence, so the reconcile wiped the migrated row); the test seed was fixed, the reconcile was not. An attribute-only drift with matching content key, row number and struck-state can be a per-row `UPDATE facts SET visibility, notability` under the same page lock. **Effort:** S. **Priority:** P3.
@@ -303,7 +305,8 @@
   retrieval-gate path were deferred. Triage records (verdict, evidence, fix
   sketch, key files per issue) live in the wave workspace
   `.context/wave/triage/issue/` + `.context/wave/refute/issue/` (gitignored
-  wave working state, not repo content). Deferred: #4381 #4576 #4578 #4603 #4616 #4622 #4649 #4772 #4921 (of the 0.48.5.0 wave's 26 deferrals, 17 shipped in 0.48.6.0: #4558 #4586 #4588 #4600 #4605 #4613 #4653 #4670 #4684 #4741 #4761 #4766 #4795 #4797 #4852 #4879 #4910).
+  wave working state, not repo content). Deferred: #4381 #4576 #4578 #4616 #4622 #4649 #4772 #4921 (of the 0.48.5.0 wave's 26 deferrals, 17 shipped in 0.48.6.0: #4558 #4586 #4588 #4600 #4605 #4613 #4653 #4670 #4684 #4741 #4761 #4766 #4795 #4797 #4852 #4879 #4910).
+  #4603 is completed by the v0.51.7.0 search reliability wave.
   Of the 0.48.1.0 wave's 27 deferrals, ten shipped in 0.48.5.0 (#4744 via
   #4933, #4729 via #4865, #4728, #4696, #4652, #4620, #4606, #4597, #4589,
   #4563), five were re-classified on verification (#4738 and #4732
@@ -1193,7 +1196,7 @@ deferred M-effort issues above are NOT repeated here.
   checklist below. **Why:** prove-before-publish — the claude lane got a
   real-binary door; these two shipped gated instead. **Effort:** M.
   **Priority:** P2.
-- [ ] **P2 — STARTER_OPS question: should get_skill/list_skills join the
+- [x] **P2 — STARTER_OPS question: should get_skill/list_skills join the
   starter surface?** **What:** the stub lane is dead on unmodified plugin
   installs (starter surface hides skills ops; stdio can't persist a
   request_tools widening). Decide whether the starter set grows the two
@@ -1203,7 +1206,9 @@ deferred M-effort issues above are NOT repeated here.
   test/skillpack-harness-bridge.test.ts (get_skill ∉ STARTER_OPS) and the
   warn text in src/commands/skillpack/harness.ts must move with it. **Why:**
   the biggest single unlock for cold-pull stubs. **Effort:** S (decision) +
-  S (change). **Priority:** P2.
+  S (change). **Priority:** P2. Completed in v0.53.0.0: starter includes
+  authorized shared discovery, assets, and own-principal membership; publication
+  gates and explicit capabilities still apply. The verbs surface is unchanged.
 - [ ] **P3 — duplicate-skill-name coexistence doctor check.** **What:** a
   doctor probe that detects the same skill name loadable from two lanes at
   once (marketplace plugin snapshot + a bridge install in
@@ -4048,6 +4053,12 @@ deliberately scoped out of the wave (see plan + GSTACK REVIEW REPORT at
 - [ ] **#1569-followup: root-cause the 56K-file sync wedge with the reporter's repro.** v0.41.37.0 shipped ReDoS hardening (input-length cap + star-height lint + `--no-schema-pack` escape) + diagnostics (`GBRAIN_SYNC_TRACE=1` begin-heartbeat + PGLite serve/sync concurrency doc), but did NOT root-cause the deterministic wedge at ~3100 files — the reporter's redos-guard hypothesis didn't hold (it's not on the sync path). Get the reporter's sample files (`/tmp/gbrain-hang-sample.txt`, `/tmp/gbrain-prewedge-sample.txt`), reproduce, and pin the resume-mode deep-recursion pre-import phase (prime suspect: the walk/diff/checkpoint path). Priority: P1 once a repro exists; tracked on the #1569 thread.
 ## MCP skillpack distribution — PR2 (v0.41.37+)
 
+Shared-brain distribution is implemented in v0.53.0.0 through source-qualified
+sealed revisions, approved `get_skill_asset` delivery, and enrolled local caches.
+This subsumes the shared-brain catalog/bundle use case without an archive endpoint.
+The older third-party tarball installation and host-global merge proposals below
+remain separate work; they are not prerequisites for shared-brain following.
+
 Filed from the v0.41.36.0 skill-catalog wave (`list_skills` / `get_skill`).
 PR1 shipped the read-only catalog; PR2 is the download-and-install surface,
 deferred per the plan's D1 + D8 because it stands up new HTTP/binary/token
@@ -6418,18 +6429,6 @@ patterns.
 
 ## OAuth/MCP hardening (v0.26.7 follow-up)
 
-### F11 — `auth register-client --redirect-uri` flag
-**Priority:** P3
-
-**What:** `gbrain auth register-client` always passes `[]` for redirect URIs; there is no CLI flag to set them. Operators who want to register an `authorization_code` client without DCR have to hand-edit the database.
-
-**Why:** Operator UX gap, not a trust-boundary issue. Codex C11 correctly flagged it as scope creep on the v0.26.7 hardening pass — kept out of that PR but worth doing.
-
-**Pros:** Closes the operator-experience gap. Validates `https://` or loopback per RFC 6749 §3.1.2.1 at registration time. Repeatable flag.
-**Cons:** ~30 lines of argv parsing + URL validation. Adds one more flag to the `auth register-client` surface. Low value relative to the OAuth provider hardening that already shipped.
-**Context:** Eva-brain has the implementation under `src/commands/auth.ts:registerClient`. Lift verbatim — the `localhost`/`127.0.0.1`/`::1` exact-match validation is correct; codex spot-check confirmed it does NOT match `localhost.evil.com`. v0.27 candidate.
-**Depends on:** Nothing.
-
 ### F13 — `gbrain serve --http` argv positive-int validator
 **Priority:** P3
 
@@ -7250,6 +7249,24 @@ keeping both skills' triggers intact for chaining.
 **Found:** 2026-04-24 during v0.19.0 production-readiness review.
 
 ## Completed
+
+### ~~F11 — manual native OAuth registration~~
+**Completed:** v0.54.1.1 (2026-09-24), with the original command proposal superseded.
+
+**Resolution:** `gbrain mcp admin register NAME --redirect-uri URI [--redirect-uri URI ...]` provides validated manual native OAuth registration through the running server and owner authentication. It supports public and confidential PKCE with authorization-code and refresh grants, without direct database edits. The legacy `auth register-client` command remains unchanged. See [MCP administration](docs/mcp/ADMIN.md).
+
+**Original proposal and context:**
+
+**Priority:** P3
+
+**What:** `gbrain auth register-client` always passes `[]` for redirect URIs; there is no CLI flag to set them. Operators who want to register an `authorization_code` client without DCR have to hand-edit the database.
+
+**Why:** Operator UX gap, not a trust-boundary issue. Codex C11 correctly flagged it as scope creep on the v0.26.7 hardening pass — kept out of that PR but worth doing.
+
+**Pros:** Closes the operator-experience gap. Validates `https://` or loopback per RFC 6749 §3.1.2.1 at registration time. Repeatable flag.
+**Cons:** ~30 lines of argv parsing + URL validation. Adds one more flag to the `auth register-client` surface. Low value relative to the OAuth provider hardening that already shipped.
+**Context:** Eva-brain has the implementation under `src/commands/auth.ts:registerClient`. Lift verbatim — the `localhost`/`127.0.0.1`/`::1` exact-match validation is correct; codex spot-check confirmed it does NOT match `localhost.evil.com`. v0.27 candidate.
+**Depends on:** Nothing.
 
 - [x] **v0.42+: `bun run ci:local` should run `bun run verify`** (codex finding #10 from /plan-eng-review).
   **Original task:** ci:local ran guards + typecheck + unit + E2E but NOT verify, so the new `check:resolver` gate (and others added to verify) did not fire in local pre-push. Deferred as a separate UX decision after measuring how often verify-only failures landed in CI.

@@ -38,6 +38,7 @@ import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
+import { redactRetrievalOutput } from './core/search/output-redaction.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
@@ -579,6 +580,22 @@ async function main() {
     // exits 1 with "No brain configured", and the handler's own help block is
     // unreachable. That is the state a reader is most likely to be in.
     if (await printSelfHelpWithoutEngine(command, subArgs)) return;
+  }
+
+  if (command === 'sources' && subArgs[0] === 'inspect') {
+    const { runCompanyBrainInspection } = await import('./commands/company-brain-inspect.ts');
+    await runCompanyBrainInspection(subArgs.slice(1));
+    return;
+  }
+  if (command === 'sources' && subArgs[0] === 'connect') {
+    const { runCompanyBrainConnect } = await import('./commands/company-brain-connect.ts');
+    await runCompanyBrainConnect(subArgs.slice(1), () => connectEngine({ probeOnly: true }));
+    return;
+  }
+  if (command === 'sources' && subArgs[0] === 'demo' && subArgs[1] === 'company-brain') {
+    const { runCompanyBrainDemoCli } = await import('./commands/company-brain-demo.ts');
+    await runCompanyBrainDemoCli(subArgs.slice(2));
+    return;
   }
 
   // #2185: strict unknown-flag validation — pre-dispatch, pre-engine. A flag
@@ -1211,6 +1228,16 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
     }
   }
 
+  for (const [key, def] of Object.entries(op.params)) {
+    if ((def.type !== 'object' && def.type !== 'array') || typeof params[key] !== 'string') continue;
+    let value: unknown;
+    try { value = JSON.parse(params[key] as string); }
+    catch { throw new OperationError('invalid_params', `--${key.replace(/_/g, '-')} requires a JSON ${def.type}.`); }
+    if (def.type === 'array' ? !Array.isArray(value) : value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new OperationError('invalid_params', `--${key.replace(/_/g, '-')} requires a JSON ${def.type}.`);
+    }
+    params[key] = value;
+  }
   return params;
 }
 
@@ -1499,6 +1526,7 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
  * disconnected engine does not pin its config for the life of the process.
  */
 const MERGED_CONFIG_BY_ENGINE = new WeakMap<BrainEngine, GBrainConfig>();
+const SELECTED_CONFIG_BY_ENGINE = new WeakMap<BrainEngine, GBrainConfig>();
 
 /**
  * Adversarial-review fixup (PR #4186): which BrainEngine instances came from
@@ -1750,8 +1778,18 @@ export function formatResult(
     }
     case 'search':
     case 'query': {
-      const results = result as any[];
-      if (params.json === true) return JSON.stringify(results, null, 2) + '\n';
+      const { results, meta } = redactRetrievalOutput(result as any[], lastRetrievalMeta);
+      const incompleteStages = Array.isArray(meta?.degraded)
+        ? [...new Set((meta.degraded as Array<{ stage?: string }>).map(d => d.stage)
+          .filter(stage => stage === 'vector_candidates_incomplete' || stage === 'projection_pending' || stage === 'projection_status_unknown'))]
+        : [];
+      const incompleteNotice = incompleteStages.length > 0
+        ? `Retrieval incomplete: ${incompleteStages.join(', ')}.\n`
+        : '';
+      if (params.json === true) {
+        if (incompleteNotice) process.stderr.write(incompleteNotice);
+        return JSON.stringify(results, null, 2) + '\n';
+      }
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —
       // a bare "No results." was indistinguishable from a degraded pipeline.
@@ -1765,9 +1803,9 @@ export function formatResult(
         const { formatResultsExplain } = require('./core/search/explain-formatter.ts');
         // v0.48.2: thread the captured retrieval meta so the header lines
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
-        return formatResultsExplain(results, lastRetrievalMeta ?? undefined);
+        return formatResultsExplain(results, meta ?? undefined);
       }
-      return results.map(r =>
+      return incompleteNotice + results.map(r =>
         `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
       ).join('\n') + '\n';
     }
@@ -2069,7 +2107,7 @@ async function handleCliOnly(command: string, args: string[]) {
   }
 
   // Local deferred connections must not bypass the remote installation route.
-  if (command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve'].includes(args[0]) && !hasHelpFlag(args)) {
+  if (command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'reconcile', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve'].includes(args[0]) && !hasHelpFlag(args)) {
     const { runDeferredPersistenceCommand } = await import('./commands/persistence-delegate.ts');
     await runDeferredPersistenceCommand(command, args, connectEngine);
     return;
@@ -2900,6 +2938,14 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  if (command === 'reindex-code') {
+    if (await (await import('./commands/reindex-code-delegate.ts')).maybeDelegateReindexCode(loadConfig(), args)) return;
+  }
+
+  if (command === 'embed' && args.includes('--facts')) {
+    if (await (await import('./commands/embed-facts-delegate.ts')).maybeDelegateFactEmbed(loadConfig(), args)) return;
+  }
+
   // Serve-delegated sweep preflight (#677) — same shape as sync above: a live
   // `gbrain serve` owns the PGLite single-writer lock, so `sweep --once` used
   // to exit 1 with LiveServeLockError. The lock owner runs the sweep over its
@@ -3072,7 +3118,7 @@ async function handleCliOnly(command: string, args: string[]) {
         // result, so a run where every chunk failed to embed still exited 0
         // and cron/CI/health gates read total silence as success. Surface
         // non-zero on failures > 0. (undefined = backgrounded via --background.)
-        const embedResult = await runEmbed(engine, args);
+        const embedResult = await runEmbed(engine, args, SELECTED_CONFIG_BY_ENGINE.get(engine) ?? null);
         if (embedResult && embedResult.failures > 0) {
           setCliExitVerdict(1);
         }
@@ -3654,6 +3700,7 @@ async function connectMountEngine(brainId: string): Promise<BrainEngine> {
   // a mount's config into the caller's context, regardless of what other
   // engine — host or another mount — this process may also be holding.
   MOUNT_ENGINES.add(handle.engine);
+  SELECTED_CONFIG_BY_ENGINE.set(handle.engine, handle.config);
   return handle.engine;
 }
 
@@ -3692,6 +3739,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
 
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
+  SELECTED_CONFIG_BY_ENGINE.set(engine, config);
   const noRetry = process.argv.includes('--no-retry-connect') ||
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');

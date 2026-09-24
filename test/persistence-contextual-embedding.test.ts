@@ -64,13 +64,21 @@ for (const kind of ['pglite', 'postgres'] as const) {
     async function publish(sourceId: string, title: string, frontmatter?: string, revision?: string) {
       const requestId = randomUUID();
       const content = `---\ntitle: ${title}\n${frontmatter ? `contextual_retrieval: ${frontmatter}\n` : ''}---\n\nStable public body.`;
-      const receipt = await operationsByName.put_page.handler(context(sourceId), {
-        slug: 'notes/context', request_id: requestId, content, ...(revision ? { expected_revision: revision } : {}),
-      });
-      expect(receipt).toMatchObject({ state: 'committed', request_id: requestId });
-      await disposePersistenceConsumer(engine);
-      const [row] = await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE request_id=$1::uuid AND source_id=$2', [requestId, sourceId]);
-      return row.id;
+      await engine.executeRaw("ALTER TABLE persistence_effects ALTER COLUMN next_attempt_at SET DEFAULT (now()+interval '1 hour')");
+      try {
+        const receipt = await operationsByName.put_page.handler(context(sourceId), {
+          slug: 'notes/context', request_id: requestId, content, ...(revision ? { expected_revision: revision } : {}),
+        });
+        expect(receipt).toMatchObject({ state: 'committed', request_id: requestId });
+        await disposePersistenceConsumer(engine);
+        const [row] = await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE request_id=$1::uuid AND source_id=$2', [requestId, sourceId]);
+        expect(await engine.executeRaw("SELECT state FROM persistence_effects WHERE request_id=$1::uuid AND kind='embedding'", [row.id]))
+          .toEqual([{ state: 'queued' }]);
+        return row.id;
+      } finally {
+        await disposePersistenceConsumer(engine);
+        await engine.executeRaw('ALTER TABLE persistence_effects ALTER COLUMN next_attempt_at SET DEFAULT now()');
+      }
     }
     async function runEmbedding(requestId: string, embed: (texts: string[]) => Promise<Float32Array[]>) {
       await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour'");

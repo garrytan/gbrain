@@ -1217,6 +1217,10 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   // Local CLI on the trusted host: probe the live commit hash so a quiet,
   // caught-up source reports lag 0 instead of growing wall-clock (v0.41.32.0).
   const metrics = await computeAllSourceMetrics(engine, sources, { probeContent: true });
+  const { readCompanyBrainSourceStatus } = await import('../core/company-brain/status.ts');
+  const ingestion = new Map(await Promise.all(sources.map(async source =>
+    [source.id, Object.hasOwn(parseSourceConfig(source.config), 'company_brain')
+      ? await readCompanyBrainSourceStatus(engine, source.id) : null] as const)));
 
   // #1950: a source holding a live (non-TTL-expired) per-source sync lock is
   // actively syncing RIGHT NOW. Without this it printed "idle" while a sync
@@ -1236,6 +1240,7 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
       ...m,
       sync_running: syncRunning.has(m.source_id),
       sync_holder: syncRunning.get(m.source_id) ?? null,
+      ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
     }));
     console.log(JSON.stringify({ schema_version: 1, sources: enriched }, null, 2));
     return;
@@ -1243,6 +1248,9 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
 
   // Human-readable table: SOURCE | LAG | EMBED | BACKFILL | FAILS | QUEUE | PAGES | LAST SYNC
   console.log('SOURCES — health');
+  for (const [sourceId, status] of ingestion) {
+    if (status) console.log(`  ${sourceId}: company ingestion ${status.state}${status.phase ? ` (${status.phase})` : ''}${status.receipt_id ? `, receipt ${status.receipt_id}` : ''}`);
+  }
   console.log('────────────────');
   console.log(
     `  ${'SOURCE'.padEnd(20)}  ${'LAG'.padEnd(8)}  ${'EMBED'.padEnd(7)}  ${'BACKFILL'.padEnd(9)}  ${'FAILS'.padEnd(6)}  ${'QUEUE'.padEnd(6)}  ${'PAGES'.padStart(8)}  LAST SYNC`,
@@ -1785,6 +1793,22 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
 export async function runSources(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
+  if (sub === 'reconcile') {
+    const { runReconcileCli } = await import('./source-reconcile.ts');
+    return runReconcileCli(rest, engine);
+  }
+  if (sub === 'inspect') {
+    const { runCompanyBrainInspection } = await import('./company-brain-inspect.ts');
+    return runCompanyBrainInspection(rest);
+  }
+  if (sub === 'connect') {
+    const { runCompanyBrainConnect } = await import('./company-brain-connect.ts');
+    return runCompanyBrainConnect(rest, async () => engine);
+  }
+  if (sub === 'demo' && rest[0] === 'company-brain') {
+    const { runCompanyBrainDemoCli } = await import('./company-brain-demo.ts');
+    return runCompanyBrainDemoCli(rest.slice(1));
+  }
   if (sub === 'writer') {
     const { runPersistenceAdminCli } = await import('./persistence-admin.ts');
     return runPersistenceAdminCli('writer', rest, engine);
@@ -1874,11 +1898,17 @@ function printHelp(): void {
   console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
 
 Subcommands:
+  inspect <path> [--profile company-brain] [--json] [--out <file>]
+                                    Preview committed company Markdown without a database or source edits.
+  connect <path> --brain <id> --source <id> [--profile company-brain] [--yes] [--json]
+                                    Preview, approve, import and verify a new company source; --plan <file> reuses a saved inspection.
+  demo company-brain [--json]        Run a fictional company through the real import and graph pipeline offline.
   add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force skips that check.
   list [--json]                     List registered sources with page counts.
   writer status|claim|activate|transfer  Inspect, activate or transfer canonical ownership (see writer --help).
+  reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).
   remove <id> [--confirm-destructive] [--dry-run]
                                     Permanently delete a source and all its data.
                                     Shows impact preview. Requires --confirm-destructive

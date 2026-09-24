@@ -50,6 +50,20 @@ suppresses writes for that turn, including when standing capture is enabled.
 > Fall back to the classic ops when the verbs aren't on the surface. Contract:
 > `docs/protocol/MEMORY_VERBS_v1.md`.
 >
+> **Choose a readback path that can see the intended visibility.** Trusted local
+> CLI callers can recall and withdraw private facts. Every MCP caller, including
+> stdio, and a thin CLI connected to MCP currently have world-only fact recall
+> and withdrawal. A
+> request to remember does not authorize making real private information
+> world-visible. Use a trusted local write/readback path for private memory
+> when available. If only remote access is available, a successful private
+> write receipt confirms storage, but private recall remains unverified; explain
+> that limit and the trusted local path needed for private readback or withdrawal.
+> Do not widen visibility
+> or request broader OAuth scopes merely to make verification pass. For an MCP
+> connection test, use only a harmless synthetic `visibility: "world"` fixture
+> with the user's test authorization, retain its ID, and withdraw it afterward.
+>
 > **Keyless brains:** when `extract_facts` returns `skipped:
 > extraction_unavailable`, YOU are the extractor — pull the facts from the turn
 > yourself and write each one via `remember` with `kind` set (event | preference

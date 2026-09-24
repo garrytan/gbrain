@@ -151,8 +151,10 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
   }, 60_000);
 
   test('Pin 3 — kill after a durable page receipt; acknowledgment is pending', async () => {
-    await administer('writer_claim', { source_id: 'workspace', path: repo });
-    expect(await administer('writer_activate', { confirm_quiesced: true })).toMatchObject({ enabled: true });
+    const beforeClaim = await administer('writer_status', {}) as { admin_state: string };
+    await administer('writer_claim', { source_id: 'workspace', path: repo, admin_intent: 'writer_claim', expected_state: beforeClaim.admin_state });
+    const beforeActivation = await administer('writer_status', {}) as { admin_state: string };
+    expect(await administer('writer_activate', { confirm_quiesced: true, admin_intent: 'writer_activate', expected_state: beforeActivation.admin_state })).toMatchObject({ enabled: true });
     writeNotes(2, 302); bulkCommit = gitCommitAll('bulk notes');
     let clientFinished = false;
     const client = runSyncChild(resumeArgs).finally(() => { clientFinished = true; });

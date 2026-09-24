@@ -16,6 +16,7 @@
  * Atomic writes via .tmp + rename (mirrors gbrain's atomic-write convention).
  */
 
+import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -107,6 +108,7 @@ export function saveRejectedBuffer(
   newEntries: RejectedEntry[],
 ): void {
   const p = rejectedFilePath(skillsDir, skillName);
+  assertLegacySkillFilesystemWrite(p);
   fs.mkdirSync(path.dirname(p), { recursive: true });
 
   const existing = loadRejectedBuffer(skillsDir, skillName);

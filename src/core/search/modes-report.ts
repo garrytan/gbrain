@@ -26,7 +26,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   intentWeighting: 'Zero-LLM intent classifier weight adjustments',
   keywordOrFallback: 'Keyword-arm AND→OR zero-recall fallback',
   tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
-  expansion: 'LLM multi-query expansion (Haiku call per search)',
+  expansion: 'Core-library default only; query defaults on and search stays off regardless of this row',
   expansion_variant_budget: 'Total RRF weight shared by expansion variant lists (null = legacy weight 1 each; (0, 4])',
   searchLimit: 'Default `limit` for the operation layer',
   reranker_enabled: 'Cross-encoder reranker on/off',
@@ -100,8 +100,11 @@ export const MODES_REPORT_PER_CALL_NOTE =
   'Resolved from config overrides + the active mode bundle. Per-call SearchOpts ' +
   'overrides on individual searches are not shown — a call that passes its own ' +
   'knobs (e.g. expand, autocut, relational) wins for that call only. The `query` ' +
-  'op always passes `expand` (default on; `--no-expand` opts out), so the ' +
-  '`expansion` row here does not govern it.';
+  'op always passes `expand` (default on in every mode; `--no-expand` or ' +
+  '`expand: false` opts out), while `search` never expands. Neither inherits ' +
+  '`search.expansion`. Expansion needs configured embedding and expansion ' +
+  'providers; requested expansion is not proof a provider ran. A configured ' +
+  'cloud expander receives the query and may charge for the call.';
 
 export interface SearchModesReport {
   schema_version: 2;

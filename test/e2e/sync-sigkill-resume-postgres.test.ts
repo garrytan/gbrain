@@ -34,8 +34,8 @@
  * for the first banked op_checkpoint_paths row (GBRAIN_SYNC_CHECKPOINT_EVERY=1
  * banks after the first file), THEN sending SIGKILL. Never sleep-then-kill.
  *
- * Shared-DB etiquette: everything is scoped to a unique random source id; no
- * table is truncated; afterAll deletes only this suite's rows.
+ * Isolated-DB etiquette: fresh init gets a dedicated test database, then this
+ * legacy checkpoint/TTL-lock scenario uses DB-only sync within that database.
  *
  * Run: DATABASE_URL=... GBRAIN_TEST_ALLOW_DATABASE_URL=1 \
  *        bun test --timeout=180000 test/e2e/sync-sigkill-resume-postgres.test.ts
@@ -43,10 +43,11 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, realpathSync } from 'fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir, hostname } from 'os';
+import postgres from 'postgres';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { loadOpCheckpoint, syncFingerprint } from '../../src/core/op-checkpoint.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
@@ -76,6 +77,10 @@ let commitB = '';
 let ckptFingerprint = '';
 let killedPid = 0;
 let bankedAfterKill = 0;
+let isolatedUrl = '';
+let databaseName = '';
+let createdDatabase = false;
+let admin: ReturnType<typeof postgres> | undefined;
 /** Live child handle so afterAll can reap a leak if an assertion throws first. */
 let liveChild: ReturnType<typeof Bun.spawn> | null = null;
 
@@ -94,6 +99,8 @@ function baseEnv(extra: Record<string, string> = {}): Record<string, string> {
     'GBRAIN_SOURCE', 'GBRAIN_BRAIN_ID',
   ]) delete env[k];
   env.GBRAIN_HOME = home;
+  env.DATABASE_URL = isolatedUrl;
+  delete env.GBRAIN_DATABASE_URL;
   return { ...env, ...extra };
 }
 
@@ -193,6 +200,13 @@ async function sourceLastCommit(): Promise<string | null> {
 describeE2E('E2E: real SIGKILL mid-sync on Postgres — checkpoint bank, stranded lock, exactly-once resume', () => {
   beforeAll(async () => {
     assertSafeE2eDatabaseUrl(DATABASE_URL!);
+    databaseName = `gbrain_test_sigkill_${randomUUID().replaceAll('-', '')}`;
+    admin = postgres(DATABASE_URL!, { max: 1, prepare: false });
+    await admin.unsafe(`CREATE DATABASE ${databaseName}`);
+    createdDatabase = true;
+    const url = new URL(DATABASE_URL!);
+    url.pathname = `/${databaseName}`;
+    isolatedUrl = url.toString();
 
     home = mkdtempSync(join(tmpdir(), 'gbrain-sigkill-home-'));
     repoDir = mkdtempSync(join(tmpdir(), 'gbrain-sigkill-repo-'));
@@ -212,42 +226,42 @@ describeE2E('E2E: real SIGKILL mid-sync on Postgres — checkpoint bank, strande
     execSync('git add -A && git commit -m "commit A: seed"', { cwd: repoDir, stdio: 'pipe' });
     commitA = git('rev-parse HEAD', repoDir);
 
-    // gbrain-owned config for the children: temp GBRAIN_HOME against the live
-    // Postgres (same pattern as test/e2e/thin-client.test.ts).
-    const init = await runCli(['init', '--non-interactive', '--no-embedding', '--url', DATABASE_URL!]);
+    const init = await runCli(['init', '--non-interactive', '--no-embedding', '--url', isolatedUrl]);
     if (init.exitCode !== 0) throw new Error(`init failed: ${init.stderr || init.stdout}`);
+
+    const legacy = new PostgresEngine();
+    await legacy.connect({ database_url: isolatedUrl });
+    try {
+      const [brain] = await legacy.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+      expect(brain.enabled).toBe(true);
+      await legacy.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    } finally {
+      await legacy.disconnect();
+    }
 
     const add = await runCli(['sources', 'add', SRC_ID, '--path', repoDir, '--no-federated']);
     if (add.exitCode !== 0) throw new Error(`sources add failed: ${add.stderr || add.stdout}`);
 
     // Parent poll/assert connection (schema already at latest via init above).
     engine = new PostgresEngine();
-    await engine.connect({ database_url: DATABASE_URL! });
+    await engine.connect({ database_url: isolatedUrl });
   }, 120_000);
 
   afterAll(async () => {
     if (liveChild && liveChild.exitCode === null && liveChild.signalCode === null) {
       try { liveChild.kill('SIGKILL'); await liveChild.exited; } catch { /* best-effort */ }
     }
-    // Shared DB: delete ONLY this suite's rows. facts FK to sources is ON
-    // DELETE RESTRICT, so clear it before the source row (cascades pages →
-    // chunks, and ingest_log).
-    if (engine) {
-      const cleanups: Array<[string, unknown[]]> = [
-        [`DELETE FROM facts WHERE source_id = $1`, [SRC_ID]],
-        [`DELETE FROM op_checkpoints WHERE op IN ('sync', 'sync-target') AND fingerprint = $1`, [ckptFingerprint || 'none']],
-        [`DELETE FROM gbrain_cycle_locks
-            WHERE id = ANY($1::text[]) AND holder_pid = $2 AND holder_host = $3`,
-          [fixtureLockIds(), killedPid, hostname()]],
-        [`DELETE FROM sources WHERE id = $1`, [SRC_ID]],
-      ];
-      for (const [sql, params] of cleanups) {
-        try { await engine.executeRaw(sql, params); } catch { /* best-effort */ }
+    try {
+      if (engine) await engine.disconnect();
+    } finally {
+      try {
+        if (admin && createdDatabase) await admin.unsafe(`DROP DATABASE ${databaseName} WITH (FORCE)`);
+      } finally {
+        await admin?.end();
+        if (home) rmSync(home, { recursive: true, force: true });
+        if (repoDir) rmSync(repoDir, { recursive: true, force: true });
       }
-      await engine.disconnect();
     }
-    if (home) rmSync(home, { recursive: true, force: true });
-    if (repoDir) rmSync(repoDir, { recursive: true, force: true });
   }, 60_000);
 
   test('baseline: first sync converges and pins last_commit at commit A', async () => {

@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
+import { createHash } from 'node:crypto';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
@@ -320,6 +321,62 @@ describe('remaining CLI gaps (coverage audit)', () => {
 });
 
 describe('review-driven CLI hardening', () => {
+  test('active shared brain installs a live source-bound router only after follow approval and cleanly opts out', () => {
+    const { home, gbrainHome } = homes();
+    const dest = mkdtempSync(join(tmpdir(), 'gb-shared-harness-dest-')); cleanups.push(dest);
+    const env = { HOME: home, GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'default', GBRAIN_BRAIN_ID: 'host' };
+    const init = spawnSync('bun', [CLI, 'init', '--pglite', '--no-embedding', '--non-interactive'], {
+      encoding: 'utf8', cwd: REPO_ROOT, env: { ...process.env, ...env }, timeout: 120_000,
+    });
+    expect(init.status, init.stderr).toBe(0);
+    mkdirSync(join(dest, 'unrelated'));
+    writeFileSync(join(dest, 'unrelated', 'SKILL.md'), 'Keep this unrelated native skill');
+    const base = ['scaffold', '--harness', 'claude-code', '--dest', dest, '--json'];
+    const pending = run([...base, '--stub'], env);
+    expect(pending.code, pending.stderr).toBe(0);
+    expect(JSON.parse(pending.stdout).reason).toBe('follow_approval_required');
+    expect(existsSync(join(dest, 'query'))).toBe(false);
+    const followed = run([...base, '--skills', 'follow'], env);
+    expect(followed.code, followed.stderr).toBe(0);
+    const receipt = JSON.parse(followed.stdout);
+    expect(receipt.status).toBe('restart_required');
+    expect(receipt.native).toBe('unverified');
+    expect(receipt.source_id).toBe('default');
+    expect(readFileSync(receipt.native_router_path, 'utf8')).toContain(receipt.launcher);
+    expect(readFileSync(receipt.native_router_path, 'utf8')).toContain('sync-brain-skills');
+    const invoke = (args: string[]) => spawnSync(receipt.launcher, args, {
+      encoding: 'utf8', cwd: '/', env: { ...process.env, ...env, GBRAIN_SOURCE: 'wrong-source', GBRAIN_BRAIN_ID: 'wrong-brain' }, timeout: 120_000,
+    });
+    const sync = invoke(['sync-brain-skills', '--installation-id', receipt.installation_id,
+      '--enrollment-epoch', String(receipt.enrollment_epoch), '--json']);
+    expect(sync.status, sync.stderr).toBe(0);
+    const view = JSON.parse(sync.stdout);
+    expect(view.brain_id).toBe(receipt.brain_id);
+    expect(view.complete).toBe(true);
+    expect(view.skills.length).toBeGreaterThan(0);
+    expect(view.skills.every((skill: { source_id: string }) => skill.source_id === 'default')).toBe(true);
+    const selected = view.skills[0];
+    const identity = ['--expected-brain-id', selected.brain_id, '--source-id', selected.source_id,
+      '--source-incarnation', selected.source_incarnation, '--pack-id', selected.pack_id, '--revision', selected.revision];
+    const fetched = invoke(['skill', selected.name, ...identity, '--schema-version', '2', '--json']);
+    expect(fetched.status, fetched.stderr).toBe(0);
+    const detail = JSON.parse(fetched.stdout);
+    expect(detail.revision).toBe(selected.revision);
+    expect(detail.usable).toBe(true);
+    expect(detail.delivery).toBe('complete');
+    const file = detail.files[0];
+    const asset = invoke(['skill-asset', '--name', selected.name, ...identity, '--path', file.path, '--json']);
+    expect(asset.status, asset.stderr).toBe(0);
+    const bytes = JSON.parse(asset.stdout);
+    expect(bytes.revision).toBe(selected.revision);
+    expect(createHash('sha256').update(Buffer.from(bytes.content, bytes.encoding)).digest('hex')).toBe(file.sha256);
+    const left = run([...base, '--skills', 'memory-only'], env);
+    expect(left.code, left.stderr).toBe(0);
+    expect(JSON.parse(left.stdout).reason).toBe('memory_only');
+    expect(existsSync(receipt.native_router_path)).toBe(false);
+    expect(readFileSync(join(dest, 'unrelated', 'SKILL.md'), 'utf8')).toBe('Keep this unrelated native skill');
+  }, 180_000);
+
   test('openclaw --persona path: lane additions inside the persona are skipped-and-reported', () => {
     const { home, gbrainHome } = homes();
     const ws = mkdtempSync(join(tmpdir(), 'gb-harness-ws-'));
@@ -357,7 +414,7 @@ describe('review-driven CLI hardening', () => {
     cleanups.push(dest);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome };
     // Initialize a PGLite brain and set the gate on the DB plane only.
-    const init = spawnSync('bun', [CLI, 'init', '--pglite', '--non-interactive'], {
+    const init = spawnSync('bun', [CLI, 'init', '--pglite', '--db-only', '--no-embedding', '--non-interactive'], {
       encoding: 'utf8',
       cwd: REPO_ROOT,
       env: { ...process.env, ...env },

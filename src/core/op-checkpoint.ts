@@ -498,6 +498,21 @@ export async function purgeStaleCheckpoints(
       `WITH deleted AS (
          DELETE FROM op_checkpoints
          WHERE updated_at < now() - ($1 || ' days')::interval
+           AND op NOT IN ('managed-atoms','managed-connector','managed-connector-retry')
+           AND NOT (op='managed-sync' AND (COALESCE(completed_keys->0->>'done','false')<>'true' OR EXISTS (
+             SELECT 1 FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.fingerprint=op_checkpoints.fingerprint)))
+           AND op<>'managed-sync-failure'
+           AND NOT (op='managed-sync-manifest' AND EXISTS (
+             SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync'
+               AND c.completed_keys->0->>'runId'=op_checkpoints.fingerprint
+               AND COALESCE(c.completed_keys->0->>'done','false')<>'true'))
+           AND NOT EXISTS (
+             SELECT 1 FROM source_ingestion_receipts r,
+               LATERAL jsonb_array_elements(r.checkpoint_refs) ref
+             WHERE r.outcome = 'incomplete'
+               AND ref->>'op' = op_checkpoints.op
+               AND ref->>'fingerprint' = op_checkpoints.fingerprint
+           )
          RETURNING 1
        )
        SELECT count(*)::text AS count FROM deleted`,

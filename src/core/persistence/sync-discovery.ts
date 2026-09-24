@@ -6,15 +6,18 @@ import type { SyncOpts } from '../../commands/sync.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
-import { isSyncable, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
+import { isSyncable, isCodeFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
 import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
+import { currentCompanyBrainSync } from '../company-brain/profile.ts';
+import type { CompanyBrainPlan } from '../company-brain/types.ts';
 
 export interface SyncEntry { path: string; sourcePath: string; action: 'import' | 'delete'; working: boolean; slug?: string; pageId?: number | null; revision?: string | null; }
 export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
+  companyPlan?: CompanyBrainPlan;
   from: string | null; target: string; entries: SyncEntry[]; uncommitted?: { added: number; modified: number; deleted: number }; slugMode: 'git-root' | 'source-root'; }
 export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
   source: { last_commit: string | null; config: Record<string, unknown> }; }
@@ -62,10 +65,11 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
 }
 export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, context?: ManagedSyncContext): Promise<SyncDiscovery> {
   const { binding, root, gitRoot, sourceId, incarnation, source } = context ?? await resolveManagedSyncContext(engine, opts);
+  const company = currentCompanyBrainSync(sourceId);
   const strategy = opts.strategy ?? source.config?.strategy ?? 'markdown';
   const scope = relative(gitRoot, root).split(sep).join('/');
   const probe = resolveSlugForPath(join(scope, 'x.md'));
-  const slugMode = scope ? await resolveSlugRootMode(engine, { sourceId, explicitGitRoot: opts.srcSubpath !== undefined,
+  const slugMode = company ? 'source-root' : scope ? await resolveSlugRootMode(engine, { sourceId, explicitGitRoot: opts.srcSubpath !== undefined,
     slugPrefix: probe.slice(0, -2), dryRun: true }) : 'git-root';
   const sourcePath = (path: string) => slugMode === 'source-root' && scope ? path.slice(scope.length + 1) : path;
   const exclude = [...(opts.exclude ?? []), ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
@@ -75,10 +79,10 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const eligible = (path: string) => (!scope || path.startsWith(`${scope}/`)) &&
     !matchesAnyGlob(scope ? path.slice(scope.length + 1) : path, exclude) &&
     isSyncable(path, { strategy: strategy as 'markdown', includeHidden });
-  const target = syncGit(gitRoot, ['rev-parse', 'HEAD']).trim();
-  const detached = syncGit(gitRoot, ['rev-parse', '--abbrev-ref', 'HEAD']).trim() === 'HEAD';
-  const working = detached || (opts.workingTree ?? (await engine.getConfig('sync.include_working_tree') === 'true'));
-  const dirty = buildDetachedWorkingTreeManifest(gitRoot);
+  const target = company?.plan.revision?.commit ?? syncGit(gitRoot, ['rev-parse', 'HEAD']).trim();
+  const detached = !company && syncGit(gitRoot, ['rev-parse', '--abbrev-ref', 'HEAD']).trim() === 'HEAD';
+  const working = !company && (detached || (opts.workingTree ?? (await engine.getConfig('sync.include_working_tree') === 'true')));
+  const dirty = company ? { added: [], modified: [], deleted: [], renamed: [] } : buildDetachedWorkingTreeManifest(gitRoot);
   const delta = !opts.full && source.last_commit ? computeSyncDelta(gitRoot, source.last_commit, target) : null;
   const entries = new Map<string, SyncEntry>();
   const put = (path: string, action: SyncEntry['action'], working = false) => {
@@ -100,10 +104,18 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     for (const path of dirty.deleted) put(path, 'delete', true);
     for (const rename of dirty.renamed) { put(rename.from, 'delete', true); put(rename.to, 'import', true); }
   }
+  if (company) {
+    entries.clear();
+    const included = company.plan.manifest.filter(entry => entry.disposition === 'included');
+    const present = new Set(included.map(entry => entry.path));
+    for (const entry of included) entries.set(entry.path, { path: entry.path, sourcePath: entry.path, action: 'import', working: false, slug: entry.page!.slug });
+    const pages = await engine.executeRaw<{ source_path: string }>('SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    for (const page of pages) if (!present.has(page.source_path)) entries.set(page.source_path, { path: page.source_path, sourcePath: page.source_path, action: 'delete', working: false });
+  }
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
-  if (selected.some(e => !/\.mdx?$/i.test(e.path))) throw new OperationError('writer_coordinator_required', 'Managed code/image sync requires a prepared importer; this sync was refused before any page write.');
+  if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
   if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw new OperationError('request_too_large', 'Sync discovery exceeds the bounded cursor size.');
-  const discovered: SyncDiscovery = { binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode };
+  const discovered: SyncDiscovery = { binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
   // Freeze all logical identities in one database statement, before yielding
   // between pages. A later interactive edit must conflict with this scan.
   const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string }>(
@@ -114,7 +126,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   for (const entry of selected) {
     const origins = byPath.get(entry.sourcePath) ?? [];
     if (origins.length > 1) throw new OperationError('page_identity_changed', 'Several pages claim the same imported origin.');
-    let slug = origins[0]?.slug ?? resolveSlugForPath(entry.sourcePath);
+    let slug = entry.slug ?? origins[0]?.slug ?? resolveSlugForPath(entry.sourcePath);
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw new OperationError('invalid_params', 'The imported file has no usable page slug.');
     const page = origins[0] ?? bySlug.get(slug);

@@ -18,6 +18,7 @@ import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from '.
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { flushTopologyDirectory } from './topology-filesystem.ts';
 import { claimPhysicalRoot } from './physical-root.ts';
+import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 
 export interface SourceLifecycleInput {
   operation:'add'|'claim'|'archive'|'restore'|'remove'|'purge'|'rebind'|'reclone';
@@ -27,6 +28,7 @@ export interface SourceLifecycleInput {
   createDirectory?:boolean;
   expiredOnly?:boolean;
   requireGitContent?:boolean;
+  expectedAdminState?:string;
 }
 interface SourceState {id:string;incarnation:string;archived:boolean;local_path:string|null;config:Record<string,unknown>;name:string;last_commit:string|null;}
 
@@ -66,7 +68,10 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
 }
 
 /** One source transition; shared-root members are fenced and invalidated together. */
-export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceLifecycleInput):Promise<Record<string,unknown>>{
+export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceLifecycleInput, admission?: {
+  before(tx: BrainEngine): Promise<void>;
+  after(tx: BrainEngine, incarnation: string): Promise<void>;
+}):Promise<Record<string,unknown>>{
   if(!['add','claim','archive','restore','remove','purge','rebind','reclone'].includes(input.operation)) throw new OperationError('invalid_params','Unknown source lifecycle operation.');
   for(const key of ['dryRun','refederate','confirmDestructive','createDirectory','expiredOnly','requireGitContent'] as const) if(input[key]!==undefined&&typeof input[key]!=='boolean') throw new OperationError('invalid_params',`${key} must be a boolean.`);
   for(const key of ['path','name','expectedIncarnation','requestId','remoteUrl'] as const) if(input[key]!==undefined&&(typeof input[key]!=='string'||input[key]!.length>8192)) throw new OperationError('invalid_params',`${key} must be a bounded string.`);
@@ -103,6 +108,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       manifests.set(path,manifest);
     }
     return topologyTransaction(engine,async tx=>{
+    await assertWriterAdminState(tx,input.expectedAdminState);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
     const sources=await lockTopologyRows(tx,input.sourceId,bindings);
     const [source]=await tx.executeRaw<SourceState>('SELECT id,incarnation,archived,local_path,config,name,last_commit FROM sources WHERE id=$1',[input.sourceId]);
@@ -110,6 +116,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     const repeated=await priorTopologyChange(tx,principal,requestId,intent);
     if(repeated){await lockTopologyPrincipal(tx,principal);return topologyReceipt(repeated);}
     if((source?.incarnation??null)!==(before?.incarnation??null)) throw new OperationError('source_changed','The source changed during lifecycle preparation.');
+    if(admission) await admission.before(tx);
     if(input.operation==='add'&&source&&(!root||source.local_path!==null)) throw new OperationError('source_id_taken','Source ID is already registered.');
     if(input.operation==='purge'&&!input.expiredOnly&&!source?.archived) throw new OperationError('invalid_params','Only an archived source can be purged.');
     if(['remove','purge'].includes(input.operation)&&!input.confirmDestructive) throw new OperationError('invalid_params','Source removal requires explicit destructive confirmation.');
@@ -133,7 +140,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(input.operation==='rebind'){
       const binding=bindings.find(value=>value.source_id===input.sourceId);
       if(!binding&&source?.local_path===null)throw new OperationError('writer_registration_required','This source has no canonical filesystem binding.',
-        `Use gbrain sources writer claim ${input.sourceId} --path <directory> for its first binding.`);
+        WRITER_INSPECTION_HINT);
       if(!binding?.local_path || !existsSync(binding.local_path)) throw new OperationError('recovery_required','The original checkout is unavailable; recover its last verified manifest before rebinding.');
       if(manifests.get(binding.local_path)!.digest!==manifests.get(root!.worktree)!.digest) throw new OperationError('writer_manifest_mismatch','The new checkout differs from the current canonical manifest, including deletions.');
     }
@@ -178,6 +185,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         ...(root?{local_path:root.source}:{}),...(['remove','purge'].includes(input.operation)?{storage_retained:true,local_path:ownedSourcePath??null,pages_deleted:pagesDeleted}:{}),
         ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:{...source?.config,...input.config},id:input.sourceId}: {})};
     });
+    if(admission) await admission.after(tx,String(result.source_incarnation));
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);
     return topologyReceipt(row);
     });

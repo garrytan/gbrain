@@ -1,0 +1,35 @@
+export const SHARED_SKILLS_MEMBERSHIP_SCHEMA_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS shared_skill_members (
+    installation_id UUID PRIMARY KEY,
+    principal_kind TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    adapter TEXT NOT NULL,
+    brain_id UUID NOT NULL,
+    epoch BIGINT NOT NULL DEFAULT 1,
+    active BOOLEAN NOT NULL DEFAULT true,
+    follow_policy JSONB NOT NULL,
+    issued_sequence BIGINT NOT NULL DEFAULT 0,
+    acknowledged_sequence BIGINT NOT NULL DEFAULT 0,
+    desired_view TEXT,
+    acknowledged_view TEXT,
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    join_window TIMESTAMPTZ NOT NULL DEFAULT now(),
+    join_count INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(principal_kind, principal_id, adapter)
+  )`,
+  `CREATE TABLE IF NOT EXISTS shared_skill_delivery_batches (
+    token UUID PRIMARY KEY,
+    installation_id UUID NOT NULL REFERENCES shared_skill_members(installation_id) ON DELETE CASCADE,
+    epoch BIGINT NOT NULL,
+    sequence BIGINT NOT NULL,
+    view_token TEXT NOT NULL,
+    authority_digest TEXT NOT NULL,
+    revisions JSONB NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    acknowledged_at TIMESTAMPTZ,
+    evidence JSONB,
+    UNIQUE(installation_id, epoch, sequence)
+  )`,
+  `CREATE INDEX IF NOT EXISTS shared_skill_delivery_member_idx ON shared_skill_delivery_batches(installation_id, epoch, issued_at)`,
+];

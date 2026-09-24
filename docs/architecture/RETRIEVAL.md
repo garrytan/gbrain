@@ -7,7 +7,7 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 1. **Vector (HNSW on pgvector)** — semantic similarity. Catches "who works on retrieval quality at acme-example?" → pages mentioning "alice-example + retrieval" even when the user never typed "acme".
 2. **BM25 keyword** — lexical match. Catches names, exact phrases, code identifiers, anything where the user remembers the literal token. Survives the cases where vector search drifts into thematic neighbors.
 3. **Reciprocal-rank fusion (RRF)** — merges vector + keyword rankings without weighting one over the other globally. Each strategy gets to vote.
-4. **Knowledge graph traversal** — follows typed edges. Catches "what did Bob invest in this quarter?" by walking `bob ── invested_in ──> company ── dated ──> Q1`. Vector search can't see causal chains; the graph can.
+4. **Knowledge graph traversal** — follows recorded typed edges. It can answer relationship queries whose relevant endpoints are not close in embedding space; it depends on the edges being present and correct, and does not by itself establish causality.
 
 ## Why each one alone fails
 
@@ -17,7 +17,7 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 
 **Graph only.** Excellent at "neighbors of Alice" but blind to anything not yet linked. Sparse on fresh pages until backlinks accumulate.
 
-**Hybrid (vector + keyword + RRF), no graph.** Decent at "what is X?" type queries. Fails on "what is Y's relationship to X?" — those are graph queries and no amount of embedding tuning recovers them.
+**Hybrid (vector + keyword + RRF), no graph.** Can retrieve relationships stated in text, but may miss answers that require joining several records. Typed graph traversal offers a separate recall path for those cases; this is not an exclusivity claim about GBrain or a guarantee that every graph answer is correct.
 
 ## The benchmark
 
@@ -30,17 +30,28 @@ BrainBench (corpus + harness in the sibling [gbrain-evals](https://github.com/ga
 | gbrain graph-disabled (hybrid + RRF, no graph traversal) | ~18 | ~85 | Hybrid alone |
 | **gbrain default (full stack)** | **49.1** | **97.9** | Graph + extract-quality lift |
 
-**+31 P@5 points** from the graph + extract quality work. The graph isn't a marginal feature; it's the load-bearing wall.
+The recorded lift on that synthetic corpus was **+31 P@5 points** for graph
+plus extraction-quality changes together. It does not isolate the graph's
+contribution, establish universal superiority, or predict accuracy on a
+different corpus. See the linked harness for the experiment's scope.
 
 ## Auto-link: why zero-LLM-call edge extraction works
 
-Every `put_page` runs `extractEntityRefs` on the markdown body. It matches:
+Trusted local `put_page` runs inline link extraction on the markdown body.
+Remote `put_page` deliberately skips it at the trust boundary. Stdio serving
+sweeps eligible pages at startup and idle; HTTP serving does not self-sweep.
+For HTTP-written pages, a trusted operator can run
+`gbrain extract links --source db` (select the intended source with
+`--source-id <id>`), or a permitted client can create explicit links through
+`add_link`. Extraction recognizes:
 
 - Standard markdown links: `[Alice Example](wiki/people/alice-example)`
 - Obsidian wikilinks: `[[wiki/people/alice-example|Alice Example]]`
 - Typed-link blockquotes: `> **Convention:** see [path](path).`
 
-Three regexes, zero LLM tokens, single SQL `addLinksBatch` call with `INSERT ... SELECT FROM jsonb_to_recordset(($1::jsonb)->'rows') JOIN pages ON CONFLICT DO NOTHING RETURNING 1` (free-text-safe). The graph grows on every write at near-zero cost. On a 17K-page brain, full graph extract completes in seconds.
+The link parser uses no LLM tokens and batches SQL insertion through
+`addLinksBatch`. Graph freshness depends on the write path and when extraction
+runs; accepting a remote write is not evidence its links have been extracted.
 
 Heuristic link-type inference (`attended`, `works_at`, `invested_in`, `founded`, `advises`) fires from surrounding sentence context — also LLM-free. Power users who want richer types add them via the typed-link blockquote convention.
 
@@ -73,11 +84,14 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   in `sql-ranking.ts`. The vector side returns N distinct pages by best chunk,
   not N chunks that collapse to fewer pages downstream. When one dense page's
   chunks fill the inner candidate pool, the engines escalate the pool in a
-  bounded loop (×4 per step, at most 3 escalations; HNSW-backed columns
-  additionally cap at the `ef_search` ceiling) until the page count is honest;
-  a loop that ends still underfilled surfaces `vector_pool_underfilled` on the
-  hybrid layer's `HybridSearchMeta` (the op-layer capture channel) instead of
-  silently returning a short page.
+  bounded loop (×4 per step, at most 3 escalations). SQL candidate limits and
+  offsets are independent of `ef_search`; supported pgvector versions use
+  strict iterative scans with bounded visits. A filtered short pool is not
+  proof that the corpus is exhausted. Postgres may make one exact fallback
+  inside the remaining eight-second arm budget; PGLite does not pretend that
+  a JavaScript timeout can cancel its WASM work. Unresolved shortfalls appear
+  as `vector_candidates_incomplete` in `degraded`, with scoped
+  `vector_pool_underfilled` details in the public retrieval metadata.
 - **Title-phrase boost** — when the normalized query is a contiguous token-run
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
@@ -131,11 +145,28 @@ The classifier is deterministic (no LLM call). Wrong classification degrades gra
 
 ## Multi-query expansion
 
-For `detail: 'high'` searches, `src/core/search/expansion.ts` runs a Haiku-class LLM call to produce 2-3 query variants. Each variant's vector list enters RRF fusion alongside the original's. Expansion is NOT free on recall: on LongMemEval-S (470 scored questions, k=5, the 2026-09-02 receipt in `docs/eval-bench.md`) plain hybrid scores 93.19% strict `recall_all@5` while hybrid + equal-weight expansion scores 54.89% (paired +3 / -183 questions) — variant lists fusing at the same weight as the original outvote it on small-k recall, and the damage grows with the nondeterministic variant count.
+When requested and available, `src/core/search/expansion.ts` asks the configured
+expansion model for up to two alternatives in addition to the original query.
+This is independent of `detail`; queries shorter than three words also skip
+the provider call. Each variant's vector list enters RRF fusion alongside the
+original's. Expansion can reduce recall: on LongMemEval-S (470 scored questions,
+k=5, the 2026-09-02 receipt in `docs/eval-bench.md`) plain hybrid scores 93.19%
+strict `recall_all@5` while hybrid plus equal-weight expansion scores 54.89%
+(paired +3 / -183 questions). Variant lists with the original's weight can
+outvote it on small-k retrieval.
 
 The fix is budget-normalized weighted RRF, composed in `src/core/search/fusion-lists.ts`. Every vector list is a role-tagged arm (`original` | `variant` | `clause` | `image`) — tagged objects, never a positional convention, so a failed arm or a fell-open image branch can't mis-tag a list. The `original` arm always fuses at weight 1; the non-empty `variant`/`clause` arms share ONE total weight budget, `search.expansion_variant_budget` (`weight_i = b / n_voting_arms`, each row scored `weight / (k + rank)`), so total expansion influence is exactly `b` however many variants the LLM produced. `null` — the default in all three mode bundles — is the legacy equal-weight fusion (every list weight 1, byte-identical). A budget in (0, 4] is set with `gbrain config set search.expansion_variant_budget <b>`, per call via `HybridSearchOpts.expansionVariantBudget`, or pinned per eval arm with `gbrain eval longmemeval --expansion-variant-budget <b>` (sweep it against frozen `--expansion-replay` variants so cells differ only in `b`). Arithmetic: two variants agreeing on a distractor at rank 0 tie the original's rank-0 vote exactly at `b = 1.0`; legacy with two variants is ≈ `b = 2.0`; `b = 0.5` subordinates them. The knob is a no-op when expansion is off and folds into the query-cache key (`evb=`). Outcome (ranker wave, 2026-09-06, recorded Haiku variants replayed at every budget): the mechanism is real — strict `recall_all@5` rises from 255/470 at the legacy weighting to 394/470 at budget 0.25 — but its pre-registered rule (≥ plain hybrid − 2 on the 430-question decision set, no type losing > 1) failed at every budget (0.25: −43; plain hybrid 439/470), so every bundle keeps `expansion_variant_budget: null` and the knob is an operator lever. The receipts point at a trigger rather than a weight (expand only when the original query's evidence is weak), filed as the next pre-registered mechanism.
 
-The mode bundles carry an `expansion` value (`tokenmax` true; `balanced` + `conservative` false — off in the cheap tiers because the LLM call adds ~$0.001/query and ~200ms, real money at scale), but the bundle value (and the `search.expansion` config key) only reaches a caller that leaves `expansion` unset AND wires an `expandFn`, and no shipped verb does today. The `query` op defaults `expand: true` per call in every mode (pass `expand: false` / `--no-expand` to opt out) — expansion-by-default is what makes it the concept/landscape verb — while `search`, the memory verbs and the eval harnesses pin expansion per call. `gbrain search modes` reports the bundle value, not what `query` does.
+The mode bundles retain a core-library `expansion` default (`tokenmax` true;
+`balanced` and `conservative` false). It applies only when a library caller
+leaves `expansion` unset and supplies an `expandFn`. Shipped operations set
+their own policy: `query` requests expansion in every mode, with
+`expand: false` / `--no-expand` as the explicit opt-out; `search` never
+expands. Neither inherits `search.expansion`. Keyless and image-only paths
+skip expansion, and `expansion_applied` reports actual variant use. The
+[search-mode guide](../guides/search-modes.md) is the authoritative rule for
+defaults, overrides and provider costs; `gbrain search modes` prints the
+operation-level exception before the retained bundle knobs.
 
 ## Putting it together
 
@@ -147,7 +178,8 @@ relational recall arm remains available.
 intent classify (query-intent.ts — deterministic, no LLM)
        │
        ▼
-expansion (if enabled — tokenmax only by default)
+expansion (query: requested by default in every mode; --no-expand opts out;
+           search: off; keyless and image-only paths skip it)
        │
        ▼
 hybrid recall + fusion:
@@ -367,6 +399,22 @@ take-holder permissions.
 
 ## Chunk rebuilds after upgrading
 
+**Say to your agent:** *"Check whether my search index is ready, and repair
+code metadata without spending on embeddings."* Search and query now report
+`projection_readiness` for empty and nonempty results. `projection_pending`
+means visible pages lack a current revision seal; `projection_status_unknown`
+means the diagnostic could not establish readiness. Neither is a clean miss.
+The CLI names these states; `--json` retains its result-array format and sends
+incompleteness notices to stderr. MCP carries them in `_meta.retrieval`.
+
+The upgraded resident `gbrain serve` drains queued Markdown and code rebuilds
+without provider calls. Code repair can also run through the current owner:
+`gbrain reindex-code --force --no-embed`. Rebuilds preserve only exact,
+provenance-compatible vectors; remaining NULL vectors still need an explicitly
+authorized `gbrain embed --stale` run. A text-ready index is not a promise that
+every page has a vector. Diagnostics do not disclose private or foreign-source
+pending pages and never start repair themselves.
+
 Markdown chunk creation applies the strict protected-body sanitizer before
 splitting text. For remote reads, all existing chunks are withheld until a
 successful rebuild records the current chunker version. Public pages require
@@ -385,8 +433,15 @@ previous vectors; use `gbrain embed --stale` later to restore semantic retrieval
 when provider usage is authorized. The regular reindex path rebuilds and embeds.
 Code pages use `gbrain reindex-code --force --no-embed`. Existing image indexes
 require reimporting the source files; images whose OCR contains protected
-sections remain unavailable to remote chunk retrieval. No schema migration is
-required.
+sections remain unavailable to remote chunk retrieval. Schema migrations 160
+and 161 install projection statistics and the pending-projection lookup index;
+they do not rebuild vector indexes or call an embedding provider.
+
+`query --since` includes its exact lower boundary. An exact `--until` timestamp
+is inclusive without losing fractional precision; a date-only upper bound
+includes the entire day, implemented as an exclusive next-midnight boundary.
+Legacy direct engine `afterDate` and `beforeDate` bounds remain strict unless
+their explicit inclusivity flags are set.
 
 
 Optional code-graph expansion is omitted from remote search. The six dedicated

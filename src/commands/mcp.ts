@@ -3,16 +3,19 @@ import { statSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { GRANT_PROFILES, type GrantPatch, type GrantProfileId } from '../core/grants/model.ts';
 import { harnessAdapter, publicHarnessMetadata } from '../core/harness/registry.ts';
-import { credentialReceipt, readCredentials, writeCredentials, readPrivateText, assertSecureEndpoint } from '../core/harness/credentials.ts';
+import { credentialReceipt, readCredentials, writeCredentials } from '../core/harness/credentials.ts';
 import { verifyHarnessConnection } from '../core/harness/verify.ts';
 import { provisionHarnessGrant, type ProvisionGrantInput } from './mcp-provision.ts';
 import { validateHarnessArguments, MCP_GRANT_ARGUMENTS } from '../core/harness/arguments.ts';
+import { createMcpAdminHttp, hasAdminCredential, McpAdminError, redactAdminValue } from './mcp-admin-http.ts';
+import { runMcpAdmin } from './mcp-admin.ts';
 
 const HELP = `gbrain mcp — provision access on the host; install it inside the harness
 
 gbrain mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL --credentials-out FILE
 gbrain mcp grant NAME --client ID --if-version N --profile PROFILE --url URL --harness ID --dry-run
 gbrain mcp verify --client ID --harness ID --url URL --credentials-file FILE [--delegate]
+gbrain mcp admin --help
 gbrain mcp adapters | profiles
 gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr] [--no-tailscale] [--no-service] [--no-install] [--force] [--dry-run] [--yes] [--json]
 gbrain mcp expose --status [--json]
@@ -22,6 +25,9 @@ expose publishes the gbrain HTTP MCP server on your Tailscale tailnet (--funnel:
 and keeps it running as a user service. Engine-free. See: gbrain mcp expose --help
 
 --profile defaults to memory-writer for new clients; omitted profiles preserve existing grants.
+New connections follow this brain's published skills within their approved read sources.
+--skills follow|memory-only         Follow shared skills (new default) or use memory only; existing grants are unchanged when omitted
+Following never grants skill editing, script execution, additional tools, or paid calls.
 Delegation requires --bound-tools T1,T2.
 --federated-read S1,S2              Explicit read sources
 --bound-slug-prefixes P1/,P2/       Direct write fence
@@ -30,7 +36,7 @@ Delegation requires --bound-tools T1,T2.
 --bound-max-concurrent N           Default for new clients: 1
 --budget-usd-per-day USD|unlimited Default for new clients: unlimited
 --token-ttl SECONDS                Override new access-token lifetime
---admin-token-file FILE            Authenticate administration on a running server
+--admin-token-file FILE            Owner credential; otherwise GBRAIN_ADMIN_BOOTSTRAP_TOKEN
 --credentials-out FILE             Private credential handoff (required for creation)
 --credentials-file FILE            Existing private handoff; never printed
 --resume                           Recover the original private handoff for --client
@@ -44,8 +50,8 @@ gbrain connect URL --harness ID --credentials-file FILE --install
 Thin CLI adapters additionally require --root ABSOLUTE-PERSISTENT-DIRECTORY.
 `;
 
-export function mcpNeedsEngine(args: string[]): boolean {
-  return args[0] === 'grant' && !args.includes('--admin-token-file') && !args.includes('--help') && !args.includes('-h');
+export function mcpNeedsEngine(args: string[], envToken = process.env.GBRAIN_ADMIN_BOOTSTRAP_TOKEN): boolean {
+  return args[0] === 'grant' && !hasAdminCredential(args, envToken) && !args.includes('--help') && !args.includes('-h');
 }
 
 export function parseMcpGrant(args: string[]): ProvisionGrantInput {
@@ -70,13 +76,16 @@ export function parseMcpGrant(args: string[]): ProvisionGrantInput {
   if (value('--token-ttl') !== undefined) patch.tokenTtlSeconds = Number(value('--token-ttl'));
   const expectedRevision = value('--if-version') === undefined ? undefined : Number(value('--if-version'));
   if (expectedRevision !== undefined && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) throw new Error('--if-version must be a nonnegative integer');
+  const sharedSkills = value('--skills');
+  if (sharedSkills !== undefined && sharedSkills !== 'follow' && sharedSkills !== 'memory-only') throw new Error('--skills must be follow or memory-only');
   return { name: args[1] ?? '', harness: value('--harness') ?? value('--agent') ?? 'generic', profile: value('--profile') as GrantProfileId | undefined,
-    sourceId: value('--source'), url: value('--url') ?? '', clientId: value('--client'), expectedRevision, dryRun: args.includes('--dry-run'), resume: args.includes('--resume'), patch };
+    sourceId: value('--source'), url: value('--url') ?? '', clientId: value('--client'), expectedRevision, dryRun: args.includes('--dry-run'), resume: args.includes('--resume'), patch, sharedSkills };
 }
 
 export async function runMcp(args: string[], engine?: BrainEngine): Promise<void> {
   const value = (flag: string) => { const i = args.indexOf(flag); return i < 0 ? undefined : args[i + 1]; };
   try {
+    if (args[0] === 'admin') { await runMcpAdmin(args.slice(1)); return; }
     if (args[0] === 'expose') {
       // Engine-free Tailscale publication (src/commands/mcp-expose.ts) — it
       // owns its own help, argument validation and exit-code mapping.
@@ -104,7 +113,7 @@ export async function runMcp(args: string[], engine?: BrainEngine): Promise<void
       if (report.status !== 'passed') setCliExitVerdict(report.status === 'failed' ? 1 : 2);
       return;
     }
-    if (args[0] !== 'grant') throw new Error('Expected mcp grant, verify, adapters, profiles or expose');
+    if (args[0] !== 'grant') throw new Error('Expected mcp admin, grant, verify, adapters, profiles or expose');
     const input = parseMcpGrant(args);
     if ((!input.clientId || input.resume) && !input.dryRun && !value('--credentials-out')) throw new Error('--credentials-out is required before creating a client or resuming delivery');
     // Refuse an occupied handoff destination before granting anything.
@@ -114,20 +123,12 @@ export async function runMcp(args: string[], engine?: BrainEngine): Promise<void
     }
     const adminFile = value('--admin-token-file');
     let result: Awaited<ReturnType<typeof provisionHarnessGrant>>;
-    if (adminFile) {
-      assertSecureEndpoint(input.url);
-      const token = readPrivateText(adminFile).trim();
-      const base = input.url.replace(/\/mcp\/?$/, '');
-      const login = await fetch(`${base}/admin/login`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
-      if (!login.ok) throw new Error(`admin_authentication_failed: HTTP ${login.status}`);
-      const cookie = login.headers.get('set-cookie')?.match(/gbrain_admin=[^;]+/)?.[0];
-      if (!cookie) throw new Error('admin_authentication_failed: session cookie missing');
-      const response = await fetch(`${base}/admin/api/grants`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000), headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(input) });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
-        throw new Error(`${body.error ?? 'grant_failed'}: ${body.message ?? `HTTP ${response.status}`}`);
-      }
-      result = await response.json() as typeof result;
+    if (hasAdminCredential(args)) {
+      const admin = createMcpAdminHttp({ url: input.url, adminTokenFile: adminFile });
+      result = await admin.request('/admin/api/grants', { method: 'POST', body: input,
+        mutation: !input.dryRun && !input.resume,
+        nextAction: input.clientId ? `gbrain mcp admin client ${input.clientId} --url ${admin.base}` : `gbrain mcp admin clients --url ${admin.base}`,
+      }) as typeof result;
     } else {
       if (!engine) throw new Error('Run on the brain host or supply --admin-token-file for authenticated server administration');
       result = await provisionHarnessGrant(engine, input, 'local-cli');
@@ -140,9 +141,16 @@ export async function runMcp(args: string[], engine?: BrainEngine): Promise<void
       spending: result.grant.budgetUsdPerDay === null ? { mode: 'unlimited' } : { mode: 'daily_cap', usd: result.grant.budgetUsdPerDay },
       credentials: result.credentials ? credentialReceipt(result.credentials) : result.credential_action,
       credential_file: result.credentials ? value('--credentials-out') : null,
-      next_action: result.dry_run ? 'Review the grant, then repeat without --dry-run.' : 'Install the private handoff inside the intended harness with gbrain connect, then run gbrain mcp verify.' }, null, args.includes('--json') ? undefined : 2));
+      next_action: result.dry_run ? 'Review the grant, then repeat without --dry-run.' : result.credentials
+        ? 'Install the private handoff inside the intended harness with gbrain connect, then run gbrain mcp verify.'
+        : 'Grant updated; inspect effective access with gbrain mcp admin client. Restrictions apply immediately. Newly added scopes require fresh authorization in the native client or a new machine token; existing credentials are preserved.' }, null, args.includes('--json') ? undefined : 2));
   } catch (error) {
-    console.log(JSON.stringify({ status: 'error', reason: 'mcp_setup_failed', message: error instanceof Error ? error.message : 'MCP setup failed' }));
+    console.log(JSON.stringify({ status: 'error', reason: error instanceof McpAdminError ? error.code : 'mcp_setup_failed',
+      message: redactAdminValue(error instanceof Error ? error.message : 'MCP setup failed', [process.env.GBRAIN_ADMIN_BOOTSTRAP_TOKEN ?? '']),
+      ...(error instanceof McpAdminError && error.outcome ? { outcome: error.outcome } : {}),
+      ...(error instanceof McpAdminError && error.nextAction ? { next_action: error.nextAction } : {}),
+      ...(error instanceof McpAdminError && error.httpStatus ? { http_status: error.httpStatus } : {}),
+      ...(error instanceof McpAdminError && error.retryAfter ? { retry_after: error.retryAfter } : {}) }));
     setCliExitVerdict(1);
   }
 }

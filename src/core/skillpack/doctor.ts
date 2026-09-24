@@ -20,6 +20,7 @@
  * output or stable JSON for agent consumption.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 
@@ -306,7 +307,9 @@ async function applyAutoFixes(
     return [];
   }
 
+  for (const p of plan) assertLegacySkillFilesystemWrite(p.path);
   for (const p of plan) {
+    assertLegacySkillFilesystemWrite(p.path);
     mkdirSync(dirname(p.path), { recursive: true });
     writeFileSync(p.path, p.content);
     fixes.push(`${p.name}: created ${p.path}`);

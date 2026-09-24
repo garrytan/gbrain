@@ -25,6 +25,8 @@ import type {
   DegradedReason,
 } from '../types.ts';
 import { affectsRecall } from '../types.ts';
+import { resolveSearchDateBounds } from './date-bounds.ts';
+export { resolveDateBoundary, resolveSearchDateBounds } from './date-bounds.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 import { requiresSafeChunks } from './safe-chunks.ts';
 import { embed, embedQuery } from '../embedding.ts';
@@ -1187,41 +1189,6 @@ export async function embedQueryBounded(
 }
 
 /**
- * #3442 — resolve the public `since`/`until` contract (SearchOpts v0.29.1):
- * ISO-8601 passes through, relative durations ('7d', '2w', '1y') resolve to a
- * concrete timestamp, and a plain YYYY-MM-DD `until` lands at end-of-day.
- * The relative form was documented since v0.29.1 but never implemented — the
- * raw string ('60d') flowed into the engines' `::timestamptz` casts, every
- * arm failed fail-open, and the date filter was SILENTLY ignored.
- * Unparseable input now throws loudly instead of degrading.
- */
-export function resolveDateBoundary(
-  raw: string | undefined,
-  boundary: 'since' | 'until',
-): string | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  const s = String(raw).trim();
-  if (!s) return undefined;
-  const rel = /^(\d+)\s*([dwmy])$/i.exec(s);
-  if (rel) {
-    const n = parseInt(rel[1], 10);
-    const unit = rel[2].toLowerCase();
-    // m = months (30d). Minutes make no sense for an effective_date filter.
-    const days = unit === 'd' ? n : unit === 'w' ? n * 7 : unit === 'm' ? n * 30 : n * 365;
-    return new Date(Date.now() - days * 86400000).toISOString();
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    // Plain date: `until` lands at end-of-day (documented SearchOpts
-    // semantics); `since` keeps UTC start-of-day.
-    return boundary === 'until' ? `${s}T23:59:59.999Z` : s;
-  }
-  if (Number.isFinite(Date.parse(s))) return s;
-  throw new Error(
-    `Invalid ${boundary} value "${s}" — expected ISO-8601 (YYYY-MM-DD or timestamp) or a relative duration like '7d', '2w', '1y'.`,
-  );
-}
-
-/**
  * WP2/T3 — classify an embed/vector failure as a timeout vs a provider
  * error for the enumerated degraded[] reason codes (D6). Matches both the
  * embedQueryBounded deadline rejection and AbortSignal.timeout's
@@ -1261,6 +1228,13 @@ export async function hybridSearch(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  if (opts?.types?.length === 0) return [];
+  if (opts?.type || opts?.types?.length) {
+    const { expandEngineTypeFilters } = await import('../schema-pack/query-types.ts');
+    const filters = await expandEngineTypeFilters(engine, opts);
+    if (filters.types?.length === 0) return [];
+    opts = { ...opts, ...filters };
+  }
   // v0.32.3 search-lite mode: resolve the active mode + per-key overrides
   // once at entry. Mode supplies DEFAULTS for intentWeighting, tokenBudget,
   // expansion, and searchLimit when the caller leaves those undefined.
@@ -1372,8 +1346,7 @@ export async function hybridSearch(
     // PR #618 callers compiling while the new names are the public surface.
     // #3442: resolveDateBoundary implements the documented contract (relative
     // durations + end-of-day for plain-date `until`) at this single seam.
-    afterDate: resolveDateBoundary(opts?.since ?? opts?.afterDate, 'since'),
-    beforeDate: resolveDateBoundary(opts?.until ?? opts?.beforeDate, 'until'),
+    ...resolveSearchDateBounds(opts),
     // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
     // inner engine.searchKeyword / engine.searchVector calls apply the
     // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
@@ -1405,12 +1378,15 @@ export async function hybridSearch(
     // sub-queries through this one opts object — last-write-wins would
     // under-report multi-query exhaustion. Keep the max-escalations event.
     onVectorPoolMeta: (m) => {
+      if (!m.underfilled) return;
+      pushDegraded(degraded, 'vector_candidates_incomplete', m.reason === 'deadline' ? 'timeout' : m.reason ?? 'candidate_budget');
       if (!vectorPoolUnderfill || m.escalations >= vectorPoolUnderfill.escalations) {
-        vectorPoolUnderfill = { escalations: m.escalations, innerLimit: m.innerLimit };
+        const { underfilled, ...detail } = m;
+        vectorPoolUnderfill = { ...detail, incomplete: true };
       }
     },
   };
-  let vectorPoolUnderfill: { escalations: number; innerLimit: number } | undefined;
+  let vectorPoolUnderfill: HybridSearchMeta['vector_pool_underfilled'];
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
   // surfaced. Capture wrapper passes a closure to receive the meta and
@@ -2574,6 +2550,7 @@ export async function hybridSearchCached(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  if (opts?.types?.length === 0) return [];
   // v0.32.3 search-lite mode: resolve mode + per-key overrides once. The
   // resolved knob set drives cache enable/threshold/TTL AND the knobs_hash
   // that scopes the cache row so a tokenmax write can't be served to a
@@ -2740,7 +2717,7 @@ export async function hybridSearchCached(
   // #3985: type-filtered requests skip the cache — `types` is not part of
   // knobsHash, so a filtered result set could be served to an unfiltered
   // lookup (and vice versa). Mirrors the #3442 date-filter bypass.
-  const typeFiltered = (opts?.types?.length ?? 0) > 0;
+  const typeFiltered = Boolean(opts?.type) || (opts?.types?.length ?? 0) > 0;
   // Offset pages are cache-hostile until the pre-slice POOL itself is what's
   // stored: the cache holds the already offset/limit-sliced page (bare
   // hybridSearch slices before returning), so a hit for any other offset

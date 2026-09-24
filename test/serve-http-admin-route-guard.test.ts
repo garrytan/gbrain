@@ -13,7 +13,7 @@
  *   (b) a stale allowlist entry (no longer present, or present a
  *       different number of times than declared),
  *   (c) an allowlisted auth endpoint that dropped its
- *       adminAuthRateLimiter middleware,
+ *       adminLimits.total, adminLimits.failures middleware,
  *   (d) extractor breakage (anti-vacuity floor: the scan must keep
  *       finding at least the known admin surface, and a self-test proves
  *       the extractor + guard CAN flag a known-bad route).
@@ -117,12 +117,12 @@ interface AllowlistEntry {
 }
 
 const ALLOWLIST: AllowlistEntry[] = [
-  // Authenticates BY credential (the admin password IS the gate); rate-limited via adminAuthRateLimiter.
-  { method: 'post', path: '/admin/login', count: 1, mustCarry: 'adminAuthRateLimiter', rationale: 'credential login endpoint' },
-  // Authenticates BY credential to mint a one-time magic link; rate-limited via adminAuthRateLimiter.
-  { method: 'post', path: '/admin/api/issue-magic-link', count: 1, mustCarry: 'adminAuthRateLimiter', rationale: 'credential-gated magic-link issuance' },
-  // Magic-link consumption: authenticates BY the single-use token in the URL; rate-limited via adminAuthRateLimiter.
-  { method: 'get', path: '/admin/auth/:token', count: 1, mustCarry: 'adminAuthRateLimiter', rationale: 'token-gated magic-link consumption' },
+  // Authenticates BY credential (the admin password IS the gate); rate-limited via adminLimits.total, adminLimits.failures.
+  { method: 'post', path: '/admin/login', count: 1, mustCarry: 'adminLimits.total, adminLimits.failures', rationale: 'credential login endpoint' },
+  // Authenticates BY credential to mint a one-time magic link; rate-limited via adminLimits.total, adminLimits.failures.
+  { method: 'post', path: '/admin/api/issue-magic-link', count: 1, mustCarry: 'adminLimits.total, adminLimits.failures', rationale: 'credential-gated magic-link issuance' },
+  // Magic-link consumption: authenticates BY the single-use token in the URL; rate-limited via adminLimits.total, adminLimits.failures.
+  { method: 'get', path: '/admin/auth/:token', count: 1, mustCarry: 'adminLimits.total, adminLimits.failures', rationale: 'token-gated magic-link consumption' },
   // Static SPA asset mount (dev admin/dist arm): serves the public JS/CSS/HTML bundle; data access is via the guarded /admin/api/* routes.
   { method: 'use', path: '/admin', count: 1, mustCarry: 'express.static', rationale: 'static SPA asset mount' },
   // Bare /admin -> /admin/ redirect (embedded-binary arm): serves no data, only a redirect.
@@ -136,7 +136,7 @@ const ALLOWLIST: AllowlistEntry[] = [
 // The scan, run once against the real file
 // ---------------------------------------------------------------------------
 
-const source = readFileSync(SRC_PATH, 'utf-8') + '\n' + readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'serve-http-oauth.ts'), 'utf-8');
+const source = readFileSync(SRC_PATH, 'utf-8') + '\n' + ['serve-http-oauth.ts', 'serve-http-grants.ts', 'serve-http-registration.ts', 'serve-http-clients.ts'].map(file => readFileSync(join(import.meta.dir, '..', 'src', 'commands', file), 'utf-8')).join('\n');
 const all = extractRegistrations(source);
 const admin = adminRoutes(all);
 const guarded = admin.filter(r => r.guarded);
@@ -155,6 +155,13 @@ describe('serve-http admin route guard (structural)', () => {
       ['post', '/admin/api/revoke-client'],
       ['get', '/admin/api/oauth-requests/:id'],
       ['post', '/admin/api/oauth-requests/:id'],
+      ['get', '/admin/api/clients'],
+      ['get', '/admin/api/clients/:clientId'],
+      ['get', '/admin/api/clients/:clientId/setup'],
+      ['post', '/admin/api/clients/:clientId/lifecycle'],
+      ['post', '/admin/api/recover-client'],
+      ['post', '/admin/api/register-client'],
+      ['post', '/admin/api/rescope-client'],
     ] as const) {
       const hit = admin.find(r => r.method === method && r.path === path);
       expect(hit, `expected app.${method}('${path}') to be found by the scan`).toBeDefined();
@@ -207,7 +214,7 @@ describe('serve-http admin route guard (structural)', () => {
     // (must be ignored), a MULTI-LINE unguarded route, a single-line
     // unguarded route, the static mount, and a non-admin route (filtered).
     const FIXTURE = [
-      `  app.post('/admin/login', adminAuthRateLimiter, express.json(), (req, res) => {`,
+      `  app.post('/admin/login', adminLimits.total, adminLimits.failures, express.json(), (req, res) => {`,
       `    res.json({ ok: true });`,
       `  });`,
       `  app.get('/admin/api/good', requireAdmin, async (_req: Request, res: Response) => {`,

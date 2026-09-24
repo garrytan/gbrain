@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, ApiError, mutationOutcomeUnknown } from '../api';
 
 export interface Grant {
   clientId: string; clientName: string; profile: string | null; revision: number;
@@ -100,7 +100,7 @@ export function GrantFields({ draft, setDraft, sources, catalog, existing = fals
       <p className="grant-help">Renewable: 3600 (1 hour). Static bearer: 2592000 (30 days). 0 uses the server default. Existing tokens keep their expiry.</p></div>
     <details style={field}><summary>Advanced permissions</summary>
       <label htmlFor="grant-scopes">Scope override</label><input id="grant-scopes" value={draft.scopes} onChange={e => change('scopes', e.target.value)} placeholder="Use profile scopes" />
-      <p className="grant-help">read, write, admin, and agent are distinct grants. Admin does not authorize delegation.</p>
+      <p className="grant-help">Scopes allow eligible brain operations. Admin does not grant owner dashboard access or delegation.</p>
       <label htmlFor="grant-surface">Visible tool catalog</label><select id="grant-surface" value={draft.surface} onChange={e => change('surface', e.target.value)}>
         {['verbs', 'starter', 'full', 'default'].map(value => <option key={value}>{value}</option>)}
       </select><p className="grant-help">Full shows all eligible tools; it does not grant additional authority.</p>
@@ -128,32 +128,45 @@ export function GrantPreview({ preview }: { preview: GrantPreviewResult }) {
   </div>;
 }
 
-export function ClientGrantEditor({ clientId, sources, onRescoped }: { clientId: string; sources: GrantSource[]; onRescoped: (grant: { sourceId: string; federatedRead: string[] }) => void }) {
+export function ClientGrantEditor({ clientId, sources, sourcesReady = true, onRescoped }: { clientId: string; sources: GrantSource[]; sourcesReady?: boolean; onRescoped: (grant: Grant) => void }) {
   const [grant, setGrant] = useState<Grant>(); const [draft, setDraft] = useState<GrantDraft>(); const [catalog, setCatalog] = useState<GrantCatalog>();
   const [preview, setPreview] = useState<GrantPreviewResult>(); const [error, setError] = useState(''); const [busy, setBusy] = useState(false); const [saved, setSaved] = useState(false);
-  const reload = async () => {
-    const [detail, nextCatalog] = await Promise.all([api.clientGrant(clientId), api.grantCatalog()]);
-    setGrant(detail.grant); setDraft(grantDraft(detail.grant)); setCatalog(nextCatalog); setPreview(undefined); setError('');
+  const [requiresReload, setRequiresReload] = useState(false);
+  const reload = async (notify = false) => {
+    setBusy(true); setSaved(false);
+    try {
+      const [detail, nextCatalog] = await Promise.all([api.clientGrant(clientId), api.grantCatalog()]);
+      setGrant(detail.grant); setDraft(grantDraft(detail.grant)); setCatalog(nextCatalog); setPreview(undefined); setError(''); setRequiresReload(false);
+      if (notify) onRescoped(detail.grant);
+    } finally { setBusy(false); }
   };
   useEffect(() => { void reload().catch(e => setError(e.message)); }, [clientId]);
   const submit = async () => {
-    if (!draft || !grant) return; setBusy(true); setError(''); setSaved(false);
+    if (!draft || !grant || !sourcesReady || requiresReload) return; setBusy(true); setError(''); setSaved(false);
     try {
       const result = await api.updateClientGrant(clientId, { ...(preview ? reviewedGrantRequest(preview.after) : grantRequest(draft)), expectedRevision: grant.revision, dryRun: !preview }) as GrantPreviewResult;
       if (!preview) setPreview(result);
       else { setGrant(result.after); setDraft(grantDraft(result.after)); setPreview(undefined); setSaved(true); onRescoped(result.after); }
-    } catch (e) { setPreview(undefined); setError(e instanceof Error ? e.message : 'Grant update failed'); }
+    } catch (e) {
+      const unknown = !!preview && mutationOutcomeUnknown(e);
+      setRequiresReload(unknown || (e instanceof ApiError && e.status === 409));
+      setPreview(undefined);
+      setError(`${e instanceof Error ? e.message : 'Grant update failed.'}${unknown ? ' The change may have completed. Reload the current grant before editing permissions again.' : ''}`);
+    }
     finally { setBusy(false); }
   };
   return <section><div className="section-title">Permissions</div>
     {grant && <p className="grant-help">Revision {grant.revision}. Review source access, direct tools, and delegated work independently.</p>}
     {grant && <ClientSpend clientId={clientId} revision={grant.revision} />}
     {!!grant?.repairReasons.length && <p role="status" style={{ color: 'var(--warning)' }}>Delegation needs repair: {grant.repairReasons.join(', ')}. Review and explicitly grant the missing bindings below.</p>}
-    {draft && catalog && <GrantFields draft={draft} catalog={catalog} sources={sources} existing setDraft={next => { setDraft(next); setPreview(undefined); setSaved(false); }} />}
-    {error && <p role="alert" style={{ color: 'var(--error)' }}>{error} <button type="button" className="btn btn-secondary" onClick={() => void reload().catch(e => setError(e.message))}>Reload current grant</button></p>}
+    {!sourcesReady && <p role="alert">Current sources are unavailable. Retry sources before editing permissions.</p>}
+    <fieldset disabled={busy || !sourcesReady || requiresReload} style={{ border: 0, padding: 0 }}>
+      {draft && catalog && <GrantFields draft={draft} catalog={catalog} sources={sources} existing setDraft={next => { setDraft(next); setPreview(undefined); setSaved(false); }} />}
+    </fieldset>
+    {error && <p role="alert" style={{ color: 'var(--error)' }}>{error} <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void reload(true).catch(e => setError(e.message))}>Reload current grant</button></p>}
     {preview && <GrantPreview preview={preview} />}
     {saved && <p role="status">Permissions saved. Credentials are unchanged.</p>}
-    <button type="button" className="btn btn-primary" disabled={busy || !draft || !catalog} onClick={() => void submit()}>{busy ? 'Checking…' : preview ? 'Apply reviewed changes' : 'Preview changes'}</button>
+    <button type="button" className="btn btn-primary" disabled={busy || !draft || !catalog || !sourcesReady || requiresReload} onClick={() => void submit()}>{busy ? 'Checking…' : preview ? 'Apply reviewed changes' : 'Preview changes'}</button>
   </section>;
 }
 

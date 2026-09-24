@@ -134,19 +134,25 @@ describe('F3 refresh-token subset semantics under hasScope', () => {
 
 describe('ALLOWED_SCOPES — exact list pinned', () => {
   test('contains the 6 canonical scopes (v0.38: agent added)', () => {
-    expect(ALLOWED_SCOPES.size).toBe(6);
+    expect(ALLOWED_SCOPES.size).toBe(9);
     expect(ALLOWED_SCOPES.has('read')).toBe(true);
     expect(ALLOWED_SCOPES.has('write')).toBe(true);
     expect(ALLOWED_SCOPES.has('admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('sources_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('users_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('agent')).toBe(true);
+    expect(ALLOWED_SCOPES.has('skill_editor')).toBe(true);
+    expect(ALLOWED_SCOPES.has('skill_publisher')).toBe(true);
+    expect(ALLOWED_SCOPES.has('skills_member_self')).toBe(true);
   });
   test('list is sorted alphabetically (deterministic for wire/drift check)', () => {
     expect([...ALLOWED_SCOPES_LIST]).toEqual([
       'admin',
       'agent',
       'read',
+      'skill_editor',
+      'skill_publisher',
+      'skills_member_self',
       'sources_admin',
       'users_admin',
       'write',
@@ -238,7 +244,7 @@ describe('scopesSupportedForDiscovery', () => {
   });
   test('DCR off: every scope except operator-only agent (the pre-ceiling advertisement)', () => {
     const list = scopesSupportedForDiscovery({ enableDcr: false });
-    expect(list).toEqual(['admin', 'read', 'sources_admin', 'users_admin', 'write']);
+    expect(list).toEqual(['admin', 'read', 'skill_editor', 'skill_publisher', 'skills_member_self', 'sources_admin', 'users_admin', 'write']);
     expect(list).toEqual(ALLOWED_SCOPES_LIST.filter((s) => s !== 'agent'));
   });
   test('neither list advertises agent (delegation bindings are operator-only)', () => {

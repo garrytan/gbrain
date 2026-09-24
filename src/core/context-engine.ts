@@ -62,6 +62,7 @@ export interface ContextEngine {
     citationsMode?: string;
     model?: string;
     prompt?: string;
+    runtimeContext?: { transcriptStorage?: { kind: string } };
   }): Promise<AssembleResult>;
   compact(params: {
     sessionId: string;
@@ -1156,7 +1157,7 @@ export function createGBrainContextEngine(ctx: {
       return { ingested: true };
     },
 
-    async assemble({ sessionId, sessionKey, messages, tokenBudget, availableTools, citationsMode, prompt }) {
+    async assemble({ sessionId, sessionKey, messages, tokenBudget, availableTools, citationsMode, prompt, runtimeContext }) {
       // Lazy SDK load on first method call (was top-level await pre-L0-B).
       await ensureSdkLoaded();
 
@@ -1165,15 +1166,14 @@ export function createGBrainContextEngine(ctx: {
       // take down the whole context pipeline.
       const msgs = Array.isArray(messages) ? messages : [];
 
-      // Some OpenClaw runtimes (e.g. the codex-app-server in 2026.7.x) deliver
-      // the current user turn via `prompt` with an empty `messages` array.
-      // Synthesize a single user turn so the Retrieval Reflex still sees the
-      // text (the deterministic live-context/pass-through path is unaffected).
-      const effectiveMessages = msgs.length > 0
-        ? msgs
-        : (typeof prompt === 'string' && prompt.trim()
-            ? ([{ role: 'user', content: prompt }] as typeof msgs)
-            : msgs);
+      const hasCurrentPrompt = typeof prompt === 'string' && prompt.trim().length > 0;
+      const lastMessage = msgs.at(-1);
+      const includesCurrentPrompt = runtimeContext?.transcriptStorage?.kind !== 'sqlite'
+        && lastMessage?.role === 'user'
+        && messageText(lastMessage.content) === prompt;
+      const effectiveMessages = hasCurrentPrompt && !includesCurrentPrompt
+        ? [...msgs, { role: 'user', content: prompt }]
+        : msgs;
 
       // 1. Generate deterministic context (<5ms, zero LLM calls)
       const liveCtx = generateLiveContext(workspaceDir);

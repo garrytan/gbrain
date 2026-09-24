@@ -22,7 +22,7 @@
  * vs user-account-mgmt — neither implies the other).
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'skill_editor' | 'skill_publisher' | 'skills_member_self';
 
 export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'read',
@@ -31,6 +31,9 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'sources_admin',
   'users_admin',
   'agent',
+  'skill_editor',
+  'skill_publisher',
+  'skills_member_self',
 ]);
 
 /**
@@ -41,6 +44,9 @@ export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
   'admin',
   'agent',
   'read',
+  'skill_editor',
+  'skill_publisher',
+  'skills_member_self',
   'sources_admin',
   'users_admin',
   'write',
@@ -134,6 +140,9 @@ const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   users_admin: new Set(['users_admin']),
   read: new Set(['read']),
   agent: new Set(['agent']),
+  skill_editor: new Set(['skill_editor']),
+  skill_publisher: new Set(['skill_publisher']),
+  skills_member_self: new Set(['skills_member_self']),
 };
 
 /**
@@ -154,6 +163,15 @@ export function hasScope(grantedScopes: readonly string[], requiredScope: string
     if (implied.has(requiredScope as Scope)) return true;
   }
   return false;
+}
+
+export function operationScopesAllowed(
+  grantedScopes: readonly string[],
+  operation: { scope?: string; requiredScopes?: readonly string[]; agentCallable?: boolean },
+): boolean {
+  return (hasScope(grantedScopes, operation.scope ?? 'read')
+    || (operation.agentCallable === true && hasScope(grantedScopes, 'agent')))
+    && (operation.requiredScopes ?? []).every(scope => hasScope(grantedScopes, scope));
 }
 
 export function isScope(s: string): s is Scope {

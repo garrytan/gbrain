@@ -6,8 +6,9 @@ import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { readJournalLimits } from './limits.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
+import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import {
-  isTerminal, principalKey, requestPrincipal,
+  isTerminal, principalKey, requestPrincipal, recoveryFiles,
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
   type SqlEngine, type WriteAuthority, type WriteRequest,
 } from './model.ts';
@@ -15,6 +16,8 @@ import {
 export interface WriteAdmission {
   principal: Principal;
   operation: string;
+  targetKind?: 'page' | 'skill_bundle';
+  protocolVersion?: 1 | 2;
   sourceId: string;
   sourceIncarnation: string;
   slug: string;
@@ -91,6 +94,8 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
   const terminalBytes = input.terminalReservation ?? Math.max(16_384,jsonBytes(input.authority)+8192);
   if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
   return { requestId, apply: async (tx: BrainEngine): Promise<WriteRequest> => {
+    await declarePersistenceProtocol(tx);
+    assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion });
     if (input.worktreeId) {
       await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]);
       const binding = await tx.executeRaw(`SELECT source_id FROM persistence_source_bindings WHERE source_id=$1
@@ -112,7 +117,13 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       if(topology.length) throw new OperationError('idempotency_conflict','This request_id belongs to a source lifecycle operation.');
     }
     const prior = await getWriteRequest(tx, input.principal, requestId);
-    if (prior) return assertReplayIntent(prior, fingerprint);
+    if (prior) {
+      if ((prior.target_kind ?? 'page') !== (input.targetKind ?? 'page') || (prior.protocol_version ?? 1) !== (input.protocolVersion ?? 1)) {
+        throw new OperationError('idempotency_conflict', 'This request_id belongs to a different mutation target or protocol.');
+      }
+      return assertReplayIntent(prior, fingerprint);
+    }
+    if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
       if (Number(row.outstanding_count) + 1 > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`);
@@ -122,11 +133,11 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     }
     const [row] = await tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
       (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
-       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation)
-      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15)
+       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version)
+      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17)
       RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
       input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
-      fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes]);
+      fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1]);
     for (const c of counters) await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+1,
       intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$3 WHERE key=$1`, [c.key, bytes, terminalBytes]);
     return row;
@@ -136,6 +147,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
 /** Claims commit before OS-lock waits. An unresolved head blocks its entire root. */
 export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseMs = 30_000, excludeRoots: string[] = []): Promise<WriteRequest | null> {
   return engine.transactionDirect(async tx => {
+    await declarePersistenceProtocol(tx);
     const [row] = await tx.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
       LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
       WHERE r.state='queued' AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
@@ -157,13 +169,13 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
 export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_requests SET
     claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now()
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' RETURNING id`, [id, token, leaseMs]);
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs]);
   return rows.length === 1;
 }
 export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_requests SET state='queued',execution_token=NULL,claim_expires_at=NULL,
     blocked_reason=$3,updated_at=now() WHERE id=$1::uuid AND execution_token=$2::uuid
-    AND state='running' AND recovery IS NULL AND publication_started=false`, [row.id, row.execution_token, reason]);
+    AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason]);
 }
 
 /** Called while holding the root lock; the durable record precedes any rename. */
@@ -173,6 +185,7 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
   if (!row.worktree_id) throw new TypeError('Filesystem recovery requires a worktree.');
   if (bytes > limits.worktreeRecoveryBytes || bytes > limits.brainRecoveryBytes) throw new OperationError('request_too_large', 'This request exceeds the configured recovery capacity.', 'Increase recovery capacity before submitting a new request.');
   await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     // A crash after rename must never lose the earlier recovery reservation,
     // even when the deployment defaults ordinary transactions to async commit.
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
@@ -196,6 +209,7 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   // Every acknowledged terminal state survives a crash, including cancellation
   // and pre-publication failures that do not enter the file coordinator.
   await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+  await declarePersistenceProtocol(tx);
   const keys = ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])];
   await lockCounters(tx, keys);
   const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
@@ -218,12 +232,13 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string): Pr
   const row = await getWriteRequestById(engine, id);
   if (!row?.recovery || !isTerminal(row)) return;
   await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
     const keys = ['brain', ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])];
     await lockCounters(tx, keys);
     const [locked] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
     if (!locked?.recovery || !isTerminal(locked)) return;
-    assertRecoveryStagingAbsent(locked.recovery);
+    for (const file of recoveryFiles(locked.recovery)) assertRecoveryStagingAbsent(file);
     for (const key of keys) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(locked.recovery_bytes)]);
     await tx.executeRaw('UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid', [id]);
   });
@@ -231,7 +246,7 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string): Pr
 export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: string, failure?: {code:string;message:string}): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_requests SET state='recovering',blocked_reason=$3,updated_at=now(),
     error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5)
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering')`, [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null]);
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null]);
 }
 export async function compactWriteReceipts(engine: BrainEngine, retentionDays = 30): Promise<number> {
   if (!Number.isFinite(retentionDays) || retentionDays < 0) throw new TypeError('Invalid receipt retention.');
@@ -240,6 +255,7 @@ export async function compactWriteReceipts(engine: BrainEngine, retentionDays = 
     AND completed_at < now()-($1::double precision*interval '1 day') ORDER BY sequence LIMIT 100`, [retentionDays]);
   let count=0;
   for(const row of rows) count+=await engine.transaction(async tx=>{
+    await declarePersistenceProtocol(tx);
     const keys=['brain',principalKey(requestPrincipal(row))];
     await lockCounters(tx,keys);
     const [current]=await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE',[row.id]);
