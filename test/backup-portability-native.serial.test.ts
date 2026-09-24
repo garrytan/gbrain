@@ -202,6 +202,124 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   }
 }, 120_000);
 
+for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32')(`private ${kind} ACL launch completes with asynchronous subprocess collection`, async () => {
+  const capturePath = join(temporary, `capture-${kind}`);
+  if (kind === 'directory') fs.mkdirSync(capturePath);
+  else fs.writeFileSync(capturePath, '');
+  let launch: { executable: string; args: string[]; options: childProcess.ExecFileSyncOptionsWithStringEncoding } | undefined;
+  let capturedCalls = 0;
+  const execute = childProcess.execFileSync;
+  const capture = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+    apply(target, thisArg, args) {
+      const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+      if (options.env?.GBRAIN_BACKUP_PRIVATE_PATH !== capturePath) return Reflect.apply(target, thisArg, args);
+      capturedCalls++;
+      launch = { executable: args[0], args: [...args[1]], options: { ...options } };
+      throw new Error('captured launch without executing');
+    },
+  }));
+  try { expect(() => privacy.protectNewBackupPath(capturePath, kind)).toThrow(AgentInstallError); }
+  finally { capture.mockRestore(); }
+  expect(capturedCalls).toBe(1);
+  expect(launch !== undefined).toBe(true);
+  const captured = launch!;
+  expect(captured.executable === join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')).toBe(true);
+  expect(captured.options.timeout).toBe(15_000);
+  expect(captured.options.maxBuffer).toBe(64 * 1024);
+  expect(captured.options.shell).toBeUndefined();
+  expect(captured.options.windowsHide).toBe(true);
+  expect(Buffer.isBuffer(captured.options.input) && captured.options.input.length === 0).toBe(true);
+  expect(Array.isArray(captured.options.stdio) && captured.options.stdio.length === 3 && captured.options.stdio.every(stream => stream === 'pipe')).toBe(true);
+  const classify = (error: unknown) => {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ETIMEDOUT' ? 'ETIMEDOUT' : code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'MAXBUFFER'
+      : code === 'GBRAIN_TEST_COMPLETION_TIMEOUT' ? 'WATCHDOG' : code === 'GBRAIN_TEST_INPUT_FAILURE' ? 'INPUT' : 'other';
+  };
+  const collect = (args: string[], env: NodeJS.ProcessEnv) => new Promise<string>((resolve, reject) => {
+    const { input, stdio, ...options } = captured.options;
+    let settled = false;
+    let watchdog = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let cleanup: ReturnType<typeof setTimeout> | undefined;
+    const finish = (error: Error | null, stdout = '') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline); clearTimeout(cleanup);
+      if (watchdog) error = Object.assign(new Error('asynchronous completion deadline'), { code: 'GBRAIN_TEST_COMPLETION_TIMEOUT' });
+      if (error) {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
+        reject(error);
+      } else resolve(stdout);
+    };
+    const child = childProcess.execFile(captured.executable, args, { ...options, env }, (error, stdout) => {
+      finish(error, stdout);
+    });
+    child.on('error', error => finish(error));
+    deadline = setTimeout(() => {
+      watchdog = true;
+      cleanup = setTimeout(() => finish(new Error('asynchronous termination not confirmed')), 1_000);
+      child.kill('SIGKILL');
+    }, 15_000);
+    const inputFailure = () => finish(Object.assign(new Error('asynchronous input unavailable'), { code: 'GBRAIN_TEST_INPUT_FAILURE' }));
+    if (!child.stdin) { inputFailure(); return; }
+    child.stdin.on('error', inputFailure);
+    try { child.stdin.end(input); }
+    catch { inputFailure(); }
+  });
+  const observations = [];
+  for (const mode of ['sync', 'async', 'async', 'sync'] as const) {
+    const path = join(temporary, `collection-${kind}-${observations.length} [literal] 'é`);
+    if (kind === 'directory') fs.mkdirSync(path);
+    else fs.writeFileSync(path, '');
+    const before = fs.lstatSync(path, { bigint: true });
+    const env = { ...captured.options.env, GBRAIN_BACKUP_PRIVATE_PATH: path };
+    let completed = false;
+    let nativeError: string | null = null;
+    let killed = false;
+    const started = performance.now();
+    try {
+      const result = mode === 'sync' ? execute(captured.executable, captured.args, { ...captured.options, env }) : await collect(captured.args, env);
+      completed = result === 'private';
+    } catch (error) {
+      const failure = error as NodeJS.ErrnoException & { killed?: boolean };
+      nativeError = classify(error);
+      killed = failure.killed === true;
+    }
+    const after = fs.lstatSync(path, { bigint: true });
+    observations.push({ path, mode, elapsedMs: Math.round(performance.now() - started), completed, nativeError, killed,
+      sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
+      empty: kind === 'directory' ? after.isDirectory() && fs.readdirSync(path).length === 0 : after.isFile() && after.size === 0n && after.nlink === 1n,
+      privateAcl: false, aclError: null as string | null });
+  }
+  for (const observation of observations) {
+    if (observation.mode !== 'async') continue;
+    const script = `$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH;
+$u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+$r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | ForEach-Object { @{sid=$_.IdentityReference.Value; inherited=$_.IsInherited; allow=$_.AccessControlType.ToString(); rights=[int]$_.FileSystemRights; inheritance=[int]$_.InheritanceFlags; propagation=[int]$_.PropagationFlags} });
+@{user=$u; owner=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value; protected=$a.AreAccessRulesProtected; rules=$r} | ConvertTo-Json -Compress -Depth 4`;
+    try {
+      const actual = JSON.parse(await collect(['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+        { ...captured.options.env, GBRAIN_TEST_ACL_PATH: observation.path }));
+      observation.privateAcl = actual.owner === actual.user && actual.protected === true
+        && JSON.stringify(actual.rules.map((rule: { sid: string }) => rule.sid).sort()) === JSON.stringify([...new Set([actual.user, 'S-1-5-18'])].sort())
+        && actual.rules.every((rule: { inherited: boolean; allow: string; rights: number; inheritance: number; propagation: number }) =>
+          !rule.inherited && rule.allow === 'Allow' && rule.rights === 0x1f01ff && rule.inheritance === (kind === 'directory' ? 3 : 0) && rule.propagation === 0);
+    } catch (error) { observation.aclError = classify(error); }
+  }
+  process.stderr.write(`Windows backup collection controls: ${JSON.stringify({ kind, arch: process.arch, runtime: Bun.version,
+    observations: observations.map(({ path, ...observation }) => observation) })}\n`);
+  for (const observation of observations) {
+    expect(observation.sameIdentity).toBe(true);
+    expect(observation.empty).toBe(true);
+    if (observation.mode !== 'async') continue;
+    expect(observation.completed).toBe(true);
+    expect(observation.nativeError).toBeNull();
+    expect(observation.privateAcl).toBe(true);
+    expect(observation.aclError).toBeNull();
+  }
+}, 120_000);
+
 test('native create, verify, absent-root restore and fresh-process reopen preserve exact data and nested paths', async () => {
   const protect = privacy.protectNewBackupPath;
   const protectedKinds: string[] = [];
