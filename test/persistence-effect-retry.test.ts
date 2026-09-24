@@ -20,11 +20,12 @@ import { persistenceSocketPathForConfig, requestPersistenceAdministration, start
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const model = 'openai:text-embedding-3-small';
 const signature = `${model}:1536`;
-for (const kind of ['pglite', ...(databaseUrl ? ['postgres' as const] : [])] as const) {
+for (const kind of testBackends()) {
   describe(`effect retry ${kind}`, () => {
     let engine: BrainEngine;
     let scratch: string;

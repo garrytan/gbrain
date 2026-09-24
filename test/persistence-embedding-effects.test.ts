@@ -18,10 +18,11 @@ import { MAX_RATE_LIMIT_RETRIES } from '../src/core/embed-retry.ts';
 import { AIConfigError } from '../src/core/ai/errors.ts';
 import { invokeAI, isAIInvocationPolicyError, withAIInvocationGuard } from '../src/core/ai/invocation-guard.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
-for (const kind of ['pglite', ...(databaseUrl ? ['postgres'] : [])] as const) {
+for (const kind of testBackends()) {
   describe(`embedding effects ${kind}`, () => {
     let engine: BrainEngine;
     let scratch: string;

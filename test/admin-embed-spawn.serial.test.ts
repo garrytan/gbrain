@@ -23,7 +23,7 @@
  * No DATABASE_URL needed; PGLite is the engine. Serial because it binds
  * a TCP port and reads/writes a tmpdir.
  */
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -113,20 +113,26 @@ async function spawnServer(): Promise<ServeProc> {
   }
 
   const cleanup = async () => {
-    try { proc.kill('SIGTERM'); } catch { /* already exited */ }
-    // Give it 2s to exit cleanly, then SIGKILL.
-    await Promise.race([
-      proc.exited,
-      new Promise(r => setTimeout(r, 2000)),
-    ]);
-    try { proc.kill('SIGKILL'); } catch { /* already gone */ }
-    try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+      await Promise.race([
+        proc.exited,
+        new Promise<void>(resolve => { timer = setTimeout(resolve, 2000); }),
+      ]);
+      if (proc.exitCode === null) {
+        try { proc.kill('SIGKILL'); } catch { /* already exited */ }
+        await proc.exited;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+      rmSync(home, { recursive: true, force: true });
+    }
   };
 
   if (!ready) {
-    // Capture some diagnostics for the failure message before tearing down.
-    const stderrText = await new Response(proc.stderr).text().catch(() => '');
     await cleanup();
+    const stderrText = await new Response(proc.stderr).text().catch(() => '');
     throw new Error(
       `serve --http never became ready on port ${port} after 30s. stderr: ${stderrText.slice(0, 2000)}`,
     );
@@ -136,98 +142,83 @@ async function spawnServer(): Promise<ServeProc> {
 }
 
 describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1090)', () => {
+  let server: ServeProc;
+
+  beforeAll(async () => {
+    server = await spawnServer();
+  }, 90_000);
+
+  afterAll(async () => {
+    if (server) await server.cleanup();
+  });
+
   test('GET /admin/ returns 200 with the React SPA shell HTML', async () => {
-    const s = await spawnServer();
-    try {
-      const res = await fetch(`http://127.0.0.1:${s.port}/admin/`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      expect(res.status).toBe(200);
-      const html = await res.text();
-      // The actual admin/dist/index.html declares <title>GBrain Admin</title>
-      // and mounts the SPA on <div id="root">. Both must be present, otherwise
-      // we're not serving the embedded asset.
-      expect(html).toContain('GBrain Admin');
-      expect(html).toContain('<div id="root">');
-      // Content-Type is text/html, not application/octet-stream (which would
-      // mean the mime lookup in ADMIN_ASSETS regressed).
-      expect(res.headers.get('content-type') ?? '').toMatch(/text\/html/);
-    } finally {
-      await s.cleanup();
-    }
+    const res = await fetch(`http://127.0.0.1:${server.port}/admin/`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // The actual admin/dist/index.html declares <title>GBrain Admin</title>
+    // and mounts the SPA on <div id="root">. Both must be present, otherwise
+    // we're not serving the embedded asset.
+    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('<div id="root">');
+    // Content-Type is text/html, not application/octet-stream (which would
+    // mean the mime lookup in ADMIN_ASSETS regressed).
+    expect(res.headers.get('content-type') ?? '').toMatch(/text\/html/);
   }, 90_000);
 
   test('GET /admin (no trailing slash) redirects to /admin/', async () => {
-    const s = await spawnServer();
-    try {
-      const res = await fetch(`http://127.0.0.1:${s.port}/admin`, {
-        signal: AbortSignal.timeout(5000),
-        redirect: 'manual',
-      });
-      // Pre-fix this 404'd: the embedded-manifest branch only registered
-      // '/admin/{*path}', which requires the literal '/' before the
-      // wildcard segment and never matches a bare '/admin' request.
-      expect([301, 302, 303, 307, 308]).toContain(res.status);
-      expect(res.headers.get('location')).toBe('/admin/');
+    const res = await fetch(`http://127.0.0.1:${server.port}/admin`, {
+      signal: AbortSignal.timeout(5000),
+      redirect: 'manual',
+    });
+    // Pre-fix this 404'd: the embedded-manifest branch only registered
+    // '/admin/{*path}', which requires the literal '/' before the
+    // wildcard segment and never matches a bare '/admin' request.
+    expect([301, 302, 303, 307, 308]).toContain(res.status);
+    expect(res.headers.get('location')).toBe('/admin/');
 
-      // Following the redirect lands on the same SPA shell as GET /admin/.
-      const followed = await fetch(`http://127.0.0.1:${s.port}/admin`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      expect(followed.status).toBe(200);
-      const html = await followed.text();
-      expect(html).toContain('GBrain Admin');
-      expect(html).toContain('<div id="root">');
-    } finally {
-      await s.cleanup();
-    }
+    // Following the redirect lands on the same SPA shell as GET /admin/.
+    const followed = await fetch(`http://127.0.0.1:${server.port}/admin`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(followed.status).toBe(200);
+    const html = await followed.text();
+    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('<div id="root">');
   }, 90_000);
 
   test('GET /admin/index.html (explicit path) also returns the SPA HTML', async () => {
-    const s = await spawnServer();
-    try {
-      const res = await fetch(`http://127.0.0.1:${s.port}/admin/index.html`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      expect(res.status).toBe(200);
-      const html = await res.text();
-      expect(html).toContain('GBrain Admin');
-    } finally {
-      await s.cleanup();
-    }
+    const res = await fetch(`http://127.0.0.1:${server.port}/admin/index.html`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('GBrain Admin');
   }, 90_000);
 
   test('GET /admin/agents (SPA-routed deep link) falls back to index.html', async () => {
-    const s = await spawnServer();
-    try {
-      const res = await fetch(`http://127.0.0.1:${s.port}/admin/agents`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      expect(res.status).toBe(200);
-      const html = await res.text();
-      // SPA fallback: any unmatched /admin/* path serves index.html so
-      // client-side routing takes over.
-      expect(html).toContain('GBrain Admin');
-      expect(html).toContain('<div id="root">');
-    } finally {
-      await s.cleanup();
-    }
+    const res = await fetch(`http://127.0.0.1:${server.port}/admin/agents`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    // SPA fallback: any unmatched /admin/* path serves index.html so
+    // client-side routing takes over.
+    expect(html).toContain('GBrain Admin');
+    expect(html).toContain('<div id="root">');
   }, 90_000);
 
   test('GET /admin/api/stats (API route) is NOT swallowed by the SPA fallback — returns auth challenge', async () => {
-    const s = await spawnServer();
-    try {
-      const res = await fetch(`http://127.0.0.1:${s.port}/admin/api/stats`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      // No session cookie → 401/403 from requireAdmin, NOT 200 + HTML.
-      // The regression we guard against: SPA fallback grabbing /admin/api/*
-      // would silently return HTML to a JSON client and break the dashboard.
-      expect(res.status).not.toBe(200);
-      const body = await res.text().catch(() => '');
-      expect(body).not.toContain('<div id="root">');
-    } finally {
-      await s.cleanup();
-    }
+    const res = await fetch(`http://127.0.0.1:${server.port}/admin/api/stats`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    // No session cookie → 401/403 from requireAdmin, NOT 200 + HTML.
+    // The regression we guard against: SPA fallback grabbing /admin/api/*
+    // would silently return HTML to a JSON client and break the dashboard.
+    expect(res.status).not.toBe(200);
+    const body = await res.text().catch(() => '');
+    expect(body).not.toContain('<div id="root">');
   }, 90_000);
 });

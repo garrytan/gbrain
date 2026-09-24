@@ -9,6 +9,7 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './persistence-postgres.ts';
 import { syncLockId } from '../../src/core/db-lock.ts';
+import { testBackends } from './test-backends.ts';
 
 export const options = { noEmbed: true, noExtract: true, noSchemaPack: true };
 export const json = (body: unknown, status = 200, headers = {}) => new Response(JSON.stringify(body), {
@@ -40,17 +41,20 @@ export async function sourceCheckpoint(engine: BrainEngine, id: string) {
 }
 
 export function createConnectorFixture() {
+  const backends = testBackends();
   const home = mkdtempSync(join(tmpdir(), 'gbrain-connector-parity-'));
   const engines: BrainEngine[] = [];
   let closePostgres: (() => Promise<void>) | undefined;
   const env = { GBRAIN_HOME: home, CONNECTOR_TEST_TOKEN: 'synthetic-local-fixture' };
   const setup = async () => {
-    const lite = new PGLiteEngine();
-    await lite.connect({ database_path: join(home, 'database') });
-    await lite.initSchema();
-    engines.push(lite);
-    if (process.env.DATABASE_URL) {
-      const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+    if (backends.includes('pglite')) {
+      const lite = new PGLiteEngine();
+      await lite.connect({ database_path: join(home, 'database') });
+      await lite.initSchema();
+      engines.push(lite);
+    }
+    if (backends.includes('postgres')) {
+      const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
       engines.push(pg.engine);
       closePostgres = pg.close;
     }
@@ -110,5 +114,5 @@ export function createConnectorFixture() {
     }
   }
 
-  return { home, engines, env, setup, teardown, source, boundSource, standaloneConnector };
+  return { home, engines, env, backends, setup, teardown, source, boundSource, standaloneConnector };
 }
