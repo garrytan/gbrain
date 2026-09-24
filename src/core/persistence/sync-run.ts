@@ -183,7 +183,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
   assertPersistenceAccepting(engine);
   validateManagedSyncOptions(opts);
   const context = await resolveManagedSyncContext(engine, opts);
-  const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, context.root);
+  const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
   const company = currentCompanyBrainSync(context.sourceId);
   const processingOptions = syncProcessingOptions(opts);
   const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),

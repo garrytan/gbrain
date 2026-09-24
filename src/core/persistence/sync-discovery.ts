@@ -46,12 +46,15 @@ export function readSyncFile(root: string, path: string): Buffer | null {
 export const syncRawHash = (root: string, path: string): string | null => { const bytes = readSyncFile(root, path); return bytes === null ? null : sha256(bytes); };
 export function assertConfiguredSyncRoot(root: string, configuredRoot: string | null): void {
   if (configuredRoot === null) return;
-  try { if (realpathSync(resolve(configuredRoot)) === root) return; } catch {}
+  try { if (realpathSync.native(resolve(configuredRoot)) === realpathSync.native(root) && realpathSync(root) === root) return; } catch {}
   throw new OperationError('source_changed', 'The configured source directory no longer matches the accepted sync owner.');
+}
+function syncGitPath(context: Pick<SyncDiscovery, 'root' | 'gitRoot'>, path: string): string {
+  return relative(realpathSync.native(context.gitRoot), resolve(realpathSync.native(context.root), path)).split(sep).join('/');
 }
 export function assertSyncEntryOrigin(context: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'slugMode'>,
   entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'action'> & { working?: boolean }): void {
-  const gitPath = relative(context.gitRoot, resolve(context.root, entry.path)).split(sep).join('/');
+  const gitPath = syncGitPath(context, entry.path);
   const expected = context.slugMode === 'source-root' ? relative(context.root, resolve(context.root, entry.path)).split(sep).join('/') : gitPath;
   const origin = syncOriginPath(entry.sourcePath);
   if (origin !== syncOriginPath(expected)) throw new OperationError('page_identity_changed', 'The sync path does not match its accepted origin.');
@@ -96,7 +99,7 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
   assertConfiguredSyncRoot(root, source.local_path);
   const gitRoot = realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim());
   const requested = realpathSync(opts.srcSubpath ? resolve(opts.repoPath ?? gitRoot, opts.srcSubpath) : opts.repoPath ?? root);
-  if (requested !== root || !isWriteTargetContained(root, gitRoot)) throw new OperationError('source_changed', 'Sync path does not match this source binding.');
+  if (realpathSync.native(requested) !== realpathSync.native(root) || !isWriteTargetContained(realpathSync.native(root), realpathSync.native(gitRoot))) throw new OperationError('source_changed', 'Sync path does not match this source binding.');
   if (source.config?.kind != null) throw new OperationError('writer_coordinator_required', 'Connector sync requires its dedicated coordinator.');
   return { binding, root, gitRoot, sourceId, incarnation: source.incarnation, source };
 }
@@ -104,7 +107,8 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const { binding, root, gitRoot, sourceId, incarnation, source } = context ?? await resolveManagedSyncContext(engine, opts);
   const company = currentCompanyBrainSync(sourceId);
   const strategy = opts.strategy ?? source.config?.strategy ?? 'markdown';
-  const scope = relative(gitRoot, root).split(sep).join('/');
+  const nativeRoot = realpathSync.native(root), nativeGitRoot = realpathSync.native(gitRoot);
+  const scope = relative(nativeGitRoot, nativeRoot).split(sep).join('/');
   const probe = resolveSlugForPath(join(scope, 'x.md'));
   const slugMode = company ? 'source-root' : scope ? await resolveSlugRootMode(engine, { sourceId, explicitGitRoot: opts.srcSubpath !== undefined,
     slugPrefix: probe.slice(0, -2), dryRun: true }) : 'git-root';
@@ -124,7 +128,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const entries = new Map<string, SyncEntry>();
   const put = (path: string, action: SyncEntry['action'], working = false) => {
     if (process.platform === 'win32' && path.includes('\\')) throw new OperationError('page_identity_changed', 'Git paths containing literal backslashes are not safe Windows sync targets.');
-    if (eligible(path)) entries.set(path, { path: relative(root, join(gitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
+    if (eligible(path)) entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
   };
   if (delta?.status === 'ok') {
     for (const path of [...delta.manifest.added, ...delta.manifest.modified]) put(path, 'import');
@@ -199,5 +203,5 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
     if (bytes === null) throw new OperationError('source_changed', 'The discovered working-tree file disappeared.');
     return bytes.toString('utf8');
   }
-  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${relative(discovery.gitRoot, join(discovery.root, entry.path)).split(sep).join('/')}`]);
+  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
 }

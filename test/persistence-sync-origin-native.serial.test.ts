@@ -1,17 +1,20 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { SyncOpts } from '../src/commands/sync.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { resolveSlugForPath } from '../src/core/sync.ts';
-import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { prepareManagedSyncMutation, type SyncIntent } from '../src/core/persistence/sync-prepare.ts';
 import { assertDistinctSyncOrigins, syncOriginPath } from '../src/core/persistence/sync-origin.ts';
+import { assertConfiguredSyncRoot, resolveManagedSyncContext } from '../src/core/persistence/sync-discovery.ts';
 import { admitWrite, claimNextWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
@@ -19,6 +22,7 @@ import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { computeSyncDelta } from '../src/core/sync-delta.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { interruptAfterSyncDiscovery } from './helpers/persistence-sync-interruption.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
@@ -93,6 +97,89 @@ test('origin comparison is Windows-specific and never case-folds POSIX identity'
     expect(() => syncOriginPath(path, 'win32')).toThrow();
     expect(syncOriginPath(path, 'linux')).toBe(path);
   }
+});
+
+test('configured sync roots still refuse unrelated directories and replaced registered roots', () => {
+  const root = realpathSync(mkdtempSync(join(home, 'configured-root-')));
+  const other = realpathSync(mkdtempSync(join(home, 'other-root-')));
+  expect(() => assertConfiguredSyncRoot(root, other)).toThrow('configured source directory');
+  expect(() => assertConfiguredSyncRoot(root, join(home, 'missing'))).toThrow('configured source directory');
+  rmSync(root, { recursive: true });
+  symlinkSync(other, root, 'junction');
+  expect(() => assertConfiguredSyncRoot(root, root)).toThrow('configured source directory');
+  expect(() => assertConfiguredSyncRoot(root, other)).toThrow('configured source directory');
+});
+
+check('native root spellings retain the registered owner and resume the same sync cursor', async engine => {
+  for (const legacy of [false, true]) {
+    const f = await fixture(engine);
+    if (legacy) {
+      const binding = (await getWorktreeBinding(engine, f.id))!;
+      await engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+        await tx.executeRaw('UPDATE persistence_source_bindings SET relative_path=$2 WHERE source_id=$1',
+          [f.id, relative(binding.local_path!, realpathSync(f.root)).split(sep).join('/')]);
+      });
+    }
+    const binding = (await getWorktreeBinding(engine, f.id))!;
+    const context = await resolveManagedSyncContext(engine, f.opts);
+    const nativeRoot = realpathSync.native(f.root);
+    expect(context.root).toBe(resolve(binding.local_path!, binding.relative_path));
+    expect(realpathSync.native(context.root)).toBe(nativeRoot);
+    console.info(`Native sync root fixture: platform=${process.platform} legacy=${legacy} distinct=${realpathSync(f.root) !== binding.local_path}`);
+    if (process.platform === 'win32' && process.env.GBRAIN_TEST_REQUIRE_CASE_INSENSITIVE === '1') {
+      expect(realpathSync(f.root)).not.toBe(binding.local_path);
+    }
+    expect(await resolveManagedSyncContext(engine, { ...f.opts, repoPath: nativeRoot })).toEqual(context);
+    expect((await interruptAfterSyncDiscovery(engine, f.opts)).status).toBe('partial');
+    const before = await engine.executeRaw<{ fingerprint: string; completed_keys: Array<Record<string, unknown>> }>(
+      "SELECT fingerprint,completed_keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
+    expect(before).toHaveLength(1);
+    expect(await performManagedSync(engine, { ...f.opts, repoPath: nativeRoot, dryRun: true })).toMatchObject({ status: 'dry_run' });
+    expect(await engine.executeRaw(
+      "SELECT fingerprint,completed_keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id])).toEqual(before);
+    expect(await performManagedSync(engine, f.opts)).toMatchObject({ status: 'first_sync', added: 0, deleted: 0 });
+    const after = await engine.executeRaw<{ fingerprint: string; completed_keys: Array<Record<string, unknown>> }>(
+      "SELECT fingerprint,completed_keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
+    expect(after).toHaveLength(1);
+    expect(after[0].fingerprint).toBe(before[0].fingerprint);
+    for (const key of ['root', 'gitRoot', 'binding', 'authority', 'runId']) {
+      expect(after[0].completed_keys[0][key]).toEqual(before[0].completed_keys[0][key]);
+    }
+    expect(await getWorktreeBinding(engine, f.id)).toEqual(binding);
+    expect((await engine.getPage(f.slug, { sourceId: f.id }))?.id).toBe(f.snapshot.page.id);
+    expect(readFileSync(join(f.root, 'notes/example.md'), 'utf8')).toBe(content);
+  }
+});
+
+check('native sync retains the exact accepted remote path and payload hash across root spellings', async engine => {
+  const f = await fixture(engine);
+  const clientId = `fixture-admin-${randomUUID()}`;
+  await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,client_secret_hash,scope,source_id,allowed_operations)
+    VALUES($1,'Fixture admin','test-only','admin',$2,ARRAY['submit_job'])`, [clientId, f.id]);
+  const ctx = { engine, remote: true, sourceId: f.id, auth: { clientId, principal: { kind: 'oauth_client', id: clientId },
+    scopes: ['admin'], sourceId: f.id, allowedOperations: ['submit_job'] } } as OperationContext;
+  const remote = await prepareRemoteJob(ctx, 'sync', { noPull: true });
+  const binding = (await getWorktreeBinding(engine, f.id))!;
+  const accepted = structuredClone(remote);
+  if (process.platform === 'win32' && process.env.GBRAIN_TEST_REQUIRE_CASE_INSENSITIVE === '1') {
+    expect(remote.data.repoPath).not.toBe(binding.local_path);
+  }
+  expect(await withSubmissionAuthority(remote.authority, () => performManagedSync(engine, remote.data as SyncOpts)))
+    .toMatchObject({ status: 'first_sync', added: 0, deleted: 0 });
+  const receipts = await engine.executeRaw<{ intent: { syncAuthority: { remoteData: unknown; remoteJob: unknown } }; state: string }>(
+    'SELECT intent,state FROM persistence_requests WHERE source_id=$1', [f.id]);
+  expect(receipts.length).toBeGreaterThan(0);
+  for (const receipt of receipts) {
+    expect(receipt.state).toBe('committed');
+    expect(receipt.intent.syncAuthority.remoteData).toEqual(accepted.data);
+    expect(receipt.intent.syncAuthority.remoteJob).toEqual(accepted.authority);
+  }
+  expect(remote).toEqual(accepted);
+  expect(await getWorktreeBinding(engine, f.id)).toEqual(binding);
+  expect((await engine.getPage(f.slug, { sourceId: f.id }))?.id).toBe(f.snapshot.page.id);
+  await expect(withSubmissionAuthority(remote.authority, () => performManagedSync(engine,
+    { ...remote.data, repoPath: home } as SyncOpts))).rejects.toMatchObject({ code: 'permission_denied' });
 });
 
 check('native historical separator identity preserves the original page or refuses distinct POSIX origins', async engine => {
