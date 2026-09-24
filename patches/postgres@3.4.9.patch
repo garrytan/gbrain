@@ -106,7 +106,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..be36dfd08e084c7f1c181e42cd1c57d5
        : ending
          ? terminate()
 diff --git a/cjs/src/index.js b/cjs/src/index.js
-index f09c61c7e998f411560b95c9a8e1ed6a97972c11..2127b3fe9d1f72ccebe7118c3ea44576f25e6248 100644
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..9dc0c7a2303941079f2c3c4e668105444a8ef1af 100644
 --- a/cjs/src/index.js
 +++ b/cjs/src/index.js
 @@ -200,40 +200,134 @@ function Postgres(a, b) {
@@ -309,7 +309,19 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..2127b3fe9d1f72ccebe7118c3ea44576
      }
    }
  
-@@ -420,10 +518,15 @@ function Postgres(a, b) {
+@@ -399,6 +497,11 @@ function Postgres(a, b) {
+   }
+ 
+   function onopen(c) {
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return c.terminate()
++    }
+     if (queries.length === 0)
+       return move(c, open)
+ 
+@@ -420,10 +523,20 @@ function Postgres(a, b) {
  
    function onclose(c, e) {
      move(c, closed)
@@ -319,6 +331,11 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..2127b3fe9d1f72ccebe7118c3ea44576
      c.onclose && (c.onclose(e), c.onclose = null)
      options.onclose && options.onclose(c.id)
 -    queries.length && connect(c, queries.shift())
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return
++    }
 +    if (queries.length) {
 +      const query = queries.peek()
 +      connect(c, query.reserve ? query : queries.shift())
@@ -490,7 +507,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..617335d1b039866e86cd63872eeaf9ef
        : ending
          ? terminate()
 diff --git a/src/index.js b/src/index.js
-index c7fba3dace20173f4cb13f3f138bb6d213b43683..8e6a424b982c18d45edd48ed99acb92ae4d220fb 100644
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..4c9192680a0da45fe13e1f06f1d8d05dcbe5a8a1 100644
 --- a/src/index.js
 +++ b/src/index.js
 @@ -200,40 +200,134 @@ function Postgres(a, b) {
@@ -693,7 +710,19 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..8e6a424b982c18d45edd48ed99acb92a
      }
    }
  
-@@ -420,10 +518,15 @@ function Postgres(a, b) {
+@@ -399,6 +497,11 @@ function Postgres(a, b) {
+   }
+ 
+   function onopen(c) {
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return c.terminate()
++    }
+     if (queries.length === 0)
+       return move(c, open)
+ 
+@@ -420,10 +523,20 @@ function Postgres(a, b) {
  
    function onclose(c, e) {
      move(c, closed)
@@ -703,6 +732,11 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..8e6a424b982c18d45edd48ed99acb92a
      c.onclose && (c.onclose(e), c.onclose = null)
      options.onclose && options.onclose(c.id)
 -    queries.length && connect(c, queries.shift())
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return
++    }
 +    if (queries.length) {
 +      const query = queries.peek()
 +      connect(c, query.reserve ? query : queries.shift())

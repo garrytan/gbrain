@@ -5310,29 +5310,32 @@ export class PostgresEngine implements BrainEngine {
     }
     return (async () => {
       const signal = opts?.signal;
-      const reserved = signal && typeof conn.reserve === 'function' ? await conn.reserve({ signal }) : undefined;
-      if (reserved) conn = reserved;
+      let reserved: postgres.ReservedSql | undefined;
+      let pending: ReturnType<typeof conn.unsafe> | undefined;
+      let cancellation: Promise<void> | undefined;
       let retired = false;
-      const owner = reserved ?? conn as unknown as postgres.TransactionSql;
+      let owner: postgres.TransactionSql | postgres.ReservedSql = conn as unknown as postgres.TransactionSql;
+      const onAbort = () => {
+        if (!pending || cancellation) return;
+        try { cancellation = pending.cancel().catch(() => { retired = true; }); }
+        catch { retired = true; }
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
       try {
+        reserved = signal && typeof conn.reserve === 'function' ? await conn.reserve({ signal }) : undefined;
+        if (reserved) conn = reserved;
+        owner = reserved ?? conn as unknown as postgres.TransactionSql;
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
         if (signal && typeof owner.discard !== 'function') throw new Error('Postgres cancellation requires the pinned driver patch');
-        const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], { cancelFence: !!signal });
-        if (!signal) return await pending as unknown as T[];
-        let cancellation: Promise<void> | undefined;
-        const onAbort = () => {
-          if (cancellation) return;
-          try { cancellation = pending.cancel().catch(() => { retired = true; }); }
-          catch { retired = true; }
-        };
-        signal.addEventListener('abort', onAbort, { once: true });
-        try { return await pending as unknown as T[]; }
-        finally {
-          signal.removeEventListener('abort', onAbort);
-          await cancellation;
+        pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], { cancelFence: !!signal });
+        return await pending as unknown as T[];
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+        try {
+          if (cancellation) await cancellation;
           if (retired) owner.discard();
-        }
-      } finally { reserved?.release(); }
+        } finally { reserved?.release(); }
+      }
     })();
   }
 

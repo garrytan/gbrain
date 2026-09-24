@@ -143,15 +143,24 @@ export class PersistenceConsumer {
     const observation = { name, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.phaseAttempts };
     this.phaseObservation = observation;
     const abort = new AbortController();
-    const stop = () => abort.abort();
+    const stop = () => abort.abort(this.abort.signal.reason);
     this.abort.signal.addEventListener('abort', stop, { once: true });
-    if (this.stopping) abort.abort();
+    if (this.stopping) stop();
     const timer = setTimeout(() => { observation.deadline_exceeded = true; abort.abort(); this.log(name, 'deadline_exceeded'); }, this.opts.phaseMs ?? 5000);
     try { return await run(this.engine.kind === 'postgres' ? abort.signal : undefined); }
-    catch (error) { this.lastPhaseError = name; throw error; }
+    catch (error) {
+      const cancelled = error as { name?: unknown; code?: unknown; message?: unknown } | null;
+      if (this.stopping && abort.signal.aborted && abort.signal.reason === this.abort.signal.reason
+        && (error === abort.signal.reason || cancelled?.name === 'AbortError'
+          || cancelled?.code === '57014' && cancelled.message === 'canceling statement due to user request')) {
+        throw this.abort.signal.reason;
+      }
+      this.lastPhaseError = name; throw error;
+    }
     finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', stop); this.phaseObservation = undefined; }
   }
   private report(error: unknown): void {
+    if (this.stopping && error === this.abort.signal.reason) return;
     const code = (error as { code?: unknown })?.code;
     this.lastError = { code: typeof code === 'string' && (/^[A-Z0-9]{5}$/.test(code) || isWriteErrorCode(code)) ? code : 'storage_error', at: new Date().toISOString(),
       ...(this.lastPhaseError ? { phase: this.lastPhaseError } : {}) };

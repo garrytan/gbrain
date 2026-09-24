@@ -13,6 +13,7 @@ import { PersistenceConsumer } from '../../src/core/persistence/consumer.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer, waitForWrite } from '../../src/core/persistence/service.ts';
 import { sha256 } from '../../src/core/persistence/digest.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import postgres from 'postgres';
 
 const url = process.env.DATABASE_URL;
 describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
@@ -96,6 +97,32 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
   }), 30000);
 
   for (const [phase, table] of [['refresh_roots', 'persistence_brain'], ['recovery_scan', 'persistence_worktrees']] as const) {
+    test(`${phase} stopping cancels its blocked query without reporting a storage failure`, () => fixture(async ({ engine, databaseUrl }, config) => {
+      const observer = postgres(databaseUrl, { max: 1, prepare: false });
+      const held = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+      const holding = engine.transaction(async tx => {
+        await tx.executeRaw(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`);
+        held.resolve(); await release.promise;
+      });
+      await held.promise;
+      const errors: unknown[] = [];
+      const consumer = new PersistenceConsumer(engine, { engine: 'postgres' }, async () => { throw new Error('unexpected preparation'); },
+        { hostId: config.hostId, phaseMs: 10000, pollMs: 60000, onError: error => errors.push(error) });
+      try {
+        consumer.start();
+        await waitFor(async () => (await observer.unsafe<{ waiting: boolean }[]>(
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE $1) AS waiting", [`%${table}%`]))[0].waiting && consumer.status().phase?.name === phase,
+        { timeoutMs: 5000 });
+        const stopping = consumer.stop();
+        await waitFor(() => consumer.status().phase === null, { timeoutMs: 2000, label: 'cancelled phase settlement before releasing its blocker' });
+        expect(errors).toEqual([]);
+        expect(consumer.status().last_error).toBeUndefined();
+        expect(consumer.status().phase).toBeNull();
+        release.resolve(); await holding; await stopping;
+        expect(await engine.executeRaw('SELECT 42 AS answer')).toEqual([{ answer: 42 }]);
+      } finally { release.resolve(); await holding; await consumer.stop(); await observer.end(); }
+    }), 30000);
+
     test(`${phase} cancels a real table-lock wait and retains fail-closed scheduling`, () => fixture(async ({ engine }, config) => {
       const sources = await fixtures(engine, config);
       const row = await admitWrite(engine, admission(config, sources[0], `waiting-${phase}`, 'phase fixture'));

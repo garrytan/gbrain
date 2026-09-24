@@ -12,6 +12,8 @@ A transaction installs its owner while sending `BEGIN`, but does not expose the 
 
 Reservation grant parks and assigns the connection before resolving the waiter. Grant, rejection and abort share idempotent queue/listener cleanup. An abort observed after grant releases that exact lease. Saved query and savepoint handles reject after ownership changes rather than borrowing the replacement owner.
 
+The engine's abort listener stays attached across reservation acquisition and query execution. Removing the last listener from `AbortSignal.timeout()` during that handoff disables its timer on affected Bun versions, even if another listener is attached afterward. Pool shutdown rejects queued reservations and cannot reconnect or grant a released slot to a new owner.
+
 ## Deadline and transport limits
 
 A phase deadline requests cancellation; it is not a promise that PostgreSQL has stopped at that instant. The owner remains accounted for until actual settlement. Cancellation-channel completion is bounded by the driver's connection timeout, which defaults to ten seconds, and can outlast a five-second phase budget. A blocked or failed transport must not be reported as a successful cancellation.

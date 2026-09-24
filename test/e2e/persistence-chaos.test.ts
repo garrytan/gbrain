@@ -346,6 +346,41 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
 
   const drivers = { esm: postgres, commonjs: createRequire(import.meta.url)('../../node_modules/postgres/cjs/src/index.js') as typeof postgres };
   for (const [name, driver] of Object.entries(drivers)) {
+    test(`${name} releasing a lease during pool shutdown cannot grant its waiter`, async () => {
+      assertSafeE2eDatabaseUrl(url!);
+      const pool = driver(url!, { max: 1, prepare: false });
+      const lease = await pool.reserve();
+      let granted: postgres.ReservedSql | undefined;
+      try {
+        const active = lease`SELECT pg_sleep(0.1)`.execute();
+        await waitFor(() => Reflect.get(active, 'active') === true);
+        const waiting = pool.reserve().then(value => { granted = value; return value; });
+        void waiting.catch(() => {});
+        const ending = pool.end({ timeout: 1 });
+        await active; lease.release();
+        await ending;
+        await expect(waiting).rejects.toMatchObject({ code: 'CONNECTION_ENDED' });
+        expect(granted).toBeUndefined();
+      } finally { lease.discard(); granted?.discard(); await pool.end({ timeout: 1 }); }
+    }, 30000);
+
+    test(`${name} ending a pool rejects a pending reservation without reconnecting`, async () => {
+      assertSafeE2eDatabaseUrl(url!);
+      const pool = driver(url!, { max: 1, prepare: false });
+      let granted: postgres.ReservedSql | undefined;
+      try {
+        await pool`SELECT 1`;
+        const active = pool`SELECT pg_sleep(0.1)`.execute();
+        await waitFor(() => Reflect.get(active, 'active') === true);
+        const waiting = pool.reserve({ signal: new AbortController().signal }).then(lease => { granted = lease; return lease; });
+        void waiting.catch(() => {});
+        await pool.end({ timeout: 1 });
+        await active;
+        await expect(waiting).rejects.toMatchObject({ code: 'CONNECTION_ENDED' });
+        expect(granted).toBeUndefined();
+      } finally { granted?.discard(); await pool.end({ timeout: 1 }); }
+    }, 30000);
+
     test(`${name} unfenced transaction followers resume pipelining after a parameter description`, async () => {
       assertSafeE2eDatabaseUrl(url!);
       const pool = driver(url!, { max: 1, prepare: false });
