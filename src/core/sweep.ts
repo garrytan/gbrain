@@ -329,6 +329,7 @@ async function runLinksTimelinePass(
   // extract command does or reconciliation flip-flops the link_type.
   const { loadActivePackForLocalEngine } = await import('./schema-pack/best-effort.ts');
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  if (linksEnabled && !pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
 
   type Extracted = Awaited<ReturnType<typeof extractPageLinks>>;
 

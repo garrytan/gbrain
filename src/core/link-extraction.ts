@@ -977,8 +977,10 @@ export function extractMarkdownLinks(content: string, positions = false): { name
 }
 
 export function attendanceEvidenceRanges(content: string): Array<[number, number]> {
+  const comments: Array<[number, number]> = [];
   let visible = '', afterComment = 0;
   const masked = stripCodeBlocks(content, { onHtmlComment(start, end) {
+    comments.push([start, end]);
     visible += content.slice(afterComment, start) + content.slice(start, end).replace(/[^\r\n]/g, ' ');
     afterComment = end;
   } });
@@ -1027,7 +1029,18 @@ export function attendanceEvidenceRanges(content: string): Array<[number, number
     if (inline && list(inline[1])) ranges.push([line.start, line.end]);
   }
   finishSection();
-  return ranges;
+  const admitted: Array<[number, number]> = [];
+  let commentIndex = 0;
+  for (const [start, end] of ranges) {
+    let cursor = start;
+    while (commentIndex < comments.length && comments[commentIndex][1] <= start) commentIndex++;
+    for (let i = commentIndex; i < comments.length && comments[i][0] < end; i++) {
+      if (comments[i][0] > cursor) admitted.push([cursor, comments[i][0]]);
+      cursor = Math.max(cursor, comments[i][1]);
+    }
+    if (cursor < end) admitted.push([cursor, end]);
+  }
+  return admitted;
 }
 
 export function hasAttendanceEvidence(ranges: ReadonlyArray<readonly [number, number]>, index: number): boolean {

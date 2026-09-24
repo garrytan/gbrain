@@ -25,6 +25,10 @@ export class DerivedLinkRepairRequiredError extends Error {
   }
 }
 
+export class DerivedLinkEndpointChangedError extends Error {
+  readonly code = 'revision_conflict';
+}
+
 export async function applyAttendanceDelta(tx: Pick<BrainEngine, 'executeRaw' | 'addLinksBatch'>,
   origin: { id: string; slug: string; source_id: string; type: string }, remove: string[], additions: LinkBatchInput[]) {
   if (origin.type !== 'meeting' || remove.length > 512 || additions.length > 256
@@ -93,13 +97,13 @@ export async function replaceDerivedLinks(
       LEFT JOIN pages f ON f.slug=v.from_slug AND f.source_id=v.from_source_id AND f.deleted_at IS NULL
       LEFT JOIN pages t ON t.slug=v.to_slug AND t.source_id=v.to_source_id AND t.deleted_at IS NULL
       WHERE f.id IS NULL OR t.id IS NULL LIMIT 1`, [], [{ rows }]);
-    if (missing.length) throw new Error('A derived link endpoint changed or was deleted');
+    if (missing.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint changed or was deleted');
     if (opts.expectedEndpoints?.length) {
       const changed = await executeRawJsonb(tx, `SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows')
         AS v(slug text, "sourceId" text, revision text)
         LEFT JOIN pages p ON p.slug=v.slug AND p.source_id=v."sourceId" AND p.deleted_at IS NULL
         WHERE p.id IS NULL OR p.knowledge_revision::text <> v.revision LIMIT 1`, [], [{ rows: opts.expectedEndpoints }]);
-      if (changed.length) throw new Error('A derived link endpoint changed after type resolution');
+      if (changed.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint changed after type resolution');
     }
     const reversed = rows.filter(row => row.link_type === 'attended' && row.origin_slug
       && row.to_slug === origin.slug && row.to_source_id === origin.sourceId

@@ -1247,8 +1247,9 @@ async function extractForSlugs(
   // Issue #972: read the basename flag once per extract run.
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: active pack loaded once per run for pack-aware link typing +
-  // pack frontmatter_links. Null keeps legacy inference.
+  // pack frontmatter_links.
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  if (doLinks && !pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(allFiles, pack);
   const ownership = !dryRun && doLinks ? await fileLinkOwnership(engine, sourceId ?? 'default') : undefined;
 
@@ -1405,6 +1406,7 @@ async function extractLinksFromDir(
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware typing + pack frontmatter_links (loaded once per walk).
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(files, pack);
   const ownership = dryRun ? undefined : await fileLinkOwnership(engine, sourceId ?? 'default');
   const processed: string[] = [];
@@ -1618,6 +1620,7 @@ export async function extractLinksForSlugs(
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware typing on the sync inline hook too.
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const pageTypes = loadFsPageTypes(allFiles, pack);
   const sourceId = opts?.sourceId ?? 'default';
   const ownership = await fileLinkOwnership(engine, sourceId);
@@ -1736,8 +1739,9 @@ async function extractLinksFromDB(
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: active schema pack, loaded ONCE per run — pack-declared link
   // verbs (link_types[].inference) + frontmatter_links apply during
-  // extraction instead of being silently ignored. Null = legacy inference.
+  // extraction instead of being silently ignored.
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   // Issue #2589: opt-in cross-source edges (deterministic to_source_id pick);
   // off, cross-source-only candidates are counted, never silently dropped.
   const crossSource = await isCrossSourceLinksEnabled(engine);
@@ -2107,6 +2111,7 @@ export async function extractStaleFromDB(
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware verbs + frontmatter_links (see extractLinksFromDB).
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  if (!pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
   // Issue #2589: mirrors extractLinksFromDB (see resolveCandidateSources).
   const crossSource = await isCrossSourceLinksEnabled(engine);
   // #4611: mirrors extractLinksFromDB — configured default, resolved once.

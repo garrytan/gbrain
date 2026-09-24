@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { extractPageLinks, isGlobalBasenameEnabled, makeResolver, resolvedLinkCandidate } from '../link-extraction.ts';
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
+import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, resolveCandidateSources } from '../link-reconciliation.ts';
 
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
@@ -9,6 +10,8 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   const resolver = makeResolver(engine, { mode: 'live', sourceId });
   const opts = { globalBasename: await isGlobalBasenameEnabled(engine),
     pack: (await loadActivePackForLocalEngine(engine))?.manifest ?? null };
+  if (!opts.pack) return { pageKeys: [{ sourceId, slug }],
+    apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };
   const content = `${page.compiled_truth}\n${page.timeline}`;
   const referenced = new Set([slug]);
   const initial = await extractPageLinks(slug, content, page.frontmatter, page.type, resolver,
@@ -41,11 +44,16 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     if (!attendanceComplete) return { created: 0, removed: 0, errors: 1, unresolved_count: Math.max(1, unresolved.length) };
     const snapshot = await tx.readPageSnapshot(slug, { sourceId });
     if (!snapshot) throw new Error('Automatic link origin disappeared');
-    const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
-      sourceIncarnation: snapshot.sourceIncarnation }, rows, { preserveExisting: true,
-      expectedEndpoints: capturedLinkEndpoints(rows, new Map([...metadata,
-        [`${sourceId}\0${slug}`, { slug, source_id: sourceId, type: page.type, knowledge_revision: snapshot.revision }]]))
-        .filter(endpoint => endpoint.slug !== slug || endpoint.sourceId !== sourceId) });
-    return { ...result, errors: 0, unresolved_count: unresolved.length };
+    try {
+      const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
+        sourceIncarnation: snapshot.sourceIncarnation }, rows, { preserveExisting: true,
+        expectedEndpoints: capturedLinkEndpoints(rows, new Map([...metadata,
+          [`${sourceId}\0${slug}`, { slug, source_id: sourceId, type: page.type, knowledge_revision: snapshot.revision }]]))
+          .filter(endpoint => endpoint.slug !== slug || endpoint.sourceId !== sourceId) });
+      return { ...result, errors: 0, unresolved_count: unresolved.length };
+    } catch (error) {
+      if (!(error instanceof DerivedLinkEndpointChangedError)) throw error;
+      return { created: 0, removed: 0, errors: 1, unresolved_count: Math.max(1, unresolved.length) };
+    }
   } };
 }

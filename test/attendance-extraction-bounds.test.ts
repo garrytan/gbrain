@@ -38,6 +38,23 @@ test('strict attendance names with a non-source colon remain eligible for exact 
   expect(calls).toHaveLength(1);
 });
 
+for (const body of [
+  `Attendees: [[${person}]] <!-- [[people/hidden-example]] -->`,
+  `## Attendees\r\n- [[${person}]] <!-- 😀 [[people/hidden-example]] -->\r\n## Notes`,
+  `Attendees: [[${person}]] <!-- [[people/hidden-example]]`,
+]) {
+  test(`inline commented targets are outside accepted attendance evidence: ${JSON.stringify(body)}`, async () => {
+    const pageTypes = new Map([...types, ['people/hidden-example', 'person']]);
+    const ranges = attendanceEvidenceRanges(body);
+    expect(hasAttendanceEvidence(ranges, body.indexOf('[[people/hidden-example]]'))).toBe(false);
+    expect(hasAttendanceEvidence(ranges, body.indexOf(`[[${person}]]`))).toBe(true);
+    const db = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => pageTypes.get(slug) });
+    const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(pageTypes.keys()), { pageTypes });
+    expect(db.candidates.filter(row => row.canonicalAttendance).map(row => row.targetSlug)).toEqual([person]);
+    expect(fs.filter(row => row.link_type === 'attended').map(row => row.from_slug)).toEqual([person]);
+  });
+}
+
 for (const example of ['```html\n<!--\n```', '~~~html\n<!--\n~~~', '`<!--`']) {
   test(`a comment opener inside code does not hide later attendance: ${JSON.stringify(example)}`, async () => {
     const body = `${example}\nAttendees: [[${person}]]`;

@@ -15,6 +15,16 @@ ordinary mentions. `hasAttendanceEvidence` indexes the ordered, nonoverlapping
 evidence ranges rather than rescanning them for every reference. Strict
 frontmatter resolution has a separate, source-keyed cache capped at 256 entries
 within one resolver lifetime.
+Accepted ranges exclude HTML-comment spans, including comments inside an
+otherwise valid list line; a reference scanner seeing those spans cannot
+promote their hidden targets. Engine-backed link extraction requires a loaded
+ontology before graph writes. Failed local preparation instead returns an
+automatic-link error so the note can commit without rewriting pack-owned edges.
+`DerivedLinkEndpointChangedError` identifies only missing or revision-changed
+endpoints detected before graph mutation. Automatic publication catches that
+specific failure, preserving its note and prior graph with retryable auto-link
+metadata; direct reconciliation still refuses. Other errors propagate and roll
+back publication rather than being mislabeled as a harmless link conflict.
 `replaceDerivedLinks` validates that origin and the locked person/meeting types
 and revisions; its `preserveExisting` path keeps matching row identities while
 refreshing their evidence context and origin field. Ambiguous bare-name spellings

@@ -12,7 +12,9 @@ import { buildRelationalArm } from '../src/core/search/relational-recall.ts';
 import { extractPageLinks } from '../src/core/link-extraction.ts';
 import { extractLinksFromFile, extractStaleFromDB } from '../src/commands/extract.ts';
 import { operations } from '../src/core/operations.ts';
-import { parseSchemaPackManifest } from '../src/core/schema-pack/index.ts';
+import { parseSchemaPackManifest, __setPackLocatorForTests, _resetPackLocatorForTests, _resetPackCacheForTests } from '../src/core/schema-pack/index.ts';
+import { bundledPackPath } from '../src/core/schema-pack/bundled-assets.ts';
+import { loadActivePackForLocalEngine } from '../src/core/schema-pack/best-effort.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -26,6 +28,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
     let engine: BrainEngine;
     let close: () => Promise<void>;
     let root: string;
+    let packRoot: string;
     beforeAll(async () => {
       if (kind === 'postgres') {
         ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
@@ -36,16 +39,24 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         close = () => engine.disconnect();
       }
       root = mkdtempSync(join(tmpdir(), 'gbrain-attendance-'));
-      await engine.setConfig('schema_pack', 'absent-attendance-fixture');
+      packRoot = mkdtempSync(join(tmpdir(), 'gbrain-attendance-pack-'));
+      await engine.setConfig('schema_pack', 'gbrain-base');
+      const base = (await loadActivePackForLocalEngine(engine))!.manifest;
+      writeFileSync(join(packRoot, 'pack.json'), JSON.stringify({ ...base, name: 'attendance-fixture', link_types: [], frontmatter_links: [] }));
+      __setPackLocatorForTests(name => name === 'attendance-fixture' ? join(packRoot, 'pack.json') : bundledPackPath(name));
+      await engine.setConfig('schema_pack', 'attendance-fixture');
       await engine.setConfig('dream.synthesize.session_corpus_dir', root);
     }, 120_000);
-    afterAll(async () => { await close?.(); rmSync(root, { recursive: true, force: true }); });
+    afterAll(async () => {
+      await close?.(); rmSync(root, { recursive: true, force: true }); rmSync(packRoot, { recursive: true, force: true });
+      _resetPackLocatorForTests(); _resetPackCacheForTests();
+    });
     afterEach(async () => { await disposePersistenceConsumer(engine); });
     beforeEach(async () => {
       expect(persistenceConsumerStatus(engine).state).toBe('not_running');
       rmSync(root, { recursive: true, force: true });
       mkdirSync(root, { recursive: true });
-      await engine.setConfig('schema_pack', 'absent-attendance-fixture');
+      await engine.setConfig('schema_pack', 'attendance-fixture');
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]);
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [sourceId]);
       await seed(person, 'person', 'An example engineer.');
@@ -103,6 +114,39 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       });
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch', 'prepare', 'sweep', 'db', 'stale']) {
+      test(`${lane}: inline commented people do not become attendees`, async () => {
+        await seed('people/hidden-example', 'person', 'A hidden reference, not attendance.');
+        await seed(meeting, 'meeting', `${positive} <!-- [Hidden](../people/hidden-example.md) -->`);
+        await extract(lane, true);
+        expect(await attendees()).toEqual([person]);
+      });
+      test(`${lane}: unavailable ontology cannot reverse existing pack-owned attendance`, async () => {
+        await engine.setConfig('schema_pack', 'gbrain-base');
+        await seed(meeting, 'meeting', positive);
+        await extract('db');
+        const rows = () => engine.executeRaw('SELECT l.* FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 ORDER BY l.id', [sourceId]);
+        const before = await rows();
+        expect(before).toHaveLength(1);
+        expect((await engine.getLinks(meeting, { sourceId }))[0].link_type).toBe('attended');
+        await engine.setConfig('schema_pack', 'missing-example-pack');
+        await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1 AND slug=$2', [sourceId, meeting]);
+        if (lane === 'db') {
+          const diagnostic = spyOn(console, 'error').mockImplementation(() => {});
+          const exit = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`Extraction exited with code ${code}`); });
+          try {
+            await expect(extract(lane, true)).rejects.toThrow('Extraction exited with code 1');
+            expect(diagnostic.mock.calls.flat()).toContain('Cannot extract links: active schema pack is unavailable.');
+          } finally { exit.mockRestore(); diagnostic.mockRestore(); }
+        } else if (['stale', 'fs-sync', 'fs-incremental', 'fs-batch'].includes(lane)) {
+          await expect(extract(lane, true)).rejects.toThrow('schema pack');
+        } else await extract(lane, true);
+        expect(await rows()).toEqual(before);
+        expect((await engine.executeRaw<{ value: string | null }>('SELECT links_extracted_at AS value FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, meeting]))[0].value).toBeNull();
+        await engine.setConfig('schema_pack', 'gbrain-base');
+        await extract(lane, true);
+        expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toHaveLength(1);
+        expect((await engine.getBacklinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toEqual([]);
+      });
       test(`${lane}: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence`, async () => {
         await engine.setConfig('link_resolution.global_basename', 'true');
         try {
@@ -277,6 +321,75 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         content: `${content}\nAn unrelated edit.` }) as { auto_links: { created: number; removed: number; errors: number } };
       expect(updated.auto_links).toMatchObject({ created: 0, removed: 0, errors: 0 });
       expect(await rows()).toEqual(before);
+    });
+    for (const change of ['edit', 'retype', 'delete']) {
+      test(`local publication keeps the note and prior graph when an endpoint changes after preparation: ${change}`, async () => {
+        await seed(meeting, 'meeting', positive);
+        await extract('db');
+        const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
+        const rows = () => engine.executeRaw('SELECT l.* FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 ORDER BY l.id', [sourceId]);
+        const before = await rows();
+        const executeRaw = engine.executeRaw;
+        let armed = true;
+        const race = spyOn(engine, 'executeRaw').mockImplementation(async function<T>(this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) {
+          const result = await executeRaw.bind(this)<T>(sql, params, opts);
+          if (armed && sql === 'SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL') {
+            armed = false;
+            if (change === 'delete') await engine.softDeletePage(person, { sourceId });
+            else await engine.putPage(person, { type: change === 'retype' ? 'company' : 'person', title: 'Alice Example', compiled_truth: 'A concurrent edit.' }, { sourceId });
+          }
+          return result;
+        });
+        try {
+          const op = operations.find(op => op.name === 'put_page')!;
+          const result = await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
+            dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting, expected_revision: snapshot.revision,
+            content: `---\ntype: meeting\ntitle: Planning\n---\n${positive}\nThe note must survive.` }) as { auto_links: { errors: number; created: number; removed: number } };
+          expect(armed).toBe(false);
+          expect(result.auto_links).toMatchObject({ errors: 1, created: 0, removed: 0 });
+          expect((await engine.getPage(meeting, { sourceId }))!.compiled_truth).toContain('The note must survive.');
+          expect(await rows()).toEqual(before);
+          expect((await engine.executeRaw<{ stale: boolean }>('SELECT links_extracted_at IS NULL OR updated_at>links_extracted_at AS stale FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, meeting]))[0].stale).toBe(true);
+        } finally { race.mockRestore(); }
+      });
+    }
+    test('local publication does not swallow unrelated graph storage failures', async () => {
+      await seed(meeting, 'meeting', positive);
+      await extract('db');
+      const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
+      const before = await engine.getLinks(person, { sourceId });
+      const fault = spyOn(engine, 'replaceDerivedLinks').mockImplementation(async () => { throw new Error('Simulated graph storage failure.'); });
+      try {
+        const op = operations.find(op => op.name === 'put_page')!;
+        await expect(op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
+          dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting, expected_revision: snapshot.revision,
+          content: `---\ntype: meeting\ntitle: Planning\n---\n${positive}\nThis publication must roll back.` })).rejects.toMatchObject({ code: 'storage_error' });
+        expect((await engine.getPage(meeting, { sourceId }))!.compiled_truth).toBe(snapshot.page.compiled_truth);
+        expect(await engine.getLinks(person, { sourceId })).toEqual(before);
+      } finally { fault.mockRestore(); }
+    });
+    test('local publication admits the visible attendee but not a live person inside an inline comment', async () => {
+      await seed('people/hidden-example', 'person', 'Not an attendee.');
+      const op = operations.find(op => op.name === 'put_page')!;
+      await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
+        dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting,
+        content: `---\ntype: meeting\ntitle: Planning\n---\n${positive} <!-- [Hidden](../people/hidden-example.md) -->` });
+      expect(await attendees()).toEqual([person]);
+    });
+    test('local publication preserves pack-owned attendance and reports unavailable ontology without losing the note', async () => {
+      await engine.setConfig('schema_pack', 'gbrain-base');
+      await seed(meeting, 'meeting', positive);
+      await extract('db');
+      const before = await engine.getLinks(meeting, { sourceId });
+      const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
+      await engine.setConfig('schema_pack', 'missing-example-pack');
+      const op = operations.find(op => op.name === 'put_page')!;
+      const result = await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
+        dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting, expected_revision: snapshot.revision,
+        content: `---\ntype: meeting\ntitle: Planning\n---\n${positive}\nAn unrelated note.` }) as { auto_links: { errors: number } };
+      expect(result.auto_links.errors).toBe(1);
+      expect((await engine.getPage(meeting, { sourceId }))!.compiled_truth).toContain('An unrelated note.');
+      expect(await engine.getLinks(meeting, { sourceId })).toEqual(before);
     });
     test('local publication does not admit a non-person into typed pack attendance', async () => {
       await engine.setConfig('schema_pack', 'company-brain');
@@ -492,9 +605,9 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       ]);
     });
     for (const [lane, packName] of [
-      ['prepare', 'absent-attendance-fixture'], ['prepare', 'gbrain-base'],
-      ['sweep', 'absent-attendance-fixture'], ['fs-batch', 'absent-attendance-fixture'],
-      ['fs-incremental', 'absent-attendance-fixture'], ['fs-sync', 'absent-attendance-fixture'],
+      ['prepare', 'attendance-fixture'], ['prepare', 'gbrain-base'],
+      ['sweep', 'attendance-fixture'], ['fs-batch', 'attendance-fixture'],
+      ['fs-incremental', 'attendance-fixture'], ['fs-sync', 'attendance-fixture'],
     ]) test(`${lane}/${packName}: retained link identities refresh their evidence`, async () => {
       await engine.setConfig('schema_pack', packName);
       await seed(meeting, 'meeting', `${positive}\n\nRoom one.`);

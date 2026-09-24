@@ -42,6 +42,8 @@ ambiguous references remain mentions or unresolved references.
 HTML comments and backtick and tilde code fences are excluded even when they contain headings
 inside an attendee section. A closing fence must use the opening character,
 have at least its length, and contain only trailing whitespace.
+An inline comment beside a visible attendee does not make its hidden references
+part of the attendee list, even when those references resolve to live people.
 An example comment opener inside code does not hide real attendance below it.
 When global basename resolution is enabled, a unique bare attendee wikilink
 can resolve to a person; missing or ambiguous names remain incomplete.
@@ -69,11 +71,23 @@ advance its watermark. Local page publication still accepts the content,
 reports an auto-link error, and leaves extraction retryable. Removing the
 supported evidence entirely still retracts its owned attendance edge. Ordinary
 filesystem links and schema-pack-owned mappings retain their existing behavior.
+A linked page changing or disappearing between preparation and the locked
+graph check has the same automatic-link error outcome: the note is saved, no
+new graph delta is written, and later extraction can retry. This does not
+suppress source/authority conflicts or unexpected storage failures.
 DB and stale extraction report skipped incomplete-attendance pages; their JSON
 summaries add `skipped_attendance_incomplete` only when it is nonzero. Sweep
 reports `attendance_resolution_incomplete`, not a budget timeout, for that case.
+Filesystem extraction omits incomplete pages from its processed set, but does
+not currently provide a per-reason skip counter.
 
 ## Schema-pack boundary
+
+An unavailable schema pack is not a pack with no attendance override. Link
+extraction refuses before changing the graph when the active pack cannot load;
+sweep reports a link/timeline pass error. Local publication still accepts the
+note but reports an automatic-link error and preserves the prior graph. Repair
+or restore the pack configuration, then retry extraction.
 
 Pack-owned relationship directions and inference rules are unchanged. This
 includes the shipped `gbrain-base` and `company-brain` outgoing attendance

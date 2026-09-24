@@ -95,6 +95,18 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       expect(await engine.executeRaw('SELECT * FROM pages WHERE source_id=$1 ORDER BY id', [sourceId])).toEqual(pages);
     });
 
+    for (const body of [
+      `${positive} <!-- [Hidden](../people/hidden-example.md) -->`,
+      '## Attendees\n- [Alice Example](../people/alice-example.md) <!-- [Hidden](../people/hidden-example.md) -->',
+    ]) test(`repair never approves or persists inline-commented attendance: ${JSON.stringify(body)}`, async () => {
+      await seed('people/hidden-example', 'person', 'Not an attendee.');
+      await seed(meeting, 'meeting', body);
+      const receipt = await preview();
+      expect(receipt.counts.add).toBe(1);
+      expect(await apply(receipt)).toMatchObject({ created: 1, removed: 0 });
+      expect((await engine.getBacklinks(meeting, { sourceId })).map(row => row.from_slug)).toEqual([person]);
+    });
+
     test('second request and new preview are row-identity idempotent', async () => {
       await legacy();
       const receipt = await preview(); await apply(receipt);
