@@ -400,7 +400,7 @@ test('an already-struck row inside a malformed fence is neither blocking nor pag
   }
 });
 
-test('a begin marker after same-line prefix text is a live fence, while inline-code mentions stay prose', () => {
+test('fence markers follow the canonical parser even after prefix text or inline-code formatting', () => {
   const prefixed = `Facts: ${renderFactsTable([fact('prefixed fence claim')])}`;
   expect(withdrawalFenceBlocks(prefixed)).toHaveLength(1);
   expect(withdrawalFenceBlocks(prefixed)[0].parsed).toMatchObject({ warnings: [], facts: [{ claim: 'prefixed fence claim' }] });
@@ -409,6 +409,17 @@ test('a begin marker after same-line prefix text is a live fence, while inline-c
   expect(withdrawalFenceBlocks(documented).map(block => block.parsed.facts.map(f => f.claim))).toEqual([['documented fence claim']]);
   expect(hasAmbiguousWithdrawalFence(documented)).toBe(false);
   expect(hasAmbiguousWithdrawalFence(`Inline: \`${FACTS_FENCE_BEGIN} … ${FACTS_FENCE_END}\` is the syntax.`)).toBe(false);
+  const inlineFormatted = renderFactsTable([fact('inline-formatted live claim')])
+    .replace(FACTS_FENCE_BEGIN, `Docs: \`${FACTS_FENCE_BEGIN}\``);
+  expect(parseFactsFence(inlineFormatted).facts.map(f => f.claim)).toEqual(['inline-formatted live claim']);
+  expect(withdrawalFenceBlocks(inlineFormatted).flatMap(block => block.parsed.facts.map(f => f.claim)))
+    .toEqual(['inline-formatted live claim']);
+  const inlineEndFormatted = renderFactsTable([fact('inline-end live claim')])
+    .replace(FACTS_FENCE_END, `End: \`${FACTS_FENCE_END}\``);
+  expect(parseFactsFence(inlineEndFormatted).facts.map(f => f.claim)).toEqual(['inline-end live claim']);
+  expect(withdrawalFenceBlocks(inlineEndFormatted).flatMap(block => block.parsed.facts.map(f => f.claim)))
+    .toEqual(['inline-end live claim']);
+  expect(hasAmbiguousWithdrawalFence(inlineEndFormatted)).toBe(false);
 });
 
 test('a prefixed fence row is overlaid, guarded on import and absent from rebuilt chunks after withdrawal', async () => {
@@ -437,6 +448,33 @@ test('a prefixed fence row is overlaid, guarded on import and absent from rebuil
       expect(chunks.length).toBeGreaterThan(0);
       expect(activeClaims(chunks.map(chunk => chunk.chunk_text).join('\n'))).toEqual([]);
       expect(await engine.searchKeyword('prefixedfencesentinel', { sourceId: isolatedSourceId })).toEqual([]);
+
+      const inlineEndClaim = 'inlineendfencesentinel withdrawn claim', inlineEndProse = 'INLINE END PROSE MUST SURVIVE';
+      const inlineEnd = (text: string) => renderFactsTable([fact(text)])
+        .replace(FACTS_FENCE_END, `Doc: \`${FACTS_FENCE_END}\`\n${inlineEndProse}\n${FACTS_FENCE_END}`);
+      await engine.putPage('inline-end-fence', { type: 'note', title: 'Inline end facts', compiled_truth: inlineEnd(inlineEndClaim) },
+        { sourceId: isolatedSourceId });
+      await engine.upsertChunks('inline-end-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: inlineEnd(inlineEndClaim) }],
+        { sourceId: isolatedSourceId });
+      const inlineEndFact = await engine.insertFact({ fact: inlineEndClaim, source: 'remember', visibility: 'world' },
+        { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, inlineEndFact.id, isolatedSourceId, true)).pages.map(page => page.slug))
+        .toEqual(['inline-end-fence']);
+      const inlineEndSnapshot = (await engine.readPageSnapshot('inline-end-fence', { sourceId: isolatedSourceId }))!;
+      expect(activeClaims(inlineEndSnapshot.page.compiled_truth)).toEqual([]);
+      expect(inlineEndSnapshot.page.compiled_truth).toContain(inlineEndProse);
+      await rebuildPendingPageProjections(engine, 100);
+      const inlineEndChunks = await engine.getChunks('inline-end-fence', { sourceId: isolatedSourceId });
+      expect(activeClaims(inlineEndChunks.map(chunk => chunk.chunk_text).join('\n'))).toEqual([]);
+      expect(inlineEndChunks.map(chunk => chunk.chunk_text).join('\n')).toContain(inlineEndProse);
+      expect(await engine.searchKeyword('inlineendfencesentinel', { sourceId: isolatedSourceId })).toEqual([]);
+
+      const inlineEndFile = `---\ntitle: Inline end import\ntype: note\n---\n${inlineEnd(inlineEndClaim)}`;
+      expect((await importFromContent(engine, 'inline-end-import', inlineEndFile,
+        { sourceId: isolatedSourceId, noEmbed: true })).status).toBe('imported');
+      const inlineEndImported = (await engine.readPageSnapshot('inline-end-import', { sourceId: isolatedSourceId }))!;
+      expect(activeClaims(inlineEndImported.page.compiled_truth)).toEqual([]);
+      expect(inlineEndImported.page.compiled_truth).toContain(inlineEndProse);
 
       const file = `---\ntitle: Prefixed import\ntype: note\n---\n${prefixed(claim)}`;
       expect((await importFromContent(engine, 'prefixed-import', file, { sourceId: isolatedSourceId, noEmbed: true })).status).toBe('imported');

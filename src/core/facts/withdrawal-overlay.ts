@@ -15,8 +15,9 @@ export function withdrawnFact(fact: ParsedFact, date: string, reason = 'memory w
 export function withdrawalFenceBlocks(body: string): Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> {
   const blocks: Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> = [];
   let open: { start: number } | undefined;
-  for (const marker of liveFenceMarkers(body)) {
+  for (const marker of literalFenceMarkers(body)) {
     if (marker.kind === 'begin') {
+      if (marker.inlineCode) continue;
       open = { start: marker.start };
       continue;
     }
@@ -24,22 +25,22 @@ export function withdrawalFenceBlocks(body: string): Array<{ start: number; end:
     blocks.push({ start: open.start, end: marker.end, parsed: parseFactsFence(body.slice(open.start, marker.end)) });
     open = undefined;
   }
-  return blocks;
+  for (const candidate of inlineCodeFenceBlocks(body)) {
+    if (!blocks.some(block => candidate.start < block.end && candidate.end > block.start)) blocks.push(candidate);
+  }
+  return blocks.sort((a, b) => a.start - b.start);
 }
 
-/**
- * Markers as `parseFactsFence` sees them: anywhere on a line, including after
- * ordinary prefix text. Only a marker inside an inline code span on its line
- * is documentation, never a live fence.
- */
-function liveFenceMarkers(body: string): Array<{ start: number; end: number; kind: 'begin' | 'end' }> {
-  const markers: Array<{ start: number; end: number; kind: 'begin' | 'end' }> = [];
+interface FenceMarker { start: number; end: number; kind: 'begin' | 'end'; inlineCode: boolean }
+
+function literalFenceMarkers(body: string): FenceMarker[] {
+  const markers: FenceMarker[] = [];
   for (const [marker, kind] of [[FACTS_FENCE_BEGIN, 'begin'], [FACTS_FENCE_END, 'end']] as const) {
     let cursor = 0;
     while (cursor < body.length) {
       const start = body.indexOf(marker, cursor);
       if (start < 0) break;
-      if (!insideInlineCode(body, start, start + marker.length)) markers.push({ start, end: start + marker.length, kind });
+      markers.push({ start, end: start + marker.length, kind, inlineCode: insideInlineCode(body, start, start + marker.length) });
       cursor = start + marker.length;
     }
   }
@@ -53,17 +54,31 @@ function insideInlineCode(body: string, start: number, end: number): boolean {
   return (before.split('`').length - 1) % 2 === 1 && after.includes('`');
 }
 
-/** Return only malformed live fence segments; inline-code documentation is ordinary prose. */
+function inlineCodeFenceBlocks(body: string): Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> {
+  const markers = literalFenceMarkers(body), blocks: Array<{ start: number; end: number; parsed: ReturnType<typeof parseFactsFence> }> = [];
+  for (let i = 0; i < markers.length; i++) {
+    const begin = markers[i], end = markers[i + 1];
+    if (begin.kind !== 'begin' || end?.kind !== 'end' || !(begin.inlineCode || end.inlineCode)) continue;
+    const parsed = parseFactsFence(body.slice(begin.start, end.end));
+    if (parsed.facts.length || parsed.warnings.length) blocks.push({ start: begin.start, end: end.end, parsed });
+  }
+  return blocks;
+}
+
+/** Return only malformed live fence segments. */
 export function ambiguousWithdrawalFenceSegments(body: string): string[] {
-  const segments: string[] = [];
+  const segments: string[] = [], inlineBlocks = inlineCodeFenceBlocks(body);
   let open: { start: number } | undefined;
-  for (const marker of liveFenceMarkers(body)) {
+  for (const marker of literalFenceMarkers(body)) {
     if (marker.kind === 'begin') {
+      if (marker.inlineCode) continue;
       if (open) segments.push(body.slice(open.start, marker.start));
       open = { start: marker.start };
       continue;
     }
     if (!open) {
+      if (marker.inlineCode) continue;
+      if (inlineBlocks.some(block => block.end === marker.end)) continue;
       segments.push(body.slice(marker.start, marker.end));
       continue;
     }
@@ -72,6 +87,9 @@ export function ambiguousWithdrawalFenceSegments(body: string): string[] {
     open = undefined;
   }
   if (open) segments.push(body.slice(open.start));
+  for (const block of inlineBlocks) {
+    if (block.parsed.warnings.length) segments.push(body.slice(block.start, block.end));
+  }
   return segments;
 }
 
