@@ -411,11 +411,13 @@ async function tryPrefixExpansion(
 }
 
 function looksLikeSlug(s: string): boolean {
-  // Slug shape: lowercase letters/digits with at least one slash OR matches
-  // [a-z0-9-]+ exactly. Anything with whitespace or capital letters fails.
+  // Slug shape: lowercase Unicode letters/numbers plus the path and slug
+  // separators. Slugs are not ASCII-only: non-Latin entity pages such as
+  // `people/한글-예시` must take the exact-match path before fuzzy matching.
+  // Anything with whitespace or uppercase letters still fails.
   if (/\s/.test(s)) return false;
   if (s !== s.toLowerCase()) return false;
-  return /^[a-z0-9/_-]+$/.test(s);
+  return /^[\p{L}\p{N}/_-]+$/u.test(s);
 }
 
 async function tryExactSlug(
