@@ -28,9 +28,10 @@ Administration is trusted-local only. HTTP and stdio agent-facing callers cannot
 ## Window policy and pipeline upgrades
 
 The `situation-v3` pipeline constructs windows of at most 8,192 UTF-8 bytes,
-including carried speaker attribution. It retains up to 640 bytes of overlap,
-keeps turn and Unicode boundaries intact, and spans at most three original
-chunks. The full eligible history is windowed rather than trimmed. Grounding
+including carried speaker attribution. It retains up to 640 bytes of overlap
+and preserves Unicode code-point boundaries, splitting long turns as needed.
+Each window spans at most three original chunks. The full eligible history is
+windowed rather than trimmed. Grounding
 still allows at most four spans, and generation still emits at most four cues
 with a 1,200-token output limit. Windows execute serially.
 
