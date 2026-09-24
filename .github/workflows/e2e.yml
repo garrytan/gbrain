@@ -122,8 +122,10 @@ jobs:
       - name: Select and freeze E2E files
         id: select
         shell: bash
+        env:
+          FULL_CORPUS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}
         run: |
-          if [ "${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}" = "true" ]; then
+          if [ "$FULL_CORPUS" = "true" ]; then
             # Full-profile coverage carries the complete E2E corpus separately.
             : > "$RUNNER_TEMP/selected.txt"
           else
@@ -655,6 +657,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Aggregate result
+        env:
+          FULL_CORPUS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}
         run: |
           JSONB="${{ needs.jsonb-parity.result }}"
           TIER1="${{ needs.tier1.result }}"
@@ -670,7 +674,7 @@ jobs:
               exit 1
             fi
           done
-          if [ "${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}" = "true" ]; then
+          if [ "$FULL_CORPUS" = "true" ]; then
             FULL_UNIT="${{ needs.coverage-full-unit.result }}"
             FULL_SERIAL="${{ needs.coverage-full-serial.result }}"
             FULL_SLOW="${{ needs.coverage-full-slow.result }}"

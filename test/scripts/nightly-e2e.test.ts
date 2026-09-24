@@ -51,6 +51,18 @@ describe('nightly E2E execution receipts', () => {
 });
 
 describe('nightly E2E scheduling', () => {
+  test('full-profile shell flags use environment data instead of expression interpolation', () => {
+    const workflow = safeLoad(readFileSync(join(repo, '.github/workflows/e2e.yml'), 'utf8')) as any;
+    const steps = [
+      workflow.jobs['prepare-e2e'].steps.find((step: any) => step.id === 'select'),
+      workflow.jobs['e2e-status'].steps.find((step: any) => step.name === 'Aggregate result'),
+    ];
+    for (const step of steps) {
+      expect(step.env?.FULL_CORPUS).toBe('${{ ' + fullProfile + ' }}');
+      expect(step.run).toContain('if [ "$FULL_CORPUS" = "true" ]; then');
+      expect(step.run).not.toContain('${{ ' + fullProfile + ' }}');
+    }
+  });
   test('the four actual runner partitions cover the complete default discovery exactly once', () => {
     const discover = (shard: string) => {
       const result = spawnSync('bash', ['scripts/run-e2e.sh', '--dry-run-list'], {
@@ -143,8 +155,9 @@ describe('nightly E2E scheduling', () => {
     expect(workflow.on.workflow_dispatch.inputs.full_corpus).toMatchObject({ type: 'boolean', default: false });
     for (const name of ['coverage-full-unit', 'coverage-full-serial', 'coverage-full-slow', 'coverage-full-e2e']) expect(workflow.jobs[name].if).toBe(fullProfile);
     for (const step of workflow.jobs['e2e-status'].steps.slice(1)) expect(step.if).toBe(fullProfile);
-    const select = workflow.jobs['prepare-e2e'].steps.find((step: any) => step.id === 'select').run;
-    expect(select).toContain('${{ ' + fullProfile + ' }}');
+    const selection = workflow.jobs['prepare-e2e'].steps.find((step: any) => step.id === 'select');
+    const select = selection.run;
+    expect(selection.env.FULL_CORPUS).toBe('${{ ' + fullProfile + ' }}');
     const group = workflow.concurrency.group;
     expect(group).toBe("${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}");
     for (const [event, enabled, expected] of [
@@ -164,8 +177,8 @@ case "$*" in
   *) exit 2 ;;
 esac
 `, { mode: 0o755 });
-        const run = spawnSync('bash', ['-e', '-c', select.replace('${{ ' + fullProfile + ' }}', String(expected))], {
-          encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: root, GITHUB_OUTPUT: join(root, 'outputs') },
+        const run = spawnSync('bash', ['-e', '-c', select], {
+          encoding: 'utf8', env: { ...process.env, FULL_CORPUS: String(expected), PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: root, GITHUB_OUTPUT: join(root, 'outputs') },
         });
         expect(run.status, run.stderr).toBe(0);
         expect(readFileSync(join(root, 'received-selection'), 'utf8')).toBe(expected ? '' : 'test/e2e/selected.test.ts\n');
