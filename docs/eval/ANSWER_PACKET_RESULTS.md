@@ -132,3 +132,7 @@ cohort rules, conservative fallback behavior, and safe-resume contract.
 The predeclared pilot rule failed on net wins, abstention regressions and category
 regressions. Production presentation stays unchanged; this small experiment does
 not justify a default rollout.
+
+For the research behind the next hypotheses, see
+[What actually helps an AI use its memory?](../research/answer-evidence/compendium.md).
+Those are proposed investigations, not additional measured GBrain improvements.

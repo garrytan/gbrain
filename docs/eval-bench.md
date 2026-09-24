@@ -31,6 +31,12 @@ Before repeating an approach, read its measured outcome and limitations:
   retrieval quality. The [experiment guide](eval/ANSWER_PACKET.md) records the
   reproducible setup and spending safeguards.
 
+- [What actually helps an AI use its memory?](research/answer-evidence/compendium.md)
+  explains the relevant research in plain English, separates published findings
+  from GBrain's measured failures, and ranks narrowly testable next experiments.
+  Its [source index](research/answer-evidence/index.md) records primary citations,
+  per-paper summaries and limits on what the results establish.
+
 ## The eval gate loop
 
 `gbrain bench publish` + `gbrain eval gate` stitch captured eval rows into
