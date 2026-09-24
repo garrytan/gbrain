@@ -231,8 +231,10 @@ a batch such as fact extraction or a sync's pending write. `remember` and
 `forget` keep the frozen `unavailable` code, with the detail in `write_error`.
 The owner sets `detail: "result_unframed_committed"` only when every receipt
 it found validated and is `committed`, and the result itself reported no
-failure (`status` of `error`, `failed`, `partial` or `blocked_by_failures`, or
-an `error`, `errors` or `skipped` field). Otherwise it sends
+failure (`status` of `error`, `failed`, `partial`, `blocked_by_failures`, `warn`
+or `fail`, an `error` or `skipped` field, non-empty `errors` or `failures`, or
+`failedFiles` above zero). If two copies of one request disagree, the
+non-committed copy wins. Otherwise it sends
 `detail: "result_unframed"` and names the failure or the unvalidated receipts
 in the message. A client that cannot validate a receipt withdraws the
 attestation. The CLI prints `Committed [...]` and exits 0 only for that

@@ -305,6 +305,36 @@ describe('dedicated persistence IPC', () => {
     expect(run.lines).not.toContain('Committed');
   });
 
+  test.each([
+    ['nested committed copy after a pending top-level copy', { write_request: { request_id: ID, state: 'queued', retry_after_ms: 1000 },
+      managedWrite: { write_request: committedReceipt(ID) } }, 'queued'],
+    ['committed batch copy after a failed singular copy', { write_request: { request_id: ID, state: 'failed', retry_after_ms: null },
+      write_requests: [committedReceipt(ID)] }, 'failed'],
+  ])('a disagreeing duplicate receipt (%s) never upgrades the request to committed', async (_label, shape, state) => {
+    const run = await framedCli({ ...shape, pad }, 'extract_facts');
+    expect(run.exit).toBe(1);
+    expect(run.body.detail).toBe('result_unframed');
+    expect(run.body.write_request).toMatchObject({ request_id: ID, state });
+    expect(run.lines).not.toContain('Committed');
+  });
+
+  test.each([
+    ['status warn (extract-atoms partial failure)', { status: 'warn' }],
+    ['status fail', { status: 'fail' }],
+    ['a non-empty failures list', { details: { failures: [{ slug: 'a', error: 'x' }] } }],
+    ['failedFiles above zero', { failedFiles: 1 }],
+  ])('a result reporting failure through %s never exits 0', async (_label, shape) => {
+    const run = await framedCli({ ...shape, write_requests: [committedReceipt(ID), committedReceipt(OTHER)], pad }, 'extract_facts');
+    expect(run.exit).toBe(1);
+    expect(run.body.detail).toBe('result_unframed');
+    expect(run.body.message).toContain('the result reported a failure');
+  });
+
+  test('empty failure lists and zero failedFiles do not withhold the attestation', async () => {
+    const run = await framedCli({ status: 'ok', failures: [], failedFiles: 0, write_requests: [committedReceipt(ID)], pad }, 'extract_facts');
+    expect(run).toMatchObject({ exit: 0, body: { detail: 'result_unframed_committed' } });
+  });
+
   test('a receipt the client cannot validate withdraws the owner attestation', async () => {
     const path = socketPath();
     const envelope = { version: 1, ok: false, error: { error: 'response_too_large', write_error: 'response_too_large',

@@ -153,8 +153,8 @@ const FROZEN_VERB_OPERATIONS = new Set(['remember', 'forget']);
 export const UNFRAMED_RESULT_COMMITTED = 'result_unframed_committed';
 export const UNFRAMED_RESULT = 'result_unframed';
 
-/** Result-level failure signals; the CLI already exits 1 on `status: 'error'`. */
-const FAILED_RESULT_STATUSES = new Set(['error', 'failed', 'partial', 'blocked_by_failures']);
+/** Result-level failure signals; the CLI already exits 1 on `status: 'error'`. `warn`/`fail` carry partial failures (e.g. extract-atoms, ledger checks). */
+const FAILED_RESULT_STATUSES = new Set(['error', 'failed', 'partial', 'blocked_by_failures', 'warn', 'fail']);
 
 interface SalvagedReceipts { receipts: WriteReceipt[]; dropped: number; failed: boolean; }
 
@@ -162,7 +162,8 @@ interface SalvagedReceipts { receipts: WriteReceipt[]; dropped: number; failed: 
 function resultReceipts(result: unknown, depth = 0, into: SalvagedReceipts = { receipts: [], dropped: 0, failed: false }): SalvagedReceipts {
   if (!record(result)) return into;
   if (typeof result.status === 'string' && FAILED_RESULT_STATUSES.has(result.status)) into.failed = true;
-  if (result.error !== undefined || result.skipped !== undefined || Array.isArray(result.errors) && result.errors.length > 0) into.failed = true;
+  if (result.error !== undefined || result.skipped !== undefined || Array.isArray(result.errors) && result.errors.length > 0
+    || Array.isArray(result.failures) && result.failures.length > 0 || typeof result.failedFiles === 'number' && result.failedFiles > 0) into.failed = true;
   if (result.write_request !== undefined) {
     if (isWriteReceipt(result.write_request)) into.receipts.push(result.write_request); else into.dropped++;
   }
@@ -175,7 +176,15 @@ function resultReceipts(result: unknown, depth = 0, into: SalvagedReceipts = { r
   if (depth === 0) for (const [key, value] of Object.entries(result)) {
     if (key !== 'write_request' && key !== 'write_requests' && record(value)) resultReceipts(value, 1, into);
   }
-  if (depth === 0) into.receipts = [...new Map(into.receipts.map(receipt => [receipt.request_id, receipt])).values()];
+  if (depth === 0) {
+    // One receipt per request_id; a disagreeing copy never upgrades a request to committed.
+    const byId = new Map<string, WriteReceipt>();
+    for (const receipt of into.receipts) {
+      const prior = byId.get(receipt.request_id);
+      if (!prior || prior.state === 'committed' || receipt.state !== 'committed') byId.set(receipt.request_id, receipt);
+    }
+    into.receipts = [...byId.values()];
+  }
   return into;
 }
 
