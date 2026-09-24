@@ -30,6 +30,9 @@ import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
 import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../core/brain-repo-durability.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { pathToSlug } from '../core/sync.ts';
+import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
 
 export interface LintIssue {
   file: string;
@@ -476,6 +479,13 @@ export interface LintOpts {
    *  shared db singleton mid-cycle. */
   engine?: BrainEngine;
   /**
+   * #5180: source id for the coordinator write path. On a managed brain
+   * (persistence enabled) fixes are published through the persistence
+   * coordinator for this source instead of written to the worktree, which
+   * the managed filesystem guard refuses. Defaults to 'default'.
+   */
+  sourceId?: string;
+  /**
    * #1972: cooperative-abort signal. lint's per-page work is synchronous, so
    * without a periodic yield the event loop can't deliver an abort and a
    * very large lint would block past the worker's 30s force-evict. The loop
@@ -520,6 +530,45 @@ export interface LintResult {
   total_fixed: number;
   dryRun: boolean;
   applied_fix: boolean;
+  /** #5180: where fixes went — the worktree (legacy), the persistence
+   *  coordinator (managed brain), or nowhere (report-only / dry-run). */
+  write_path: 'filesystem' | 'coordinator' | 'none';
+  /** #5180: fixes a managed brain could not publish this run (the file has
+   *  no indexed page, or the page changed mid-scan); each is reported as a
+   *  non-fixable `managed-write-pending` issue and retried next cycle. */
+  fix_pending: number;
+}
+
+/**
+ * #5180: publish one lint repair through the persistence coordinator, the
+ * only writer a managed brain's worktree accepts. Resolves the page's slug
+ * the way sync does, admits the repaired markdown against the page's current
+ * revision, and returns null once the coordinator has committed it (DB row
+ * and file in one guarded write). Returns a non-fixable issue instead of
+ * throwing when the repair must wait: the file is not an indexed page of the
+ * source (README/RESOLVER and other sync-skipped files, or a stray file the
+ * coordinator never wrote), or the page changed between scan and admission.
+ * Any other failure propagates and fails the run.
+ */
+async function publishLintFix(engine: BrainEngine, authority: MaintenanceAuthority, root: string, page: string, fixed: string): Promise<LintIssue | null> {
+  const relPath = relative(root, page);
+  const slug = pathToSlug(relPath);
+  const sourceId = authority.writer.sourceId;
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+  if (!snapshot || snapshot.page.deleted_at) {
+    return { file: relPath, line: 1, rule: 'managed-write-pending', fixable: false,
+      message: `fix not applied: ${slug} is not an indexed page of source ${sourceId} (a managed brain only rewrites indexed pages)` };
+  }
+  try {
+    await publishMaintenancePage(engine, authority, slug, fixed, { expectedRevision: snapshot.revision });
+    return null;
+  } catch (e) {
+    if ((e as { code?: unknown } | null)?.code === 'revision_conflict') {
+      return { file: relPath, line: 1, rule: 'managed-write-pending', fixable: false,
+        message: `fix not applied: ${slug} changed while lint ran; the next cycle retries` };
+    }
+    throw e;
+  }
 }
 
 /**
@@ -536,7 +585,12 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     throw new Error(`Not found: ${opts.target}`);
   }
 
-  if (opts.engine && !hasSourceFilesystemLock(opts.target)) {
+  // #5180: a managed brain's worktree belongs to the persistence coordinator —
+  // the legacy filesystem lock (and its writer guard) would refuse the whole
+  // run, so lint reads the tree lock-free there and publishes fixes through
+  // the coordinator below. Unmanaged brains keep the lock + direct writes.
+  const managed = !!opts.engine && await managedPersistenceEnabled(opts.engine);
+  if (!managed && opts.engine && !hasSourceFilesystemLock(opts.target)) {
     return withSourceFilesystemLock(opts.engine, opts.target, () => runLintCore(opts), { signal: opts.signal });
   }
 
@@ -561,12 +615,26 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   // line even though the later push landed) — a single end-of-run
   // multi-path commit would need a new helper.
   const repoProbe = isSingleFile ? dirname(opts.target) : opts.target;
-  const commitFixes = !!opts.fix && !opts.dryRun && isDurabilityHardened(repoProbe);
+  const applyFixes = !!opts.fix && !opts.dryRun;
+  // #5180: on a managed brain the coordinator commits what it publishes, so
+  // the durability commit stays on the legacy path only.
+  const commitFixes = applyFixes && !managed && isDurabilityHardened(repoProbe);
+  // #5180: the maintenance authority for coordinator writes, resolved once per
+  // run like the synthesize/patterns phases. Throws `owner_unavailable` when
+  // the managed source has no active canonical owner, which the cycle reports
+  // as the phase's failure instead of a per-page filesystem refusal.
+  const maintenance: MaintenanceAuthority | null = applyFixes && managed
+    ? await maintenancePreflight(opts.engine!, opts.sourceId ?? 'default', isSingleFile ? undefined : opts.target)
+    : null;
+  // #5180: a single-file target on a managed brain derives its slug from the owned worktree root.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- local_path/relative_path are the operator's own worktree binding rows (persistence_host_bindings / persistence_source_bindings) that maintenancePreflight just validated with assertPhysicalRoot; the join reproduces the binding root the coordinator itself uses (prepared-maintenance.ts) and only feeds relative() for slug derivation — no filesystem operation
+  const managedRoot = !isSingleFile ? opts.target : maintenance?.binding?.local_path ? join(maintenance.binding.local_path, maintenance.binding.relative_path) : dirname(opts.target);
 
   let totalIssues = 0;
   let totalFixable = 0;
   let totalFixed = 0;
   let pagesWithIssues = 0;
+  let fixPending = 0;
 
   for (let idx = 0; idx < pages.length; idx++) {
     assertSourceFilesystemActive();
@@ -592,15 +660,29 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     if (opts.fix && issues.some(i => i.fixable)) {
       const fixed = fixContent(content);
       if (fixed !== content) {
-        fixCount = issues.filter(i => i.fixable).length;
-        totalFixed += fixCount;
-        if (!opts.dryRun) {
+        const fixable = issues.filter(i => i.fixable).length;
+        if (!applyFixes) {
+          fixCount = fixable;
+        } else if (maintenance) {
+          // #5180: managed brain — the coordinator rewrites the page (DB row
+          // and worktree file together) or says why the repair must wait.
+          const pending = await publishLintFix(opts.engine!, maintenance, managedRoot, page, fixed);
+          if (pending) {
+            issues.push(pending);
+            totalIssues++;
+            fixPending++;
+          } else {
+            fixCount = fixable;
+          }
+        } else {
           assertSourceFilesystemActive();
           writeSourceFileSync(page, fixed);
           if (commitFixes) {
             commitWriteThroughFile(repoProbe, page, relative(repoProbe, page).replace(/\.md$/u, ''));
           }
+          fixCount = fixable;
         }
+        totalFixed += fixCount;
       }
     }
     opts.onPageIssues?.(relPath, issues, fixCount);
@@ -614,6 +696,8 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     total_fixed: totalFixed,
     dryRun: !!opts.dryRun,
     applied_fix: !!opts.fix,
+    write_path: !applyFixes ? 'none' : maintenance ? 'coordinator' : 'filesystem',
+    fix_pending: fixPending,
   };
 }
 
