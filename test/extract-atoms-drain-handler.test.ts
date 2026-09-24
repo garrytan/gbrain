@@ -100,6 +100,18 @@ describe('extract-atoms-drain background continuation', () => {
     expect(rows[0].data).toMatchObject({ sourceId: 'default', window: 120, continuation_of: job.id, continuation_depth: 1 });
   });
 
+  test('no continuation while another drain for the same source is already queued', async () => {
+    const job = await parent();
+    const other = await parent(); // e.g. a manual submit for the same source, still waiting
+    const elsewhere = await parent({ sourceId: 'wiki', window: 120 }); // other sources never block
+    expect(await queueDrainContinuation(engine, job, cut()))
+      .toEqual({ queued: false, reason: 'already_in_flight', in_flight_job_id: other.id });
+    expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE data ? 'continuation_of'")).toEqual([]);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed' WHERE id = $1", [other.id]);
+    expect(await queueDrainContinuation(engine, job, cut())).toMatchObject({ queued: true, depth: 1 });
+    expect(elsewhere.id).toBeGreaterThan(0);
+  });
+
   test('deferred transcripts alone still count as work left', async () => {
     const job = await parent();
     expect(await queueDrainContinuation(engine, job, cut({ remaining: 0, transcripts_remaining: 2, items_deferred: 2 })))

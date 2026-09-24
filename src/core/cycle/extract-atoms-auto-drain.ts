@@ -80,14 +80,18 @@ export async function countDrainJobsToday(engine: BrainEngine, utcDay: string, e
   }
 }
 
-/** A drain for this source is queued or running (excluding `exceptJobId`). Unscoped jobs are 'default'. */
-export async function drainInFlight(engine: BrainEngine, sourceId: string, exceptJobId = 0): Promise<boolean> {
-  const rows = await engine.executeRaw(
-    `SELECT 1 FROM minion_jobs WHERE name = 'extract-atoms-drain' AND status = ANY($3::text[])
-       AND COALESCE(data->>'sourceId', 'default') = $1 AND id <> $2 LIMIT 1`,
+/** Id of a drain for this source that is queued or running (excluding `exceptJobId`), else null. Unscoped jobs are 'default'. */
+export async function inFlightDrainId(engine: BrainEngine, sourceId: string, exceptJobId = 0): Promise<number | null> {
+  const rows = await engine.executeRaw<{ id: number }>(
+    `SELECT id FROM minion_jobs WHERE name = 'extract-atoms-drain' AND status = ANY($3::text[])
+       AND COALESCE(data->>'sourceId', 'default') = $1 AND id <> $2 ORDER BY id LIMIT 1`,
     [sourceId, exceptJobId, IN_FLIGHT],
   );
-  return rows.length > 0;
+  return rows.length > 0 ? Number(rows[0].id) : null;
+}
+
+export async function drainInFlight(engine: BrainEngine, sourceId: string, exceptJobId = 0): Promise<boolean> {
+  return (await inFlightDrainId(engine, sourceId, exceptJobId)) !== null;
 }
 
 export interface DrainBacklog { pages: number | null; transcripts: number | null }

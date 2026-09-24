@@ -522,6 +522,8 @@ export type DrainContinuation =
    *  delayed job that re-runs the same budget gate when it starts. */
   | { queued: true; job_id: number; depth: number; budget_check?: 'deferred' }
   | { queued: false; reason: 'drained' | 'no_forward_progress' | 'continuation_limit' | 'not_window_cut' | 'submit_failed'; error?: string }
+  /** Another drain for this source is already queued or running; it picks up the work. */
+  | { queued: false; reason: 'already_in_flight'; in_flight_job_id: number }
   | DrainBudgetBlock;
 
 /** Delay before a lock-busy continuation starts and rechecks its budget; also its retry backoff base. */
@@ -552,6 +554,10 @@ export async function queueDrainContinuation(
     const policyMod = await import('./extract-atoms-auto-drain.ts');
     const { MinionQueue } = await import('../minions/queue.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+    // Same dedup as autopilot's dispatch: a drain already queued for this
+    // source (e.g. a manual submit) will do the work; a second one only burns a cap slot.
+    const inFlight = await policyMod.inFlightDrainId(engine, sourceId, job.id);
+    if (inFlight !== null) return { queued: false, reason: 'already_in_flight', in_flight_job_id: inFlight };
     let policy;
     try { policy = await policyMod.readAutoDrainPolicy(engine); }
     catch { return { queued: false, reason: 'budget_unknown' }; }

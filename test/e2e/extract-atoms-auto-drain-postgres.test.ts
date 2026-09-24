@@ -44,6 +44,13 @@ describeDb('Postgres background drain policy', () => {
       .toEqual({ queued: false, reason: 'daily_cap', max_usd_per_day: 0.3, max_jobs_today: 1, jobs_today: 1 });
   });
 
+  test('a same-source drain already queued suppresses the continuation (bigint id normalised)', async () => {
+    const parent = await queue.add('extract-atoms-drain', { sourceId: 'default' }, { queue: 'default' }, { allowProtectedSubmit: true });
+    const other = await queue.add('extract-atoms-drain', { sourceId: 'default' }, { queue: 'default' }, { allowProtectedSubmit: true });
+    expect(await queueDrainContinuation(engine, parent, cut))
+      .toEqual({ queued: false, reason: 'already_in_flight', in_flight_job_id: other.id });
+  });
+
   test('transcript-only backlog dispatches once per day', async () => {
     const dir = mkdtempSync(join(root, 'sessions-'));
     writeFileSync(join(dir, '2026-01-01-session.txt'), 'Synthetic session about a generic topic. '.repeat(80));
