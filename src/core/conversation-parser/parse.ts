@@ -330,6 +330,9 @@ export function applyPattern(
   if (!body) return [];
   const out: MatchedMessage[] = [];
   const lines = body.split(/\r?\n/);
+  const allowedAnchors = entry.id === 'python-dict-utterance'
+    ? speakerObjectAnchorsAllowed(body, entry)
+    : undefined;
   // Some multi-day conversation exports use markdown date headings instead
   // of repeating a date on every message. Keep the caller's context immutable
   // while advancing a local date anchor as those headings are encountered.
@@ -380,11 +383,14 @@ export function applyPattern(
       }
     }
 
+    if (allowedAnchors?.[i] === false) continue;
     const dateHeader = dateHeaderRe.exec(line);
     if (dateHeader) {
       runningCtx.fallbackDate = dateHeader[1];
       continue;
     }
+
+    if (allowedAnchors && !entry.regex.test(line)) continue;
 
     // Quick-reject fast path.
     if (entry.quick_reject && !entry.quick_reject.test(line)) {
@@ -450,13 +456,93 @@ function getNonBlankLines(body: string, headCap?: number): string[] {
   return headCap !== undefined ? all.slice(0, headCap) : all;
 }
 
+function speakerObjectAnchorsAllowed(body: string, entry: PatternEntry): boolean[] {
+  let fence: string | undefined;
+  let inTranscript: boolean | undefined;
+  let invalidRegion = false;
+  let malformedPreamble = false;
+  let preambleQuote: string | undefined;
+  const preambleClosers: string[] = [];
+  const scanPreamble = (line: string): void => {
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (preambleQuote) {
+        if (char === '\\') i++;
+        else if (line.startsWith(preambleQuote, i)) {
+          i += preambleQuote.length - 1;
+          preambleQuote = undefined;
+        }
+        continue;
+      }
+      if (char === "'" || char === '"' || char === '`') {
+        let wordStart = i;
+        while (wordStart > 0 && /[\p{L}\p{N}_]/u.test(line[wordStart - 1])) wordStart--;
+        const word = line.slice(wordStart, i);
+        if (char === "'" && word && !/^(?:r|u|b|f|fr|rf|br|rb)$/i.test(word)) continue;
+        preambleQuote = line.startsWith(char.repeat(3), i) ? char.repeat(3) : char;
+        i += preambleQuote.length - 1;
+      } else if (char === '{') preambleClosers.push('}');
+      else if (char === '[') preambleClosers.push(']');
+      else if (char === '(') preambleClosers.push(')');
+      else if ('}])'.includes(char) && preambleClosers.length > 0 && preambleClosers.pop() !== char) malformedPreamble = true;
+    }
+  };
+  const allowed = body.split(/\r?\n/).map(raw => {
+    const line = raw.trim();
+    if (malformedPreamble || preambleQuote || preambleClosers.length > 0) {
+      if (entry.regex.test(line) || /^#{1,6}\s+Transcript\s*$/i.test(line)) invalidRegion = true;
+      if (!malformedPreamble) scanPreamble(line);
+      return false;
+    }
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(raw);
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
+      return false;
+    }
+    if (marker) {
+      fence = marker[1];
+      return false;
+    }
+    if (!line || /^(?: {4}| *\t)/.test(raw)) return false;
+    if (/^#{1,6}\s+Transcript\s*$/i.test(line)) {
+      inTranscript = true;
+      return false;
+    }
+    if (/^#{1,4}\s+\d{4}-\d{2}-\d{2}\s*$/.test(line)) return inTranscript !== false;
+    if (/^#{1,6}\s/.test(line)) {
+      inTranscript = false;
+      scanPreamble(line);
+      return false;
+    }
+    const matches = entry.regex.test(line);
+    if (inTranscript === undefined) {
+      inTranscript = matches;
+      if (!matches) invalidRegion = true;
+    } else if (inTranscript && !matches) {
+      invalidRegion = true;
+    } else if (!inTranscript) {
+      scanPreamble(line);
+    }
+    return inTranscript && matches;
+  });
+  return invalidRegion ? allowed.fill(false) : allowed;
+}
+
+function speakerObjectScoringLines(body: string, entry: PatternEntry, headCap?: number): string[] {
+  const allowed = speakerObjectAnchorsAllowed(body, entry);
+  const lines = body.split(/\r?\n/)
+    .map((line, index) => ({ line: line.trim(), allowed: allowed[index] }))
+    .filter(({ line }) => line.length > 0)
+    .map(({ line, allowed }) => allowed ? line : '');
+  return headCap === undefined ? lines : lines.slice(0, headCap);
+}
+
 /**
  * Core scorer over a pre-split line array. Both `scorePattern` (head
  * window) and `scorePatternFull` (whole body) delegate here so the
  * quick_reject + regex loop lives in one place. Reused by
- * `parseConversation`'s fallback path which pre-splits ONCE and
- * passes the array to all 18 candidates (saves 17 redundant body
- * splits per fallback pass).
+ * `parseConversation`'s fallback path shares a pre-split array across
+ * candidates that use ordinary line scoring.
  */
 function scoreFromLines(
   lines: readonly string[],
@@ -540,6 +626,7 @@ function scoreFromLines(
  * Exported for tests.
  */
 export function scorePattern(body: string, entry: PatternEntry): number {
+  if (entry.id === 'python-dict-utterance') return scoreFromLines(speakerObjectScoringLines(body, entry, SCORING_HEAD_LINES), entry);
   return scoreFromLines(getNonBlankLines(body, SCORING_HEAD_LINES), entry);
 }
 
@@ -555,6 +642,7 @@ export function scorePattern(body: string, entry: PatternEntry): number {
  * needs full-body scoring of a single pattern.
  */
 export function scorePatternFull(body: string, entry: PatternEntry): number {
+  if (entry.id === 'python-dict-utterance') return scoreFromLines(speakerObjectScoringLines(body, entry), entry);
   return scoreFromLines(getNonBlankLines(body), entry);
 }
 
@@ -624,7 +712,7 @@ export function parseConversation(
     const allLines = getNonBlankLines(body);
     scored = candidates.map((entry) => ({
       entry,
-      score: scoreFromLines(allLines, entry),
+      score: entry.id === 'python-dict-utterance' ? scorePatternFull(body, entry) : scoreFromLines(allLines, entry),
       priority: priorityOf(entry.id),
     }));
     sortScored(scored);
@@ -650,7 +738,7 @@ export function parseConversation(
   // candidate; this only tightens its acceptance (a real transcript
   // stays ~1.0; a 3/200-label notes page drops to ~0.015 → no_match).
   if (top.entry.score_full_body && !fullBodyScored) {
-    top.score = scoreFromLines(getNonBlankLines(body), top.entry);
+    top.score = scorePatternFull(body, top.entry);
   }
 
   // Minimum acceptance floor (closes Codex P1 #2): an essay with

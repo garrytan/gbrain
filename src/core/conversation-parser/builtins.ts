@@ -1,7 +1,7 @@
 /**
  * v0.41.16.0 — Built-in conversation parser pattern registry.
  *
- * Eighteen hand-vetted patterns covering the chat-export formats this
+ * Hand-vetted patterns covering the chat-export formats this
  * codebase is most likely to encounter. Each pattern's regex was
  * derived from a public format reference (source_doc field) so future
  * maintainers can verify against the wild shape.
@@ -50,7 +50,25 @@ export function cleanSpeaker(raw: string, override?: RegExp): string {
   return stripped || raw.trim();
 }
 
-/** The 18 hand-vetted built-in patterns. */
+const speakerObjectFields = [
+  ['microphone', 'me'],
+  ['speaker', 'them'],
+].flatMap(([source, attribution]) => {
+  const fields = [
+    `'source'[ \\t]*:[ \\t]*'${source}'`,
+    `'attribution'[ \\t]*:[ \\t]*'${attribution}'`,
+    "'name'[ \\t]*:[ \\t]*'[\\p{L}\\p{N}][\\p{L}\\p{N} ._-]{0,79}'",
+  ];
+  return [[0, 1], [1, 0], [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+    .map(order => order.map(i => fields[i]).join('[ \\t]*,[ \\t]*'));
+});
+
+const speakerObjectRegex = new RegExp(
+  `^\\{(?=[ \\t]*(?:${speakerObjectFields.join('|')})[ \\t]*\\}:[ \\t]+\\S)` +
+  "(?:[^}]*'name'[ \\t]*:[ \\t]*|[^}]*'attribution'[ \\t]*:[ \\t]*)'([^']+)'[^}]*\\}:[ \\t]+(.+)$",
+  'u',
+);
+
 export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   // -------------------------------------------------------------------
   // INLINE-DATE patterns (date in every line; less ambiguous; tried first).
@@ -832,6 +850,30 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     ],
     source_doc:
       'gbrain nightly transcript ingest: compiled_truth bodies use markdown headings per turn',
+  },
+  {
+    id: 'python-dict-utterance',
+    origin: 'builtin',
+    regex: speakerObjectRegex,
+    captures: { speaker_group: 1, text_group: 2 },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: false,
+    quick_reject: /^\{/,
+    score_full_body: true,
+    test_positive: [
+      "{'source': 'microphone', 'attribution': 'me'}: hello",
+      "{'source': 'speaker', 'name': 'alice-example', 'attribution': 'them'}: hi",
+      "{'attribution': 'them', 'source': 'speaker', 'name': 'alice-example'}: hi",
+    ],
+    test_negative: [
+      "{'source': 'speaker', 'attribution': 'me'}: conflicting attribution",
+      "{'source': 'speaker', 'attribution': 'them', 'name': 'alice-example', 'name': 'bob-example'}: duplicate",
+      "{'source': 'speaker', 'attribution': 'them', 'extra': {}}: nested",
+      '{"source": "speaker", "attribution": "them"}: unsupported JSON',
+    ],
+    source_doc: 'https://github.com/garrytan/gbrain/issues/5364',
   },
 ];
 
