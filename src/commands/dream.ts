@@ -33,6 +33,7 @@ import {
 } from '../core/cycle.ts';
 import { ALL_SOURCES, isResolverUserError, resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { withHumanLogsToStderr } from '../core/console-prefix.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
 import { resolve } from 'node:path';
@@ -832,7 +833,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // array); empty means the full/default cycle.
   const phases: CyclePhase[] | undefined = opts.phases.length > 0 ? opts.phases : undefined;
 
-  const report = await runCycle(engine, {
+  const cycleOpts = {
     brainDir,
     dryRun: opts.dryRun,
     pull: opts.pull,
@@ -849,7 +850,18 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     // issue #2860: exactly one phase is guaranteed here when opts.once is
     // set (parseArgs enforces --once requires a single explicit --phase).
     onceForPhase: opts.once ? opts.phases[0]! : undefined,
-  });
+  };
+
+  // JSON mode reserves stdout for the single CycleReport. Nested phases (sync →
+  // performSync, and its callees) emit human progress via `slog`, which writes
+  // to stdout by default; under `--json` that pollutes the report and breaks a
+  // whole-stdout `JSON.parse`. Wrap runCycle in `withHumanLogsToStderr` so those
+  // slog lines route to stderr — the same native pattern `sync --json` uses
+  // (commands/sync.ts). The final `console.log(report)` stays OUTSIDE the wrap
+  // so the CycleReport itself lands on stdout.
+  const report = opts.json
+    ? await withHumanLogsToStderr(() => runCycle(engine, cycleOpts))
+    : await runCycle(engine, cycleOpts);
 
   if (opts.json) {
     console.log(JSON.stringify(report, null, 2));

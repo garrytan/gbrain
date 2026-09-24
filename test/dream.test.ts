@@ -856,3 +856,41 @@ describe('runDream → checkCycleFreshness end-to-end (D5)', () => {
     expect(afterCheck.status).toBe('ok');
   }, 300_000);
 });
+
+// ─── JSON-mode stdout contract: one CycleReport only, human logs to stderr ──
+// Regression guard for the Dream --json stdout-pollution defect: on v0.50 the Dream sync phase's
+// performSync slog lines leaked to STDOUT in --json mode, so a caller doing
+// json.load(whole stdout) failed ("invalid JSON"). The fix wraps runCycle in
+// withHumanLogsToStderr for JSON mode while keeping the final report on stdout.
+describe('runDream — --json keeps stdout a single CycleReport (no leaked human logs)', () => {
+  test('full-sync --json: whole stdout parses to one CycleReport; sync human lines go to stderr', async () => {
+    const outCalls: string[] = [];
+    const errCalls: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { outCalls.push(a.map(String).join(' ')); });
+    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errCalls.push(a.map(String).join(' ')); });
+    try {
+      await runDream(engine, ['--dir', repo, '--phase', 'sync', '--json']);
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+    const stdout = outCalls.join('\n');
+    // Contract: stdout carries EXACTLY ONE console.log — the CycleReport — and
+    // the whole of stdout parses as one JSON object. On v0.50 the leaked sync
+    // human lines make outCalls.length > 1 and JSON.parse(stdout) throw.
+    expect(outCalls.length).toBe(1);
+    const parsed = JSON.parse(stdout) as { status?: unknown; phases?: unknown };
+    expect(parsed).toHaveProperty('phases');
+    expect(parsed).toHaveProperty('status');
+    // The sync phase's human progress must be routed to stderr, not stdout.
+    // Assert a STABLE sync full-import human marker (a performSync `slog` line
+    // that leaked to stdout on v0.50) is present on stderr and absent from
+    // stdout — proving the relocation, not merely that stderr is non-empty.
+    const stderr = errCalls.join('\n');
+    const SYNC_HUMAN = /Running full import of|Import complete/;
+    expect(SYNC_HUMAN.test(stderr)).toBe(true);
+    expect(SYNC_HUMAN.test(stdout)).toBe(false);
+    // The CycleReport itself must NOT be duplicated onto stderr.
+    expect(errCalls.some((l) => /"phases"\s*:/.test(l))).toBe(false);
+  }, 300_000);
+});
