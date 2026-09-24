@@ -1,14 +1,20 @@
+
 $ErrorActionPreference = 'Stop'
 $path = $env:GBRAIN_BACKUP_PRIVATE_PATH
-if ($env:GBRAIN_BACKUP_PRIVATE_KIND -ne 'directory') { throw 'Expected a directory probe' }
+$directory = $env:GBRAIN_BACKUP_PRIVATE_KIND -eq 'directory'
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-$sids = @($user.Value)
-if ($user.Value -ne 'S-1-5-18') { $sids += 'S-1-5-18' }
-$attributes = [IO.File]::GetAttributes($path)
-if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ($attributes -band [IO.FileAttributes]::Directory) -eq 0) { throw 'Unexpected path type' }
-if ([IO.Directory]::GetFileSystemEntries($path).Length -ne 0) { throw 'Directory is not empty' }
-$acl = [System.Security.AccessControl.DirectorySecurity]::new()
-$inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+$sids = @($user.Value, 'S-1-5-18' | Select-Object -Unique)
+$item = Get-Item -LiteralPath $path -Force
+if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.PSIsContainer -ne $directory) { throw 'Unexpected path type' }
+if ($directory) {
+  if ([IO.Directory]::GetFileSystemEntries($path).Length -ne 0) { throw 'Directory is not empty' }
+  $acl = New-Object System.Security.AccessControl.DirectorySecurity
+  $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+} else {
+  if ($item.Length -ne 0) { throw 'File is not empty' }
+  $acl = New-Object System.Security.AccessControl.FileSecurity
+  $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
+}
 $acl.SetOwner($user)
 $acl.SetAccessRuleProtection($true, $false)
 foreach ($sid in $sids) {
@@ -16,8 +22,8 @@ foreach ($sid in $sids) {
   $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
   $acl.AddAccessRule($rule)
 }
-[IO.Directory]::SetAccessControl($path, $acl)
-$actual = [IO.Directory]::GetAccessControl($path)
+Set-Acl -LiteralPath $path -AclObject $acl
+$actual = Get-Acl -LiteralPath $path
 if (!$actual.AreAccessRulesProtected -or $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $user.Value) { throw 'Owner or inheritance mismatch' }
 $rules = @($actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
 if ($rules.Count -ne $sids.Count) { throw 'Unexpected access rules' }

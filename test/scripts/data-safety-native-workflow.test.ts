@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -79,13 +80,20 @@ describe('data-safety native CI coverage', () => {
     expect(step!.shell).toBe('bash');
     expect(step!.env).toEqual({ GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1', GBRAIN_TEST_BACKUP_DOTNET_PROBE: '1' });
     expect(step!.run!.trim().split('\n')).toEqual([
-      "bun --no-env-file test --timeout=180000 --test-name-pattern '^private directory ACL setup compares cmdlet and direct dotnet calls$' test/backup-portability-native.serial.test.ts 2>&1 | tee \"$RUNNER_TEMP/backup-dotnet.log\"",
-      "grep -Fq 'Windows backup dotnet controls:' \"$RUNNER_TEMP/backup-dotnet.log\"",
+      "bun --no-env-file test --timeout=180000 --test-name-pattern '^private (directory|file) ACL setup compares cmdlet and direct dotnet calls$' test/backup-portability-native.serial.test.ts 2>&1 | tee \"$RUNNER_TEMP/backup-dotnet.log\"",
+      "grep -Fq 'Windows backup dotnet controls: {\"kind\":\"directory\",' \"$RUNNER_TEMP/backup-dotnet.log\"",
+      "grep -Fq 'Windows backup dotnet controls: {\"kind\":\"file\",' \"$RUNNER_TEMP/backup-dotnet.log\"",
     ]);
     const fixture = readFileSync(join(import.meta.dir, '../backup-portability-native.serial.test.ts'), 'utf8');
-    expect(fixture).toContain("test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')('private directory ACL setup compares cmdlet and direct dotnet calls'");
+    expect(fixture).toContain("for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')(`private ${kind} ACL setup compares cmdlet and direct dotnet calls`");
     expect(workflow.jobs.native.steps.some(entry => entry.env?.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== undefined)).toBe(false);
     expect(workflow.jobs['windows-backup-console'].steps.some(entry => entry.env?.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== undefined)).toBe(false);
+  });
+
+  test('the cmdlet arm retains the exact original encoded protection program', () => {
+    const program = readFileSync(join(import.meta.dir, '../fixtures/windows-backup-cmdlet-protect.ps1'), 'utf8').replace(/\r\n/g, '\n');
+    expect(createHash('sha256').update(Buffer.from(program, 'utf16le')).digest('hex'))
+      .toBe('586ed48aa8f0ec1b6a37d0fe516d45fd98b3b3cc47587ef2c406a1e76521f2fc');
   });
 
   for (const [exitCode, observation] of [[0, true], [1, true], [0, false]] as const) test(`dotnet probe refuses failed or unexecuted diagnostics (${exitCode}, ${observation})`, () => {
@@ -93,10 +101,22 @@ describe('data-safety native CI coverage', () => {
     try {
       const step = workflow.jobs['windows-backup-dotnet'].steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs')!;
       const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
-        bun() { if [[ "$GBRAIN_TEST_OBSERVATION" == 1 ]]; then printf '%s\\n' 'Windows backup dotnet controls: synthetic'; fi; return "$GBRAIN_TEST_EXIT"; }
+        bun() { if [[ "$GBRAIN_TEST_OBSERVATION" == 1 ]]; then printf '%s\\n' 'Windows backup dotnet controls: {"kind":"directory",' 'Windows backup dotnet controls: {"kind":"file",'; fi; return "$GBRAIN_TEST_EXIT"; }
         ${step.run}
       `], { env: { PATH: process.env.PATH ?? '', RUNNER_TEMP: temporary, GBRAIN_TEST_OBSERVATION: observation ? '1' : '0', GBRAIN_TEST_EXIT: String(exitCode) } });
       expect(result.exitCode).toBe(exitCode === 0 && observation ? 0 : 1);
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
+  });
+
+  for (const kind of ['directory', 'file']) for (const copies of [1, 2]) test(`dotnet probe refuses execution of only ${kind}${copies === 2 ? ' twice' : ''}`, () => {
+    const temporary = mkdtempSync(join(tmpdir(), 'gbrain-dotnet-partial-'));
+    try {
+      const step = workflow.jobs['windows-backup-dotnet'].steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs')!;
+      const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+        bun() { printf '%s\\n' ${Array(copies).fill(`'Windows backup dotnet controls: {"kind":"${kind}",'`).join(' ')}; }
+        ${step.run}
+      `], { env: { PATH: process.env.PATH ?? '', RUNNER_TEMP: temporary } });
+      expect(result.exitCode).toBe(1);
     } finally { rmSync(temporary, { recursive: true, force: true }); }
   });
 

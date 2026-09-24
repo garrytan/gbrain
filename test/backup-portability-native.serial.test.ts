@@ -53,22 +53,27 @@ function expectPrivate(path: string, directory: boolean, protectedAcl = false) {
     expect(fs.statSync(path).mode & 0o777).toBe(directory ? 0o700 : 0o600);
     return;
   }
-  const script = `$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH;
-$u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
-$r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | ForEach-Object { @{sid=$_.IdentityReference.Value; allow=$_.AccessControlType.ToString(); rights=[int]$_.FileSystemRights} });
-@{user=$u; owner=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value; protected=$a.AreAccessRulesProtected; rules=$r} | ConvertTo-Json -Compress -Depth 4`;
-  const result = JSON.parse(execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      env: { ...process.env, GBRAIN_TEST_ACL_PATH: path }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
-    }));
-  expect(result.owner).toBe(result.user);
-  if (protectedAcl) expect(result.protected).toBe(true);
-  const expectedSids = [...new Set([result.user, 'S-1-5-18'])].sort();
-  expect(result.rules.map((rule: { sid: string }) => rule.sid).sort()).toEqual(expectedSids);
-  for (const rule of result.rules) {
-    expect(rule.allow).toBe('Allow');
-    expect(rule.rights).toBe(0x1f01ff);
-  }
+  const script = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-inspect.ps1'), 'utf8');
+  try {
+    const result = JSON.parse(execFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+        env: { ...process.env, GBRAIN_TEST_ACL_PATH: path }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
+      }));
+    expect(typeof result.user === 'string' && /^S-\d+(?:-\d+)+$/.test(result.user)).toBe(true);
+    expect(Array.isArray(result.rules)).toBe(true);
+    expect(result.owner).toBe(result.user);
+    if (protectedAcl) expect(result.protected).toBe(true);
+    const expectedSids = [...new Set([result.user, 'S-1-5-18'])].sort();
+    expect(result.rules.map((rule: { sid: string }) => rule.sid).sort()).toEqual(expectedSids);
+    for (const rule of result.rules) {
+      expect(rule.allow).toBe('Allow');
+      expect(rule.rights).toBe(0x1f01ff);
+      expect(rule.inheritance).toBe(directory ? 3 : 0);
+      expect(rule.propagation).toBe(0);
+      expect(typeof rule.inherited).toBe('boolean');
+      if (protectedAcl) expect(rule.inherited).toBe(false);
+    }
+  } catch { throw new Error('Windows private ACL verification failed'); }
 }
 
 async function expectOriginal() {
@@ -215,14 +220,15 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_CONSO
   }
 }, 120_000);
 
-test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')('private directory ACL setup compares cmdlet and direct dotnet calls', () => {
-  const protectProgram = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-protect.ps1'), 'utf8');
+for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNET_PROBE !== '1')(`private ${kind} ACL setup compares cmdlet and direct dotnet calls`, () => {
+  const legacyProgram = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-cmdlet-protect.ps1'), 'utf8').replace(/\r\n/g, '\n');
   const inspectProgram = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-inspect.ps1'), 'utf8');
   const observations = [];
   let originalProgram: string | undefined;
   for (const mode of ['cmdlet', 'dotnet', 'dotnet', 'cmdlet'] as const) {
-    const path = join(temporary, `dotnet-${observations.length} [literal] 'é`);
-    fs.mkdirSync(path);
+    const path = join(temporary, `dotnet-${kind}-${observations.length} [literal] 'é`);
+    if (kind === 'directory') fs.mkdirSync(path);
+    else fs.writeFileSync(path, '');
     const before = fs.lstatSync(path, { bigint: true });
     let launches = 0;
     let inspections = 0;
@@ -252,8 +258,8 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNE
         } else inspections++;
         try {
           expect(command.slice(0, -1)).toEqual(['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
-          return Reflect.apply(target, thisArg, mode === 'cmdlet' ? args : [args[0], [...command.slice(0, -1),
-            Buffer.from(protection ? protectProgram : inspectProgram, 'utf16le').toString('base64')], options]);
+          return Reflect.apply(target, thisArg, mode === 'cmdlet' && protection ? [args[0], [...command.slice(0, -1),
+            Buffer.from(legacyProgram, 'utf16le').toString('base64')], options] : args);
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
           if (protection) nativeError = code;
@@ -268,7 +274,7 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNE
     let inspectionElapsedMs: number | null = null;
     const started = performance.now();
     try {
-      try { privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
+      try { privacy.protectNewBackupPath(path, kind); protectedPath = true; } catch {}
       protectionElapsedMs = Math.round(performance.now() - started);
       if (mode === 'dotnet' && protectedPath) {
         const inspectionStarted = performance.now();
@@ -281,7 +287,7 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNE
             && actual.owner === actual.user && actual.protected === true && Array.isArray(actual.rules)
             && JSON.stringify(actual.rules.map((rule: { sid: string }) => rule.sid).sort()) === JSON.stringify([...new Set([actual.user, 'S-1-5-18'])].sort())
             && actual.rules.every((rule: { inherited: boolean; allow: string; rights: number; inheritance: number; propagation: number }) =>
-              rule.inherited === false && rule.allow === 'Allow' && rule.rights === 0x1f01ff && rule.inheritance === 3 && rule.propagation === 0);
+              rule.inherited === false && rule.allow === 'Allow' && rule.rights === 0x1f01ff && rule.inheritance === (kind === 'directory' ? 3 : 0) && rule.propagation === 0);
         } catch (error) { inspectionError ??= (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other'; }
         finally { inspectionElapsedMs = Math.round(performance.now() - inspectionStarted); }
       }
@@ -290,9 +296,9 @@ test.skipIf(process.platform !== 'win32' || process.env.GBRAIN_TEST_BACKUP_DOTNE
     observations.push({ mode, protectionElapsedMs, inspectionElapsedMs, launches, inspections,
       bounded, fixedExecutable, stableProgram, nativeError, inspectionError, protectedPath, privateAcl,
       sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
-      empty: after.isDirectory() && fs.readdirSync(path).length === 0 });
+      empty: kind === 'directory' ? after.isDirectory() && fs.readdirSync(path).length === 0 : after.isFile() && after.size === 0n && after.nlink === 1n });
   }
-  process.stderr.write(`Windows backup dotnet controls: ${JSON.stringify({ arch: process.arch, runtime: Bun.version, observations })}\n`);
+  process.stderr.write(`Windows backup dotnet controls: ${JSON.stringify({ kind, arch: process.arch, runtime: Bun.version, observations })}\n`);
   for (const observation of observations) {
     expect(observation.launches).toBe(1);
     expect(observation.bounded).toBe(true);
@@ -529,17 +535,15 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   }
   for (const observation of observations) {
     if (observation.mode !== 'async') continue;
-    const script = `$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH;
-$u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
-$r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | ForEach-Object { @{sid=$_.IdentityReference.Value; inherited=$_.IsInherited; allow=$_.AccessControlType.ToString(); rights=[int]$_.FileSystemRights; inheritance=[int]$_.InheritanceFlags; propagation=[int]$_.PropagationFlags} });
-@{user=$u; owner=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value; protected=$a.AreAccessRulesProtected; rules=$r} | ConvertTo-Json -Compress -Depth 4`;
+    const script = fs.readFileSync(join(import.meta.dir, 'fixtures/windows-backup-dotnet-inspect.ps1'), 'utf8');
     try {
       const actual = JSON.parse(await collect(['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
         { ...captured.options.env, GBRAIN_TEST_ACL_PATH: observation.path }));
-      observation.privateAcl = actual.owner === actual.user && actual.protected === true
+      observation.privateAcl = typeof actual.user === 'string' && /^S-\d+(?:-\d+)+$/.test(actual.user)
+        && actual.owner === actual.user && actual.protected === true && Array.isArray(actual.rules)
         && JSON.stringify(actual.rules.map((rule: { sid: string }) => rule.sid).sort()) === JSON.stringify([...new Set([actual.user, 'S-1-5-18'])].sort())
         && actual.rules.every((rule: { inherited: boolean; allow: string; rights: number; inheritance: number; propagation: number }) =>
-          !rule.inherited && rule.allow === 'Allow' && rule.rights === 0x1f01ff && rule.inheritance === (kind === 'directory' ? 3 : 0) && rule.propagation === 0);
+          rule.inherited === false && rule.allow === 'Allow' && rule.rights === 0x1f01ff && rule.inheritance === (kind === 'directory' ? 3 : 0) && rule.propagation === 0);
     } catch (error) { observation.aclError = classify(error); }
   }
   const stagedPath = join(temporary, `staged-${kind} [literal] 'é`);
@@ -552,10 +556,10 @@ $r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Fo
   const checkpoints = [
     ["$ErrorActionPreference = 'Stop'", 'entry'],
     ['$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User', 'identity'],
-    ["$sids = @($user.Value, 'S-1-5-18' | Select-Object -Unique)", 'principals'],
-    ['$item = Get-Item -LiteralPath $path -Force', 'item'],
-    ['Set-Acl -LiteralPath $path -AclObject $acl', 'after-set'],
-    ['$actual = Get-Acl -LiteralPath $path', 'read-back'],
+    ["if ($user.Value -ne 'S-1-5-18') { $sids += 'S-1-5-18' }", 'principals'],
+    ['$attributes = [IO.File]::GetAttributes($path)', 'item'],
+    ['if ($directory) { [IO.Directory]::SetAccessControl($path, $acl) } else { [IO.File]::SetAccessControl($path, $acl) }', 'after-set'],
+    ['$actual = if ($directory) { [IO.Directory]::GetAccessControl($path) } else { [IO.File]::GetAccessControl($path) }', 'read-back'],
   ] as const;
   expect(captured.args.at(-2) === '-EncodedCommand').toBe(true);
   let stagedProgram = Buffer.from(captured.args.at(-1)!, 'base64').toString('utf16le');
@@ -831,13 +835,13 @@ test('backup paths exclude inherited public access without changing the existing
   const parent = join(temporary, 'public-parent'); fs.mkdirSync(parent);
   const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const inspectParent = () => process.platform === 'win32'
-    ? execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH).Sddl'], {
+    ? execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '[IO.Directory]::GetAccessControl($env:GBRAIN_TEST_ACL_PATH).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::All)'], {
       env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, encoding: 'utf8', timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
     }).trim() : fs.statSync(parent).mode;
   if (process.platform === 'win32') {
-    const script = `$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH;
+    const script = `$ErrorActionPreference='Stop'; $a=[IO.Directory]::GetAccessControl($env:GBRAIN_TEST_ACL_PATH);
 $r=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow);
-$a.AddAccessRule($r); Set-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH -AclObject $a`;
+$a.AddAccessRule($r); [IO.Directory]::SetAccessControl($env:GBRAIN_TEST_ACL_PATH, $a)`;
     execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
       env: { ...process.env, GBRAIN_TEST_ACL_PATH: parent }, timeout: 15_000, windowsHide: true, input: Buffer.alloc(0), stdio: ['pipe', 'pipe', 'pipe'],
     });

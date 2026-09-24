@@ -1,5 +1,8 @@
 $ErrorActionPreference = 'Stop'
-$a = [IO.Directory]::GetAccessControl($env:GBRAIN_TEST_ACL_PATH)
+$path = $env:GBRAIN_TEST_ACL_PATH
+$attributes = [IO.File]::GetAttributes($path)
+if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Unexpected reparse point' }
+$a = if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) { [IO.Directory]::GetAccessControl($path) } else { [IO.File]::GetAccessControl($path) }
 $u = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $owner = $a.GetOwner([Security.Principal.SecurityIdentifier]).Value
 $rules = @($a.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))

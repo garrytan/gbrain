@@ -170,8 +170,9 @@ jobs:
           GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
           GBRAIN_TEST_BACKUP_DOTNET_PROBE: '1'
         run: |
-          bun --no-env-file test --timeout=180000 --test-name-pattern '^private directory ACL setup compares cmdlet and direct dotnet calls$' test/backup-portability-native.serial.test.ts 2>&1 | tee "$RUNNER_TEMP/backup-dotnet.log"
-          grep -Fq 'Windows backup dotnet controls:' "$RUNNER_TEMP/backup-dotnet.log"
+          bun --no-env-file test --timeout=180000 --test-name-pattern '^private (directory|file) ACL setup compares cmdlet and direct dotnet calls$' test/backup-portability-native.serial.test.ts 2>&1 | tee "$RUNNER_TEMP/backup-dotnet.log"
+          grep -Fq 'Windows backup dotnet controls: {"kind":"directory",' "$RUNNER_TEMP/backup-dotnet.log"
+          grep -Fq 'Windows backup dotnet controls: {"kind":"file",' "$RUNNER_TEMP/backup-dotnet.log"
 
   musl:
     name: ${{ matrix.target }} / Bun ${{ matrix.bun }}
