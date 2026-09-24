@@ -1,7 +1,7 @@
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
- * replacing them with whitespace of equivalent length. Preserves byte offsets
- * for callers that care about positions.
+ * replacing non-newline characters with spaces. Preserves CR/LF characters
+ * and UTF-16 code-unit offsets for callers that care about positions.
  */
 export function stripCodeBlocks(content: string): string {
   let out = '';
@@ -9,9 +9,9 @@ export function stripCodeBlocks(content: string): string {
   while (i < content.length) {
     if (content.startsWith('```', i)) {
       const end = content.indexOf('```', i + 3);
-      if (end === -1) { out += ' '.repeat(content.length - i); break; }
-      out += ' '.repeat(end + 3 - i);
-      i = end + 3;
+      const afterFence = end === -1 ? content.length : end + 3;
+      out += content.slice(i, afterFence).replace(/[^\r\n]/g, ' ');
+      i = afterFence;
       continue;
     }
     if (content[i] === '`') {
@@ -21,7 +21,7 @@ export function stripCodeBlocks(content: string): string {
         i++;
         continue;
       }
-      out += ' '.repeat(end + 1 - i);
+      out += content.slice(i, end + 1).replace(/[^\r\n]/g, ' ');
       i = end + 1;
       continue;
     }
