@@ -8,9 +8,15 @@ status: research synthesis; separate frozen replication running
 # What actually helps an AI use its memory?
 
 **The field has found useful methods, but our excerpt experiment did not help.**
-The best next investigation is to replicate evidence-notes-before-answering,
-keeping the original evidence intact. That is a hypothesis worth testing, not a
-GBrain improvement we have demonstrated.
+The original recommendation was to replicate evidence-notes-before-answering,
+keeping the original evidence intact. That recommendation was a hypothesis,
+not evidence of a GBrain improvement.
+
+**Follow-up, 2026-09-24:** the separately frozen
+[GBrain reading comparison](../../eval/READING_NOTES_RESULTS.md) now shows a
+positive automated result, 324/361 versus 308/361, with source-verified
+improvements and explicit grading/cutoff caveats. The full paper replication
+is still running. This does not rehabilitate the failed excerpt selector.
 
 Think of an AI answering an open-book question. It has three jobs: keep useful
 records, find the right pages, and read those pages correctly. Giving it fewer

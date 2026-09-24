@@ -104,6 +104,7 @@ disagreement, compression losses, retrieval gains without answer gains,
 unanswerable-question exclusions, imported baselines, and unlike judge metrics.
 The compendium's recommendation is our synthesis, not a claim made by all papers.
 
-For GBrain's own measured outcome, the authoritative record remains
-[Answer-evidence packets: did not help](../../eval/ANSWER_PACKET_RESULTS.md).
+For GBrain's own measured outcomes, read
+[Answer-evidence packets: did not help](../../eval/ANSWER_PACKET_RESULTS.md)
+and the subsequent [intact-evidence reading results](../../eval/READING_NOTES_RESULTS.md).
 The broader [evaluation guide](../../eval-bench.md) links this collection.

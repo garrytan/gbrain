@@ -1,9 +1,11 @@
 # Intact-evidence reading replication
 
-**Status: running, not evidence of an improvement yet.** This follow-up tests
-whether writing brief evidence notes before answering helps without deleting
-any retrieved conversation. The [earlier excerpt experiment](ANSWER_PACKET_RESULTS.md)
-failed; its scores remain unchanged.
+**Status: GBrain transfer completed; full paper replication running.** The
+[measured results and audit](READING_NOTES_RESULTS.md) report the positive
+automated transfer score, verified examples, grading artifacts and cutoff
+responses. This protocol tests notes without deleting retrieved conversation.
+The [earlier excerpt experiment](ANSWER_PACKET_RESULTS.md) failed; its scores
+remain unchanged.
 
 The protocol and both cohorts were frozen on 2026-09-24 at
 21:01:05.530 UTC, before the first follow-up paid call at 21:01:20.585 UTC.
@@ -157,5 +159,5 @@ mechanics, **not** the effectiveness of notes.
 
 Raw conversation data, request/response receipts and private run files are
 not mirrored in this public document. Completed outcomes and audit findings
-will be added here after the frozen comparisons finish. Until then, the only
-completed measured result remains the negative excerpt pilot.
+are recorded separately in [the results](READING_NOTES_RESULTS.md), preserving
+this frozen protocol alongside both positive and negative observations.
