@@ -479,7 +479,7 @@ async function runLinksTimelinePass(
     }
     for (const ref of processedRefs) {
       if (incomplete.has(ref.slug) || overBudget()) {
-        skip('budget_exhausted:link_reconcile');
+        if (!incomplete.has(ref.slug)) skip('budget_exhausted:link_reconcile');
         stampable.delete(ref.slug);
         continue;
       }

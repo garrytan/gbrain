@@ -3,7 +3,7 @@
  * replacing non-newline characters with spaces. Preserves CR/LF characters
  * and UTF-16 code-unit offsets for callers that care about positions.
  */
-export function stripCodeBlocks(content: string): string {
+export function stripCodeBlocks(content: string, opts: { onHtmlComment?: (start: number, end: number) => void } = {}): string {
   let fence: string | undefined;
   let out = '';
   let i = 0;
@@ -20,6 +20,14 @@ export function stripCodeBlocks(content: string): string {
         i = end;
         continue;
       }
+    }
+    if (opts.onHtmlComment && content.startsWith('<!--', i)) {
+      const close = content.indexOf('-->', i + 4);
+      const end = close === -1 ? content.length : close + 3;
+      opts.onHtmlComment(i, end);
+      out += content.slice(i, end).replace(/[^\r\n]/g, ' ');
+      i = end;
+      continue;
     }
     if (content.startsWith('```', i)) {
       const end = content.indexOf('```', i + 3);

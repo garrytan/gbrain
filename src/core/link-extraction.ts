@@ -15,6 +15,7 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import type { PageType, EffectiveDateSource } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
+import { isValidSourceId } from './source-id.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
@@ -627,7 +628,8 @@ export async function extractPageLinks(
   pageType: PageType,
   resolver: SlugResolver,
   opts: { globalBasename?: boolean; skipFrontmatter?: boolean; pack?: LinkExtractionPack | null;
-    targetType?: (slug: string, sourceId?: string) => string | undefined } = {},
+    targetType?: (slug: string, sourceId?: string) => string | undefined;
+    onResolvedFrontmatterTarget?: (slug: string) => void } = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -755,28 +757,10 @@ export async function extractPageLinks(
       // flag off. Exact slugs only; downstream existence checks drop the miss.
       const bareDirect = new Set<string>();
       if (slashIdx === -1) {
-        const forms = new Set([slugifyPath(ref.slug), normalizeBasename(ref.slug)]);
-        const uniquePerson = [...forms].filter(form => opts.targetType?.(form) === 'person').length === 1;
-        if (pageType === 'meeting' && opts.targetType && !uniquePerson
-          && [...forms].filter(form => opts.targetType?.(form) !== undefined).length > 1) {
-          attendanceAmbiguous.add(ref.index ?? content.indexOf(ref.slug));
-        }
-        for (const form of forms) {
-          // Self-loop guard: `[[own-basename]]` on the root page itself.
-          if (!form || form === slug) continue;
-          bareDirect.add(form);
-          const litIdx = ref.index ?? content.indexOf(ref.slug);
-          const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
-          const inferred = typeFor(litContext, form, litIdx);
-          candidates.push({
-            targetSlug: form,
-            ...(inferred.canonicalAttendance && !uniquePerson ? { linkType: 'mentions' } : inferred),
-            context: litContext,
-            linkSource: 'markdown',
-          });
+        for (const form of [slugifyPath(ref.slug), normalizeBasename(ref.slug)]) {
+          if (form && form !== slug) bareDirect.add(form);
         }
       }
-      if (typeof resolver.resolveBasenameMatches !== 'function') continue;
       // Issue #972 (codex): resolve by the wikilink TARGET (ref.slug — the
       // text inside `[[...]]` before any `|`), NOT the display alias
       // (ref.name = match[2]). `[[struktura|the project]]` must resolve
@@ -794,27 +778,37 @@ export async function extractPageLinks(
       // above already covers it (#2576), so keeping it would double-emit.
       let matches: string[] = [];
       const slugified = ref.slug.includes('/') ? slugifyPath(ref.slug) : '';
-      if (slugified.includes('/')) {
+      if (resolver.resolveBasenameMatches && slugified.includes('/')) {
         const tail = slugified.slice(slugified.lastIndexOf('/') + 1);
         matches = (await resolver.resolveBasenameMatches(tail))
           .filter(m => m !== ref.slug && (m === slugified || m.endsWith(`/${slugified}`)));
-      } else if (opts.globalBasename) {
+      } else if (resolver.resolveBasenameMatches && opts.globalBasename) {
         // #4062: exclude the root-exact slugified form — the direct typed
         // candidate above already covers it (same rule the dir-qualified
         // branch applies to its raw literal). Keeping it would double-emit.
         matches = (await resolver.resolveBasenameMatches(ref.slug))
           .filter(m => !bareDirect.has(m));
       }
-      if (matches.length === 0) continue;
-      const idx = content.indexOf(ref.slug);
+      matches = matches.filter(matched => matched !== slug);
+      const idx = ref.index ?? content.indexOf(ref.slug);
       const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
+      const targets = [...new Set([...bareDirect, ...matches])];
+      const personTargets = targets.filter(target => opts.targetType
+        ? opts.targetType(target) === 'person' : target.startsWith('people/'));
+      const uniquePerson = personTargets.length === 1;
+      if (pageType === 'meeting' && opts.targetType && !uniquePerson
+        && targets.filter(target => opts.targetType!(target) !== undefined).length > 1) attendanceAmbiguous.add(idx);
+      for (const target of bareDirect) {
+        const inferred = typeFor(context, target, idx);
+        candidates.push({ targetSlug: target,
+          ...(inferred.canonicalAttendance && !uniquePerson ? { linkType: 'mentions' } : inferred),
+          context, linkSource: 'markdown' });
+      }
       for (const matched of matches) {
-        // Issue #972 (codex [P2]): a basename `[[own-tail]]` on its own page
-        // resolves back to itself — drop the self-loop.
-        if (matched === slug) continue;
+        const inferred = typeFor(context, matched, idx);
         candidates.push({
           targetSlug: matched,
-          linkType: WIKILINK_BASENAME_LINK_TYPE,
+          ...(inferred.canonicalAttendance && uniquePerson ? inferred : { linkType: WIKILINK_BASENAME_LINK_TYPE }),
           context,
           linkSource: 'wikilink-resolved',
         });
@@ -892,7 +886,8 @@ export async function extractPageLinks(
   let fmUnresolved: UnresolvedFrontmatterRef[] = [];
   let frontmatterAttendanceComplete = true;
   if (!opts.skipFrontmatter) {
-    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack, opts.targetType);
+    const fm = await extractFrontmatterLinks(slug, pageType, frontmatter, resolver, opts.globalBasename, pack, opts.targetType,
+      opts.onResolvedFrontmatterTarget);
     candidates.push(...fm.candidates);
     fmUnresolved = fm.unresolved;
     frontmatterAttendanceComplete = fm.attendanceComplete;
@@ -982,10 +977,15 @@ export function extractMarkdownLinks(content: string, positions = false): { name
 }
 
 export function attendanceEvidenceRanges(content: string): Array<[number, number]> {
-  const masked = stripCodeBlocks(content);
+  let visible = '', afterComment = 0;
+  const masked = stripCodeBlocks(content, { onHtmlComment(start, end) {
+    visible += content.slice(afterComment, start) + content.slice(start, end).replace(/[^\r\n]/g, ' ');
+    afterComment = end;
+  } });
+  visible += content.slice(afterComment);
   const lines: Array<{ text: string; start: number; end: number }> = [];
   let start = 0;
-  for (const text of content.split('\n')) {
+  for (const text of visible.split('\n')) {
     lines.push({ text, start, end: start + text.length });
     start += text.length + 1;
   }
@@ -1471,8 +1471,8 @@ export function makeResolver(
   return {
     async resolveAttendance(name: string, dirHint?: string | string[]): Promise<string | null> {
       let value = name.trim();
-      if (value.includes(':')) {
-        const colon = value.indexOf(':');
+      const colon = value.indexOf(':');
+      if (colon !== -1 && isValidSourceId(value.slice(0, colon))) {
         if (value.slice(0, colon) !== (opts.sourceId ?? 'default')) return null;
         value = value.slice(colon + 1);
       }
@@ -1639,6 +1639,7 @@ export async function extractFrontmatterLinks(
   globalBasename = false,
   pack?: LinkExtractionPack | null,
   targetType?: (slug: string) => string | undefined,
+  onResolvedTarget?: (slug: string) => void,
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
@@ -1719,15 +1720,16 @@ export async function extractFrontmatterLinks(
           if (matches.length === 1) resolved = matches[0];
         }
         if (!resolved) {
-          if (canonicalAttendance) attendanceComplete = false;
+          if (mapping.type === 'attended') attendanceComplete = false;
           unresolved.push({ field, name });
           continue;
         }
+        onResolvedTarget?.(resolved);
         const expectedType = packMappings.includes(mapping)
           ? pack?.link_types.find(lt => lt.name === mapping.type)?.inference?.target_type
           : mapping.type === 'attended' && mapping.direction === 'incoming' ? 'person' : undefined;
         if (expectedType && (targetType || packMappings.includes(mapping)) && targetType?.(resolved) !== expectedType) {
-          if (targetType?.(resolved) === undefined && canonicalAttendance) attendanceComplete = false;
+          if (targetType?.(resolved) === undefined && mapping.type === 'attended') attendanceComplete = false;
           unresolved.push({ field, name, reason: 'target_type_mismatch' });
           continue;
         }

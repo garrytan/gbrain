@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -62,7 +62,13 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       return (await buildRelationalArm(engine, 'Who attended meetings/planning?', { sourceId })).map(row => row.slug);
     }
     async function extract(lane: string, all = false) {
-      if (lane === 'db') return runExtract(engine, [all ? 'all' : 'links', '--source', 'db', '--source-id', sourceId]);
+      if (lane === 'db') {
+        const output = spyOn(console, 'log').mockImplementation(() => {});
+        try {
+          await runExtract(engine, [all ? 'all' : 'links', '--source', 'db', '--source-id', sourceId, '--json']);
+          return JSON.parse(output.mock.calls.at(-1)![0]);
+        } finally { output.mockRestore(); }
+      }
       else if (lane === 'stale') return extractStaleFromDB(engine, { sourceIdFilter: sourceId, quiet: true, dryRun: false, jsonMode: false, catchUp: true });
       else if (lane === 'fs-batch') return runExtractCore(engine, { mode: all ? 'all' : 'links', dir: root, sourceId, quiet: true });
       else if (lane === 'fs-incremental') return runExtractCore(engine, { mode: all ? 'all' : 'links', dir: root, sourceId, slugs: [meeting, person], quiet: true });
@@ -73,7 +79,7 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
           const prepared = await prepareAutomaticLinks(engine, slug, page, sourceId);
           await engine.transaction(async tx => { await tx.lockPageKeys(prepared.pageKeys); await prepared.apply(tx); });
         }
-      } else await runMaintenanceSweep(engine, { sourceId, budgetMs: 60_000, batchLimit: 20,
+      } else return runMaintenanceSweep(engine, { sourceId, budgetMs: 60_000, batchLimit: 20,
         capabilities: { embeddings: { available: false }, extraction: { available: false }, search: 'keyword-only', mode: 'keyless' } });
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch']) {
@@ -97,6 +103,33 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       });
     }
     for (const lane of ['fs-sync', 'fs-incremental', 'fs-batch', 'prepare', 'sweep', 'db', 'stale']) {
+      test(`${lane}: a unique bare attendee resolves, survives re-extraction, and retracts with its evidence`, async () => {
+        await engine.setConfig('link_resolution.global_basename', 'true');
+        try {
+          await seed(meeting, 'meeting', 'Attendees: [[Alice Example]]');
+          await extract(lane, true);
+          expect(await attendees()).toEqual([person]);
+          const rows = await engine.executeRaw<{ producer: string; origin: string }>(`SELECT l.link_source AS producer,o.slug AS origin
+            FROM links l JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND o.slug=$2 AND l.link_type='attended'`, [sourceId, meeting]);
+          expect(rows).toEqual([{ producer: 'wikilink-resolved', origin: meeting }]);
+          await seed(person, 'person', 'An updated person with no attendance claim.');
+          await extract(lane, true);
+          expect(await attendees()).toEqual([person]);
+          await seed(meeting, 'meeting', 'The attendance list was removed.');
+          await extract(lane, true);
+          expect(await attendees()).toEqual([]);
+        } finally {
+          await engine.setConfig('link_resolution.global_basename', 'false');
+        }
+      });
+      test(`${lane}: HTML-commented attendance retracts the claim without asserting hidden evidence`, async () => {
+        await seed(meeting, 'meeting', positive);
+        await extract(lane);
+        expect(await attendees()).toEqual([person]);
+        await seed(meeting, 'meeting', `<!--\n${positive}\n-->`);
+        await extract(lane);
+        expect(await attendees()).toEqual([]);
+      });
       test(`${lane}: missing display-label slugs do not make actual attendance incomplete`, async () => {
         await seed(meeting, 'meeting', 'Attendees: [people/missing-example](../people/alice-example.md)');
         await extract(lane);
@@ -138,6 +171,13 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1 AND slug=$2', [sourceId, meeting]);
         const unresolved = await extract(lane, true);
         if (lane === 'fs-sync') expect((unresolved as { processed: string[] }).processed).not.toContain(meeting);
+        if (lane === 'db') expect((unresolved as { skipped_attendance_incomplete: number }).skipped_attendance_incomplete).toBe(1);
+        if (lane === 'stale') expect((unresolved as { skippedAttendanceIncomplete: number }).skippedAttendanceIncomplete).toBe(1);
+        if (lane === 'sweep') {
+          const skips = (unresolved as Awaited<ReturnType<typeof runMaintenanceSweep>>).skipped;
+          expect(skips).toContainEqual({ reason: 'attendance_resolution_incomplete', count: 1 });
+          expect(skips.some(row => row.reason === 'budget_exhausted:link_reconcile')).toBe(false);
+        }
         expect(await attendees()).toEqual([person]);
         expect((await engine.executeRaw<{ links_extracted_at: string | null }>('SELECT links_extracted_at FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, meeting]))[0].links_extracted_at).toBeNull();
       });
@@ -218,6 +258,72 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         expect(await attendees()).toEqual([]);
       });
     }
+    test('local publication discovers typed pack frontmatter before admitting edges and preserves unchanged row identity', async () => {
+      await engine.setConfig('schema_pack', 'company-brain');
+      const op = operations.find(op => op.name === 'put_page')!;
+      const ctx = { engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
+        dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+      const content = `---\ntype: meeting\ntitle: Planning\nattendees: ["${person}"]\n---\nNo body references.`;
+      const created = await op.handler(ctx, { slug: meeting, content }) as { auto_links: { errors: number } };
+      expect(created.auto_links.errors).toBe(0);
+      const rows = () => engine.executeRaw<{ id: string; from_slug: string; to_slug: string; producer: string }>(`SELECT l.id::text,f.slug AS from_slug,t.slug AS to_slug,l.link_source AS producer
+        FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+        WHERE f.source_id=$1 AND f.slug=$2 AND l.link_type='attended'`, [sourceId, meeting]);
+      const before = await rows();
+      expect(before).toHaveLength(1);
+      expect(before[0]).toMatchObject({ from_slug: meeting, to_slug: person, producer: 'frontmatter' });
+      const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
+      const updated = await op.handler(ctx, { slug: meeting, expected_revision: snapshot.revision,
+        content: `${content}\nAn unrelated edit.` }) as { auto_links: { created: number; removed: number; errors: number } };
+      expect(updated.auto_links).toMatchObject({ created: 0, removed: 0, errors: 0 });
+      expect(await rows()).toEqual(before);
+    });
+    test('local publication does not admit a non-person into typed pack attendance', async () => {
+      await engine.setConfig('schema_pack', 'company-brain');
+      await seed('people/company-example', 'company', 'Not a person.');
+      const op = operations.find(op => op.name === 'put_page')!;
+      const result = await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
+        dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting,
+        content: '---\ntype: meeting\ntitle: Planning\nattendees: ["people/company-example"]\n---\nNo body references.' }) as {
+          auto_links: { created: number; unresolved_count: number } };
+      expect(result.auto_links.created).toBe(0);
+      expect(result.auto_links.unresolved_count).toBe(1);
+      expect((await engine.getLinks(meeting, { sourceId })).filter(row => row.link_type === 'attended')).toEqual([]);
+    });
+    test('local publication retains typed pack attendance when resolved endpoint metadata is unavailable', async () => {
+      await engine.setConfig('schema_pack', 'company-brain');
+      await seed(meeting, 'meeting', 'No body references.', { attendees: [person] });
+      await engine.addLinksBatch([{ from_slug: meeting, to_slug: person, from_source_id: sourceId, to_source_id: sourceId,
+        link_type: 'attended', link_source: 'frontmatter', origin_slug: meeting, origin_source_id: sourceId, origin_field: 'attendees' }]);
+      const before = await engine.getLinks(meeting, { sourceId });
+      const snapshot = (await engine.readPageSnapshot(meeting, { sourceId }))!;
+      const executeRaw = engine.executeRaw;
+      const metadata = spyOn(engine, 'executeRaw').mockImplementation(function<T>(this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) {
+        return sql === 'SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL'
+          ? Promise.resolve<T[]>([]) : executeRaw.bind(this)<T>(sql, params, opts);
+      });
+      try {
+        const op = operations.find(op => op.name === 'put_page')!;
+        const result = await op.handler({ engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,
+          dryRun: false, logger: { info() {}, warn() {}, error() {} } }, { slug: meeting, expected_revision: snapshot.revision,
+          content: `---\ntype: meeting\ntitle: Planning\nattendees: ["${person}"]\n---\nAn unrelated edit.` }) as { auto_links: { errors: number } };
+        expect(result.auto_links.errors).toBe(1);
+        expect((await engine.getPage(meeting, { sourceId }))!.compiled_truth).toBe('An unrelated edit.');
+        expect(await engine.getLinks(meeting, { sourceId })).toEqual(before);
+      } finally { metadata.mockRestore(); }
+    });
+    test('typed pack attendance preserves prior edges when the new target cannot be resolved', async () => {
+      await engine.setConfig('schema_pack', 'company-brain');
+      await seed(meeting, 'meeting', 'No body references.', { attendees: [person] });
+      await engine.addLinksBatch([{ from_slug: meeting, to_slug: person, from_source_id: sourceId, to_source_id: sourceId,
+        link_type: 'attended', link_source: 'frontmatter', origin_slug: meeting, origin_source_id: sourceId, origin_field: 'attendees' }]);
+      const before = await engine.getLinks(meeting, { sourceId });
+      const page = (await engine.getPage(meeting, { sourceId }))!;
+      const prepared = await prepareAutomaticLinks(engine, meeting, { ...page, frontmatter: { attendees: ['people/missing-example'] } }, sourceId);
+      const result = await engine.transaction(async tx => { await tx.lockPageKeys(prepared.pageKeys); return prepared.apply(tx); });
+      expect(result.errors).toBe(1);
+      expect(await engine.getLinks(meeting, { sourceId })).toEqual(before);
+    });
     test('local put_page and remote deferred sweep preserve the actual Markdown producer', async () => {
       const op = operations.find(op => op.name === 'put_page')!;
       const ctx = { engine, config: { engine: kind as 'pglite' | 'postgres' }, remote: false, sourceId,

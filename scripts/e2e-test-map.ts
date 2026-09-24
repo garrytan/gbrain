@@ -134,7 +134,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // differently on real pgvector than on PGLite.
   "src/core/embedding-migration.ts": ["test/e2e/migrate-embeddings-postgres.test.ts"],
   "src/core/retrieval-upgrade-planner.ts": ["test/e2e/migrate-embeddings-postgres.test.ts"],
-  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/extract-timeline-attendance-postgres.test.ts"],
+  "src/commands/extract-attendance-repair.ts": ["test/e2e/attendance-repair-postgres.test.ts"],
   "src/commands/migrate-engine.ts": [
     "test/e2e/multi-source-bug-class.test.ts",
     "test/e2e/migrate-engine-pglite-to-postgres.test.ts",
@@ -336,7 +337,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts"],
   // Knowledge graph layer feeds graph-quality.
   "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts"],
-  "src/core/derived-links.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/core/attendance-repair.ts": ["test/e2e/attendance-repair-postgres.test.ts"],
+  "src/core/extract-timeline-from-meetings.ts": ["test/e2e/extract-timeline-attendance-postgres.test.ts"],
+  "src/core/derived-links.ts": ["test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/attendance-repair-postgres.test.ts"],
   "src/core/link-reconciliation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
   "src/core/persistence/links-preparation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
   "src/core/sweep.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],

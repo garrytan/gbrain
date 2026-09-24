@@ -25,6 +25,23 @@ export class DerivedLinkRepairRequiredError extends Error {
   }
 }
 
+export async function applyAttendanceDelta(tx: Pick<BrainEngine, 'executeRaw' | 'addLinksBatch'>,
+  origin: { id: string; slug: string; source_id: string; type: string }, remove: string[], additions: LinkBatchInput[]) {
+  if (origin.type !== 'meeting' || remove.length > 512 || additions.length > 256
+    || additions.some(row => row.link_type !== 'attended' || row.to_slug !== origin.slug
+      || row.to_source_id !== origin.source_id || row.from_source_id !== origin.source_id
+      || row.origin_slug !== origin.slug || row.origin_source_id !== origin.source_id
+      || row.link_source !== 'markdown')) throw new Error('Invalid attendance delta');
+  const removed = remove.length ? await tx.executeRaw(`DELETE FROM links WHERE id=ANY($1::bigint[])
+    AND link_type='attended' AND link_source='markdown'
+    AND (origin_page_id=$2::bigint OR (origin_page_id IS NULL AND from_page_id=$2::bigint AND link_source='markdown'))
+    RETURNING id`, [remove, origin.id]) : [];
+  if (removed.length !== remove.length) throw new Error('Attendance removal changed');
+  const created = additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0;
+  if (created !== additions.length) throw new Error('Attendance insertion did not persist the approved delta');
+  return { created, removed: removed.length };
+}
+
 export async function replaceDerivedLinks(
   engine: Pick<BrainEngine, 'transaction'>,
   origin: DerivedLinkOrigin,
@@ -40,7 +57,7 @@ export async function replaceDerivedLinks(
       || (link.origin_source_id && link.origin_source_id !== origin.sourceId)) {
       throw new TypeError('Derived link origin does not match the replacement scope');
     }
-    const reversedAttendance = producer === 'markdown' && link.link_type === 'attended'
+    const reversedAttendance = (producer === 'markdown' || producer === 'wikilink-resolved') && link.link_type === 'attended'
       && link.origin_slug === origin.slug && link.origin_source_id === origin.sourceId
       && (link.from_slug !== origin.slug || (link.from_source_id ?? origin.sourceId) !== origin.sourceId)
       && link.to_slug === origin.slug && (link.to_source_id ?? origin.sourceId) === origin.sourceId;
@@ -88,7 +105,7 @@ export async function replaceDerivedLinks(
       && row.to_slug === origin.slug && row.to_source_id === origin.sourceId
       && (row.from_slug !== origin.slug || row.from_source_id !== origin.sourceId));
     if (reversed.length) {
-      if (snapshot.page.type !== 'meeting' || reversed.some(row => row.link_source === 'markdown' && !opts.expectedEndpoints?.some(endpoint =>
+      if (snapshot.page.type !== 'meeting' || reversed.some(row => row.link_source !== 'frontmatter' && !opts.expectedEndpoints?.some(endpoint =>
         endpoint.slug === row.from_slug && endpoint.sourceId === row.from_source_id))) {
         throw new TypeError('Canonical attendance requires a meeting origin and revision-bound person endpoints');
       }

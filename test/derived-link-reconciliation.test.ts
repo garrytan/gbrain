@@ -71,6 +71,24 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
       return { slug, sourceId, expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation };
     }
 
+    test('reversed basename attendance requires the same origin, revision and person guards as Markdown attendance', async () => {
+      await seed('meetings/planning', 'meeting');
+      await seed('people/alice-example', 'person');
+      const scope = await origin('meetings/planning');
+      const person = (await engine.readPageSnapshot('people/alice-example', { sourceId }))!;
+      const row = { from_slug: person.page.slug, to_slug: scope.slug, link_type: 'attended', link_source: 'wikilink-resolved',
+        from_source_id: sourceId, to_source_id: sourceId, origin_slug: scope.slug, origin_source_id: sourceId };
+      await expect(engine.replaceDerivedLinks(scope, [row])).rejects.toThrow('revision-bound person endpoints');
+      expect(await graph()).toEqual([]);
+      const expectedEndpoints = [{ slug: person.page.slug, sourceId, revision: person.revision }];
+      expect(await engine.replaceDerivedLinks(scope, [row], { expectedEndpoints })).toEqual({ created: 1, removed: 0 });
+      await seed(person.page.slug, 'company');
+      const changed = (await engine.readPageSnapshot(person.page.slug, { sourceId }))!;
+      await expect(engine.replaceDerivedLinks(scope, [row], { expectedEndpoints })).rejects.toThrow('changed after type resolution');
+      await expect(engine.replaceDerivedLinks(scope, [row], { expectedEndpoints: [{ ...expectedEndpoints[0], revision: changed.revision }] }))
+        .rejects.toThrow('person endpoints');
+    });
+
     test('retained frontmatter identities update and clear evidence metadata', async () => {
       await seed('meetings/planning', 'meeting');
       await seed('people/alice-example', 'person');

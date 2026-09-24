@@ -1,11 +1,52 @@
 import { expect, test } from 'bun:test';
-import { extractPageLinks, hasAttendanceEvidence, makeResolver } from '../src/core/link-extraction.ts';
+import { attendanceEvidenceRanges, extractPageLinks, hasAttendanceEvidence, makeResolver } from '../src/core/link-extraction.ts';
 import { extractLinksFromFile } from '../src/commands/extract.ts';
 
 const person = 'people/alice-example';
 const meeting = 'meetings/planning';
 const resolver = { async resolve(value: string) { return value === person ? person : null; } };
 const types = new Map([[person, 'person'], [meeting, 'meeting']]);
+
+test('a unique basename is canonical evidence while missing and ambiguous names remain incomplete', async () => {
+  for (const targets of [[person], [], [person, 'archive/alice-example']]) {
+    const basenameResolver = { ...resolver, async resolveBasenameMatches() { return targets; } };
+    const result = await extractPageLinks(meeting, 'Attendees: [[Alice Example]]', {}, 'meeting', basenameResolver,
+      { globalBasename: true, targetType: slug => targets.includes(slug) ? 'person' : undefined });
+    expect(result.attendanceComplete).toBe(targets.length === 1);
+    expect(result.candidates.filter(row => row.canonicalAttendance).map(row => row.targetSlug)).toEqual(targets.length === 1 ? [person] : []);
+  }
+});
+
+test('commented attendance cannot borrow visible evidence and masking preserves CRLF and UTF-16 positions', async () => {
+  const body = `😀\r\n<!--\r\nAttendees: [[people/hidden-example]]\r\n-->\r\nAttendees: [[${person}]]`;
+  const ranges = attendanceEvidenceRanges(body);
+  expect(hasAttendanceEvidence(ranges, body.indexOf('[[people/hidden-example]]'))).toBe(false);
+  expect(hasAttendanceEvidence(ranges, body.indexOf(`[[${person}]]`))).toBe(true);
+  const result = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+  expect(result.attendanceComplete).toBe(true);
+  expect(result.candidates.filter(row => row.canonicalAttendance).map(row => row.targetSlug)).toEqual([person]);
+  expect(attendanceEvidenceRanges(`<!--\nAttendees: [[${person}]]`)).toEqual([]);
+});
+
+test('strict attendance names with a non-source colon remain eligible for exact title resolution', async () => {
+  const calls: unknown[][] = [];
+  const engine = { async executeRaw(_sql: string, args: unknown[]) { calls.push(args); return [{ slug: person }]; } };
+  const live = makeResolver(engine as never, { mode: 'batch', sourceId: 'example' });
+  expect(await live.resolveAttendance!('Example Person: host', 'people')).toBe(person);
+  expect(calls[0]?.[2]).toBe('Example Person: host');
+  expect(await live.resolveAttendance!(`other:${person}`, 'people')).toBeNull();
+  expect(calls).toHaveLength(1);
+});
+
+for (const example of ['```html\n<!--\n```', '~~~html\n<!--\n~~~', '`<!--`']) {
+  test(`a comment opener inside code does not hide later attendance: ${JSON.stringify(example)}`, async () => {
+    const body = `${example}\nAttendees: [[${person}]]`;
+    const db = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+    const fs = await extractLinksFromFile(`---\ntype: meeting\n---\n${body}`, `${meeting}.md`, new Set(types.keys()), { pageTypes: types });
+    expect(db.candidates.filter(row => row.canonicalAttendance).map(row => row.targetSlug)).toEqual([person]);
+    expect(fs.filter(row => row.link_type === 'attended').map(row => row.from_slug)).toEqual([person]);
+  });
+}
 
 for (const fence of ['~~~', '```', '~~~~', '````']) {
   for (const falseClose of [...new Set([fence.slice(0, 2), fence.slice(0, -1), `${fence} not a closing fence`, fence[0] === '~' ? '```' : '~~~'])]) {

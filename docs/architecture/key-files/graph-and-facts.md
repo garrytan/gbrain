@@ -8,7 +8,7 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
 The shared and filesystem extractors recognize canonical attendance only from
 supported explicit lists and uniquely resolved person targets when no pack owns
 the relationship. Callers resolve source identities before
-`resolvedLinkCandidate` orients a Markdown claim as person-to-meeting with the
+`resolvedLinkCandidate` orients a Markdown or uniquely resolved bare-wikilink claim as person-to-meeting with the
 meeting as its origin.
 Only parsed link targets can make canonical body claims; display-label slugs stay
 ordinary mentions. `hasAttendanceEvidence` indexes the ordered, nonoverlapping
@@ -20,6 +20,10 @@ and revisions; its `preserveExisting` path keeps matching row identities while
 refreshing their evidence context and origin field. Ambiguous bare-name spellings
 remain mentions rather than asserted attendees, and nonmatching constrained pack
 rules suppress canonical fallback in both extractors.
+Automatic preparation discovers resolved frontmatter targets before applying
+pack target-type constraints, so an unchanged pack-owned attendance row is not
+deleted merely because its endpoint appears only in frontmatter. Missing
+endpoint metadata remains incomplete; known non-person targets are not admitted.
 Filesystem attendance reconciliation excludes legacy rows whose producer is
 unknown; existing canonical-write and sweep handling of those rows is unchanged.
 `prepareAutomaticLinks`, DB/stale extraction, filesystem extraction, and sweep
@@ -31,7 +35,9 @@ missing, ambiguous, or denied attendance resolution preserves the prior graph an
 does not advance extraction watermarks. Incomplete local preparation still allows
 `put_page` to commit the note, with auto-link error metadata and retryable extraction.
 The shared Markdown mask preserves positions while respecting backtick and tilde
-fence closing rules. Pack-owned outgoing mappings,
+fence closing rules. Attendance opts into comment masking in that same scanner,
+so comment openers inside code do not conceal later evidence. Other callers keep
+their existing code-only masking. Pack-owned outgoing mappings,
 including the shipped base and company packs, stay unchanged. See
 [explicit attendance evidence](../../guides/attendance-evidence.md) for grammar,
 coverage limits, and the distinction from a historical repair.
@@ -45,6 +51,8 @@ The opted-in thin CLI uses engine-free scope resolution and refuses `--brain`;
 its source tests execute the real remote dispatcher, not only a canned response.
 
 ## Files
+
+- `src/core/extract-timeline-from-meetings.ts` — normalizes canonical incoming and pack-owned outgoing `attended` edges into meeting/person roles before timeline fan-out. SQL requires a live person and live meeting (including legacy meeting notes); existing private-meeting filtering, source opt-in and source-qualified deduplication still apply. Dual-engine tests in `test/extract-timeline-attendance.test.ts` use an empty gazetteer so a body-mention fallback cannot conceal a broken attendance consumer.
 
 - `src/core/ops/facts.ts` — shared fact/memory operations, including `recall`. Recall keeps source/visibility and fact filters before per-arm candidate limits. Its default/explicit `facts_first` packing preserves the frozen memory-verb contract, including the positive sub-one budget quirk. Optional `query_first` packs the ranked page prefix first only with a nonblank query and positive finite budget; floor-zero and exhausted remainders explicitly return empty arms rather than call the unbounded zero-budget packer. Neither arm skips oversized prefix items or truncates. No-query and inactive-budget paths keep legacy behavior. Only policy-supplied calls add `budget_packing` effective-policy/reason and candidate/kept/dropped/estimated-used accounting. Counter sums match the frozen fields. Do not change the global packer or fact relevance to implement this policy. `test/recall-budget-policy.test.ts` pins numeric boundaries, compatibility, candidate ordering, filters, source/private/safe-projection behavior and shared transport validation.
 

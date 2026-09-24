@@ -40,6 +40,7 @@
 
 import { readFileSync, readdirSync, lstatSync, existsSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { ATTENDANCE_REPAIR_HELP, isAttendanceRepairRequest } from './extract-attendance-repair.ts';
 import { join, relative, dirname } from 'path';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from '../core/engine.ts';
 import type { PageType } from '../core/types.ts';
@@ -242,6 +243,7 @@ interface ExtractResult {
   pages_processed: number;
   /** #2589: drop counters, present on the DB links path only (additive). */
   skipped_missing_target?: number;
+  skipped_attendance_incomplete?: number;
   skipped_cross_source?: number;
 }
 
@@ -511,7 +513,7 @@ export async function extractLinksFromFile(
         .map(form => join(dirname(target), form)).filter(candidate => allSlugs.has(candidate)
           && (opts?.pageTypes?.get(candidate) ?? parseMarkdown('', `${candidate}.md`, { activePack }).type) === 'person')).size > 1;
       const canonicalAttendance = !inferred && guessedPageType === 'meeting' && targetType === 'person'
-        && !isBasename && !ambiguousAttendance
+        && resolvedSlugs.length === 1 && !ambiguousAttendance
         && !pack?.link_types.some(lt => lt.name === 'attended' && (lt.inference?.page_type || lt.inference?.target_type))
         && hasAttendanceEvidence(attendanceRanges, position);
       if (!inferred) {
@@ -524,7 +526,7 @@ export async function extractLinksFromFile(
       const link: ExtractedLink = {
         from_slug: slug,
         to_slug: target,
-        link_type: isBasename
+        link_type: isBasename && !canonicalAttendance
           ? WIKILINK_BASENAME_LINK_TYPE
           : inferred,
         context: canonicalAttendance ? evidence : context,
@@ -788,6 +790,7 @@ Extraction:
   it. It is NOT the content's authored/effective date.
 
 Incremental sweep:
+${ATTENDANCE_REPAIR_HELP}
   gbrain extract --stale [--source-id <id>] [--include-frontmatter]
                          [--catch-up] [--dry-run] [--json]
       Re-extract links + timeline only for stale pages. DB-source; safe to
@@ -800,10 +803,15 @@ Inspection:
 Status:
   gbrain extract status [--source-id ID] [--kind X] [--verbose] [--json]`;
 
-export async function runExtract(engine: BrainEngine, args: string[]) {
+export async function runExtract(engine: BrainEngine, args: string[], authority?: { remote: boolean }) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(EXTRACT_HELP);
     return;
+  }
+
+  if (isAttendanceRepairRequest(args)) {
+    const { runAttendanceRepair } = await import('./extract-attendance-repair.ts');
+    return runAttendanceRepair(engine, args, { remote: authority?.remote !== false });
   }
 
   const subcommand = args[0];
@@ -1131,6 +1139,7 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
           // additive fields, only present on the DB links path.
           result.skipped_missing_target = r.skippedMissingTarget;
           result.skipped_cross_source = r.skippedCrossSource;
+          if (r.skippedAttendanceIncomplete) result.skipped_attendance_incomplete = r.skippedAttendanceIncomplete;
         }
         if (subcommand === 'timeline' || subcommand === 'all') {
           const r = await extractTimelineFromDB(engine, dryRun, jsonMode, typeFilter, since, { sourceIdFilter, inferDates });
@@ -1712,7 +1721,7 @@ async function extractLinksFromDB(
   typeFilter: PageType | undefined,
   since: string | undefined,
   opts?: { includeFrontmatter?: boolean; sourceIdFilter?: string; stampWatermark?: boolean },
-): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[]; skippedMissingTarget: number; skippedCrossSource: number }> {
+): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[]; skippedMissingTarget: number; skippedCrossSource: number; skippedAttendanceIncomplete: number }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
   const sourceIdFilter = opts?.sourceIdFilter;
   // C3 (D6): the links_extracted_at watermark covers links AND timeline, so a
@@ -1780,6 +1789,7 @@ async function extractLinksFromDB(
   );
   const targetMetadata = new Map((await loadLinkPageMetadata(engine)).map(p => [`${p.source_id}\0${p.slug}`, p]));
   let processed = 0, created = 0;
+  let skippedAttendanceIncomplete = 0;
   // #2576: skipped-candidate counter — see extractStaleFromDB's twin.
   let skippedMissingTarget = 0;
   // #2589: target resolved (via global_basename) to a page that exists only
@@ -1822,7 +1832,7 @@ async function extractLinksFromDB(
       } },
     );
     unresolved.push(...extracted.unresolved);
-    if (!extracted.attendanceComplete) continue;
+    if (!extracted.attendanceComplete) { skippedAttendanceIncomplete++; continue; }
 
     for (const c of extracted.candidates) {
       // v0.32.8 F10 cross-source link resolution, extracted to the shared pure
@@ -1892,6 +1902,7 @@ async function extractLinksFromDB(
   if (!jsonMode) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
+    if (skippedAttendanceIncomplete) console.log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -1916,7 +1927,7 @@ async function extractLinksFromDB(
   // #2589: the counters ride the return value so machine consumers (and the
   // --json path, which has no summary event on this path) can see the drops —
   // "counted, never silent" must hold beyond human-mode console lines.
-  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource };
+  return { created, pages: processed, unresolved, skippedMissingTarget, skippedCrossSource, skippedAttendanceIncomplete };
 }
 
 async function extractTimelineFromDB(
@@ -2056,7 +2067,7 @@ export async function extractStaleFromDB(
      */
     timeBudgetMs?: number;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
@@ -2122,6 +2133,7 @@ export async function extractStaleFromDB(
   const startMs = Date.now();
   let afterPageId = 0;
   let linksCreated = 0, timelineCreated = 0, pagesProcessed = 0;
+  let skippedAttendanceIncomplete = 0;
   let budgetHit = false;
   // #2576: candidates whose endpoint pages don't exist are skipped, not
   // persisted. Counted so a dropped reference is observable in the summary
@@ -2157,7 +2169,7 @@ export async function extractStaleFromDB(
           return resolved.ok ? targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
         } },
       );
-      if (!extracted.attendanceComplete) continue;
+      if (!extracted.attendanceComplete) { skippedAttendanceIncomplete++; continue; }
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(
           c, page.slug, page.source_id, allSlugs, slugToSources,
@@ -2225,6 +2237,7 @@ export async function extractStaleFromDB(
 
   if (!jsonMode) {
     log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
+    if (skippedAttendanceIncomplete) log(`Skipped ${skippedAttendanceIncomplete} page(s) with unresolved attendance; prior links and extraction watermarks were preserved.`);
     if (skippedMissingTarget > 0) {
       log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -2239,9 +2252,11 @@ export async function extractStaleFromDB(
       action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
       skipped_missing_target: skippedMissingTarget, skipped_cross_source: skippedCrossSource,
+      ...(skippedAttendanceIncomplete ? { skipped_attendance_incomplete: skippedAttendanceIncomplete } : {}),
     }) + '\n');
   }
-  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource };
+  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource,
+    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}) };
 }
 
 /**

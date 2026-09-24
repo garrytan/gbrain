@@ -172,7 +172,7 @@ export async function fileLinkOwnership(engine: BrainEngine, sourceId: string) {
   const resolve = (slug: string, candidate: LinkCandidate) => resolveCandidateSources(candidate, slug, sourceId,
     allSlugs, slugToSources, policy.allowCrossSource, policy);
   const origins = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT o.slug FROM links l
-    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','frontmatter')
+    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
       AND l.link_type='attended' AND l.to_page_id=l.origin_page_id`, [sourceId]);
   return { metadata, resolver, resolve, origins: new Set(origins.map(row => row.slug)) };
 }

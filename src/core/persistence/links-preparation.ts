@@ -10,8 +10,10 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   const opts = { globalBasename: await isGlobalBasenameEnabled(engine),
     pack: (await loadActivePackForLocalEngine(engine))?.manifest ?? null };
   const content = `${page.compiled_truth}\n${page.timeline}`;
-  const initial = await extractPageLinks(slug, content, page.frontmatter, page.type, resolver, opts);
-  const keys = [...new Set([slug, ...initial.candidates.flatMap(c => [c.targetSlug, c.fromSlug ?? slug])])].sort();
+  const referenced = new Set([slug]);
+  const initial = await extractPageLinks(slug, content, page.frontmatter, page.type, resolver,
+    { ...opts, onResolvedFrontmatterTarget: target => referenced.add(target) });
+  const keys = [...new Set([...referenced, ...initial.candidates.flatMap(c => [c.targetSlug, c.fromSlug ?? slug])])].sort();
   const endpointRows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
     'SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL', [keys]);
   const endpoints = indexLinkSources(endpointRows);
