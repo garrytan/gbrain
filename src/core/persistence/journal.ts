@@ -13,6 +13,7 @@ import {
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
   type SqlEngine, type WriteAuthority, type WriteRequest,
 } from './model.ts';
+import { isWriteBlockedReason } from './types.ts';
 
 export interface WriteAdmission {
   principal: Principal;
@@ -279,7 +280,7 @@ export function receiptFor(row: WriteRequest, facts?: WriteHealthFacts, now = Da
     request_id: row.request_id, state: row.state,
     ...writeHealth(row, facts, now),
     ...(row.error_code ? { write_error: row.error_code } : {}),
-    ...(row.blocked_reason ? { blocked_reason: row.blocked_reason } : {}),
+    ...(isWriteBlockedReason(row.blocked_reason) ? { blocked_reason: row.blocked_reason } : {}),
     ...(row.compacted ? { compacted: true } : {}),
     created_at: new Date(row.created_at).toISOString(), updated_at: new Date(row.updated_at).toISOString(),
   };

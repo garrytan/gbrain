@@ -114,6 +114,29 @@ describe('public write receipts', () => {
     expect(isWriteReceipt({ ...receipt('committed'), retry_after_ms: 1000 })).toBe(false);
   });
 
+  test('blocked reasons distinguish owner loss from ordinary queueing without changing state', () => {
+    const blocked = { ...receipt('queued'), blocked_reason: 'owner_unavailable' as const };
+    expect(isWriteReceipt(blocked)).toBe(true);
+    expect(publicWriteReceipt(blocked)).toEqual(blocked);
+    expect(publicWriteReceipt(receipt('queued'))).not.toHaveProperty('blocked_reason');
+    const uncertain = { ...receipt('recovering'), blocked_reason: 'commit_outcome_uncertain' as const };
+    expect(JSON.parse(JSON.stringify(Object.assign(new OperationError('write_pending', 'Pending.'), { writeRequest: uncertain })))
+      .write_request).toEqual(uncertain);
+    // A reason from a newer server is dropped, never a reason to discard the receipt.
+    const newer = { ...receipt('queued'), blocked_reason: 'future_reason' } as unknown as WriteReceipt;
+    expect(isWriteReceipt(newer)).toBe(true);
+    expect(publicWriteReceipt(newer)).toEqual(receipt('queued'));
+    for (const bad of ['', 7, null]) expect(isWriteReceipt({ ...receipt('queued'), blocked_reason: bad })).toBe(false);
+  });
+
+  test('frozen verb receipt schema accepts the blocked reason', () => {
+    const body = frozenVerbWriteError({ ...receipt('queued'), blocked_reason: 'owner_unavailable' }).toJSON();
+    expect(body.write_error).toBe('write_pending');
+    expect(body.write_request?.blocked_reason).toBe('owner_unavailable');
+    expect(body.message).toContain('not committed');
+    expect(validateAgainstSchema(body, ERROR_SCHEMA)).toEqual([]);
+  });
+
   test('public persistence details preserve mode without adding private fields', () => {
     const persisted = { ...receipt('committed'), revision: REQUEST_ID, compacted: true,
       outcome: { status: 'imported' }, persistence: { mode: 'filesystem' as const, file_written: true, git_state: 'pending', path: '/private' } };

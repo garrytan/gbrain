@@ -143,6 +143,51 @@ describe('dedicated persistence IPC', () => {
     }
   });
 
+  test('owner-unavailable pending receipts keep their blocked reason across transport', async () => {
+    const path = socketPath();
+    await bind(path, async () => {
+      const error = new OperationError('write_pending', 'The write is accepted and is still pending.');
+      error.writeError = 'write_pending';
+      error.writeRequest = { request_id: ID, state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' };
+      throw error;
+    });
+    try { await requestPersistenceOperation(path, request()); throw new Error('Expected pending error.'); }
+    catch (error) {
+      expect(error).toBeInstanceOf(OperationError);
+      expect((error as OperationError).toJSON().write_request).toEqual(
+        { request_id: ID, state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' });
+    }
+  });
+
+  test('an oversized committed result is reported with its committed receipt, never as a receiptless failure', async () => {
+    const path = socketPath();
+    const receipt = { request_id: ID, state: 'committed', retry_after_ms: null, revision: ID,
+      outcome: { status: 'created_or_updated', slug: 'test/page' }, persistence: { mode: 'filesystem', file_written: true } };
+    await bind(path, async () => ({ ...receipt, write_request: receipt, pages: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }));
+    try { await requestPersistenceOperation(path, request()); throw new Error('Expected oversized result error.'); }
+    catch (error) {
+      expect(error).toBeInstanceOf(OperationError);
+      const body = (error as OperationError).toJSON();
+      expect(body.error).toBe('response_too_large');
+      expect(body.write_error).toBe('response_too_large');
+      expect(body.write_request).toEqual({ request_id: ID, state: 'committed', retry_after_ms: null, revision: ID,
+        persistence: { mode: 'filesystem', file_written: true } });
+      expect(body.message).toContain('committed');
+      expect(body.suggestion).toContain('Do not resubmit');
+    }
+  });
+
+  test('an oversized result without a receipt stays a plain transport-limit error', async () => {
+    const path = socketPath();
+    await bind(path, async () => ({ pages: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }));
+    try { await requestPersistenceOperation(path, request()); throw new Error('Expected oversized result error.'); }
+    catch (error) {
+      expect(error).toBeInstanceOf(OperationError);
+      expect((error as OperationError).code).toBe('response_too_large');
+      expect((error as OperationError).writeRequest).toBeUndefined();
+    }
+  });
+
   test('private driver failures are not reflected', async () => {
     const path = socketPath();
     await bind(path, async () => { throw new Error(`secret=${REGISTRATION.credential}`); });

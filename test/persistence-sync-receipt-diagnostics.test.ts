@@ -61,6 +61,20 @@ test('human output leads with source_changed, JSON stays frozen and clean, both 
   } finally { stderr.mockRestore(); }
 });
 
+test('owner-unavailable pending writes name their blocked reason in human and JSON output', async () => {
+  const pending: WriteReceipt = { request_id: requestId, state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' };
+  const error = frozenVerbWriteError(pending);
+  const stderr = spyOn(console, 'error').mockImplementation(() => {});
+  let stdout = '';
+  try {
+    expect(await reportPersistenceCliError(error, true, async text => { stdout += text; })).toBe(true);
+    expect(JSON.parse(stdout)).toMatchObject({ error: 'unavailable', write_error: 'write_pending', write_request: pending });
+    const lines = stderr.mock.calls.map(args => args.join(' ')).join('\n');
+    expect(lines).toContain('Error [write_pending]:');
+    expect(lines).toContain(`Request: ${requestId} (queued, owner_unavailable)`);
+  } finally { stderr.mockRestore(); }
+});
+
 test.each(['queued', 'running', 'recovering'] as const)('%s cannot look committed or suggest a replacement request', state => {
   const body = frozenVerbWriteError({ ...receipt, state, retry_after_ms: 1000 }, 'write_pending').toJSON();
   expect(body.message).toContain('not committed');

@@ -204,6 +204,14 @@ describe('extractToolErrorDetail', () => {
     } }))).toEqual({ code: 'unavailable' });
   });
 
+  test('keeps an owner-unavailable blocked reason and drops an unknown one without losing the receipt', () => {
+    const blocked = { ...PENDING_WRITE, blocked_reason: 'owner_unavailable' as const };
+    expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_error: 'write_pending', write_request: blocked })))
+      .toEqual({ code: 'unavailable', write_error: 'write_pending', write_request: blocked });
+    expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: { ...PENDING_WRITE, blocked_reason: 'newer_reason' } }))
+      .write_request).toEqual(PENDING_WRITE);
+  });
+
   test('retains backward compatibility with plain text tool errors', () => {
     expect(extractToolErrorDetail('missing scope write')).toEqual({ code: 'missing_scope' });
     expect(extractToolErrorDetail('failed')).toEqual({});

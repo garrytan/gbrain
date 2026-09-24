@@ -142,6 +142,30 @@ function responseFrame(value: unknown): string {
   return frame;
 }
 
+/**
+ * The operation already ran when its result is framed. An oversized result
+ * keeps its receipt (without the outcome body), so a committed write is never
+ * reported as a receiptless failure.
+ */
+export function resultFrame(result: unknown): string {
+  try { return responseFrame({ version: 1, ok: true, result }); } catch (error) {
+    if (!(error instanceof OperationError) || error.code !== 'response_too_large') throw error;
+    const candidate = record(result) ? result.write_request : undefined;
+    if (!isWriteReceipt(candidate)) throw error;
+    const receipt = publicWriteReceipt(candidate);
+    delete receipt.outcome;
+    const committed = receipt.state === 'committed';
+    return responseFrame({ version: 1, ok: false, error: {
+      error: 'response_too_large', write_error: 'response_too_large', write_request: receipt,
+      message: committed ? 'The write committed, but its result exceeds the local transport limit.'
+        : `The request is ${receipt.state}, but its result exceeds the local transport limit.`,
+      suggestion: committed
+        ? `Do not resubmit. Read the committed change back, or inspect request_id ${receipt.request_id} with get_write_request.`
+        : `Inspect request_id ${receipt.request_id} with get_write_request before retrying; do not generate a replacement ID.`,
+    } });
+  }
+}
+
 /** Bind only when no live listener owns the discovery path. Never displace on timeout. */
 export async function startPersistenceIpcServer(
   socketPath: string,
@@ -208,7 +232,7 @@ export async function startPersistenceIpcServer(
           admitted = true;
           if (request.kind === 'administration' && !provider.administer) throw new OperationError('unavailable', 'This owner does not support local administration.');
           const result = request.kind === 'administration' ? await provider.administer!(request) : await provider.dispatch(request);
-          if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: true, result }));
+          if (!socket.destroyed) socket.end(resultFrame(result));
         } catch (error) {
           if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: false, error: publicError(error) }));
         } finally {

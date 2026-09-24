@@ -18,7 +18,8 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   if (detail.suggestion) console.error(`Fix: ${detail.suggestion}`);
   const receipt = 'write_request' in detail ? detail.write_request : undefined;
   const requestId = receipt?.request_id ?? ('request_id' in detail ? detail.request_id : undefined);
-  if (requestId) console.error(`Request: ${requestId}${receipt ? ` (${receipt.state})` : ''}`);
+  if (requestId) console.error(`Request: ${requestId}${receipt
+    ? ` (${receipt.state}${receipt.blocked_reason ? `, ${receipt.blocked_reason}` : ''})` : ''}`);
   setCliExitVerdict(1);
   return true;
 }

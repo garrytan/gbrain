@@ -202,9 +202,24 @@ and do not disable guards or change ownership as part of rollback.
 | `cancelled` | Cancelled before publication began. |
 
 Receipts include `request_id`, `state`, and `retry_after_ms`, with optional
-revision, outcome, persistence status, and timestamps. Terminal receipts have
-`retry_after_ms: null`. Private queued content, credential hashes, and recovery
-bytes are never part of the receipt.
+revision, outcome, persistence status, `blocked_reason`, and timestamps. Terminal
+receipts have `retry_after_ms: null`. Private queued content, credential hashes,
+and recovery bytes are never part of the receipt.
+
+`state` alone decides commitment. `blocked_reason` explains why accepted work
+is not progressing, for example `owner_unavailable` (the canonical owner is
+offline or changed), `writer_busy`, `writer_pool_capacity`,
+`database_contention`, or, while `recovering`, `commit_outcome_uncertain`
+(publication ran but the commit acknowledgment was lost). It is a fixed,
+content-free vocabulary, and its absence means ordinary queueing. It appears on
+pending error envelopes, `get_write_request`, `list_write_requests`, and CLI
+output (`Request: <id> (queued, owner_unavailable)`). Clients ignore
+unrecognized reasons rather than discard the receipt.
+
+If a local owner commits a write whose result is too large for the transport,
+the response is `response_too_large` with the outcome-free receipt, for
+example `state: "committed"`. Do not resubmit it. Read the change back or
+inspect the request ID.
 
 Nonterminal receipts may include a validated `diagnostic` with `age_ms`,
 `assessment` (`pending`, `blocked`, or `stalled`), a closed `reason`, and
