@@ -9,6 +9,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { uploadAttachment, downloadAttachment } from '../src/commands/attachment-transfer.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { enforceBoundClientOpAllowList } from '../src/core/ops/context.ts';
 
 let engine: PGLiteEngine;
 let dir: string;
@@ -84,6 +85,16 @@ test('upload ownership, source isolation and page fences apply on every request'
   await expect(call('attachment_write', { upload_id: upload.upload_id, offset: 0, data_base64: 'ZGF0YQ==' }, fenced)).rejects.toMatchObject({ code: 'permission_denied' });
   expect((await call('attachment_list', { page_slug: 'notes/audit' }, context('client-b', 'other'))).attachments).toEqual([]);
   await call('attachment_abort', { upload_id: upload.upload_id });
+});
+
+test('a namespace-bound client can transfer within its approved namespace', async () => {
+  const ctx = context(); ctx.auth!.boundSlugPrefixes = ['notes/'];
+  for (const name of ['attachment_begin', 'attachment_write', 'attachment_complete', 'attachment_abort']) {
+    expect(() => enforceBoundClientOpAllowList(ctx.auth, operationsByName[name])).not.toThrow();
+  }
+  const started = await begin(Buffer.alloc(0), {}, ctx);
+  const saved = await call('attachment_complete', { upload_id: started.upload_id }, ctx);
+  expect(saved.state).toBe('complete');
 });
 
 test('invalid metadata and oversized or noncanonical chunks fail before storing bytes', async () => {
@@ -178,7 +189,7 @@ test('real HTTP MCP accepts multi-request binaries with read/write scopes and de
   const token = randomUUID(), readToken = randomUUID();
   await engine.executeRaw("INSERT INTO access_tokens (name,token_hash,scopes) VALUES ('attachment-test',$1,ARRAY['read','write']),('attachment-reader',$2,ARRAY['read'])", [digest(Buffer.from(token)), digest(Buffer.from(readToken))]);
   await withEnv({ GBRAIN_HOME: home, GBRAIN_HTTP_MAX_BODY_BYTES: '1048576', GBRAIN_MCP_FORCE_SURFACE: undefined }, async () => {
-    const server = await startHttpTransport({ engine, port: 0, surface: 'full' });
+    const server = await startHttpTransport({ engine, port: 0, surface: 'starter' });
     const rpc = async (method: string, params: unknown, auth = token) => {
       const response = await fetch(`http://127.0.0.1:${server.port}/mcp`, { method: 'POST',
         headers: { Authorization: `Bearer ${auth}`, 'Content-Type': 'application/json' },

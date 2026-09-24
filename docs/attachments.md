@@ -45,8 +45,10 @@ existing `remote_mcp` connection configuration; no new endpoint or token is need
    attachments cannot be removed by this operation.
 
 Writes require `write`; list/read require `read`. Tool bindings and the server's
-MCP surface still apply. A verbs-only or starter surface may need an explicit
-host tool grant. Upload sessions belong to their initiating authenticated
+MCP surface still apply. The starter surface includes attachment tools. Existing
+clients retain their saved operation grants: an operator must add these six
+operations explicitly with `auth rescope-client --allowed-operations`, preserving
+the rest of the grant. A verbs-only surface must also be expanded. Upload sessions belong to their initiating authenticated
 principal. Each request rechecks the source, current page visibility and write
 fences. Attachments of private, deleted or archived pages are not remotely
 readable. File names are display metadata; storage keys are opaque UUIDs.
