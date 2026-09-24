@@ -1,7 +1,7 @@
 /** Real CLI → resident owner import, SIGKILL, and same-cursor recovery. */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createEngine } from '../../src/core/engine-factory.ts';
@@ -18,7 +18,7 @@ const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const SAVED_ENV: Record<string, string | undefined> = {};
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_BRAIN_ID',
   'GBRAIN_SOURCE', 'GBRAIN_HOOKS', 'GBRAIN_SWEEP', 'GBRAIN_SYNC_NO_DELEGATE'];
-let tmpParent: string, dbDir: string, repo: string;
+let tmpParent: string, dbDir: string, repo: string, claimBarrier: string;
 let serveProc: ReturnType<typeof Bun.spawn> | undefined;
 let serveStderr = '';
 const serveReaders: Promise<void>[] = [];
@@ -89,6 +89,7 @@ beforeAll(async () => {
   delete process.env.GBRAIN_DATABASE_URL; delete process.env.DATABASE_URL;
   delete process.env.GBRAIN_HOOKS; delete process.env.GBRAIN_SYNC_NO_DELEGATE;
   tmpParent = mkdtempSync(join(tmpdir(), 'gb-sds-'));
+  claimBarrier = join(tmpParent, 'durable-sync-claim.json');
   mkdirSync(join(tmpParent, '.gbrain'));
   dbDir = join(tmpParent, 'db');
   process.env.GBRAIN_HOME = tmpParent;
@@ -109,8 +110,8 @@ beforeAll(async () => {
   } finally { await engine.disconnect(); }
   // First exercise the unactivated compatibility route before opting into
   // managed ownership for the crash/recovery pins.
-  serveProc = Bun.spawn([process.execPath, join(REPO_ROOT, 'src/cli.ts'), 'serve'], {
-    cwd: REPO_ROOT, env: childEnv(), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
+  serveProc = Bun.spawn([process.execPath, '--no-env-file', '--preload', join(REPO_ROOT, 'test/fixtures/serve-sync-claim-barrier.ts'), join(REPO_ROOT, 'src/cli.ts'), 'serve'], {
+    cwd: REPO_ROOT, env: { ...childEnv(), GBRAIN_TEST_SYNC_CLAIM_BARRIER: claimBarrier }, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
   });
   serveReaders.push(read(serveProc.stdout as ReadableStream<Uint8Array>, () => {}),
     read(serveProc.stderr as ReadableStream<Uint8Array>, value => { serveStderr += value; }));
@@ -165,12 +166,15 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
           const result = await client;
           throw new Error(`sync stopped before a committed receipt: ${result.err}\n${result.out}\n${serveStderr}`);
         }
+        if (!existsSync(claimBarrier)) return false;
         const result = await operation('list_write_requests', { source_id: 'workspace', limit: 25 }) as { requests: typeof observed };
         observed = result.requests;
         return observed.some(row => row.state === 'committed') && observed.some(row => row.state === 'running');
       }, 'committed and running sync page receipts');
     } finally { serveProc!.kill('SIGKILL'); await serveProc!.exited; }
     const result = await client;
+    const paused = JSON.parse(readFileSync(claimBarrier, 'utf8')) as { requestId: string; runId: string };
+    expect(observed.some(row => row.request_id === paused.requestId && row.state === 'running')).toBe(true);
     expect(result.code).toBe(1);
     expect(result.err).toContain('Delegating to the registered PGLite owner.');
     expect(JSON.parse(result.out)).toMatchObject({ error: 'write_pending', suggestion: expect.stringContaining('same sync options') });
@@ -185,6 +189,7 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
         "SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op='managed-sync'");
       expect(cursor.value.done).not.toBe(true);
       interruptedRun = cursor.value.runId;
+      expect(interruptedRun).toBe(paused.runId);
       savedRequests = await engine.executeRaw("SELECT request_id,slug,state FROM persistence_requests WHERE intent->>'runId'=$1", [interruptedRun]);
       expect(savedRequests.length).toBeGreaterThan(0);
       expect(savedRequests.length).toBeLessThan(301);
@@ -192,6 +197,7 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
       // The next ID may have been flushed just before its admission. Resume
       // must use that frozen ID too, whether or not its receipt exists yet.
       pendingRequestId = cursor.value.pending?.requestId;
+      expect(pendingRequestId).toBe(paused.requestId);
       const [source] = await engine.executeRaw<{ last_commit: string }>("SELECT last_commit FROM sources WHERE id='workspace'");
       expect(source.last_commit).toBe(initialCommit);
     } finally { await engine.disconnect(); }
