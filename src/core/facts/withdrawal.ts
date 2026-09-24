@@ -36,38 +36,49 @@ export async function recordFactWithdrawal(
     // Provenance may be incomplete on legacy rows, so also inspect pages that
     // actually contain a facts fence. A DB-only subjectless memory has neither
     // provenance nor a matching fence and must not invalidate unrelated pages.
-    const candidates = await tx.executeRaw<{ slug: string; compiled_truth: string; timeline: string; fingerprint_body: string; fingerprint_timeline: string; provenance: boolean; chunk_match: boolean; timeline_match: boolean }>(
+    const candidates = await tx.executeRaw<{ slug: string; compiled_truth: string; timeline: string; fingerprint_body: string; fingerprint_timeline: string; provenance: boolean; chunk_match: boolean; body_match: boolean; timeline_match: boolean }>(
       `WITH target AS (
           SELECT regexp_replace(lower(btrim($3::text)),'[[:space:]]+',' ','g') AS claim,
-            regexp_replace(lower(btrim($4::text)),'[[:space:]]+',' ','g') AS escaped_claim
+            regexp_replace(lower(btrim($4::text)),'[[:space:]]+',' ','g') AS escaped_claim,
+            plainto_tsquery('${getFtsLanguage()}',$3) AS query
         ), provenance AS (
           SELECT DISTINCT COALESCE(source_markdown_slug,entity_slug) AS slug FROM facts
           WHERE source_id=$1 AND visibility=$2
+            AND btrim($3::text)<>''
             AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
             AND COALESCE(source_markdown_slug,entity_slug) IS NOT NULL
         ), chunk_shortlist AS MATERIALIZED (
-          SELECT c.page_id,c.chunk_text FROM content_chunks c
-          WHERE c.search_vector @@ plainto_tsquery('${getFtsLanguage()}',$3)
+          SELECT c.page_id,c.chunk_text FROM content_chunks c JOIN pages p ON p.id=c.page_id CROSS JOIN target
+          WHERE p.source_id=$1 AND target.claim<>''
+            AND (numnode(target.query)=0 OR c.search_vector IS NULL OR c.search_vector @@ target.query)
         ), chunk_pages AS MATERIALIZED (
           SELECT c.page_id,bool_or(
             position(target.claim in regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g'))>0 OR
             position(target.escaped_claim in regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g'))>0
           ) AS chunk_match
-          FROM chunk_shortlist c JOIN pages cp ON cp.id=c.page_id CROSS JOIN target
-          WHERE cp.source_id=$1 GROUP BY c.page_id
+          FROM chunk_shortlist c CROSS JOIN target GROUP BY c.page_id
+        ), fence_pages AS MATERIALIZED (
+          SELECT p.id,p.compiled_truth FROM pages p
+          WHERE p.source_id=$1 AND btrim($3::text)<>'' AND position('gbrain:facts:begin' in p.compiled_truth)>0
+        ), body_pages AS MATERIALIZED (
+          SELECT p.id FROM fence_pages p CROSS JOIN target WHERE
+            position(target.claim in regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g'))>0 OR
+            position(target.escaped_claim in regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g'))>0
         ), timeline_pages AS MATERIALIZED (
           SELECT p.id FROM pages p CROSS JOIN target
-          WHERE p.source_id=$1 AND p.search_vector @@ plainto_tsquery('${getFtsLanguage()}',$3) AND (
+          WHERE p.source_id=$1 AND target.claim<>''
+            AND (numnode(target.query)=0 OR p.search_vector IS NULL OR p.search_vector @@ target.query) AND (
             position(target.claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0 OR
             position(target.escaped_claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0)
         ), candidate_slugs AS (
-          SELECT slug,true AS provenance,false AS chunk_match,false AS timeline_match FROM provenance
-          UNION ALL SELECT p.slug,false,c.chunk_match,false FROM chunk_pages c JOIN pages p ON p.id=c.page_id
-          UNION ALL SELECT p.slug,false,false,true FROM timeline_pages t JOIN pages p ON p.id=t.id
+          SELECT slug,true AS provenance,false AS chunk_match,false AS body_match,false AS timeline_match FROM provenance
+          UNION ALL SELECT p.slug,false,c.chunk_match,false,false FROM chunk_pages c JOIN pages p ON p.id=c.page_id
+          UNION ALL SELECT p.slug,false,false,true,false FROM body_pages b JOIN pages p ON p.id=b.id
+          UNION ALL SELECT p.slug,false,false,false,true FROM timeline_pages t JOIN pages p ON p.id=t.id
         ), candidates AS MATERIALIZED (
           SELECT slug,bool_or(provenance) AS provenance,bool_or(chunk_match) AS chunk_match,
-            bool_or(timeline_match) AS timeline_match FROM candidate_slugs GROUP BY slug
-        ) SELECT p.slug,p.compiled_truth,p.timeline,c.provenance,c.chunk_match,c.timeline_match,
+            bool_or(body_match) AS body_match,bool_or(timeline_match) AS timeline_match FROM candidate_slugs GROUP BY slug
+        ) SELECT p.slug,p.compiled_truth,p.timeline,c.provenance,c.chunk_match,c.body_match,c.timeline_match,
           (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
             FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS fingerprint_body,
           (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
@@ -79,6 +90,7 @@ export async function recordFactWithdrawal(
       page.provenance || page.chunk_match ||
       overlayWithdrawalBody(page.compiled_truth, page.fingerprint_body ?? '', [withdrawal]) !== page.compiled_truth ||
       overlayWithdrawalBody(page.timeline, page.fingerprint_timeline ?? '', [withdrawal]) !== page.timeline ||
+      page.body_match && hasAmbiguousWithdrawalFence(page.compiled_truth) ||
       page.timeline_match && hasAmbiguousWithdrawalFence(page.timeline),
     ).map(page => page.slug);
     await tx.lockPageKeys(affected.map(slug => ({ sourceId, slug })));
@@ -110,24 +122,26 @@ export async function recordFactWithdrawal(
   });
 }
 
-function ambiguousFenceClaims(body: string): string[] {
-  const claims = new Set<string>();
+function ambiguousFenceClaims(body: string): Array<{ claim: string; visibility: string | null }> {
+  const claims = new Map<string, { claim: string; visibility: string | null }>();
   for (const segment of ambiguousWithdrawalFenceSegments(body)) {
     for (const line of segment.split('\n')) {
       const cells = parseRowCells(line);
       if (!cells || isSeparatorRow(cells) || cells[1]?.trim().toLowerCase() === 'claim') continue;
       const claim = stripStrikethrough(cells[1] ?? '').text.trim();
-      if (claim) claims.add(claim);
+      const visibility = ['private', 'world'].includes(cells[4]?.trim().toLowerCase()) ? cells[4].trim().toLowerCase() : null;
+      if (claim) claims.set(`${visibility}:${claim}`, { claim, visibility });
     }
   }
-  return [...claims];
+  return [...claims.values()];
 }
 
 async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[]): Promise<boolean> {
-  const claims = [...new Set(bodies.flatMap(ambiguousFenceClaims))];
+  const claims = bodies.flatMap(ambiguousFenceClaims);
   if (!claims.length) return false;
-  const rows = await engine.executeRaw(`SELECT 1 FROM jsonb_array_elements_text($2::text::jsonb) incoming(claim)
-    JOIN fact_withdrawals w ON w.source_id=$1 AND w.fact_hash=gbrain_fact_fingerprint(incoming.claim) LIMIT 1`,
+  const rows = await engine.executeRaw(`SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) incoming(claim text,visibility text)
+    JOIN fact_withdrawals w ON w.source_id=$1 AND w.fact_hash=gbrain_fact_fingerprint(incoming.claim)
+      AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility) LIMIT 1`,
   [sourceId, JSON.stringify(claims)]);
   return rows.length > 0;
 }

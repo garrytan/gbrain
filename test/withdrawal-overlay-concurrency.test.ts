@@ -119,7 +119,7 @@ test('DB-only subjectless withdrawal leaves unrelated pages and chunks unchanged
 
 test('subjectless withdrawal removes an exact stale chunk even when the page body no longer carries the claim', async () => {
   const isolatedSourceId = 'withdrawal-stale-chunk-test';
-  const claim = 'stale subjectless chunk sentinel';
+  const claim = 'not now';
   for (const engine of engines) {
     await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
     try {
@@ -292,13 +292,17 @@ test('prepared import refuses a timeline fence whose matching withdrawal committ
 test('prepared import refuses an ambiguous fence when the source has a withdrawal ledger', async () => {
   const isolatedSourceId = 'withdrawal-malformed-prepared-test';
   const claim = 'malformed prepared withdrawal sentinel';
-  const body = `---\ntitle: Malformed prepared withdrawal\ntype: note\n---\n${renderFactsTable([fact(claim)]).replace('| world |', '| impossible |')}`;
+  const body = `---\ntitle: Malformed prepared withdrawal\ntype: note\n---\n${renderFactsTable([fact(claim)]).replace('| fact |', '| impossible |')}`;
   for (const engine of engines) {
     await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
     try {
       let prepared: PreparedContentImport | undefined;
       await importFromContent(engine, 'malformed-prepared-withdrawal', body, { sourceId: isolatedSourceId, noEmbed: true,
         prepare: async value => { prepared = value; return value.result; } });
+      await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
+      const privateMatch = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'private' },
+        { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, privateMatch.id, isolatedSourceId)).withdrawn).toBe(true);
       await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
       const unrelated = await engine.insertFact({ fact: 'unrelated withdrawn claim', source: 'remember', visibility: 'world' },
         { source_id: isolatedSourceId });

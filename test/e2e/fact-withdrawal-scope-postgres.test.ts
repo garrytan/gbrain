@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { renderFactsTable } from '../../src/core/facts-fence.ts';
 import { recordFactWithdrawal } from '../../src/core/facts/withdrawal.ts';
 import { hasDatabase } from './helpers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
@@ -41,6 +42,21 @@ describePg('Postgres fact-withdrawal scope', () => {
       expect(unrelatedAfter.knowledge_revision).toBe(unrelatedBefore.knowledge_revision);
       expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
         WHERE p.source_id=$1 AND p.slug='notes/scale-4999'`, [sourceId])).toEqual([]);
+
+      const stopwordClaim = 'not now';
+      const privateFence = renderFactsTable([{ rowNum: 1, claim: stopwordClaim, kind: 'fact', confidence: 1,
+        visibility: 'private', notability: 'medium', active: true }]);
+      await engine.executeRaw(`UPDATE pages SET compiled_truth=$3 WHERE source_id=$1 AND slug=$2`,
+        [sourceId, 'notes/scale-4998', privateFence]);
+      const privateFact = await engine.insertFact({ fact: stopwordClaim, source: 'test', visibility: 'private' },
+        { source_id: sourceId });
+      const stopwordStarted = performance.now();
+      const stopwordResult = await engine.transaction(async tx => {
+        await tx.executeRaw(`SELECT set_config('statement_timeout','5000ms',true)`);
+        return recordFactWithdrawal(tx, privateFact.id, sourceId, false);
+      });
+      expect(performance.now() - stopwordStarted).toBeLessThan(5000);
+      expect(stopwordResult.pages.map(page => page.slug)).toEqual(['notes/scale-4998']);
     } finally {
       await fixture.close();
     }
