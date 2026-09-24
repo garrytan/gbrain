@@ -1,5 +1,7 @@
 # Key files: Evaluation
 
+- `src/eval/longmemeval/evidence-packet.ts` + `scripts/eval-answer-packet.ts` — experimental presentation-only paired comparison over pinned historical session IDs. The pure formatter uses original structured conversational rounds with recoverable pointers and explicit omissions. The runner keeps the existing full-session baseline, uses a leakage-safe development/holdout split, and journals guarded reader/judge spending under one resumable cap. It does not retrieve or change production defaults. Usage and caveats: [answer packets](../../eval/ANSWER_PACKET.md). Tests: `test/longmemeval-evidence-packet.test.ts`, `test/eval-answer-packet.test.ts`.
+
 [Subsystem index](../KEY_FILES.md). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
 
