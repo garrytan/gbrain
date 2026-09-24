@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
+import { FACTS_FENCE_BEGIN, renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal, preserveWithdrawnFenceRows } from '../src/core/facts/withdrawal.ts';
-import { withdrawalFenceBlocks } from '../src/core/facts/withdrawal-overlay.ts';
+import { hasAmbiguousWithdrawalFence, withdrawalFenceBlocks } from '../src/core/facts/withdrawal-overlay.ts';
 import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
 import { rebuildPendingPageProjections } from '../src/core/page-state/projections.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -31,6 +31,10 @@ function fact(claim: string, extra: Partial<ParsedFact> = {}): ParsedFact {
   return { rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium',
     active: true, context: 'Original evidence context', ...extra };
 }
+
+test('an unterminated facts fence remains conservatively ambiguous', () => {
+  expect(hasAmbiguousWithdrawalFence(`${FACTS_FENCE_BEGIN}\n| 1 | fact | world |`)).toBe(true);
+});
 
 test('withdrawal covers prior context, inactive history and every legacy fence by fingerprint', async () => {
   const active = 'withdrawalcontextsentinel active claim';
@@ -91,6 +95,7 @@ test('DB-only subjectless withdrawal leaves unrelated pages and chunks unchanged
       const result = await recordFactWithdrawal(engine, factRow.id, isolatedSourceId, true);
 
       expect(result).toMatchObject({ withdrawn: true, pages: [] });
+      expect(await recordFactWithdrawal(engine, factRow.id, isolatedSourceId, true)).toEqual({ withdrawn: false, pages: [] });
       const blank = await engine.insertFact({ fact: '   ', source: 'legacy', visibility: 'world' }, { source_id: isolatedSourceId });
       expect((await recordFactWithdrawal(engine, blank.id, isolatedSourceId, true)).pages).toEqual([]);
       const after = (await engine.readPageSnapshot('unrelated', { sourceId: isolatedSourceId }))!;
@@ -198,19 +203,25 @@ test('malformed, timeline-only and provenance-only candidates remain conservativ
     await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
     try {
       const malformedClaim = 'malformed withdrawal sentinel';
-      const timelineClaim = 'timeline withdrawal sentinel';
+      const malformedTimelineClaim = 'malformed chronology withdrawal sentinel';
+      const timelineClaim = 'valid timeline withdrawal sentinel';
       const provenanceClaim = 'provenance withdrawal sentinel';
       await engine.putPage('malformed-fence', { type: 'note', title: 'Malformed facts',
         compiled_truth: renderFactsTable([fact(malformedClaim)]).replace('| world |', '| impossible |') }, { sourceId: isolatedSourceId });
       await engine.putPage('timeline-fence', { type: 'note', title: 'Timeline facts', compiled_truth: 'Safe body',
         timeline: renderFactsTable([fact(timelineClaim)]) }, { sourceId: isolatedSourceId });
+      await engine.putPage('malformed-timeline-fence', { type: 'note', title: 'Malformed timeline facts', compiled_truth: 'Safe body',
+        timeline: renderFactsTable([fact(malformedTimelineClaim)]).replace('| world |', '| impossible |') }, { sourceId: isolatedSourceId });
       await engine.putPage('provenance-only', { type: 'note', title: 'Provenance only', compiled_truth: 'No facts fence' },
         { sourceId: isolatedSourceId });
-      for (const [slug, claim] of [['malformed-fence', malformedClaim], ['timeline-fence', timelineClaim], ['provenance-only', provenanceClaim]]) {
+      for (const [slug, claim] of [['malformed-fence', malformedClaim], ['malformed-timeline-fence', malformedTimelineClaim],
+        ['timeline-fence', timelineClaim], ['provenance-only', provenanceClaim]]) {
         await engine.upsertChunks(slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
           { sourceId: isolatedSourceId });
       }
       const malformed = await engine.insertFact({ fact: malformedClaim, source: 'legacy', visibility: 'world' },
+        { source_id: isolatedSourceId });
+      const malformedTimeline = await engine.insertFact({ fact: malformedTimelineClaim, source: 'legacy', visibility: 'world' },
         { source_id: isolatedSourceId });
       const timeline = await engine.insertFact({ fact: timelineClaim, source: 'legacy', visibility: 'world' },
         { source_id: isolatedSourceId });
@@ -218,10 +229,12 @@ test('malformed, timeline-only and provenance-only candidates remain conservativ
         entity_slug: 'provenance-only' }, { source_id: isolatedSourceId });
 
       expect((await recordFactWithdrawal(engine, malformed.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['malformed-fence']);
+      expect((await recordFactWithdrawal(engine, malformedTimeline.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['malformed-timeline-fence']);
       expect((await recordFactWithdrawal(engine, timeline.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['timeline-fence']);
       expect((await recordFactWithdrawal(engine, provenance.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['provenance-only']);
       expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
-        WHERE p.source_id=$1 AND p.slug=ANY($2::text[])`, [isolatedSourceId, ['malformed-fence', 'timeline-fence', 'provenance-only']])).toEqual([]);
+        WHERE p.source_id=$1 AND p.slug=ANY($2::text[])`, [isolatedSourceId,
+          ['malformed-fence', 'malformed-timeline-fence', 'timeline-fence', 'provenance-only']])).toEqual([]);
     } finally {
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
     }
@@ -252,6 +265,27 @@ test('prepared import refuses a fence whose matching withdrawal committed during
   }
 });
 
+test('prepared import refuses a timeline fence whose matching withdrawal committed during preparation', async () => {
+  const isolatedSourceId = 'withdrawal-prepared-timeline-test';
+  const claim = 'withdrawal prepared timeline sentinel';
+  const body = `---\ntitle: Prepared timeline withdrawal\ntype: note\n---\nSafe body\n<!-- timeline -->\n${renderFactsTable([fact(claim)])}`;
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      let prepared: PreparedContentImport | undefined;
+      await importFromContent(engine, 'prepared-timeline-withdrawal', body, { sourceId: isolatedSourceId, noEmbed: true,
+        prepare: async value => { prepared = value; return value.result; } });
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages).toEqual([]);
+
+      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toThrow('withdrawal changed during import preparation');
+      expect(await engine.getPage('prepared-timeline-withdrawal', { sourceId: isolatedSourceId })).toBeNull();
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
 test('prepared import refuses an ambiguous fence when the source has a withdrawal ledger', async () => {
   const isolatedSourceId = 'withdrawal-malformed-prepared-test';
   const claim = 'malformed prepared withdrawal sentinel';
@@ -262,10 +296,12 @@ test('prepared import refuses an ambiguous fence when the source has a withdrawa
       let prepared: PreparedContentImport | undefined;
       await importFromContent(engine, 'malformed-prepared-withdrawal', body, { sourceId: isolatedSourceId, noEmbed: true,
         prepare: async value => { prepared = value; return value.result; } });
+      await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
       const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
       expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages).toEqual([]);
 
-      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toThrow('withdrawal changed during import preparation');
+      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toMatchObject({ code: 'invalid_params' });
+      await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toThrow('Repair the fence before importing');
       expect(await engine.getPage('malformed-prepared-withdrawal', { sourceId: isolatedSourceId })).toBeNull();
     } finally {
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);

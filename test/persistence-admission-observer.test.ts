@@ -10,6 +10,9 @@ import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { activatePersistence } from '../src/core/persistence/activation.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
+import { renderFactsTable } from '../src/core/facts-fence.ts';
+import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 interface Fixture { engine: BrainEngine; observations: { requestId: string; at: number }[]; }
@@ -38,12 +41,12 @@ afterAll(async () => {
   await fixtures[0]?.engine.disconnect(); await closePostgres?.();
 });
 
-async function admission(engine: BrainEngine, slug: string): Promise<WriteAdmission> {
+async function admission(engine: BrainEngine, slug: string, body = 'Canonical publication follows durable admission.'): Promise<WriteAdmission> {
   const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [sourceId]);
   const context: OperationContext = { engine, sourceId, remote: false, dryRun: false,
     config: { engine: engine.kind }, logger: { info() {}, warn() {}, error() {} } };
   const authority = await submissionAuthority(context, 'put_page', sourceId, source.incarnation, slug);
-  const content = '---\ntitle: Admission timing example\ntype: note\n---\nCanonical publication follows durable admission.\n';
+  const content = `---\ntitle: Admission timing example\ntype: note\n---\n${body}\n`;
   return { principal: authority.principal, operation: 'put_page', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: null, requestId: randomUUID(), callerIntent: { slug, content }, intent: { slug, content }, authority };
 }
@@ -91,5 +94,28 @@ test('admission timing precedes actual publication and survives transaction warm
     expect(performance.now()).toBeGreaterThan(admitted.at);
     expect(observations).toHaveLength(1);
     expect((await engine.readPageSnapshot(input.slug, { sourceId }))?.revision).toBe(String(committed.outcome?.revision));
+  }
+}, 120_000);
+
+test('coordinator rejects a prepared put_page after its fact is withdrawn', async () => {
+  for (const { engine } of fixtures) {
+    const claim = 'withdrawn between page preparation and publication';
+    const fence = renderFactsTable([{ rowNum: 1, claim, kind: 'fact', confidence: 1, visibility: 'world',
+      notability: 'medium', active: true, context: 'test evidence' }]);
+    const input = await admission(engine, `notes/withdrawal-race-${engine.kind}`, fence);
+    const fact = await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () =>
+      tx.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: sourceId })));
+    const row = await admitWrite(engine, input);
+    const claimed = (await claimNextWrite(engine, hostId))!;
+    expect(claimed.id).toBe(row.id);
+    const prepared = await preparePageMutation(engine, claimed, { engine: engine.kind });
+    const withdrawn = await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () =>
+      recordFactWithdrawal(tx, fact.id, sourceId, true)));
+    expect(withdrawn.pages).toEqual([]);
+
+    const rejected = await publishMutation(engine, claimed, prepared, hostId);
+
+    expect(rejected).toMatchObject({ state: 'conflict', error_code: 'revision_conflict' });
+    expect(await engine.readPageSnapshot(input.slug, { sourceId })).toBeNull();
   }
 }, 120_000);

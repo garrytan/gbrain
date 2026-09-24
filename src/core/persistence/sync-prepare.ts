@@ -149,7 +149,9 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     if (!prepared || prepared.slug !== row.slug) throw new OperationError('invalid_params', result.error ?? 'The code file identity could not be prepared.');
     const ready = prepared;
     if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The code page changed during preparation.');
-    return { observedRevision: ready.observedRevision, validate, noop: ready.noop, deferEmbedding: true, apply: async tx => {
+    return { observedRevision: ready.observedRevision,
+      validate: async tx => { await validate(tx); await ready.validate(tx); },
+      noop: ready.noop, deferEmbedding: true, apply: async tx => {
       await ready.apply(tx);
       return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
         chunks: result.chunks, noop: ready.noop, imported_file: true };

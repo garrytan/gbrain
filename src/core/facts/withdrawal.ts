@@ -137,8 +137,11 @@ export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceI
     await preserveWithdrawnFenceRows(engine, sourceId, timeline) !== timeline;
   const ambiguous = hasAmbiguousWithdrawalFence(body) || hasAmbiguousWithdrawalFence(timeline);
   const blocked = ambiguous && (await engine.executeRaw('SELECT 1 FROM fact_withdrawals WHERE source_id=$1 LIMIT 1', [sourceId])).length > 0;
-  if (changed || blocked) {
+  if (changed) {
     throw new OperationError('revision_conflict', 'A fact withdrawal changed during import preparation. Retry the import.');
+  }
+  if (blocked) {
+    throw new OperationError('invalid_params', 'A fact fence is malformed while this source has withdrawn facts. Repair the fence before importing.');
   }
 }
 
