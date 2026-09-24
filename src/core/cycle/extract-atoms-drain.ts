@@ -409,11 +409,21 @@ export async function runExtractAtomsDrainForSource(
   opts: DrainForSourceOpts,
 ): Promise<ExtractAtomsDrainResult> {
   const { withRefreshingLock } = await import('../db-lock.ts');
-  const { runPhaseExtractAtoms, countExtractAtomsBacklog, countPendingTranscripts } = await import('./extract-atoms.ts');
+  const { runPhaseExtractAtoms, countExtractAtomsBacklog, countPendingTranscripts, discoverTranscriptCorpus } =
+    await import('./extract-atoms.ts');
   const { cycleLockIdFor } = await import('../cycle.ts');
 
   const extractionSourceId = opts.sourceId ?? 'default';
   const lockId = cycleLockIdFor(opts.sourceId);
+  // Read the transcript corpus from disk ONCE per drain. File contents are
+  // hash-keyed, so the cached list stays valid; what changes between batches
+  // is DB liveness (atom rows, tombstones), which every batch and every
+  // pending count still re-checks. A file added mid-drain waits for the next
+  // drain, which is fine under the single-hold lock.
+  let corpus: Promise<Array<{ filePath: string; content: string; contentHash: string }>> | undefined =
+    opts._phase?._transcripts ? Promise.resolve(opts._phase._transcripts) : undefined;
+  const transcriptCorpus = () =>
+    (corpus ??= discoverTranscriptCorpus(engine, extractionSourceId, { brainDir: opts.brainDir }));
 
   return runExtractAtomsDrain(
     {
@@ -421,6 +431,7 @@ export async function runExtractAtomsDrainForSource(
       runBatch: async ({ shouldStop }) => {
         const r = await runPhaseExtractAtoms(engine, {
           ...opts._phase,
+          _transcripts: await transcriptCorpus(),
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
@@ -469,8 +480,8 @@ export async function runExtractAtomsDrainForSource(
         };
       },
       countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
-      countPendingTranscripts: () => countPendingTranscripts(engine, extractionSourceId, {
-        brainDir: opts.brainDir, _transcripts: opts._phase?._transcripts,
+      countPendingTranscripts: async () => countPendingTranscripts(engine, extractionSourceId, {
+        brainDir: opts.brainDir, _transcripts: await transcriptCorpus(),
       }),
       now: opts._now ?? Date.now,
       onBatch: opts.onBatch,
@@ -484,15 +495,28 @@ export async function runExtractAtomsDrainForSource(
 // A window-cut drain job used to complete like a finished one, so deferred
 // work waited for autopilot's next daily slot. The handler now chains ONE
 // continuation job when the run made forward progress and left work due,
-// bounded by MAX_DRAIN_CONTINUATIONS per chain. Every other case reports why
-// no continuation was queued, so the job result never implies more than it did.
+// bounded by MAX_DRAIN_CONTINUATIONS per chain AND by the same daily spend
+// cap + fairness autopilot's dispatch obeys (extract-atoms-auto-drain.ts).
+// Every other case reports why no continuation was queued, so the job result
+// never implies more than it did.
 
 /** Longest continuation chain one submitted drain may start. */
 export const MAX_DRAIN_CONTINUATIONS = 8;
 
+/** Why a continuation was blocked by spend policy, with the numbers that decided it. */
+export interface DrainBudgetBlock {
+  queued: false;
+  reason: 'auto_drain_disabled' | 'daily_cap' | 'reserved_for_other_sources' | 'budget_unknown' | 'cap_lock_busy';
+  max_usd_per_day?: number;
+  max_jobs_today?: number;
+  jobs_today?: number | null;
+  reserved_for_other_sources?: string[];
+}
+
 export type DrainContinuation =
   | { queued: true; job_id: number; depth: number }
-  | { queued: false; reason: 'drained' | 'no_forward_progress' | 'continuation_limit' | 'not_window_cut' | 'submit_failed'; error?: string };
+  | { queued: false; reason: 'drained' | 'no_forward_progress' | 'continuation_limit' | 'not_window_cut' | 'submit_failed'; error?: string }
+  | DrainBudgetBlock;
 
 export async function queueDrainContinuation(
   engine: BrainEngine,
@@ -507,23 +531,48 @@ export async function queueDrainContinuation(
   if (result.items_completed === 0) return { queued: false, reason: 'no_forward_progress' };
   const depth = typeof job.data.continuation_depth === 'number' ? job.data.continuation_depth : 0;
   if (depth >= MAX_DRAIN_CONTINUATIONS) return { queued: false, reason: 'continuation_limit' };
+  const idempotencyKey = `extract-atoms-drain:continuation:${job.id}`;
   try {
+    // A retried parent reports the continuation it already created; the
+    // budget check below would otherwise count that very job against itself.
+    const [existing] = await engine.executeRaw<{ id: number }>(
+      'SELECT id FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1', [idempotencyKey]);
+    if (existing) return { queued: true, job_id: Number(existing.id), depth: depth + 1 };
+    const policyMod = await import('./extract-atoms-auto-drain.ts');
     const { MinionQueue } = await import('../minions/queue.ts');
-    const [parent] = await engine.executeRaw<{ max_attempts: number | null; timeout_ms: number | null; queue: string | null }>(
-      'SELECT max_attempts, timeout_ms, queue FROM minion_jobs WHERE id = $1', [job.id]);
-    const next = await new MinionQueue(engine).add(
-      'extract-atoms-drain',
-      { ...job.data, continuation_of: job.id, continuation_depth: depth + 1 },
-      {
-        // One continuation per parent even if the parent's handler is retried.
-        idempotency_key: `extract-atoms-drain:continuation:${job.id}`,
-        ...(parent?.queue ? { queue: parent.queue } : {}),
-        ...(parent?.max_attempts ? { max_attempts: parent.max_attempts } : {}),
-        ...(parent?.timeout_ms ? { timeout_ms: parent.timeout_ms } : {}),
-      },
-      { allowProtectedSubmit: true },
-    );
-    return { queued: true, job_id: next.id, depth: depth + 1 };
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+    // Spend + fairness gate, under the same lock autopilot's dispatch holds.
+    const gated = await policyMod.withDrainCapLock(engine, async (): Promise<DrainContinuation> => {
+      const policy = await policyMod.readAutoDrainPolicy(engine);
+      const budget = { max_usd_per_day: policy.maxUsdPerDay, max_jobs_today: policy.maxJobsToday };
+      if (!policy.enabled) return { queued: false, reason: 'auto_drain_disabled', ...budget };
+      const today = await policyMod.countDrainJobsToday(engine, policy.utcDay);
+      if (today === null) return { queued: false, reason: 'budget_unknown', ...budget, jobs_today: null };
+      if (today >= policy.maxJobsToday) return { queued: false, reason: 'daily_cap', ...budget, jobs_today: today };
+      // Fairness: never take a slot another due source needs for its first drain today.
+      const others = await policyMod.sourcesAwaitingDrain(engine, policy,
+        { excludeSourceId: sourceId, limit: policy.maxJobsToday - today });
+      if (today + others.length >= policy.maxJobsToday) {
+        return { queued: false, reason: 'reserved_for_other_sources', ...budget, jobs_today: today,
+          reserved_for_other_sources: others.map(o => o.id) };
+      }
+      const [parent] = await engine.executeRaw<{ max_attempts: number | null; timeout_ms: number | null; queue: string | null }>(
+        'SELECT max_attempts, timeout_ms, queue FROM minion_jobs WHERE id = $1', [job.id]);
+      const next = await new MinionQueue(engine).add(
+        'extract-atoms-drain',
+        { ...job.data, continuation_of: job.id, continuation_depth: depth + 1 },
+        {
+          // One continuation per parent even if the parent's handler is retried.
+          idempotency_key: idempotencyKey,
+          ...(parent?.queue ? { queue: parent.queue } : {}),
+          ...(parent?.max_attempts ? { max_attempts: parent.max_attempts } : {}),
+          ...(parent?.timeout_ms ? { timeout_ms: parent.timeout_ms } : {}),
+        },
+        { allowProtectedSubmit: true },
+      );
+      return { queued: true, job_id: next.id, depth: depth + 1 };
+    });
+    return gated?.value ?? { queued: false, reason: 'cap_lock_busy' };
   } catch (e) {
     return { queued: false, reason: 'submit_failed', error: sanitizeFailureText(e instanceof Error ? e.message : String(e), MAX_DRAIN_FAILURE_REASON_CHARS) };
   }

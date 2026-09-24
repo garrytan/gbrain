@@ -655,28 +655,7 @@ export async function loadLiveTranscripts(
   sourceId: string,
   opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig' | 'progress'>,
 ): Promise<{ transcripts: TranscriptInput[]; live: TranscriptInput[]; duplicatesSkipped: number }> {
-  //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
-  //     dream.* DB-plane merge from Phase 1 reaches this phase.
-  let transcripts: TranscriptInput[] = opts._transcripts ?? [];
-  // Configured transcript corpus paths are brain-global, so only default discovers them.
-  if (sourceId === 'default' && transcripts.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
-    try {
-      const { discoverTranscripts } = await import('./transcript-discovery.ts');
-      const { loadConfigWithEngine } = await import('../config.ts');
-      const cfgRaw = opts._loadConfig ? await opts._loadConfig() : await loadConfigWithEngine(engine);
-      const cfg = (cfgRaw ?? {}) as unknown as Record<string, unknown>;
-      const dream = cfg.dream as
-        | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
-        | undefined;
-      const corpusDir = dream?.synthesize?.session_corpus_dir;
-      if (corpusDir !== undefined) {
-        transcripts = discoverTranscripts({ corpusDir, meetingTranscriptsDir: dream?.synthesize?.meeting_transcripts_dir })
-          .map((d) => ({ filePath: d.filePath, content: d.content, contentHash: d.contentHash }));
-      }
-    } catch {
-      // No transcripts available — phase no-ops cleanly.
-    }
-  }
+  const transcripts = opts._transcripts ?? await discoverTranscriptCorpus(engine, sourceId, opts);
   // Transcript-side source-hash idempotency in ONE batch query instead of N
   // per-hash round trips. Page-side idempotency lives in the discovery SQL.
   const live: TranscriptInput[] = [];
@@ -692,6 +671,36 @@ export async function loadLiveTranscripts(
     else live.push(t);
   }
   return { transcripts, live, duplicatesSkipped };
+}
+
+/**
+ * Read the configured transcript corpus from disk (default source with a
+ * brain dir only; [] otherwise). File I/O only — liveness is a separate DB
+ * check, so a caller may read the corpus once and pass it back as
+ * `_transcripts` while `loadLiveTranscripts` rechecks liveness each time.
+ */
+export async function discoverTranscriptCorpus(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_loadConfig'>,
+): Promise<TranscriptInput[]> {
+  // Configured transcript corpus paths are brain-global, so only default discovers them.
+  if (sourceId !== 'default' || opts.brainDir === undefined) return [];
+  try {
+    const { discoverTranscripts } = await import('./transcript-discovery.ts');
+    const { loadConfigWithEngine } = await import('../config.ts');
+    // loadConfigWithEngine: the dream.* DB-plane merge reaches this phase.
+    const cfgRaw = opts._loadConfig ? await opts._loadConfig() : await loadConfigWithEngine(engine);
+    const dream = ((cfgRaw ?? {}) as unknown as Record<string, unknown>).dream as
+      | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
+      | undefined;
+    const corpusDir = dream?.synthesize?.session_corpus_dir;
+    if (corpusDir === undefined) return [];
+    return discoverTranscripts({ corpusDir, meetingTranscriptsDir: dream?.synthesize?.meeting_transcripts_dir })
+      .map((d) => ({ filePath: d.filePath, content: d.content, contentHash: d.contentHash }));
+  } catch {
+    return []; // No transcripts available — phase no-ops cleanly.
+  }
 }
 
 /** Distinct live transcript contents still due for atom extraction (the drain's non-page backlog). */

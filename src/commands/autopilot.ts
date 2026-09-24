@@ -1152,108 +1152,33 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         // PGLite has no multi-process worker to run the job.
         if (engine.kind === 'postgres') {
           try {
-            const enabled = (await engine.getConfig('autopilot.auto_drain.enabled')) !== 'false';
-            if (enabled) {
-              const { packDeclaresPhase } = await import('../core/cycle.ts');
-              // packDeclaresPhase reads the active pack (brain-wide, not
-              // per-source). If the pack declares extract_atoms the routine
-              // cycle already drains it for every source — nothing to do.
-              const declares = await packDeclaresPhase(engine, 'extract_atoms');
-              if (!declares) {
-                const parsePosInt = (v: string | null, d: number): number => {
-                  if (v == null) return d;
-                  const n = parseInt(v, 10);
-                  return Number.isFinite(n) && n > 0 ? n : d;
-                };
-                const parseNonNegFloat = (v: string | null, d: number): number => {
-                  if (v == null) return d;
-                  const n = parseFloat(v);
-                  return Number.isFinite(n) && n >= 0 ? n : d;
-                };
-                const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 25);
-                const windowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
-                const maxUsdPerDay = parseNonNegFloat(await engine.getConfig('autopilot.auto_drain.max_usd_per_day'), 2.0);
-                // Each drain run is BudgetTracker-capped at ~$0.30; bound the
-                // brain-wide daily count instead of a real-time spend ledger.
-                const PER_RUN_USD = 0.3;
-                const maxJobsToday = Math.max(0, Math.floor(maxUsdPerDay / PER_RUN_USD));
-                const utcDay = new Date().toISOString().slice(0, 10);
-
-                let submittedToday = 0;
-                try {
-                  const rows = await engine.executeRaw<{ cnt: number }>(
-                    `SELECT count(*)::int AS cnt FROM minion_jobs WHERE name = 'extract-atoms-drain' AND created_at >= $1::timestamptz`,
-                    [`${utcDay}T00:00:00Z`],
-                  );
-                  submittedToday = rows[0]?.cnt ?? 0;
-                } catch {
-                  // count is best-effort; treat as 0 (cap still bounds submits this tick).
-                }
-
-                if (submittedToday < maxJobsToday) {
-                  const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
-                  const sources = await loadAllSources(engine);
-                  for (const src of sources) {
-                    if (submittedToday >= maxJobsToday) break; // brain-wide daily cap (fairness)
-                    if (!src.local_path) continue;
-                    // Same unavailable-path skip (relative / missing on this
-                    // machine) as the freshness loop above, same --json shape.
-                    const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config);
-                    if (skipWarn) {
-                      process.stderr.write(
-                        (jsonMode ? JSON.stringify({ event: 'freshness_source_path_skipped', source_id: src.id, reason: skipWarn }) : skipWarn) + '\n',
-                      );
-                      continue;
-                    }
-                    const backlog = await countExtractAtomsBacklog(engine, src.id);
-                    if (backlog === null || backlog <= threshold) continue;
-                    // Time-sloted key (CODEX #2): a static key would block the
-                    // source FOREVER once the first job completes. A new UTC-day
-                    // slot reopens it each day.
-                    const idemKey = `autopilot-extract-atoms-drain:${src.id}:${utcDay}`;
-                    try {
-                      // CODEX (impl review #4): DO NOT use maxWaiting here — it
-                      // coalesces by (name, queue), NOT by source, so source B's
-                      // submit would return source A's waiting row, B would never
-                      // queue, and the cap counter would over-count. The per-source
-                      // idempotency key is the correct dedup. Pre-check it so we
-                      // submit + count only genuinely-new sources (queue.add returns
-                      // the existing row on an idempotency hit with no created flag,
-                      // which would otherwise over-count the daily cap). The
-                      // single-instance autopilot lock + the unique idempotency
-                      // index make this pre-check race-free.
-                      const dupe = await engine.executeRaw<{ one: number }>(
-                        `SELECT 1 AS one FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1`,
-                        [idemKey],
-                      );
-                      if (dupe.length > 0) continue; // already queued/drained for this source today
-                      const job = await queue.add(
-                        'extract-atoms-drain',
-                        { sourceId: src.id, window: windowSeconds, repoPath: src.local_path },
-                        {
-                          queue: 'default',
-                          idempotency_key: idemKey,
-                          // issue #3218: the handler now throws on an
-                          // all-provider-failed batch, so give the queue's
-                          // backoff a chance (was 1 — dead-lettered instantly).
-                          max_attempts: 3,
-                          timeout_ms: timeoutMs,
-                        },
-                        { allowProtectedSubmit: true },
-                      );
-                      submittedToday++;
-                      if (jsonMode) {
-                        process.stderr.write(JSON.stringify({
-                          event: 'dispatched', job_id: job.id, mode: 'auto-drain',
-                          source_id: src.id, backlog,
-                        }) + '\n');
-                      } else {
-                        console.log(`[dispatch] job #${job.id} extract-atoms-drain (auto-drain: ${src.id}; backlog=${backlog})`);
-                      }
-                    } catch (e) {
-                      logError('dispatch.auto-drain', e);
-                    }
-                  }
+            const { packDeclaresPhase } = await import('../core/cycle.ts');
+            // packDeclaresPhase reads the active pack (brain-wide, not
+            // per-source). If the pack declares extract_atoms the routine
+            // cycle already drains it for every source — nothing to do.
+            if (!(await packDeclaresPhase(engine, 'extract_atoms'))) {
+              // Policy (enabled flag, max_usd_per_day daily cap, fairness,
+              // page OR live-transcript due, dedup, cap lock) lives in one
+              // module shared with the drain handler's continuation.
+              const { dispatchAutoDrains } = await import('../core/cycle/extract-atoms-auto-drain.ts');
+              const dispatched = await dispatchAutoDrains(engine, queue, {
+                timeoutMs,
+                onError: (_sourceId, e) => logError('dispatch.auto-drain', e),
+                // Same unavailable-path skip (relative / missing on this
+                // machine) as the freshness loop above, same --json shape.
+                onSkip: (sourceId, reason) => process.stderr.write(
+                  (jsonMode ? JSON.stringify({ event: 'freshness_source_path_skipped', source_id: sourceId, reason }) : reason) + '\n',
+                ),
+              });
+              for (const d of dispatched) {
+                const backlog = d.backlog.pages;
+                if (jsonMode) {
+                  process.stderr.write(JSON.stringify({
+                    event: 'dispatched', job_id: d.jobId, mode: 'auto-drain',
+                    source_id: d.sourceId, backlog, transcripts: d.backlog.transcripts,
+                  }) + '\n');
+                } else {
+                  console.log(`[dispatch] job #${d.jobId} extract-atoms-drain (auto-drain: ${d.sourceId}; backlog=${backlog}; transcripts=${d.backlog.transcripts})`);
                 }
               }
             }
