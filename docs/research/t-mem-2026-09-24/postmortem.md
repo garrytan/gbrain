@@ -1,7 +1,7 @@
 ---
 title: "T-Mem: failed validation for GBrain"
 date: 2026-09-24
-status: archived-no-go
+status: mothballed
 tags: [research, retrieval, t-mem, negative-result, postmortem]
 ---
 
@@ -9,7 +9,7 @@ tags: [research, retrieval, t-mem, negative-result, postmortem]
 
 [Research index](../README.md)
 
-**Decision: archive this effort as a failed validation, and do not proceed with the custom integration on this evidence.** This does not establish that the paper's idea is false. Our implementation failed to complete its comparison, and the later released-code pilot did not demonstrate an answer-quality gain.
+**Decision: mothball the custom integration in [gbrain#5374](https://github.com/garrytan/gbrain/pull/5374), and preserve the research without shipping that feature.** This does not establish that the paper's idea is false. Our implementation failed to complete its comparison, and the later released-code pilot did not demonstrate an answer-quality gain.
 
 ## In plain English
 
@@ -58,11 +58,21 @@ These differences were recorded before inference, not invented to explain the ou
 4. Match the claimed experiment, not merely the paper's model names. Released scripts, historical artifacts and paper settings must agree, or the experiment needs a narrower label.
 5. Preserve weak positive signals as well as failures. Two descriptive-trigger recoveries are real, but they are not evidence of Horizon's added recall or a large overall gain.
 
+## Disposition of #5374 and the companion work
+
+[gbrain#5374](https://github.com/garrytan/gbrain/pull/5374) is **mothballed, closed without merging**. Its branch is retained as historical source, not maintained as a merge-ready feature. The published prototype head is [4f5382a](https://github.com/garrytan/gbrain/commit/4f5382a65f8aef96ab6c04ea7e6c32062da849ad). Its passing implementation tests never supplied the missing end-to-end retrieval result, so neither those tests nor the small released-code signal justify landing it.
+
+The disposition separates three changes:
+
+- [gbrain#5453](https://github.com/garrytan/gbrain/pull/5453) preserves this postmortem, the protocol, measured results and reproducible evidence. It does not introduce the feature's runtime code.
+- [gbrain-evals#34](https://github.com/garrytan/gbrain-evals/pull/34) preserves the evaluation harness independently. Its pinned [939232f prototype](https://github.com/garrytan/gbrain/commit/939232f1746381b4e932d620d6c709e29198f14c) belongs to the unmerged experimental lineage, not the current production release. Landing that harness does not establish a capability gain or authorize another paid experiment.
+- #5374 remains unmerged. Its conflicts are not being repaired to prepare it for shipping, and the later unpublished prototype work is not being folded into either archival PR.
+
 ## Conditions for reopening
 
 Reopening needs new evidence or a materially clearer experimental protocol, not another schema/repair iteration: obtain the exact paper runner or explicitly label a reconstruction; test memory constructed before the query if that is the intended GBrain behavior; complete a preselected matched comparison that measures both retrieval and answers; and audit judge reliability without replacing unfavorable primary results after the fact.
 
-At the 2026-09-24 archival decision, no feature was merged, no draft was closed, and no branch was deleted. The implementation and evaluator were unshipped. Their historical references are [product PR #5374](https://github.com/garrytan/gbrain/pull/5374) and [evaluator PR #34](https://github.com/garrytan/gbrain-evals/pull/34). This documentation change does not resume either implementation.
+Reopening #5374 also requires an explicit new decision to resume the feature. Preserving its branch, documentation and evaluator is not that decision.
 
 ## Evidence and sources
 
