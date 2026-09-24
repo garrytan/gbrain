@@ -99,6 +99,7 @@ jobs:
           : "${DATABASE_URL:?PostgreSQL contract tests require the explicit test database}"
           bun --no-env-file test --timeout=120000 \
             test/persistence-admission-observer.test.ts \
+            test/persistence-read-diagnostics.test.ts \
             test/persistence-journal.test.ts \
             test/persistence-staging.test.ts \
             test/persistence-effect-recovery-fairness.test.ts \

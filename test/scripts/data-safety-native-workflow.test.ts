@@ -152,6 +152,24 @@ describe('data-safety native CI coverage', () => {
     expect(result.stdout.toString().trim().split('\n')).toEqual(suites);
   });
 
+  for (const exitCode of [0, 1]) test(`read diagnostics run with PostgreSQL and retain test failure (${exitCode})`, () => {
+    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+      jobs: { 'deployment-matrix': { steps: Step[] } };
+    };
+    const step = persistence.jobs['deployment-matrix'].steps.find(entry => entry.name === 'Require PostgreSQL lifecycle, projection and recovery contracts');
+    expect(step).toBeDefined();
+    expect(step!.if).toBeUndefined();
+    expect(step!['continue-on-error']).toBeUndefined();
+    expect(step!.env?.GBRAIN_TEST_ALLOW_DATABASE_URL).toBe('1');
+    expect(step!.env?.DATABASE_URL).toMatch(/^postgres:\/\/.+\/gbrain_test$/);
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { printf '%s\\n' "$@"; return ${exitCode}; }
+      ${step!.run}
+    `], { env: { PATH: process.env.PATH ?? '', ...step!.env } });
+    expect(result.exitCode).toBe(exitCode);
+    expect(result.stdout.toString().trim().split('\n').filter(arg => arg === 'test/persistence-read-diagnostics.test.ts')).toHaveLength(1);
+  });
+
   test('publication and sync safety suites run in separate PostgreSQL-bearing CI processes', () => {
     const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { 'deployment-matrix': { steps: Step[] } };
