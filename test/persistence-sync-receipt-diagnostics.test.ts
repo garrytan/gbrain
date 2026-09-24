@@ -166,9 +166,11 @@ test('an unknown or absent stored reason stays write_pending in both fields', ()
 });
 
 const OTHER_ID = '20000000-0000-4000-8000-000000000002';
-async function reportFraming(receipts: WriteReceipt[], writeError: 'response_too_large' | 'storage_error' | 'write_pending' = 'response_too_large') {
+async function reportFraming(receipts: WriteReceipt[], writeError: 'response_too_large' | 'storage_error' | 'write_pending' = 'response_too_large',
+  detail: string | null = 'result_unframed_committed') {
   const error = new OperationError(writeError, 'Result could not be framed.');
   error.writeError = writeError;
+  if (detail !== null) error.detail = detail;
   if (receipts.length === 1) error.writeRequest = receipts[0]; else error.writeRequests = receipts;
   const stderr = spyOn(console, 'error').mockImplementation(() => {});
   let stdout = '';
@@ -199,4 +201,32 @@ test('any uncommitted receipt, or a non-framing error, keeps exit 1', async () =
   expect((await reportFraming([committedCli(requestId)], 'write_pending')).exit).toBe(1);
   _resetCliExitVerdictForTests();
   expect((await reportFraming([])).exit).toBe(1);
+});
+
+test('unattested or failure-flagged committed receipts never exit 0 (older owner, failed result, dropped receipt)', async () => {
+  // An older owner sends committed receipts with no attestation.
+  const legacy = await reportFraming([committedCli(requestId)], 'response_too_large', null);
+  expect(legacy.exit).toBe(1);
+  expect(legacy.lines).toContain('Error [response_too_large]');
+  expect(legacy.lines).not.toContain('Committed');
+  _resetCliExitVerdictForTests();
+  // The owner saw a result-level failure or an invalid receipt.
+  for (const plural of [[committedCli(requestId)], [committedCli(requestId), committedCli(OTHER_ID)]]) {
+    const failed = await reportFraming(plural, 'storage_error', 'result_unframed');
+    expect(failed.exit).toBe(1);
+    expect(failed.lines).not.toContain('Committed');
+    _resetCliExitVerdictForTests();
+  }
+});
+
+test('a remote MCP error cannot claim a committed framing salvage', async () => {
+  const { RemoteMcpError } = await import('../src/core/mcp-client.ts');
+  const error = new RemoteMcpError('tool_error', 'framing', { code: 'response_too_large', write_error: 'response_too_large',
+    server_detail: 'result_unframed_committed', write_request: committedCli(requestId) });
+  const stderr = spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    expect(await reportPersistenceCliError(error, false)).toBe(true);
+    expect(currentExitCode()).toBe(1);
+    expect(stderr.mock.calls.map(args => args.join(' ')).join('\n')).not.toContain('Committed');
+  } finally { stderr.mockRestore(); }
 });

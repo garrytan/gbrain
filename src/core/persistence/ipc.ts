@@ -145,44 +145,74 @@ function responseFrame(value: unknown): string {
 /** Frozen MEMORY_VERBS v1 operations reachable over this socket; their error enum never widens. */
 const FROZEN_VERB_OPERATIONS = new Set(['remember', 'forget']);
 
+/**
+ * `detail` values for a result that ran but could not be framed. `detail` is the
+ * existing freeform envelope field, so frozen MEMORY_VERBS envelopes keep their
+ * exact schema. Only the attested value lets a CLI treat the call as committed.
+ */
+export const UNFRAMED_RESULT_COMMITTED = 'result_unframed_committed';
+export const UNFRAMED_RESULT = 'result_unframed';
+
+/** Result-level failure signals; the CLI already exits 1 on `status: 'error'`. */
+const FAILED_RESULT_STATUSES = new Set(['error', 'failed', 'partial', 'blocked_by_failures']);
+
+interface SalvagedReceipts { receipts: WriteReceipt[]; dropped: number; failed: boolean; }
+
 /** Receipts at the result's top level or one record below (e.g. a sync `managedWrite`). */
-function resultReceipts(result: unknown, depth = 0): WriteReceipt[] {
-  if (!record(result)) return [];
-  const found: WriteReceipt[] = [];
-  if (isWriteReceipt(result.write_request)) found.push(result.write_request);
-  if (Array.isArray(result.write_requests)) found.push(...result.write_requests.filter(isWriteReceipt));
-  if (depth === 0) for (const [key, value] of Object.entries(result)) {
-    if (key !== 'write_request' && key !== 'write_requests' && record(value)) found.push(...resultReceipts(value, 1));
+function resultReceipts(result: unknown, depth = 0, into: SalvagedReceipts = { receipts: [], dropped: 0, failed: false }): SalvagedReceipts {
+  if (!record(result)) return into;
+  if (typeof result.status === 'string' && FAILED_RESULT_STATUSES.has(result.status)) into.failed = true;
+  if (result.error !== undefined || result.skipped !== undefined || Array.isArray(result.errors) && result.errors.length > 0) into.failed = true;
+  if (result.write_request !== undefined) {
+    if (isWriteReceipt(result.write_request)) into.receipts.push(result.write_request); else into.dropped++;
   }
-  return [...new Map(found.map(receipt => [receipt.request_id, receipt])).values()];
+  if (result.write_requests !== undefined) {
+    if (!Array.isArray(result.write_requests)) into.dropped++;
+    else for (const candidate of result.write_requests) {
+      if (isWriteReceipt(candidate)) into.receipts.push(candidate); else into.dropped++;
+    }
+  }
+  if (depth === 0) for (const [key, value] of Object.entries(result)) {
+    if (key !== 'write_request' && key !== 'write_requests' && record(value)) resultReceipts(value, 1, into);
+  }
+  if (depth === 0) into.receipts = [...new Map(into.receipts.map(receipt => [receipt.request_id, receipt])).values()];
+  return into;
 }
 
 /**
  * The operation already ran when its result is framed. A result that cannot be
  * framed keeps every receipt it carried (without outcome bodies), so committed
  * writes are never reported as a receiptless failure. Frozen verbs keep the
- * frozen `unavailable` code and carry the detail in `write_error`.
+ * frozen `unavailable` code and carry the detail in `write_error`. Commitment is
+ * attested only when every candidate receipt validated, every receipt is
+ * committed and the result itself reported no failure.
  */
 export function resultFrame(result: unknown, operation?: string): string {
   try { return responseFrame({ version: 1, ok: true, result }); } catch (error) {
-    const receipts = resultReceipts(result).map(receipt => {
+    const salvaged = resultReceipts(result);
+    const receipts = salvaged.receipts.map(receipt => {
       const outcomeFree = publicWriteReceipt(receipt);
       delete outcomeFree.outcome;
       return outcomeFree;
     });
     if (!receipts.length) throw error;
     const reason = error instanceof OperationError && error.code === 'response_too_large' ? 'response_too_large' : 'storage_error';
-    const committed = receipts.every(receipt => receipt.state === 'committed');
+    const committed = !salvaged.failed && salvaged.dropped === 0 && receipts.every(receipt => receipt.state === 'committed');
     const frozen = operation !== undefined && FROZEN_VERB_OPERATIONS.has(operation);
     const ids = receipts.length === 1 ? `request_id ${receipts[0].request_id}` : 'these request_ids';
     const problem = reason === 'response_too_large' ? 'exceeds the local transport limit' : 'could not be encoded';
+    const caveats = [
+      ...(salvaged.failed ? ['the result reported a failure'] : []),
+      ...(salvaged.dropped ? [`${salvaged.dropped} receipt${salvaged.dropped === 1 ? '' : 's'} could not be validated`] : []),
+    ];
     return responseFrame({ version: 1, ok: false, error: {
       error: frozen ? 'unavailable' : reason, write_error: reason,
+      detail: committed ? UNFRAMED_RESULT_COMMITTED : UNFRAMED_RESULT,
       ...(frozen ? { protocol_version: 1 } : {}),
       ...(receipts.length === 1 ? { write_request: receipts[0] } : { write_requests: receipts }),
       message: committed
         ? `The ${receipts.length === 1 ? 'write' : `${receipts.length} writes`} committed, but the result ${problem}.`
-        : `States: ${[...new Set(receipts.map(receipt => receipt.state))].join(', ')}; the result ${problem}.`,
+        : `States: ${[...new Set(receipts.map(receipt => receipt.state))].join(', ')}${caveats.length ? `; ${caveats.join('; ')}` : ''}; the result ${problem}.`,
       suggestion: committed
         ? `Do not resubmit. Read the committed change back, or inspect ${ids} with get_write_request.`
         : `Inspect ${ids} with get_write_request before retrying; do not generate replacement IDs.`,
@@ -329,12 +359,19 @@ function remoteOperationError(value: unknown): OperationError {
     typeof value.docs === 'string' ? value.docs : undefined);
   if (typeof value.detail === 'string') error.detail = value.detail;
   if (typeof value.protocol_version === 'number') error.protocolVersion = value.protocol_version;
-  if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
+  let dropped = 0;
+  if (value.write_request !== undefined) {
+    if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request); else dropped++;
+  }
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;
-  if (Array.isArray(value.write_requests)) {
-    const receipts = value.write_requests.filter(isWriteReceipt).map(publicWriteReceipt);
+  if (value.write_requests !== undefined) {
+    const candidates = Array.isArray(value.write_requests) ? value.write_requests : [value.write_requests];
+    const receipts = candidates.filter(isWriteReceipt).map(publicWriteReceipt);
+    dropped += candidates.length - receipts.length;
     if (receipts.length) error.writeRequests = receipts;
   }
+  // A receipt this client cannot validate withdraws any commitment attestation.
+  if (dropped && error.detail === UNFRAMED_RESULT_COMMITTED) error.detail = UNFRAMED_RESULT;
   return error;
 }
 

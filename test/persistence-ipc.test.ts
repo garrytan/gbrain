@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import net, { type Server } from 'node:net';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from 'node:fs';
@@ -8,6 +8,8 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { ERROR_SCHEMA } from '../src/core/verbs.ts';
 import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
 import type { WriteReceipt } from '../src/core/persistence/types.ts';
+import { reportPersistenceCliError } from '../src/commands/persistence-delegate.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import {
   PERSISTENCE_IPC_MAX_BYTES, PersistenceIpcTransportError,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
@@ -236,6 +238,91 @@ describe('dedicated persistence IPC', () => {
         write_request: { request_id: ID, state: 'committed', retry_after_ms: null } });
       expect(body.message).toContain('could not be encoded');
     }
+  });
+
+  /** Real socket, then the CLI reporter: returns the envelope, printed lines and exit verdict. */
+  async function framedCli(result: Record<string, unknown>, operation: PersistenceIpcRequest['operation'] = 'put_page') {
+    const path = socketPath();
+    await bind(path, async () => result);
+    let caught: unknown;
+    try { await requestPersistenceOperation(path, { ...request(), operation }); } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(OperationError);
+    _resetCliExitVerdictForTests();
+    const stderr = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await reportPersistenceCliError(caught, false)).toBe(true);
+      return { body: (caught as OperationError).toJSON(), lines: stderr.mock.calls.map(args => args.join(' ')).join('\n'), exit: currentExitCode() };
+    } finally { stderr.mockRestore(); _resetCliExitVerdictForTests(); process.exitCode = 0; }
+  }
+  const pad = 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES);
+
+  test('attested committed salvage exits 0 for singular, plural, nested and frozen-verb envelopes', async () => {
+    const single = await framedCli({ ...committedReceipt(ID), write_request: committedReceipt(ID), pad });
+    expect(single).toMatchObject({ exit: 0, body: { detail: 'result_unframed_committed', write_request: { state: 'committed' } } });
+    const plural = await framedCli({ write_requests: [committedReceipt(ID), committedReceipt(OTHER)], pad }, 'extract_facts');
+    expect(plural).toMatchObject({ exit: 0, body: { detail: 'result_unframed_committed' } });
+    expect(plural.body.write_requests).toHaveLength(2);
+    const nested = await framedCli({ status: 'synced', managedWrite: { write_request: committedReceipt(ID) }, pad });
+    expect(nested).toMatchObject({ exit: 0, body: { write_request: { request_id: ID } } });
+    const frozen = await framedCli({ ...committedReceipt(ID), write_request: committedReceipt(ID), pad }, 'remember');
+    expect(frozen.exit).toBe(0);
+    expect(frozen.body).toMatchObject({ error: 'unavailable', protocol_version: 1, write_error: 'response_too_large', detail: 'result_unframed_committed' });
+    expect(validateAgainstSchema(frozen.body, ERROR_SCHEMA)).toEqual([]);
+    expect(Object.keys(JSON.parse(JSON.stringify(frozen.body))).sort()).toEqual(['detail', 'error', 'message', 'protocol_version', 'suggestion', 'write_error', 'write_request']);
+    for (const run of [single, plural, nested, frozen]) expect(run.lines).toContain('Committed [response_too_large]');
+  });
+
+  test.each([
+    ['singular', 'put_page', { status: 'error', write_request: undefined as unknown, single: true }],
+    ['plural', 'extract_facts', { status: 'error' }],
+    ['nested', 'put_page', { managedWrite: { status: 'partial', write_request: 'NESTED' } }],
+    ['frozen', 'remember', { error: 'page-level failure', single: true }],
+  ] as const)('a %s result that itself failed never exits 0 even when every receipt committed', async (_label, operation, shape) => {
+    const receipts = 'managedWrite' in shape ? {} : 'single' in shape ? { write_request: committedReceipt(ID) }
+      : { write_requests: [committedReceipt(ID), committedReceipt(OTHER)] };
+    const result: Record<string, unknown> = { ...shape, ...receipts, pad };
+    delete result.single;
+    if ('managedWrite' in shape) result.managedWrite = { status: 'partial', write_request: committedReceipt(ID) };
+    const run = await framedCli(result, operation as PersistenceIpcRequest['operation']);
+    expect(run.exit).toBe(1);
+    expect(run.body.detail).toBe('result_unframed');
+    expect(run.body.message).toContain('the result reported a failure');
+    expect(run.body.suggestion).not.toContain('Do not resubmit');
+    expect(run.lines).not.toContain('Committed');
+    if (operation === 'remember') expect(validateAgainstSchema(run.body, ERROR_SCHEMA)).toEqual([]);
+  });
+
+  test.each([
+    ['malformed singular beside a batch', { write_request: { request_id: ID, state: 'future_state', retry_after_ms: null }, write_requests: [committedReceipt(OTHER)] }],
+    ['one malformed batch entry', { write_requests: [committedReceipt(ID), { request_id: OTHER, state: 'future_state', retry_after_ms: null }] }],
+    ['non-array batch', { write_request: committedReceipt(ID), write_requests: 'corrupt' }],
+    ['malformed nested receipt', { write_request: committedReceipt(ID), managedWrite: { write_request: { state: 'committed' } } }],
+  ])('an owner-dropped receipt (%s) makes the decision conservative', async (_label, shape) => {
+    const run = await framedCli({ ...shape, pad }, 'extract_facts');
+    expect(run.exit).toBe(1);
+    expect(run.body.detail).toBe('result_unframed');
+    expect(run.body.message).toMatch(/could not be validated/);
+    expect(run.lines).not.toContain('Committed');
+  });
+
+  test('a receipt the client cannot validate withdraws the owner attestation', async () => {
+    const path = socketPath();
+    const envelope = { version: 1, ok: false, error: { error: 'response_too_large', write_error: 'response_too_large',
+      detail: 'result_unframed_committed', message: 'The 2 writes committed.', suggestion: 'Do not resubmit.',
+      write_requests: [{ request_id: ID, state: 'committed', retry_after_ms: null }, { request_id: OTHER, state: 'future_state', retry_after_ms: null }] } };
+    const server = net.createServer(socket => { socket.once('data', () => socket.end(JSON.stringify(envelope) + '\n')); });
+    rawServers.push(server);
+    server.listen(path);
+    await once(server, 'listening');
+    let caught: unknown;
+    try { await requestPersistenceOperation(path, request()); } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(OperationError);
+    expect((caught as OperationError).detail).toBe('result_unframed');
+    expect((caught as OperationError).writeRequests).toEqual([{ request_id: ID, state: 'committed', retry_after_ms: null }]);
+    _resetCliExitVerdictForTests();
+    const stderr = spyOn(console, 'error').mockImplementation(() => {});
+    try { await reportPersistenceCliError(caught, false); expect(currentExitCode()).toBe(1); }
+    finally { stderr.mockRestore(); _resetCliExitVerdictForTests(); process.exitCode = 0; }
   });
 
   test('an oversized result without a receipt stays a plain transport-limit error', async () => {

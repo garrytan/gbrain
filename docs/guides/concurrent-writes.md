@@ -229,8 +229,16 @@ it exceeds the transport limit (`response_too_large`) or cannot be encoded
 without outcome bodies: `write_request` for one write, or `write_requests` for
 a batch such as fact extraction or a sync's pending write. `remember` and
 `forget` keep the frozen `unavailable` code, with the detail in `write_error`.
-When every attached receipt is `committed`, the CLI prints `Committed [...]`
-and exits 0 while the JSON envelope is unchanged. Otherwise it exits 1. Never
+The owner sets `detail: "result_unframed_committed"` only when every receipt
+it found validated and is `committed`, and the result itself reported no
+failure (`status` of `error`, `failed`, `partial` or `blocked_by_failures`, or
+an `error`, `errors` or `skipped` field). Otherwise it sends
+`detail: "result_unframed"` and names the failure or the unvalidated receipts
+in the message. A client that cannot validate a receipt withdraws the
+attestation. The CLI prints `Committed [...]` and exits 0 only for that
+attested local-owner envelope. The JSON envelope is unchanged. An older owner's
+unattested envelope, a remote MCP error, a failed result or any dropped receipt
+exits 1. Never
 resubmit a committed receipt. Read the change back or inspect the request ID.
 A result that carries no receipt still returns the plain error.
 

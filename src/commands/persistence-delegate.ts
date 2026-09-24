@@ -4,7 +4,7 @@ import type { GBrainConfig } from '../core/config.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { finishCliTeardown, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
-import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
+import { PersistenceIpcTransportError, UNFRAMED_RESULT_COMMITTED } from '../core/persistence/ipc.ts';
 import { RemoteMcpError } from '../core/mcp-client.ts';
 import type { WriteReceipt } from '../core/persistence/types.ts';
 
@@ -17,9 +17,10 @@ export async function reportPersistenceCliError(error: unknown, json = false,
     ...('write_request' in detail && detail.write_request ? [detail.write_request] : []),
     ...('write_requests' in detail && Array.isArray(detail.write_requests) ? detail.write_requests : []),
   ];
-  // Only a result-framing failure can accompany committed work; the frozen envelope stays unchanged.
+  // Only an owner-attested result-framing failure can accompany committed work; the envelope stays unchanged.
   const writeError = 'write_error' in detail ? detail.write_error : undefined;
-  const committed = committedDespiteFraming(writeError, receipts);
+  const committed = error instanceof OperationError
+    && committedDespiteFraming(writeError, 'detail' in detail ? detail.detail : undefined, receipts);
   if (json) await out(JSON.stringify(detail, null, 2) + '\n');
   console.error(error instanceof OperationError || error instanceof RemoteMcpError
     ? `${committed ? 'Committed' : 'Error'} [${writeError || detail.error}]: ${detail.message}` : error.message);
@@ -33,9 +34,14 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   return true;
 }
 
-/** Exit 0 only when every accepted write committed and the sole failure was returning its result. */
-export function committedDespiteFraming(writeError: unknown, receipts: WriteReceipt[]): boolean {
+/**
+ * Exit 0 only when the owner attested that every receipt validated and committed, the
+ * result reported no failure, and the sole failure was returning it. Anything else,
+ * including an unattested envelope from an older owner, stays a failure.
+ */
+export function committedDespiteFraming(writeError: unknown, detail: unknown, receipts: WriteReceipt[]): boolean {
   return (writeError === 'response_too_large' || writeError === 'storage_error')
+    && detail === UNFRAMED_RESULT_COMMITTED
     && receipts.length > 0 && receipts.every(receipt => receipt.state === 'committed');
 }
 
