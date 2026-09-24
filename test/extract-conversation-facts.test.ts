@@ -45,6 +45,7 @@ import {
 } from '../src/commands/extract-conversation-facts.ts';
 import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
+import { loadOpCheckpoint } from '../src/core/op-checkpoint.ts';
 
 // ---------------------------------------------------------------------------
 // pageTypesForAllowed — logical→concrete page-type expansion.
@@ -532,6 +533,232 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_processed).toBe(1);
     expect(result.facts_inserted).toBe(0);
     expect(result.segments_processed).toBeGreaterThanOrEqual(1);
+  });
+
+  test('#5364 speaker objects preserve provenance and isolate same-slug sources', async () => {
+    const slug = 'conversations/speaker-object-example';
+    const body = "{'source': 'microphone', 'attribution': 'me'}: hello\n{'source': 'speaker', 'name': 'alice-example', 'attribution': 'them'}: hi";
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('speaker-other', 'speaker-other') ON CONFLICT DO NOTHING`);
+    for (const sourceId of ['default', 'speaker-other']) {
+      await engine.putPage(slug, { type: 'meeting', title: 'Speaker object example', compiled_truth: body, timeline: '', frontmatter: { date: '2026-06-02' } }, { sourceId });
+    }
+    const turns: string[] = [];
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug, sleepMs: 0,
+      extractor: async input => {
+        turns.push(input.turnText);
+        return [{ fact: 'alice-example said hi', kind: 'event', confidence: 1, entity_slug: null, source: 'test', context: input.turnText }];
+      },
+    });
+    expect(result.pages_processed).toBe(1);
+    expect(result.facts_inserted).toBe(1);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toContain('me (2026-06-02T00:00:00Z): hello');
+    expect(turns[0]).toContain('alice-example (2026-06-02T00:00:00Z): hi');
+    expect(turns[0]).not.toContain('them (');
+    const rows = await engine.executeRaw<{ source_id: string; source_markdown_slug: string; source_session: string; context: string }>(
+      `SELECT source_id, source_markdown_slug, source_session, context FROM facts WHERE source_markdown_slug = $1 AND source = $2`, [slug, PER_SEGMENT_SOURCE_PREFIX],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source_id: 'default', source_markdown_slug: slug, source_session: `${PER_SEGMENT_SOURCE_PREFIX}:${slug}`, context: turns[0] });
+    expect(mainChatCalls).toBe(0);
+    expect(fallbackCalls).toBe(0);
+    const replay = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug, sleepMs: 0 });
+    expect(replay.pages_skipped_completed).toBe(1);
+    expect(replay.pages_skipped).toBe(0);
+    const other = await runExtractConversationFactsCore(engine, { sourceId: 'speaker-other', slug, dryRun: true, sleepMs: 0 });
+    expect(other.pages_processed).toBe(1);
+    expect(other.pages_skipped_completed).toBe(0);
+  });
+
+  test('#5364 dry-run on recognized turns never invokes extraction or changes durable state', async () => {
+    await engine.setConfig('conversation_parser.llm_fallback_enabled', 'true');
+    const before = await engine.executeRaw(`SELECT (SELECT count(*) FROM facts) AS facts, (SELECT count(*) FROM op_checkpoints) AS checkpoints, (SELECT count(*) FROM pages) AS pages, (SELECT count(*) FROM extract_rollup_7d) AS rollups`);
+    let calls = 0;
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'conversations/imessage/alice-example', dryRun: true, sleepMs: 0,
+      extractor: async () => { calls++; return []; },
+    });
+    expect(result.pages_processed).toBe(1);
+    expect(result.segments_processed).toBeGreaterThan(0);
+    expect(calls).toBe(0);
+    expect(mainChatCalls).toBe(0);
+    expect(fallbackCalls).toBe(0);
+    expect(embeddedTexts).toEqual([]);
+    expect(await engine.executeRaw(`SELECT (SELECT count(*) FROM facts) AS facts, (SELECT count(*) FROM op_checkpoints) AS checkpoints, (SELECT count(*) FROM pages) AS pages, (SELECT count(*) FROM extract_rollup_7d) AS rollups`)).toEqual(before);
+  });
+
+  test('#5364 skip reasons are additive subsets and no-match remains retryable', async () => {
+    const singleton = 'conversations/single-speaker-object-example';
+    await engine.putPage(singleton, { type: 'conversation', title: 'Single turn', compiled_truth: fmt('Alice Example', '2024-03-15', '9:00 AM', 'hello'), timeline: '', frontmatter: {} });
+    const slugs = ['conversations/novel-format-example', singleton, 'people/alice-example'];
+    for (const dryRun of [true, false]) {
+      const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, dryRun, sleepMs: 0 });
+      expect(result).toMatchObject({ pages_skipped: 3, pages_skipped_unparsed: 1, pages_skipped_type_mismatch: 1, pages_skipped_insufficient_turns: 1, pages_skipped_since: 0, pages_marked_non_extractable: dryRun ? 0 : 1 });
+    }
+    const retry = await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, sleepMs: 0 });
+    expect(retry).toMatchObject({ pages_skipped: 2, pages_skipped_unparsed: 1, pages_skipped_type_mismatch: 1, pages_skipped_insufficient_turns: 0, pages_skipped_non_extractable: 1 });
+    expect(await engine.executeRaw(`SELECT id FROM facts WHERE source_markdown_slug = 'conversations/novel-format-example'`)).toEqual([]);
+    expect(mainChatCalls).toBe(0);
+    expect(fallbackCalls).toBe(0);
+  });
+
+  test('#5364 explicit since filtering is distinct from insufficient turns and checkpoints', async () => {
+    const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug: 'conversations/imessage/alice-example', sinceIso: '2099-01-01T00:00:00Z', sleepMs: 0 });
+    expect(result).toMatchObject({ pages_skipped: 1, pages_skipped_since: 1, pages_skipped_insufficient_turns: 0, pages_skipped_unparsed: 0, pages_skipped_completed: 0, pages_marked_non_extractable: 0 });
+    expect(mainChatCalls).toBe(0);
+  });
+
+  test('#5364 repairing the same no-match page extracts once without touching another source', async () => {
+    const slug = 'conversations/repairable-speaker-object-example';
+    const sourceId = 'default';
+    const otherSourceId = 'speaker-other';
+    const title = 'Repairable speaker object example';
+    const unsupported = 'An unsupported transcript without speaker anchors.';
+    const supported = "{'source': 'microphone', 'attribution': 'me'}: hello\n{'attribution': 'them', 'name': 'alice-example', 'source': 'speaker'}: hi";
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING', [otherSourceId]);
+    for (const id of [sourceId, otherSourceId]) {
+      await engine.putPage(slug, { type: 'meeting', title, compiled_truth: unsupported, timeline: '', frontmatter: { date: '2026-06-02' } }, { sourceId: id });
+    }
+    const otherPage = await engine.getPage(slug, { sourceId: otherSourceId });
+    const checkpoint = (id: string) => ({ op: 'extract-conversation-facts', fingerprint: extractConversationFactsFingerprint({ sourceId: id }) });
+    const assertOtherUntouched = async () => {
+      expect(await engine.getPage(slug, { sourceId: otherSourceId })).toEqual(otherPage);
+      expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id = $1', [otherSourceId])).toEqual([]);
+      expect(await loadOpCheckpoint(engine, checkpoint(otherSourceId))).toEqual([]);
+    };
+    const turns: string[] = [];
+    const extractor = async (input: { turnText: string }) => {
+      turns.push(input.turnText);
+      return [{ fact: 'alice-example said hi', kind: 'event' as const, confidence: 1, entity_slug: null, source: 'test', context: input.turnText }];
+    };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await runExtractConversationFactsCore(engine, { sourceId, slug, extractor, sleepMs: 0 });
+      expect(result).toMatchObject({ pages_considered: 1, pages_processed: 0, pages_skipped: 1, pages_skipped_unparsed: 1, pages_skipped_completed: 0, pages_skipped_non_extractable: 0, pages_marked_non_extractable: 0, facts_inserted: 0 });
+      expect(await engine.executeRaw('SELECT id FROM facts WHERE source_markdown_slug = $1', [slug])).toEqual([]);
+      expect(await loadOpCheckpoint(engine, checkpoint(sourceId))).toEqual([]);
+      expect(turns).toEqual([]);
+      expect(mainChatCalls).toBe(0);
+      expect(fallbackCalls).toBe(0);
+      expect(embeddedTexts).toEqual([]);
+      await assertOtherUntouched();
+    }
+
+    await engine.putPage(slug, { type: 'meeting', title, compiled_truth: supported, timeline: '', frontmatter: { date: '2026-06-02' } }, { sourceId });
+    const repaired = await runExtractConversationFactsCore(engine, { sourceId, slug, extractor, sleepMs: 0 });
+    expect(repaired).toMatchObject({ pages_processed: 1, pages_skipped: 0, pages_skipped_unparsed: 0, segments_processed: 1, facts_inserted: 1 });
+    const expectedTurn = `Page: ${title}\nConversation between me and alice-example from 2026-06-02T00:00:00Z to 2026-06-02T00:00:00Z\n---\nme (2026-06-02T00:00:00Z): hello\nalice-example (2026-06-02T00:00:00Z): hi`;
+    expect(turns).toEqual([expectedTurn]);
+    const facts = await engine.executeRaw<{ source_id: string; source: string; source_session: string; source_markdown_slug: string; context: string; row_num: number }>(
+      'SELECT source_id, source, source_session, source_markdown_slug, context, row_num FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num', [slug],
+    );
+    expect(facts).toHaveLength(2);
+    expect(facts[0]).toEqual({ source_id: sourceId, source: PER_SEGMENT_SOURCE_PREFIX, source_session: `${PER_SEGMENT_SOURCE_PREFIX}:${slug}`, source_markdown_slug: slug, context: expectedTurn, row_num: 0 });
+    expect(facts[1]).toMatchObject({ source_id: sourceId, source: TERMINAL_AUDIT_SOURCE, source_markdown_slug: slug, row_num: 1 });
+    expect(await loadOpCheckpoint(engine, checkpoint(sourceId))).toEqual([encodeCheckpointEntry(sourceId, slug, '2026-06-02T00:00:00Z')]);
+    await assertOtherUntouched();
+
+    const replay = await runExtractConversationFactsCore(engine, { sourceId, slug, extractor, sleepMs: 0 });
+    expect(replay).toMatchObject({ pages_considered: 1, pages_processed: 0, pages_skipped: 0, pages_skipped_completed: 1, facts_inserted: 0 });
+    expect(turns).toEqual([expectedTurn]);
+    expect(await engine.executeRaw('SELECT source_id, source, source_session, source_markdown_slug, context, row_num FROM facts WHERE source_markdown_slug = $1 ORDER BY row_num', [slug])).toEqual(facts);
+    expect(mainChatCalls).toBe(0);
+    expect(fallbackCalls).toBe(0);
+    expect(embeddedTexts).toEqual([]);
+    await assertOtherUntouched();
+  });
+
+  test('#5364 wrapper-contained speakers never reach extraction or certify an outcome', async () => {
+    const first = "{'source': 'microphone', 'attribution': 'me'}: hello";
+    const second = "{'source': 'speaker', 'name': 'alice-example', 'attribution': 'them'}: hi";
+    const wrappers = [
+      `{'example': '''\n${first}\n${second}\n'''}`,
+      `{'example': {\n${first}\n${second}\n}}`,
+      `[\n${first}\n${second}\n]`,
+      `payload = (\n${first}\n${second}\n)`,
+      `{'example': '''\n## Transcript\n${first}\n${second}\n'''}`,
+      `## Summary\npayload(\n## Transcript\n${first}\n${second}`,
+      `## Summary\nr'\n## Transcript\n${first}\n${second}`,
+    ];
+    let extractorCalls = 0;
+    for (const [index, wrapper] of wrappers.entries()) {
+      for (const [position, prefix] of [['bare', ''], ['section', '## Transcript\n'], ['after-turn', `${first}\n`]] as const) {
+        const slug = `conversations/wrapper-${index}-${position}`;
+        await engine.putPage(slug, { type: 'meeting', title: 'Wrapped speaker examples', compiled_truth: prefix + wrapper, timeline: '', frontmatter: { date: '2026-06-02' } });
+        const result = await runExtractConversationFactsCore(engine, {
+          sourceId: 'default', slug, sleepMs: 0,
+          extractor: async () => {
+            extractorCalls++;
+            return [{ fact: 'invented speaker context', kind: 'event', confidence: 1, entity_slug: null, source: 'test' }];
+          },
+        });
+        expect(result).toMatchObject({ pages_considered: 1, pages_processed: 0, pages_skipped: 1, pages_skipped_unparsed: 1, pages_marked_non_extractable: 0, pages_skipped_completed: 0, segments_processed: 0, facts_inserted: 0 });
+        expect(await engine.executeRaw('SELECT id FROM facts WHERE source_markdown_slug = $1', [slug])).toEqual([]);
+        expect(await loadOpCheckpoint(engine, { op: 'extract-conversation-facts', fingerprint: extractConversationFactsFingerprint({ sourceId: 'default' }) })).toEqual([]);
+        expect(extractorCalls).toBe(0);
+        expect(mainChatCalls).toBe(0);
+        expect(fallbackCalls).toBe(0);
+        expect(embeddedTexts).toEqual([]);
+      }
+    }
+  });
+
+  test('#5364 summary punctuation and following notes preserve genuine transcript extraction', async () => {
+    const turns = "{'source': 'microphone', 'attribution': 'me'}: hello\n{'source': 'speaker', 'name': 'alice-example', 'attribution': 'them'}: hi";
+    const bodies = [
+      `## Summary\nThe founders' update is ready. Good job :)\n## Transcript\n${turns}`,
+      `## Transcript\n${turns}\n## Action Items\nFollow up next week.`,
+    ];
+    const extracted: string[] = [];
+    for (const [index, body] of bodies.entries()) {
+      const slug = `conversations/section-boundary-${index}`;
+      await engine.putPage(slug, { type: 'meeting', title: 'Sectioned transcript', compiled_truth: body, timeline: '', frontmatter: { date: '2026-06-02' } });
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default', slug, sleepMs: 0,
+        extractor: async ({ turnText }) => {
+          extracted.push(turnText);
+          return [{ fact: 'alice-example said hi', kind: 'event', confidence: 1, entity_slug: null, source: 'test' }];
+        },
+      });
+      expect(result).toMatchObject({ pages_processed: 1, pages_skipped_unparsed: 0, segments_processed: 1, facts_inserted: 1 });
+      expect(await engine.executeRaw('SELECT id FROM facts WHERE source_markdown_slug = $1 AND source = $2', [slug, TERMINAL_AUDIT_SOURCE])).toHaveLength(1);
+    }
+    expect(extracted).toHaveLength(2);
+    for (const text of extracted) {
+      expect(text).toContain('me (2026-06-02T00:00:00Z): hello');
+      expect(text).toContain('alice-example (2026-06-02T00:00:00Z): hi');
+      expect(text).not.toContain('founders');
+      expect(text).not.toContain('Follow up');
+    }
+    expect(mainChatCalls).toBe(0);
+    expect(fallbackCalls).toBe(0);
+  });
+
+  test('#5364 oversized pages stop before extraction without touching another source', async () => {
+    const slug = 'conversations/oversized-speaker-example';
+    const otherSourceId = 'oversized-other';
+    const turns = `${fmt('Alice Example', '2026-06-02', '9:00 AM', 'hello')}\n${fmt('Bob Example', '2026-06-02', '9:01 AM', 'hi')}\n`;
+    const body = turns + 'x'.repeat(MAX_PAGE_BODY_BYTES + 1 - Buffer.byteLength(turns));
+    expect(Buffer.byteLength(body)).toBe(MAX_PAGE_BODY_BYTES + 1);
+    await engine.putPage(slug, { type: 'meeting', title: 'Oversized transcript', compiled_truth: body, timeline: '', frontmatter: { date: '2026-06-02' } });
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING', [otherSourceId]);
+    await engine.putPage(slug, { type: 'meeting', title: 'Other source transcript', compiled_truth: turns, timeline: '', frontmatter: { date: '2026-06-02' } }, { sourceId: otherSourceId });
+    const otherPage = await engine.getPage(slug, { sourceId: otherSourceId });
+    let extractorCalls = 0;
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug, sleepMs: 0,
+      extractor: async () => { extractorCalls++; return []; },
+    });
+    expect(result).toMatchObject({ pages_considered: 1, pages_processed: 0, pages_skipped: 0, pages_skipped_too_large: 1, pages_skipped_unparsed: 0, pages_skipped_insufficient_turns: 0, pages_marked_non_extractable: 0, pages_skipped_completed: 0, segments_processed: 0, facts_inserted: 0 });
+    expect(extractorCalls).toBe(0);
+    expect(mainChatCalls).toBe(0);
+    expect(fallbackCalls).toBe(0);
+    expect(embeddedTexts).toEqual([]);
+    expect(await engine.executeRaw('SELECT id FROM facts WHERE source_markdown_slug = $1', [slug])).toEqual([]);
+    for (const sourceId of ['default', otherSourceId]) {
+      expect(await loadOpCheckpoint(engine, { op: 'extract-conversation-facts', fingerprint: extractConversationFactsFingerprint({ sourceId }) })).toEqual([]);
+    }
+    expect(await engine.getPage(slug, { sourceId: otherSourceId })).toEqual(otherPage);
   });
 
   test('historical backfill embeds and retains high, medium, low, and absent-tier facts', async () => {
