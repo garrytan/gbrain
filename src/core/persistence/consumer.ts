@@ -152,7 +152,8 @@ export class PersistenceConsumer {
       const cancelled = error as { name?: unknown; code?: unknown; message?: unknown } | null;
       if (this.stopping && abort.signal.aborted && abort.signal.reason === this.abort.signal.reason
         && (error === abort.signal.reason || cancelled?.name === 'AbortError'
-          || cancelled?.code === '57014' && cancelled.message === 'canceling statement due to user request')) {
+          || cancelled?.code === '57014' && typeof cancelled.message === 'string'
+            && /^(?:57014: )?canceling statement due to user request$/.test(cancelled.message))) {
         throw this.abort.signal.reason;
       }
       this.lastPhaseError = name; throw error;

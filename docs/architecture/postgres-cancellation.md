@@ -12,11 +12,13 @@ A transaction installs its owner while sending `BEGIN`, but does not expose the 
 
 Reservation grant parks and assigns the connection before resolving the waiter. Grant, rejection and abort share idempotent queue/listener cleanup. An abort observed after grant releases that exact lease. Saved query and savepoint handles reject after ownership changes rather than borrowing the replacement owner.
 
-The engine's abort listener stays attached across reservation acquisition and query execution. Removing the last listener from `AbortSignal.timeout()` during that handoff disables its timer on affected Bun versions, even if another listener is attached afterward. Pool shutdown rejects queued reservations and cannot reconnect or grant a released slot to a new owner.
+The engine's abort listener stays attached across reservation acquisition and query execution. Removing the last listener from `AbortSignal.timeout()` during that handoff disables its timer on Bun 1.3.13 and 1.3.14, even if another listener is attached afterward; the same control works on 1.3.11. This protects a single engine call, not reuse of that timeout signal across completed calls. Production phase and renewal budgets use explicit `AbortController` timers. Pool shutdown rejects queued work and cannot reconnect or grant a released slot to a new owner.
 
 ## Deadline and transport limits
 
 A phase deadline requests cancellation; it is not a promise that PostgreSQL has stopped at that instant. The owner remains accounted for until actual settlement. Cancellation-channel completion is bounded by the driver's connection timeout, which defaults to ten seconds, and can outlast a five-second phase budget. A blocked or failed transport must not be reported as a successful cancellation.
+
+The phase's `deadline_exceeded` observation records an elapsed budget even when shutdown requested cancellation first and settlement is still pending. It does not replace that first abort reason: recognized stop-owned cancellation is not reported as a storage error, while deadline-first cancellation and unrelated errors remain visible.
 
 An abort before dispatch can produce `AbortError`; a PostgreSQL cancellation can produce SQLSTATE `57014`. Callers must honor their aborted signal rather than interpreting every `57014` as permission to retry. The raw engine methods do not retry statements.
 

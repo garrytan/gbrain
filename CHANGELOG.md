@@ -45,6 +45,7 @@ Schema migration 165 adds an index for database-only pending writes. It does not
 - Receipt health enrichment is authorization-first, batched for at most 100 receipts, bounded to a 500ms caller wait, and limited to one unsettled query per engine. The new pending index keeps retained terminal history out of this lookup.
 - Expired-claim sweeps skip locked rows without bypassing same-root order. Supported scheduler and renewal waits use cancellation budgets; ordinary `put_page` and `remember` preparation gets a cooperative deadline with late-result fencing.
 - PostgreSQL timeout cancellation isolates the affected query from neighboring work, including transaction siblings and connections reassigned after a disconnect. Cancellation failures do not authorize blind statement retries.
+- PostgreSQL pool shutdown rejects work still waiting for a connection instead of silently reconnecting after shutdown. Recognized shutdown cancellations no longer appear as resident storage failures.
 - Trusted writer status exposes process-local phases, deadlines and attempts, with inspection advice consistent with receipt health. Operator guidance distinguishes observation from recovery authority and local tests from live recovery.
 
 ## [0.54.1.1] - 2026-09-24
