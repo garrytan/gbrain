@@ -5,6 +5,16 @@ answers**. Full sessions scored **53/60 (88.3%)**; the excerpt packet scored
 **48/60 (80.0%)**. Keep full-session presentation as the default. This experiment
 does not support promoting the packet.
 
+## What we tried
+
+Both approaches kept retrieved sessions fixed and changed only their presentation
+to the answering model. Neither generated summaries or changed retrieval.
+
+| Approach | Hypothesis | Observed outcome | Decision |
+|---|---|---|---|
+| v1: query-relevant original rounds, adjacent context and qualifications | Removing irrelevant conversation would help the reader use the evidence. | Development fell from 15/18 to 14/18. Holdout fell from 53/60 to 48/60, with zero wins and five judged losses. | Do not promote. The selector can remove a fact needed for the answer. |
+| v2: more selected rounds and wider adjacent context | Keeping more context might avoid the narrower packet's losses. | Development tied at 15/18, but 15 of 18 prompts were unchanged full sessions. Both answer flips used identical prompts. V2 was not run on holdout. | No demonstrated presentation benefit. A mostly unchanged prompt is not evidence that wider excerpts help. |
+
 ## Matched results
 
 | Group | Questions | Full sessions correct | Packet correct | Improved | Worsened |
@@ -52,6 +62,21 @@ Manual observations below are separate from those scores.
 The useful engineering finding is narrower than the headline: lexical selection
 can omit a necessary numeric detail even when the original retrieved session is
 present. More compression or a cheaper prompt is not evidence of better answers.
+
+## Lessons to carry forward
+
+- **A retrieved session is not the same as a preserved answer.** The necessary
+  sale was in the fixed source set but disappeared during excerpt selection.
+  Recoverable pointers verify where retained text came from; they do not prove
+  omitted text was irrelevant.
+- **Separate changed-input effects from reader and judge variability.** Identical
+  prompts still produced score changes, and manual inspection found questionable
+  grading. Keep those caveats and the original scores together rather than
+  attributing every flip to the formatter or rewriting unfavorable labels.
+- **Do not trade answer quality for a smaller prompt.** The modest cost saving
+  did not meet the predeclared quality gates. Leave full sessions unchanged; any
+  different approach needs a fresh untouched comparison, not tuning on these
+  already-inspected holdout questions.
 
 ## Development and cost
 

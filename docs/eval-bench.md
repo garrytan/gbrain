@@ -17,6 +17,20 @@ result sets; BrainBench gates the memory behaviors above them, with its own
 committed baseline (`evals/brainbench/baselines/main.json`) compared against
 MAIN's copy in CI so a PR can't self-approve a regression.
 
+## Recorded experiments, including negative results
+
+Before repeating an approach, read its measured outcome and limitations:
+
+- [Answer-evidence packets: did not help](eval/ANSWER_PACKET_RESULTS.md).
+  Query-selected conversational excerpts over fixed retrieved sessions produced
+  zero answer improvements and five judged regressions on a 60-question holdout
+  (48/60 correct versus 53/60 for full sessions). A wider-context variant only
+  tied in development, mostly with unchanged prompts. The notes cover both
+  attempts, every regression, grading caveats, the $8.01 total usage-priced cost,
+  and why full sessions remain the default. This tested presentation, not
+  retrieval quality. The [experiment guide](eval/ANSWER_PACKET.md) records the
+  reproducible setup and spending safeguards.
+
 ## The eval gate loop
 
 `gbrain bench publish` + `gbrain eval gate` stitch captured eval rows into
