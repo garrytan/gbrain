@@ -307,8 +307,61 @@ $r=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Fo
           !rule.inherited && rule.allow === 'Allow' && rule.rights === 0x1f01ff && rule.inheritance === (kind === 'directory' ? 3 : 0) && rule.propagation === 0);
     } catch (error) { observation.aclError = classify(error); }
   }
+  const stagedPath = join(temporary, `staged-${kind} [literal] 'é`);
+  const tracePath = join(temporary, `staged-${kind}.trace`);
+  if (kind === 'directory') fs.mkdirSync(stagedPath);
+  else fs.writeFileSync(stagedPath, '');
+  const stagedBefore = fs.lstatSync(stagedPath, { bigint: true });
+  fs.writeFileSync(tracePath, '', { flag: 'wx', mode: 0o600 });
+  const trace = (stage: string) => `[IO.File]::AppendAllText($env:GBRAIN_TEST_ACL_STAGE, '${stage}' + [Environment]::NewLine)`;
+  const checkpoints = [
+    ["$ErrorActionPreference = 'Stop'", 'entry'],
+    ['$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User', 'identity'],
+    ['$item = Get-Item -LiteralPath $path -Force', 'item'],
+    ['Set-Acl -LiteralPath $path -AclObject $acl', 'after-set'],
+    ['$actual = Get-Acl -LiteralPath $path', 'read-back'],
+  ] as const;
+  expect(captured.args.at(-2) === '-EncodedCommand').toBe(true);
+  let stagedProgram = Buffer.from(captured.args.at(-1)!, 'base64').toString('utf16le');
+  for (const [line, stage] of checkpoints) {
+    expect(stagedProgram.split(line).length).toBe(2);
+    stagedProgram = stagedProgram.replace(line, `${stage === 'after-set' ? trace('before-set') + '\n' : ''}${line}\n${trace(stage)}`);
+  }
+  expect(stagedProgram.split("[Console]::Write('private')").length).toBe(2);
+  stagedProgram = stagedProgram.replace("[Console]::Write('private')", `${trace('verified')}\n[Console]::Write('private')\n${trace('output-write-returned')}`);
+  let stagedCompleted = false;
+  let stagedError: string | null = null;
+  const stagedStarted = performance.now();
+  try {
+    stagedCompleted = execute(captured.executable, [...captured.args.slice(0, -1), Buffer.from(stagedProgram, 'utf16le').toString('base64')],
+      { ...captured.options, env: { ...captured.options.env, GBRAIN_BACKUP_PRIVATE_PATH: stagedPath, GBRAIN_TEST_ACL_STAGE: tracePath } }) === 'private';
+  } catch (error) { stagedError = classify(error); }
+  const stagedElapsedMs = Math.round(performance.now() - stagedStarted);
+  const stagedAfter = fs.lstatSync(stagedPath, { bigint: true });
+  const stagedSameIdentity = stagedBefore.dev === stagedAfter.dev && stagedBefore.ino === stagedAfter.ino && stagedBefore.birthtimeNs === stagedAfter.birthtimeNs;
+  const stagedEmpty = kind === 'directory' ? stagedAfter.isDirectory() && fs.readdirSync(stagedPath).length === 0
+    : stagedAfter.isFile() && stagedAfter.size === 0n && stagedAfter.nlink === 1n;
+  const allowedStages = ['entry', 'identity', 'item', 'before-set', 'after-set', 'read-back', 'verified', 'output-write-returned'];
+  const traceBytes = fs.readFileSync(tracePath);
+  const recordedStages = traceBytes.length <= 128 ? traceBytes.toString('utf8').split(/\r?\n/).filter(Boolean) : [];
+  const validTrace = traceBytes.length <= 128 && recordedStages.every(stage => allowedStages.includes(stage))
+    && JSON.stringify(recordedStages) === JSON.stringify(allowedStages.slice(0, recordedStages.length));
+  let sameResolvedExecutable: boolean | null = null;
+  try {
+    const resolved = Bun.which('powershell.exe');
+    if (resolved) {
+      const a = fs.statSync(resolved, { bigint: true }), b = fs.statSync(captured.executable, { bigint: true });
+      if (a.ino && b.ino) sameResolvedExecutable = a.dev === b.dev && a.ino === b.ino;
+    }
+  } catch {}
   process.stderr.write(`Windows backup collection controls: ${JSON.stringify({ kind, arch: process.arch, runtime: Bun.version,
-    observations: observations.map(({ path, ...observation }) => observation) })}\n`);
+    observations: observations.map(({ path, ...observation }) => observation),
+    staged: { elapsedMs: stagedElapsedMs, completed: stagedCompleted, nativeError: stagedError, sameIdentity: stagedSameIdentity, empty: stagedEmpty,
+      validTrace, stages: validTrace ? recordedStages : [], sameResolvedExecutable } })}\n`);
+  expect(validTrace).toBe(true);
+  expect(stagedSameIdentity).toBe(true);
+  expect(stagedEmpty).toBe(true);
+  if (stagedCompleted) expect(recordedStages).toEqual(allowedStages);
   for (const observation of observations) {
     expect(observation.sameIdentity).toBe(true);
     expect(observation.empty).toBe(true);
