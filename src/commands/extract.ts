@@ -247,6 +247,8 @@ interface ExtractResult {
   skipped_missing_target?: number;
   skipped_attendance_incomplete?: number;
   skipped_cross_source?: number;
+  /** Set when a managed brain skipped the timeline pass (rows come from the coordinated import path). */
+  timeline_skipped_reason?: 'writer_coordinator_required';
 }
 
 // --- Shared walker ---
@@ -722,6 +724,14 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   const jsonMode = !!opts.jsonMode;
   const quiet = !!opts.quiet;
   const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
+  // Managed brain: timeline_entries is guard-triggered outside the coordinator and
+  // the coordinated import path already derives those rows; keep the (unguarded)
+  // links pass, skip the timeline pass with a reason instead of losing rows.
+  if (!dryRun && opts.mode !== 'links' && await managedPersistenceEnabled(engine)) {
+    result.timeline_skipped_reason = 'writer_coordinator_required';
+    if (opts.mode === 'timeline') return result;
+    opts = { ...opts, mode: 'links' };
+  }
 
   // v0.41.15.0 (D9): resolve workers via the PGLite-clamp wrapper.
   // Page count unknown at this point — pass 0 so the auto-path falls
