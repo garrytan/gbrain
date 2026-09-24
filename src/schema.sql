@@ -2251,4 +2251,3 @@ CREATE TABLE IF NOT EXISTS attachment_chunks (
   data_base64 TEXT NOT NULL CHECK (length(data_base64) <= 349528),
   PRIMARY KEY (upload_id, byte_offset)
 );
-
