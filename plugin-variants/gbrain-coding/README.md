@@ -1,4 +1,4 @@
-<!-- gbrain-plugin-tree-stamp: 0.54.1.1 -->
+<!-- gbrain-plugin-tree-stamp: 0.56.1.0 -->
 # gbrain-coding (generated persona variant — do not hand-edit)
 
 Brain-first coding agent working inside a repo: retrieval, routing, ingest discipline, correction hygiene. Default persona for the claude-code harness bridge; also published as the gbrain-coding marketplace variant.

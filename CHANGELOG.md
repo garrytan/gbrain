@@ -2,6 +2,48 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.56.1.0] - 2026-09-24
+
+**Meeting imports tell you what they could read, and crowded timelines no longer stall extraction.**
+
+Some meeting exports put each speaker's name inside a small structured label instead of a plain heading. GBrain can now read the supported single-quoted form without guessing who spoke. Labels that are malformed, nested, or quoted as examples stay unparsed. When a page cannot be read, the extraction summary says so instead of implying that its facts were already extracted.
+
+You can also preview extraction without asking a model to interpret the transcript. The preview explains whether a page has the wrong type, too few turns, unsupported formatting, or no eligible turns after your chosen cutoff time. Pages with a fresh completion record are counted separately. Existing skip totals remain available to scripts.
+
+Timeline extraction handles long runs of spaces without the previous slowdown. Text hidden inside code stays hidden without joining the real lines around it. The email text-conversion helper also cleans supported escaped markup while preserving ordinary addresses, comparisons, and valid Unicode. This helper change does not add a new email-import path.
+
+### What changes in practice
+
+| Input | What you see |
+|---|---|
+| A supported speaker-object transcript | Utterances retain the explicitly named speaker. |
+| An unsupported transcript | A parse-skip explanation, not a false already-processed message. |
+| A timeline line with excessive leading spaces | Bounded parsing instead of a long stall. |
+| Escaped email formatting | Cleaned text, with unsupported or invalid entities left literal. |
+
+## To take advantage of v0.56.1.0
+
+Run `gbrain upgrade`. For a read-only preview of one meeting source:
+
+```bash
+gbrain extract-conversation-facts --source-id meetings --dry-run
+```
+
+**Say to your agent:** *"Run `extract-conversation-facts --dry-run` on my meeting source and explain why any pages were skipped."*
+
+This release adds no schema migration and does not automatically reprocess historical pages. Correcting a previously unparsed transcript leaves it eligible for a later extraction; fresh completion outcomes keep their existing meaning. The email helper uses a fixed decoding limit and is a text converter, not a browser sanitizer.
+
+### Itemized changes
+
+- Add the narrow `python-dict-utterance` conversation pattern with explicit attribution, conservative wrapper rejection, and normal section boundaries. Contributed by @furuchanchan in #5365; fixes #5364.
+- Preserve `pages_skipped` and add `pages_skipped_unparsed`, `pages_skipped_type_mismatch`, `pages_skipped_insufficient_turns`, and `pages_skipped_since` through CLI and worker aggregation. Keep dry-run parsing model-free.
+- Make both timeline date-prefix matchers non-ambiguous and preserve every CR/LF position and UTF-16 offset when masking code. Contributed by @Masashi-Ono0611 in #5369.
+- Keep `stripEmailHtml` capped before processing, remove recognized markup with quote-aware matching around at most two entity-decoding passes, and validate numeric Unicode scalars. Contributed by @furuchanchan in #5388; fixes #5327.
+
+### For contributors
+
+- Add parser corpus, real-core retry/source/provenance, model-free preview, oversized-page, timeline-consumer, and bounded email-conversion regressions without weakening existing assertions.
+
 ## [0.54.1.1] - 2026-09-24
 
 **Your agent can now open administration and guide another agent through a working connection.**
