@@ -9,8 +9,9 @@ import type { HybridSearchMeta } from '../../src/core/types.ts';
 const SLUG = 'notes/scheduling-constraint-example';
 const CHUNKS = ['I do not take calls ', 'before 10.'];
 const CUE = 'Arranging an early appointment';
-const DIM = 1536;
-const vector = (axis: number) => Float32Array.from({ length: DIM }, (_, i) => i === axis ? 1 : 0);
+let dimensions: number;
+let embeddingModel: string;
+const vector = (axis: number) => Float32Array.from({ length: dimensions }, (_, i) => i === axis ? 1 : 0);
 let engine: PGLiteEngine;
 
 async function buildCues() {
@@ -31,15 +32,22 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  dimensions = Number(await engine.getConfig('embedding_dimensions'));
+  embeddingModel = (await engine.getConfig('embedding_model'))!;
+  expect(embeddingModel).toMatch(/^[^:]+:.+$/);
+  const [physical] = await engine.executeRaw<{ dimensions: number }>(`SELECT atttypmod AS dimensions FROM pg_attribute
+    WHERE attrelid='content_chunks'::regclass AND attname='embedding'`);
+  expect(physical).toEqual({ dimensions });
   for (const [key, value] of Object.entries({
-    embedding_columns: JSON.stringify({ embedding: { provider: 'openai:text-embedding-3-large', dimensions: DIM, type: 'vector' } }),
+    embedding_columns: JSON.stringify({ embedding: { provider: embeddingModel, dimensions, type: 'vector' } }),
     chat_model: 'openai:gpt-4o-mini', 'memory.cues.generation_enabled': 'true', 'memory.cues.sources': '["default"]',
     'memory.cues.read': 'on', 'memory.cues.min_similarity': '0.8',
   })) await engine.setConfig(key, value);
+  expect(await memoryCueColumn(engine)).toEqual({ name: 'embedding', type: 'vector', dimensions, embeddingModel });
   await engine.setConfig('memory.cues.read_calibration_signature', cueSignature(await memoryCueColumn(engine)));
   await engine.putPage(SLUG, { title: 'Scheduling note', type: 'note', compiled_truth: CHUNKS.join('') }, { sourceId: 'default' });
   await installFixtureChunks(engine, SLUG, CHUNKS.map((chunk_text, chunk_index) => ({ chunk_text, chunk_index,
-    chunk_source: 'compiled_truth', embedding: vector(chunk_index + 1) })), { sourceId: 'default' });
+    chunk_source: 'compiled_truth', model: embeddingModel, embedding: vector(chunk_index + 1) })), { sourceId: 'default' });
   await buildCues();
 }, 120_000);
 
@@ -133,7 +141,7 @@ describe('cross-chunk cue evidence through production hybrid search', () => {
       ['people/investor-example', 'Investor example', 'An investor with a diversified portfolio.'],
     ]) {
       await engine.putPage(slug, { title, type: slug.startsWith('companies/') ? 'company' : 'person', compiled_truth: text }, { sourceId: 'default' });
-      await installFixtureChunks(engine, slug, [{ chunk_text: text, chunk_index: 0, chunk_source: 'compiled_truth', embedding: vector(3) }], { sourceId: 'default' });
+      await installFixtureChunks(engine, slug, [{ chunk_text: text, chunk_index: 0, chunk_source: 'compiled_truth', model: embeddingModel, embedding: vector(3) }], { sourceId: 'default' });
     }
     await engine.addLink('people/investor-example', 'companies/widget-co', '', 'invested_in', 'manual');
     try {
@@ -157,7 +165,7 @@ describe('cross-chunk cue evidence through production hybrid search', () => {
     await engine.putPage(SLUG, { title: 'Scheduling note', type: 'note', compiled_truth: CHUNKS.join(''),
       frontmatter: { provenance: 'auto-extracted', status: 'unverified' } }, { sourceId: 'default' });
     await installFixtureChunks(engine, SLUG, CHUNKS.map((chunk_text, chunk_index) => ({ chunk_text, chunk_index,
-      chunk_source: 'compiled_truth', ...(chunk_index === 0 ? { embedding: vector(1) } : {}) })), { sourceId: 'default' });
+      chunk_source: 'compiled_truth', model: embeddingModel, ...(chunk_index === 0 ? { embedding: vector(1) } : {}) })), { sourceId: 'default' });
     await buildCues();
     let rankedChunks: number[] = [];
     const found = await search(2, undefined, false, async () => {
@@ -177,7 +185,7 @@ describe('cross-chunk cue evidence through production hybrid search', () => {
   test('an edit to a supporting chunk during reranking invalidates the whole original evidence group', async () => {
     const found = await search(2, undefined, false, async () => {
       await installFixtureChunks(engine, SLUG, [CHUNKS[0], 'The restriction was withdrawn.'].map((chunk_text, chunk_index) => ({ chunk_text,
-        chunk_index, chunk_source: 'compiled_truth', embedding: vector(chunk_index + 1) })), { sourceId: 'default' });
+        chunk_index, chunk_source: 'compiled_truth', model: embeddingModel, embedding: vector(chunk_index + 1) })), { sourceId: 'default' });
     });
     expect(found.results).toEqual([]);
     expect(found.meta?.memory_cues).toMatchObject({ admitted: 0, reason: 'candidates_invalidated' });
