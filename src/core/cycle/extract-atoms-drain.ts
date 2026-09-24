@@ -309,7 +309,10 @@ export async function runExtractAtomsDrain(
     // mislead the CLI/JSON consumer (dream.ts prints both fields verbatim).
     // status already takes precedence for the Minion handler's retry
     // decision; keep `stopped` consistent with it once a failure latched.
-    if (!providerFailure && remaining === 0) stopped = 'drained';
+    // `remaining` counts only the page backlog; deferred items (transcripts
+    // included) are still due, so a zero recount after a window cut is NOT
+    // drained — stopped stays 'window' and callers treat the run as incomplete.
+    if (!providerFailure && remaining === 0 && itemsDeferred === 0) stopped = 'drained';
     return {
       phase: 'extract_atoms',
       status: providerFailure ? 'provider_failure' : 'ok',

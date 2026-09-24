@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, beforeEach, describe, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
+import { assertTranscriptDeferralScenario, assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
 
 const describeDb = hasDatabase() ? describe : describe.skip;
 describeDb('Postgres dream --drain --window in-batch checkpoint', () => {
@@ -17,9 +17,14 @@ describeDb('Postgres dream --drain --window in-batch checkpoint', () => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.executeRaw('TRUNCATE pages CASCADE');
     await engine.executeRaw('DELETE FROM extract_atoms_page_state');
+    await engine.executeRaw('DELETE FROM extract_atoms_transcript_state');
   });
 
   test('stops between items, keeps persisted atoms, defers the rest', async () => {
     await assertWindowCheckpointScenario(engine);
+  });
+
+  test('deferred transcripts keep stopped=window when the page backlog recounts 0', async () => {
+    await assertTranscriptDeferralScenario(engine);
   });
 });

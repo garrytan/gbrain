@@ -148,6 +148,16 @@ describe('dream --drain failure summary (#4730)', () => {
     expect(payload).toMatchObject({ stopped: 'window', items_completed: 2, items_deferred: 3, failure_count: 1, remaining: 3 });
   });
 
+  test('deferred transcript work exits 3 even when the page backlog reads 0', async () => {
+    nextResult = baseResult({ remaining: 0, stopped: 'window', items_completed: 1, items_deferred: 1 });
+    const r = await runDrainCaptured([]);
+    expect(r.exitCode).toBe(3);
+    expect(r.stdout.join('\n')).toContain('0 remaining (stopped: window) — 1 item(s) completed, 1 deferred by --window, 0 failed');
+    const json = await runDrainCaptured(['--json']);
+    expect(json.exitCode).toBe(3);
+    expect(JSON.parse(json.stdout.find(l => l.trim().startsWith('{'))!)).toMatchObject({ remaining: 0, stopped: 'window', items_deferred: 1 });
+  });
+
   test('a clean run prints no failure line at all', async () => {
     nextResult = baseResult({});
     const r = await runDrainCaptured([]);

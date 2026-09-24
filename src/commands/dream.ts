@@ -79,7 +79,8 @@ interface DreamArgs {
    * for `--phase extract_atoms`) holds the cycle lock once and loops bounded
    * batches, rediscovering eligibility each batch, until the backlog empties or
    * `--window` seconds elapse. Reports {extracted, skipped, remaining}; exits
-   * non-zero when remaining > 0 so a cron/agent loop knows to run again.
+   * non-zero when remaining > 0 or any item was deferred by the window, so a
+   * cron/agent loop knows to run again.
    */
   drain: boolean;
   /** Drain wallclock budget in seconds. Default 300 (5 min). */
@@ -446,6 +447,7 @@ Options:
                       cycle lock once, processes batches until the backlog
                       empties or --window elapses, reports {extracted,
                       remaining}, and exits 3 when the backlog isn't empty
+                      or --window deferred any item (transcripts included)
                       so a cron/agent loop knows to run again. Use this to
                       grind down an extract_atoms backlog on a brain whose
                       pack doesn't run the phase in the routine cycle.
@@ -667,7 +669,11 @@ async function runDrain(
     );
   }
   // null remaining = the final count query failed; do not report success.
-  if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
+  // Deferred items are pending work even when the page backlog reads 0
+  // (transcripts are not in that count), so they also mean "run again".
+  if (result.remaining === null || result.remaining > 0 || result.items_deferred > 0) {
+    process.exit(EXIT_DRAIN_INCOMPLETE);
+  }
 }
 
 export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {

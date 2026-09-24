@@ -110,3 +110,42 @@ export async function assertWindowCheckpointScenario(engine: BrainEngine): Promi
   });
   expect(await atomCount(engine)).toBe(3);
 }
+
+/**
+ * Transcript deferral: transcripts are not in the page backlog count. A window
+ * cut after the batch's only page (work order is page-first) defers both
+ * transcripts and leaves `remaining` at 0. The drain must still report
+ * stopped=window with the deferred items, never drained.
+ */
+export async function assertTranscriptDeferralScenario(engine: BrainEngine): Promise<void> {
+  const slug = WINDOW_SCENARIO_SLUGS[0]!;
+  await engine.putPage(slug, {
+    title: slug, type: 'meeting', timeline: '',
+    compiled_truth: `Synthetic evidence for ${slug} with enough source detail for extraction. `.repeat(20),
+  });
+  expect(await countExtractAtomsBacklog(engine, 'default')).toBe(1);
+  const transcripts = ['a', 'b'].map(n => ({
+    filePath: `/tmp/window-example-transcript-${n}.txt`,
+    content: `Synthetic transcript ${n} with enough detail for extraction. `.repeat(20),
+    contentHash: n.repeat(64),
+  }));
+  const clock = { t: 0, calls: 0 };
+  const result = await runExtractAtomsDrainForSource(engine, {
+    sourceId: undefined,
+    windowSeconds: 30, // the page's simulated minute crosses the window
+    _now: () => clock.t,
+    _phase: { _chat: makeClockedChat(clock), _transcripts: transcripts },
+  });
+  expect(clock.calls).toBe(1);
+  expect(result).toMatchObject({
+    status: 'ok',
+    stopped: 'window',
+    remaining: 0, // the page backlog is empty; the transcripts are not counted there
+    extracted: 1,
+    items_completed: 1,
+    items_deferred: 2,
+    failure_count: 0,
+  });
+  expect(await atomCount(engine)).toBe(1);
+  expect(await countExtractAtomsBacklog(engine, 'default')).toBe(0);
+}

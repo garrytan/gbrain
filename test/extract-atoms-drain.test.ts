@@ -110,6 +110,21 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
     expect(result.status).toBe('ok');
   });
 
+  // `remaining` counts only the PAGE backlog. A window cut that deferred
+  // transcripts (not in that count) must not recount to 0 and report drained.
+  it('a zero page recount after deferral stays stopped=window, not drained', async () => {
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: seq([1, 0]), // before-check: 1 page; final recount: 0
+        runBatch: async () => ({ extracted: 1, skipped: 0, completed: 1, deferred: 2 }),
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+    expect(result).toMatchObject({ stopped: 'window', remaining: 0, items_completed: 1, items_deferred: 2 });
+  });
+
   it('accumulates items_completed across batches; legacy adapters report 0', async () => {
     const withCounts = await runExtractAtomsDrain(
       {

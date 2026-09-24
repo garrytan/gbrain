@@ -11,7 +11,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from '../helpers/extract-atoms-page-fixtures.ts';
 import { countExtractAtomsBacklog } from '../../src/core/cycle/extract-atoms.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
-import { assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
+import { assertTranscriptDeferralScenario, assertWindowCheckpointScenario } from '../helpers/extract-atoms-window-scenario.ts';
 import type { ChatResult } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -96,5 +96,9 @@ describe('extract_atoms stop checkpoint (phase level)', () => {
 describe('dream --drain --window enforced inside a batch (PGLite)', () => {
   test('stops between items, keeps persisted atoms, defers the rest', async () => {
     await assertWindowCheckpointScenario(engine);
+  });
+
+  test('deferred transcripts keep stopped=window when the page backlog recounts 0', async () => {
+    await assertTranscriptDeferralScenario(engine);
   });
 });
