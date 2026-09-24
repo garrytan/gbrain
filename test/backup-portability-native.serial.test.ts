@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import * as childProcess from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AgentInstallError, checkedManagedPaths, confinedPath, privateWrite, readInstallReceipt, sha256, type AgentInstallReceipt } from '../src/core/agent-install/state.ts';
 import { extractPgliteDump, readBackupArchive, writeBackupArchive } from '../src/core/backup/archive.ts';
@@ -147,6 +147,80 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(() => { if (temporary) fs.rmSync(temporary, { recursive: true, force: true }); });
+
+test.skipIf(process.platform !== 'win32')('private ACL setup isolates built-in Windows PowerShell modules from the inherited environment', () => {
+  const observations = [];
+  for (const mode of ['ambient', 'builtin', 'builtin', 'ambient'] as const) {
+    const path = join(temporary, `module-path-${observations.length} [literal] 'é`);
+    fs.mkdirSync(path);
+    const before = fs.lstatSync(path, { bigint: true });
+    let launches = 0;
+    let inspections = 0;
+    let inheritedModulePath = false;
+    let bounded = false;
+    let fixedExecutable = false;
+    let forcedSystemModules = false;
+    let nativeError: string | null = null;
+    let inspectionError: string | null = null;
+    const execute = childProcess.execFileSync;
+    const inspect = spyOn(childProcess, 'execFileSync').mockImplementation(new Proxy(execute, {
+      apply(target, thisArg, args) {
+        const options = args[2] as childProcess.ExecFileSyncOptionsWithStringEncoding;
+        const protection = options?.env?.GBRAIN_BACKUP_PRIVATE_PATH === path;
+        const inspection = options?.env?.GBRAIN_TEST_ACL_PATH === path;
+        if (!protection && !inspection) return Reflect.apply(target, thisArg, args);
+        if (protection) {
+          launches++;
+          inheritedModulePath = Object.entries(options.env!).some(([key, value]) => key.toLowerCase() === 'psmodulepath' && Boolean(value));
+          fixedExecutable = args[0] === join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+          bounded = options.timeout === 15_000 && options.maxBuffer === 64 * 1024 && options.windowsHide === true && !options.shell;
+        } else inspections++;
+        let env = options.env;
+        if (mode === 'builtin') {
+          env = { ...Object.fromEntries(Object.entries(env!).filter(([key]) => key.toLowerCase() !== 'psmodulepath')),
+            PSModulePath: join(dirname(args[0]), 'Modules') };
+          forcedSystemModules = Object.keys(env).filter(key => key.toLowerCase() === 'psmodulepath').length === 1;
+        }
+        try { return Reflect.apply(target, thisArg, [args[0], args[1], { ...options, env }]); }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'ETIMEDOUT' : 'other';
+          if (protection) nativeError = code;
+          else inspectionError = code;
+          throw error;
+        }
+      },
+    }));
+    let protectedPath = false;
+    let privateAcl = false;
+    const started = performance.now();
+    try {
+      try { privacy.protectNewBackupPath(path, 'directory'); protectedPath = true; } catch {}
+      if (mode === 'builtin' && protectedPath) {
+        try { expectPrivate(path, true, true); privateAcl = true; } catch {}
+      }
+    } finally { inspect.mockRestore(); }
+    const after = fs.lstatSync(path, { bigint: true });
+    observations.push({ mode, elapsedMs: Math.round(performance.now() - started), launches, inspections, inheritedModulePath,
+      bounded, fixedExecutable, forcedSystemModules, nativeError, inspectionError, protectedPath, privateAcl,
+      sameIdentity: before.dev === after.dev && before.ino === after.ino && before.birthtimeNs === after.birthtimeNs,
+      empty: after.isDirectory() && fs.readdirSync(path).length === 0 });
+  }
+  process.stderr.write(`Windows backup module controls: ${JSON.stringify({ arch: process.arch, runtime: Bun.version, observations })}\n`);
+  for (const observation of observations) {
+    expect(observation.launches).toBe(1);
+    expect(observation.bounded).toBe(true);
+    expect(observation.fixedExecutable).toBe(true);
+    expect(observation.sameIdentity).toBe(true);
+    expect(observation.empty).toBe(true);
+    if (observation.mode !== 'builtin') continue;
+    expect(observation.forcedSystemModules).toBe(true);
+    expect(observation.protectedPath).toBe(true);
+    expect(observation.nativeError).toBeNull();
+    expect(observation.inspections).toBe(1);
+    expect(observation.privateAcl).toBe(true);
+    expect(observation.inspectionError).toBeNull();
+  }
+}, 120_000);
 
 for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform !== 'win32')(`private ${kind} ACL setup uses an explicitly closed input pipe`, () => {
   const observations = [];
