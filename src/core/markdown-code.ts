@@ -1,33 +1,31 @@
 /**
  * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
- * replacing them with whitespace of equivalent length. Preserves byte offsets
- * for callers that care about positions.
+ * replacing non-newline characters with spaces. Preserves CR/LF characters
+ * and UTF-16 code-unit offsets for callers that care about positions.
  */
 export function stripCodeBlocks(content: string): string {
   let fence: string | undefined;
-  return content.split('\n').map(line => {
-    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence) {
-      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
-      return ' '.repeat(line.length);
-    }
-    if (marker && (marker[1][0] === '~' || !marker[2].includes('`'))) {
-      fence = marker[1];
-      return ' '.repeat(line.length);
-    }
-    return stripInlineCode(line);
-  }).join('\n');
-}
-
-function stripInlineCode(content: string): string {
   let out = '';
   let i = 0;
   while (i < content.length) {
+    if (i === 0 || content[i - 1] === '\n') {
+      const newline = content.indexOf('\n', i);
+      const end = newline === -1 ? content.length : newline + 1;
+      const line = content.slice(i, end);
+      const marker = /^ {0,3}(`{3,}|~{3,})([^\n]*)/.exec(line);
+      if (fence || (marker && (marker[1][0] === '~' || !marker[2].includes('`')))) {
+        if (!fence) fence = marker![1];
+        else if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
+        out += line.replace(/[^\r\n]/g, ' ');
+        i = end;
+        continue;
+      }
+    }
     if (content.startsWith('```', i)) {
       const end = content.indexOf('```', i + 3);
-      if (end === -1) { out += ' '.repeat(content.length - i); break; }
-      out += ' '.repeat(end + 3 - i);
-      i = end + 3;
+      const afterFence = end === -1 ? content.length : end + 3;
+      out += content.slice(i, afterFence).replace(/[^\r\n]/g, ' ');
+      i = afterFence;
       continue;
     }
     if (content[i] === '`') {
@@ -37,7 +35,7 @@ function stripInlineCode(content: string): string {
         i++;
         continue;
       }
-      out += ' '.repeat(end + 1 - i);
+      out += content.slice(i, end + 1).replace(/[^\r\n]/g, ' ');
       i = end + 1;
       continue;
     }

@@ -335,6 +335,10 @@ export interface ExtractConversationFactsResult {
   pages_considered: number;
   pages_processed: number;
   pages_skipped: number;
+  pages_skipped_unparsed: number;
+  pages_skipped_type_mismatch: number;
+  pages_skipped_insufficient_turns: number;
+  pages_skipped_since: number;
   pages_skipped_too_large: number;
   pages_skipped_disappeared: number;
   /** Fresh terminal outcomes skipped before parsing or model work. */
@@ -1000,6 +1004,11 @@ async function processPage(
   const segments = splitIntoSegments(messages, { sinceIso });
   if (segments.length === 0) {
     state.result.pages_skipped++;
+    if (!declinedUnrecognizedSpeaker) {
+      if (messages.length === 0) state.result.pages_skipped_unparsed++;
+      else if (allSegments.length === 0) state.result.pages_skipped_insufficient_turns++;
+      else state.result.pages_skipped_since++;
+    }
     if (
       !state.dryRun &&
       parseResult.phase !== 'no_match' &&
@@ -1039,27 +1048,30 @@ async function processPage(
     return { newEndIso: null };
   }
 
+  if (state.dryRun) {
+    state.result.segments_processed += state.segmentLimit > 0
+      ? Math.min(segments.length, state.segmentLimit)
+      : segments.length;
+    state.result.pages_processed++;
+    return { newEndIso: null };
+  }
+
   // D11: delete-orphans-first replay safety. Wipes any facts written by
   // a prior crashed / killed / partial run for this (sourceId, slug)
   // pair before we re-extract. The lock we hold (D2 + D12 refreshing
   // lock above the caller) guarantees no other worker is writing to
   // this page right now, so the DELETE+INSERT pair is safe.
-  if (!state.dryRun) {
-    const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
-    if (cleaned > 0) {
-      state.result.orphan_facts_cleaned += cleaned;
-      process.stderr.write(
-        `[extract-conversation-facts] cleaned ${cleaned} orphan fact(s) for ${page.slug} from prior partial run\n`,
-      );
-    }
+  const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+  if (cleaned > 0) {
+    state.result.orphan_facts_cleaned += cleaned;
+    process.stderr.write(
+      `[extract-conversation-facts] cleaned ${cleaned} orphan fact(s) for ${page.slug} from prior partial run\n`,
+    );
   }
 
   // Page-global row_num: after delete-orphans-first the table has no
-  // rows for this (sourceId, slug), so we always start from 0. Peek
-  // is kept as a defensive fallback for dry-run + non-deleting paths.
-  let rowNum = state.dryRun
-    ? await peekRowNumStart(state.engine, state.sourceId, page.slug)
-    : 0;
+  // rows for this (sourceId, slug), so we always start from 0.
+  let rowNum = 0;
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
@@ -1129,13 +1141,7 @@ async function processPage(
         );
       },
     );
-    const commitSegmentResolutionTelemetry = () => {
-      mergeSaveTimeResolutionCounts(pageResolution, segmentResolution);
-      state.result.fallback_slugify_count += segmentResolution.fallback_slugify_count;
-      state.result.resolution_errors += segmentResolution.resolution_errors;
-    };
-
-    if (!state.dryRun && extracted.length > 0) {
+    if (extracted.length > 0) {
       // Eng-v2 C1 / E11: page-global row_num stays unique across segments.
       // entity_slug is already canonical here — resolveExtractedEntitiesForSave
       // (above) ran every fact through the shipped resolver cascade (#3729/#4052),
@@ -1159,25 +1165,22 @@ async function processPage(
       const ins = await state.engine.insertFacts(rows, { source_id: state.sourceId }); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
       pageInsertedTotal += ins.inserted;
       state.result.facts_inserted += ins.inserted;
-      rowNum += extracted.length;
-      commitSegmentResolutionTelemetry();
-    } else {
-      // dry-run: count for reporting, no DB write.
-      rowNum += extracted.length;
-      commitSegmentResolutionTelemetry();
     }
+    rowNum += extracted.length;
+    mergeSaveTimeResolutionCounts(pageResolution, segmentResolution);
+    state.result.fallback_slugify_count += segmentResolution.fallback_slugify_count;
+    state.result.resolution_errors += segmentResolution.resolution_errors;
 
     newestEnd = seg.endIso;
     if (state.sleepMs > 0) await sleep(state.sleepMs);
   }
 
   // Eng-v2 C7 / E16: write terminal audit row after all segments commit
-  // successfully. Only run when not dry-run AND we got through every
+  // successfully. Only run when we got through every
   // segment (no break on segmentLimit; that's an explicit partial run).
   const fullyProcessed =
     state.segmentLimit === 0 || segmentsThisPage < state.segmentLimit;
   if (
-    !state.dryRun &&
     fullyProcessed &&
     newestEnd !== null &&
     await snapshotIsCurrent(state.engine, state.sourceId, snapshot)
@@ -1193,7 +1196,7 @@ async function processPage(
       snapshot.versionToken,
     );
     rowNum++;
-  } else if (!state.dryRun && fullyProcessed && newestEnd !== null) {
+  } else if (fullyProcessed && newestEnd !== null) {
     process.stderr.write(
       `[extract-conversation-facts] ${page.slug} changed during extraction; leaving it unfinished for replay\n`,
     );
@@ -1203,7 +1206,7 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  if (!state.dryRun && newestEnd !== null) {
+  if (newestEnd !== null) {
     // v0.41.15.0 (codex #5/#6): per-page atomic checkpoint write. Mutate
     // the shared Map in place — JS single-threaded event loop makes
     // Map.set atomic across parallel workers; we don't need a load-mutate-
@@ -1294,6 +1297,10 @@ export async function runExtractConversationFactsCore(
     pages_considered: 0,
     pages_processed: 0,
     pages_skipped: 0,
+    pages_skipped_unparsed: 0,
+    pages_skipped_type_mismatch: 0,
+    pages_skipped_insufficient_turns: 0,
+    pages_skipped_since: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
     pages_skipped_completed: 0,
@@ -1465,6 +1472,7 @@ export async function runExtractConversationFactsCore(
         }
         if (!concreteTypes.includes(page.type)) {
           result.pages_skipped++;
+          result.pages_skipped_type_mismatch++;
           continue;
         }
         await processPageWithLock(page);
@@ -1477,6 +1485,7 @@ export async function runExtractConversationFactsCore(
       }
       if (!concreteTypes.includes(page.type)) {
         result.pages_skipped++;
+        result.pages_skipped_type_mismatch++;
         return;
       }
 
@@ -1844,7 +1853,7 @@ Options:
                          Default: reads cycle.conversation_facts_backfill.types config
                          (falls back to the full allowlist).
   --slug <slug>          Process a single page (overrides multi-page enumeration).
-  --dry-run              Show segmentation + counts; no DB writes, no checkpoint advance.
+  --dry-run              Show segmentation + counts; no model calls, DB writes, or checkpoint advance.
   --limit <N>            Cap pages processed (default: all).
   --since <iso>          Only consider messages newer than this ISO timestamp.
   --force                Re-process the target page (clears its resume entry).
@@ -1943,6 +1952,10 @@ export async function runExtractConversationFacts(
     pages_considered: 0,
     pages_processed: 0,
     pages_skipped: 0,
+    pages_skipped_unparsed: 0,
+    pages_skipped_type_mismatch: 0,
+    pages_skipped_insufficient_turns: 0,
+    pages_skipped_since: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
     pages_skipped_completed: 0,
@@ -1991,6 +2004,10 @@ export async function runExtractConversationFacts(
       aggregate.pages_considered += perSource.pages_considered;
       aggregate.pages_processed += perSource.pages_processed;
       aggregate.pages_skipped += perSource.pages_skipped;
+      aggregate.pages_skipped_unparsed += perSource.pages_skipped_unparsed;
+      aggregate.pages_skipped_type_mismatch += perSource.pages_skipped_type_mismatch;
+      aggregate.pages_skipped_insufficient_turns += perSource.pages_skipped_insufficient_turns;
+      aggregate.pages_skipped_since += perSource.pages_skipped_since;
       aggregate.pages_skipped_too_large += perSource.pages_skipped_too_large;
       aggregate.pages_skipped_disappeared += perSource.pages_skipped_disappeared;
       aggregate.pages_skipped_completed += perSource.pages_skipped_completed;
@@ -2015,16 +2032,18 @@ export async function runExtractConversationFacts(
     progress.finish();
   }
 
-  const verb = parsed.dryRun ? '(dry run) would extract' : 'extracted';
+  const outcome = parsed.dryRun
+    ? '(dry run) segmentation only; no facts extracted'
+    : `extracted ${aggregate.facts_extracted} facts (${aggregate.facts_inserted} inserted)`;
   console.log(
-    `\nDone: ${verb} ${aggregate.facts_extracted} facts ` +
-    `(${aggregate.facts_inserted} inserted) across ${aggregate.segments_processed} segments ` +
+    `\nDone: ${outcome} across ${aggregate.segments_processed} segments ` +
     `from ${aggregate.pages_processed}/${aggregate.pages_considered} pages ` +
     `in ${sourceIds.length} source(s). ` +
     `Spent ~$${totalSpent.toFixed(4)}.`,
   );
   if (aggregate.pages_skipped > 0) {
-    console.log(`  Skipped ${aggregate.pages_skipped} page(s) with no new segments since last checkpoint.`);
+    console.log(`  Skipped ${aggregate.pages_skipped} page(s) without eligible segments or outside the selected types:`);
+    console.log(`    ${aggregate.pages_skipped_unparsed} with no parseable speaker turns (retryable); ${aggregate.pages_skipped_type_mismatch} with a type mismatch; ${aggregate.pages_skipped_insufficient_turns} with insufficient turns; ${aggregate.pages_skipped_since} with no eligible segments after --since; ${aggregate.pages_skipped_unrecognized_speaker} declined for speaker attribution.`);
   }
   if (aggregate.pages_skipped_too_large > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped_too_large} page(s) exceeding ${MAX_PAGE_BODY_BYTES / 1024 / 1024}MB body cap.`);

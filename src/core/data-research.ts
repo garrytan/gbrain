@@ -368,46 +368,65 @@ export function buildDateWindows(
 }
 
 // ---------------------------------------------------------------------------
-// HTML email stripping (6-phase pipeline)
+// HTML email stripping
 // ---------------------------------------------------------------------------
 
 const MAX_HTML_SIZE = 500 * 1024; // 500KB cap (ReDoS prevention)
+const EMAIL_HTML_TAGS = new Set((
+  'a abbr acronym address area article aside audio b base basefont bdi bdo big blockquote body br button ' +
+  'canvas caption center cite code col colgroup data datalist dd del details dfn dialog dir div dl dt em embed ' +
+  'fieldset figcaption figure font footer form frame frameset h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe ' +
+  'img input ins kbd label legend li link main map mark marquee menu meta meter nav noframes noscript object ' +
+  'ol optgroup option output p param picture plaintext pre progress q rp rt ruby s samp script search section ' +
+  'select slot small source span strike strong style sub summary sup table tbody td template textarea tfoot ' +
+  'th thead time title tr track tt u ul var video wbr xmp'
+).split(' '));
 
-/** Strip HTML from email bodies. 6-phase pipeline with input size cap. */
+function stripEmailMarkup(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(style|script)(?=[\s>])(?:[^<>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<\/?([a-z][a-z0-9:-]*)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>|<![^>]*>|<\?[^>]*\?>/gi,
+      (tag, name: string | undefined) => name && !EMAIL_HTML_TAGS.has(name.toLowerCase()) ? tag : '');
+}
+
+/** Strip HTML from email bodies with bounded entity decoding and an input size cap. */
 export function stripEmailHtml(html: string): string {
-  // Phase 0: Size cap (ReDoS prevention)
   let text = html;
   if (text.length > MAX_HTML_SIZE) {
     text = text.slice(0, MAX_HTML_SIZE) + '\n...[truncated]';
   }
 
-  // Phase 1: Remove <style> and <script> blocks entirely
-  text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
-  text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+  for (let pass = 0; pass < 2; pass++) {
+    text = stripEmailMarkup(text);
+    text = text.replace(/&(nbsp|amp|lt|gt|quot|#\d+);/gi, (entity, code: string) => {
+      switch (code.toLowerCase()) {
+        case 'nbsp': return ' ';
+        case 'amp': return '&';
+        case 'lt': return '<';
+        case 'gt': return '>';
+        case 'quot': return '"';
+        default: {
+          const value = Number(code.slice(1));
+          if (!Number.isInteger(value) || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
+            return entity;
+          }
+          return String.fromCodePoint(value);
+        }
+      }
+    });
+  }
 
-  // Phase 2: Convert block elements to newlines
-  text = text.replace(/<br\s*\/?>/gi, '\n');
-  text = text.replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n');
+  text = stripEmailMarkup(text);
 
-  // Phase 3: Strip remaining HTML tags (non-greedy)
-  text = text.replace(/<[^>]*?>/g, '');
-
-  // Phase 4: Strip inline CSS artifacts (skip on large inputs for performance)
   if (text.length < 100000) {
     text = text.replace(/@media[^{]*\{[^}]*\}/g, '');
     text = text.replace(/\.[a-zA-Z][\w-]*\s*\{[^}]*\}/g, '');
     text = text.replace(/#[a-zA-Z][\w-]*\s*\{[^}]*\}/g, '');
   }
 
-  // Phase 5: Decode HTML entities
-  text = text.replace(/&nbsp;/gi, ' ');
-  text = text.replace(/&amp;/gi, '&');
-  text = text.replace(/&lt;/gi, '<');
-  text = text.replace(/&gt;/gi, '>');
-  text = text.replace(/&quot;/gi, '"');
-  text = text.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)));
-
-  // Phase 6: Collapse whitespace
   text = text.replace(/[ \t]+/g, ' ');
   text = text.replace(/\n{3,}/g, '\n\n');
   text = text.trim();

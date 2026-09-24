@@ -31,6 +31,15 @@ for (const fence of ['~~~', '```', '~~~~', '````']) {
     expect(db.candidates.filter(row => row.linkType === 'attended').map(row => row.targetSlug)).toEqual([person]);
     expect(fs.filter(row => row.link_type === 'attended').map(row => row.from_slug)).toEqual([person]);
   });
+  test(`CRLF ${fence} fences hide examples through invalid closers and preserve later attendance`, async () => {
+    const body = ['## Attendees', fence, '## Example', `${fence} not a closer`,
+      'Attendees: [[people/missing-example]]', `${fence}  `, '## Notes', `Attendees: [[${person}]]`].join('\r\n');
+    const db = await extractPageLinks(meeting, body, {}, 'meeting', resolver, { targetType: slug => types.get(slug) });
+    const fs = await extractLinksFromFile(`---\r\ntype: meeting\r\n---\r\n${body}`, `${meeting}.md`, new Set(types.keys()), { pageTypes: types });
+    expect(db.candidates.filter(row => row.linkType === 'attended').map(row => row.targetSlug)).toEqual([person]);
+    expect(db.attendanceComplete).toBe(true);
+    expect(fs.filter(row => row.link_type === 'attended').map(row => row.from_slug)).toEqual([person]);
+  });
 }
 
 test('attendance membership reads logarithmically many ordered ranges with exact boundaries', () => {
