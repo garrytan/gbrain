@@ -79,7 +79,7 @@ function syncRestoredTree(path: string): void {
     return;
   }
   if (!stat.isFile()) throw new AgentInstallError('unsupported_file', 'Unexpected file type in restored staging.');
-  const fd = openSync(path, 'r');
+  const fd = openSync(path, 'r+');
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 

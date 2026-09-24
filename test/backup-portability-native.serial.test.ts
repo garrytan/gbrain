@@ -411,3 +411,61 @@ $a.AddAccessRule($r); Set-Acl -LiteralPath $env:GBRAIN_TEST_ACL_PATH -AclObject 
   expect(inspectParent()).toBe(before);
   await expectOriginal();
 }, 120_000);
+
+for (const failureCode of [null, 'EPERM', 'EIO'] as const) test(failureCode
+  ? `restore preserves private staging when a writable file flush fails with ${failureCode}`
+  : 'restore honors a simulated Windows writable-handle file-flush requirement', async () => {
+  const into = join(temporary, `writable-flush-${failureCode ?? 'success'}`);
+  const open = fs.openSync; const fsync = fs.fsyncSync; const close = fs.closeSync;
+  const handles = new Map<number, string>();
+  const flagsSeen: string[] = [];
+  let versionPath = '';
+  let flushes = 0;
+  let closes = 0;
+  const flushError = failureCode ? Object.assign(new Error('injected restored writable-file flush failure'), { code: failureCode }) : null;
+  const opened = spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+    const fd = open(path, flags, mode);
+    if (String(path).startsWith(join(into, '.restore-')) && String(path).endsWith(join('restored', '.gbrain', 'brain.pglite', 'PG_VERSION')) && (flags === 'r' || flags === 'r+')) {
+      versionPath = String(path);
+      handles.set(fd, flags);
+      flagsSeen.push(flags);
+    }
+    return fd;
+  });
+  const synced = spyOn(fs, 'fsyncSync').mockImplementation(fd => {
+    if (handles.has(fd)) {
+      flushes++;
+      if (handles.get(fd) === 'r') throw Object.assign(new Error('simulated Windows read-only file flush refusal'), { code: 'EPERM' });
+      if (flushError) throw flushError;
+    }
+    fsync(fd);
+  });
+  const closed = spyOn(fs, 'closeSync').mockImplementation(fd => {
+    close(fd);
+    if (handles.delete(fd)) closes++;
+  });
+  try {
+    if (flushError) await expect(restorePgliteBackup({ archive, into })).rejects.toBe(flushError);
+    else expect((await restorePgliteBackup({ archive, into })).root).toBe(into);
+  } finally { opened.mockRestore(); synced.mockRestore(); closed.mockRestore(); }
+  expect(flagsSeen).toEqual(['r+']);
+  expect(flushes).toBe(1);
+  expect(closes).toBe(1);
+  if (flushError) {
+    expectIncomplete(into);
+    expect(fs.existsSync(join(into, '.gbrain'))).toBe(false);
+    expectPrivate(versionPath, false);
+    expect(fs.readFileSync(versionPath, 'utf8').trim()).toBe('17');
+    const [stage] = fs.readdirSync(into).filter(name => name.startsWith('.restore-'));
+    expectPrivate(join(into, stage, 'payload', 'database.tar'), false);
+    expect(fs.statSync(join(into, stage, 'payload', 'database.tar')).size).toBeGreaterThan(0);
+  } else {
+    expect(JSON.parse(fs.readFileSync(join(into, 'restore-receipt.json'), 'utf8')).state).toBe('ready');
+    expectPrivate(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), false);
+    expect(fs.readFileSync(join(into, '.gbrain', 'brain.pglite', 'PG_VERSION'), 'utf8').trim()).toBe('17');
+    expect(fs.readFileSync(join(into, 'memory', 'nested', 'note.md'))).toEqual(fs.readFileSync(join(root, 'memory', 'nested', 'note.md')));
+    expect(fs.readFileSync(join(into, 'memory', 'attachments', 'nested', 'bytes.bin'))).toEqual(attachment);
+    expect((await databaseState(into)).facts).toEqual(original.facts);
+  }
+  await expectOriginal();
+}, 120_000);
