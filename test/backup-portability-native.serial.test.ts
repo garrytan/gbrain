@@ -451,7 +451,8 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   if (kind === 'directory') fs.mkdirSync(capturePath);
   else fs.writeFileSync(capturePath, '');
   let launch: { executable: string; args: string[]; options: childProcess.ExecFileOptionsWithStringEncoding; child: childProcess.ChildProcess } | undefined;
-  const capture = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(childProcess.execFile, {
+  const captureExecute = childProcess.execFile;
+  const capture = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(captureExecute, {
     apply(target, thisArg, args) {
       const child = Reflect.apply(target, thisArg, args);
       if (args[2]?.env?.GBRAIN_BACKUP_PRIVATE_PATH === capturePath) {
@@ -544,7 +545,8 @@ for (const kind of ['directory', 'file'] as const) test.skipIf(process.platform 
   let capturedOutput: string | undefined;
   let capturedCalls = 0;
   const execute = childProcess.execFileSync;
-  const capture = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(childProcess.execFile, {
+  const captureExecute = childProcess.execFile;
+  const capture = spyOn(childProcess, 'execFile').mockImplementation(new Proxy(captureExecute, {
     apply(target, thisArg, args) {
       const options = args[2] as childProcess.ExecFileOptionsWithStringEncoding;
       if (options.env?.GBRAIN_BACKUP_PRIVATE_PATH !== capturePath) return Reflect.apply(target, thisArg, args);
