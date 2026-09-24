@@ -44,7 +44,7 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
   const engine = observeAdmissionTransactions(kind === 'postgres' ? new PostgresEngine() : new PGLiteEngine(), (requestId, now) => {
     timings.admitted(requestId, now);
   });
-  const samples: { at_ms: number; queue_count: number; queue_age_ms: number; recovery_bytes: number; rss_bytes: number; pool: unknown }[] = [];
+  const samples: { at_ms: number; queue_count: number; queue_age_ms: number; recovery_bytes: number; rss_bytes: number | null; pool: unknown }[] = [];
   // Production search can degrade when one lexical arm fails. A benchmark
   // must not count that cheaper, partial read as a successful measurement.
   const keyword = engine.searchKeyword; const titles = engine.searchTitles;
@@ -108,8 +108,10 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
         ${kind === 'postgres' ? `, (SELECT json_build_object('total', count(*), 'active', count(*) FILTER(WHERE state='active'),
           'idle', count(*) FILTER(WHERE state='idle'), 'idle_in_transaction', count(*) FILTER(WHERE state='idle in transaction'))
           FROM pg_stat_activity WHERE datname=current_database()) AS database_sessions` : ''} FROM persistence_requests`);
+      let rss: number | null;
+      try { rss = process.memoryUsage().rss; } catch { rss = null; }
       samples.push({ at_ms: performance.now() - at, queue_count: row.pending, queue_age_ms: Number(row.age), recovery_bytes: Number(row.recovery),
-        rss_bytes: process.memoryUsage().rss, pool: engine instanceof PostgresEngine ? {
+        rss_bytes: rss, pool: engine instanceof PostgresEngine ? {
           tracked_subset: engine.getPoolDiagnostics(), database_sessions: row.database_sessions,
           scope: 'fresh fixture database; active count includes this sampler; tracked gauges cover a SQL subset' } : null });
     };
@@ -135,7 +137,9 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
     result.metrics = samples; result.throughput_writes_per_second = completed * 1000 / (performance.now() - queryStart);
     result.peak_queue_age_ms = Math.max(...samples.map(sample => sample.queue_age_ms));
     result.peak_recovery_bytes = Math.max(...samples.map(sample => sample.recovery_bytes));
-    result.peak_rss_bytes = Math.max(...samples.map(sample => sample.rss_bytes));
+    const rss = samples.flatMap(sample => sample.rss_bytes === null ? [] : [sample.rss_bytes]);
+    result.peak_rss_bytes = rss.length ? Math.max(...rss) : null;
+    result.rss_unavailable_samples = samples.length - rss.length;
     for (const p of ['p50', 'p95', 'p99']) result[`delta_${p}_pct`] = 100 * (result.phase_b[`${p}_ms`] / result.phase_a[`${p}_ms`] - 1);
     result.brain_page_count = Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::integer AS n FROM pages'))[0].n);
     assert(result.phase_b.writes_committed_during_reads > 0, 'actual writes must commit while reads are still running');

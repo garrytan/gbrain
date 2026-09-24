@@ -150,6 +150,10 @@ without a provider or remote embedding latency.
 The manifest records all three runs, exact source hashes, storage/runtime
 and runner characteristics, admission/completion distributions, queue age,
 recovery bytes, RSS, throughput and Postgres activity samples. The harness
+records unavailable RSS samples as `null` and counts them in
+`rss_unavailable_samples`; `peak_rss_bytes` is the maximum available sample,
+or `null` when none are available. RSS sampling failures do not invalidate
+actual read/write measurements or relax the latency and overlap gates. The harness
 measures durable admission when the public handler's top-level queued journal
 transaction resolves, and completion when its terminal committed receipt is
 observed. Nested savepoints never count as admission. The same harness proxy
