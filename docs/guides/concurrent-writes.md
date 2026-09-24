@@ -489,6 +489,13 @@ flight after the phase deadline; the status reports that wait without claiming
 cancellation. A stopped consumer cannot begin preparation when a delayed claim
 eventually returns.
 
+PostgreSQL cancellation keeps the affected connection isolated until both the
+query and its cancellation transport settle, so a late cancellation cannot be
+sent into a successor's work by reusing that connection early. The cancellation
+transport can outlast the phase budget; this is not a hard database execution
+deadline. See [PostgreSQL cancellation ownership](../architecture/postgres-cancellation.md)
+for driver and pooler boundaries.
+
 An authorized replacement or rollback must quiesce the designated owner and
 retain accepted IDs, recovery reservations and additive indexes. Never downgrade
 below the existing writer protocol floor. If publication cannot safely drain,

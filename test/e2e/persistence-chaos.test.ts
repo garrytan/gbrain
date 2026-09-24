@@ -34,6 +34,7 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
     cancelHeld: () => boolean; releaseCancel: () => void;
     stopAccepting: () => Promise<void>; restart: () => Promise<void>;
     closeQueryConnections: () => void;
+    pauseQueries: () => void; resumeQueries: () => void; failNextStartup: () => void;
   }) => Promise<void>, options: { tls?: boolean; targetUrl?: string; observerUrl?: string } = {}) {
     assertSafeE2eDatabaseUrl(options.targetUrl ?? url!);
     assertSafeE2eDatabaseUrl(options.observerUrl ?? url!);
@@ -41,6 +42,7 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
     const sockets = new Set<Socket>();
     const querySockets = new Set<Socket>();
     let held: (() => void) | undefined;
+    let rejectStartup = false;
     const accept = (client: Socket) => {
       sockets.add(client);
       client.once('close', () => { sockets.delete(client); querySockets.delete(client); });
@@ -52,6 +54,14 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
         if (initial.length < 8) return;
         client.removeListener('data', receive);
         client.pause();
+        if (rejectStartup && initial.readInt32BE(4) === 196608) {
+          rejectStartup = false;
+          const body = Buffer.from('SFATAL\0C28000\0Msynthetic startup rejection\0\0');
+          const length = Buffer.alloc(4);
+          length.writeUInt32BE(body.length + 4);
+          client.end(Buffer.concat([Buffer.from('E'), length, body]));
+          return;
+        }
         const forward = () => {
           const upstream = createConnection({ host: target.hostname, port: Number(target.port) || 5432 });
           sockets.add(upstream);
@@ -91,6 +101,9 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
         stopAccepting: () => new Promise<void>(resolve => server.close(() => resolve())),
         restart: () => new Promise<void>(resolve => server.listen(address.port, '127.0.0.1', resolve)),
         closeQueryConnections: () => { for (const socket of querySockets) socket.destroy(); },
+        pauseQueries: () => { for (const socket of querySockets) socket.pause(); },
+        resumeQueries: () => { for (const socket of querySockets) socket.resume(); },
+        failNextStartup: () => { rejectStartup = true; },
       }));
     } finally {
       releaseCancel();
@@ -278,7 +291,7 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
 
   test('multi-host cancellation connection errors cannot masquerade as acknowledgement', () => fixture(async ctx => {
     const port = Number(new URL(ctx.proxyUrl).port);
-    const pool = postgres(ctx.proxyUrl, { host: ['127.0.0.1', '127.0.0.1'], port: [port, port], max: 1, prepare: false });
+    const pool = postgres(ctx.proxyUrl, { host: '127.0.0.1,127.0.0.1', port, max: 1, prepare: false });
     try {
       const owned = await pool.reserve();
       const [{ pid }] = await owned`SELECT pg_backend_pid() AS pid`;
@@ -333,22 +346,147 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
 
   const drivers = { esm: postgres, commonjs: createRequire(import.meta.url)('../../node_modules/postgres/cjs/src/index.js') as typeof postgres };
   for (const [name, driver] of Object.entries(drivers)) {
-    test(`${name} transaction ownership survives actual socket backpressure`, async () => {
+    test(`${name} unfenced transaction followers resume pipelining after a parameter description`, async () => {
       assertSafeE2eDatabaseUrl(url!);
       const pool = driver(url!, { max: 1, prepare: false });
+      try {
+        await pool.begin(async tx => {
+          const previous = tx`SELECT pg_sleep(${0.1})`.execute();
+          const first = tx`SELECT pg_sleep(0.1)`.execute();
+          const follower = tx`SELECT 42 AS answer`.execute();
+          await previous;
+          expect(Reflect.get(first, 'state')).not.toBeNull();
+          expect(Reflect.get(follower, 'state')).not.toBeNull();
+          await first;
+          expect(Array.from(await follower)).toEqual([{ answer: 42 }]);
+        });
+      } finally { await pool.end({ timeout: 1 }); }
+    }, 30000);
+
+    for (const warm of [false, true]) {
+      test(`${name} reservation opens ${warm ? 'after reconnect without another type fetch' : 'with type fetching disabled'}`, async () => {
+        assertSafeE2eDatabaseUrl(url!);
+        const closed = Promise.withResolvers<void>();
+        const pool = driver(url!, { max: 1, prepare: false, fetch_types: warm, onclose: () => closed.resolve() });
+        const observer = postgres(url!, { max: 1, prepare: false });
+        const abort = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          if (warm) {
+            const [{ pid }] = await pool`SELECT pg_backend_pid() AS pid`;
+            await observer`SELECT pg_terminate_backend(${pid})`;
+            await closed.promise;
+          }
+          timer = setTimeout(() => abort.abort(), 2000);
+          const lease = await pool.reserve({ signal: abort.signal });
+          expect(Array.from(await lease`SELECT 42 AS answer`)).toEqual([{ answer: 42 }]);
+          lease.release();
+        } finally { clearTimeout(timer); await pool.end({ timeout: 1 }); await observer.end({ timeout: 1 }); }
+      }, 30000);
+    }
+
+    test(`${name} cancelling a completed cursor settles without a new cancel request`, async () => {
+      assertSafeE2eDatabaseUrl(url!);
+      const pool = driver(url!, { max: 1, prepare: false });
+      try {
+        const lease = await pool.reserve();
+        const query = lease`SELECT generate_series(1, 2) AS n`;
+        const values: number[] = [];
+        for await (const rows of query.cursor(1)) values.push(...rows.map(row => row.n));
+        expect(values).toEqual([1, 2]);
+        expect(await Promise.race([query.cancel().then(() => true), Bun.sleep(50).then(() => false)])).toBe(true);
+        expect(Array.from(await lease`SELECT 42 AS answer`)).toEqual([{ answer: 42 }]);
+        lease.release();
+      } finally { await pool.end({ timeout: 1 }); }
+    }, 30000);
+
+    test(`${name} a saved savepoint handle cannot enter a replacement transaction`, async () => {
+      assertSafeE2eDatabaseUrl(url!);
+      const pool = driver(url!, { max: 1, prepare: false });
+      const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+      let stale: postgres.TransactionSql | undefined;
+      let replacement: Promise<unknown> | undefined;
+      try {
+        await pool.begin(async tx => { stale = tx; await tx`SELECT 1`; });
+        replacement = pool.begin(async tx => { entered.resolve(); await release.promise; return tx`SELECT 7 AS answer`; });
+        void replacement.catch(() => {});
+        await entered.promise;
+        await expect(stale!.savepoint(tx => tx`SELECT 42 AS answer`)).rejects.toMatchObject({ code: 'CONNECTION_CLOSED' });
+        stale!.discard();
+        release.resolve();
+        expect(Array.from(await replacement as postgres.Row[])).toEqual([{ answer: 7 }]);
+      } finally { release.resolve(); await replacement?.catch(() => {}); await pool.end({ timeout: 1 }); }
+    }, 30000);
+
+    test(`${name} an ended pool rejects a new reservation without waiting`, async () => {
+      assertSafeE2eDatabaseUrl(url!);
+      const pool = driver(url!, { max: 1, prepare: false });
+      await pool`SELECT 1`;
+      await pool.end();
+      await expect(pool.reserve()).rejects.toMatchObject({ code: 'CONNECTION_ENDED' });
+    }, 30000);
+
+    test(`${name} transaction ownership survives actual socket backpressure`, () => fixture(async ctx => {
+      const pool = driver(ctx.proxyUrl, { max: 1, prepare: false });
       const write = Socket.prototype.write;
       let backpressure = false;
       const writes = spyOn(Socket.prototype, 'write').mockImplementation(function(this: Socket, ...args: unknown[]) {
         const ready = Reflect.apply(write, this, args);
-        if (!ready && args[0] instanceof Uint8Array && args[0].byteLength > 65536) backpressure = true;
+        if (!ready && this.remotePort === Number(new URL(ctx.proxyUrl).port) && args[0] instanceof Uint8Array && args[0].byteLength > 65536) backpressure = true;
         return ready;
       });
+      let work: Promise<unknown> | undefined;
       try {
-        const rows = await pool.begin(' '.repeat(1024 * 1024), tx => tx`SELECT 42 AS answer`);
+        await pool`SELECT 1`;
+        ctx.pauseQueries();
+        work = pool.begin(' '.repeat(8 * 1024 * 1024), tx => tx`SELECT 42 AS answer`);
+        void work.catch(() => {});
+        await waitFor(() => backpressure, { label: 'actual write backpressure' });
+        ctx.resumeQueries();
+        const rows = await work as postgres.Row[];
         expect(Array.from(rows)).toEqual([{ answer: 42 }]);
         expect(backpressure).toBe(true);
-      } finally { writes.mockRestore(); await pool.end({ timeout: 1 }); }
-    }, 30000);
+      } finally { ctx.resumeQueries(); writes.mockRestore(); await work?.catch(() => {}); await pool.end({ timeout: 1 }); }
+    }), 30000);
+
+    test(`${name} a rejected cold reservation cannot consume the replacement connection`, () => fixture(async ctx => {
+      const pool = driver(ctx.proxyUrl, { max: 1, prepare: false });
+      try {
+        ctx.failNextStartup();
+        await expect(pool.reserve()).rejects.toMatchObject({ code: '28000' });
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), 2000);
+        try {
+          const next = await pool.reserve({ signal: abort.signal });
+          expect(Array.from(await next`SELECT 42 AS answer`)).toEqual([{ answer: 42 }]);
+          next.release();
+        } finally { clearTimeout(timer); }
+      } finally { await pool.end({ timeout: 1 }); }
+    }), 30000);
+
+    test(`${name} a granted reservation excludes a competing transaction continuation`, () => fixture(async ctx => {
+      const pool = driver(ctx.proxyUrl, { max: 1, prepare: false });
+      const release = Promise.withResolvers<void>();
+      let lease: postgres.ReservedSql | undefined;
+      let competing: Promise<unknown> | undefined;
+      try {
+        const [{ pid }] = await pool`SELECT pg_backend_pid() AS pid`;
+        const previous = pool`SELECT pg_sleep(0.1) AS reservation_predecessor`.execute();
+        await waitFor(async () => (await ctx.observer`SELECT query FROM pg_stat_activity WHERE pid=${pid} AND state='active'`)[0]?.query.includes('reservation_predecessor'));
+        let entered = false;
+        competing = previous.then(() => pool.begin(async tx => { entered = true; await release.promise; return tx`SELECT 7 AS answer`; }));
+        void competing.catch(() => {});
+        lease = await pool.reserve();
+        expect(Array.from(await lease`SELECT 42 AS answer`)).toEqual([{ answer: 42 }]);
+        await Bun.sleep(30);
+        expect(entered).toBe(false);
+        lease.release();
+        lease = undefined;
+        await waitFor(() => entered);
+        release.resolve();
+        expect(Array.from(await competing as postgres.Row[])).toEqual([{ answer: 7 }]);
+      } finally { lease?.release(); release.resolve(); await competing?.catch(() => {}); await pool.end({ timeout: 1 }); }
+    }), 30000);
 
     for (const timing of ['waiting', 'granted'] as const) {
       test(`${name} aborting a ${timing} reservation returns the only connection`, async () => {

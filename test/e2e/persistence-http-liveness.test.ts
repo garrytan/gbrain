@@ -358,6 +358,10 @@ describe.skipIf(!url)('authenticated PostgreSQL HTTP accepted-write liveness', (
       await start(oldFirst ? undefined : oldBinary);
       const successor = await connect(tokens[0]);
       const done = await committed(successor, args.request_id);
+      await waitFor(async () => {
+        const row = await read();
+        return row.state === 'committed' && row.recovery === null && Number(row.recovery_bytes) === 0;
+      }, { timeoutMs: 5000, label: 'retained owner recovery cleanup' });
       const final = await read();
       expect(final).toMatchObject({ id: retained.id, request_id: args.request_id, digest: retained.digest,
         source_id: source.id, source_incarnation: retained.source_incarnation, state: 'committed', recovery: null });
