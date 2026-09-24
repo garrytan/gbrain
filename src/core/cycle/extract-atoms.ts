@@ -71,7 +71,7 @@ import { truncateUtf8 } from '../text-safe.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
@@ -217,6 +217,9 @@ export interface ExtractAtomsOpts {
    * `heartbeat()` on the passed reporter.
    */
   progress?: ProgressReporter;
+  /** Stop checkpoint before each item (never mid-item). True defers every unstarted item:
+   *  untouched, still due, reported as pages_/transcripts_deferred (`--drain --window`). */
+  shouldStop?: () => boolean;
 }
 
 interface ExtractedAtom {
@@ -1065,9 +1068,14 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  let transcriptsDeferred = 0, pagesDeferred = 0;
   await withBudgetTracker(budgetTracker, async () => {
-  for (const item of work) {
+  for (const [idx, item] of work.entries()) {
     await maybeYield();
+    if (opts.shouldStop?.()) {
+      for (const rest of work.slice(idx)) { if (rest.kind === 'transcript') transcriptsDeferred++; else pagesDeferred++; }
+      break;
+    }
     if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
@@ -1389,12 +1397,12 @@ export async function runPhaseExtractAtoms(
     // failures.length (which stays inclusive, for CLI/receipt reporting),
     // so a heavy run that only ever hit transient errors doesn't trip the
     // doctor extract_health halt-rate warning.
+    // A shouldStop deferral is an expected limit (#4482 deadline_hit), not a round or a failure.
     await upsertExtractRollup(engine, {
       kind: 'atoms',
       source_id: sourceId,
       cost_delta: estimatedSpendUsd,
-      round_completed_delta: hardFailureCount === 0 ? 1 : 0,
-      halt_delta: hardFailureCount > 0 ? 1 : 0,
+      ...classifyRunStop({ error: hardFailureCount > 0, deadline_hit: transcriptsDeferred + pagesDeferred > 0 }),
     });
   }
 
@@ -1418,6 +1426,9 @@ export async function runPhaseExtractAtoms(
       (failures.length > 0 ? ` (${failures.length} failed)` : '') +
       (transcriptsSkipped + pagesSkipped > 0
         ? ` (${transcriptsSkipped + pagesSkipped} budget-skipped)`
+        : '') +
+      (transcriptsDeferred + pagesDeferred > 0
+        ? ` (${transcriptsDeferred + pagesDeferred} deferred at stop checkpoint)`
         : ''),
     details: {
       atoms_extracted: totalAtomsExtracted,
@@ -1427,6 +1438,8 @@ export async function runPhaseExtractAtoms(
       pages_processed: pagesProcessed,
       pages_total: pages.length,
       pages_skipped_budget: pagesSkipped,
+      transcripts_deferred: transcriptsDeferred,
+      pages_deferred: pagesDeferred,
       duplicates_skipped: duplicatesSkipped,
       failures,
       ...(managed ? { write_requests: writeRequests } : {}),

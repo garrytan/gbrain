@@ -449,7 +449,10 @@ Options:
                       so a cron/agent loop knows to run again. Use this to
                       grind down an extract_atoms backlog on a brain whose
                       pack doesn't run the phase in the routine cycle.
-  --window <seconds>  Drain wallclock budget. Default 300 (5 min).
+  --window <seconds>  Drain wallclock budget. Default 300 (5 min). Checked
+                      before each item, so the run ends within one item's
+                      time of the window; unstarted items are reported as
+                      deferred and stay due for the next run.
 
   --unsafe-bypass-dream-guard
                       Disable the self-consumption guard. Use only when you
@@ -598,7 +601,7 @@ async function runDrain(
   if (opts.dryRun) {
     const remaining = await countExtractAtomsBacklog(engine, extractionSourceId);
     if (opts.json) {
-      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window', failure_count: 0, failures: [], omitted_failure_count: 0, last_error: null }, null, 2));
+      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, items_completed: 0, items_deferred: 0, stopped: 'window', failure_count: 0, failures: [], omitted_failure_count: 0, last_error: null }, null, 2));
     } else {
       console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) eligible for atom extraction (no work done)`);
     }
@@ -652,7 +655,16 @@ async function runDrain(
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
-    console.log(`[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ${result.remaining ?? '?'} remaining (stopped: ${result.stopped})`);
+    // Completed / deferred / failed are distinct: deferred items were never
+    // started (the --window checkpoint fired mid-batch) and stay due.
+    const deferred = result.items_deferred > 0
+      ? `, ${result.items_deferred} deferred by --window`
+      : '';
+    console.log(
+      `[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ` +
+      `${result.remaining ?? '?'} remaining (stopped: ${result.stopped}) — ` +
+      `${result.items_completed} item(s) completed${deferred}, ${result.failure_count} failed`,
+    );
   }
   // null remaining = the final count query failed; do not report success.
   if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);

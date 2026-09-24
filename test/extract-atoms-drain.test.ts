@@ -80,6 +80,59 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
     expect(result.status).toBe('ok');
   });
 
+  // The window is a checkpoint INSIDE the batch: the batch receives a
+  // shouldStop that turns true at the deadline, and a batch that defers items
+  // ends the drain with stopped=window — never misread as no_progress, even
+  // when the cut batch completed nothing.
+  it('hands the batch a deadline checkpoint and stops window on deferral', async () => {
+    let t = 0;
+    const seen: boolean[] = [];
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async () => 5,
+        runBatch: async ({ shouldStop }) => {
+          seen.push(shouldStop());
+          t = 150; // the batch's own work crosses the 100ms deadline
+          seen.push(shouldStop());
+          return { extracted: 0, skipped: 0, completed: 0, deferred: 4 };
+        },
+        now: () => t,
+      },
+      { windowMs: 100 },
+    );
+    expect(seen).toEqual([false, true]);
+    expect(result.stopped).toBe('window');
+    expect(result.batches).toBe(1);
+    expect(result.items_completed).toBe(0);
+    expect(result.items_deferred).toBe(4);
+    expect(result.remaining).toBe(5);
+    expect(result.status).toBe('ok');
+  });
+
+  it('accumulates items_completed across batches; legacy adapters report 0', async () => {
+    const withCounts = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: seq([4, 2, 0, 0]),
+        runBatch: async () => ({ extracted: 3, skipped: 0, completed: 2 }),
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+    expect(withCounts).toMatchObject({ stopped: 'drained', items_completed: 4, items_deferred: 0 });
+    const legacy = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: seq([1, 0, 0]),
+        runBatch: async () => ({ extracted: 1, skipped: 0 }),
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+    expect(legacy).toMatchObject({ stopped: 'drained', items_completed: 0, items_deferred: 0 });
+  });
+
   // issue #3218 — a batch where every attempted item errored (providerFailure)
   // must surface distinctly from an ordinary no_progress/drained/window stop,
   // so the Minion handler can retry instead of completing the durable job.
@@ -197,7 +250,7 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
   // not from `r.status` (which collapses partial and total failure into the
   // same 'warn' value — the exact discard the issue reports).
   it('runBatch derives providerFailure from failures.length + zero processed items, not r.status', () => {
-    const runBatchBlock = src.slice(src.indexOf('runBatch: async () => {'));
+    const runBatchBlock = src.slice(src.indexOf('runBatch: async ({ shouldStop }) => {'));
     expect(runBatchBlock).toContain('d.failures');
     expect(runBatchBlock).toContain('transcripts_processed');
     expect(runBatchBlock).toContain('pages_processed');

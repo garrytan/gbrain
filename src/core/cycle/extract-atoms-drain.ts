@@ -24,6 +24,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { ExtractAtomsOpts } from './extract-atoms.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
@@ -87,10 +88,18 @@ export interface ExtractAtomsDrainDeps {
    * reconcilable from `--json` — pre-#4730 everything but ONE representative
    * error was dropped and the operator had to re-run the work to see the
    * other reasons.
+   *
+   * `ctx.shouldStop` is the window checkpoint: the batch consults it before
+   * starting each item and defers the rest once it returns true, reporting
+   * them as `deferred` (still due — nothing is stamped). `completed` is the
+   * number of items the batch finished (atoms persisted or zero-yield
+   * settled). Both are optional for adapters that predate the checkpoint.
    */
-  runBatch: () => Promise<{
+  runBatch: (ctx: { shouldStop: () => boolean }) => Promise<{
     extracted: number;
     skipped: number;
+    completed?: number;
+    deferred?: number;
     providerFailure?: boolean;
     failureCount?: number;
     firstError?: string;
@@ -127,6 +136,14 @@ export interface ExtractAtomsDrainResult {
   remaining: number | null;
   /** Batches actually processed. */
   batches: number;
+  /** Work items finished across every batch (atoms persisted or zero-yield settled). */
+  items_completed: number;
+  /**
+   * Work items a batch left unstarted because the window elapsed mid-batch.
+   * They were not touched, so they stay eligible (pages count toward
+   * `remaining`) for the next run.
+   */
+  items_deferred: number;
   /** Why the loop stopped: drained | window | no_progress | max_batches | provider_failure. */
   stopped: 'drained' | 'window' | 'no_progress' | 'max_batches' | 'provider_failure';
   /**
@@ -170,6 +187,10 @@ export function formatDrainProviderFailure(
   );
 }
 
+function countOrZero(n: unknown): number {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
 export async function runExtractAtomsDrain(
   deps: ExtractAtomsDrainDeps,
   opts: ExtractAtomsDrainOpts,
@@ -180,6 +201,8 @@ export async function runExtractAtomsDrain(
     let extracted = 0;
     let skipped = 0;
     let batches = 0;
+    let itemsCompleted = 0;
+    let itemsDeferred = 0;
     let stopped: ExtractAtomsDrainResult['stopped'] = 'window';
     // issue #3218: latched once any batch reports providerFailure — drives
     // the returned `status`, independent of how `stopped` reads after the
@@ -197,10 +220,17 @@ export async function runExtractAtomsDrain(
       const before = await deps.countRemaining();
       if (before === 0) { stopped = 'drained'; break; }
 
-      const r = await deps.runBatch();
+      // The window is enforced INSIDE the batch too: one batch is up to the
+      // page-discovery budget plus every live transcript, each an LLM call,
+      // so checking only between batches let a single batch run far past the
+      // window (and past a Minion job timeout, losing the final result).
+      const r = await deps.runBatch({ shouldStop: () => deps.now() >= deadline });
       extracted += r.extracted;
       skipped += r.skipped;
       batches++;
+      const batchDeferred = countOrZero(r.deferred);
+      itemsCompleted += countOrZero(r.completed);
+      itemsDeferred += batchDeferred;
       // #4730: preserve typed per-item records (bounded, sanitized) while
       // keeping failure_count exact and reconcilable — count-only adapters
       // (the #4539 shape) still contribute to the total via failureCount.
@@ -254,6 +284,11 @@ export async function runExtractAtomsDrain(
         break;
       }
 
+      // The batch hit the window checkpoint and left items unstarted. Stop
+      // here so the zero-progress check below can't misread a cut batch as
+      // no_progress.
+      if (batchDeferred > 0) { stopped = 'window'; break; }
+
       // Stop if a batch made zero forward progress — extraction is failing or
       // everything left is ineligible (e.g. all skipped). Prevents a hot loop
       // that spends budget without draining.
@@ -282,6 +317,8 @@ export async function runExtractAtomsDrain(
       skipped,
       remaining,
       batches,
+      items_completed: itemsCompleted,
+      items_deferred: itemsDeferred,
       stopped,
       failure_count: failureCount,
       failures,
@@ -326,6 +363,10 @@ export interface DrainForSourceOpts {
   maxBatches?: number;
   /** Optional per-batch progress sink (stderr line in dream; job progress in the handler). */
   onBatch?: ExtractAtomsDrainDeps['onBatch'];
+  /** Test seam: clock for the window deadline. Production: Date.now. */
+  _now?: () => number;
+  /** Test seam: extra phase options (e.g. `_chat`, `_transcripts`) merged into each batch. */
+  _phase?: Pick<ExtractAtomsOpts, '_chat' | '_transcripts'>;
 }
 
 export async function runExtractAtomsDrainForSource(
@@ -342,11 +383,13 @@ export async function runExtractAtomsDrainForSource(
   return runExtractAtomsDrain(
     {
       withLock: (work) => withRefreshingLock(engine, lockId, work, { ttlMinutes: 5 }),
-      runBatch: async () => {
+      runBatch: async ({ shouldStop }) => {
         const r = await runPhaseExtractAtoms(engine, {
+          ...opts._phase,
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
+          shouldStop,
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
@@ -377,13 +420,15 @@ export async function runExtractAtomsDrainForSource(
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
+          completed: itemsSucceeded,
+          deferred: Number(d.pages_deferred ?? 0) + Number(d.transcripts_deferred ?? 0),
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
           failureCount: failures.length,
           failures: typedFailures,
         };
       },
       countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),
-      now: Date.now,
+      now: opts._now ?? Date.now,
       onBatch: opts.onBatch,
     },
     { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches },

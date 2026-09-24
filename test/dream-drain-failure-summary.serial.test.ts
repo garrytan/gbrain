@@ -54,6 +54,8 @@ function baseResult(overrides: Partial<ExtractAtomsDrainResult>): ExtractAtomsDr
     skipped: 0,
     remaining: 0, // fully drained → dream exits 0 (no process.exit call)
     batches: 1,
+    items_completed: 1,
+    items_deferred: 0,
     stopped: 'drained',
     failure_count: 0,
     failures: [],
@@ -129,6 +131,21 @@ describe('dream --drain failure summary (#4730)', () => {
     expect(r.stderr).toContain('[drain] 2 item failure(s); last error: writings/b: bad json');
     expect(r.stderr).not.toContain('beyond the record cap');
     expect(r.stderr).not.toContain('detailed');
+  });
+
+  test('a window-cut run reports completed, deferred and failed items separately', async () => {
+    nextResult = baseResult({
+      extracted: 2, remaining: 3, stopped: 'window', items_completed: 2, items_deferred: 3,
+      failure_count: 1, failures: [{ batch: 1, source: 'writings/a', reason: 'bad json' }],
+    });
+    const r = await runDrainCaptured([]);
+    expect(r.exitCode).toBe(3); // deferred work stays due → run again
+    expect(r.stdout.join('\n')).toContain(
+      '[drain] extracted 2 atom(s) across 1 batch(es); 3 remaining (stopped: window) — 2 item(s) completed, 3 deferred by --window, 1 failed',
+    );
+    const json = await runDrainCaptured(['--json']);
+    const payload = JSON.parse(json.stdout.find(l => l.trim().startsWith('{'))!);
+    expect(payload).toMatchObject({ stopped: 'window', items_completed: 2, items_deferred: 3, failure_count: 1, remaining: 3 });
   });
 
   test('a clean run prints no failure line at all', async () => {
