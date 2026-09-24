@@ -55,8 +55,13 @@ export function defaultTcpProbe(host: string, port: number, timeoutMs: number): 
   });
 }
 
-/** Default `lookup`: the system resolver (`getaddrinfo`), the same one `fetch` consults. */
-export const defaultLookup: HostLookup = async (hostname) => { await lookup(hostname); };
+/** Default `lookup`: RFC 6761 `.invalid` negatives, otherwise the system resolver (`getaddrinfo`). */
+export const defaultLookup: HostLookup = async (hostname) => {
+  if (/(^|\.)invalid\.?$/i.test(hostname)) {
+    throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
+  }
+  await lookup(hostname);
+};
 
 export interface FetchOutcome {
   /** The response (whatever its status), or null when the fetch rejected (connection refused / timeout / unresolved name). */

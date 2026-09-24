@@ -156,7 +156,7 @@
     "marked": "^18.0.2",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",
-    "postgres": "^3.4.0",
+    "postgres": "3.4.9",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.22.6",
     "zod": "^4.3.6"
@@ -192,5 +192,8 @@
     "ip-address": "^10.3.1",
     "qs": "6.16.0",
     "js-yaml": "^3.15.2"
+  },
+  "patchedDependencies": {
+    "postgres@3.4.9": "patches/postgres@3.4.9.patch"
   }
 }

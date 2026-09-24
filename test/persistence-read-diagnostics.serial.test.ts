@@ -116,6 +116,56 @@ test('RSS failure retains partial reads and safe stage/errno; a successful later
   expect(result.metrics.length).toBeGreaterThan(0);
 }, 120_000);
 
+test('late known Bun RSS unavailability is included in final sample counts and peaks', async () => {
+  const result = await child(`
+    import { PGLiteEngine } from ${engineImport};
+    import { runReadLatencyWorkload } from ${workloadImport};
+    import { WriteTimingRecorder } from ${admissionImport};
+    let loaded = false; let releaseCommit;
+    const committed = new Promise(resolve => { releaseCommit = resolve; });
+    const complete = WriteTimingRecorder.prototype.complete;
+    WriteTimingRecorder.prototype.complete = function(...args) {
+      const result = complete.apply(this, args);
+      if (loaded) releaseCommit();
+      return result;
+    };
+    const keyword = PGLiteEngine.prototype.searchKeyword; let reads = 0;
+    PGLiteEngine.prototype.searchKeyword = async function(...args) {
+      if (++reads === 22) { loaded = true; await committed; }
+      return keyword.apply(this, args);
+    };
+    const interval = globalThis.setInterval;
+    let sampler; let late = false; let injected = false;
+    globalThis.setInterval = function(fn, ms, ...args) {
+      if (ms === 250) sampler = fn;
+      return interval(fn, ms, ...args);
+    };
+    const memory = process.memoryUsage;
+    process.memoryUsage = Object.assign(function() {
+      if (late && !injected) {
+        injected = true;
+        throw Object.assign(new Error('Failed to get memory usage'), { name: 'SystemError', syscall: 'memoryUsage', errno: 2 });
+      }
+      return memory();
+    }, memory);
+    const execute = PGLiteEngine.prototype.executeRaw;
+    PGLiteEngine.prototype.executeRaw = async function(sql, ...args) {
+      if (sql === 'SELECT count(*)::integer AS n FROM pages') { late = true; sampler(); }
+      return execute.call(this, sql, ...args);
+    };
+    const result = await runReadLatencyWorkload(${options});
+    console.log(JSON.stringify({ diagnostic_test: true, result: { ...result, injected } }));
+  `);
+  expect(result.injected).toBe(true);
+  expect(result.ok).toBe(true);
+  expect(result.rss_unavailable_samples).toBe(1);
+  expect(result.metrics.filter((sample: any) => sample.rss_bytes === null)).toHaveLength(1);
+  expect(result.peak_rss_bytes).toBe(Math.max(...result.metrics.flatMap((sample: any) => sample.rss_bytes === null ? [] : [sample.rss_bytes])));
+  expect(result.peak_queue_age_ms).toBe(Math.max(0, ...result.metrics.map((sample: any) => sample.queue_age_ms)));
+  expect(result.peak_recovery_bytes).toBe(Math.max(0, ...result.metrics.map((sample: any) => sample.recovery_bytes)));
+  expect(result.diagnostics.failures.total).toBe(0);
+}, 120_000);
+
 test('failed loaded lexical arm remains invalid and retains its partial query without raw errors', async () => {
   const result = await child(`
     import { PGLiteEngine } from ${engineImport};

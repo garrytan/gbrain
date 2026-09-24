@@ -11,7 +11,9 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
-import { admitWrite, claimNextWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
+import { admitWrite, claimNextWrite, getWriteRequest, getWriteRequestById, receiptFor } from '../src/core/persistence/journal.ts';
+import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
@@ -55,6 +57,82 @@ afterAll(async () => {
 });
 
 describe('journaled memory publication, both engines', () => {
+  test('remember provider preparation cooperatively aborts without terminal failure and retries the same receipt', async () => {
+    for (const engine of engines) {
+      await disposePersistenceConsumer(engine);
+      const slug = 'people/deadline-example';
+      const snapshot = await setupPage(engine, slug);
+      const authority = await submissionAuthority(context(engine), 'remember', sourceId, snapshot.sourceIncarnation, slug);
+      const intent = { fact: 'Synthetic provider deadline fact', provenance: 'deadline fixture', entity_slug: slug,
+        visibility: 'world', fence: true, valid_from: new Date().toISOString(), valid_until: null };
+      const row = await admitWrite(engine, { principal: authority.principal, operation: 'remember', sourceId,
+        sourceIncarnation: snapshot.sourceIncarnation, slug, pageId: snapshot.page.id, callerIntent: intent, intent, authority, requestId: randomUUID() });
+      let aborted = false;
+      const release = Promise.withResolvers<void>();
+      const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async () => {
+        await release.promise;
+        return Response.json({ embeddings: [[1, ...Array(1535).fill(0)]], usage: { tokens: 0 } });
+      } });
+      configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { OPENAI_API_KEY: 'sk-test' } });
+      __setEmbedTransportForTests(async options => {
+        try { return await (await fetch(provider.url, { signal: options.abortSignal })).json() as never; }
+        catch (error) { aborted = options.abortSignal!.aborted; throw error; }
+      });
+      const consumer = new PersistenceConsumer(engine, context(engine).config, prepareMemoryMutation, { pollMs: 60000, preparationMs: 50 });
+      try {
+        consumer.start();
+        await waitFor(() => aborted && consumer.status().active_preparations === 0);
+        expect((await getWriteRequestById(engine, row.id))?.state).toBe('queued');
+        expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND fact=$2', [sourceId, intent.fact])).toHaveLength(0);
+      } finally { release.resolve(); provider.stop(true); await consumer.stop(); __setEmbedTransportForTests(null); configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} }); }
+      const retry = new PersistenceConsumer(engine, context(engine).config, prepareMemoryMutation, { pollMs: 50 });
+      try {
+        retry.start();
+        await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'committed');
+        expect(await engine.executeRaw('SELECT fact,source FROM facts WHERE source_id=$1 AND fact=$2', [sourceId, intent.fact]))
+          .toEqual([{ fact: intent.fact, source: intent.provenance }]);
+      } finally { await retry.stop(); }
+    }
+  }, 15000);
+  test('slow healthy loopback preparation keeps an aged receipt nonterminal and replays without a provider call', async () => {
+    for (const engine of engines) {
+      await disposePersistenceConsumer(engine);
+      const slug = 'people/slow-provider-example';
+      await setupPage(engine, slug);
+      const release = Promise.withResolvers<void>();
+      let calls = 0;
+      const provider = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: async () => {
+        calls++;
+        await release.promise;
+        return Response.json({ embeddings: [[1, ...Array(1535).fill(0)]], usage: { tokens: 0 } });
+      } });
+      configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { OPENAI_API_KEY: 'sk-test' } });
+      __setEmbedTransportForTests(async options => await (await fetch(provider.url, { signal: options.abortSignal })).json() as never);
+      const params = { fact: 'Synthetic slow healthy fact', provenance: 'slow loopback fixture', entity: slug, request_id: randomUUID() };
+      const completion = submitRememberMutation(context(engine), params, 10000);
+      try {
+        await waitFor(async () => calls > 0 && (await engine.executeRaw<{ state: string }>(
+          'SELECT state FROM persistence_requests WHERE request_id=$1', [params.request_id]))[0]?.state === 'running');
+        await engine.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '3 minutes' WHERE request_id=$1", [params.request_id]);
+        const [pending] = await engine.executeRaw<import('../src/core/persistence/model.ts').WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1', [params.request_id]);
+        expect(pending.state).toBe('running');
+        expect(receiptFor(pending).diagnostic).toMatchObject({ reason: 'cause_unknown', next_action: 'inspect_owner' });
+        expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND fact=$2', [sourceId, params.fact])).toHaveLength(0);
+        release.resolve();
+        const result = await completion;
+        expect(result.state).toBe('committed');
+        await disposePersistenceConsumer(engine);
+        const callsBeforeReplay = calls;
+        expect(await submitRememberMutation(context(engine), params)).toEqual(result);
+        expect(calls).toBe(callsBeforeReplay);
+        expect(await engine.executeRaw('SELECT fact,source FROM facts WHERE source_id=$1 AND fact=$2', [sourceId, params.fact]))
+          .toEqual([{ fact: params.fact, source: params.provenance }]);
+      } finally {
+        release.resolve(); await completion.catch(() => {}); await disposePersistenceConsumer(engine);
+        provider.stop(true); __setEmbedTransportForTests(null); configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+      }
+    }
+  }, 20000);
   test('same-ID remember replays frozen fields after entity and fact removal', async () => {
     for (const engine of engines) {
       const slug = 'people/replay-example';
