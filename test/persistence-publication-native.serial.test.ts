@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -8,7 +8,13 @@ import type { GBrainConfig } from '../src/core/config.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
-import { acquireWorktree, claimWorktree } from '../src/core/persistence/ownership.ts';
+import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
+import { hasManagedRootMarker, nativeFilesystemPath } from '../src/core/persistence/root-registry.ts';
+import { assertManagedFilesystemWrite } from '../src/core/persistence/filesystem-guard.ts';
+import { PHYSICAL_ROOT_MARKER, physicalRootReservationPath, reservePhysicalRootRecord } from '../src/core/persistence/physical-root-record.ts';
+import { inspectPhysicalRootRecovery } from '../src/core/persistence/physical-root-recovery.ts';
+import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
@@ -45,11 +51,12 @@ afterAll(async () => {
   finally { for (const f of fixtures) f.cleanup(); }
 });
 
-async function fixture() {
+async function fixture(useRequestedRoot = false) {
   const f = gitFixture(); fixtures.push(f);
-  const sourceId = `publication-${randomUUID()}`;
-  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, f.root]);
-  const binding = await claimWorktree(engine, sourceId, f.root, hostId);
+  const sourceId = `publication-${randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  const sourceRoot = useRequestedRoot ? f.requestedRoot : f.root;
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, sourceRoot]);
+  const binding = await claimWorktree(engine, sourceId, sourceRoot, hostId);
   const ctx: OperationContext = { engine, config, remote: false, dryRun: false, sourceId,
     logger: { info() {}, warn() {}, error() {} } };
   return { ...f, sourceId, binding, ctx };
@@ -93,6 +100,77 @@ function expectBlob(f: Awaited<ReturnType<typeof fixture>>, path: string) {
   expect(git(f.root, 'show', `HEAD:${path}`)).toBe('Published\n');
   expect(git(f.remote, 'show', `refs/heads/main:${path}`)).toBe('Published\n');
 }
+
+test('native root aliases produce confined bindings and replay the same managed claim', async () => {
+  const f = await fixture(true);
+  console.log(`Native root alias fixture: platform=${process.platform} distinct=${f.requestedRoot !== f.root}`);
+  expect(f.binding.local_path).toBe(f.root);
+  expect(f.binding.relative_path).toBe('');
+  expect(await runManagedSourceLifecycle(engine, { operation: 'claim', sourceId: f.sourceId, path: f.requestedRoot }))
+    .toMatchObject({ state: 'committed', noop: true });
+  expect(await engine.executeRaw('SELECT local_path FROM sources WHERE id=$1', [f.sourceId]))
+    .toEqual([{ local_path: f.requestedRoot }]);
+  const duplicate = `overlap-${randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  await expect(runManagedSourceLifecycle(engine, { operation: 'add', sourceId: duplicate, path: f.requestedRoot }))
+    .rejects.toMatchObject({ code: 'overlapping_path' });
+  expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [duplicate])).toEqual([]);
+  const { row, receipt, effect } = await publish(f, 'notes/native-alias');
+  const target = f.caseInsensitive ? 'Notes/native-alias.md' : 'notes/native-alias.md';
+  expect(effect.data.relative_path).toBe(target);
+  expect(await run(effect.id)).toMatchObject({ state: 'committed', outcome: { git: 'committed', push: 'committed' } });
+  expectBlob(f, target);
+  expect(await getWriteRequestById(engine, row.id)).toEqual(receipt);
+});
+
+for (const stamped of [false, true]) test(`legacy native root reservation keeps its veto and owner identity (stamped=${stamped})`, async () => {
+  const f = gitFixture(); fixtures.push(f);
+  const requested = join(dirname(f.requestedRoot), 'legacy-root');
+  mkdirSync(requested);
+  const root = realpathSync(requested);
+  const sourceId = `legacy-${randomUUID().replaceAll('-', '').slice(0, 20)}`;
+  const file = join(root, 'page.md');
+  writeFileSync(file, 'Retained canonical bytes\n');
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
+  const reservation = reservePhysicalRootRecord(root, { brainId: stamped ? brain.brain_id : randomUUID(),
+    hostId, worktreeId: randomUUID(), coordinationPath: join(dirname(root), 'legacy-owner.lock') });
+  const recordPath = physicalRootReservationPath(root);
+  const bytes = readFileSync(recordPath);
+  console.log(`Legacy root identity fixture: platform=${process.platform} stamped=${stamped} distinct=${root !== nativeFilesystemPath(root)}`);
+  expect(hasManagedRootMarker(file)).toBe(true);
+  expect(() => assertManagedFilesystemWrite(file)).toThrow(expect.objectContaining({ code: 'writer_coordinator_required' }));
+  if (!stamped) {
+    await expect(claimWorktree(engine, sourceId, root, hostId)).rejects.toMatchObject({ code: 'recovery_required' });
+    const nativeRoot = nativeFilesystemPath(root);
+    await expect(runManagedSourceLifecycle(engine, { operation: 'claim', sourceId, path: nativeRoot }))
+      .rejects.toMatchObject({ code: root === nativeRoot ? 'recovery_required' : 'source_changed' });
+    expect(await getWorktreeBinding(engine, sourceId, hostId)).toBeNull();
+    expect(existsSync(join(root, PHYSICAL_ROOT_MARKER))).toBe(false);
+  } else {
+    const binding = await claimWorktree(engine, sourceId, root, hostId);
+    expect(binding).toMatchObject({ worktree_id: reservation.worktreeId, local_path: root,
+      coordination_path: reservation.coordinationPath, relative_path: '' });
+    const stamp = readFileSync(join(root, PHYSICAL_ROOT_MARKER));
+    const lock = await acquireWorktree(binding);
+    expect(lock).not.toBeNull();
+    let competing: Awaited<ReturnType<typeof tryAcquireNativeLock>> = null;
+    try {
+      competing = await tryAcquireNativeLock(nativeFilesystemPath(reservation.coordinationPath));
+      expect(competing).toBeNull();
+    } finally { await competing?.release(); await lock?.release(); }
+    expect(inspectPhysicalRootRecovery(root, reservation).reservation).toEqual(reservation);
+    expect(await runManagedSourceLifecycle(engine, { operation: 'claim', sourceId, path: root }))
+      .toMatchObject({ state: 'committed', noop: true });
+    if (root !== nativeFilesystemPath(root)) {
+      await expect(runManagedSourceLifecycle(engine, { operation: 'claim', sourceId, path: nativeFilesystemPath(root) }))
+        .rejects.toMatchObject({ code: 'writer_transfer_required' });
+    }
+    expect(await getWorktreeBinding(engine, sourceId, hostId)).toEqual(binding);
+    expect(readFileSync(join(root, PHYSICAL_ROOT_MARKER))).toEqual(stamp);
+  }
+  expect(readFileSync(recordPath)).toEqual(bytes);
+  expect(readFileSync(file, 'utf8')).toBe('Retained canonical bytes\n');
+});
 
 test('new-page preparation and journal publication use actual native directory spelling', async () => {
   const f = await fixture();

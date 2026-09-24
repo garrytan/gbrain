@@ -9,7 +9,8 @@ export function git(root: string, ...args: string[]): string {
 }
 
 export function gitFixture() {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-git-publication-')));
+  const requestedHome = mkdtempSync(join(tmpdir(), 'gbrain-git-publication-'));
+  const home = realpathSync.native(requestedHome);
   const root = join(home, 'worktree'), remote = join(home, 'remote.git');
   mkdirSync(root); mkdirSync(remote);
   git(root, 'init', '-b', 'main');
@@ -25,5 +26,6 @@ export function gitFixture() {
   chmodSync(hook, 0o755);
   mkdirSync(join(root, 'Notes'));
   const caseInsensitive = existsSync(join(root, 'notes'));
-  return { home, root, remote, caseInsensitive, cleanup: () => rmSync(home, { recursive: true, force: true }) };
+  return { home, root, requestedRoot: join(requestedHome, 'worktree'), remote, caseInsensitive,
+    cleanup: () => rmSync(home, { recursive: true, force: true }) };
 }
