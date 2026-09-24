@@ -5296,14 +5296,8 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Shared body for executeRaw / executeRawDirect: run a raw statement on the
    * given connection and wire AbortSignal cancellation onto the pending query.
-   * The ONLY difference between the two public methods is which connection they
-   * pick (read pool vs direct session pool), so the cancellation plumbing lives
-   * here in one place rather than being copy-pasted.
-   *
-   * v0.41.18.0 (A20, codex #7): real cancellation via postgres.js's .cancel()
-   * on the pending query. Init nudge (3s wallclock cap) is the first consumer;
-   * the AbortSignal fires when the timer trips. An already-aborted signal
-   * short-circuits before the network round-trip.
+   * Cancellable statements retain an exclusive connection through query and
+   * cancellation settlement so a late CancelRequest cannot hit its successor.
    */
   private runUnsafe<T>(
     conn: ReturnType<typeof postgres>,
@@ -5311,30 +5305,35 @@ export class PostgresEngine implements BrainEngine {
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
-    // #4145 R2-2 preflight: an ALREADY-aborted signal must short-circuit
-    // BEFORE the query is dispatched — the previous order created the
-    // pending query first and cancelled it after, which still burned a
-    // round-trip (and on a saturated pool, a slot). Cancellation remains
-    // BEST-EFFORT overall (PG protocol cancel is async); callers that need
-    // correctness must rely on their own fencing, not this signal.
     if (opts?.signal?.aborted) {
       throw new DOMException('aborted', 'AbortError');
     }
-    const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]);
-    if (opts?.signal) {
-      const onAbort = () => {
-        try {
-          (pending as unknown as { cancel?: () => void }).cancel?.();
-        } catch {
-          // best-effort; the .finally below settles regardless
+    return (async () => {
+      const signal = opts?.signal;
+      const reserved = signal && typeof conn.reserve === 'function' ? await conn.reserve({ signal }) : undefined;
+      if (reserved) conn = reserved;
+      let retired = false;
+      const owner = reserved ?? conn as unknown as postgres.TransactionSql;
+      try {
+        if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+        if (signal && typeof owner.discard !== 'function') throw new Error('Postgres cancellation requires the pinned driver patch');
+        const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], { cancelFence: !!signal });
+        if (!signal) return await pending as unknown as T[];
+        let cancellation: Promise<void> | undefined;
+        const onAbort = () => {
+          if (cancellation) return;
+          try { cancellation = pending.cancel().catch(() => { retired = true; }); }
+          catch { retired = true; }
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        try { return await pending as unknown as T[]; }
+        finally {
+          signal.removeEventListener('abort', onAbort);
+          await cancellation;
+          if (retired) owner.discard();
         }
-      };
-      opts.signal.addEventListener('abort', onAbort, { once: true });
-      return (pending as unknown as Promise<T[]>).finally(() => {
-        opts.signal?.removeEventListener('abort', onAbort);
-      });
-    }
-    return pending as unknown as Promise<T[]>;
+      } finally { reserved?.release(); }
+    })();
   }
 
   async executeRaw<T = Record<string, unknown>>(
