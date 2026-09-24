@@ -1161,7 +1161,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               // page OR live-transcript due, dedup, cap lock) lives in one
               // module shared with the drain handler's continuation.
               const { dispatchAutoDrains } = await import('../core/cycle/extract-atoms-auto-drain.ts');
-              const dispatched = await dispatchAutoDrains(engine, queue, {
+              const { dispatched, blocked } = await dispatchAutoDrains(engine, queue, {
                 timeoutMs,
                 onError: (_sourceId, e) => logError('dispatch.auto-drain', e),
                 // Same unavailable-path skip (relative / missing on this
@@ -1181,6 +1181,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                   console.log(`[dispatch] job #${d.jobId} extract-atoms-drain (auto-drain: ${d.sourceId}; backlog=${backlog}; transcripts=${d.backlog.transcripts})`);
                 }
               }
+              // Fail-closed refusals are visible; a busy lock retries next tick.
+              if (blocked && jsonMode) process.stderr.write(JSON.stringify({ event: 'auto_drain_blocked', reason: blocked }) + '\n');
+              else if (blocked === 'budget_unknown' || blocked === 'cap_lock_busy') console.log(`[dispatch] auto-drain skipped this tick (${blocked})`);
             }
           } catch (e) {
             logError('dispatch.auto-drain-gate', e);

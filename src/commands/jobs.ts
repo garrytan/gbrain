@@ -2987,8 +2987,12 @@ export async function registerBuiltinHandlers(
       const { retryManagedAtomBatch } = await import('../core/persistence/atom-retry.ts');
       return retryManagedAtomBatch(engine, job.data.sourceId, job.data.retryRequestId, `job:${job.id}`);
     }
-    const { formatDrainProviderFailure, queueDrainContinuation, runExtractAtomsDrainForSource } =
+    const { formatDrainProviderFailure, queueDrainContinuation, recheckDeferredContinuation, runExtractAtomsDrainForSource } =
       await import('../core/cycle/extract-atoms-drain.ts');
+    if (job.data.budget_recheck === true) { // lock-busy continuation: same budget gate at start
+      const gate = await recheckDeferredContinuation(engine, job);
+      if (!gate.proceed) return gate.result;
+    }
     const { LockUnavailableError } = await import('../core/db-lock.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     const windowSeconds =

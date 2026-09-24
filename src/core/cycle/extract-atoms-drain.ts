@@ -504,9 +504,13 @@ export async function runExtractAtomsDrainForSource(
 export const MAX_DRAIN_CONTINUATIONS = 8;
 
 /** Why a continuation was blocked by spend policy, with the numbers that decided it. */
+export type DrainBudgetReason =
+  | 'auto_drain_disabled' | 'zero_budget' | 'budget_unknown' | 'daily_cap' | 'reserved_for_other_sources';
+
+/** Why a continuation was refused by spend policy, with the numbers that decided it. */
 export interface DrainBudgetBlock {
   queued: false;
-  reason: 'auto_drain_disabled' | 'daily_cap' | 'reserved_for_other_sources' | 'budget_unknown' | 'cap_lock_busy';
+  reason: DrainBudgetReason;
   max_usd_per_day?: number;
   max_jobs_today?: number;
   jobs_today?: number | null;
@@ -514,9 +518,14 @@ export interface DrainBudgetBlock {
 }
 
 export type DrainContinuation =
-  | { queued: true; job_id: number; depth: number }
+  /** `budget_check: 'deferred'`: the cap lock was busy, so the continuation is a
+   *  delayed job that re-runs the same budget gate when it starts. */
+  | { queued: true; job_id: number; depth: number; budget_check?: 'deferred' }
   | { queued: false; reason: 'drained' | 'no_forward_progress' | 'continuation_limit' | 'not_window_cut' | 'submit_failed'; error?: string }
   | DrainBudgetBlock;
+
+/** Delay before a lock-busy continuation starts and rechecks its budget; also its retry backoff base. */
+export const CONTINUATION_RECHECK_DELAY_MS = 30_000;
 
 export async function queueDrainContinuation(
   engine: BrainEngine,
@@ -535,45 +544,75 @@ export async function queueDrainContinuation(
   try {
     // A retried parent reports the continuation it already created; the
     // budget check below would otherwise count that very job against itself.
-    const [existing] = await engine.executeRaw<{ id: number }>(
-      'SELECT id FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1', [idempotencyKey]);
-    if (existing) return { queued: true, job_id: Number(existing.id), depth: depth + 1 };
+    const [existing] = await engine.executeRaw<{ id: number; status: string }>(
+      'SELECT id, status FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1', [idempotencyKey]);
+    if (existing) {
+      return { queued: true, job_id: Number(existing.id), depth: depth + 1, ...(existing.status === 'delayed' ? { budget_check: 'deferred' as const } : {}) };
+    }
     const policyMod = await import('./extract-atoms-auto-drain.ts');
     const { MinionQueue } = await import('../minions/queue.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+    let policy;
+    try { policy = await policyMod.readAutoDrainPolicy(engine); }
+    catch { return { queued: false, reason: 'budget_unknown' }; }
+    const budget = { max_usd_per_day: policy.maxUsdPerDay, max_jobs_today: policy.maxJobsToday };
+    const [parent] = await engine.executeRaw<{ max_attempts: number | null; timeout_ms: number | null; queue: string | null }>(
+      'SELECT max_attempts, timeout_ms, queue FROM minion_jobs WHERE id = $1', [job.id]);
+    const { budget_recheck: _recheck, ...parentData } = job.data;
+    const submit = (deferred: boolean) => new MinionQueue(engine).add(
+      'extract-atoms-drain',
+      { ...parentData, continuation_of: job.id, continuation_depth: depth + 1, ...(deferred ? { budget_recheck: true } : {}) },
+      {
+        // One continuation per parent even if the parent's handler is retried.
+        idempotency_key: idempotencyKey,
+        ...(parent?.queue ? { queue: parent.queue } : {}),
+        ...(parent?.timeout_ms ? { timeout_ms: parent.timeout_ms } : {}),
+        ...(deferred
+          // Lock-busy fallback: durable, delayed, and retried with backoff
+          // until the start-time gate gets the lock (recheckDeferredContinuation).
+          ? { delay: CONTINUATION_RECHECK_DELAY_MS, max_attempts: Math.max(parent?.max_attempts ?? 0, 5),
+              backoff_type: 'exponential' as const, backoff_delay: CONTINUATION_RECHECK_DELAY_MS }
+          : parent?.max_attempts ? { max_attempts: parent.max_attempts } : {}),
+      },
+      { allowProtectedSubmit: true },
+    );
     // Spend + fairness gate, under the same lock autopilot's dispatch holds.
-    const gated = await policyMod.withDrainCapLock(engine, async (): Promise<DrainContinuation> => {
-      const policy = await policyMod.readAutoDrainPolicy(engine);
-      const budget = { max_usd_per_day: policy.maxUsdPerDay, max_jobs_today: policy.maxJobsToday };
-      if (!policy.enabled) return { queued: false, reason: 'auto_drain_disabled', ...budget };
-      const today = await policyMod.countDrainJobsToday(engine, policy.utcDay);
-      if (today === null) return { queued: false, reason: 'budget_unknown', ...budget, jobs_today: null };
-      if (today >= policy.maxJobsToday) return { queued: false, reason: 'daily_cap', ...budget, jobs_today: today };
-      // Fairness: never take a slot another due source needs for its first drain today.
-      const others = await policyMod.sourcesAwaitingDrain(engine, policy,
-        { excludeSourceId: sourceId, limit: policy.maxJobsToday - today });
-      if (today + others.length >= policy.maxJobsToday) {
-        return { queued: false, reason: 'reserved_for_other_sources', ...budget, jobs_today: today,
-          reserved_for_other_sources: others.map(o => o.id) };
-      }
-      const [parent] = await engine.executeRaw<{ max_attempts: number | null; timeout_ms: number | null; queue: string | null }>(
-        'SELECT max_attempts, timeout_ms, queue FROM minion_jobs WHERE id = $1', [job.id]);
-      const next = await new MinionQueue(engine).add(
-        'extract-atoms-drain',
-        { ...job.data, continuation_of: job.id, continuation_depth: depth + 1 },
-        {
-          // One continuation per parent even if the parent's handler is retried.
-          idempotency_key: idempotencyKey,
-          ...(parent?.queue ? { queue: parent.queue } : {}),
-          ...(parent?.max_attempts ? { max_attempts: parent.max_attempts } : {}),
-          ...(parent?.timeout_ms ? { timeout_ms: parent.timeout_ms } : {}),
-        },
-        { allowProtectedSubmit: true },
-      );
-      return { queued: true, job_id: next.id, depth: depth + 1 };
-    });
-    return gated?.value ?? { queued: false, reason: 'cap_lock_busy' };
+    const gated = await policyMod.continuationBudgetGate(engine, policy, sourceId, 0, () => submit(false));
+    if (gated === null) {
+      const next = await submit(true);
+      return { queued: true, job_id: next.id, depth: depth + 1, budget_check: 'deferred' };
+    }
+    if (!gated.value.ok) {
+      return { queued: false, reason: gated.value.reason, ...budget, jobs_today: gated.value.jobs_today,
+        ...(gated.value.reserved_for_other_sources ? { reserved_for_other_sources: gated.value.reserved_for_other_sources } : {}) };
+    }
+    return { queued: true, job_id: gated.value.value.id, depth: depth + 1 };
   } catch (e) {
     return { queued: false, reason: 'submit_failed', error: sanitizeFailureText(e instanceof Error ? e.message : String(e), MAX_DRAIN_FAILURE_REASON_CHARS) };
   }
+}
+
+/**
+ * Start-time gate for a continuation queued while the cap lock was busy
+ * (`data.budget_recheck`). Runs the SAME budget + fairness gate, excluding the
+ * job's own row from today's count. Refused → a truthful skipped result (no
+ * drain). Lock busy again, or the count unavailable → throws, so the queue
+ * retries the job with backoff: the continuation stays durable.
+ */
+export async function recheckDeferredContinuation(
+  engine: BrainEngine,
+  job: { id: number; data: Record<string, unknown> },
+): Promise<{ proceed: true } | { proceed: false; result: Record<string, unknown> }> {
+  const policyMod = await import('./extract-atoms-auto-drain.ts');
+  const policy = await policyMod.readAutoDrainPolicy(engine);
+  const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
+  const gated = await policyMod.continuationBudgetGate(engine, policy, sourceId, job.id, async () => true);
+  if (gated === null) throw new Error('extract-atoms-drain: daily cap lock busy — continuation will retry');
+  if (gated.value.ok) return { proceed: true };
+  if (gated.value.reason === 'budget_unknown') throw new Error('extract-atoms-drain: daily drain count unavailable — continuation will retry');
+  return { proceed: false, result: {
+    phase: 'extract_atoms', status: 'skipped', reason: gated.value.reason, continuation_of: job.data.continuation_of ?? null,
+    max_usd_per_day: policy.maxUsdPerDay, max_jobs_today: policy.maxJobsToday, jobs_today: gated.value.jobs_today,
+    ...(gated.value.reserved_for_other_sources ? { reserved_for_other_sources: gated.value.reserved_for_other_sources } : {}),
+  } };
 }

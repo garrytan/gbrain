@@ -15,7 +15,11 @@
  *  - Duplicates: a source with a drain already waiting/active/delayed/paused,
  *    or already dispatched today, is never dispatched again.
  *  - Races: count-then-submit runs under one DB lock, so autopilot and
- *    concurrent handlers cannot jointly overshoot the cap.
+ *    concurrent handlers cannot jointly overshoot the cap. The expensive
+ *    due-set scan (it may read the transcript corpus) runs BEFORE the lock;
+ *    inside it only cheap SQL rechecks run, so the lock is held briefly.
+ *  - Fail closed: disabled, a zero budget, or an unknown daily count
+ *    dispatches nothing on every path (`budgetVerdict`).
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -59,12 +63,16 @@ export async function readAutoDrainPolicy(engine: BrainEngine, now = new Date())
   };
 }
 
-/** Drain jobs created since 00:00 UTC (all origins: autopilot, continuation, manual). null on error. */
-export async function countDrainJobsToday(engine: BrainEngine, utcDay: string): Promise<number | null> {
+/**
+ * Drain jobs created since 00:00 UTC (all origins: autopilot, continuation,
+ * manual), excluding `exceptJobId` (a deferred continuation rechecking its
+ * own slot). null on error — callers fail closed.
+ */
+export async function countDrainJobsToday(engine: BrainEngine, utcDay: string, exceptJobId = 0): Promise<number | null> {
   try {
     const rows = await engine.executeRaw<{ cnt: number }>(
-      `SELECT count(*)::int AS cnt FROM minion_jobs WHERE name = 'extract-atoms-drain' AND created_at >= $1::timestamptz`,
-      [`${utcDay}T00:00:00Z`],
+      `SELECT count(*)::int AS cnt FROM minion_jobs WHERE name = 'extract-atoms-drain' AND created_at >= $1::timestamptz AND id <> $2`,
+      [`${utcDay}T00:00:00Z`, exceptJobId],
     );
     return Number(rows[0]?.cnt ?? 0);
   } catch {
@@ -97,6 +105,21 @@ export function isDrainDue(backlog: DrainBacklog, threshold: number): boolean {
   return (backlog.pages ?? 0) > threshold || (backlog.transcripts ?? 0) > 0;
 }
 
+export type BudgetRefusal = 'auto_drain_disabled' | 'zero_budget' | 'budget_unknown' | 'daily_cap';
+
+/**
+ * The one spend verdict for initial dispatch AND continuation. Fails closed:
+ * disabled, a ceiling below one run ($0.30), or an unknown count → no slots.
+ */
+export function budgetVerdict(policy: AutoDrainPolicy, jobsToday: number | null):
+  { ok: true; slots: number } | { ok: false; reason: BudgetRefusal } {
+  if (!policy.enabled) return { ok: false, reason: 'auto_drain_disabled' };
+  if (policy.maxJobsToday === 0) return { ok: false, reason: 'zero_budget' };
+  if (jobsToday === null) return { ok: false, reason: 'budget_unknown' };
+  if (jobsToday >= policy.maxJobsToday) return { ok: false, reason: 'daily_cap' };
+  return { ok: true, slots: policy.maxJobsToday - jobsToday };
+}
+
 export const autoDrainKey = (sourceId: string, utcDay: string) => `autopilot-extract-atoms-drain:${sourceId}:${utcDay}`;
 
 export interface DueSource { id: string; localPath: string; backlog: DrainBacklog }
@@ -126,6 +149,50 @@ export async function sourcesAwaitingDrain(
   return due;
 }
 
+/** Cheap in-lock recheck of a precomputed due set: drop sources dispatched or started since the scan. */
+export async function recheckAwaiting(engine: BrainEngine, policy: AutoDrainPolicy, due: DueSource[]): Promise<DueSource[]> {
+  const out: DueSource[] = [];
+  for (const src of due) {
+    const dispatched = await engine.executeRaw('SELECT 1 FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1',
+      [autoDrainKey(src.id, policy.utcDay)]);
+    if (dispatched.length === 0 && !(await drainInFlight(engine, src.id))) out.push(src);
+  }
+  return out;
+}
+
+export type ContinuationGate<T> =
+  | { ok: true; value: T; jobs_today: number }
+  | { ok: false; reason: BudgetRefusal | 'reserved_for_other_sources'; jobs_today: number | null; reserved_for_other_sources?: string[] };
+
+/**
+ * Budget + fairness gate for a drain continuation, used at submit time and
+ * again when a deferred continuation starts (`exceptJobId` = itself). Runs
+ * `onAllowed` inside the cap lock. null = lock busy (caller must stay retryable).
+ */
+export async function continuationBudgetGate<T>(
+  engine: BrainEngine,
+  policy: AutoDrainPolicy,
+  sourceId: string,
+  exceptJobId: number,
+  onAllowed: (jobsToday: number) => Promise<T>,
+): Promise<{ value: ContinuationGate<T> } | null> {
+  const pre = budgetVerdict(policy, 0);
+  if (!pre.ok) return { value: { ok: false, reason: pre.reason, jobs_today: null } };
+  // Expensive scan outside the lock; rechecked cheaply inside it.
+  const others = await sourcesAwaitingDrain(engine, policy, { excludeSourceId: sourceId, limit: policy.maxJobsToday });
+  return withDrainCapLock(engine, async (): Promise<ContinuationGate<T>> => {
+    const today = await countDrainJobsToday(engine, policy.utcDay, exceptJobId);
+    const verdict = budgetVerdict(policy, today);
+    if (!verdict.ok) return { ok: false, reason: verdict.reason, jobs_today: today };
+    const fresh = await recheckAwaiting(engine, policy, others);
+    // Fairness: never take a slot another due source needs for its first drain today.
+    if (today! + fresh.length >= policy.maxJobsToday) {
+      return { ok: false, reason: 'reserved_for_other_sources', jobs_today: today, reserved_for_other_sources: fresh.map(o => o.id) };
+    }
+    return { ok: true, value: await onAllowed(today!), jobs_today: today! };
+  });
+}
+
 /** Run `work` under the brain-wide cap lock; null when another submitter holds it past the retry budget. */
 export async function withDrainCapLock<T>(engine: BrainEngine, work: () => Promise<T>): Promise<{ value: T } | null> {
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -139,43 +206,47 @@ export async function withDrainCapLock<T>(engine: BrainEngine, work: () => Promi
 }
 
 /**
- * Autopilot's initial dispatch: one drain per due source per UTC day, oldest
- * source order, stopping at the daily cap. Returns the dispatched jobs.
+ * Autopilot's initial dispatch: one drain per due source per UTC day, source
+ * order, stopping at the daily cap. `blocked` says why nothing could be
+ * dispatched (fail closed); a busy lock leaves no day key behind, so the next
+ * tick simply tries again.
  */
 export async function dispatchAutoDrains(
   engine: BrainEngine,
   queue: MinionQueue,
   opts: { timeoutMs?: number; onSkip?: (sourceId: string, reason: string) => void; onError?: (sourceId: string, e: unknown) => void },
-): Promise<Array<{ jobId: number; sourceId: string; backlog: DrainBacklog }>> {
+): Promise<{ dispatched: Array<{ jobId: number; sourceId: string; backlog: DrainBacklog }>; blocked: BudgetRefusal | 'cap_lock_busy' | null }> {
   const policy = await readAutoDrainPolicy(engine);
-  if (!policy.enabled) return [];
+  const pre = budgetVerdict(policy, 0);
+  if (!pre.ok) return { dispatched: [], blocked: pre.reason };
+  // Expensive scan outside the lock; rechecked cheaply inside it.
+  const due = await sourcesAwaitingDrain(engine, policy, { limit: policy.maxJobsToday, onSkip: opts.onSkip });
+  if (due.length === 0) return { dispatched: [], blocked: null };
   const gated = await withDrainCapLock(engine, async () => {
-    const today = await countDrainJobsToday(engine, policy.utcDay);
-    // count is best-effort for autopilot: an unknown count leaves one slot.
-    const slots = Math.max(0, policy.maxJobsToday - (today ?? policy.maxJobsToday - 1));
-    if (slots === 0) return [];
+    const verdict = budgetVerdict(policy, await countDrainJobsToday(engine, policy.utcDay));
+    if (!verdict.ok) return { dispatched: [], blocked: verdict.reason };
     const out: Array<{ jobId: number; sourceId: string; backlog: DrainBacklog }> = [];
-    for (const src of await sourcesAwaitingDrain(engine, policy, { limit: slots, onSkip: opts.onSkip })) {
+    for (const src of (await recheckAwaiting(engine, policy, due)).slice(0, verdict.slots)) {
       // DO NOT use maxWaiting: it coalesces by (name, queue), not source. The
-      // per-source day key plus the pre-check above is the dedup. A failed
+      // per-source day key plus the recheck above is the dedup. A failed
       // submit for one source never blocks the others.
       let job;
       try {
         job = await queue.add(
-        'extract-atoms-drain',
-        { sourceId: src.id, window: policy.windowSeconds, repoPath: src.localPath },
-        {
-          queue: 'default',
-          idempotency_key: autoDrainKey(src.id, policy.utcDay),
-          max_attempts: 3, // the handler throws on an all-provider-failed batch (#3218)
-          ...(opts.timeoutMs ? { timeout_ms: opts.timeoutMs } : {}),
-        },
-        { allowProtectedSubmit: true },
+          'extract-atoms-drain',
+          { sourceId: src.id, window: policy.windowSeconds, repoPath: src.localPath },
+          {
+            queue: 'default',
+            idempotency_key: autoDrainKey(src.id, policy.utcDay),
+            max_attempts: 3, // the handler throws on an all-provider-failed batch (#3218)
+            ...(opts.timeoutMs ? { timeout_ms: opts.timeoutMs } : {}),
+          },
+          { allowProtectedSubmit: true },
         );
       } catch (e) { opts.onError?.(src.id, e); continue; }
       out.push({ jobId: job.id, sourceId: src.id, backlog: src.backlog });
     }
-    return out;
+    return { dispatched: out, blocked: null };
   });
-  return gated?.value ?? [];
+  return gated?.value ?? { dispatched: [], blocked: 'cap_lock_busy' };
 }

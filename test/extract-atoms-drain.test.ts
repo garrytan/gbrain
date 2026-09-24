@@ -293,7 +293,7 @@ describe('extract-atoms-drain Minion handler retries on provider_failure (issue 
   const jobsSrc = readFileSync(join(import.meta.dir, '../src/commands/jobs.ts'), 'utf8');
   const handlerBlock = jobsSrc.slice(
     jobsSrc.indexOf("registerBuiltinJob(worker, engine, 'extract-atoms-drain'"),
-    jobsSrc.indexOf("registerBuiltinJob(worker, engine, 'extract-atoms-drain'") + 2200,
+    jobsSrc.indexOf("registerBuiltinJob(worker, engine, 'extract-atoms-drain'") + 2600, // widened for the start-time budget recheck lines
   );
 
   it("throws when result.status === 'provider_failure' instead of returning it", () => {

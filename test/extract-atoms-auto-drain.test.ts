@@ -8,6 +8,11 @@
  *  - N2: autopilot's initial dispatch treats live transcripts as due work
  *    (the page backlog never counts them), without duplicate dispatch.
  *  - N3: a drain reads the transcript corpus from disk once, not per batch.
+ *  - P3-1: initial dispatch and continuation fail closed identically
+ *    (disabled, zero budget, unknown daily count).
+ *  - P3-2: cap-lock contention never loses work — the initial dispatch
+ *    retries next tick; the continuation becomes a durable delayed job that
+ *    rechecks the same budget gate when it starts.
  *
  * Hermetic PGLite: generic fixtures, a temp corpus dir, stubbed chat.
  */
@@ -23,6 +28,9 @@ import {
   type ExtractAtomsDrainResult,
 } from '../src/core/cycle/extract-atoms-drain.ts';
 import * as discovery from '../src/core/cycle/transcript-discovery.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
+import { MinionWorker } from '../src/core/minions/worker.ts';
+import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -43,6 +51,22 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 // a tree that predates the policy module.
 const dispatchAutoDrains: typeof import('../src/core/cycle/extract-atoms-auto-drain.ts').dispatchAutoDrains =
   async (...args) => (await import('../src/core/cycle/extract-atoms-auto-drain.ts')).dispatchAutoDrains(...args);
+const recheckDeferredContinuation: typeof import('../src/core/cycle/extract-atoms-drain.ts').recheckDeferredContinuation =
+  async (...args) => (await import('../src/core/cycle/extract-atoms-drain.ts')).recheckDeferredContinuation(...args);
+/** Dispatched jobs, whatever the return shape (an array before P3-1). */
+const list = (r: unknown) => (Array.isArray(r) ? r : (r as { dispatched: unknown[] }).dispatched);
+const blockedOf = (r: unknown) => (Array.isArray(r) ? undefined : (r as { blocked: string | null }).blocked);
+const CAP_LOCK = 'extract-atoms-drain-daily-cap';
+
+/** Make the daily drain-count query fail, as a DB error would. */
+async function withCountFailure<T>(fn: () => Promise<T>): Promise<T> {
+  const orig = engine.executeRaw.bind(engine);
+  const spy = spyOn(engine, 'executeRaw').mockImplementation(((sql: string, params?: unknown[]) =>
+    /count\(\*\)::int AS cnt FROM minion_jobs WHERE name = 'extract-atoms-drain'/.test(sql)
+      ? Promise.reject(new Error('count unavailable'))
+      : orig(sql, params)) as typeof engine.executeRaw);
+  try { return await fn(); } finally { spy.mockRestore(); }
+}
 
 beforeEach(async () => {
   // Targeted cleanup: resetPgliteState would also clear the schema-version
@@ -138,25 +162,107 @@ describe('N1: continuations obey the daily spend cap and fairness', () => {
 describe('N2: autopilot dispatch sees transcript-only backlog', () => {
   test('live transcripts with an empty page backlog dispatch one drain, once per day', async () => {
     await seedCorpus(2);
-    const first = await dispatchAutoDrains(engine, queue, {});
+    const first = list(await dispatchAutoDrains(engine, queue, {}));
     expect(first).toHaveLength(1);
     expect(first[0]).toMatchObject({ sourceId: 'default', backlog: { pages: 0, transcripts: 2 } });
     // Same day: the day key (and the in-flight job) block a duplicate.
-    expect(await dispatchAutoDrains(engine, queue, {})).toEqual([]);
+    expect(list(await dispatchAutoDrains(engine, queue, {}))).toEqual([]);
     expect(await drainJobCount()).toBe(1);
   });
 
   test('no live transcripts and a page backlog under threshold dispatch nothing', async () => {
     await seedCorpus(0);
-    expect(await dispatchAutoDrains(engine, queue, {})).toEqual([]);
+    expect(list(await dispatchAutoDrains(engine, queue, {}))).toEqual([]);
   });
 
   test('the daily cap bounds autopilot dispatch too', async () => {
     await seedCorpus(1);
     await engine.setConfig('autopilot.auto_drain.max_usd_per_day', '0.3');
     await parentDrain({ sourceId: 'other', window: 120 }); // today's only slot is used
-    expect(await dispatchAutoDrains(engine, queue, {})).toEqual([]);
+    const r = await dispatchAutoDrains(engine, queue, {});
+    expect(list(r)).toEqual([]);
+    expect(blockedOf(r)).toBe('daily_cap');
   });
+});
+
+describe('P3-1: initial dispatch and continuation fail closed identically', () => {
+  const cases: Array<{ name: string; cfg: Record<string, string>; countFails: boolean; reason: string }> = [
+    { name: 'auto-drain disabled', cfg: { 'autopilot.auto_drain.enabled': 'false' }, countFails: false, reason: 'auto_drain_disabled' },
+    { name: 'a $0 ceiling', cfg: { 'autopilot.auto_drain.max_usd_per_day': '0' }, countFails: false, reason: 'zero_budget' },
+    { name: 'a ceiling below one run ($0.20)', cfg: { 'autopilot.auto_drain.max_usd_per_day': '0.2' }, countFails: false, reason: 'zero_budget' },
+    { name: 'an unavailable daily count', cfg: {}, countFails: true, reason: 'budget_unknown' },
+    { name: 'a $0 ceiling with an unavailable daily count', cfg: { 'autopilot.auto_drain.max_usd_per_day': '0' }, countFails: true, reason: 'zero_budget' },
+  ];
+  for (const c of cases) {
+    test(`${c.name}: no initial dispatch, and the continuation is refused for the same reason`, async () => {
+      await seedCorpus(1); // default is due (a live transcript)
+      for (const [k, v] of Object.entries(c.cfg)) await engine.setConfig(k, v);
+      const guard = <T>(fn: () => Promise<T>) => (c.countFails ? withCountFailure(fn) : fn());
+      const initial = await guard(() => dispatchAutoDrains(engine, queue, {}));
+      expect(list(initial)).toEqual([]);
+      expect(blockedOf(initial)).toBe(c.reason);
+      expect(await drainJobCount()).toBe(0);
+      const parent = await parentDrain({ sourceId: 'other-source', window: 120 });
+      expect(await guard(() => queueDrainContinuation(engine, parent, windowCut()))).toMatchObject({ queued: false, reason: c.reason });
+      expect(await drainJobCount()).toBe(1);
+    });
+  }
+});
+
+describe('P3-2: cap-lock contention never loses work', () => {
+  test('initial dispatch under a busy lock leaves nothing behind; the next tick dispatches', async () => {
+    await seedCorpus(1);
+    const held = await tryAcquireDbLock(engine, CAP_LOCK, 1);
+    expect(held).not.toBeNull();
+    try {
+      const busy = await dispatchAutoDrains(engine, queue, {});
+      expect(list(busy)).toEqual([]);
+      expect(blockedOf(busy)).toBe('cap_lock_busy');
+      expect(await drainJobCount()).toBe(0);
+    } finally { await held!.release(); }
+    expect(list(await dispatchAutoDrains(engine, queue, {}))).toHaveLength(1);
+  }, 20_000);
+
+  test('a continuation under a busy lock is queued durably once and rechecks its budget at start', async () => {
+    const parent = await parentDrain();
+    const held = await tryAcquireDbLock(engine, CAP_LOCK, 1);
+    let jobId = 0;
+    let data: Record<string, unknown> = {};
+    try {
+      const deferred = await queueDrainContinuation(engine, parent, windowCut());
+      expect(deferred).toMatchObject({ queued: true, depth: 1, budget_check: 'deferred' });
+      jobId = (deferred as { job_id: number }).job_id;
+      // A retried parent reuses it: no duplicate continuation.
+      expect(await queueDrainContinuation(engine, parent, windowCut())).toEqual(deferred);
+      const [row] = await engine.executeRaw<{ status: string; data: Record<string, unknown>; max_attempts: number }>(
+        'SELECT status, data, max_attempts FROM minion_jobs WHERE id = $1', [jobId]);
+      data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+      expect(row.status).toBe('delayed');
+      expect(row.max_attempts).toBeGreaterThanOrEqual(5);
+      expect(data).toMatchObject({ budget_recheck: true, continuation_of: parent.id, continuation_depth: 1 });
+      // Still contended when it starts: throw, so the queue retries with backoff.
+      await expect(recheckDeferredContinuation(engine, { id: jobId, data })).rejects.toThrow(/cap lock busy/);
+    } finally { await held?.release(); }
+    // Next attempt, lock free and budget available: it proceeds.
+    expect(await recheckDeferredContinuation(engine, { id: jobId, data })).toEqual({ proceed: true });
+    expect(await drainJobCount()).toBe(2);
+  }, 20_000);
+
+  test('a deferred continuation that starts over the cap is skipped by the real handler, with the numbers', async () => {
+    const parent = await parentDrain();
+    const held = await tryAcquireDbLock(engine, CAP_LOCK, 1);
+    let deferred;
+    try { deferred = await queueDrainContinuation(engine, parent, windowCut()); } finally { await held?.release(); }
+    const jobId = (deferred as { job_id: number }).job_id;
+    const [row] = await engine.executeRaw<{ data: Record<string, unknown> }>('SELECT data FROM minion_jobs WHERE id = $1', [jobId]);
+    await engine.setConfig('autopilot.auto_drain.max_usd_per_day', '0.3'); // the parent used the only slot
+    const worker = new MinionWorker(engine);
+    await registerBuiltinHandlers(worker, engine);
+    const handler = worker.getHandler('extract-atoms-drain')!;
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+    const result = await handler({ id: jobId, data, signal: new AbortController().signal } as never);
+    expect(result).toMatchObject({ status: 'skipped', reason: 'daily_cap', max_jobs_today: 1, jobs_today: 1, continuation_of: parent.id });
+  }, 20_000);
 });
 
 describe('N3: one corpus read per drain', () => {
