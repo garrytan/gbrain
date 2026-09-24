@@ -12,11 +12,11 @@ function setup() {
   for (const name of ['a', 'b']) writeFileSync(join(root, `test/e2e/${name}.test.ts`), `import {test,expect} from 'bun:test'; test('isolated routing',()=>{ expect(process.env.SHARD).toBeUndefined(); expect(process.env.COVERAGE_DIR ?? '').toBe(''); });`);
   return root;
 }
-const env = { ...process.env, GBRAIN_NO_SNAPSHOT: '1', DATABASE_URL: '', GBRAIN_DATABASE_URL: '', SHARD: '', COVERAGE_DIR: '' };
-function run(root: string, args: string[], shard = '') {
-  return spawnSync('bash', ['scripts/run-e2e.sh', ...args], { cwd: root, encoding: 'utf8', env: { ...env, SHARD: shard } });
-}
-describe('sequential E2E runner', () => {
+for (const githubActions of ['', 'true']) describe(`sequential E2E runner (GITHUB_ACTIONS=${githubActions})`, () => {
+  const env = { ...process.env, GITHUB_ACTIONS: githubActions, GBRAIN_NO_SNAPSHOT: '1', DATABASE_URL: '', GBRAIN_DATABASE_URL: '', SHARD: '', COVERAGE_DIR: '' };
+  function run(root: string, args: string[], shard = '') {
+    return spawnSync('bash', ['scripts/run-e2e.sh', ...args], { cwd: root, encoding: 'utf8', env: { ...env, SHARD: shard } });
+  }
   test('weighted shards cover exactly the explicit input; empty shards launch nothing', () => {
     const root = setup();
     try {
@@ -179,7 +179,7 @@ test('parent',()=>{
       const file = kind === 'wrong report file' ? 'test/e2e/other.test.ts' : selected;
       const failures = kind === 'reported failure' ? 1 : 0;
       const counts = kind === 'missing pass count' ? ' 0 fail\n' : ` ${1 - failures} pass\n ${failures} fail\n`;
-      const output = `bun test v1.3.13\n\n${header}:\n${counts}${kind === 'missing console summary' ? '' : 'Ran 1 test across 1 file. [1.00ms]\n'}`;
+      const output = `bun test v1.3.13\n\n${githubActions ? '::group::' : ''}${header}:\n${counts}${kind === 'missing console summary' ? '' : 'Ran 1 test across 1 file. [1.00ms]\n'}`;
       const testcase = kind === 'missing testcases' ? '' : `<testcase name="parent" file="${file}">${failures || kind === 'hidden failure' ? '<failure />' : ''}</testcase>`;
       let xml = `<testsuites tests="1" failures="${failures}" skipped="0">\n  <testsuite file="${file}" tests="${kind === 'wrong suite count' ? 2 : 1}" failures="${failures}" skipped="0">${testcase}</testsuite>\n</testsuites>\n`;
       if (kind === 'truncated XML') xml = xml.slice(0, xml.indexOf('</testsuites>'));

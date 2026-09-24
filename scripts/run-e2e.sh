@@ -271,7 +271,7 @@ try:
     with open(log) as stream:
         for raw in stream:
             line = re.sub(r'\x1b\[[0-9;]*m', '', raw.rstrip('\n'))
-            header = header or line == expected + ':'
+            header = header or line in (expected + ':', '::group::' + expected + ':')
             count = re.fullmatch(r'\s*(\d+) (pass|fail|skip|todo)\s*', line)
             if count:
                 value, kind = count.groups()

@@ -16,7 +16,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { auth, extractWWWAuthenticateParams, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { hasDatabase } from './helpers.ts';
+import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const skip = !hasDatabase();
@@ -45,6 +45,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   const dcrClientIds: string[] = [];
 
   beforeAll(async () => {
+    await setupDB();
     const { execSync, spawn } = await import('child_process');
 
     // Register a test OAuth client via CLI.
@@ -125,6 +126,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
         console.error(`[afterAll] revoke-client cleanup failed for ${id}: ${e.message}`);
       }
     }
+    await teardownDB();
   }, 30_000);
 
   // Helper: mint a token with given scopes
