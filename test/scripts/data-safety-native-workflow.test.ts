@@ -14,6 +14,12 @@ type Step = {
 const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/native-locks.yml'), 'utf8')) as {
   jobs: { native: { steps: Step[]; strategy: { matrix: { target: string[]; bun: string[] } } } };
 };
+const suites = [
+  'test/persistence-publication-native.serial.test.ts',
+  'test/persistence-git-publication.test.ts',
+  'test/persistence-sync-origin-native.serial.test.ts',
+  'test/backup-portability-native.serial.test.ts',
+];
 
 describe('data-safety native CI coverage', () => {
   test('real publication, sync and backup contracts run on every native matrix target', () => {
@@ -32,11 +38,20 @@ describe('data-safety native CI coverage', () => {
       GBRAIN_TEST_REQUIRE_CASE_INSENSITIVE: "${{ runner.os != 'Linux' && '1' || '0' }}",
     });
     expect(step!.run!.trim().split('\n')).toEqual([
-      'bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts',
-      'bun --no-env-file test --timeout=180000 test/persistence-git-publication.test.ts',
-      'bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts',
-      'bun --no-env-file test --timeout=180000 test/backup-portability-native.serial.test.ts',
+      'status=0',
+      ...suites.map(suite => `bun --no-env-file test --timeout=180000 ${suite} || status=1`),
+      'exit "$status"',
     ]);
+  });
+
+  for (const failed of ['', ...suites]) test(`every native safety suite runs and failures remain fatal (${failed || 'all pass'})`, () => {
+    const step = workflow.jobs.native.steps.find(entry => entry.name === 'Verify native data-safety contracts')!;
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { printf '%s\\n' "$4"; [[ "$4" != "$GBRAIN_TEST_FAILED_SUITE" ]]; }
+      ${step.run}
+    `], { env: { PATH: process.env.PATH ?? '', GBRAIN_TEST_FAILED_SUITE: failed } });
+    expect(result.exitCode).toBe(failed ? 1 : 0);
+    expect(result.stdout.toString().trim().split('\n')).toEqual(suites);
   });
 
   test('publication and sync safety suites run in separate PostgreSQL-bearing CI processes', () => {
