@@ -131,7 +131,11 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
           FROM pg_stat_activity WHERE datname=current_database()) AS database_sessions` : ''} FROM persistence_requests`);
       sampleStage = 'metrics_rss';
       let rss: number | null;
-      try { rss = process.memoryUsage().rss; } catch { rss = null; rssUnavailable++; }
+      try { rss = process.memoryUsage().rss; }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Failed to get memory usage') throw error;
+        rss = null; rssUnavailable++;
+      }
       peakQueueAge = Math.max(peakQueueAge, Number(row.age)); peakRecovery = Math.max(peakRecovery, Number(row.recovery));
       if (rss !== null) peakRss = Math.max(peakRss ?? 0, rss);
       sampleRecords.add({ at_ms: performance.now() - at, queue_count: row.pending, queue_age_ms: Number(row.age), recovery_bytes: Number(row.recovery),
@@ -164,10 +168,6 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
     stage = 'validate';
     assert.equal(admissionMs.length, completed, 'every completed write needs an observed durable admission');
     result.metrics = samples; result.throughput_writes_per_second = completed * 1000 / (performance.now() - queryStart);
-    result.peak_queue_age_ms = peakQueueAge;
-    result.peak_recovery_bytes = peakRecovery;
-    result.peak_rss_bytes = peakRss;
-    result.rss_unavailable_samples = rssUnavailable;
     for (const p of ['p50', 'p95', 'p99']) result[`delta_${p}_pct`] = 100 * (result.phase_b[`${p}_ms`] / result.phase_a[`${p}_ms`] - 1);
     result.brain_page_count = Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::integer AS n FROM pages'))[0].n);
     assert(result.phase_b.writes_committed_during_reads > 0, 'actual writes must commit while reads are still running');
@@ -181,6 +181,10 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
     catch (error) { diagnostics.failure('shutdown', error); result.ok = false; result.error = 'benchmark workload failed'; }
     if (backgroundFailure || diagnostics.failures.total > 0) { result.ok = false; result.error = 'benchmark workload failed'; }
     restoreBegin?.(); diagnostics.stop();
+    result.peak_queue_age_ms = peakQueueAge;
+    result.peak_recovery_bytes = peakRecovery;
+    result.peak_rss_bytes = peakRss;
+    result.rss_unavailable_samples = rssUnavailable;
     result.metrics_retention = { limit: sampleRecords.limit, total: sampleRecords.total, dropped: sampleRecords.dropped };
     result.elapsed_ms = performance.now() - at;
   }
