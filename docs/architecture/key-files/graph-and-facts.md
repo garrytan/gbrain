@@ -49,6 +49,10 @@ scope resolver, then checks source liveness. Explicit `default` is not omission.
 With no selector, fact scope and page federation retain their previous behavior.
 The opted-in thin CLI uses engine-free scope resolution and refuses `--brain`;
 its source tests execute the real remote dispatcher, not only a canned response.
+Degraded serving has its own explicit `serve` dispatch guard, so the generated
+registry cannot assign its flags to the preceding thin-recall branch.
+`test/cli-recall-flag-ownership.test.ts` pins fresh generation and real CLI
+rejection of serve-only flags before a brain opens.
 
 ## Files
 

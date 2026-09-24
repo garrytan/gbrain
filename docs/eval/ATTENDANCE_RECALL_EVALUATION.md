@@ -42,6 +42,15 @@ apart from fixture timestamps. Explicit `facts_first` matched omission apart
 from its documented additive accounting. No forbidden source/private page was
 returned in the source/privacy control.
 
+A fresh paired replay after the correctness pass compared upstream
+`db56c778e8b287482e21df654e6df6dbcc9745fd` with candidate
+`2f33f01486f51a4d42fba5f41c9df82148f6b7de` (tree
+`702c804ec8440143e92dda0754af582e4f681167`). It produced 48 receipts per
+revision with zero provider calls and reproduced every table count and the
+944-to-874 token estimate above. All sixteen omitted-policy results matched
+the new upstream baseline after normalizing only fixture `created_at` values;
+explicit fact-first results additionally differed only by `budget_packing`.
+
 The questions are synthetic development fixtures, not a held-out semantic
 retrieval benchmark. Repeated budgets and related fixtures are not independent
 user questions. The forced fact-risk loss is retained rather than averaged into
