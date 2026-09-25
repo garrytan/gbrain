@@ -3,7 +3,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, type ParsedFact } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal, preserveWithdrawnFenceRows } from '../src/core/facts/withdrawal.ts';
-import { hasAmbiguousWithdrawalFence, withdrawalFenceBlocks } from '../src/core/facts/withdrawal-overlay.ts';
+import { ambiguousWithdrawalFenceSegments, hasAmbiguousWithdrawalFence, withdrawalFenceBlocks } from '../src/core/facts/withdrawal-overlay.ts';
 import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
 import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -527,6 +527,149 @@ test('withdrawal scope does not depend on the FTS configuration that built store
       expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
         WHERE p.source_id=$1 AND p.slug='stale-chunk'`, [isolatedSourceId])).toEqual([]);
       expect((await engine.readPageSnapshot('unrelated', { sourceId: isolatedSourceId }))!.revision).toBe(unrelated.revision);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+// An open fence interrupted by a second begin marker: the canonical parser reads the
+// outer rows as live, so they stay ambiguous; only the inner complete table is rewritable.
+const nestedOpenFence = (outer: string, inner: string) =>
+  `${renderFactsTable([fact(outer)]).replace(FACTS_FENCE_END, '')}\n${renderFactsTable([fact(inner)])}`;
+// A malformed table whose begin marker is written as inline code is still live to the parser.
+const inlineBeginMalformed = (claim: string) => renderFactsTable([fact(claim)])
+  .replace(FACTS_FENCE_BEGIN, `Docs: \`${FACTS_FENCE_BEGIN}\``).replace('| fact |', '| impossible |');
+
+test('a nested begin inside an open malformed fence keeps the outer rows ambiguous', () => {
+  const body = nestedOpenFence('nested outer claim', 'nested inner claim');
+  const canonical = parseFactsFence(body);
+  expect(canonical.facts.filter(f => f.active).map(f => f.claim)).toEqual(['nested outer claim']);
+  expect(canonical.warnings.length).toBeGreaterThan(0);
+  expect(hasAmbiguousWithdrawalFence(body)).toBe(true);
+  const segments = ambiguousWithdrawalFenceSegments(body);
+  expect(segments).toHaveLength(1);
+  expect(segments[0]).toStartWith(FACTS_FENCE_BEGIN);
+  expect(segments[0]).toContain('nested outer claim');
+  expect(segments[0]).not.toContain('nested inner claim');
+  const blocks = withdrawalFenceBlocks(body);
+  expect(blocks.map(block => [block.parsed.warnings, block.parsed.facts.map(f => f.claim)]))
+    .toEqual([[[], ['nested inner claim']]]);
+});
+
+test('a malformed fence whose begin marker is inline code stays ambiguous', () => {
+  const body = inlineBeginMalformed('inline begin malformed claim');
+  expect(parseFactsFence(body).warnings.length).toBeGreaterThan(0);
+  expect(hasAmbiguousWithdrawalFence(body)).toBe(true);
+  expect(ambiguousWithdrawalFenceSegments(body)).toEqual([expect.stringContaining('inline begin malformed claim')]);
+  const endInline = renderFactsTable([fact('inline end malformed claim')])
+    .replace(FACTS_FENCE_END, `End: \`${FACTS_FENCE_END}\``).replace('| fact |', '| impossible |');
+  expect(hasAmbiguousWithdrawalFence(endInline)).toBe(true);
+  // The inline-end block can be reported by both marker passes; claims are de-duplicated downstream.
+  const endSegments = ambiguousWithdrawalFenceSegments(endInline);
+  expect(endSegments.length).toBeGreaterThan(0);
+  expect(endSegments.every(segment => segment.includes('inline end malformed claim'))).toBe(true);
+});
+
+for (const shape of ['nested-open', 'inline-begin'] as const) {
+  test(`withdrawal guards the ambiguous rows of a ${shape} malformed fence on scope, import and prepared import`, async () => {
+    const isolatedSourceId = `withdrawal-${shape}-fence-test`;
+    const render = (claim: string) => shape === 'nested-open' ? nestedOpenFence(claim, `${claim} inner`) : inlineBeginMalformed(claim);
+    const file = (title: string, claim: string) => `---\ntitle: ${title}\ntype: note\n---\n${render(claim)}`;
+    const claim = `${shape} ambiguous withdrawal sentinel`;
+    const raced = `${shape} ambiguous race sentinel`;
+    for (const engine of engines) {
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+      try {
+        await engine.putPage('ambiguous-fence', { type: 'note', title: 'Ambiguous facts', compiled_truth: render(claim) },
+          { sourceId: isolatedSourceId });
+        await engine.upsertChunks('ambiguous-fence', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'unrelated chunk' }],
+          { sourceId: isolatedSourceId });
+        const before = (await engine.readPageSnapshot('ambiguous-fence', { sourceId: isolatedSourceId }))!;
+        const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+
+        const result = await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true);
+
+        expect(result.pages.map(page => page.slug)).toEqual(['ambiguous-fence']);
+        expect((await engine.readPageSnapshot('ambiguous-fence', { sourceId: isolatedSourceId }))!.revision).not.toBe(before.revision);
+        expect(await engine.executeRaw('SELECT id FROM content_chunks WHERE page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)',
+          [isolatedSourceId, 'ambiguous-fence'])).toEqual([]);
+        await expect(importFromContent(engine, 'ambiguous-import', file('Ambiguous import', claim), { sourceId: isolatedSourceId, noEmbed: true }))
+          .rejects.toThrow('malformed fact fence contains a withdrawn claim');
+        expect(await engine.getPage('ambiguous-import', { sourceId: isolatedSourceId })).toBeNull();
+
+        let prepared: PreparedContentImport | undefined;
+        await importFromContent(engine, 'ambiguous-race', file('Ambiguous race', raced), { sourceId: isolatedSourceId, noEmbed: true,
+          prepare: async value => { prepared = value; return value.result; } });
+        await expect(engine.transaction(tx => prepared!.validate(tx))).resolves.toBeUndefined();
+        const racedFact = await engine.insertFact({ fact: raced, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+        expect((await recordFactWithdrawal(engine, racedFact.id, isolatedSourceId, true)).withdrawn).toBe(true);
+        await expect(engine.transaction(tx => prepared!.validate(tx))).rejects.toMatchObject({ code: 'invalid_params' });
+        await expect(engine.transaction(tx => prepared!.apply(tx))).rejects.toThrow('malformed fact fence contains a withdrawn claim');
+        expect(await engine.getPage('ambiguous-race', { sourceId: isolatedSourceId })).toBeNull();
+      } finally {
+        await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+      }
+    }
+  });
+}
+
+test('the complete inner table of a nested open fence is overlaid when its claim is withdrawn', async () => {
+  const isolatedSourceId = 'withdrawal-nested-inner-test';
+  const outer = 'nested inner scope outer claim', inner = 'nested inner scope withdrawn claim';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('nested-inner', { type: 'note', title: 'Nested inner', compiled_truth: nestedOpenFence(outer, inner) },
+        { sourceId: isolatedSourceId });
+      const stored = await engine.insertFact({ fact: inner, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['nested-inner']);
+      const snapshot = (await engine.readPageSnapshot('nested-inner', { sourceId: isolatedSourceId }))!;
+      expect(withdrawalFenceBlocks(snapshot.page.compiled_truth).flatMap(block => block.parsed.facts.map(f => [f.claim, f.active])))
+        .toEqual([[inner, false]]);
+      expect(sanitizeRemoteBody(snapshot.page.compiled_truth)).not.toContain(inner);
+      expect(snapshot.page.compiled_truth).toContain(outer);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('repeat withdrawal through duplicate fact rows expires live duplicates without re-invalidating pages', async () => {
+  const isolatedSourceId = 'withdrawal-duplicate-rows-test';
+  const claim = 'duplicate row withdrawal sentinel';
+  const legacy = 'legacy ledger duplicate sentinel';
+  for (const engine of engines) {
+    const live = async (id: number) =>
+      (await engine.executeRaw<{ expired_at: unknown }>('SELECT expired_at FROM facts WHERE id=$1', [id]))[0].expired_at === null;
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('duplicate-fence', { type: 'note', title: 'Duplicate facts',
+        compiled_truth: renderFactsTable([fact(claim), fact(legacy, { rowNum: 2 })]) }, { sourceId: isolatedSourceId });
+      const first = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
+      const second = await engine.insertFact({ fact: `  ${claim.toUpperCase()} `, source: 'extract', visibility: 'world' },
+        { source_id: isolatedSourceId });
+      expect(second.id).not.toBe(first.id);
+
+      expect((await recordFactWithdrawal(engine, first.id, isolatedSourceId, true)).pages.map(page => page.slug)).toEqual(['duplicate-fence']);
+      expect(await live(first.id)).toBe(false);
+      expect(await live(second.id)).toBe(false);
+      const afterFirst = (await engine.readPageSnapshot('duplicate-fence', { sourceId: isolatedSourceId }))!;
+      expect(await recordFactWithdrawal(engine, second.id, isolatedSourceId, true)).toEqual({ withdrawn: false, pages: [] });
+      expect((await engine.readPageSnapshot('duplicate-fence', { sourceId: isolatedSourceId }))!.revision).toBe(afterFirst.revision);
+
+      // An upgrade backfill can record a ledger entry while a legacy duplicate row is still live.
+      const legacyRow = await engine.insertFact({ fact: legacy, source: 'legacy', visibility: 'world' }, { source_id: isolatedSourceId });
+      await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash) VALUES ($1,'world',gbrain_fact_fingerprint($2))`,
+        [isolatedSourceId, legacy]);
+      expect(await live(legacyRow.id)).toBe(true);
+      const beforeRepeat = (await engine.readPageSnapshot('duplicate-fence', { sourceId: isolatedSourceId }))!;
+
+      expect(await recordFactWithdrawal(engine, legacyRow.id, isolatedSourceId, true)).toEqual({ withdrawn: false, pages: [] });
+      expect(await live(legacyRow.id)).toBe(false);
+      expect((await engine.readPageSnapshot('duplicate-fence', { sourceId: isolatedSourceId }))!.revision).toBe(beforeRepeat.revision);
+      expect(await engine.executeRaw('SELECT fact_hash FROM fact_withdrawals WHERE source_id=$1', [isolatedSourceId])).toHaveLength(2);
     } finally {
       await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
     }
