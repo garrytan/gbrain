@@ -592,7 +592,7 @@ export async function importFromContent(
     parsed.compiled_truth = mergeHiddenFactRowsIntoBody(slug, parsed.compiled_truth, existing.compiled_truth);
     parsed.timeline = mergeHiddenFactRowsIntoBody(slug, parsed.timeline, existing.timeline);
   }
-  const { preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
+  const { assertPreparedFactWithdrawals, preserveWithdrawnFenceRows } = await import('./facts/withdrawal.ts');
   parsed.compiled_truth = await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.compiled_truth);
   parsed.timeline = await preserveWithdrawnFenceRows(engine, sourceId ?? 'default', parsed.timeline);
 
@@ -666,7 +666,7 @@ export async function importFromContent(
     if (opts.prepare) {
       const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
       return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
-        noop: true, result, apply: async () => {} });
+        noop: true, result, validate: async () => {}, apply: async () => {} });
     }
     await persistUnchanged();
     return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
@@ -738,7 +738,7 @@ export async function importFromContent(
         if (opts.prepare) {
           const result: ImportResult = { slug: dup.slug, status: 'skipped', chunks: 0, parsedPage };
           return opts.prepare({ slug: dup.slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
-            noop: true, result, apply: async () => {} });
+            noop: true, result, validate: async () => {}, apply: async () => {} });
         }
         // True duplicate (same external ID). Skip + log to stderr.
         process.stderr.write(
@@ -869,7 +869,7 @@ export async function importFromContent(
   const txOpts = { sourceId: sourceId ?? 'default' };
   let persistedProjection: ProjectionSnapshot | null = null;
   const applyPrepared = async (tx: BrainEngine) => {
-    await assertImportBase(tx, slug, txOpts.sourceId, existing);
+    await assertImportBase(tx, slug, txOpts.sourceId, existing); await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '');
     if (existing) await tx.createVersion(slug, txOpts);
 
     // v0.29.1 — compute effective_date from frontmatter precedence chain.
@@ -1030,6 +1030,7 @@ export async function importFromContent(
     slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
     noop: false, result: { slug, status: 'imported', chunks: chunks.length, parsedPage,
       ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}) },
+    validate: tx => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || ''),
     apply: applyPrepared,
   });
   await engine.transaction(applyPrepared).catch(async (err: unknown) => {
@@ -1408,7 +1409,7 @@ export async function importCodeFile(
   if (!opts.force && existing?.content_hash === hash && !existing.deleted_at && existing.text_projection_revision === existing.knowledge_revision) {
     if (opts.prepare) {
       const result: ImportResult = { slug, status: 'skipped', chunks: 0 };
-      return opts.prepare({ slug, parsedPage, observedRevision: existing.knowledge_revision ?? null, noop: true, result, apply: async () => {} });
+      return opts.prepare({ slug, parsedPage, observedRevision: existing.knowledge_revision ?? null, noop: true, result, validate: async () => {}, apply: async () => {} });
     }
     await engine.transaction(tx => assertImportBase(tx, slug, sourceId ?? 'default', existing));
     return { slug, status: 'skipped', chunks: 0 };
@@ -1420,7 +1421,7 @@ export async function importCodeFile(
     const result: ImportResult = { slug, status: 'imported', chunks: projection.chunks.length };
     const apply = (tx: BrainEngine) => installPageProjection(tx, snapshot, projection.chunks,
       { seal: true, preserveEmbeddings: true, code: projection.code });
-    if (opts.prepare) return opts.prepare({ slug, parsedPage, observedRevision: snapshot.snapshot.revision, noop: false, result, apply });
+    if (opts.prepare) return opts.prepare({ slug, parsedPage, observedRevision: snapshot.snapshot.revision, noop: false, result, validate: async () => {}, apply });
     await engine.transaction(apply);
     return result;
   }
@@ -1528,7 +1529,7 @@ export async function importCodeFile(
   };
   if (opts.prepare) {
     const result: ImportResult = { slug, status: 'imported', chunks: chunks.length };
-    return opts.prepare({ slug, parsedPage, observedRevision: existing?.knowledge_revision ?? null, noop: false, result, apply });
+    return opts.prepare({ slug, parsedPage, observedRevision: existing?.knowledge_revision ?? null, noop: false, result, validate: async () => {}, apply });
   }
   await engine.transaction(apply);
 
@@ -2063,7 +2064,7 @@ export async function importImageFile(
       [sourceOpts.sourceId, imageSlug]);
     if (sealed.length && !existing.deleted_at && existing.text_projection_revision === existing.knowledge_revision) {
       if (opts.prepare) return opts.prepare({ slug: imageSlug, observedRevision: existing.knowledge_revision ?? null, noop: true,
-        result: { slug: imageSlug, status: 'skipped', chunks: 0 }, apply: async () => {} });
+        result: { slug: imageSlug, status: 'skipped', chunks: 0 }, validate: async () => {}, apply: async () => {} });
       await engine.transaction(tx => assertImportBase(tx, imageSlug, sourceOpts.sourceId, existing));
       return { slug: imageSlug, status: 'skipped', chunks: 0 };
     }
@@ -2190,7 +2191,7 @@ export async function importImageFile(
   };
 
   if (opts.prepare) return opts.prepare({ slug: imageSlug, observedRevision: existing?.knowledge_revision ?? null, noop: false,
-    result: { slug: imageSlug, status: 'imported', chunks: 1 }, apply: tx => applyImportTransaction(tx, spec) });
+    result: { slug: imageSlug, status: 'imported', chunks: 1 }, validate: async () => {}, apply: tx => applyImportTransaction(tx, spec) });
   await withImportTransaction(engine, spec);
 
   return { slug: imageSlug, status: 'imported', chunks: 1 };

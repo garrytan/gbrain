@@ -287,6 +287,14 @@ even when its physical mirror is pending. Imports and rebuilds honor the
 withdrawal ledger. History and backups can remain; withdrawal is not a promise
 of physical erasure. See [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md).
 
+Withdrawal invalidates only pages and chunks that carry the withdrawn claim;
+other pages from the same source keep their revision and stay searchable. To
+find them, it reads every fenced page containing the claim's longest word. When
+that word appears on most fenced pages of a very large source, the scan can
+exceed the write budget: `forget` then returns a contention error and withdraws
+nothing. Retrying the same withdrawal does not help until the source is smaller;
+see the known limitation in the CHANGELOG.
+
 Git, embeddings, and physical withdrawal mirrors report their own `effects`
 states on receipt reads. Their retries never change the committed canonical
 result. Mirror recovery checks the recorded bytes and blocks its worktree if

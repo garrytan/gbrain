@@ -452,7 +452,9 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
   const file = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
   if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw new OperationError('source_changed', 'The connector canonical file changed during preparation.');
-  return { observedRevision: ready.observedRevision, sourceExclusive: true, validate, file, noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
+  return { observedRevision: ready.observedRevision, sourceExclusive: true,
+    validate: async tx => { await validate(tx); await ready.validate(tx); },
+    file, noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
     await ready.apply(tx);
     if (!ready.noop) { await project(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
     return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,

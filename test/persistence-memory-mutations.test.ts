@@ -263,6 +263,32 @@ describe('journaled memory publication, both engines', () => {
     }
   });
 
+  test('subjectless forget commits without invalidating unrelated canonical pages', async () => {
+    for (const engine of engines) {
+      const slug = 'people/unrelated-to-subjectless-memory';
+      const before = await setupPage(engine, slug, 'Unrelated canonical content');
+      const remembered = await submitRememberMutation(context(engine), {
+        fact: 'A managed subjectless memory to withdraw',
+        provenance: 'test',
+        request_id: randomUUID(),
+      }, 30_000);
+      const requestId = randomUUID();
+
+      const forgotten = await submitForgetMutation(context(engine), 'forget', {
+        id: remembered.id,
+        request_id: requestId,
+      });
+
+      expect(forgotten).toMatchObject({ id: remembered.id, expired: true, state: 'committed' });
+      expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(before.revision);
+      const local = await registerLocalWriter(engine, 'cli');
+      const request = (await getWriteRequest(engine, { kind: 'local_cli', id: local.id }, requestId))!;
+      expect(await engine.executeRaw<{ kind: string }>(
+        'SELECT kind FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [request.id],
+      )).toEqual([{ kind: 'embedding' }, { kind: 'git' }, { kind: 'withdrawal-mirror' }]);
+    }
+  });
+
   test('withdrawal invalidates a prepared remember before publication', async () => {
     for (const engine of engines) {
       // Dispose the resident consumer so this test controls the publication boundary.

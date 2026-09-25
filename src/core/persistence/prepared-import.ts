@@ -8,5 +8,7 @@ export interface PreparedContentImport {
   observedRevision: string | null;
   noop: boolean;
   result: ImportResult;
+  /** Recheck preparation-only invariants after the coordinator acquires guards and before file publication. */
+  validate(tx: BrainEngine): Promise<void>;
   apply(tx: BrainEngine): Promise<void>;
 }
