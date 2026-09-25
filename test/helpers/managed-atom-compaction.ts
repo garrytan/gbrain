@@ -30,7 +30,8 @@ export async function exerciseAtomCompaction(engine: BrainEngine, scenario: type
       await engine.putPage('notes/2026-01-01-example', { type: 'source', title: 'Example', compiled_truth: 'A private project record. '.repeat(40), frontmatter: { visibility: 'private' } }, { sourceId });
       const page = (await engine.getPage('notes/2026-01-01-example', { sourceId }))!;
       const titles = ['Measured progress', 'Explicit ownership'];
-      const slugs = titles.map(title => `atoms/2026-01-01/${title.toLowerCase().replaceAll(' ', '-')}-${sha256(`${page.slug}\0${title}`).slice(0, 8)}`);
+      // #4908: page-derived atom identity hashes the lowercased title.
+      const slugs = titles.map(title => `atoms/2026-01-01/${title.toLowerCase().replaceAll(' ', '-')}-${sha256(`${page.slug}\0${title.toLowerCase()}`).slice(0, 8)}`);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
       const observe = (target: BrainEngine): BrainEngine => new Proxy(target, {
         get(current, key) {

@@ -73,7 +73,8 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         if (scenario === 'publication_retry') {
           const path = join(root!, 'atoms', new Date().toISOString().slice(0, 10));
           mkdirSync(path, { recursive: true });
-          blockedPath = join(path, `measured-progress-${sha256(`${page.slug}\0Measured progress`).slice(0, 8)}.md`);
+          // #4908: page-derived atom identity hashes the lowercased title.
+          blockedPath = join(path, `measured-progress-${sha256(`${page.slug}\0measured progress`).slice(0, 8)}.md`);
           writeFileSync(blockedPath, 'Unindexed operator content.');
         }
         return { text: scenario === 'zero_yield' ? '[]' : scenario === 'malformed' || scenario.startsWith('malformed_retry') &&
@@ -228,7 +229,8 @@ export async function exerciseManagedAtomBatch(engine: BrainEngine, scenario: ty
       await engine.putPage('notes/2026-01-01-example', { type: 'source', title: 'Example', compiled_truth: 'A private project record. '.repeat(40), frontmatter: { visibility: 'private' } }, { sourceId });
       const page = (await engine.getPage('notes/2026-01-01-example', { sourceId }))!;
       const titles = ['Measured progress', 'Explicit ownership'];
-      const slugs = titles.map(title => `atoms/2026-01-01/${title.toLowerCase().replaceAll(' ', '-')}-${sha256(`${page.slug}\0${title}`).slice(0, 8)}`);
+      // #4908: page-derived atom identity hashes the lowercased title.
+      const slugs = titles.map(title => `atoms/2026-01-01/${title.toLowerCase().replaceAll(' ', '-')}-${sha256(`${page.slug}\0${title.toLowerCase()}`).slice(0, 8)}`);
       let blockedPath: string | undefined;
       if (scenario === 'partial_publication') {
         const root = join(home, 'repo');
