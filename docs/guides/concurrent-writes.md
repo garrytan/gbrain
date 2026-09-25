@@ -224,26 +224,45 @@ outcome is final. Retained recovery or staging files still block that worktree
 until an operator reconciles them (see `gbrain sources writer status`). Do not
 resubmit the write.
 
-A local owner may be unable to return a result after the work has run, because
-it exceeds the transport limit (`response_too_large`) or cannot be encoded
-(`storage_error`). In that case the error carries every receipt the result held,
-without outcome bodies: `write_request` for one write, or `write_requests` for
-a batch such as fact extraction or a sync's pending write. `remember` and
-`forget` keep the frozen `unavailable` code, with the detail in `write_error`.
-The owner sets `detail: "result_unframed_committed"` only when every receipt
-it found validated and is `committed`, and the result itself reported no
-failure (`status` of `error`, `failed`, `partial`, `blocked_by_failures`, `warn`
-or `fail`, an `error` or `skipped` field, non-empty `errors` or `failures`, or
-`failedFiles` above zero). If two copies of one request disagree, the
-non-committed copy wins. Otherwise it sends
-`detail: "result_unframed"` and names the failure or the unvalidated receipts
-in the message. A client that cannot validate a receipt withdraws the
-attestation. The CLI prints `Committed [...]` and exits 0 only for that
-attested local-owner envelope. The JSON envelope is unchanged. An older owner's
-unattested envelope, a remote MCP error, a failed result or any dropped receipt
-exits 1. Never
-resubmit a committed receipt. Read the change back or inspect the request ID.
-A result that carries no receipt still returns the plain error.
+A local owner may be unable to return a mutation result after the work has
+run, because it exceeds the transport limit (`response_too_large`) or cannot
+be encoded (`storage_error`). Read results never salvage receipts. For a
+mutation, the owner walks the whole result, including arrays and every nesting
+level, and returns the receipts it found without outcome bodies:
+`write_request` for one write, or `write_requests` for a batch such as fact
+extraction or a sync's pending write. `remember` and `forget` keep the frozen
+`unavailable` code, with the detail in `write_error`.
+
+The owner sets `detail: "result_unframed_committed"` only when all of these
+hold:
+
+- the walk covered the whole result;
+- every receipt it found validated and is `committed`;
+- no part of the result reported a failure;
+- every receipt fits in the envelope.
+
+A failure is a `status` of `error`, `failed`, `partial`, `blocked_by_failures`,
+`warn` or `fail`; an `error` or `skipped` field; `ok` or `success` set to false;
+a non-empty `errors` or `failures`; or a positive `failed`, `failures`,
+`failedFiles` or `pages_failed`. If two copies of one request disagree, the
+non-committed copy wins.
+
+The walk is bounded and cycle-safe. It stops early when the result nests too
+deeply, holds too many entries, or contains a value it cannot inspect, such as
+a custom encoder or a throwing getter. An envelope holds at most 1,000 receipts
+and shrinks further when needed to fit the frame. An early stop or a withheld
+receipt withdraws the attestation, and the message says so. In that case, list
+the source's requests with `list_write_requests` rather than assume none exist.
+
+Otherwise the owner sends `detail: "result_unframed"` and names the failure,
+the unvalidated or withheld receipts, or the incomplete walk in the message. A
+client that cannot validate a receipt withdraws the attestation. The CLI prints
+`Committed [...]` and exits 0 only for that attested local-owner envelope. The
+JSON envelope is unchanged. Everything else exits 1: an older owner's
+unattested envelope, a remote MCP error, a failed result, or any dropped,
+withheld or undiscovered receipt. Never resubmit a committed receipt. Read the
+change back or inspect the request ID. A result whose walk completed and found
+no receipt still returns the plain error.
 
 Nonterminal receipts may include a validated `diagnostic` with `age_ms`,
 `assessment` (`pending`, `blocked`, or `stalled`), a closed `reason`, and

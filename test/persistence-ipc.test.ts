@@ -13,8 +13,9 @@ import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-f
 import {
   PERSISTENCE_IPC_MAX_BYTES, PersistenceIpcTransportError,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
-  startPersistenceIpcServer, type PersistenceIpcBinding, type PersistenceIpcRequest,
+  SALVAGE_MAX_RECEIPTS, startPersistenceIpcServer, type PersistenceIpcBinding, type PersistenceIpcRequest,
 } from '../src/core/persistence/ipc.ts';
+import { discoverResultReceipts, SALVAGE_MAX_DEPTH } from '../src/core/persistence/result-salvage.ts';
 
 const BRAIN = '10000000-0000-4000-8000-000000000001';
 const ID = '20000000-0000-4000-8000-000000000001';
@@ -364,6 +365,89 @@ describe('dedicated persistence IPC', () => {
       expect((error as OperationError).code).toBe('response_too_large');
       expect((error as OperationError).writeRequest).toBeUndefined();
     }
+  });
+
+  const failedReceipt = (id: string) => ({ request_id: id, state: 'failed', retry_after_ms: null });
+
+  test.each([
+    ['a failed receipt inside an array', { items: [{ write_request: failedReceipt(OTHER) }] }],
+    ['a failed receipt three levels down', { details: { inner: { deeper: { write_request: failedReceipt(OTHER) } } } }],
+    ['a failed batch entry nested in an array of arrays', { runs: [[{ write_requests: [failedReceipt(OTHER)] }]] }],
+  ])('%s is discovered and blocks the committed attestation', async (_label, shape) => {
+    const run = await framedCli({ write_request: committedReceipt(ID), ...shape, pad }, 'extract_facts');
+    expect(run.exit).toBe(1);
+    expect(run.body.detail).toBe('result_unframed');
+    expect((run.body.write_requests ?? []).map((r: WriteReceipt) => [r.request_id, r.state]).sort())
+      .toEqual([[ID, 'committed'], [OTHER, 'failed']]);
+    expect(run.lines).not.toContain('Committed');
+  });
+
+  test.each([
+    ['status error in an array element', { items: [{ status: 'error' }] }],
+    ['a failures list three levels down', { details: { inner: { deeper: { failures: ['x'] } } } }],
+    ['a numeric failure count in a nested array', { phases: [[{ failed: 2 }]] }],
+    ['success false deep in the tree', { a: { b: { c: { success: false } } } }],
+  ])('a failure signal (%s) blocks the committed attestation', async (_label, shape) => {
+    const run = await framedCli({ write_request: committedReceipt(ID), ...shape, pad }, 'extract_facts');
+    expect(run.exit).toBe(1);
+    expect(run.body).toMatchObject({ detail: 'result_unframed', write_request: { request_id: ID, state: 'committed' } });
+    expect(run.body.message).toContain('the result reported a failure');
+  });
+
+  test('a cyclic mutation result terminates and reports storage_error with its receipt', async () => {
+    const result: Record<string, unknown> = { write_request: committedReceipt(ID), list: [] as unknown[] };
+    result.self = result;
+    (result.list as unknown[]).push(result, { back: result });
+    const run = await framedCli(result);
+    expect(run.body).toMatchObject({ error: 'storage_error', write_error: 'storage_error', detail: 'result_unframed_committed',
+      write_request: { request_id: ID, state: 'committed' } });
+    expect(run.exit).toBe(0);
+  });
+
+  test.each([
+    ['nesting past the depth bound', () => {
+      let deep: Record<string, unknown> = { write_request: failedReceipt(OTHER) };
+      for (let i = 0; i < SALVAGE_MAX_DEPTH + 5; i++) deep = { next: deep };
+      return deep;
+    }],
+    ['a value with a custom encoder', () => ({ opaque: { toJSON: () => ({ write_request: failedReceipt(OTHER) }) } })],
+    ['a getter that throws', () => Object.defineProperty({}, 'boom', { enumerable: true, get() { throw new Error('no'); } })],
+  ])('incomplete discovery (%s) withholds commitment and says so', async (_label, build) => {
+    const run = await framedCli({ write_request: committedReceipt(ID), extra: build(), pad });
+    expect(run.exit).toBe(1);
+    expect(run.body.detail).toBe('result_unframed');
+    expect(run.body.message).toContain('receipt discovery could not inspect the whole result');
+    expect(run.body.suggestion).toContain('list_write_requests');
+    expect(run.lines).not.toContain('Committed');
+  });
+
+  test('discovery is bounded by examined entries, not by recursion', () => {
+    const wide = { write_request: committedReceipt(ID), rows: Array.from({ length: 50 }, () => ({ v: 1 })) };
+    expect(discoverResultReceipts(wide, { maxEntries: 20 })).toMatchObject({ complete: false });
+    expect(discoverResultReceipts(wide)).toMatchObject({ complete: true, failed: false, dropped: 0 });
+    let deep: Record<string, unknown> = { write_request: committedReceipt(ID) };
+    for (let i = 0; i < 100_000; i++) deep = { next: deep };
+    expect(discoverResultReceipts(deep)).toMatchObject({ complete: false, receipts: [] });
+  });
+
+  test('a mutation result whose receipts cannot all fit returns a bounded, unattested envelope', async () => {
+    const ids = Array.from({ length: SALVAGE_MAX_RECEIPTS + 500 }, (_, i) => `20000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+    const run = await framedCli({ write_requests: ids.map(committedReceipt), pad }, 'extract_facts');
+    expect(run.exit).toBe(1);
+    expect(run.body.detail).toBe('result_unframed');
+    expect(run.body.write_requests).toHaveLength(SALVAGE_MAX_RECEIPTS);
+    expect(run.body.message).toContain(`500 of ${ids.length} receipts were withheld`);
+    expect(run.body.suggestion).toContain('list_write_requests');
+    expect(run.lines).not.toContain('Committed');
+  });
+
+  test('a salvaged envelope that still exceeds the frame shrinks instead of failing receiptless', async () => {
+    const huge = { ...committedReceipt(ID), revision: 'r'.repeat(PERSISTENCE_IPC_MAX_BYTES) };
+    const run = await framedCli({ write_requests: [committedReceipt(OTHER), huge], pad }, 'extract_facts');
+    expect(run.exit).toBe(1);
+    expect(run.body).toMatchObject({ error: 'response_too_large', detail: 'result_unframed' });
+    expect(run.body.write_requests).toEqual([{ request_id: OTHER, state: 'committed', retry_after_ms: null }]);
+    expect(run.body.message).toContain('1 of 2 receipts were withheld');
   });
 
   test('an oversized read result cannot counterfeit a committed write receipt', async () => {
