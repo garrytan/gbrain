@@ -102,7 +102,7 @@ describe('dream --drain --window enforced inside a batch (PGLite)', () => {
     await assertTranscriptDeferralScenario(engine);
   });
 
-  test('a window cut after one transient failure is deferral; an uncut all-failed batch is an outage', async () => {
+  test('an all-failed run is a provider failure whether or not the window deferred the rest', async () => {
     await assertTransientCutScenario(engine);
   });
 });

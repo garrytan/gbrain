@@ -10,10 +10,15 @@
  *  - Fairness: a continuation may not take a slot another source needs for
  *    its first drain of the day.
  *  - Due: page backlog above the threshold, OR any live transcript (the
- *    transcript pool is not in the page count). Counting is free — discovery
- *    plus two SELECTs, no LLM.
- *  - Duplicates: a source with a drain already waiting/active/delayed/paused,
- *    or already dispatched today, is never dispatched again.
+ *    transcript pool is not in the page count). No LLM. The transcript side
+ *    is a stat-only corpus fingerprint checked against a durable snapshot
+ *    (`TRANSCRIPT_BACKLOG_KEY`); the corpus is read (quietly) only when the
+ *    fingerprint changed or the snapshot is from an earlier UTC day, and
+ *    every drain refreshes the snapshot with its own final count.
+ *  - Duplicates: a source with a runnable drain already waiting/active/
+ *    delayed, or already dispatched today, is never dispatched again.
+ *    Managed-atom retry jobs share the job name but never drain the backlog,
+ *    and a paused job may never resume, so neither counts as in flight.
  *  - Races: count-then-submit runs under one DB lock, so autopilot and
  *    concurrent handlers cannot jointly overshoot the cap. The expensive
  *    due-set scan (it may read the transcript corpus) runs BEFORE the lock;
@@ -26,12 +31,14 @@ import type { BrainEngine } from '../engine.ts';
 import type { MinionQueue } from '../minions/queue.ts';
 import { tryAcquireDbLock } from '../db-lock.ts';
 import { loadAllSources, sourceLocalPathSkipWarning } from '../sources-load.ts';
-import { countExtractAtomsBacklog, countPendingTranscripts } from './extract-atoms.ts';
+import { countExtractAtomsBacklog, countPendingTranscripts, resolveTranscriptCorpusDirs } from './extract-atoms.ts';
+import { transcriptCorpusSignature } from './transcript-discovery.ts';
 
 /** Each drain run is BudgetTracker-capped at ~$0.30; the cap counts jobs, not a spend ledger. */
 export const AUTO_DRAIN_PER_RUN_USD = 0.3;
 const CAP_LOCK_ID = 'extract-atoms-drain-daily-cap';
-const IN_FLIGHT = ['waiting', 'active', 'delayed', 'paused', 'waiting-children'];
+/** Runnable states only: a paused (or otherwise parked) drain may never run, so it must not suppress one that will. */
+const RUNNABLE = ['waiting', 'active', 'delayed'];
 
 export interface AutoDrainPolicy {
   enabled: boolean;
@@ -80,12 +87,17 @@ export async function countDrainJobsToday(engine: BrainEngine, utcDay: string, e
   }
 }
 
-/** Id of a drain for this source that is queued or running (excluding `exceptJobId`), else null. Unscoped jobs are 'default'. */
+/**
+ * Id of a runnable backlog drain for this source (excluding `exceptJobId`),
+ * else null — a job that will actually do the work. Managed-atom retries
+ * (`retryRequestId`) share the name but do not drain. Unscoped jobs are 'default'.
+ */
 export async function inFlightDrainId(engine: BrainEngine, sourceId: string, exceptJobId = 0): Promise<number | null> {
   const rows = await engine.executeRaw<{ id: number }>(
     `SELECT id FROM minion_jobs WHERE name = 'extract-atoms-drain' AND status = ANY($3::text[])
-       AND COALESCE(data->>'sourceId', 'default') = $1 AND id <> $2 ORDER BY id LIMIT 1`,
-    [sourceId, exceptJobId, IN_FLIGHT],
+       AND COALESCE(data->>'sourceId', 'default') = $1 AND id <> $2
+       AND NOT (data ? 'retryRequestId') ORDER BY id LIMIT 1`,
+    [sourceId, exceptJobId, RUNNABLE],
   );
   return rows.length > 0 ? Number(rows[0].id) : null;
 }
@@ -97,12 +109,59 @@ export async function drainInFlight(engine: BrainEngine, sourceId: string, excep
 export interface DrainBacklog { pages: number | null; transcripts: number | null }
 
 /** Pages always; transcripts only for 'default' with a checkout (where discovery applies). */
-export async function readDrainBacklog(engine: BrainEngine, sourceId: string, localPath: string | null): Promise<DrainBacklog> {
+export async function readDrainBacklog(
+  engine: BrainEngine, sourceId: string, localPath: string | null, utcDay = new Date().toISOString().slice(0, 10),
+): Promise<DrainBacklog> {
   const pages = await countExtractAtomsBacklog(engine, sourceId);
   const transcripts = sourceId === 'default' && localPath
-    ? await countPendingTranscripts(engine, sourceId, { brainDir: localPath })
+    ? await pendingTranscriptsForDueCheck(engine, localPath, utcDay)
     : 0;
   return { pages, transcripts };
+}
+
+/** Durable snapshot of the default source's live transcript count, keyed by corpus fingerprint + UTC day. */
+export const TRANSCRIPT_BACKLOG_KEY = 'autopilot.auto_drain.transcript_backlog';
+interface TranscriptBacklogSnapshot { signature: string; pending: number; day: string }
+
+/** Stat-only fingerprint of the configured corpus; 'none' when none is configured, null on error. */
+export async function transcriptBacklogSignature(engine: BrainEngine, brainDir: string): Promise<string | null> {
+  try {
+    const dirs = await resolveTranscriptCorpusDirs(engine, 'default', { brainDir });
+    return dirs ? transcriptCorpusSignature(dirs) : 'none';
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort: a failed write only means the next due check reads the corpus again. */
+export async function recordTranscriptBacklog(engine: BrainEngine, snap: TranscriptBacklogSnapshot): Promise<void> {
+  try { await engine.setConfig(TRANSCRIPT_BACKLOG_KEY, JSON.stringify(snap)); } catch { /* next check recounts */ }
+}
+
+async function readTranscriptBacklog(engine: BrainEngine): Promise<TranscriptBacklogSnapshot | null> {
+  try {
+    const v = JSON.parse((await engine.getConfig(TRANSCRIPT_BACKLOG_KEY)) ?? 'null');
+    return v && typeof v.signature === 'string' && typeof v.pending === 'number' && typeof v.day === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Live transcript backlog for the due check without reading the corpus on a
+ * healthy tick: an unchanged fingerprint with a same-day snapshot reuses the
+ * snapshot's count. Otherwise count for real (quietly) and snapshot it. A
+ * stale snapshot can only over-report within a day (one cheap drain that
+ * recounts), and the daily refresh bounds any drift.
+ */
+export async function pendingTranscriptsForDueCheck(engine: BrainEngine, brainDir: string, utcDay: string): Promise<number | null> {
+  const signature = await transcriptBacklogSignature(engine, brainDir);
+  if (signature === 'none') return 0;
+  const snap = signature ? await readTranscriptBacklog(engine) : null;
+  if (snap && snap.signature === signature && snap.day === utcDay) return snap.pending;
+  const pending = await countPendingTranscripts(engine, 'default', { brainDir, quiet: true });
+  if (pending !== null && signature) await recordTranscriptBacklog(engine, { signature, pending, day: utcDay });
+  return pending;
 }
 
 export function isDrainDue(backlog: DrainBacklog, threshold: number): boolean {

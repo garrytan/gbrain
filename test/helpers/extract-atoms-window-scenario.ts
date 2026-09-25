@@ -183,9 +183,10 @@ function transientThenOk(clock: { t: number; calls: number }) {
 }
 
 /**
- * A window cut right after ONE transient failure is deferral, not an outage:
- * the other items never ran. Contrast: an uncut batch whose every attempted
- * item fails is still a provider failure (#3218).
+ * Whole-run provider-failure truth. A run whose every attempted item failed
+ * with a provider-class error (a timeout here) is a provider failure EVEN
+ * when the window then deferred the items it never attempted — the cut does
+ * not hide the outage. An uncut all-failed run is one too (#3218).
  */
 export async function assertTransientCutScenario(engine: BrainEngine): Promise<void> {
   await seedWindowScenarioPages(engine);
@@ -198,7 +199,7 @@ export async function assertTransientCutScenario(engine: BrainEngine): Promise<v
   });
   expect(cut.calls).toBe(1);
   expect(cutResult).toMatchObject({
-    status: 'ok', stopped: 'window', failure_count: 1, items_completed: 0, items_deferred: 2, remaining: 3,
+    status: 'provider_failure', stopped: 'provider_failure', failure_count: 1, items_completed: 0, items_deferred: 2, remaining: 3,
   });
 
   const uncut = { t: 0, calls: 0 };

@@ -18,7 +18,7 @@
  *
  * Pure over injected deps: no DB, no LLM, no lock primitive imported here, so
  * the loop logic is unit-testable. Its only static imports are pure text
- * sanitizers (#4730). The wiring helper `runExtractAtomsDrainForSource`
+ * sanitizers (#4730) and the dependency-free lease-requeue error class. The wiring helper `runExtractAtomsDrainForSource`
  * (below) builds the real deps; it uses DYNAMIC imports so the pure-loop unit
  * tests don't drag in db-lock / cycle.
  */
@@ -28,6 +28,7 @@ import type { ExtractAtomsOpts } from './extract-atoms.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
+import { RateLeaseUnavailableError } from '../minions/rate-leases.ts';
 
 /** #4730: bounded operator-facing failure detail; totals stay exact above the cap. */
 export const MAX_DRAIN_FAILURE_RECORDS = 25;
@@ -125,16 +126,24 @@ export interface ExtractAtomsDrainOpts {
   windowMs: number;
   /** Hard cap on batches (belt-and-suspenders against a 0-progress loop). Default 1000. */
   maxBatches?: number;
+  /**
+   * Cancellation (Minion timeout / cancel / pause). Stops the loop and is part
+   * of every item checkpoint (the wiring helper also aborts the in-flight
+   * provider call with it). The run then reports `stopped: 'aborted'`.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ExtractAtomsDrainResult {
   phase: 'extract_atoms';
   /**
-   * issue #3218: 'provider_failure' when any batch reported `providerFailure`
-   * (every item it attempted errored). The Minion handler throws on this
-   * status so the durable job retries instead of completing over a backlog
-   * that made zero forward progress. Partial-success batches (>=1 item
-   * succeeded) always report 'ok', unchanged from before.
+   * issue #3218: 'provider_failure' when the WHOLE RUN completed nothing and
+   * a batch reported `providerFailure` (every attempted item failed) — even
+   * if the window deferred items that were never attempted.
+   * The Minion handler throws on this status so the durable job retries. A
+   * batch that fails after earlier batches completed work is incomplete
+   * work (`stopped: 'no_progress'`, status 'ok'), not an outage: retrying
+   * the job would only re-spend on the same failing items.
    */
   status: 'ok' | 'provider_failure';
   extracted: number;
@@ -153,8 +162,8 @@ export interface ExtractAtomsDrainResult {
    * `remaining`) for the next run.
    */
   items_deferred: number;
-  /** Why the loop stopped: drained | window | no_progress | max_batches | provider_failure. */
-  stopped: 'drained' | 'window' | 'no_progress' | 'max_batches' | 'provider_failure';
+  /** Why the loop stopped: drained | window | no_progress | max_batches | provider_failure | aborted (cancelled). */
+  stopped: 'drained' | 'window' | 'no_progress' | 'max_batches' | 'provider_failure' | 'aborted';
   /**
    * #4539: total per-item failures across every batch in this run. 0 for a
    * clean run. Included in `--json` verbatim; dream.ts prints a stderr line
@@ -211,6 +220,26 @@ export function formatDrainProviderFailure(
   );
 }
 
+/** Error text for a drain the Minion job cancelled mid-run: what finished, what stays due. */
+export function formatDrainAborted(
+  result: Pick<ExtractAtomsDrainResult, 'items_completed' | 'items_deferred' | 'remaining' | 'transcripts_remaining'>,
+  signal: AbortSignal,
+): string {
+  const reason = signal.reason instanceof Error ? signal.reason.message : String(signal.reason ?? 'aborted');
+  return `extract-atoms-drain: aborted (${reason}) after ${result.items_completed} item(s) completed; ` +
+    `${result.items_deferred} deferred, ${result.remaining ?? '?'} page(s) + ${result.transcripts_remaining ?? '?'} transcript(s) still due`;
+}
+
+/**
+ * A continuation whose source cycle lock is busy (the routine cycle holds it)
+ * must stay due: completing it `skipped` would strand its work until the next
+ * UTC day, because autopilot's day key already exists. The worker requeues a
+ * RateLeaseUnavailableError as delayed WITHOUT burning an attempt.
+ */
+export function drainLockBusyRetry(sourceId: string | undefined): RateLeaseUnavailableError {
+  return new RateLeaseUnavailableError(`extract-atoms-drain:cycle-lock:${sourceId ?? 'default'}`, 1, 1, CONTINUATION_RECHECK_DELAY_MS);
+}
+
 /** Pages + live transcripts still due; null when either count failed. */
 async function pendingWork(deps: ExtractAtomsDrainDeps): Promise<number | null> {
   const pages = await deps.countRemaining();
@@ -227,6 +256,7 @@ export async function runExtractAtomsDrain(
   opts: ExtractAtomsDrainOpts,
 ): Promise<ExtractAtomsDrainResult> {
   const maxBatches = opts.maxBatches ?? 1000;
+  const aborted = () => opts.signal?.aborted === true;
   return deps.withLock(async () => {
     const deadline = deps.now() + opts.windowMs;
     let extracted = 0;
@@ -245,7 +275,7 @@ export async function runExtractAtomsDrain(
     const failures: ExtractAtomsDrainFailure[] = [];
     let lastError: string | null = null;
 
-    while (deps.now() < deadline) {
+    while (!aborted() && deps.now() < deadline) {
       if (batches >= maxBatches) { stopped = 'max_batches'; break; }
 
       const before = await pendingWork(deps);
@@ -255,7 +285,7 @@ export async function runExtractAtomsDrain(
       // page-discovery budget plus every live transcript, each an LLM call,
       // so checking only between batches let a single batch run far past the
       // window (and past a Minion job timeout, losing the final result).
-      const r = await deps.runBatch({ shouldStop: () => deps.now() >= deadline });
+      const r = await deps.runBatch({ shouldStop: () => aborted() || deps.now() >= deadline });
       extracted += r.extracted;
       skipped += r.skipped;
       batches++;
@@ -304,16 +334,21 @@ export async function runExtractAtomsDrain(
       }
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
 
-      // issue #3218: every item this batch attempted failed (0 succeeded, >=1
-      // error) — a total provider outage, not ordinary no-op/partial progress.
-      // Stop immediately (same hot-loop guard as no_progress below) and flag
-      // it so the caller can retry via its own policy instead of treating the
-      // drain as a clean completion.
+      // issue #3218: every item this batch attempted failed. Stop immediately (same hot-loop guard as no_progress below).
+      // Whole-run truth: it is a provider failure only if the run completed
+      // nothing; after real progress the batch is just the items still
+      // failing (e.g. one poison transcript), reported as no_progress.
       if (r.providerFailure) {
-        providerFailure = true;
-        stopped = 'provider_failure';
+        if (itemsCompleted === 0 && extracted === 0) {
+          providerFailure = true;
+          stopped = 'provider_failure';
+        } else {
+          stopped = 'no_progress';
+        }
         break;
       }
+
+      if (aborted()) { stopped = 'aborted'; break; }
 
       // The batch hit the window checkpoint and left items unstarted. Stop
       // here so the zero-progress check below can't misread a cut batch as
@@ -343,7 +378,8 @@ export async function runExtractAtomsDrain(
     // decision; keep `stopped` consistent with it once a failure latched.
     // Drained only when neither pool has work due and nothing was deferred:
     // `remaining` counts pages, so it alone cannot see deferred transcripts.
-    if (!providerFailure && remaining === 0 && transcriptsRemaining === 0 && itemsDeferred === 0) stopped = 'drained';
+    if (aborted() && !providerFailure) stopped = 'aborted';
+    else if (!providerFailure && remaining === 0 && transcriptsRemaining === 0 && itemsDeferred === 0) stopped = 'drained';
     return {
       phase: 'extract_atoms',
       status: providerFailure ? 'provider_failure' : 'ok',
@@ -398,6 +434,8 @@ export interface DrainForSourceOpts {
   maxBatches?: number;
   /** Optional per-batch progress sink (stderr line in dream; job progress in the handler). */
   onBatch?: ExtractAtomsDrainDeps['onBatch'];
+  /** Cancellation: the Minion job's signal (timeout / cancel / pause). Aborts the in-flight provider call. */
+  signal?: AbortSignal;
   /** Test seam: clock for the window deadline. Production: Date.now. */
   _now?: () => number;
   /** Test seam: extra phase options (e.g. `_chat`, `_transcripts`) merged into each batch. */
@@ -424,8 +462,14 @@ export async function runExtractAtomsDrainForSource(
     opts._phase?._transcripts ? Promise.resolve(opts._phase._transcripts) : undefined;
   const transcriptCorpus = () =>
     (corpus ??= discoverTranscriptCorpus(engine, extractionSourceId, { brainDir: opts.brainDir }));
+  // Autopilot's due check reuses this drain's final transcript count instead
+  // of re-reading the corpus. Fingerprint BEFORE the corpus is read, so a file
+  // that changes mid-drain makes the snapshot stale (a recount), never falsely fresh.
+  const backlogPolicy = !opts._phase?._transcripts && extractionSourceId === 'default' && opts.brainDir
+    ? await import('./extract-atoms-auto-drain.ts') : null;
+  const snapshotSig = backlogPolicy ? await backlogPolicy.transcriptBacklogSignature(engine, opts.brainDir!) : null;
 
-  return runExtractAtomsDrain(
+  const result = await runExtractAtomsDrain(
     {
       withLock: (work) => withRefreshingLock(engine, lockId, work, { ttlMinutes: 5 }),
       runBatch: async ({ shouldStop }) => {
@@ -436,6 +480,7 @@ export async function runExtractAtomsDrainForSource(
           dryRun: false,
           brainDir: opts.brainDir,
           shouldStop,
+          ...(opts.signal ? { abortSignal: opts.signal } : {}),
         });
         const d = (r.details ?? {}) as Record<string, unknown>;
         // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
@@ -469,12 +514,10 @@ export async function runExtractAtomsDrainForSource(
           skipped: Number(d.duplicates_skipped ?? 0),
           completed: itemsSucceeded,
           deferred,
-          // Every attempted item failed AND the batch was not cut by the window.
-          // A cut after one (often transient) failure is ordinary deferral —
-          // the rest never ran, so there is no outage-level evidence. A real
-          // auth/billing halt breaks the phase loop without deferring, so it
-          // still lands here.
-          providerFailure: failures.length > 0 && itemsSucceeded === 0 && deferred === 0,
+          // Every attempted item failed — whether or not the window then
+          // deferred the unattempted rest (a cut does not hide an outage).
+          // The pure loop decides run-wide: after earlier progress it is not one.
+          providerFailure: failures.length > 0 && itemsSucceeded === 0,
           failureCount: failures.length,
           failures: typedFailures,
         };
@@ -486,8 +529,14 @@ export async function runExtractAtomsDrainForSource(
       now: opts._now ?? Date.now,
       onBatch: opts.onBatch,
     },
-    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches },
+    { windowMs: opts.windowSeconds * 1000, maxBatches: opts.maxBatches, ...(opts.signal ? { signal: opts.signal } : {}) },
   );
+  if (backlogPolicy && snapshotSig && snapshotSig !== 'none' && result.transcripts_remaining !== null) {
+    await backlogPolicy.recordTranscriptBacklog(engine, {
+      signature: snapshotSig, pending: result.transcripts_remaining, day: new Date().toISOString().slice(0, 10),
+    });
+  }
+  return result;
 }
 
 // ─── Background continuation (Minion lane) ──────────────────────────────────
@@ -522,6 +571,8 @@ export type DrainContinuation =
    *  delayed job that re-runs the same budget gate when it starts. */
   | { queued: true; job_id: number; depth: number; budget_check?: 'deferred' }
   | { queued: false; reason: 'drained' | 'no_forward_progress' | 'continuation_limit' | 'not_window_cut' | 'submit_failed'; error?: string }
+  /** The parent was cancelled, timed out, paused or dead-lettered: its chain ends with it. */
+  | { queued: false; reason: 'aborted'; parent_status?: string }
   /** Another drain for this source is already queued or running; it picks up the work. */
   | { queued: false; reason: 'already_in_flight'; in_flight_job_id: number }
   | DrainBudgetBlock;
@@ -529,11 +580,15 @@ export type DrainContinuation =
 /** Delay before a lock-busy continuation starts and rechecks its budget; also its retry backoff base. */
 export const CONTINUATION_RECHECK_DELAY_MS = 30_000;
 
+/** Parent states that end a chain: an operator or the queue stopped this job, so nothing may outlive it. */
+const STOPPED_PARENT = new Set(['cancelled', 'dead', 'failed', 'paused']);
+
 export async function queueDrainContinuation(
   engine: BrainEngine,
-  job: { id: number; data: Record<string, unknown> },
+  job: { id: number; data: Record<string, unknown>; signal?: AbortSignal },
   result: ExtractAtomsDrainResult,
 ): Promise<DrainContinuation> {
+  if (job.signal?.aborted || result.stopped === 'aborted') return { queued: false, reason: 'aborted' };
   if (!drainLeftWorkDue(result)) return { queued: false, reason: 'drained' };
   // no_progress / provider_failure stops must not self-chain: they would spin.
   if (result.status !== 'ok' || (result.stopped !== 'window' && result.stopped !== 'max_batches')) {
@@ -544,6 +599,10 @@ export async function queueDrainContinuation(
   if (depth >= MAX_DRAIN_CONTINUATIONS) return { queued: false, reason: 'continuation_limit' };
   const idempotencyKey = `extract-atoms-drain:continuation:${job.id}`;
   try {
+    // The row is the ground truth when the signal was never delivered (a
+    // cancel/timeout seen by another process): a stopped parent never chains.
+    const [self] = await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [job.id]);
+    if (self && STOPPED_PARENT.has(self.status)) return { queued: false, reason: 'aborted', parent_status: self.status };
     // A retried parent reports the continuation it already created; the
     // budget check below would otherwise count that very job against itself.
     const [existing] = await engine.executeRaw<{ id: number; status: string }>(

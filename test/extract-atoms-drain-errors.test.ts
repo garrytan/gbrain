@@ -44,7 +44,10 @@ describe('extract_atoms drain error surfacing (#4539)', () => {
     );
     expect(result.failure_count).toBe(5);
     expect(result.last_error).toBe('pages/b: 429 rate limit');
-    expect(result.status).toBe('provider_failure');
+    // Whole-run truth: batch 1 completed work, so the all-failed batch 2 is
+    // incomplete work still failing, not a provider outage (no retry loop).
+    expect(result.status).toBe('ok');
+    expect(result.stopped).toBe('no_progress');
   });
 
   it('clean run reports failure_count 0 and last_error null', async () => {

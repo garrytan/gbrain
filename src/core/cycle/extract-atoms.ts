@@ -220,6 +220,9 @@ export interface ExtractAtomsOpts {
   /** Stop checkpoint before each item (never mid-item). True defers every unstarted item:
    *  untouched, still due, reported as pages_/transcripts_deferred (`--drain --window`). */
   shouldStop?: () => boolean;
+  /** Cancellation (Minion timeout/cancel): stops like `shouldStop` AND aborts the in-flight
+   *  provider call; the interrupted item is deferred, never recorded as a failure. */
+  abortSignal?: AbortSignal;
 }
 
 interface ExtractedAtom {
@@ -653,7 +656,7 @@ type TranscriptInput = { filePath: string; content: string; contentHash: string 
 export async function loadLiveTranscripts(
   engine: BrainEngine,
   sourceId: string,
-  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig' | 'progress'>,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig' | 'progress'> & { quiet?: boolean },
 ): Promise<{ transcripts: TranscriptInput[]; live: TranscriptInput[]; duplicatesSkipped: number }> {
   const transcripts = opts._transcripts ?? await discoverTranscriptCorpus(engine, sourceId, opts);
   // Transcript-side source-hash idempotency in ONE batch query instead of N
@@ -673,30 +676,41 @@ export async function loadLiveTranscripts(
   return { transcripts, live, duplicatesSkipped };
 }
 
+/** Configured transcript corpus dirs (default source with a brain dir only), else null. */
+export async function resolveTranscriptCorpusDirs(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_loadConfig'>,
+): Promise<{ corpusDir: string; meetingTranscriptsDir?: string } | null> {
+  // Configured transcript corpus paths are brain-global, so only default discovers them.
+  if (sourceId !== 'default' || opts.brainDir === undefined) return null;
+  const { loadConfigWithEngine } = await import('../config.ts');
+  // loadConfigWithEngine: the dream.* DB-plane merge reaches this phase.
+  const cfgRaw = opts._loadConfig ? await opts._loadConfig() : await loadConfigWithEngine(engine);
+  const dream = ((cfgRaw ?? {}) as unknown as Record<string, unknown>).dream as
+    | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
+    | undefined;
+  const corpusDir = dream?.synthesize?.session_corpus_dir;
+  return corpusDir === undefined ? null : { corpusDir, meetingTranscriptsDir: dream?.synthesize?.meeting_transcripts_dir };
+}
+
 /**
- * Read the configured transcript corpus from disk (default source with a
- * brain dir only; [] otherwise). File I/O only — liveness is a separate DB
- * check, so a caller may read the corpus once and pass it back as
- * `_transcripts` while `loadLiveTranscripts` rechecks liveness each time.
+ * Read the configured transcript corpus from disk ([] when none). File I/O
+ * only — liveness is a separate DB check, so a caller may read the corpus
+ * once and pass it back as `_transcripts` while `loadLiveTranscripts`
+ * rechecks liveness each time. `quiet` drops per-file skip lines (a
+ * due-check is not a run).
  */
 export async function discoverTranscriptCorpus(
   engine: BrainEngine,
   sourceId: string,
-  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_loadConfig'>,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_loadConfig'> & { quiet?: boolean },
 ): Promise<TranscriptInput[]> {
-  // Configured transcript corpus paths are brain-global, so only default discovers them.
-  if (sourceId !== 'default' || opts.brainDir === undefined) return [];
   try {
+    const dirs = await resolveTranscriptCorpusDirs(engine, sourceId, opts);
+    if (!dirs) return [];
     const { discoverTranscripts } = await import('./transcript-discovery.ts');
-    const { loadConfigWithEngine } = await import('../config.ts');
-    // loadConfigWithEngine: the dream.* DB-plane merge reaches this phase.
-    const cfgRaw = opts._loadConfig ? await opts._loadConfig() : await loadConfigWithEngine(engine);
-    const dream = ((cfgRaw ?? {}) as unknown as Record<string, unknown>).dream as
-      | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
-      | undefined;
-    const corpusDir = dream?.synthesize?.session_corpus_dir;
-    if (corpusDir === undefined) return [];
-    return discoverTranscripts({ corpusDir, meetingTranscriptsDir: dream?.synthesize?.meeting_transcripts_dir })
+    return discoverTranscripts({ ...dirs, quiet: opts.quiet })
       .map((d) => ({ filePath: d.filePath, content: d.content, contentHash: d.contentHash }));
   } catch {
     return []; // No transcripts available — phase no-ops cleanly.
@@ -707,7 +721,7 @@ export async function discoverTranscriptCorpus(
 export async function countPendingTranscripts(
   engine: BrainEngine,
   sourceId: string,
-  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig'>,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig'> & { quiet?: boolean },
 ): Promise<number | null> {
   try {
     const { live } = await loadLiveTranscripts(engine, sourceId, opts);
@@ -1086,13 +1100,13 @@ export async function runPhaseExtractAtoms(
   }
 
   let transcriptsDeferred = 0, pagesDeferred = 0;
+  const deferFrom = (idx: number) => {
+    for (const rest of work.slice(idx)) { if (rest.kind === 'transcript') transcriptsDeferred++; else pagesDeferred++; }
+  };
   await withBudgetTracker(budgetTracker, async () => {
   for (const [idx, item] of work.entries()) {
     await maybeYield();
-    if (opts.shouldStop?.()) {
-      for (const rest of work.slice(idx)) { if (rest.kind === 'transcript') transcriptsDeferred++; else pagesDeferred++; }
-      break;
-    }
+    if (opts.shouldStop?.() || opts.abortSignal?.aborted) { deferFrom(idx); break; }
     if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
@@ -1122,6 +1136,7 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: maxOutputTokens,
+        ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
@@ -1344,6 +1359,9 @@ export async function runPhaseExtractAtoms(
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
       if (err instanceof OperationError && err.writeRequest) writeRequests.push(err.writeRequest);
+      // Cancelled mid-item: the provider call was aborted, not the content at fault.
+      // Nothing was completed for this item, so it stays due (no failure, no strike).
+      if (opts.abortSignal?.aborted) { deferFrom(idx); break; }
       if (err instanceof BudgetExhausted) {
         budgetExhausted = true;
         if (item.kind === 'transcript') transcriptsSkipped++;

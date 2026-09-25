@@ -2987,7 +2987,7 @@ export async function registerBuiltinHandlers(
       const { retryManagedAtomBatch } = await import('../core/persistence/atom-retry.ts');
       return retryManagedAtomBatch(engine, job.data.sourceId, job.data.retryRequestId, `job:${job.id}`);
     }
-    const { formatDrainProviderFailure, queueDrainContinuation, recheckDeferredContinuation, runExtractAtomsDrainForSource } =
+    const { drainLockBusyRetry, formatDrainAborted, formatDrainProviderFailure, queueDrainContinuation, recheckDeferredContinuation, runExtractAtomsDrainForSource } =
       await import('../core/cycle/extract-atoms-drain.ts');
     if (job.data.budget_recheck === true) { // lock-busy continuation: same budget gate at start
       const gate = await recheckDeferredContinuation(engine, job);
@@ -3006,7 +3006,10 @@ export async function registerBuiltinHandlers(
         sourceId,
         windowSeconds,
         brainDir: repoPath,
+        signal: job.signal,
       });
+      // Cancelled (timeout/cancel/pause): lock released; fail with the receipt, never chain.
+      if (job.signal.aborted) throw new Error(formatDrainAborted(result, job.signal));
       // issue #3218: every item the drain attempted failed (0 succeeded, >=1
       // provider error) — completing this job normally would mark the
       // durable job done while the backlog sits untouched, and no retry
@@ -3021,6 +3024,8 @@ export async function registerBuiltinHandlers(
       return { ...result, continuation: await queueDrainContinuation(engine, job, result) };
     } catch (e) {
       if (e instanceof LockUnavailableError) {
+        // A continuation is the only carrier of its work today: requeue it (no attempt burned).
+        if (job.data.continuation_of !== undefined) throw drainLockBusyRetry(sourceId);
         return { phase: 'extract_atoms', status: 'skipped', deferred: true, reason: 'cycle_already_running' };
       }
       throw e;

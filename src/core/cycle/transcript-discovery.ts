@@ -48,6 +48,8 @@ export interface DiscoverOpts {
    * that would let any caller silently re-trigger the loop bug.
    */
   bypassGuard?: boolean;
+  /** Suppress the per-file guard lines and the exclude tally (background due-checks). */
+  quiet?: boolean;
 }
 
 const DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
@@ -290,7 +292,7 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
       }
       if (content.length < minChars) continue;
       if (isDreamOutput(content, bypass)) {
-        process.stderr.write(`[dream] skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
+        if (!opts.quiet) process.stderr.write(`[dream] skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
         continue;
       }
       const excludeHits = matchingExcludeLabels(content, excludes);
@@ -309,8 +311,31 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
     }
   }
 
-  tally.report();
+  if (!opts.quiet) tally.report();
   return results.sort((a, b) => a.filePath.localeCompare(b.filePath));
+}
+
+/**
+ * Stat-only fingerprint of the files `discoverTranscripts` would read from
+ * these dirs (path, size, mtime) — no file contents are read or hashed. An
+ * unchanged fingerprint means the corpus input is unchanged, so a cached
+ * pending count for it is still about the same files.
+ */
+export function transcriptCorpusSignature(dirs: { corpusDir: string; meetingTranscriptsDir?: string }): string {
+  const h = createHash('sha256');
+  for (const dir of [dirs.corpusDir, dirs.meetingTranscriptsDir]) {
+    if (typeof dir !== 'string' || dir.length === 0) continue;
+    h.update(`dir\0${dir}\n`);
+    for (const filePath of listTextFiles(dir)) {
+      try {
+        const st = statSync(filePath);
+        h.update(`${filePath}\0${st.size}\0${st.mtimeMs}\n`);
+      } catch {
+        h.update(`${filePath}\0gone\n`);
+      }
+    }
+  }
+  return h.digest('hex');
 }
 
 /**
