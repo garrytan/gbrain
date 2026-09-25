@@ -15,7 +15,8 @@
  *     for keys carrying a real value. Launchers inject `ANTHROPIC_API_KEY=''`
  *     to neuter subprocess LLM calls; an unconditional spread would let that
  *     empty string clobber a valid config.json key. '' and undefined are
- *     dropped; '0' and 'false' are legitimate values and survive.
+ *     dropped; '0' and 'false' are legitimate values and survive. The
+ *     non-secret GBRAIN_QUERY_INSTRUCT preserves '' as an explicit opt-out.
  *   - GEMINI_API_KEY alias: Google's docs/SDKs export GEMINI_API_KEY, but the
  *     google recipe reads GOOGLE_GENERATIVE_AI_API_KEY. Precedence: env
  *     GOOGLE_GENERATIVE_AI_API_KEY > env GEMINI_API_KEY > config
@@ -55,7 +56,8 @@ export function mergedProviderEnv(
   if (cfg?.azure_openai_use_entra) fromConfig.AZURE_OPENAI_USE_ENTRA = cfg.azure_openai_use_entra;
 
   const envReal = Object.fromEntries(
-    Object.entries(env).filter(([, v]) => v !== undefined && v !== ''),
+    // Empty query instructions are an explicit opt-out, not a missing credential.
+    Object.entries(env).filter(([key, v]) => v !== undefined && (v !== '' || key === 'GBRAIN_QUERY_INSTRUCT')),
   ) as Record<string, string>;
   const merged = { ...fromConfig, ...envReal };
   if (!envReal.GOOGLE_GENERATIVE_AI_API_KEY && envReal.GEMINI_API_KEY) {

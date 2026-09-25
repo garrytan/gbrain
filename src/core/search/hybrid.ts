@@ -29,7 +29,7 @@ import { resolveSearchDateBounds } from './date-bounds.ts';
 export { resolveDateBoundary, resolveSearchDateBounds } from './date-bounds.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 import { requiresSafeChunks } from './safe-chunks.ts';
-import { embed, embedQuery } from '../embedding.ts';
+import { embed, embedQuery, getQueryInstruction } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { isDbAccessFailure } from '../pg-access-classify.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
@@ -2576,6 +2576,7 @@ export async function hybridSearchCached(
   const cacheKnobsHash = knobsHash(resolvedForCache, {
     embeddingColumn: resolvedColCached.name,
     embeddingModel: resolvedColCached.embeddingModel,
+    queryInstruction: getQueryInstruction(resolvedColCached.embeddingModel),
     // #2825 — fold the resolved hard-exclude prefix list (defaults ∪
     // GBRAIN_SEARCH_EXCLUDE ∪ per-call exclude_slug_prefixes, minus
     // include_slug_prefixes — exactly what the engines' query-build path
