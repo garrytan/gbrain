@@ -145,6 +145,8 @@ function responseFrame(value: unknown): string {
 
 /** Frozen MEMORY_VERBS v1 operations reachable over this socket; their error enum never widens. */
 const FROZEN_VERB_OPERATIONS = new Set(['remember', 'forget']);
+/** Private commands whose results can carry durable page-write receipts. */
+const RECEIPT_BEARING_ADMIN_OPERATIONS = new Set(['writer_sync']);
 
 /**
  * `detail` values for a result that ran but could not be framed. `detail` is the
@@ -171,7 +173,7 @@ export function resultFrame(result: unknown, operation?: string): string {
     // Only mutation results may attest a committed write. Read results can contain
     // arbitrary page data, including receipt-shaped objects, and must never turn
     // that content into a successful write acknowledgement.
-    if (operation === undefined || !isPersistenceIpcMutation(operation)) throw error;
+    if (operation === undefined || !(isPersistenceIpcMutation(operation) || RECEIPT_BEARING_ADMIN_OPERATIONS.has(operation))) throw error;
     const salvaged = discoverResultReceipts(result);
     const all = salvaged.receipts.map(receipt => {
       const outcomeFree = publicWriteReceipt(receipt);
@@ -284,7 +286,7 @@ export async function startPersistenceIpcServer(
           admitted = true;
           if (request.kind === 'administration' && !provider.administer) throw new OperationError('unavailable', 'This owner does not support local administration.');
           const result = request.kind === 'administration' ? await provider.administer!(request) : await provider.dispatch(request);
-          if (!socket.destroyed) socket.end(resultFrame(result, request.kind === 'operation' ? request.operation : undefined));
+          if (!socket.destroyed) socket.end(resultFrame(result, request.operation));
         } catch (error) {
           if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: false, error: publicError(error) }));
         } finally {

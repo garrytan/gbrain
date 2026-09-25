@@ -10,6 +10,7 @@ import { WRITE_BLOCKED_REASONS } from '../src/core/persistence/types.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { ERROR_SCHEMA } from '../src/core/verbs.ts';
 import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
+import { writerNextAction } from '../src/core/persistence/diagnostics.ts';
 
 const requestId = '20000000-0000-4000-8000-000000000001';
 const receipt: WriteReceipt = { request_id: requestId, state: 'conflict', retry_after_ms: null };
@@ -153,6 +154,7 @@ test.each([...WRITE_BLOCKED_REASONS])('sync diagnostic reason and write_request 
     expect(diagnostic.write_request.blocked_reason).toBe(blocked);
     expect(diagnostic.write_request.state).toBe(state);
     expect(diagnostic.write_error).toBe('write_pending');
+    expect(diagnostic.suggestion).toBe(writerNextAction(blocked));
   }
 });
 

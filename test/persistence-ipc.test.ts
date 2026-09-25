@@ -12,7 +12,7 @@ import { reportPersistenceCliError } from '../src/commands/persistence-delegate.
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import {
   PERSISTENCE_IPC_MAX_BYTES, PersistenceIpcTransportError,
-  persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
+  persistenceSocketPathForConfig, requestPersistenceAdministration, requestPersistenceCapabilities, requestPersistenceOperation,
   SALVAGE_MAX_RECEIPTS, startPersistenceIpcServer, type PersistenceIpcBinding, type PersistenceIpcRequest,
 } from '../src/core/persistence/ipc.ts';
 import { discoverResultReceipts, SALVAGE_MAX_DEPTH } from '../src/core/persistence/result-salvage.ts';
@@ -203,12 +203,21 @@ describe('dedicated persistence IPC', () => {
     }
   });
 
-  test('a nested administration receipt (sync managedWrite) survives an oversized result', async () => {
+  test('a writer_sync administration receipt survives an oversized result', async () => {
     const path = socketPath();
     const pending: WriteReceipt = { request_id: OTHER, state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' };
-    await bind(path, async () => ({ status: 'partial', managedWrite: { reason: 'owner_unavailable', write_request: pending },
-      pagesAffected: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }));
-    try { await requestPersistenceOperation(path, request()); throw new Error('Expected oversized result error.'); }
+    const binding = await startPersistenceIpcServer(path, { brainId: BRAIN,
+      dispatch: async () => { throw new Error('Administration must not dispatch as an operation.'); },
+      administer: async () => ({ status: 'partial', managedWrite: { reason: 'owner_unavailable', write_request: pending },
+        pagesAffected: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES) }),
+    });
+    expect(binding).not.toBeNull();
+    bindings.push(binding!);
+    try {
+      await requestPersistenceAdministration(path, { version: 1, kind: 'administration', brain_id: BRAIN,
+        operation: 'writer_sync', params: {}, registration: REGISTRATION });
+      throw new Error('Expected oversized result error.');
+    }
     catch (error) {
       const body = (error as OperationError).toJSON();
       expect(body.write_request).toEqual(pending);

@@ -18,6 +18,7 @@ import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { recordManagedSyncFailure, clearManagedSyncFailureAfterSuccess, formatManagedSyncFailure, type ManagedSyncFailure } from './sync-failures.ts';
 import { writeFailureDiagnostic } from './verb-errors.ts';
+import { writerNextAction } from './diagnostics.ts';
 import { isTerminalWriteState, isWriteBlockedReason, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
 
@@ -117,7 +118,9 @@ export function writeDiagnostic(cursor: Pick<Cursor, 'sourceId' | 'root'>, pendi
   const blockedReason = isWriteBlockedReason(row.blocked_reason) ? row.blocked_reason : 'write_pending';
   const detail = terminal ? writeFailureDiagnostic(code, row.error_message) : {
     reason: blockedReason, message: 'The write is accepted but not committed; the sync checkpoint has not advanced.',
-    suggestion: 'Re-run the same sync options to resume this request. Do not submit a replacement request or skip the pending write.',
+    suggestion: isWriteBlockedReason(row.blocked_reason)
+      ? writerNextAction(row.blocked_reason)
+      : 'Re-run the same sync options to resume this request. Do not submit a replacement request or skip the pending write.',
   };
   const diagnostic: ManagedSyncWriteDiagnostic = { source_id: cursor.sourceId, slug: pending.slug,
     path: pending.intent.path, write_error: code, ...detail, write_request: publicWriteReceipt(receiptFor(row)) };
