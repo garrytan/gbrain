@@ -916,6 +916,18 @@ async function reconcileGmailDeletes(
     if (firstIso && Date.parse(firstIso) / 1000 < cutoffSec) continue;
     if (tid && !liveThreads.has(tid)) stale.push({ slug: r.slug, source_path: r.source_path });
   }
+  await deleteStalePages(deps, stale, summary);
+}
+
+/**
+ * Delete reconcile-stale pages (DB rows + managed files), behind the
+ * mass-delete guard: more than 200 at once needs GBRAIN_ALLOW_MASS_RECONCILE.
+ */
+async function deleteStalePages(
+  deps: GoogleSyncDeps,
+  stale: Array<{ slug: string; source_path: string | null }>,
+  summary: GoogleSyncSummary,
+): Promise<void> {
   if (stale.length === 0) return;
   const { massReconcileAllowed } = await import('../../commands/sync.ts');
   if (stale.length > 200 && !massReconcileAllowed()) {
