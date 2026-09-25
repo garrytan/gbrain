@@ -660,8 +660,8 @@ async function runDrain(
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
-    // Completed / deferred / failed are distinct: deferred items were never
-    // started (the --window checkpoint fired mid-batch) and stay due.
+    // Completed / deferred / failed are distinct: deferred items were either
+    // interrupted in flight or never started, and stay due for the next run.
     const deferred = result.items_deferred > 0
       ? `, ${result.items_deferred} deferred by --window`
       : '';
