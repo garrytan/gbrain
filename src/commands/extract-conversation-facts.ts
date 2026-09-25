@@ -1176,10 +1176,10 @@ async function processPage(
   }
 
   // Eng-v2 C7 / E16: write terminal audit row after all segments commit
-  // successfully. Only run when we got through every
-  // segment (no break on segmentLimit; that's an explicit partial run).
-  const fullyProcessed =
-    state.segmentLimit === 0 || segmentsThisPage < state.segmentLimit;
+  // successfully. Only run when every segment was processed — including a
+  // page whose segment count equals --segment-limit exactly, which
+  // previously missed the terminal row and re-extracted on every run.
+  const fullyProcessed = segmentsThisPage === segments.length;
   if (
     fullyProcessed &&
     newestEnd !== null &&

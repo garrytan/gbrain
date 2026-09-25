@@ -10,6 +10,10 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.18] - 2026-09-25
+
+**`--segment-limit` boundary rows are re-extracted on every run.** The terminal audit row is only written after all segments of a page complete, and the fresh-check counts committed segments against the page's true segment count — so a page whose segment count equals `--segment-limit` exactly never received its terminal row and re-extracted on every run. The segment count now honors the same limit the extractor applies, so boundary pages complete and stamp their terminal row.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

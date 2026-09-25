@@ -1120,6 +1120,28 @@ describe('runExtractConversationFactsCore', () => {
     expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
   });
 
+  // #5430 item E.3 — a page whose segment count equals --segment-limit
+  // exactly used to miss the terminal row (`segmentsThisPage < limit` was
+  // false), so every later run re-extracted it. `fullyProcessed` now means
+  // "all segments in scope were processed", which includes the boundary.
+  test('a page with exactly --segment-limit segments records a terminal outcome (#5430)', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      segmentLimit: 2, // the fixture has exactly 2 segments
+      sleepMs: 0,
+    });
+    expect(result.pages_processed).toBe(1);
+    expect(result.facts_inserted).toBeGreaterThan(0);
+
+    const terminalRows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts
+        WHERE source = $1 AND source_session LIKE $2`,
+      [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example:page-%`],
+    );
+    expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
+  });
+
   test('canonicalizes a raw LLM entity display name before writing facts.entity_slug', async () => {
     chatTextOverride = JSON.stringify({
       facts: [{
