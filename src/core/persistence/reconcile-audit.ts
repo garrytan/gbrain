@@ -17,6 +17,7 @@ export interface ReconcileAuditReport extends Record<string, unknown> {
   inspected: number;
   drifted: number;
   errors: number;
+  database_only: number;
   findings: Array<{ slug: string; reason: string; suggestion: string }>;
   next_after: string | null;
   complete: boolean;
@@ -39,14 +40,23 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
     throw new OperationError('owner_unavailable', 'Read-only drift auditing must run on the active canonical owner.');
   }
   const root = join(binding.local_path, binding.relative_path);
-  const rows = await engine.executeRaw<{ slug: string; bytes: number }>(`SELECT slug,
+  const rows = await engine.executeRaw<{ slug: string; bytes: number; source_path: string | null }>(`SELECT slug, source_path,
     octet_length(compiled_truth)+octet_length(COALESCE(timeline,''))+octet_length(frontmatter::text) AS bytes
     FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND page_kind='markdown' AND slug>$2
     ORDER BY slug LIMIT $3`, [sourceId, options.after ?? '', limit + 1]);
-  const report: ReconcileAuditReport = { source_id: sourceId, inspected: 0, drifted: 0, errors: 0, findings: [],
+  const report: ReconcileAuditReport = { source_id: sourceId, inspected: 0, drifted: 0, errors: 0, database_only: 0, findings: [],
     next_after: rows.length > limit ? rows[limit - 1].slug : null, complete: rows.length <= limit, snapshot_only: true };
   for (const candidate of rows.slice(0, limit)) {
     report.inspected++;
+    // DB-only pages have no canonical Markdown file, so "missing file" is
+    // not drift and no exact-page preview can exist — report them separately
+    // instead of counting them as unrepairable source_changed findings.
+    if (candidate.source_path === null) {
+      report.database_only++;
+      report.findings.push({ slug: candidate.slug, reason: 'database_only',
+        suggestion: 'The page has no recorded Markdown origin; reconcile is not applicable to database-only pages.' });
+      continue;
+    }
     try {
       if (Number(candidate.bytes) > 5_000_000) throw new OperationError('invalid_params', 'The page exceeds the bounded audit size.');
       const snapshot = await engine.readPageSnapshot(candidate.slug, { sourceId });

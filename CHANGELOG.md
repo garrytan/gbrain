@@ -10,6 +10,31 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.3] - 2026-09-25
+
+**Drift audits stop flagging database-only pages.** `gbrain sources reconcile
+<source> --brain <brain> --audit` checked every recorded page for a missing or
+changed Markdown file — including pages that have no file at all, such as
+database-only extract receipts. Each of those was reported as drift and came
+with a suggestion to preview it, a command that cannot work because there is no
+recorded file origin. The audit now reports those pages separately under a
+`database_only` reason and counter, so the drift count only covers pages where a
+file actually exists to disagree. Real missing-file and content-drift findings
+are unchanged.
+
+**Say to your agent:** *"Re-run the read-only source audit and check that
+database-only pages show up under database_only instead of inflating drift."*
+
+### How to use it
+
+```bash
+gbrain sources reconcile <source> --brain <brain> --audit --limit 25 --json
+```
+
+The JSON report gains a `database_only` count. Findings for those pages carry
+`reason: "database_only"` and no preview suggestion; `inspected`, `drifted`,
+`errors`, `next_after`, and `complete` behave as before.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

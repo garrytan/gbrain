@@ -62,6 +62,16 @@ test('bounded audit detects metadata drift and missing files without changing ca
   expect(await engine.executeRaw('SELECT request_id FROM persistence_requests')).toEqual([]);
 }), 60_000);
 
+test('audit reports DB-only pages separately instead of counting them as unrepairable drift', () => fixture(async (_root, source) => {
+  await engine.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,timeline,frontmatter,content_hash,source_path)
+    VALUES($1,'d','note','Example','A synthetic DB-only observation.','','{}'::jsonb,'synthetic-dbonly-hash',NULL)`, [source]);
+  const report = await runReconcileAudit(engine, { source_id: source });
+  expect(report).toMatchObject({ inspected: 4, drifted: 2, errors: 0, database_only: 1 });
+  const dbOnly = report.findings.find((row) => row.slug === 'd');
+  expect(dbOnly).toMatchObject({ reason: 'database_only' });
+  expect(dbOnly!.suggestion).not.toContain('sources reconcile');
+}), 60_000);
+
 test('audit cursor is bounded, explicit and not a source checkpoint', () => fixture(async (_root, source) => {
   const first = await runReconcileAudit(engine, { source_id: source, limit: 1 });
   expect(first).toMatchObject({ inspected: 1, drifted: 0, next_after: 'a', complete: false });
