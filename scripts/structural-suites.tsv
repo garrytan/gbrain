@@ -191,7 +191,7 @@ test/jobs-thin-client-date-rehydration.test.ts	thin-client unpack sites route th
 test/jobs-worker-startup-recovery.test.ts	work-handler recovery placement (structural)	1	readFileSync
 test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFileSync
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
-test/loops-extract-wiring.test.ts	jobs.ts wiring	2	readFileSync
+test/loops-extract-wiring.test.ts	jobs.ts wiring	3	readFileSync
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync
 test/mcp-registration-blocks.test.ts	OpenClaw stdio registration docs (#4842)	2	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	readFileSync

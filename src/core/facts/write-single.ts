@@ -71,10 +71,20 @@ export interface SingleFactResult {
   degraded_dedup: boolean;
 }
 
+export interface SingleFactWriteOptions {
+  /**
+   * Managed source-scoped callers that already hold the canonical coordinator
+   * capability may persist the facts projection in the database without
+   * entering the legacy markdown fence writer.
+   */
+  coordinatedDatabaseOnly?: boolean;
+}
+
 export async function writeSingleFact(
   engine: BrainEngine,
   sourceId: string,
   input: SingleFactInput,
+  opts: SingleFactWriteOptions = {},
 ): Promise<SingleFactResult> {
   const { assertCoordinatedWrite } = await import('../persistence/context.ts');
   await assertCoordinatedWrite(engine, sourceId);
@@ -175,7 +185,7 @@ export async function writeSingleFact(
   const localPath = resolvedSlug ? await lookupSourceLocalPath(engine, sourceId) : null;
   const fenceable = resolvedSlug !== null && localPath !== null;
 
-  if (fenceable) {
+  if (fenceable && !opts.coordinatedDatabaseOnly) {
     const result = await writeFactsToFence(
       engine,
       { sourceId, localPath, slug: resolvedSlug, resolutionSource },

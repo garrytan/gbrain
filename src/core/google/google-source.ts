@@ -552,6 +552,17 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
     }
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(deps.engine);
+    // Pin the source incarnation into every accepted job. Managed workers use
+    // this durable identity to reject stale jobs after archive/recreate or a
+    // topology replacement, before any provider call.
+    const [sourceIdentity] = await deps.engine.executeRaw<{ incarnation: string; archived: boolean }>(
+      'SELECT incarnation,archived FROM sources WHERE id=$1',
+      [deps.sourceId],
+    );
+    if (!sourceIdentity || sourceIdentity.archived) {
+      deps.log('[google] loops_extract: source is unavailable; skipped enqueue');
+      return;
+    }
     // EVERY eligible candidate is enqueued (up to a generous safety ceiling).
     // The queue is the backlog; the worker's concurrency is the rate limit.
     //
@@ -606,7 +617,12 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
     for (const c of picked) {
       await queue.add(
         LOOPS_EXTRACT_JOB,
-        { slug: c.slug, sourceId: deps.sourceId, threadId: c.threadId },
+        {
+          slug: c.slug,
+          sourceId: deps.sourceId,
+          threadId: c.threadId,
+          sourceIncarnation: sourceIdentity.incarnation,
+        },
         {
           priority: 5,
           // Page-revision keyed: a re-sweep of an unchanged thread is a no-op,

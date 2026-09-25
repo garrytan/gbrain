@@ -1243,10 +1243,19 @@ describe('google-source materialize', () => {
       await insertGoogleSource(dir);
       await withHome(async () => {
         await sweep(dir, fx, vault, {}, 'gmail');
-        const jobs1 = await engine.executeRaw<{ id: number; idempotency_key: string | null }>(
-          `SELECT id, idempotency_key FROM minion_jobs WHERE name = 'loops_extract'`,
+        const jobs1 = await engine.executeRaw<{
+          id: number;
+          idempotency_key: string | null;
+          data: Record<string, unknown> | string;
+        }>(
+          `SELECT id, idempotency_key, data FROM minion_jobs WHERE name = 'loops_extract'`,
         );
         expect(jobs1.length).toBe(1);
+        const source = await engine.executeRaw<{ incarnation: string }>(
+          `SELECT incarnation FROM sources WHERE id = 'gsrc'`,
+        );
+        const jobData = typeof jobs1[0].data === 'string' ? JSON.parse(jobs1[0].data) : jobs1[0].data;
+        expect(jobData.sourceIncarnation).toBe(source[0].incarnation);
         // Key folds the SOURCE first (red-team: the same account registered
         // twice must not coalesce source B's job onto source A's).
         expect(jobs1[0].idempotency_key).toMatch(/^loops:[^:]+:emails\//);

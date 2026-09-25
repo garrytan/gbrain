@@ -47,6 +47,12 @@ describe('jobs.ts wiring', () => {
     expect(registered).toContain('loops_extract');
     expect(src).not.toMatch(/worker\.register\(\s*'loops_extract'/);
   });
+
+  test('managed worker selects the source-incarnation fenced handler', () => {
+    expect(src).toContain('sourceIncarnation');
+    expect(src).toContain('runManagedLoopsExtract');
+    expect(src).toMatch(/brain\?\.enabled[\s\S]*runManagedLoopsExtract/);
+  });
 });
 
 describe('kill-switch config key', () => {
