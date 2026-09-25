@@ -199,7 +199,7 @@ test('subjectless withdrawal removes an exact stale chunk even when the page bod
     try {
       await engine.putPage('stale-projection', { type: 'note', title: 'Stale projection', compiled_truth: 'Current safe body' },
         { sourceId: isolatedSourceId });
-      await engine.upsertChunks('stale-projection', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
+      await engine.upsertChunks('stale-projection', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: ` \n${claim}\n ` }],
         { sourceId: isolatedSourceId });
       const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' }, { source_id: isolatedSourceId });
 

@@ -51,7 +51,7 @@ export async function recordFactWithdrawal(
             AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
             AND COALESCE(source_markdown_slug,entity_slug) IS NOT NULL
         ), chunk_shortlist AS MATERIALIZED (
-          SELECT c.page_id,regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g') AS chunk_text
+          SELECT c.page_id,btrim(regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g')) AS chunk_text
           FROM content_chunks c JOIN pages p ON p.id=c.page_id CROSS JOIN target
           WHERE p.source_id=$1 AND target.claim<>''
             AND (target.anchor IS NULL OR position(target.anchor in lower(c.chunk_text))>0)
@@ -65,8 +65,9 @@ export async function recordFactWithdrawal(
           ) AS chunk_match
           FROM chunk_shortlist c CROSS JOIN target GROUP BY c.page_id
         ), fence_pages AS MATERIALIZED (
-          SELECT p.id,p.compiled_truth FROM pages p
+          SELECT p.id,p.compiled_truth FROM pages p CROSS JOIN target
           WHERE p.source_id=$1 AND btrim($3::text)<>'' AND position('gbrain:facts:begin' in p.compiled_truth)>0
+            AND (target.anchor IS NULL OR position(target.anchor in lower(p.compiled_truth))>0)
         ), body_pages AS MATERIALIZED (
           SELECT p.id FROM fence_pages p CROSS JOIN target WHERE
             position(target.claim in regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g'))>0 OR
@@ -74,6 +75,7 @@ export async function recordFactWithdrawal(
         ), timeline_pages AS MATERIALIZED (
           SELECT p.id FROM pages p CROSS JOIN target
           WHERE p.source_id=$1 AND target.claim<>'' AND position('gbrain:facts:begin' in p.timeline)>0 AND (
+            target.anchor IS NULL OR position(target.anchor in lower(p.timeline))>0) AND (
             position(target.claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0 OR
             position(target.escaped_claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0)
         ), candidate_slugs AS (
