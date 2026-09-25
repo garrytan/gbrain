@@ -4,8 +4,9 @@ import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 import { resolveSocketPathForConfig, socketHasLiveListener } from '../context/resolve-ipc.ts';
-import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt } from './types.ts';
+import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import { isPersistenceAdminOperation, PERSISTENCE_ADMIN_OPERATIONS, type PersistenceAdminOperation } from './admin-contract.ts';
+import { discoverResultReceipts } from './result-salvage.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe, prepareLocalIpcPath } from '../context/ipc-path.ts';
 
 export const PERSISTENCE_IPC_VERSION = 1;
@@ -142,6 +143,83 @@ function responseFrame(value: unknown): string {
   return frame;
 }
 
+/** Frozen MEMORY_VERBS v1 operations reachable over this socket; their error enum never widens. */
+const FROZEN_VERB_OPERATIONS = new Set(['remember', 'forget']);
+/** Private commands whose results can carry durable page-write receipts. */
+const RECEIPT_BEARING_ADMIN_OPERATIONS = new Set(['writer_sync']);
+
+/**
+ * `detail` values for a result that ran but could not be framed. `detail` is the
+ * existing freeform envelope field, so frozen MEMORY_VERBS envelopes keep their
+ * exact schema. Only the attested value lets a CLI treat the call as committed.
+ */
+export const UNFRAMED_RESULT_COMMITTED = 'result_unframed_committed';
+export const UNFRAMED_RESULT = 'result_unframed';
+
+/** Receipts returned in one salvaged envelope; the rest are counted, never silently dropped. */
+export const SALVAGE_MAX_RECEIPTS = 1000;
+
+/**
+ * The operation already ran when its result is framed. A mutation result that
+ * cannot be framed keeps the receipts it carried (without outcome bodies), so
+ * committed writes are never reported as a receiptless failure. Frozen verbs keep
+ * the frozen `unavailable` code and carry the detail in `write_error`. Commitment
+ * is attested only when discovery covered the whole result, every candidate
+ * receipt validated, every receipt is committed, the result reported no failure
+ * anywhere, and every receipt fits in the envelope.
+ */
+export function resultFrame(result: unknown, operation?: string): string {
+  try { return responseFrame({ version: 1, ok: true, result }); } catch (error) {
+    // Only mutation results may attest a committed write. Read results can contain
+    // arbitrary page data, including receipt-shaped objects, and must never turn
+    // that content into a successful write acknowledgement.
+    if (operation === undefined || !(isPersistenceIpcMutation(operation) || RECEIPT_BEARING_ADMIN_OPERATIONS.has(operation))) throw error;
+    const salvaged = discoverResultReceipts(result);
+    const all = salvaged.receipts.map(receipt => {
+      const outcomeFree = publicWriteReceipt(receipt);
+      delete outcomeFree.outcome;
+      return outcomeFree;
+    });
+    if (!all.length && salvaged.complete) throw error;
+    const reason = error instanceof OperationError && error.code === 'response_too_large' ? 'response_too_large' : 'storage_error';
+    const frozen = FROZEN_VERB_OPERATIONS.has(operation);
+    const problem = reason === 'response_too_large' ? 'exceeds the local transport limit' : 'could not be encoded';
+    // Shrink until the envelope itself frames; a withheld receipt withholds commitment.
+    for (let limit = Math.min(all.length, SALVAGE_MAX_RECEIPTS); ; limit = Math.floor(limit / 2)) {
+      const receipts = all.slice(0, limit);
+      const withheld = all.length - receipts.length;
+      const committed = salvaged.complete && !salvaged.failed && salvaged.dropped === 0 && withheld === 0
+        && receipts.every(receipt => receipt.state === 'committed');
+      const ids = receipts.length === 1 ? `request_id ${receipts[0].request_id}` : 'these request_ids';
+      const caveats = [
+        ...(salvaged.failed ? ['the result reported a failure'] : []),
+        ...(salvaged.dropped ? [`${salvaged.dropped} receipt${salvaged.dropped === 1 ? '' : 's'} could not be validated`] : []),
+        ...(!salvaged.complete ? ['receipt discovery could not inspect the whole result, so more writes may exist'] : []),
+        ...(withheld ? [`${withheld} of ${all.length} receipts were withheld to fit the transport limit`] : []),
+      ];
+      const states = [...new Set(receipts.map(receipt => receipt.state))];
+      const inspect = receipts.length ? `Inspect ${ids} with get_write_request` : 'Inspect the source\'s requests';
+      const enumerate = withheld || !salvaged.complete ? ' List every accepted request for this source with list_write_requests.' : '';
+      try {
+        return responseFrame({ version: 1, ok: false, error: {
+          error: frozen ? 'unavailable' : reason, write_error: reason,
+          detail: committed ? UNFRAMED_RESULT_COMMITTED : UNFRAMED_RESULT,
+          ...(frozen ? { protocol_version: 1 } : {}),
+          ...(receipts.length === 1 && !withheld ? { write_request: receipts[0] } : receipts.length ? { write_requests: receipts } : {}),
+          message: committed
+            ? `The ${receipts.length === 1 ? 'write' : `${receipts.length} writes`} committed, but the result ${problem}.`
+            : `${states.length ? `States: ${states.join(', ')}; ` : ''}${caveats.length ? `${caveats.join('; ')}; ` : ''}the result ${problem}.`,
+          suggestion: committed
+            ? `Do not resubmit. Read the committed change back, or inspect ${ids} with get_write_request.`
+            : `${inspect} before retrying; do not generate replacement IDs.${enumerate}`,
+        } });
+      } catch (frameError) {
+        if (limit === 0) throw frameError;
+      }
+    }
+  }
+}
+
 /** Bind only when no live listener owns the discovery path. Never displace on timeout. */
 export async function startPersistenceIpcServer(
   socketPath: string,
@@ -208,7 +286,7 @@ export async function startPersistenceIpcServer(
           admitted = true;
           if (request.kind === 'administration' && !provider.administer) throw new OperationError('unavailable', 'This owner does not support local administration.');
           const result = request.kind === 'administration' ? await provider.administer!(request) : await provider.dispatch(request);
-          if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: true, result }));
+          if (!socket.destroyed) socket.end(resultFrame(result, request.operation));
         } catch (error) {
           if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: false, error: publicError(error) }));
         } finally {
@@ -281,8 +359,19 @@ function remoteOperationError(value: unknown): OperationError {
     typeof value.docs === 'string' ? value.docs : undefined);
   if (typeof value.detail === 'string') error.detail = value.detail;
   if (typeof value.protocol_version === 'number') error.protocolVersion = value.protocol_version;
-  if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request);
+  let dropped = 0;
+  if (value.write_request !== undefined) {
+    if (isWriteReceipt(value.write_request)) error.writeRequest = publicWriteReceipt(value.write_request); else dropped++;
+  }
   if (isWriteErrorCode(value.write_error)) error.writeError = value.write_error;
+  if (value.write_requests !== undefined) {
+    const candidates = Array.isArray(value.write_requests) ? value.write_requests : [value.write_requests];
+    const receipts = candidates.filter(isWriteReceipt).map(publicWriteReceipt);
+    dropped += candidates.length - receipts.length;
+    if (receipts.length) error.writeRequests = receipts;
+  }
+  // A receipt this client cannot validate withdraws any commitment attestation.
+  if (dropped && error.detail === UNFRAMED_RESULT_COMMITTED) error.detail = UNFRAMED_RESULT;
   return error;
 }
 

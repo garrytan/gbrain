@@ -22,6 +22,7 @@ import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFil
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
+import type { WriteBlockedReason } from './types.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
@@ -309,7 +310,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       }
       catch (error) {
         if (!(error instanceof OperationError) || !['unexpected_staging_bytes','unexpected_file_bytes','storage_error'].includes(error.code)) throw error;
-        const reason = error.code === 'unexpected_staging_bytes' ? error.code : 'unexpected_file_bytes';
+        const reason: WriteBlockedReason = error.code === 'unexpected_staging_bytes' ? 'unexpected_staging_bytes' : 'unexpected_file_bytes';
         const [blocked] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET
           state=CASE WHEN state IN ('committed','conflict','failed','cancelled') THEN state ELSE 'recovering' END,
           blocked_reason=$2,updated_at=now() WHERE id=$1::uuid RETURNING *`, [id, reason]);

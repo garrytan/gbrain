@@ -4,10 +4,15 @@ import { ERROR_SCHEMA, RESPONSE_SCHEMAS } from '../src/core/verbs.ts';
 import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
 import { parseMutationPrecondition } from '../src/core/persistence/preconditions.ts';
 import { committedVerbOutcome, frozenVerbWriteError } from '../src/core/persistence/verb-errors.ts';
-import { isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../src/core/persistence/types.ts';
+import { isWriteBlockedReason, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../src/core/persistence/types.ts';
 import { receiptFor } from '../src/core/persistence/journal.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { writeHealth, pendingWriteHint } from '../src/core/persistence/health.ts';
+import { Glob } from 'bun';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const ROOT = join(import.meta.dir, '..');
 
 const REQUEST_ID = 'd7599b95-65c2-4d54-aa4e-cb5745af90cf';
 const receipt = (state: WriteReceipt['state']): WriteReceipt => ({
@@ -76,6 +81,15 @@ describe('public write receipts', () => {
       diagnostic: { assessment: 'blocked', reason: 'database_contention', next_action: 'poll' } });
   });
 
+  test('a claim released at the preparation deadline keeps its blocked reason beside the derived health', () => {
+    const row = { request_id: REQUEST_ID, state: 'queued', blocked_reason: 'preparation_deadline',
+      created_at: new Date(), updated_at: new Date() } as WriteRequest;
+    const pending = publicWriteReceipt(receiptFor(row));
+    expect(pending).toMatchObject({ state: 'queued', blocked_reason: 'preparation_deadline',
+      diagnostic: { assessment: 'pending', reason: 'cause_unknown', next_action: 'poll' } });
+    expect(validateAgainstSchema(frozenVerbWriteError(pending).toJSON(), ERROR_SCHEMA)).toEqual([]);
+  });
+
   test('renewed aged requests request inspection without inventing owner failure', () => {
     const row = { request_id: REQUEST_ID, state: 'running', created_at: new Date(Date.now() - 130_000),
       updated_at: new Date() } as WriteRequest;
@@ -112,6 +126,58 @@ describe('public write receipts', () => {
       expect(isWriteReceipt({ ...receipt('queued'), ...patch })).toBe(false);
     }
     expect(isWriteReceipt({ ...receipt('committed'), retry_after_ms: 1000 })).toBe(false);
+  });
+
+  test('blocked reasons distinguish owner loss from ordinary queueing without changing state', () => {
+    const blocked = { ...receipt('queued'), blocked_reason: 'owner_unavailable' as const };
+    expect(isWriteReceipt(blocked)).toBe(true);
+    expect(publicWriteReceipt(blocked)).toEqual(blocked);
+    expect(publicWriteReceipt(receipt('queued'))).not.toHaveProperty('blocked_reason');
+    const uncertain = { ...receipt('recovering'), blocked_reason: 'commit_outcome_uncertain' as const };
+    expect(JSON.parse(JSON.stringify(Object.assign(new OperationError('write_pending', 'Pending.'), { writeRequest: uncertain })))
+      .write_request).toEqual(uncertain);
+  });
+
+  test.each([['future', 'future_reason'], ['null', null], ['empty', ''], ['number', 7], ['object', { reason: 'x' }], ['array', ['owner_unavailable']]])(
+    'a %s blocked_reason never invalidates a valid receipt and is dropped from public output', (_label, value) => {
+      for (const state of ['queued', 'committed'] as const) {
+        const received = { ...receipt(state), blocked_reason: value };
+        expect(isWriteReceipt(received)).toBe(true);
+        expect(publicWriteReceipt(received as unknown as WriteReceipt)).toEqual(receipt(state));
+      }
+    });
+
+  test('every blocked_reason literal stored by source code is in the shared vocabulary', () => {
+    const files = new Glob('src/**/*.ts').scanSync({ cwd: ROOT });
+    const found = new Map<string, string>();
+    const patterns = [
+      /blocked_reason(?:='|: ')([a-z_]+)'/g,                                     // SQL assignment or object field
+      /await (?:releaseUnpublishedClaim|markRecovering)\([^;]*;/g,               // every literal in a producer call
+      /const reason: WriteBlockedReason = [^;]*;/g,                               // typed direct-SQL reason
+    ];
+    for (const file of files) {
+      if (file.endsWith('schema-embedded.generated.ts')) continue;
+      const text = readFileSync(join(ROOT, file), 'utf8');
+      for (const pattern of patterns) for (const match of text.matchAll(pattern)) {
+        const literals = match[1] ? [match[1]] : [...match[0].matchAll(/'([a-z_]+)'/g)].map(m => m[1]);
+        for (const literal of literals) found.set(literal, file);
+      }
+    }
+    // Producers found by the scan: claim release, recovery marks, pool capacity and recovery blocks.
+    for (const expected of ['owner_unavailable', 'writer_busy', 'database_contention', 'revision_changed_repreparing', 'recovery_required',
+      'recovery_capacity', 'consumer_stopping', 'preparation_deadline', 'publication_failed', 'commit_outcome_uncertain', 'publication_not_started',
+      'writer_pool_capacity', 'database_unavailable', 'unexpected_staging_bytes', 'unexpected_file_bytes'])
+      expect(found.has(expected)).toBe(true);
+    const unknown = [...found].filter(([literal]) => !isWriteBlockedReason(literal));
+    expect(unknown).toEqual([]);
+  });
+
+  test('frozen verb receipt schema accepts the blocked reason', () => {
+    const body = frozenVerbWriteError({ ...receipt('queued'), blocked_reason: 'owner_unavailable' }).toJSON();
+    expect(body.write_error).toBe('write_pending');
+    expect(body.write_request?.blocked_reason).toBe('owner_unavailable');
+    expect(body.message).toContain('not committed');
+    expect(validateAgainstSchema(body, ERROR_SCHEMA)).toEqual([]);
   });
 
   test('public persistence details preserve mode without adding private fields', () => {

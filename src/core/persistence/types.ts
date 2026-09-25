@@ -19,6 +19,25 @@ export const WRITE_ERROR_CODES = [
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];
 
+/**
+ * Content-free reasons an accepted request is waiting or recovering; they never change `state`.
+ * On a terminal receipt only `unexpected_staging_bytes`/`unexpected_file_bytes` can remain: the
+ * outcome is final and immutable, but its retained recovery/staging files block the worktree until
+ * an operator reconciles them. Every value stored by the journal must come from this list.
+ */
+export const WRITE_BLOCKED_REASONS = [
+  'writer_busy', 'writer_pool_capacity', 'owner_unavailable', 'writer_lock_unavailable',
+  'recovery_required', 'recovery_capacity', 'database_contention', 'database_unavailable',
+  'consumer_stopping', 'preparation_deadline', 'revision_changed_repreparing', 'publication_not_started', 'publication_failed',
+  'commit_outcome_uncertain', 'unexpected_file_bytes', 'unexpected_staging_bytes',
+] as const;
+
+export type WriteBlockedReason = typeof WRITE_BLOCKED_REASONS[number];
+
+export function isWriteBlockedReason(value: unknown): value is WriteBlockedReason {
+  return typeof value === 'string' && (WRITE_BLOCKED_REASONS as readonly string[]).includes(value);
+}
+
 export const WRITE_HEALTH_REASONS = ['pending', 'waiting_on_earlier_write', 'database_contention', 'writer_busy',
   'revision_changed_repreparing', 'recovery_required', 'writer_pool_capacity', 'owner_unavailable',
   'writer_lock_unavailable', 'consumer_stopping', 'cause_unknown'] as const;
@@ -37,6 +56,8 @@ export interface WriteReceipt {
   state: WriteRequestState;
   /** Milliseconds until polling is useful; null for terminal outcomes. */
   retry_after_ms: number | null;
+  /** Why work is blocked, e.g. `owner_unavailable`. Diagnostic only; `state` alone decides commitment. */
+  blocked_reason?: WriteBlockedReason;
   revision?: string;
   compacted?: boolean;
   outcome?: Record<string, unknown>;
@@ -96,6 +117,8 @@ export function isWriteReceipt(value: unknown): value is WriteReceipt {
   const retry = value.retry_after_ms;
   if (retry !== null && (typeof retry !== 'number' || !Number.isSafeInteger(retry) || retry < 0)) return false;
   if (isTerminalWriteState(value.state as WriteRequestState) && retry !== null) return false;
+  // blocked_reason is diagnostic: a null, malformed or newer value never invalidates the receipt;
+  // publicWriteReceipt drops anything outside WRITE_BLOCKED_REASONS.
   if (value.revision !== undefined && (typeof value.revision !== 'string' || !value.revision)) return false;
   if (value.compacted !== undefined && typeof value.compacted !== 'boolean') return false;
   if (value.outcome !== undefined && !isRecord(value.outcome)) return false;
@@ -117,6 +140,7 @@ export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
     request_id: receipt.request_id,
     state: receipt.state,
     retry_after_ms: receipt.retry_after_ms,
+    ...(isWriteBlockedReason(receipt.blocked_reason) ? { blocked_reason: receipt.blocked_reason } : {}),
     ...(receipt.revision !== undefined ? { revision: receipt.revision } : {}),
     ...(receipt.compacted !== undefined ? { compacted: receipt.compacted } : {}),
     ...(receipt.outcome !== undefined ? { outcome: receipt.outcome } : {}),

@@ -147,6 +147,50 @@ describe('own-principal write receipt operations', () => {
     for (const key of ['principal_id', 'authority', 'intent', 'execution_token', 'recovery', 'digest']) expect(receipt).not.toHaveProperty(key);
   });
 
+  test('queued, owner-lost, commit-uncertain and committed receipts are distinguishable', async () => {
+    const queued = await accept();
+    const ordinary = await call('get_write_request', { request_id: queued.request_id });
+    expect(ordinary).toMatchObject({ state: 'queued', retry_after_ms: 1000 });
+    expect(ordinary).not.toHaveProperty('blocked_reason');
+
+    await engine.executeRaw("UPDATE persistence_requests SET blocked_reason='owner_unavailable' WHERE id=$1", [queued.id]);
+    expect(await call('get_write_request', { request_id: queued.request_id }))
+      .toMatchObject({ state: 'queued', retry_after_ms: 30000, blocked_reason: 'owner_unavailable',
+        diagnostic: { assessment: 'blocked', reason: 'owner_unavailable', next_action: 'inspect_owner' } });
+
+    const uncertain = await accept();
+    await engine.executeRaw("UPDATE persistence_requests SET state='recovering',blocked_reason='commit_outcome_uncertain' WHERE id=$1", [uncertain.id]);
+    expect(await call('get_write_request', { request_id: uncertain.request_id }))
+      .toMatchObject({ state: 'recovering', blocked_reason: 'commit_outcome_uncertain' });
+
+    // Unknown internal text never leaves the journal as a public reason.
+    await engine.executeRaw("UPDATE persistence_requests SET blocked_reason='/private/path' WHERE id=$1", [queued.id]);
+    const sanitized = await call('get_write_request', { request_id: queued.request_id });
+    expect(sanitized).toMatchObject({ state: 'queued' });
+    expect(sanitized).not.toHaveProperty('blocked_reason');
+
+    const committed = await accept();
+    await engine.executeRaw(`UPDATE persistence_requests SET state='committed',outcome=$2::text::jsonb,completed_at=now() WHERE id=$1`,
+      [committed.id, JSON.stringify({ status: 'created_or_updated', slug: 'allowed/page' })]);
+    const done = await call('get_write_request', { request_id: committed.request_id });
+    expect(done).toMatchObject({ state: 'committed', retry_after_ms: null, outcome: { status: 'created_or_updated' } });
+    expect(done).not.toHaveProperty('blocked_reason');
+    expect(done).not.toHaveProperty('write_error');
+  });
+
+  test('a committed receipt with retained staging recovery stays committed and names the operator block', async () => {
+    const row = await accept();
+    // Terminal outcome is immutable; recoverPublication can only mark retained staging/file bytes.
+    await engine.executeRaw(`UPDATE persistence_requests SET state='committed',outcome=$2::text::jsonb,completed_at=now(),
+      blocked_reason='unexpected_staging_bytes' WHERE id=$1`, [row.id, JSON.stringify({ status: 'created_or_updated', slug: 'allowed/page' })]);
+    const receipt = await call('get_write_request', { request_id: row.request_id });
+    expect(receipt).toMatchObject({ state: 'committed', retry_after_ms: null, blocked_reason: 'unexpected_staging_bytes',
+      outcome: { status: 'created_or_updated' } });
+    const listed = await call('list_write_requests', { source_id: source });
+    expect(listed.requests.find((r: { request_id: string }) => r.request_id === row.request_id))
+      .toMatchObject({ state: 'committed', blocked_reason: 'unexpected_staging_bytes' });
+  });
+
   test('foreign and missing UUIDs have the same get/cancel not_found envelope', async () => {
     const row = await accept(foreign);
     for (const operation of ['get_write_request', 'cancel_write_request']) {

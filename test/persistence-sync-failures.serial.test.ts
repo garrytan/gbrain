@@ -238,7 +238,7 @@ test('explicit retry leaves a frozen terminal cursor untouched while queued work
     expect((await engine.executeRaw<{ run: string }>("SELECT completed_keys->0->>'runId' AS run FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]))[0].run).toBe(blocked.runId!);
     const claimed = await claimNextWrite(engine, localHostId()); expect(claimed?.id).toBe(active.id);
     expect(await performManagedSync(engine, { ...options, retryFailed: true })).toEqual(blocked);
-    await markRecovering(engine, claimed!, 'Synthetic recovering fixture');
+    await markRecovering(engine, claimed!, 'commit_outcome_uncertain');
     expect(await performManagedSync(engine, { ...options, retryFailed: true })).toEqual(blocked);
     await engine.transaction(tx => completeWrite(tx, claimed!, 'cancelled', {}, { code: 'storage_error', message: 'Fixture cleanup' }));
     expect((await performManagedSync(engine, { ...options, retryFailed: true })).status).toBe('first_sync');

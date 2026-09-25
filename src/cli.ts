@@ -837,10 +837,10 @@ async function main() {
     // drain bounds teardown; the hard-deadline timer armed at teardown entry
     // bounds a hung one.
     const { reportPersistenceCliError } = await import('./commands/persistence-delegate.ts');
-    if (!await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest)) {
-      console.error(e instanceof Error ? e.message : String(e));
+    // The reporter owns the write-error verdict, so its printed state and exit code agree.
+    if (!await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest || !!(e as OperationError)?.writeRequests?.length)) {
+      console.error(e instanceof Error ? e.message : String(e)); setCliExitVerdict(1);
     }
-    setCliExitVerdict(1);
   } finally {
     // 1s per-sink drain budget: read paths with no pending work pay the ~0ms
     // fast path; capture/import that DO enqueue pay up to 1s (+ facts shutdown

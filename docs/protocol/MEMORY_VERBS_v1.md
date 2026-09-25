@@ -283,10 +283,17 @@ Response: `{ id, expired, reason, protocol_version }`.
 #### Durable write receipts (additive)
 
 Write receipts distinguish accepted work from committed memory. Their public
-shape is `{request_id, state, retry_after_ms, revision?, outcome?, persistence?,
-compacted?, created_at?, updated_at?, diagnostic?}`. States are `queued`, `running`,
+shape is `{request_id, state, retry_after_ms, blocked_reason?, revision?, outcome?,
+persistence?, compacted?, created_at?, updated_at?, diagnostic?}`. States are `queued`, `running`,
 `recovering`, `committed`, `conflict`, `failed`, and `cancelled`. Terminal
-receipts have `retry_after_ms: null`. `persistence.mode` distinguishes a
+receipts have `retry_after_ms: null`. `blocked_reason` is a content-free
+diagnostic (for example `owner_unavailable` or `commit_outcome_uncertain`)
+drawn from a closed vocabulary; it is the recorded journal reason, while
+`diagnostic.reason` is the derived health summary. Clients drop an unrecognized
+`blocked_reason` rather than discard the receipt. Only `state` decides
+commitment. On a terminal receipt it can only name retained recovery files
+(`unexpected_staging_bytes`, `unexpected_file_bytes`) that need operator
+reconciliation; the outcome is still final. `persistence.mode` distinguishes a
 filesystem-backed write from an intentional database-only write; Git progress
 does not change the meaning of committed memory.
 

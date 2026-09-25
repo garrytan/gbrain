@@ -3,10 +3,14 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { frozenVerbWriteError, runMemoryWrite, writeFailureDiagnostic } from '../src/core/persistence/verb-errors.ts';
 import type { WriteReceipt } from '../src/core/persistence/types.ts';
 import { reportPersistenceCliError, runDeferredPersistenceCommand } from '../src/commands/persistence-delegate.ts';
-import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { printSyncResult, type SyncResult } from '../src/commands/sync.ts';
+import { writeDiagnostic, type Pending } from '../src/core/persistence/sync-run.ts';
+import { WRITE_BLOCKED_REASONS } from '../src/core/persistence/types.ts';
+import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { ERROR_SCHEMA } from '../src/core/verbs.ts';
 import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
+import { writerNextAction } from '../src/core/persistence/diagnostics.ts';
 
 const requestId = '20000000-0000-4000-8000-000000000001';
 const receipt: WriteReceipt = { request_id: requestId, state: 'conflict', retry_after_ms: null };
@@ -58,6 +62,20 @@ test('human output leads with source_changed, JSON stays frozen and clean, both 
     expect(lines[0]).toStartWith('Error [source_changed]:');
     expect(lines.join('\n')).toContain(`Request: ${requestId} (conflict)`);
     expect(stdout).not.toContain('Error [');
+  } finally { stderr.mockRestore(); }
+});
+
+test('owner-unavailable pending writes name their blocked reason in human and JSON output', async () => {
+  const pending: WriteReceipt = { request_id: requestId, state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' };
+  const error = frozenVerbWriteError(pending);
+  const stderr = spyOn(console, 'error').mockImplementation(() => {});
+  let stdout = '';
+  try {
+    expect(await reportPersistenceCliError(error, true, async text => { stdout += text; })).toBe(true);
+    expect(JSON.parse(stdout)).toMatchObject({ error: 'unavailable', write_error: 'write_pending', write_request: pending });
+    const lines = stderr.mock.calls.map(args => args.join(' ')).join('\n');
+    expect(lines).toContain('Error [write_pending]:');
+    expect(lines).toContain(`Request: ${requestId} (queued, owner_unavailable)`);
   } finally { stderr.mockRestore(); }
 });
 
@@ -119,4 +137,98 @@ test.each(['blocked_by_failures', 'partial'] as const)('managed %s rendering use
   expect(output).not.toContain('frontmatter validate');
   expect(output).not.toContain('sync --skip-failed');
   if (pending) { expect(output).toContain('not committed'); expect(output).not.toContain('First sync complete'); }
+});
+
+function syncRow(state: WriteRequest['state'], blocked: string | null): WriteRequest {
+  const now = new Date('2026-01-01T00:00:00Z');
+  return { id: requestId, request_id: requestId, state, blocked_reason: blocked, error_code: null, error_message: null,
+    outcome: null, compacted: false, created_at: now, updated_at: now } as unknown as WriteRequest;
+}
+const syncPending = { requestId, slug: 'notes/example', pageId: null, intent: { path: 'notes/example.md' } } as unknown as Pending;
+const syncCursor = { sourceId: 'example-source', root: '/nonexistent-example-root' };
+
+test.each([...WRITE_BLOCKED_REASONS])('sync diagnostic reason and write_request agree for pending %s', blocked => {
+  for (const state of ['queued', 'running', 'recovering'] as const) {
+    const diagnostic = writeDiagnostic(syncCursor, syncPending, syncRow(state, blocked));
+    expect(diagnostic.reason).toBe(blocked);
+    expect(diagnostic.write_request.blocked_reason).toBe(blocked);
+    expect(diagnostic.write_request.state).toBe(state);
+    expect(diagnostic.write_error).toBe('write_pending');
+    expect(diagnostic.suggestion).toBe(writerNextAction(blocked));
+  }
+});
+
+test('an unknown or absent stored reason stays write_pending in both fields', () => {
+  for (const blocked of [null, '/private/path', 'future_reason']) {
+    const diagnostic = writeDiagnostic(syncCursor, syncPending, syncRow('queued', blocked));
+    expect(diagnostic.reason).toBe('write_pending');
+    expect(diagnostic.write_request).not.toHaveProperty('blocked_reason');
+    expect(JSON.stringify(diagnostic)).not.toContain('/private/path');
+  }
+});
+
+const OTHER_ID = '20000000-0000-4000-8000-000000000002';
+async function reportFraming(receipts: WriteReceipt[], writeError: 'response_too_large' | 'storage_error' | 'write_pending' = 'response_too_large',
+  detail: string | null = 'result_unframed_committed') {
+  const error = new OperationError(writeError, 'Result could not be framed.');
+  error.writeError = writeError;
+  if (detail !== null) error.detail = detail;
+  if (receipts.length === 1) error.writeRequest = receipts[0]; else error.writeRequests = receipts;
+  const stderr = spyOn(console, 'error').mockImplementation(() => {});
+  let stdout = '';
+  try {
+    expect(await reportPersistenceCliError(error, true, async text => { stdout += text; })).toBe(true);
+    return { json: JSON.parse(stdout), lines: stderr.mock.calls.map(args => args.join(' ')).join('\n'), exit: currentExitCode() };
+  } finally { stderr.mockRestore(); }
+}
+const committedCli = (id: string): WriteReceipt => ({ request_id: id, state: 'committed', retry_after_ms: null });
+
+test('a committed write whose result could not be framed exits 0 with the unchanged error envelope', async () => {
+  const single = await reportFraming([committedCli(requestId)]);
+  expect(single.exit).toBe(0);
+  expect(single.json).toMatchObject({ error: 'response_too_large', write_error: 'response_too_large', write_request: { state: 'committed' } });
+  expect(single.lines).toContain('Committed [response_too_large]');
+  _resetCliExitVerdictForTests();
+  const batch = await reportFraming([committedCli(requestId), committedCli(OTHER_ID)], 'storage_error');
+  expect(batch.exit).toBe(0);
+  expect(batch.json.write_requests).toHaveLength(2);
+  expect(batch.lines).toContain(`Request: ${OTHER_ID} (committed)`);
+});
+
+test('any uncommitted receipt, or a non-framing error, keeps exit 1', async () => {
+  const mixed = await reportFraming([committedCli(requestId), { request_id: OTHER_ID, state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' }]);
+  expect(mixed.exit).toBe(1);
+  expect(mixed.lines).toContain(`Request: ${OTHER_ID} (queued, owner_unavailable)`);
+  _resetCliExitVerdictForTests();
+  expect((await reportFraming([committedCli(requestId)], 'write_pending')).exit).toBe(1);
+  _resetCliExitVerdictForTests();
+  expect((await reportFraming([])).exit).toBe(1);
+});
+
+test('unattested or failure-flagged committed receipts never exit 0 (older owner, failed result, dropped receipt)', async () => {
+  // An older owner sends committed receipts with no attestation.
+  const legacy = await reportFraming([committedCli(requestId)], 'response_too_large', null);
+  expect(legacy.exit).toBe(1);
+  expect(legacy.lines).toContain('Error [response_too_large]');
+  expect(legacy.lines).not.toContain('Committed');
+  _resetCliExitVerdictForTests();
+  // The owner saw a result-level failure or an invalid receipt.
+  for (const plural of [[committedCli(requestId)], [committedCli(requestId), committedCli(OTHER_ID)]]) {
+    const failed = await reportFraming(plural, 'storage_error', 'result_unframed');
+    expect(failed.exit).toBe(1);
+    expect(failed.lines).not.toContain('Committed');
+    _resetCliExitVerdictForTests();
+  }
+});
+
+test('a remote MCP error cannot claim a committed framing salvage', async () => {
+  const { RemoteMcpError } = await import('../src/core/mcp-client.ts');
+  const error = new RemoteMcpError('tool_error', 'framing', { code: 'response_too_large', write_error: 'response_too_large',
+    server_detail: 'result_unframed_committed', write_request: committedCli(requestId) });
+  const stderr = spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    expect(await reportPersistenceCliError(error, false)).toBe(true);
+    expect(currentExitCode()).toBe(1);
+    expect(stderr.mock.calls.map(args => args.join(' ')).join('\n')).not.toContain('Committed');
+  } finally { stderr.mockRestore(); }
 });

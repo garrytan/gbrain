@@ -13,6 +13,7 @@ import { writerDiagnostics } from '../src/core/persistence/control.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { waitFor } from './helpers/wait-for.ts';
 import { readWriterDiagnostics, WRITER_NEXT_ACTIONS } from '../src/core/persistence/diagnostics.ts';
+import { WRITE_BLOCKED_REASONS } from '../src/core/persistence/types.ts';
 
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
@@ -57,6 +58,14 @@ test('failed optional enrichment returns no facts without making database writes
     throw new Error('PRIVATE_DRIVER_MARKER');
   } } as unknown as BrainEngine;
   expect((await writeHealthFacts(engine, [{ state: 'queued', source_incarnation: randomUUID() } as WriteRequest])).size).toBe(0);
+});
+
+test('every public blocked reason has actionable operator advice', () => {
+  for (const reason of WRITE_BLOCKED_REASONS) {
+    expect(WRITER_NEXT_ACTIONS[reason]).toBeString();
+    expect(WRITER_NEXT_ACTIONS[reason].length).toBeGreaterThan(30);
+    expect(WRITER_NEXT_ACTIONS[reason]).not.toContain('sanitized receipt');
+  }
 });
 
 for (const reason of ['writer_busy', 'database_contention']) test.each([0, 180000])(`trusted ${reason} advice agrees with health at age %d`, async age => {

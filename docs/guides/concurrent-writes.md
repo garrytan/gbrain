@@ -202,9 +202,67 @@ and do not disable guards or change ownership as part of rollback.
 | `cancelled` | Cancelled before publication began. |
 
 Receipts include `request_id`, `state`, and `retry_after_ms`, with optional
-revision, outcome, persistence status, and timestamps. Terminal receipts have
-`retry_after_ms: null`. Private queued content, credential hashes, and recovery
-bytes are never part of the receipt.
+revision, outcome, persistence status, `blocked_reason`, and timestamps. Terminal
+receipts have `retry_after_ms: null`. Private queued content, credential hashes,
+and recovery bytes are never part of the receipt.
+
+`state` alone decides commitment. `blocked_reason` explains why accepted work
+is not progressing, for example `owner_unavailable` (the canonical owner is
+offline or changed), `writer_busy`, `writer_pool_capacity`, `preparation_deadline`
+(an unpublished attempt was released at its preparation deadline),
+`database_contention`, or, while `recovering`, `commit_outcome_uncertain`
+(publication ran but the commit acknowledgment was lost). It is a fixed,
+content-free vocabulary, and its absence means ordinary queueing. It appears on
+pending error envelopes, `get_write_request`, `list_write_requests`, and CLI
+output (`Request: <id> (queued, owner_unavailable)`). Clients ignore a null,
+malformed or unrecognized reason rather than discard the receipt.
+
+A terminal receipt can keep only `unexpected_staging_bytes` or
+`unexpected_file_bytes`. For example, `state: "committed"` with
+`blocked_reason: "unexpected_staging_bytes"` means the write committed and its
+outcome is final. Retained recovery or staging files still block that worktree
+until an operator reconciles them (see `gbrain sources writer status`). Do not
+resubmit the write.
+
+A local owner may be unable to return a mutation result after the work has
+run, because it exceeds the transport limit (`response_too_large`) or cannot
+be encoded (`storage_error`). Read results never salvage receipts. For a
+mutation, the owner walks the whole result, including arrays and every nesting
+level, and returns the receipts it found without outcome bodies:
+`write_request` for one write, or `write_requests` for a batch such as fact
+extraction or a sync's pending write. `remember` and `forget` keep the frozen
+`unavailable` code, with the detail in `write_error`.
+
+The owner sets `detail: "result_unframed_committed"` only when all of these
+hold:
+
+- the walk covered the whole result;
+- every receipt it found validated and is `committed`;
+- no part of the result reported a failure;
+- every receipt fits in the envelope.
+
+A failure is a `status` of `error`, `failed`, `partial`, `blocked_by_failures`,
+`warn` or `fail`; an `error` or `skipped` field; `ok` or `success` set to false;
+a non-empty `errors` or `failures`; or a positive `failed`, `failures`,
+`failedFiles` or `pages_failed`. If two copies of one request disagree, the
+non-committed copy wins.
+
+The walk is bounded and cycle-safe. It stops early when the result nests too
+deeply, holds too many entries, or contains a value it cannot inspect, such as
+a custom encoder or a throwing getter. An envelope holds at most 1,000 receipts
+and shrinks further when needed to fit the frame. An early stop or a withheld
+receipt withdraws the attestation, and the message says so. In that case, list
+the source's requests with `list_write_requests` rather than assume none exist.
+
+Otherwise the owner sends `detail: "result_unframed"` and names the failure,
+the unvalidated or withheld receipts, or the incomplete walk in the message. A
+client that cannot validate a receipt withdraws the attestation. The CLI prints
+`Committed [...]` and exits 0 only for that attested local-owner envelope. The
+JSON envelope is unchanged. Everything else exits 1: an older owner's
+unattested envelope, a remote MCP error, a failed result, or any dropped,
+withheld or undiscovered receipt. Never resubmit a committed receipt. Read the
+change back or inspect the request ID. A result whose walk completed and found
+no receipt still returns the plain error.
 
 Nonterminal receipts may include a validated `diagnostic` with `age_ms`,
 `assessment` (`pending`, `blocked`, or `stalled`), a closed `reason`, and
