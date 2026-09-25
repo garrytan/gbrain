@@ -38,6 +38,14 @@ describe('normalizeForGrounding', () => {
     expect(s.slice(start, end)).toBe('NOT\n\nready');
   });
 
+  test('a collapsed whitespace run maps to its first whitespace char, not the previous letter (#5451)', () => {
+    const s = 'I am normalizing  \n every approved frame.';
+    const { norm, map } = normalizeForGrounding(s);
+    const sp = norm.indexOf(' every');
+    expect(map[sp]).toBe(s.indexOf('  \n every'));
+    expect(s.slice(map[sp], map[norm.indexOf('frame') + 'frame'.length - 1] + 1).trim()).toBe('every approved frame');
+  });
+
   test('empty and whitespace-only inputs', () => {
     expect(normForGrounding('')).toBe('');
     expect(normForGrounding('   \n\t ')).toBe('');
@@ -104,6 +112,15 @@ describe('groundQuote — the repair ladder', () => {
     if (g.status === 'near') {
       expect(transcript).toContain(g.replacement);
       expect(normForGrounding(g.replacement)).toContain('mechanical checker beats an llm judge');
+    }
+  });
+
+  test('near-match replacement starts on a word boundary, not mid-word (#5451)', () => {
+    const g = groundQuote('the team agreed the mechanical checker beats an LLM judge today', t);
+    expect(g.status).toBe('near');
+    if (g.status === 'near') {
+      const at = transcript.indexOf(g.replacement);
+      expect(at === 0 || /\s/.test(transcript[at - 1])).toBe(true);
     }
   });
 

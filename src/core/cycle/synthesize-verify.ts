@@ -158,6 +158,7 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
   const out: string[] = [];
   const map: number[] = [];
   let pendingSpace = false;
+  let pendingSpaceAt = 0;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
   // per-unit loop would silently leave non-BMP text unfolded and diverge
@@ -168,6 +169,7 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
     idx += cp.length;
     let ch = cp;
     if (/\s/.test(ch)) {
+      if (!pendingSpace) pendingSpaceAt = i;
       pendingSpace = out.length > 0;
       continue;
     }
@@ -180,7 +182,9 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
     else if (ch === '…') ch = '...';
     if (pendingSpace) {
       out.push(' ');
-      if (withMap) map.push(map.length > 0 ? map[map.length - 1] : i);
+      // #5451: the folded space maps to the first whitespace of its run, not the
+      // previous letter, so a slice that starts on it trims to a word boundary.
+      if (withMap) map.push(pendingSpaceAt);
       pendingSpace = false;
     }
     const low = ch.toLowerCase();
