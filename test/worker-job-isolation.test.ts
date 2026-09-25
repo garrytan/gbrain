@@ -36,8 +36,19 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await engine.executeRaw('DELETE FROM minion_lease_pressure_log');
   await engine.executeRaw('DELETE FROM minion_jobs');
 });
+
+/** Delay state after a no-burn requeue: remaining delay, stacktrace, audit rows. */
+async function requeueDetail(id: number): Promise<{ delay_ms: number; stacktrace: unknown; pressure: number }> {
+  const [row] = await engine.executeRaw<{ delay_ms: number; stacktrace: unknown }>(
+    `SELECT (EXTRACT(EPOCH FROM (delay_until - now())) * 1000)::float8 AS delay_ms, stacktrace
+       FROM minion_jobs WHERE id = $1`, [id]);
+  const [p] = await engine.executeRaw<{ n: number }>(
+    'SELECT count(*)::int AS n FROM minion_lease_pressure_log WHERE job_id = $1', [id]);
+  return { delay_ms: Number(row!.delay_ms), stacktrace: row!.stacktrace, pressure: Number(p!.n) };
+}
 
 function makeWorker(invocationCmd = process.execPath, argsPrefix = [FIXTURE]) {
   const worker = new MinionWorker(engine, {
@@ -153,6 +164,38 @@ describe('worker with jobIsolation=process (PGLite + fake child)', () => {
       const row = await jobRow(job.id);
       expect(row.status).toBe('dead'); // maxAttempts 1 → attempt burned → dead
       expect(row.error_text).toContain('fake child handler failure');
+    });
+  }, 20_000);
+
+  test('T5: deferred outcome keeps the caller delay, burns no attempt, and is not lease pressure', async () => {
+    await withEnv({ FAKE_RUN_CHILD_MODE: 'deferred' }, async () => {
+      const job = await queue.add('isotest', {}, { max_attempts: 1 });
+      const worker = makeWorker();
+      await runWorkerUntil(worker, async () => (await jobRow(job.id)).status !== 'waiting'
+        && (await jobRow(job.id)).status !== 'active');
+      const row = await jobRow(job.id);
+      expect(row.status).toBe('delayed'); // max_attempts 1: a burned attempt would be dead
+      expect(row.attempts_made).toBe(0);
+      expect(row.error_text).toBe('fake cycle lock busy');
+      const d = await requeueDetail(job.id);
+      expect(d.delay_ms).toBeGreaterThan(40_000); // 45s survived the boundary, not a 1-3s bounce
+      expect(d.stacktrace === null || (Array.isArray(d.stacktrace) && d.stacktrace.length === 0)).toBe(true);
+      expect(d.pressure).toBe(0);
+    });
+  }, 20_000);
+
+  test('T5b: a rate-lease outcome keeps its cooldown delay and its lease-pressure row', async () => {
+    await withEnv({ FAKE_RUN_CHILD_MODE: 'rate_lease_delay' }, async () => {
+      const job = await queue.add('isotest', {}, { max_attempts: 1 });
+      const worker = makeWorker();
+      await runWorkerUntil(worker, async () => (await jobRow(job.id)).status !== 'waiting'
+        && (await jobRow(job.id)).status !== 'active');
+      const row = await jobRow(job.id);
+      expect(row.status).toBe('delayed');
+      expect(row.attempts_made).toBe(0);
+      const d = await requeueDetail(job.id);
+      expect(d.delay_ms).toBeGreaterThan(40_000); // cooldown survived, not the 1-3s bounce
+      expect(d.pressure).toBe(1); // genuine lease telemetry unchanged
     });
   }, 20_000);
 

@@ -185,6 +185,22 @@ describe('N2: autopilot dispatch sees transcript-only backlog', () => {
   });
 });
 
+describe('due scan keys the transcript snapshot on the policy day', () => {
+  test("a snapshot from the policy's utcDay is reused, not recounted against the wall clock", async () => {
+    const mod = await import('../src/core/cycle/extract-atoms-auto-drain.ts');
+    await seedCorpus(0); // real recount would find 0 live transcripts
+    const signature = await mod.transcriptBacklogSignature(engine, root);
+    expect(signature).not.toBeNull();
+    expect(signature).not.toBe('none');
+    // A same-fingerprint snapshot dated to the tick's policy day (not today's wall clock).
+    await mod.recordTranscriptBacklog(engine, { signature: signature!, pending: 7, day: '2000-01-01' });
+    const policy = await mod.readAutoDrainPolicy(engine, new Date('2000-01-01T12:00:00Z'));
+    expect(policy.utcDay).toBe('2000-01-01');
+    const due = await mod.sourcesAwaitingDrain(engine, policy);
+    expect(due).toEqual([{ id: 'default', localPath: root, backlog: { pages: 0, transcripts: 7 } }]);
+  });
+});
+
 describe('P3-1: initial dispatch and continuation fail closed identically', () => {
   const cases: Array<{ name: string; cfg: Record<string, string>; countFails: boolean; reason: string }> = [
     { name: 'auto-drain disabled', cfg: { 'autopilot.auto_drain.enabled': 'false' }, countFails: false, reason: 'auto_drain_disabled' },
@@ -263,6 +279,65 @@ describe('P3-2: cap-lock contention never loses work', () => {
     const result = await handler({ id: jobId, data, signal: new AbortController().signal } as never);
     expect(result).toMatchObject({ status: 'skipped', reason: 'daily_cap', max_jobs_today: 1, jobs_today: 1, continuation_of: parent.id });
   }, 20_000);
+});
+
+describe('continuation fail-closed edges', () => {
+  test('a deferred continuation stays retryable on an unknown count and respects fairness at start', async () => {
+    const parent = await parentDrain();
+    const held = await tryAcquireDbLock(engine, CAP_LOCK, 1);
+    let deferred;
+    try { deferred = await queueDrainContinuation(engine, parent, windowCut()); } finally { await held?.release(); }
+    const jobId = (deferred as { job_id: number }).job_id;
+    const [row] = await engine.executeRaw<{ data: Record<string, unknown> }>('SELECT data FROM minion_jobs WHERE id = $1', [jobId]);
+    const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+
+    // Unknown daily count: throw (the queue retries), never proceed and never complete skipped.
+    await expect(withCountFailure(() => recheckDeferredContinuation(engine, { id: jobId, data })))
+      .rejects.toThrow(/daily drain count unavailable/);
+
+    // Two slots/day, the parent used one, and another source is due: the last slot is theirs.
+    await engine.setConfig('autopilot.auto_drain.max_usd_per_day', '0.6');
+    await seedDueSource('source-b');
+    expect(await recheckDeferredContinuation(engine, { id: jobId, data })).toEqual({ proceed: false, result: {
+      phase: 'extract_atoms', status: 'skipped', reason: 'reserved_for_other_sources', continuation_of: parent.id,
+      max_usd_per_day: 0.6, max_jobs_today: 2, jobs_today: 1, reserved_for_other_sources: ['source-b'],
+    } });
+  }, 20_000);
+
+  test('a submit-path error reports submit_failed, sanitized, and queues nothing', async () => {
+    const parent = await parentDrain();
+    const orig = engine.executeRaw.bind(engine);
+    const spy = spyOn(engine, 'executeRaw').mockImplementation(((sql: string, params?: unknown[]) =>
+      /^SELECT status FROM minion_jobs WHERE id = \$1/.test(sql)
+        ? Promise.reject(new Error('connect failed for postgres://drain_user:s3cretPassw0rd@db.example.invalid:5432/brain'))
+        : orig(sql, params)) as typeof engine.executeRaw);
+    let result;
+    try { result = await queueDrainContinuation(engine, parent, windowCut()); } finally { spy.mockRestore(); }
+    expect(result).toMatchObject({ queued: false, reason: 'submit_failed' });
+    const error = (result as { error: string }).error;
+    expect(error).toContain('connect failed');
+    expect(error).not.toContain('s3cretPassw0rd');
+    expect(await drainJobCount()).toBe(1);
+  });
+
+  test('a readAutoDrainPolicy failure is budget_unknown, not a submit', async () => {
+    const parent = await parentDrain();
+    const orig = engine.getConfig.bind(engine);
+    const spy = spyOn(engine, 'getConfig').mockImplementation((async (key: string) => {
+      if (key.startsWith('autopilot.auto_drain.')) throw new Error('config unavailable');
+      return orig(key);
+    }) as typeof engine.getConfig);
+    let result;
+    try { result = await queueDrainContinuation(engine, parent, windowCut()); } finally { spy.mockRestore(); }
+    expect(result).toEqual({ queued: false, reason: 'budget_unknown' });
+    expect(await drainJobCount()).toBe(1);
+  });
+
+  test('a max_batches cut with progress queues a continuation like a window cut', async () => {
+    const parent = await parentDrain();
+    expect(await queueDrainContinuation(engine, parent, windowCut({ stopped: 'max_batches', items_deferred: 0 })))
+      .toMatchObject({ queued: true, depth: 1 });
+  });
 });
 
 describe('N3: one corpus read per drain', () => {

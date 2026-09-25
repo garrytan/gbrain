@@ -29,7 +29,7 @@ import {
   writeChildOutcomeFile,
   type ChildOutcome,
 } from '../src/core/minions/job-isolation.ts';
-import { UnrecoverableError } from '../src/core/minions/types.ts';
+import { JobDeferredError, UnrecoverableError } from '../src/core/minions/types.ts';
 import { RateLeaseUnavailableError } from '../src/core/minions/handlers/subagent.ts';
 
 function tmpFile(name: string): { dir: string; path: string } {
@@ -141,6 +141,64 @@ describe('handler-error encode → reconstruct (instanceof parity with inline mo
     });
     expect(weird).toBeInstanceOf(Error);
     expect(weird).not.toBeInstanceOf(UnrecoverableError);
+  });
+
+  /** Full child→parent path: encode, write the file, decode it, rebuild. */
+  function throughFile(err: unknown): Error {
+    const { dir, path } = tmpFile('outcome.json');
+    try {
+      writeChildOutcomeFile(path, encodeHandlerError(err));
+      return reconstructHandlerError(decodeChildOutcomeFile(path) as Extract<ChildOutcome, { outcome: 'error' }>);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** Decode a hand-written (possibly hostile) outcome file. */
+  function decodeRaw(o: unknown): ChildOutcome {
+    const { dir, path } = tmpFile('outcome.json');
+    try {
+      writeFileSync(path, JSON.stringify(o));
+      return decodeChildOutcomeFile(path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test('T1: JobDeferredError survives the file boundary as deferred with its exact delay', () => {
+    const enc = encodeHandlerError(new JobDeferredError('cycle lock busy', 30_000));
+    expect(enc).toEqual({ outcome: 'error', errorKind: 'deferred', message: 'cycle lock busy', retryInMs: 30_000 });
+    const rebuilt = throughFile(new JobDeferredError('cycle lock busy', 30_000));
+    expect(rebuilt).toBeInstanceOf(JobDeferredError);
+    expect(rebuilt).not.toBeInstanceOf(RateLeaseUnavailableError);
+    expect((rebuilt as JobDeferredError).retryInMs).toBe(30_000);
+    expect(rebuilt.message).toBe('cycle lock busy');
+  });
+
+  test('T1b: a rate lease keeps its caller-selected retryInMs across the file boundary', () => {
+    const withDelay = throughFile(new RateLeaseUnavailableError('global-llm-halt:auth:anthropic', 1, 1, 45_000));
+    expect(withDelay).toBeInstanceOf(RateLeaseUnavailableError);
+    expect((withDelay as RateLeaseUnavailableError).retryInMs).toBe(45_000);
+    expect((withDelay as RateLeaseUnavailableError).key).toBe('global-llm-halt:auth:anthropic');
+    // No delay stays no delay (the worker then uses the short lease bounce).
+    const plain = throughFile(new RateLeaseUnavailableError('anthropic', 4, 4));
+    expect((plain as RateLeaseUnavailableError).retryInMs).toBeUndefined();
+    expect(encodeHandlerError(new RateLeaseUnavailableError('anthropic', 4, 4))).toEqual({
+      outcome: 'error', errorKind: 'rate_lease', message: 'rate lease "anthropic" full (4/4)',
+      lease: { key: 'anthropic', active: 4, max: 4 },
+    });
+  });
+
+  test('T2: a deferred or lease delay that is not a finite number >= 0 degrades to generic', () => {
+    for (const retryInMs of [undefined, -1, '30000', null, 'NaN', Number.POSITIVE_INFINITY]) {
+      const deferred = decodeRaw({ outcome: 'error', errorKind: 'deferred', message: 'm', retryInMs });
+      expect(deferred).toEqual({ outcome: 'error', errorKind: 'generic', message: 'm' });
+      if (retryInMs === undefined) continue; // an absent lease delay is valid
+      const lease = decodeRaw({ outcome: 'error', errorKind: 'rate_lease', message: 'm', lease: { key: 'k', active: 1, max: 1, retryInMs } });
+      expect(lease).toEqual({ outcome: 'error', errorKind: 'generic', message: 'm' });
+    }
+    expect(decodeRaw({ outcome: 'error', errorKind: 'deferred', message: 'm', retryInMs: 0 }))
+      .toEqual({ outcome: 'error', errorKind: 'deferred', message: 'm', retryInMs: 0 });
   });
 
   test('non-Error throws (strings) encode without crashing', () => {

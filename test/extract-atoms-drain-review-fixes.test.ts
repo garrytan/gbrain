@@ -27,6 +27,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { RateLeaseUnavailableError } from '../src/core/minions/rate-leases.ts';
+import { JobDeferredError } from '../src/core/minions/errors.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { cycleLockIdFor } from '../src/core/cycle.ts';
@@ -277,10 +278,13 @@ describe('R3: a continuation that meets a busy source cycle lock stays due', () 
       const cont = await drainJob({ sourceId: 'default', window: 120, continuation_of: 1, continuation_depth: 1 });
       const err = await handler({ id: cont.id, data: cont.data, signal: new AbortController().signal } as never)
         .then(() => null, (e: unknown) => e);
-      // The worker routes this class to releaseLeaseFullJob: delayed, attempts_made unchanged.
-      expect(err).toBeInstanceOf(RateLeaseUnavailableError);
-      expect((err as RateLeaseUnavailableError).retryInMs).toBe(30_000);
-      expect((err as Error).message).toContain('extract-atoms-drain:cycle-lock:default');
+      // The worker routes this class to deferJob: delayed for exactly 30s,
+      // attempts_made unchanged, and NOT rate-lease pressure (contract change:
+      // this was a RateLeaseUnavailableError, which wrote false lease telemetry).
+      expect(err).toBeInstanceOf(JobDeferredError);
+      expect(err).not.toBeInstanceOf(RateLeaseUnavailableError);
+      expect((err as JobDeferredError).retryInMs).toBe(30_000);
+      expect((err as Error).message).toContain('cycle lock busy for source default');
 
       const rootJob = await drainJob();
       expect(await handler({ id: rootJob.id, data: rootJob.data, signal: new AbortController().signal } as never))

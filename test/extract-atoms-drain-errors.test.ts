@@ -352,7 +352,7 @@ describe('runExtractAtomsDrainForSource forwards typed per-item failures (#4730)
     'utf8',
   );
   it('maps d.failures {source, error} → {source, reason} and returns them on the batch', () => {
-    const runBatchBlock = src.slice(src.indexOf('runBatch: async ({ shouldStop }) => {'));
+    const runBatchBlock = src.slice(src.indexOf('runBatch: async ({ shouldStop, signal }) => {'));
     expect(runBatchBlock).toContain(".map(({ source, error }) => ({ source, reason: error }))");
     expect(runBatchBlock).toContain('failures: typedFailures');
   });

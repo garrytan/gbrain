@@ -21,6 +21,7 @@ import type {
 } from './types.ts';
 import {
   UnrecoverableError,
+  JobDeferredError,
   ABORT_REASON_LOCK_RENEWAL_FAILED,
   ABORT_REASON_LOCK_LOST,
 } from './types.ts';
@@ -1425,6 +1426,17 @@ export class MinionWorker extends EventEmitter {
         // handler ran). The token-fenced failJob would no-op anyway — return
         // without burning anything against a claim we no longer hold.
         console.log(`Job ${job.id} (${job.name}): ${errorText}`);
+        return;
+      }
+
+      // Handler-scheduled deferral: delayed for exactly the caller's delay, no
+      // attempt burned, and NOT lease pressure (no audit row, no stacktrace).
+      if (err instanceof JobDeferredError) {
+        if (!(await this.queue.deferJob(job.id, lockToken, errorText, err.retryInMs))) {
+          console.warn(`Job ${job.id} deferral dropped (lock token mismatch)`);
+        } else {
+          console.log(`Job ${job.id} (${job.name}) deferred, re-queuing in ${Math.round(err.retryInMs)}ms (no attempt burned): ${errorText}`);
+        }
         return;
       }
 

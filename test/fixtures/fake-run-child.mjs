@@ -1,7 +1,7 @@
 // Fake `jobs run-child` for the isolation tests (worker-job-isolation.test.ts
 // + test/e2e/job-isolation.test.ts): honors the isolation env contract
 // without needing a compiled gbrain binary or a Postgres engine.
-// Mode via FAKE_RUN_CHILD_MODE: success | error | exit15 | crash.
+// Mode via FAKE_RUN_CHILD_MODE: success | error | deferred | rate_lease_delay | exit15 | crash.
 import { writeFileSync, renameSync } from 'node:fs';
 
 const resultPath = process.env.GBRAIN_JOB_RESULT_PATH;
@@ -34,6 +34,21 @@ if (mode === 'error') {
     outcome: 'error',
     errorKind: 'generic',
     message: 'fake child handler failure',
+  });
+  process.exit(0);
+}
+
+if (mode === 'deferred') {
+  // A handler-scheduled deferral (JobDeferredError) with a caller-selected delay.
+  writeOutcome({ outcome: 'error', errorKind: 'deferred', message: 'fake cycle lock busy', retryInMs: 45000 });
+  process.exit(0);
+}
+
+if (mode === 'rate_lease_delay') {
+  // A lease bounce carrying a cooldown delay (the global-LLM-halt shape).
+  writeOutcome({
+    outcome: 'error', errorKind: 'rate_lease', message: 'rate lease "global-llm-halt:auth:x" full (1/1)',
+    lease: { key: 'global-llm-halt:auth:x', active: 1, max: 1, retryInMs: 45000 },
   });
   process.exit(0);
 }

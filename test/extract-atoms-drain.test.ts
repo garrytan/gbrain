@@ -12,6 +12,8 @@ import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
+  DRAIN_WINDOW_ELAPSED,
+  drainLeftWorkDue,
   runExtractAtomsDrain,
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
@@ -265,7 +267,7 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
   // not from `r.status` (which collapses partial and total failure into the
   // same 'warn' value — the exact discard the issue reports).
   it('runBatch derives providerFailure from failures.length + zero processed items, not r.status', () => {
-    const runBatchBlock = src.slice(src.indexOf('runBatch: async ({ shouldStop }) => {'));
+    const runBatchBlock = src.slice(src.indexOf('runBatch: async ({ shouldStop, signal }) => {'));
     expect(runBatchBlock).toContain('d.failures');
     expect(runBatchBlock).toContain('transcripts_processed');
     expect(runBatchBlock).toContain('pages_processed');
@@ -345,5 +347,84 @@ describe('#2144: zero-yield tombstone progress semantics', () => {
     expect(result.batches).toBe(1);
     expect(result.remaining).toBe(5);
     expect(batches).toBe(1);
+  });
+});
+
+// The window is a hard deadline: a real timer aborts the batch's signal even
+// when the injected clock never advances (a provider call that never returns
+// to a checkpoint). Only the external signal yields 'aborted'.
+describe('hard window deadline', () => {
+  /** A batch whose single in-flight call only ends when its signal fires. */
+  const hangingBatch = (seen: AbortSignal[]): ExtractAtomsDrainDeps['runBatch'] => async ({ signal }) => {
+    seen.push(signal);
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+    return { extracted: 0, skipped: 0, completed: 0, deferred: 2 };
+  };
+
+  it('the window alone interrupts an in-flight batch → stopped=window', async () => {
+    const seen: AbortSignal[] = [];
+    const started = Date.now();
+    const result = await runExtractAtomsDrain(
+      { withLock: passThroughLock, countRemaining: async () => 2, runBatch: hangingBatch(seen), now: () => 0 },
+      { windowMs: 50 },
+    );
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(seen).toHaveLength(1);
+    expect((seen[0].reason as Error).message).toBe(DRAIN_WINDOW_ELAPSED);
+    expect(result).toMatchObject({ status: 'ok', stopped: 'window', items_deferred: 2, remaining: 2 });
+  });
+
+  it('an external abort mid-batch still reports aborted', async () => {
+    const seen: AbortSignal[] = [];
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(new Error('cancel')), 20);
+    const result = await runExtractAtomsDrain(
+      { withLock: passThroughLock, countRemaining: async () => 2, runBatch: hangingBatch(seen), now: () => 0 },
+      { windowMs: 1_000_000, signal: ac.signal },
+    );
+    expect((seen[0].reason as Error).message).toBe('cancel');
+    expect(result.stopped).toBe('aborted');
+  });
+
+  it('a fast drain leaves no live deadline behind', async () => {
+    const seen: AbortSignal[] = [];
+    await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock, countRemaining: seq([1, 0, 0]),
+        runBatch: async ({ signal }) => { seen.push(signal); return { extracted: 1, skipped: 0, completed: 1 }; },
+        now: () => 0,
+      },
+      { windowMs: 30 },
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    expect(seen[0].aborted).toBe(false); // the timer was cleared when the drain returned
+  });
+});
+
+// A failed transcript count is unknown work, never "drained".
+describe('null transcript count', () => {
+  it('pages 0 + transcripts null → not drained, transcripts_remaining null, work still due', async () => {
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock, countRemaining: async () => 0, countPendingTranscripts: async () => null,
+        runBatch: async () => ({ extracted: 0, skipped: 0 }), now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+    expect(result.stopped).not.toBe('drained');
+    expect(result.transcripts_remaining).toBeNull();
+    expect(drainLeftWorkDue(result)).toBe(true);
+  });
+
+  it('transcripts 2 → 0 with pages 0 → drained', async () => {
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock, countRemaining: async () => 0, countPendingTranscripts: seq([2, 0, 0]),
+        runBatch: async () => ({ extracted: 2, skipped: 0, completed: 2 }), now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+    expect(result).toMatchObject({ stopped: 'drained', transcripts_remaining: 0, batches: 1 });
+    expect(drainLeftWorkDue(result)).toBe(false);
   });
 });

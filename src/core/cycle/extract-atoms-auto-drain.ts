@@ -150,9 +150,15 @@ async function readTranscriptBacklog(engine: BrainEngine): Promise<TranscriptBac
 /**
  * Live transcript backlog for the due check without reading the corpus on a
  * healthy tick: an unchanged fingerprint with a same-day snapshot reuses the
- * snapshot's count. Otherwise count for real (quietly) and snapshot it. A
- * stale snapshot can only over-report within a day (one cheap drain that
- * recounts), and the daily refresh bounds any drift.
+ * snapshot's count. Otherwise count for real (quietly) and snapshot it.
+ *
+ * The fingerprint is stat-only (path, size, mtime), so a reused snapshot can
+ * be stale in EITHER direction within its UTC day: liveness also depends on
+ * DB state and config the fingerprint does not see (atoms written or deleted
+ * by another path, tombstones, corpus filter settings). Over-reporting costs
+ * one drain that recounts and re-snapshots; under-reporting delays a drain
+ * until the corpus files change or the next UTC day forces a recount. Any
+ * drain of the default source also re-snapshots its final count.
  */
 export async function pendingTranscriptsForDueCheck(engine: BrainEngine, brainDir: string, utcDay: string): Promise<number | null> {
   const signature = await transcriptBacklogSignature(engine, brainDir);
@@ -206,7 +212,8 @@ export async function sourcesAwaitingDrain(
     const dispatched = await engine.executeRaw('SELECT 1 FROM minion_jobs WHERE idempotency_key = $1 LIMIT 1',
       [autoDrainKey(src.id, policy.utcDay)]);
     if (dispatched.length > 0 || await drainInFlight(engine, src.id)) continue;
-    const backlog = await readDrainBacklog(engine, src.id, src.local_path);
+    // The tick's own day: the snapshot is keyed on the same day as the dispatch key.
+    const backlog = await readDrainBacklog(engine, src.id, src.local_path, policy.utcDay);
     if (isDrainDue(backlog, policy.threshold)) due.push({ id: src.id, localPath: src.local_path, backlog });
   }
   return due;

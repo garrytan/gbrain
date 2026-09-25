@@ -24,9 +24,10 @@
  *                  binary, so the group signal falls back to POSIX
  *                  /bin/kill when needed.
  *
- * Handler-error semantics survive the boundary: the child encodes the two
+ * Handler-error semantics survive the boundary: the child encodes the three
  * error classes executeJob branches on (UnrecoverableError → 'dead',
- * RateLeaseUnavailableError → lease release, no attempt burned) and
+ * RateLeaseUnavailableError → lease release, JobDeferredError → deferral;
+ * the last two burn no attempt and carry their caller-selected `retryInMs`) and
  * `reconstructHandlerError` rebuilds real instances parent-side so the
  * existing `instanceof` branches work verbatim. Everything else degrades to
  * a generic Error → the normal delayed/dead backoff path, same as inline.
@@ -35,7 +36,7 @@
 import { readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { UnrecoverableError } from './types.ts';
+import { UnrecoverableError, JobDeferredError } from './types.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
 
 /** Grace between group-SIGTERM and group-SIGKILL on abort. Deliberately
@@ -69,7 +70,7 @@ export const CHILD_ENV = {
   childPoolSize: 'GBRAIN_JOB_CHILD_POOL_SIZE',
 } as const;
 
-export type ChildErrorKind = 'unrecoverable' | 'rate_lease' | 'generic';
+export type ChildErrorKind = 'unrecoverable' | 'rate_lease' | 'deferred' | 'generic';
 
 export type ChildOutcome =
   | { outcome: 'success'; result: unknown }
@@ -78,17 +79,30 @@ export type ChildOutcome =
       errorKind: ChildErrorKind;
       message: string;
       stack?: string;
-      lease?: { key: string; active: number; max: number };
+      lease?: { key: string; active: number; max: number; retryInMs?: number };
+      /** 'deferred' only: the handler's requeue delay (finite, >= 0). */
+      retryInMs?: number;
     };
+
+/** A caller-selected requeue delay the parent may honor: finite and >= 0. */
+function validRetryInMs(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
 
 /** Child-side: classify a handler throw into the wire shape. */
 export function encodeHandlerError(err: unknown): ChildOutcome {
+  if (err instanceof JobDeferredError) {
+    return { outcome: 'error', errorKind: 'deferred', message: err.message, retryInMs: err.retryInMs };
+  }
   if (err instanceof RateLeaseUnavailableError) {
     return {
       outcome: 'error',
       errorKind: 'rate_lease',
       message: err.message,
-      lease: { key: err.key, active: err.active, max: err.max },
+      lease: {
+        key: err.key, active: err.active, max: err.max,
+        ...(err.retryInMs !== undefined ? { retryInMs: err.retryInMs } : {}),
+      },
     };
   }
   if (err instanceof UnrecoverableError) {
@@ -111,8 +125,11 @@ export function encodeHandlerError(err: unknown): ChildOutcome {
  * file is same-user-written but a malformed kind must not crash the worker).
  */
 export function reconstructHandlerError(o: Extract<ChildOutcome, { outcome: 'error' }>): Error {
+  if (o.errorKind === 'deferred' && validRetryInMs(o.retryInMs)) {
+    return new JobDeferredError(o.message, o.retryInMs);
+  }
   if (o.errorKind === 'rate_lease' && o.lease) {
-    return new RateLeaseUnavailableError(o.lease.key, o.lease.active, o.lease.max);
+    return new RateLeaseUnavailableError(o.lease.key, o.lease.active, o.lease.max, o.lease.retryInMs);
   }
   if (o.errorKind === 'unrecoverable') {
     return new UnrecoverableError(o.message);
@@ -139,7 +156,10 @@ export function writeChildOutcomeFile(path: string, outcome: ChildOutcome): void
  *     the message, NEVER file content — handler output may carry secrets).
  * The `lease` payload is shape-validated (security review): a corrupt file
  * must degrade to 'generic', not inject undefined fields into the parent's
- * lease-release accounting.
+ * lease-release accounting. A `retryInMs` (deferred, or optional on a lease)
+ * must be a finite number >= 0: a deferral without one degrades to 'generic';
+ * an invalid optional lease delay degrades the whole outcome to 'generic' too
+ * (never a silently shortened delay).
  */
 export function parseChildOutcome(raw: string, size: number, maxBytes = CHILD_OUTCOME_MAX_BYTES): ChildOutcome {
   if (size > maxBytes) {
@@ -159,18 +179,21 @@ export function parseChildOutcome(raw: string, size: number, maxBytes = CHILD_OU
   if (o && o.outcome === 'error' && typeof (o as { message?: unknown }).message === 'string') {
     const kind = (o as { errorKind?: unknown }).errorKind;
     const rawLease = (o as { lease?: unknown }).lease as
-      | { key?: unknown; active?: unknown; max?: unknown }
+      | { key?: unknown; active?: unknown; max?: unknown; retryInMs?: unknown }
       | undefined;
     const leaseValid =
       rawLease != null &&
       typeof rawLease.key === 'string' &&
       Number.isFinite(rawLease.active as number) &&
-      Number.isFinite(rawLease.max as number);
-    // rate_lease without a valid lease payload degrades to generic — same
-    // policy as the errorKind whitelist.
-    const errorKind =
+      Number.isFinite(rawLease.max as number) &&
+      (rawLease.retryInMs === undefined || validRetryInMs(rawLease.retryInMs));
+    const rawRetry = (o as { retryInMs?: unknown }).retryInMs;
+    // rate_lease without a valid lease payload (or deferred without a valid
+    // delay) degrades to generic — same policy as the errorKind whitelist.
+    const errorKind: ChildErrorKind =
       kind === 'unrecoverable' ? 'unrecoverable'
       : kind === 'rate_lease' && leaseValid ? 'rate_lease'
+      : kind === 'deferred' && validRetryInMs(rawRetry) ? 'deferred'
       : 'generic';
     return {
       outcome: 'error',
@@ -180,8 +203,12 @@ export function parseChildOutcome(raw: string, size: number, maxBytes = CHILD_OU
         ? { stack: (o as { stack: string }).stack }
         : {}),
       ...(errorKind === 'rate_lease' && leaseValid
-        ? { lease: { key: rawLease.key as string, active: rawLease.active as number, max: rawLease.max as number } }
+        ? { lease: {
+            key: rawLease.key as string, active: rawLease.active as number, max: rawLease.max as number,
+            ...(rawLease.retryInMs !== undefined ? { retryInMs: rawLease.retryInMs as number } : {}),
+          } }
         : {}),
+      ...(errorKind === 'deferred' ? { retryInMs: rawRetry as number } : {}),
     };
   }
   throw new Error(`job child outcome file has an unrecognized shape (${size} bytes)`);
