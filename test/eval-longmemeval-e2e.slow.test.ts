@@ -26,6 +26,9 @@ import type { LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
 import { createBenchmarkBrain } from '../src/eval/longmemeval/harness.ts';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeStubClient } from './helpers/longmemeval-stub.ts';
+import { readerConfigHash, resolveReaderConfig } from '../src/eval/longmemeval/reader.ts';
+
+const READER_PINS = { reader_config_hash: readerConfigHash(resolveReaderConfig(), 'anthropic:claude-sonnet-4-6') };
 
 /** Run with process.exit + stderr captured (the harness exits non-zero on gates). */
 async function runCapturing(args: string[], runOpts: Parameters<typeof runEvalLongMemEval>[1]): Promise<{ code: number | null; stderr: string }> {
@@ -285,8 +288,8 @@ describe('runEvalLongMemEval --resume-from (v0.35.1.0)', () => {
       writeFileSync(
         outPath,
         [
-          JSON.stringify({ question_id: fixture[0].question_id, hypothesis: 'prior-1' }),
-          JSON.stringify({ question_id: fixture[1].question_id, hypothesis: 'prior-2' }),
+          JSON.stringify({ question_id: fixture[0].question_id, hypothesis: 'prior-1', ...READER_PINS }),
+          JSON.stringify({ question_id: fixture[1].question_id, hypothesis: 'prior-2', ...READER_PINS }),
         ].join('\n') + '\n',
         'utf8',
       );
@@ -323,7 +326,7 @@ describe('runEvalLongMemEval --resume-from (v0.35.1.0)', () => {
         .split('\n').filter(l => l.length > 0).map(l => JSON.parse(l)).slice(0, 5);
       writeFileSync(
         outPath,
-        fixture.map(q => JSON.stringify({ question_id: q.question_id, hypothesis: 'done' })).join('\n') + '\n',
+        fixture.map(q => JSON.stringify({ question_id: q.question_id, hypothesis: 'done', ...READER_PINS })).join('\n') + '\n',
         'utf8',
       );
       const { client, calls } = makeStubClient('should-not-be-called');
@@ -489,6 +492,7 @@ describe('codex CDX-3 — resume + --by-type-floor enforcement on no-op resume',
           question: q.question,
           question_type: q.question_type,
           hypothesis: 'done',
+          ...READER_PINS,
           retrieved_session_ids: [], // every prior question missed (recomputed on resume)
           recall_hit: false, // deprecated alias; ignored by the v2 seed
         })).join('\n') + '\n',

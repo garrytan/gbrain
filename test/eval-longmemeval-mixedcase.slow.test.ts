@@ -407,7 +407,7 @@ describe('no-op resume runs the FULL run-end block (gates + --record)', () => {
     // Every prior row "completed" but silently degraded: keyword-only fallback
     // (vector_enabled:false + embed_unavailable) and an un-reranked pass-through.
     writeFileSync(out, qs.map(q => JSON.stringify({
-      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done',
+      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done', retrieval_only: true,
       retrieved_session_ids: q.answer_session_ids ?? [],
       search_meta: { vector_enabled: false, expansion_applied: false, degraded: [{ stage: 'embed_unavailable', reason: 'provider_error' }, { stage: 'reranker_skipped', reason: 'no_key' }], reranked: false },
     })).join('\n') + '\n', 'utf8');
@@ -439,7 +439,7 @@ describe('no-op resume runs the FULL run-end block (gates + --record)', () => {
     const out = join(tmp, 'noop-resume-kw.jsonl');
     const qs = readRows(FIXTURE);
     writeFileSync(out, qs.map(q => JSON.stringify({
-      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done',
+      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done', retrieval_only: true,
       retrieved_session_ids: q.answer_session_ids ?? [],
       search_meta: { vector_enabled: false, expansion_applied: false, degraded: [], reranked: false },
     })).join('\n') + '\n', 'utf8');
@@ -498,7 +498,7 @@ describe('silent vector-arm / expansion degradation is a gate (mirrors --reranke
     const recordDir = join(tmp, 'partial-resume-ledger');
     // Two prior rows scored keyword-only after a silent embed failure; the third question is left for this run.
     writeFileSync(out, readRows(FIXTURE).filter(q => q.question_id !== 'mc-3_abs').map(q => JSON.stringify({
-      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done',
+      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done', retrieval_only: true,
       retrieved_session_ids: q.answer_session_ids ?? [],
       search_meta: { vector_enabled: false, expansion_applied: false, degraded: [{ stage: 'embed_unavailable', reason: 'provider_error' }], reranked: false },
     })).join('\n') + '\n', 'utf8');
@@ -583,7 +583,7 @@ describe('reranker preflight keys on the RESOLVED pin', () => {
 
 describe('reranker skipped-rows gate keys on the RESOLVED pin (no --reranker flag)', () => {
   const priorDegraded = (out: string) => writeFileSync(out, readRows(FIXTURE).map(q => JSON.stringify({
-    question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done',
+    question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done', retrieval_only: true,
     retrieved_session_ids: q.answer_session_ids ?? [],
     search_meta: { vector_enabled: true, expansion_applied: false, degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }], reranked: false },
   })).join('\n') + '\n', 'utf8');
@@ -679,7 +679,7 @@ describe('legacy pre-stamp rows with slug-normalized ids re-score against RAW go
     const out = join(tmp, 'legacy-ids.jsonl');
     // Pre-v2 rows: no retrieval_config_hash, no retrieved[], ids lowercased with _ → -.
     writeFileSync(out, readRows(FIXTURE).map(q => JSON.stringify({
-      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done',
+      question_id: q.question_id, question: q.question, question_type: q.question_type, hypothesis: 'done', retrieval_only: true,
       retrieved_session_ids: (q.answer_session_ids ?? []).map((id: string) => id.toLowerCase().replace(/[_.]/g, '-')),
     })).join('\n') + '\n', 'utf8');
     expect(readRows(out)[0].retrieved_session_ids).toEqual(['sharegpt-yywfirx-0']);

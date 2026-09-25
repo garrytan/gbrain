@@ -2,9 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendRecord, freezeEvidence, inputUpperBound, pairedSummary, readRecords, readerRequest, recordedCall, reportSummaries, saveJson, selectCohorts, usageCost, READER } from '../scripts/eval-answer-packet.ts';
+import { appendRecord, completedReaderText, freezeEvidence, inputUpperBound, pairedSummary, readRecords, readerRequest, recordedCall, reportSummaries, saveJson, selectCohorts, usageCost, READER } from '../scripts/eval-answer-packet.ts';
 import { invokeAI } from '../src/core/ai/invocation-guard.ts';
-import { generateAnswer } from '../src/eval/longmemeval/reader.ts';
+import { generateAnswer, resolveReaderConfig } from '../src/eval/longmemeval/reader.ts';
 import { renderFullSessions } from '../src/eval/longmemeval/evidence-packet.ts';
 import { haystackToPages, type LongMemEvalQuestion } from '../src/eval/longmemeval/adapter.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
@@ -28,6 +28,14 @@ function fake(path: string, opts: { unknown?: boolean; fail?: boolean; before?: 
 }
 
 describe('frozen presentation experiment', () => {
+  test('future reader attempts require natural completion before any judge call', () => {
+    expect(completedReaderText({ text: 'final answer', stopReason: 'end' }, 'q')).toBe('final answer');
+    for (const stopReason of ['length', 'other', 'refusal', 'content_filter', 'tool_calls'] as const) {
+      expect(() => completedReaderText({ text: 'partial notes', stopReason }, 'q')).toThrow('Incomplete reader');
+    }
+    expect(() => completedReaderText({ text: '   ', stopReason: 'end' }, 'q')).toThrow('Incomplete reader');
+  });
+
   test('baseline is byte-identical to the unmodified reader, including dates and full pages', async () => {
     const sources = freezeEvidence(question, { question_id: 'q', retrieved_session_ids: ['s2', 's1'] });
     const request = readerRequest(question, renderFullSessions(sources));
@@ -35,7 +43,7 @@ describe('frozen presentation experiment', () => {
     const pages = haystackToPages(question).map((p, i) => ({ ...p, date: question.haystack_dates[i] }));
     await generateAnswer({ create: async (params: any) => { captured = params; return { content: [{ type: 'text', text: 'x' }] } as any; } }, question,
       [pages[1], pages[0], pages[1]].map(p => ({ slug: p.slug, chunk_text: 'not the full text' }) as SearchResult), pages,
-      new Map(pages.map((p, i) => [p.slug, [question.haystack_sessions[i].session_id]])), READER);
+      new Map(pages.map((p, i) => [p.slug, [question.haystack_sessions[i].session_id]])), READER, '', resolveReaderConfig({ mode: 'direct' }));
     expect(request.system).toBe(captured.system);
     expect(request.messages).toEqual(captured.messages);
     expect(request.maxTokens).toBe(captured.max_tokens);

@@ -7,6 +7,11 @@ responses. This protocol tests notes without deleting retrieved conversation.
 The [earlier excerpt experiment](ANSWER_PACKET_RESULTS.md) failed; its scores
 remain unchanged.
 
+The protocol below is frozen historical science, not the current CLI default.
+See the [dated release follow-up](READING_NOTES_RESULTS.md#release-follow-up-2026-09-25)
+for the separate nine-case 1024-token completion smoke and the LongMemEval-only
+notes default; the original 512-token comparison and labels are unchanged.
+
 The protocol and both cohorts were frozen on 2026-09-24 at
 21:01:05.530 UTC, before the first follow-up paid call at 21:01:20.585 UTC.
 The operator removed the original $20 ceiling before this run. Calls still

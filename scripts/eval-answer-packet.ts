@@ -95,6 +95,11 @@ export function readerRequest(q: Pick<Question, 'question' | 'question_date'>, r
   return { model: READER, system: READER_SYSTEM_TEXT, messages: [{ role: 'user', content: buildReaderUserText({ question: q.question, questionDate: q.question_date, rendered }) }], maxTokens: READER_MAX_TOKENS };
 }
 
+export function completedReaderText(response: Pick<ChatResult, 'text' | 'stopReason'>, id: string): string {
+  if (response.stopReason !== 'end' || !response.text.trim()) throw new Error(`Incomplete reader: ${id} (${response.stopReason})`);
+  return response.text.trim();
+}
+
 export function inputUpperBound(opts: ChatOpts): number {
   if (!opts.model || opts.tools?.length || opts.messages.some(m => typeof m.content !== 'string') || opts.providerOptions) throw new Error('Only pinned text-only requests are supported');
   return Buffer.byteLength((opts.system ?? '') + opts.messages.map(m => m.content).join(''), 'utf8') + 1024;
@@ -328,9 +333,9 @@ async function main(args: string[]) {
         const prefix = `${phase}/${id}/${armKey}`;
         const maxUsd = phase === 'dev' ? CAP - HOLDOUT_RESERVE : CAP;
         const response = await recordedCall(journal, `${prefix}/reader`, arm === 'baseline' ? baseline : candidate, maxUsd);
-        if (!response.text.trim() || ['refusal', 'content_filter'].includes(response.stopReason)) throw new Error(`Incomplete reader: ${prefix}`);
+        const answer = completedReaderText(response, prefix);
         if (response.usage.input_tokens + READER_MAX_TOKENS > countBaseline + 1024 + READER_MAX_TOKENS) throw new Error('Reader exceeded common input/output ceiling');
-        const judge = await runJudge({ model: DEFAULT_JUDGE_MODEL, prompt: buildJudgePrompt({ ...q, answer: String(q.answer), hypothesis: response.text.trim() }).prompt,
+        const judge = await runJudge({ model: DEFAULT_JUDGE_MODEL, prompt: buildJudgePrompt({ ...q, answer: String(q.answer), hypothesis: answer }).prompt,
           maxTokens: JUDGE_MAX_TOKENS, temperature: JUDGE_TEMPERATURE, parse: classifyJudgeResponse, retries: 0,
           client: opts => recordedCall(journal, `${prefix}/judge`, opts, maxUsd) });
         if (judge.kind !== 'verdict') { appendRecord(journal, { event: 'judge_error', id: `${prefix}/judge`, judge }); throw new Error(`Incomplete judge: ${prefix} ${judge.judge_error}`); }

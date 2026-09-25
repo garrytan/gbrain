@@ -215,6 +215,15 @@ rubric credit, including the property-count improvement whose explanation
 contains the answer before its final list is cut off. A correct benchmark
 label is not proof of a complete, usable response.
 
+**Conservative completion sensitivity (existing 512-token receipts, not a new
+accuracy run):** If every output-limit finish is counted incorrect, including
+the seven of nine notes cutoffs that originally received rubric credit, the
+unchanged direct arm stays **308/361** and notes becomes **317/361**. The
+paired count is **21 wins and 12 losses**, net **+9 answers (+2.493 percentage
+points)**. This stricter treatment explains the released reader's incomplete-
+completion policy; it does not replace the original **324/361** notes label,
+the frozen protocol, or any original receipt.
+
 Notes used **2.8 times as many output tokens** and cost **5.0% more for the
 reader calls**. The long, unchanged input accounts for most reader spending.
 That extra generation is intended work, not evidence of a same-work latency
@@ -254,3 +263,23 @@ qualifications are kept separate. Keep the existing direct-answer,
 full-session production prompt unchanged for now. A subsequent reader change
 needs bounded output and fresh validation, not tuning on this now-inspected
 benchmark and calling it confirmation.
+
+## Release follow-up (2026-09-25)
+
+The preceding decision was the study-completion recommendation on 2026-09-24,
+before an implementation or larger-output completion check. In v0.59.0.0,
+the **LongMemEval benchmark reader only** defaults to the tested notes-first
+instruction with a 1024-token output cap; `--reader-mode direct` retains the
+exact historical v3 prompt and 512-token cap. This does not change `gbrain think`
+or external agents, and the failed excerpt selector remains inactive.
+
+A separately authorized bounded [completion smoke](reading-notes-completion-smoke.json)
+replayed only the nine original cutoff inputs at 1024 tokens through the
+packaged reader request and gateway. All nine ended naturally with nonempty
+answers (445–603 output tokens), across nine accounted calls costing $0.562143;
+there were no retries. The two previously unusable endings were complete on
+inspection. This selected-case check verifies completion, **not a new accuracy
+or cost comparison**. All original 512-token grades, paired labels, caveats,
+protocol and study spending totals above remain unchanged. The benchmark
+records output-limit, empty or unknown finishes as incomplete errors rather
+than successful answers and keeps those questions in the judged denominator.

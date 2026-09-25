@@ -1,0 +1,21 @@
+{
+  "model": "anthropic:claude-sonnet-4-6",
+  "max_tokens": 1024,
+  "n": 9,
+  "completed": 9,
+  "cost_usd": 0.562143,
+  "manifest_sha256": "ff64ddac4d62a79dfedfd0258d98d76f8c0acae6d94ba95104c42b425ba2bf94",
+  "journal_sha256": "ced6646e383a6c37878918c90695f2f6e66e05c7f7ab3b0bb85f474312cada05",
+  "results": [
+    { "question_id": "95228167", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 454, "cost_usd": 0.059604, "request_sha256": "242513f7b6e336e82dce51ef40b5302f0a0b46dc78889dd0c9a795ef9b0c4c61" },
+    { "question_id": "0a34ad58", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 540, "cost_usd": 0.061191, "request_sha256": "8f79fe77e1e0db6ae89675ec90ec5066c3adca55138e2d832f3d8a13684c3681" },
+    { "question_id": "75832dbd", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 510, "cost_usd": 0.061689, "request_sha256": "50fa3aa145ac2804724d02cd125f27ef2342b57265fd935b3bd2afbef2c537e5" },
+    { "question_id": "gpt4_7fce9456", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 445, "cost_usd": 0.065715, "request_sha256": "cf896a5d0398626bba37e2a1a8bc5891a7f0804c3972df145de9d4d798cf0449" },
+    { "question_id": "gpt4_a1b77f9c", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 591, "cost_usd": 0.07359, "request_sha256": "0d3f3d5dfeaa1f0729065f844090ab21ad8ed888809854a0745997f180d69ec2" },
+    { "question_id": "gpt4_f420262c", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 603, "cost_usd": 0.058152, "request_sha256": "0e17e33fc8e989643f12cefa0ddba1b9f6d1be8e3150636c5f3b58da5923d316" },
+    { "question_id": "06878be2", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 540, "cost_usd": 0.068418, "request_sha256": "9146f35f3e09d7b66c9505930d3fe21c0f7bb96761322d65daa35386be9ff125" },
+    { "question_id": "a89d7624", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 507, "cost_usd": 0.053787, "request_sha256": "bbe0d9d69328e5c5eff8e9e253e4b5e32d8830979f8fff14401bcc28a8324cec" },
+    { "question_id": "1a1907b4", "finish_reason": "end_turn", "nonempty": true, "output_tokens": 452, "cost_usd": 0.059997, "request_sha256": "593ddc36a8ba61f883808cbb95a08bec661818c7983f71c3f60944dedd67f0b5" }
+  ],
+  "caveat": "Selected prior cutoffs, not a fresh accuracy comparison. Original study labels are unchanged."
+}

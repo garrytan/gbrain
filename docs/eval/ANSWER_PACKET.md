@@ -1,10 +1,16 @@
 # Experimental answer-evidence packets
 
 The completed [pilot results](ANSWER_PACKET_RESULTS.md) were negative: zero wins
-and five losses on 60 holdout questions. Production defaults remain unchanged.
+and five losses on 60 holdout questions. This excerpt experiment remains inactive.
+Future experimental runs refuse reader results unless they end naturally with
+nonempty text; a length cutoff, refusal or unknown finish cannot be judged as a
+completed pair. Historical receipts and labels are unchanged. The separate
+LongMemEval reader's current notes-first default is documented in the
+[benchmark guide](../eval-bench.md).
 
 This experiment changes only the text shown to the answering model. It compares
-the current full-session reader with original conversational-round excerpts over
+the fixed historical direct-answer, full-session v3 reader (512-token cap)
+with original conversational-round excerpts over
 the same saved retrieved sessions. It does not run retrieval, generate summaries,
 change gold answers, or enable a production feature.
 
