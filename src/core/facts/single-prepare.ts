@@ -10,9 +10,10 @@ export interface SingleFactIntent {
   fact: string; kind: FactRow['kind']; visibility: FactRow['visibility']; entity_slug: string | null;
 }
 /** Provider work belongs to preparation, never to a page/source transaction. */
-export async function prepareFactEmbedding(fact: string): Promise<{ embedding: Float32Array | null; degraded: boolean }> {
+export async function prepareFactEmbedding(fact: string, signal?: AbortSignal): Promise<{ embedding: Float32Array | null; degraded: boolean }> {
+  signal?.throwIfAborted();
   if (isAvailable('embedding')) {
-    try { return { embedding: await embedOne(fact), degraded: false }; } catch { /* keyless-compatible fail soft */ }
+    try { return { embedding: await embedOne(fact, { abortSignal: signal }), degraded: false }; } catch { signal?.throwIfAborted(); }
   }
   return { embedding: null, degraded: true };
 }

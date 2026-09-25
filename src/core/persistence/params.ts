@@ -8,7 +8,7 @@ export const CAPTURE_EVENT_PARAMS: Record<string, ParamDef> = {
   kind: { type: 'string', description: 'For event captures, the event kind.' },
   depth: { type: 'string', description: 'For event captures, the depth page to link.' },
 };
-import { WRITE_REQUEST_STATES } from './types.ts';
+import { WRITE_REQUEST_STATES, WRITE_HEALTH_REASONS, WRITE_HEALTH_ASSESSMENTS, WRITE_HEALTH_ACTIONS } from './types.ts';
 
 /** Leaf definitions: safe to import while the frozen verb registry is evaluating.
  * Runtime validators belong in separate modules; importing OperationError here
@@ -57,5 +57,15 @@ export const WRITE_RECEIPT_SCHEMA = {
     },
     created_at: { type: 'string' },
     updated_at: { type: 'string' },
+    diagnostic: {
+      type: 'object', required: ['age_ms', 'assessment', 'reason', 'next_action'],
+      properties: {
+        age_ms: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        observed_at: { type: 'string', format: 'date-time' },
+        assessment: { type: 'string', enum: [...WRITE_HEALTH_ASSESSMENTS] },
+        reason: { type: 'string', enum: [...WRITE_HEALTH_REASONS] },
+        next_action: { type: 'string', enum: [...WRITE_HEALTH_ACTIONS] },
+      },
+    },
   },
 };

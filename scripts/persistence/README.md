@@ -153,6 +153,13 @@ without a provider or remote embedding latency.
 The manifest records all three runs, exact source hashes, storage/runtime
 and runner characteristics, admission/completion distributions, queue age,
 recovery bytes, RSS, throughput and Postgres activity samples. The harness
+records Bun's known `Failed to get memory usage` exception as a `null` RSS
+sample and counts it in `rss_unavailable_samples`; `peak_rss_bytes` is the maximum
+available sample, or `null` when none are available. These counters and peaks
+include every settled sample, including those completing during final validation.
+This known sampling limitation does not invalidate actual read/write measurements
+or relax the latency and overlap gates. Unexpected sampler errors still invalidate
+the run and retain only safe diagnostic fields. The harness
 measures durable admission when the public handler's top-level queued journal
 transaction resolves, and completion when its terminal committed receipt is
 observed. Nested savepoints never count as admission. The same harness proxy

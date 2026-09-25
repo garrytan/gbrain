@@ -25,7 +25,8 @@ function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', en
 }
 
 /** Every retry renders the semantic append from the latest coherent snapshot. */
-export async function prepareMemoryMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
+export async function prepareMemoryMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal): Promise<PreparedMutation> {
+  signal?.throwIfAborted();
   if (row.operation !== 'remember' || !row.intent) throw new OperationError('storage_error', 'Unknown memory mutation intent.');
   const p = row.intent;
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
@@ -35,7 +36,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   await assertFactNotWithdrawn(engine, row.source_id, input);
-  const { embedding, degraded } = await prepareFactEmbedding(input.fact);
+  signal?.throwIfAborted();
+  const { embedding, degraded } = await prepareFactEmbedding(input.fact, signal);
+  signal?.throwIfAborted();
   const decision = await decideSingleFact(engine, row.source_id, input, embedding);
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input);
@@ -69,7 +72,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const content = serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags);
     // Reuse the canonical parser/chunker and durable filesystem publication.
     // The original caller revision was checked above; this CAS binds this render.
-    page = await preparePageMutation(engine, { ...row, intent: { ...p, content, expected_revision: observedRevision, force: false } }, config);
+    page = await preparePageMutation(engine, { ...row, intent: { ...p, content, expected_revision: observedRevision, force: false } }, config, undefined, signal);
     if (page.observedRevision !== observedRevision) conflict();
   }
   return { observedRevision, file: page?.file, validate: async tx => { await validate(tx); await page?.validate?.(tx); }, apply: async tx => {

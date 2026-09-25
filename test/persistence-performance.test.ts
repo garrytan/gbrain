@@ -1,13 +1,42 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { overlapPercent, summarizeReadRuns } from '../scripts/persistence/read-metrics.ts';
 import { runReadPerformance } from '../scripts/persistence/performance.ts';
+import { runReadLatencyWorkload } from '../scripts/persistence/read-workload.ts';
 import { WriteTimingRecorder } from '../scripts/persistence/read-admission.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { childEnvironment } from '../scripts/persistence/validate.ts';
 
 describe('read-load evidence', () => {
+  test.each([false, true])('unavailable RSS stays explicit without invalidating real reads and writes (all=%s)', async all => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-read-rss-'));
+    const original = process.memoryUsage;
+    let calls = 0;
+    const memory = spyOn(process, 'memoryUsage').mockImplementation(Object.assign(() => {
+      if (++calls === 1 || all) throw new Error('Failed to get memory usage');
+      return original.call(process);
+    }, { rss: original.rss }));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const result = await runReadLatencyWorkload({ pages: 4, queries: 200, writers: 1, writesPerWriter: 100 });
+        expect(result.ok).toBe(true);
+        expect(result.phase_b.writes_completed).toBeGreaterThan(0);
+        expect(result.phase_b.writes_failed).toBe(0);
+        expect(result.rss_unavailable_samples).toBeGreaterThan(0);
+        expect(result.metrics[0].rss_bytes).toBeNull();
+        if (all) {
+          expect(result.metrics.every((sample: { rss_bytes: number | null }) => sample.rss_bytes === null)).toBe(true);
+          expect(result.peak_rss_bytes).toBeNull();
+        } else {
+          expect(result.rss_unavailable_samples).toBe(1);
+          expect(result.peak_rss_bytes).toBeGreaterThan(0);
+        }
+      });
+    } finally { memory.mockRestore(); rmSync(home, { recursive: true, force: true }); }
+  }, 60000);
+
   test('rejects invalid workload sizes before opening a datastore', async () => {
     await expect(runReadPerformance({ pages: 0 })).rejects.toThrow('Invalid pages');
   });

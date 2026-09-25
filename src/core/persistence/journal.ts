@@ -6,6 +6,7 @@ import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { readJournalLimits } from './limits.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
+import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import {
   isTerminal, principalKey, requestPrincipal, recoveryFiles,
@@ -62,8 +63,8 @@ export async function assertPageRequestIdentity(engine: SqlEngine, principal: Pr
     [principal.id, requireUuid(requestId)]);
   if (topology) throw new OperationError('idempotency_conflict', 'This request_id belongs to a source lifecycle operation.');
 }
-export async function getWriteRequestById(engine: SqlEngine, id: string): Promise<WriteRequest | null> {
-  const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id]);
+export async function getWriteRequestById(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
+  const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], { signal });
   return row ?? null;
 }
 export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 'slug' | 'callerIntent'>): string {
@@ -78,7 +79,7 @@ export async function admitWrite(engine: BrainEngine, input: WriteAdmission, ove
   const { requestId, apply } = await prepareAdmission(engine, input, overrides);
   return retryWriteAdmission(requestId, remaining => engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
-      [`${Math.min(1000, remaining)}ms`, `${remaining}ms`]);
+      [`${Math.min(10, remaining)}ms`, `${remaining}ms`]);
     return apply(tx);
   }));
 }
@@ -166,10 +167,10 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     return claimed;
   });
 }
-export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000): Promise<boolean> {
+export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_requests SET
     claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now()
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs]);
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs], { signal });
   return rows.length === 1;
 }
 export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteRequest, reason: string): Promise<void> {
@@ -271,15 +272,60 @@ export async function compactWriteReceipts(engine: BrainEngine, retentionDays = 
   });
   return count;
 }
-export function receiptFor(row: WriteRequest) {
+export function receiptFor(row: WriteRequest, facts?: WriteHealthFacts, now = Date.now()) {
   return {
     ...(row.outcome ?? {}),
     ...(row.outcome ? { outcome: row.outcome } : {}),
     request_id: row.request_id, state: row.state,
-    retry_after_ms: isTerminal(row) ? null : 1000,
+    ...writeHealth(row, facts, now),
     ...(row.error_code ? { write_error: row.error_code } : {}),
     ...(row.blocked_reason ? { blocked_reason: row.blocked_reason } : {}),
     ...(row.compacted ? { compacted: true } : {}),
     created_at: new Date(row.created_at).toISOString(), updated_at: new Date(row.updated_at).toISOString(),
   };
+}
+
+const healthQueries = new WeakMap<BrainEngine, Promise<unknown>>();
+export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]): Promise<Map<string, WriteHealthFacts>> {
+  if (rows.length > 100) throw new RangeError('Receipt health pages are limited to 100 rows.');
+  const pending = rows.filter(row => !isTerminal(row));
+  const result = new Map<string, WriteHealthFacts>();
+  if (!pending.length || healthQueries.has(engine)) return result;
+  const roots = [...new Set(pending.map(row => row.worktree_id ?? `db:${row.source_incarnation}`))];
+  const abort = new AbortController();
+  const observed_at = new Date().toISOString();
+  const query = engine.executeRaw<{ root: string; sequence: string | null; recovery_required: boolean; owner_unavailable: boolean; inspect_owner: boolean }>(`
+    WITH roots AS (SELECT unnest($1::text[]) AS root)
+    SELECT roots.root,head.sequence::text,COALESCE(head.inspect_owner,false) AS inspect_owner,
+      COALESCE(head.recovering,false) OR EXISTS (SELECT 1 FROM persistence_effects e
+        WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL) AS recovery_required,
+      w.id IS NOT NULL AND (w.state<>'active' OR w.owner_host_id IS NULL) AS owner_unavailable
+    FROM roots LEFT JOIN persistence_worktrees w ON w.id::text=roots.root
+    LEFT JOIN LATERAL (
+      (SELECT r.sequence,r.recovery IS NOT NULL AS recovering,
+        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
+        WHERE r.worktree_id=w.id AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL)
+        ORDER BY r.sequence LIMIT 1)
+      UNION ALL
+      (SELECT r.sequence,r.recovery IS NOT NULL AS recovering,
+        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
+        WHERE r.worktree_id IS NULL AND r.source_incarnation=CASE WHEN roots.root LIKE 'db:%' THEN substring(roots.root FROM 4)::uuid END
+        AND r.state IN ('queued','running','recovering') ORDER BY r.sequence LIMIT 1)
+    ) head ON true`, [roots], { signal: engine.kind === 'postgres' ? abort.signal : undefined })
+    .catch(() => null).finally(() => { if (healthQueries.get(engine) === query) healthQueries.delete(engine); });
+  healthQueries.set(engine, query);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const facts = await Promise.race([query, new Promise<null>(resolve => {
+    timer = setTimeout(() => { abort.abort(); resolve(null); }, 500);
+  })]).finally(() => { if (timer) clearTimeout(timer); });
+  if (!facts) return result;
+  const byRoot = new Map(facts.map(fact => [fact.root, fact]));
+  for (const row of pending) {
+    const fact = byRoot.get(row.worktree_id ?? `db:${row.source_incarnation}`);
+    if (fact) result.set(row.id, { observed_at, recovery_required: fact.recovery_required,
+      owner_unavailable: fact.owner_unavailable,
+      inspect_owner: fact.inspect_owner,
+      earlier_write: fact.sequence != null && BigInt(fact.sequence) < BigInt(row.sequence) });
+  }
+  return result;
 }

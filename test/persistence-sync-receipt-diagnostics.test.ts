@@ -69,6 +69,24 @@ test.each(['queued', 'running', 'recovering'] as const)('%s cannot look committe
   expect(body.write_request).not.toHaveProperty('revision');
 });
 
+test('CLI JSON and frozen error serialization retain the same allowlisted health', async () => {
+  const diagnostic = { age_ms: 120000, assessment: 'stalled' as const,
+    reason: 'cause_unknown' as const, next_action: 'inspect_owner' as const };
+  const error = frozenVerbWriteError({ request_id: requestId, state: 'queued', retry_after_ms: 30000,
+    diagnostic: { ...diagnostic, ...{ raw_error: 'PRIVATE_DRIVER_ERROR' } } }, 'write_pending');
+  const stderr = spyOn(console, 'error').mockImplementation(() => {});
+  let stdout = '';
+  try {
+    expect(await reportPersistenceCliError(error, true, async text => { stdout += text; })).toBe(true);
+    const body = JSON.parse(stdout);
+    expect(body.write_request.diagnostic).toEqual(diagnostic);
+    expect(body.suggestion).toContain(requestId);
+    expect(body.suggestion).toContain('gbrain sources writer status');
+    expect(stdout).not.toContain('PRIVATE_DRIVER_ERROR');
+    expect(validateAgainstSchema(body, ERROR_SCHEMA)).toEqual([]);
+  } finally { stderr.mockRestore(); }
+});
+
 test('unrecognized errors cannot echo private content, absolute paths, or credentials', () => {
   const privateMessage = '/private/source/example.md contains secret private fixture content with credential=redacted';
   for (const code of ['source_changed', 'storage_error', 'invalid_params', 'unknown_error']) {
