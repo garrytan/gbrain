@@ -354,13 +354,16 @@ for f in "${files[@]}"; do
   else
     TIMEOUT_CMD=""
   fi
+  FILE_HOME="$E2E_TMP_HOME/file-$file_idx"
+  mkdir -p "$FILE_HOME/.gbrain"
   rc=0
   rm -f "$E2E_TMP_HOME/current.junit.xml"
-  $TIMEOUT_CMD bun test --timeout=60000 --reporter=junit --reporter-outfile="$E2E_TMP_HOME/current.junit.xml" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
+  HOME="$FILE_HOME" GBRAIN_HOME="$FILE_HOME" $TIMEOUT_CMD bun test --timeout=60000 --reporter=junit --reporter-outfile="$E2E_TMP_HOME/current.junit.xml" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
   ACTIVE_E2E_PID=$!
   wait "$ACTIVE_E2E_PID" || rc=$?
   ACTIVE_E2E_PID=""
   output=$(cat "$E2E_TMP_HOME/current.log")
+  rm -rf "$FILE_HOME"
   if [ "$rc" -eq 0 ] && ! p=$(completed_e2e_passes "$f"); then
     echo "FAILED: $name did not produce a complete native Bun report for the selected file"
     rc=1

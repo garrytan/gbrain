@@ -197,6 +197,12 @@ including setup, queueing and retries; never count skip-only output as coverage.
 
 ### Test command tiers
 
+The sequential E2E runner gives each test file a fresh `HOME` and `GBRAIN_HOME`.
+Configuration written by a CLI initialization or schema migration remains
+available within that file, but cannot change a later file's selected schema or
+harness state. Each file's home is removed after it exits, including failures;
+the runner's exit trap also cleans up interrupted runs.
+
 Test command tiers, each with a clear scope:
 
 | Command | What it runs | Wallclock | When to use |
