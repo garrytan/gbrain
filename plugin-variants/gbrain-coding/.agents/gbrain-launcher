@@ -1,0 +1,84 @@
+#!/bin/sh
+# .agents/gbrain-launcher — MCP-server launcher for the gbrain Codex and
+# Claude Code plugins. Unix-only (macOS/Linux): needs /bin/sh, executable
+# bits, and `command -v`. Windows support is a filed follow-up.
+#
+# Resolves the gbrain binary (the plugin snapshot cannot ship it — the CLI
+# installs separately), then execs it with the argv the plugin manifest
+# pinned. Resolution order:
+#   1. $GBRAIN_BIN         explicit override (must be executable)
+#   2. `gbrain` on PATH
+#   3. ~/.bun/bin/gbrain   the sanctioned global-install location
+#
+# GBRAIN_SURFACE: when set and argv[0] is `serve`, replaces the value of an
+# existing `--surface <x>` pair, or appends `--surface $GBRAIN_SURFACE` if
+# the pair is absent — so a user can widen (full) or narrow (verbs) this
+# machine's plugin surface without editing the plugin snapshot.
+#
+# No auto-install by design: an MCP server start must never run a network
+# install. On a miss this exits 127 with the recovery path on stderr; the
+# bundled `setup` skill walks the install interactively.
+
+set -eu
+
+resolve_bin() {
+  if [ -n "${GBRAIN_BIN:-}" ]; then
+    if [ ! -x "$GBRAIN_BIN" ]; then
+      echo "gbrain-launcher: GBRAIN_BIN='$GBRAIN_BIN' is not an executable file" >&2
+      exit 127
+    fi
+    printf '%s' "$GBRAIN_BIN"
+    return
+  fi
+  # ~/.bun/bin (the sanctioned global-install location) is preferred OVER a
+  # bare PATH lookup: a hostile repo that prepends node_modules/.bin with a
+  # fake `gbrain` must not win over the real install. GBRAIN_BIN (above) is
+  # the explicit escape hatch for a gbrain living elsewhere.
+  if [ -x "${HOME:-}/.bun/bin/gbrain" ]; then
+    printf '%s' "$HOME/.bun/bin/gbrain"
+    return
+  fi
+  if command -v gbrain >/dev/null 2>&1; then
+    command -v gbrain
+    return
+  fi
+  echo "gbrain-launcher: gbrain binary not found." >&2
+  echo "  install: bun install -g github:garrytan/gbrain#latest-stable" >&2
+  echo "  (the npm package named 'gbrain' is unrelated - do not npm install it)" >&2
+  echo "  then run the bundled 'setup' skill to initialize your brain," >&2
+  echo "  or set GBRAIN_BIN to an absolute gbrain binary path." >&2
+  exit 127
+}
+
+BIN="$(resolve_bin)"
+echo "gbrain-launcher: using $BIN" >&2
+
+# Surface override — only for `serve` invocations. Rebuilds the positional
+# params in place (rotate-through-sentinel idiom; no eval, no word-splitting
+# hazards): replace the value of an existing `--surface <x>` pair, or append
+# the pair when absent.
+if [ -n "${GBRAIN_SURFACE:-}" ] && [ "${1:-}" = "serve" ]; then
+  replaced=0
+  expect_value=0
+  set -- "$@" "__gbrain_end__"
+  while [ "$1" != "__gbrain_end__" ]; do
+    a="$1"
+    shift
+    if [ "$expect_value" = 1 ]; then
+      expect_value=0
+      replaced=1
+      set -- "$@" "$GBRAIN_SURFACE"
+      continue
+    fi
+    if [ "$a" = "--surface" ]; then
+      expect_value=1
+    fi
+    set -- "$@" "$a"
+  done
+  shift
+  if [ "$replaced" = 0 ]; then
+    set -- "$@" "--surface" "$GBRAIN_SURFACE"
+  fi
+fi
+
+exec "$BIN" "$@"
