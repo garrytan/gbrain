@@ -13,6 +13,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
  */
 
 import type { Operation, OperationContext } from './contract.ts';
+import type { PageVersion } from '../page-state/version-types.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 
@@ -161,15 +162,37 @@ const run_doctor: Operation = {
 
 const get_versions: Operation = {
   name: 'get_versions',
-  description: 'Page version history',
+  description: 'Page version history, newest snapshot first. `limit` bounds how many snapshots come back; `include_body: false` drops the snapshot bodies and returns metadata only.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
+    limit: { type: 'number', required: false, description: 'Max snapshots returned, taken from the newest end. Omitted — or a value below 1, or a non-finite/non-numeric one — returns the full history.' },
+    include_body: { type: 'boolean', required: false, description: 'Include the compiled_truth and timeline snapshot bodies. Default true; exactly false omits both keys and returns snapshot metadata only (id, page_id, title, type, tags, frontmatter, snapshot_at, …).' },
   },
   handler: async (ctx, p) => {
     const versions = await ctx.engine.getVersions(p.slug as string, await readPolicyOpts(ctx));
-    if (ctx.remote === false) return versions;
-    return versions.map(v => ({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth),
-      ...(typeof v.timeline === 'string' ? { timeline: sanitizeRemoteBody(v.timeline) } : {}) }));
+    // #5234. Both knobs shape the RESPONSE only — the engine read, its source
+    // scope and its privacy predicates are untouched, so a bounded or bodyless
+    // call can never widen what a caller may see.
+    //
+    // The engine already orders newest-first (ORDER BY snapshot_at DESC), so a
+    // bound is that order's prefix. An unusable limit (0, negative, below 1,
+    // NaN/Infinity, or not a number at all) falls back to the FULL history
+    // rather than to []: an empty array is indistinguishable from "this page
+    // has no history", and silently reporting none is the worse failure.
+    const limit = typeof p.limit === 'number' && Number.isFinite(p.limit) && p.limit >= 1
+      ? Math.floor(p.limit)
+      : undefined;
+    const bounded = limit === undefined ? versions : versions.slice(0, limit);
+    const shaped: PageVersion[] = ctx.remote === false ? bounded
+      : bounded.map(v => ({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth),
+        ...(typeof v.timeline === 'string' ? { timeline: sanitizeRemoteBody(v.timeline) } : {}) }));
+    // Stripping runs LAST, after the remote projection above: doing it first
+    // would let that spread reinstate compiled_truth (as '') and timeline on
+    // the very rows the caller asked to have them removed from.
+    if (p.include_body === false) {
+      return shaped.map(({ compiled_truth: _compiled_truth, timeline: _timeline, ...metadata }) => metadata);
+    }
+    return shaped;
   },
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
