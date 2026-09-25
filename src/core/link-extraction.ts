@@ -1598,6 +1598,10 @@ export interface TimelineCandidate {
  * them shatters one entry into two fragments whose halves re-insert on
  * every sync (the (page_id, date, summary, source) uniqueness sees each
  * fragment shape as a new row). Returns -1 when the line has no delimiter.
+ * #5282: when no dash delimiter exists, falls back to a `Source: Summary`
+ * colon split guarded on a slug-shaped source token (see
+ * findColonSourceDelimiter), so house-style sweeps that strip em dashes
+ * still extract.
  */
 export function findTimelineSourceDelimiter(text: string): number {
   let depth = 0;
@@ -1612,6 +1616,29 @@ export function findTimelineSourceDelimiter(text: string): number {
       i + 1 < text.length && /\s/.test(text[i + 1])
     ) {
       return i;
+    }
+  }
+  return findColonSourceDelimiter(text);
+}
+
+/**
+ * #5282: fallback delimiter for house-style sweeps that strip em dashes —
+ * a `Source: Summary` colon split, accepted ONLY when the token before the
+ * colon looks like a slug (lowercase, no spaces: `manual`, `alice-agent`,
+ * `acme/wiki`). A slug token never contains a colon-space, so the first
+ * `: ` outside link spans is unambiguous; a sentence-shaped rest
+ * (`Note: meeting moved`, `Update: v2 ships`) keeps its `markdown` source
+ * default instead of being fragmented. The em-dash pass above always wins
+ * — canonical write-through rows are unaffected.
+ */
+function findColonSourceDelimiter(text: string): number {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '[' || c === '(') depth++;
+    else if (c === ']' || c === ')') { if (depth > 0) depth--; }
+    else if (depth === 0 && c === ':' && i + 1 < text.length && /\s/.test(text[i + 1])) {
+      return /^[a-z0-9][a-z0-9._/-]*$/.test(text.slice(0, i)) ? i : -1;
     }
   }
   return -1;

@@ -99,6 +99,48 @@ describe('#3957 parseTimelineEntries — FS/DB source split parity', () => {
   });
 });
 
+describe('#5282 colon-delimited Source split (em-dash-free house style)', () => {
+  test('pipe bullet `slug: Summary` splits on the colon, FS and DB identical', () => {
+    const line = '- **2026-01-05** | alice-agent: Discussed the wiki';
+    const db = parseTimelineEntries(line);
+    const fs = extractTimelineFromContent(line, 'x');
+    expect(db[0].source).toBe('alice-agent');
+    expect(db[0].summary).toBe('Discussed the wiki');
+    expect({ source: db[0].source, summary: db[0].summary })
+      .toEqual({ source: fs[0].source, summary: fs[0].summary });
+  });
+
+  test('em dash still wins over an interior colon', () => {
+    const line = '- **2026-01-05** | manual — Deploy: shipped v2';
+    const db = parseTimelineEntries(line);
+    expect(db[0].source).toBe('manual');
+    expect(db[0].summary).toBe('Deploy: shipped v2');
+  });
+
+  test('sentence-shaped `Note: text` is NOT split (guard on slug-shaped source)', () => {
+    const line = '- **2026-01-05** | Meeting Notes: discussed roadmap';
+    const db = parseTimelineEntries(line);
+    const fs = extractTimelineFromContent(line, 'x');
+    expect(db[0].source).toBe('markdown');
+    expect(db[0].source).toBe(fs[0].source);
+    expect(db[0].summary).toBe(fs[0].summary);
+  });
+
+  test('colon inside a markdown link never splits', () => {
+    const line = '- **2026-01-05** | [Docs: v2](docs/v2.md) shipped';
+    const db = parseTimelineEntries(line);
+    const fs = extractTimelineFromContent(line, 'x');
+    expect(db[0].source).toBe('markdown');
+    expect(db[0].summary).toBe(fs[0].summary);
+  });
+
+  test('path-shaped source `acme/wiki: X` splits too', () => {
+    const db = parseTimelineEntries('- **2026-01-05** | acme/wiki: reviewed the plan');
+    expect(db[0].source).toBe('acme/wiki');
+    expect(db[0].summary).toBe('reviewed the plan');
+  });
+});
+
 describe('#3957 markPagesExtractedBatch count + stampExtracted shortfall', () => {
   test('returns the stamped-row count; wrong-source refs are a visible shortfall', async () => {
     await engine.executeRaw(
