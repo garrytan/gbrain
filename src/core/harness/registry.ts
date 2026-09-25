@@ -46,6 +46,9 @@ export const HARNESS_ADAPTERS: readonly HarnessAdapter[] = [
   { id: 'muse-code', label: 'Muse Code', aliases: [], modes: ['stdio', 'http'], connection: 'manual', renewable: true,
     guide: 'docs/guides/muse.md#muse-code-is-a-different-product', reload: 'Reload Muse Code’s MCP connection.', nativeInstructions: 'manual',
     evidence: dated(['https://dev.meta.ai/docs/muse-code/extending']) },
+  { id: 'hermes', label: 'Hermes', aliases: [], modes: ['stdio'], connection: 'manual', renewable: true,
+    guide: 'docs/mcp/HERMES.md', reload: 'Restart the Hermes session and run `hermes mcp test gbrain`.', nativeInstructions: 'manual',
+    evidence: dated([`${repo}docs/mcp/HERMES.md`, 'https://hermes-agent.nousresearch.com/docs']) },
   ...(['cursor', 'perplexity', 'chatgpt', 'generic'] as const).map(id => ({
     id, label: id === 'generic' ? 'your agent' : id === 'perplexity' ? 'Perplexity Computer' : id, aliases: [], modes: ['http'] as HarnessMode[],
     connection: 'manual' as const, renewable: true, guide: 'docs/guides/hosted-harness-access.md',

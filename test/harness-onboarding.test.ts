@@ -18,6 +18,21 @@ describe('harness identity and private handoff', () => {
     expect(readFileSync(new URL('../docs/guides/harness-adapters.md', import.meta.url), 'utf8')).toBe(renderHarnessReference());
     for (const adapter of HARNESS_ADAPTERS) expect(() => statSync(new URL(`../${adapter.guide.split('#')[0]}`, import.meta.url))).not.toThrow();
   });
+  test('documented Hermes transport is a registered adapter (#5292)', () => {
+    // docs/mcp/HERMES.md is a tested stdio path, but the registry carried
+    // no entry, so every registry-driven surface (`mcp adapters`,
+    // onboarding enumeration, grant metadata) rendered Hermes invisible.
+    const hermes = harnessAdapter('hermes');
+    expect(hermes.id).toBe('hermes');
+    expect(hermes.modes).toEqual(['stdio']);
+    expect(hermes.connection).toBe('manual');
+    expect(hermes.guide).toBe('docs/mcp/HERMES.md');
+    expect(hermes.evidence.runtimeTestedAt).toBeNull();
+    // The writeback reality table must not lump a documented transport
+    // into the "others" catch-all.
+    const writeback = readFileSync(new URL('../docs/guides/ambient-writeback.md', import.meta.url), 'utf8');
+    expect(writeback).toContain('| Hermes |');
+  });
   test('old grok alias remains Build and personal agents have no asserted native MCP integration', () => {
     expect(harnessAdapter('grok').id).toBe('grok-build');
     for (const id of ['grok-bot', 'muse']) {

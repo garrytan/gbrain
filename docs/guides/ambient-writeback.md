@@ -123,6 +123,7 @@ bank remains harmless — the target serve's own DB gate decides.
 |---|---|---|
 | Claude Code | MCP instructions + managed user CLAUDE.md block | Stop-hook lane (above) |
 | Codex | MCP instructions + managed `$CODEX_HOME/AGENTS.md` block | **No per-turn hook exists** (SessionEnd only, 3s hard-kill). The existing SessionEnd capture → corpus → maintenance-sweep extraction lane is the delayed backstop — whole-session, next-sweep latency, governed by `facts.extraction_enabled` (it predates this feature). |
+| Hermes | MCP instructions when connected | None wired — follow-ups filed. |
 | opencode / OpenClaw / others | MCP instructions when connected | None wired — follow-ups filed. |
 
 The workspace-bootstrap "same-turn write-back" contract

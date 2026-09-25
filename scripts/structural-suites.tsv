@@ -178,7 +178,7 @@ test/fix-wave-structural.test.ts	v0.42.20.0 — background-work registry drains 
 test/fix-wave-structural.test.ts	v0.42.20.0 — search-cache drained via the background-work registry	1	readFileSync
 test/fix-wave-structural.test.ts	v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)	2	readFileSync
 test/frontmatter-install-hook.test.ts	frontmatter install-hook (B13)	22	readFileSync
-test/harness-onboarding.test.ts	harness identity and private handoff	5	readFileSync
+test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileSync
 test/hook-command.serial.test.ts	user-prompt	14	readFileSync
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync
 test/hook-push-spawn-env.test.ts	tryExecAsync env handoff	1	readFileSync
