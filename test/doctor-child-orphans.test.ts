@@ -41,7 +41,7 @@ describe('childTableOrphansCheck (#1063)', () => {
     expect(result.status).toBe('warn');
     expect(result.message).toContain('5 orphan row(s)');
     expect(result.message).toContain('content_chunks.page_id=5');
-    expect(result.message).toContain('DELETE FROM content_chunks WHERE page_id NOT IN (SELECT id FROM pages)');
+    expect(result.message).toContain('DELETE FROM content_chunks WHERE NOT EXISTS');
   });
 
   test('orphans in multiple tables → aggregated breakdown + multi-line cleanup', async () => {
@@ -72,14 +72,14 @@ describe('childTableOrphansCheck (#1063)', () => {
     await childTableOrphansCheck(engine);
     // The nullable-FK tables MUST have `IS NOT NULL AND` in their predicate
     // (NULL is a valid SET NULL outcome, not an orphan).
-    const filesSql = capturedSql.find((s) => s.includes('FROM files WHERE'));
+    const filesSql = capturedSql.find((s) => s.includes('FROM files child WHERE'));
     expect(filesSql).toBeDefined();
-    expect(filesSql!).toContain('page_id IS NOT NULL AND page_id NOT IN');
-    const linksOrigSql = capturedSql.find((s) => s.includes('FROM links WHERE') && s.includes('origin_page_id'));
+    expect(filesSql!).toContain('child.page_id IS NOT NULL AND NOT EXISTS');
+    const linksOrigSql = capturedSql.find((s) => s.includes('FROM links child WHERE') && s.includes('origin_page_id'));
     expect(linksOrigSql).toBeDefined();
-    expect(linksOrigSql!).toContain('origin_page_id IS NOT NULL AND origin_page_id NOT IN');
+    expect(linksOrigSql!).toContain('child.origin_page_id IS NOT NULL AND NOT EXISTS');
     // NOT-NULL FK tables MUST NOT have the IS NOT NULL filter (it'd be redundant)
-    const ccSql = capturedSql.find((s) => s.includes('FROM content_chunks WHERE'));
+    const ccSql = capturedSql.find((s) => s.includes('FROM content_chunks child WHERE'));
     expect(ccSql).toBeDefined();
     expect(ccSql!).not.toContain('IS NOT NULL');
   });
@@ -121,7 +121,7 @@ describe('childTableOrphansCheck (#1063)', () => {
     const queriedTables = new Set<string>();
     const engine = makeMockEngine(async (sql: string) => {
       // Extract `FROM <table>` to verify every target gets visited
-      const m = sql.match(/FROM (\w+) WHERE/);
+      const m = sql.match(/FROM (\w+) child WHERE/);
       if (m) queriedTables.add(m[1]);
       return [{ n: 0 }];
     });
