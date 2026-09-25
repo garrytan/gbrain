@@ -10,6 +10,7 @@ import {
 } from '../core/search/embedding-column.ts';
 
 import { redactPgUrl } from '../core/url-redact.ts';
+import { operations } from '../core/operations.ts';
 
 // v0.36.x #892: sensitive config-key allowlist. The `show` path used a
 // loose `.includes('key')` check that also redacts (works); the `set` path
@@ -71,6 +72,16 @@ const MEMORY_DUAL_PLANE_KEYS: ReadonlySet<string> = new Set(
  * audience must be readable by the ENGINE-FREE bootstrap-harness lane so a
  * shared-declared brain never gets the enable-nudge advisory. */
 const BRAIN_AUDIENCE_KEY = 'brain.audience';
+
+/** Publish-gate keys (Operation.publishGateKey — today: mcp.publish_skills,
+ * mcp.publish_advisor) are DB-AUTHORITATIVE at runtime: the tools/list
+ * resolver (readPublishGate) reads DB > file > false. `config get` must
+ * resolve the same plane — file-first would print the stale file mirror
+ * while the gate already hid the tools (#5358). Derived from the operation
+ * contract so a new gate cannot silently regress get. */
+const PUBLISH_GATE_KEYS: ReadonlySet<string> = new Set(
+  operations.map((o) => o.publishGateKey).filter((k): k is NonNullable<typeof k> => k != null),
+);
 
 /** Ambient-writeback posture re-stamp (red-team review, this wave): the
  * engine-free bootstrap-harness renderer reads `memory.visibility_posture`
@@ -443,7 +454,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // serves the previous DB value — exactly the lie the off switch's
     // non-zero exit exists to prevent. Everything else keeps the #2120
     // file/env-wins resolution.
-    const dbAuthoritative = MEMORY_DUAL_PLANE_KEYS.has(key) || key === BRAIN_AUDIENCE_KEY;
+    const dbAuthoritative = MEMORY_DUAL_PLANE_KEYS.has(key) || key === BRAIN_AUDIENCE_KEY || PUBLISH_GATE_KEYS.has(key);
     const val = dbAuthoritative
       ? (dbVal ?? fileVal)
       : (fileVal !== undefined && fileVal !== null ? fileVal : dbVal);

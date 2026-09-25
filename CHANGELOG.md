@@ -10,6 +10,10 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.13] - 2026-09-25
+
+**`config get` reads publish-gate keys from the database first.** Publish-gate keys resolved file-plane only, so a value set through `gbrain config set` looked unset when queried. Those keys now resolve DB-first like the rest of the config surface.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

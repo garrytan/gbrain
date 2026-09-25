@@ -144,3 +144,25 @@ describe('#3943 — config get redacts sensitive values by default (--raw opts o
     expect(logs).toContain('anthropic:claude-sonnet-4-6');
   });
 });
+
+describe('#5358 — config get resolves publish-gate keys the way the runtime does (DB > file)', () => {
+  // The tools/list gate (readPublishGate) resolves DB > file > false. get
+  // previously answered file-first, so `config set mcp.publish_skills false`
+  // hid the tools while get kept printing the init-written 'true' mirror.
+  test('mcp.publish_skills prints the DB value and warns about the diverged file mirror', async () => {
+    writeFileConfig({ engine: 'pglite', mcp: { publish_skills: true } });
+    const { logs, errs, exit } = await runGet({ 'mcp.publish_skills': 'false' }, 'mcp.publish_skills');
+    expect(exit).toBeNull();
+    expect(logs).toContain('false');
+    expect(logs).not.toContain('true');
+    expect(errs.join('\n')).toContain('db plane (authoritative for this key)');
+    expect(errs.join('\n')).toContain('file mirror disagrees');
+  });
+
+  test('mcp.publish_skills falls back to the file plane when no DB row exists', async () => {
+    writeFileConfig({ engine: 'pglite', mcp: { publish_skills: true } });
+    const { logs, errs } = await runGet({}, 'mcp.publish_skills');
+    expect(logs).toContain('true');
+    expect(errs.join('\n')).toContain('file mirror (no DB row)');
+  });
+});
