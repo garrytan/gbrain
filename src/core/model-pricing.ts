@@ -80,6 +80,8 @@ function anthro(input: number, output: number, cacheReadMult = ANTHROPIC_CACHE_R
 export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
   // Fable 5.1 bills cache hits at 0.025x base input ($0.25/MTok on $10).
   'anthropic:claude-fable-5-1': 0.025,
+  // Opus 5.5 bills cache hits at 0.05x base input ($0.20/MTok on $4).
+  'anthropic:claude-opus-5-5': 0.05,
 };
 
 /**
@@ -101,6 +103,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
   // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
   'anthropic:claude-opus-5':              anthro( 5.00, 25.00),
+  // Opus 5.5: $4 in / $20 out; cache hits bill 0.05x ($0.20/MTok), not the
+  // default 0.1x — closes gbrain#5359.
+  'anthropic:claude-opus-5-5':            anthro( 4.00, 20.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-opus-5-5']),
   'anthropic:claude-opus-4-8':            anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-7':            anthro( 5.00, 25.00),
   'anthropic:claude-opus-4-6':            anthro( 5.00, 25.00),

@@ -42,6 +42,15 @@ describe('CANONICAL_PRICING — table integrity', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-5']).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
+  test('Opus 5.5 present at $4/$20 with 0.05x cache reads (closes gbrain#5359)', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-opus-5-5']).toEqual({
+      input: 4.0,
+      output: 20.0,
+      cache_read: 0.2,
+      cache_write: 5.0,
+    });
+  });
+
   test('Opus 4.8 present at $5/$25 (closes gbrain#1819)', () => {
     expect(CANONICAL_PRICING['anthropic:claude-opus-4-8']).toMatchObject({ input: 5.0, output: 25.0 });
   });
