@@ -38,6 +38,7 @@ import {
   isCacheFresh,
   readUpdateCache,
   reconcileBreadcrumb,
+  resolveQuietHoursWindow,
   resolveSelfUpgradeMode,
 } from '../core/self-upgrade.ts';
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
@@ -399,9 +400,7 @@ async function attemptAutopilotSelfUpgrade(
     const latestVersion = entry.marker.latest;
 
     const idle = await computeAutopilotIdle(engine, engineType);
-    const qh = cfg.self_upgrade?.quiet_hours;
-    const tz = qh?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-    const verdict = evaluateQuietHours({ start: qh?.start ?? 23, end: qh?.end ?? 8, tz }, new Date());
+    const verdict = evaluateQuietHours(resolveQuietHoursWindow(cfg.self_upgrade?.quiet_hours), new Date());
     const installMethod = detectInstallMethod();
 
     const decision = decideSelfUpgrade({

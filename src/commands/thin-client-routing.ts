@@ -62,6 +62,11 @@ export async function routeThinClientCommand(
   const sub = args[0];
   const rest = args.slice(1);
 
+  if (command === 'config') {
+    const { tryRunConfigThinClient } = await import('./config.ts');
+    return tryRunConfigThinClient(args);
+  }
+
   if (command === 'takes') {
     switch (sub) {
       case 'list': {
