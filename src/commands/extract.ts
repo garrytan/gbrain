@@ -88,6 +88,7 @@ import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted } from '../core/abort-check.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 import { loadAllSources } from '../core/sources-load.ts';
+import { withCoordinatedWrite } from '../core/persistence/context.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -2060,7 +2061,46 @@ async function extractTimelineFromDB(
  * make re-extraction idempotent). EVERY processed page is stamped, including
  * zero-link pages — they WERE processed.
  */
+/**
+ * Run the stale sweep through the managed-writer capability when it is active.
+ *
+ * Extraction writes only derived projections (links, timeline rows, and the
+ * extraction watermark), but those are still protected by the database writer
+ * guard. The pre-0.57 command path called the sweep directly, so a correctly
+ * activated brain rejected its own safe maintenance work. The core sweep opens
+ * one coordinated transaction per keyset batch, retaining the source-scoped
+ * capability while bounding database resources for large backlogs.
+ */
 export async function extractStaleFromDB(
+  engine: BrainEngine,
+  opts: {
+    dryRun: boolean;
+    jsonMode: boolean;
+    quiet?: boolean;
+    includeFrontmatter?: boolean;
+    sourceIdFilter?: string;
+    catchUp: boolean;
+    timeBudgetMs?: number;
+  },
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number }> {
+  if (opts.dryRun) return extractStaleFromDBCore(engine, opts);
+
+  const [persistence] = await engine.executeRaw<{ enabled: boolean }>(
+    'SELECT enabled FROM persistence_brain WHERE singleton=1',
+  );
+  if (!persistence?.enabled) return extractStaleFromDBCore(engine, opts);
+
+  // An unscoped sweep may touch any source.  Name every configured source
+  // rather than widening the guard; include `default` for older brains whose
+  // source row predates the registry migration.
+  const sourceIds = opts.sourceIdFilter
+    ? [opts.sourceIdFilter]
+    : [...new Set(['default', ...(await engine.listAllSources()).map(source => source.id)])];
+
+  return extractStaleFromDBCore(engine, { ...opts, coordinatedSourceIds: sourceIds });
+}
+
+async function extractStaleFromDBCore(
   engine: BrainEngine,
   opts: {
     dryRun: boolean;
@@ -2079,6 +2119,8 @@ export async function extractStaleFromDB(
      * explicit `gbrain extract --stale` command. Ignored when catchUp.
      */
     timeBudgetMs?: number;
+    /** Source-scoped coordinator capability used for each bounded write batch. */
+    coordinatedSourceIds?: string[];
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
@@ -2116,7 +2158,6 @@ export async function extractStaleFromDB(
   // resolution even with `link_resolution.global_basename` enabled, stamping
   // pages as extracted with their bare wikilinks dropped. Mirrors
   // extractLinksFromDB (including the codex-[P1] `sourceId` scoping).
-  const resolvers = new Map<string, ReturnType<typeof makeResolver>>();
   const globalBasename = await isGlobalBasenameEnabled(engine);
   const packs = new Map<string, LinkExtractionPack | null>();
   // Issue #2589: mirrors extractLinksFromDB (see resolveCandidateSources).
@@ -2165,55 +2206,60 @@ export async function extractStaleFromDB(
     if (rows.length === 0) break;
     await loadSourceLinkPacks(engine, rows.map(page => page.source_id), packs);
 
-    const timelineRows: TimelineBatchInput[] = [];
-    const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
+    const processBatch = async (writeEngine: BrainEngine) => {
+      const resolvers = new Map<string, ReturnType<typeof makeResolver>>();
+      const timelineRows: TimelineBatchInput[] = [];
+      const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
+      let batchLinksCreated = 0;
+      let batchSkippedMissingTarget = 0;
+      let batchSkippedCrossSource = 0;
 
-    for (const page of rows) {
-      const pack = packs.get(page.source_id);
-      if (!pack) {
-        if (sourceIdFilter) throw new Error('Cannot extract links: active schema pack is unavailable.');
-        packUnavailable = true;
-        continue;
-      }
-      const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
-      if (!snapshot) throw new Error('Link extraction origin changed during the stale scan');
-      const fullContent = snapshot.page.compiled_truth + '\n' + snapshot.page.timeline;
-      const linkRows: LinkBatchInput[] = [];
-      if (!resolvers.has(page.source_id)) resolvers.set(page.source_id, makeResolver(engine, { mode: 'batch', sourceId: page.source_id }));
-      const resolver = resolvers.get(page.source_id)!;
-      const extracted = await extractPageLinks(
-        page.slug, fullContent, snapshot.page.frontmatter, snapshot.page.type, resolver,
-        { skipFrontmatter: !includeFrontmatter, globalBasename, pack, targetType: (targetSlug, targetSourceId) => {
-          const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, page.slug,
-            page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId });
-          return resolved.ok ? targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
-        } },
-      );
-      if (!extracted.attendanceComplete) { skippedAttendanceIncomplete++; continue; }
-      for (const c of extracted.candidates) {
+      for (const page of rows) {
+        const pack = packs.get(page.source_id);
+        if (!pack) {
+          if (sourceIdFilter) throw new Error('Cannot extract links: active schema pack is unavailable.');
+          packUnavailable = true;
+          continue;
+        }
+        const snapshot = await writeEngine.readPageSnapshot(page.slug, { sourceId: page.source_id });
+        if (!snapshot) throw new Error('Link extraction origin changed during the stale scan');
+        const fullContent = snapshot.page.compiled_truth + '\n' + snapshot.page.timeline;
+        const linkRows: LinkBatchInput[] = [];
+        if (!resolvers.has(page.source_id)) resolvers.set(page.source_id, makeResolver(writeEngine, { mode: 'batch', sourceId: page.source_id }));
+        const resolver = resolvers.get(page.source_id)!;
+        const extracted = await extractPageLinks(
+          page.slug, fullContent, snapshot.page.frontmatter, snapshot.page.type, resolver,
+          { skipFrontmatter: !includeFrontmatter, globalBasename, pack, targetType: (targetSlug, targetSourceId) => {
+            const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, page.slug,
+              page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId });
+            return resolved.ok ? targetMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
+          } },
+        );
+        if (!extracted.attendanceComplete) { skippedAttendanceIncomplete++; continue; }
+        for (const c of extracted.candidates) {
         const r = resolveCandidateSources(
           c, page.slug, page.source_id, allSlugs, slugToSources,
           federatedSourceIds.has(page.source_id),
           { crossSource, defaultSourceId: linkDefaultSourceId },
         );
         if (!r.ok) {
-          if (r.reason === 'cross_source') skippedCrossSource++;
-          else skippedMissingTarget++;
+          if (r.reason === 'cross_source') batchSkippedCrossSource++;
+          else batchSkippedMissingTarget++;
           continue;
+          }
+          linkRows.push(resolvedLinkCandidate(c, page.slug, page.source_id, r));
         }
-        linkRows.push(resolvedLinkCandidate(c, page.slug, page.source_id, r));
-      }
-      const written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId: page.source_id,
-        expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, linkRows, { includeFrontmatter,
-        expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) });
-      linksCreated += written.created;
-      for (const entry of parseTimelineEntries(fullContent)) {
+        const written = await writeEngine.replaceDerivedLinks({ slug: page.slug, sourceId: page.source_id,
+          expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, linkRows, { includeFrontmatter,
+          expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) });
+        batchLinksCreated += written.created;
+        for (const entry of parseTimelineEntries(fullContent)) {
         // #3957: carry the parsed source label — omitting it wrote source=''
         // while the FS path wrote the split label, so the same bullet
         // extracted via both paths duplicated under the (page_id, date,
         // summary, source) dedup index.
-        timelineRows.push({ slug: page.slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
-      }
+          timelineRows.push({ slug: page.slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
+        }
       // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
       // stamp with the row's READ updated_at, NOT now() — a concurrent edit
       // landing between this SELECT and the stamp advances updated_at past the
@@ -2232,21 +2278,32 @@ export async function extractStaleFromDB(
       // GREATEST(updated_at, versionTs) preserves the race semantics (a real
       // future edit advances updated_at > versionTs >= stamp → re-extracts)
       // while lifting old pages to the threshold so they clear.
-      const stampIso = page.updated_at.getTime() >= Date.parse(versionTs)
-        ? page.updated_at_iso
-        : versionTs;
-      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
-    }
+        const stampIso = page.updated_at.getTime() >= Date.parse(versionTs)
+          ? page.updated_at_iso
+          : versionTs;
+        processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
+      }
 
-    for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
-      timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
-    }
+      let batchTimelineCreated = 0;
+      for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
+        batchTimelineCreated += await writeEngine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
+      }
     // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
     // failure surfaces instead of looping forever.
-    await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+      await writeEngine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+      return { batchLinksCreated, batchTimelineCreated, batchSkippedMissingTarget, batchSkippedCrossSource, pagesProcessed: processedRefs.length };
+    };
 
-    pagesProcessed += processedRefs.length;
-    progress.tick(processedRefs.length);
+    const batch = opts.coordinatedSourceIds
+      ? await engine.transaction(tx => withCoordinatedWrite(tx, opts.coordinatedSourceIds!, () => processBatch(tx)))
+      : await processBatch(engine);
+    linksCreated += batch.batchLinksCreated;
+    timelineCreated += batch.batchTimelineCreated;
+    skippedMissingTarget += batch.batchSkippedMissingTarget;
+    skippedCrossSource += batch.batchSkippedCrossSource;
+
+    pagesProcessed += batch.pagesProcessed;
+    progress.tick(batch.pagesProcessed);
     afterPageId = rows[rows.length - 1]!.id;
 
     if (!catchUp && Date.now() - startMs > timeBudgetMs) { budgetHit = true; break; }
