@@ -264,7 +264,7 @@ describe('recipe: openrouter', () => {
 
   test('16. fetch shim promotes reasoning_content when content is empty (DeepSeek-via-OpenRouter, #4753)', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(JSON.stringify({
         choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'the answer' } }],
       }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
@@ -396,6 +396,151 @@ describe('recipe: openrouter', () => {
       expect(calls[0].init!.body).toBeUndefined();
       expect(new Headers(calls[0].init!.headers as any).has(OPENROUTER_CACHE_HEADER)).toBe(false);
       expect((await res.json()).choices[0].message.content).toBe('x');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // #5473: OpenRouter reports upstream rate limits / provider outages as an
+  // `error` object inside an HTTP 200 body. The AI SDK's openai-compatible
+  // provider reads `res.status` (via `compat.fetch`, exactly the function
+  // under test here — not a separate helper) to decide retryability, so
+  // these tests exercise the same boundary the SDK actually calls.
+  test('21. #5473 — HTTP-200 error.code 429 is rewritten to a real 429 Response', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: 'openai/gpt-6-luna is temporarily rate-limited upstream.',
+            code: 429,
+            metadata: { error_type: 'rate_limit_exceeded' },
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      expect(res.status).toBe(429);
+      expect(res.ok).toBe(false);
+      expect((await res.json()).error.code).toBe(429);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('22. #5473 — HTTP-200 error.code 503 is rewritten to a real 503 Response (retryable 5xx)', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ error: { message: 'upstream unavailable', code: 503 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      expect(res.status).toBe(503);
+      expect(res.ok).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('23. #5473 — an existing Retry-After header on the 200 response is preserved verbatim', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ error: { message: 'rate limited', code: 429 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'retry-after': '17' },
+      })) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      expect(res.status).toBe(429);
+      expect(res.headers.get('retry-after')).toBe('17');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('24. #5473 — a numeric error.metadata.retry_after is promoted to a Retry-After header when none is present', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(
+        JSON.stringify({ error: { message: 'rate limited', code: 429, metadata: { retry_after: 5 } } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      expect(res.status).toBe(429);
+      expect(res.headers.get('retry-after')).toBe('5');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('25. #5473 — malformed/missing error.metadata does not block the status rewrite', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ error: { message: 'rate limited', code: 429, metadata: 'not an object' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      expect(res.status).toBe(429);
+      expect(res.headers.has('retry-after')).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('26. #5473 — a 4xx error.code (config-level) is left as HTTP 200, not rewritten', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ error: { message: 'bad request', code: 400 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      expect(res.status).toBe(200);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('27. #5473 — a real success payload (no error key) regresses unchanged', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'hi' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      expect(res.status).toBe(200);
+      expect((await res.json()).choices[0].message.content).toBe('hi');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('28. #5473 — the envelope rewrite composes with the cache-header + reasoning_content shims unchanged', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ error: { message: 'rate limited', code: 429 } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { [OPENROUTER_CACHE_HEADER]: '1' },
+        body: JSON.stringify({
+          model: 'anthropic/claude-sonnet-4.6',
+          messages: [{ role: 'system', content: 'stable' }, { role: 'user', content: 'hi' }],
+        }),
+      });
+      expect(res.status).toBe(429);
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -107,13 +107,66 @@ function withSystemCacheControl(body: unknown): unknown {
 }
 
 /**
+ * OpenRouter reports upstream rate limits and some provider outages inside
+ * an HTTP 200 body: `{ error: { message, code, metadata? } }` (#5473). The
+ * AI SDK's openai-compatible response handler validates a 200 body against
+ * the chat-completion schema, fails, and throws `APICallError("Invalid
+ * JSON response")` carrying the observed `statusCode: 200` — so both the
+ * SDK's own built-in retry (keyed on HTTP status, not body shape) and
+ * gbrain's `rate_limit` classification (`errors.ts:normalizeAIError`, also
+ * status-keyed) never see it.
+ *
+ * Rewriting the Response's status to match `error.code` before it reaches
+ * the SDK lets both of those EXISTING status-keyed paths work unchanged —
+ * no new retry logic here. Only `error.code === 429` or a `5xx` code is
+ * rewritten (the retryable range); a genuine success payload, an
+ * unparseable body, a 4xx `error.code` (config-level, non-retryable), or a
+ * missing/non-integer code all pass through untouched. Any existing
+ * `Retry-After` response header is preserved as-is; when the body's
+ * `error.metadata` carries a numeric `retry_after`/`retryAfter` and no
+ * header is already present, that value is promoted to `Retry-After` so
+ * the SDK's backoff honors it. Fail-open: any parse problem returns the
+ * original response.
+ */
+async function rewriteOpenRouterErrorEnvelopeStatus(res: Response): Promise<Response> {
+  if (res.status !== 200) return res;
+  const ctype = res.headers.get('content-type') ?? '';
+  if (!ctype.includes('application/json')) return res;
+  try {
+    const text = await res.clone().text();
+    const json = JSON.parse(text);
+    const code = json?.error?.code;
+    if (typeof code !== 'number' || !Number.isInteger(code)) return res;
+    const newStatus = code === 429 ? 429 : code >= 500 && code < 600 ? code : null;
+    if (newStatus === null) return res;
+    const headers = new Headers(res.headers);
+    if (!headers.has('retry-after')) {
+      const meta = json?.error?.metadata;
+      const retryAfter =
+        typeof meta?.retry_after === 'number'
+          ? meta.retry_after
+          : typeof meta?.retryAfter === 'number'
+            ? meta.retryAfter
+            : undefined;
+      if (typeof retryAfter === 'number' && retryAfter >= 0) headers.set('retry-after', String(retryAfter));
+    }
+    return new Response(text, { status: newStatus, statusText: res.statusText, headers });
+  } catch {
+    return res;
+  }
+}
+
+/**
  * Compat fetch: (1) honors the OPENROUTER_CACHE_HEADER marker by splicing an
  * Anthropic cache_control breakpoint onto the system block, then strips the
  * marker; (2) composes the native DeepSeek `reasoning_content` promote so
  * OpenRouter-hosted thinking models (DeepSeek V4, etc.) do not arrive at the
- * AI SDK adapter as empty `content` (#4753). Fail-open: any parse problem
- * sends the original body unchanged. Tool-call turns are never promoted
- * (that logic lives in `deepseekReasoningContentCompatFetch`).
+ * AI SDK adapter as empty `content` (#4753); (3) rewrites an HTTP-200
+ * error-in-body envelope's status so retryable failures reach the SDK's
+ * retry lane and gbrain's classification (#5473, see
+ * `rewriteOpenRouterErrorEnvelopeStatus`). Fail-open: any parse problem
+ * sends the original body/response unchanged. Tool-call turns are never
+ * promoted (that logic lives in `deepseekReasoningContentCompatFetch`).
  *
  * @internal exported for tests. Cast through `unknown` because TS's
  * `typeof fetch` includes a `preconnect` member (matches azure-openai.ts).
@@ -122,8 +175,10 @@ export const openrouterCompatFetch = (async (
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> => {
-  const promote = (nextInit?: RequestInit) =>
-    deepseekReasoningContentCompatFetch(input as any, nextInit as any);
+  const promote = async (nextInit?: RequestInit): Promise<Response> =>
+    rewriteOpenRouterErrorEnvelopeStatus(
+      await deepseekReasoningContentCompatFetch(input as any, nextInit as any),
+    );
   if (!init?.headers) return promote(init);
   const headers = new Headers(init.headers as any);
   if (!headers.has(OPENROUTER_CACHE_HEADER)) return promote(init);
