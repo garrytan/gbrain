@@ -144,6 +144,11 @@ export function getPostgresSchema(
     .replace(/\('embedding_dimensions', '1536'\)/g, `('embedding_dimensions', '${parsedDims}')`);
 }
 
+/** The driver owner must support discard() before cancellation can retire it safely. */
+export function hasPostgresCancellationCapability(owner: unknown): boolean {
+  return typeof (owner as { discard?: unknown } | null)?.discard === 'function';
+}
+
 // CONNECTION_ERROR_PATTERNS / isConnectionError were used by the per-call
 // executeRaw retry that #406 originally shipped. Eng-review D3 dropped that
 // retry as unsound (regex idempotence-boundary doesn't hold for writable
@@ -5309,7 +5314,7 @@ export class PostgresEngine implements BrainEngine {
         if (reserved) conn = reserved;
         owner = reserved ?? conn as unknown as postgres.TransactionSql;
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-        if (signal && typeof owner.discard !== 'function') throw new Error('Postgres cancellation requires the pinned driver patch');
+        if (signal && !hasPostgresCancellationCapability(owner)) throw new Error('Postgres cancellation requires the pinned driver patch');
         pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], { cancelFence: !!signal });
         return await pending as unknown as T[];
       } finally {

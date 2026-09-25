@@ -26,6 +26,8 @@ import { schemaVersionHealth } from '../core/schema-version-health.ts';
 import { zeroTotalContradictionsCheck } from '../core/eval-contradictions/run-health.ts';
 import { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
 export { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
+import { checkPostgresCancellationDriver } from './doctor/checks/postgres-cancellation.ts';
+export { checkPostgresCancellationDriver } from './doctor/checks/postgres-cancellation.ts';
 // Peeled doctor modules (containment sprint): each is a verbatim move out of
 // this file. doctor.ts re-exports every moved public symbol under its
 // original name so existing importers (tests, scripts/live-brain-first-check.ts,
@@ -1875,6 +1877,10 @@ export async function buildChecks(
   // 4. pgvector extension
   progress.heartbeat('pgvector');
   checks.push(await pgvectorCheck(engine));
+
+  // The postgres driver patch is required for signalled-query cancellation.
+  const postgresCancellation = await checkPostgresCancellationDriver(engine);
+  if (postgresCancellation) checks.push(postgresCancellation);
 
   // 4a-bis. #550: pages(source_id, slug) upsert arbiter — when missing, every
   // page write fails brain-wide and the version counter can't see the drift.
