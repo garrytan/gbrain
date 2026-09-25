@@ -440,7 +440,7 @@ describe('dedicated persistence IPC', () => {
   });
 
   test('a mutation result whose receipts cannot all fit returns a bounded, unattested envelope', async () => {
-    const ids = Array.from({ length: SALVAGE_MAX_RECEIPTS + 500 }, (_, i) => `20000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+    const ids = Array.from({ length: SALVAGE_MAX_RECEIPTS + 500 }, (_, i) => `aaaaaaaa-bbbb-4ccc-8ddd-a${String(i).padStart(11, '0')}`);
     const run = await framedCli({ write_requests: ids.map(committedReceipt), pad }, 'extract_facts');
     expect(run.exit).toBe(1);
     expect(run.body.detail).toBe('result_unframed');
