@@ -10,6 +10,41 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.3.0] - 2026-09-25
+
+**Know whether a managed write is waiting, failed, or already committed.**
+
+Accepted write receipts now retain a validated reason when work is blocked, including owner loss, database contention, preparation deadlines, recovery, and publication uncertainty. Trusted writer status and managed sync show specific recovery guidance for every public reason. The receipt state remains authoritative: a reason explains why work is waiting but never changes pending work into a success.
+
+When a local owner commits a write but cannot return the full result because it is too large or cannot be encoded, the bounded IPC response preserves outcome-free receipts. The CLI exits successfully only when the owner proves that receipt discovery covered the complete mutation result, every receipt validated, every copy agrees, every write committed, and the result itself contains no failure. Reads cannot supply this attestation. Older owners without the attestation and clients that cannot validate every receipt continue to fail closed.
+
+Managed sync administration receives the same receipt recovery. A blocked sync keeps its original request ID and reports the blocker-specific next action instead of always suggesting another sync attempt.
+
+### How to recover a write result
+
+Keep the original request ID. Do not submit a replacement request merely because the result was too large:
+
+```bash
+gbrain write-request <request-id> --json
+gbrain sources writer status --brain <brain> --probe --json
+```
+
+If a bounded response says some receipts were withheld, list the selected source's accepted requests and inspect each original ID before retrying. Unexpected canonical or staging bytes require explicit reconciliation; another sync cannot safely clear them.
+
+## To take advantage of v0.57.3.0
+
+Upgrade and restart the designated owner and its CLI together. No schema migration, ownership transfer, reindex, embedding run, or paid enrichment is required. Pending and terminal requests keep their existing IDs and states. Mixed-version clients remain conservative: optional blocked reasons they do not recognize are dropped, and an unrecognized or incomplete commitment attestation exits nonzero.
+
+### Itemized changes
+
+- Add a closed, privacy-safe `blocked_reason` vocabulary to public receipts and frozen memory-verb schemas without widening their error enum.
+- Keep blocked reasons aligned across journal producers, managed-sync diagnostics, trusted writer status, and actionable operator guidance.
+- Preserve singular, batch, nested managed-write, and `writer_sync` receipts when a local result exceeds the IPC frame or cannot be encoded.
+- Discover receipts and failure signals with a bounded, iterative, cycle-safe traversal over arrays and nested records. Custom encoders, throwing getters, incomplete traversal, malformed receipts, disagreeing duplicates, partial failures, and withheld receipts all prevent commitment attestation.
+- Restrict committed-result salvage to mutation and receipt-bearing managed-sync paths, so receipt-shaped read content cannot counterfeit a successful write.
+- Keep salvaged responses bounded to the transport limit and direct callers to retained request IDs instead of silently dropping the whole receipt set.
+- Make the CLI's exit verdict match the owner attestation: committed-but-unframed local writes exit zero; pending, ambiguous, legacy, remote, or partially failed results remain failures.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**
