@@ -102,7 +102,7 @@ export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof 
           };
           if (key === 'readPageSnapshot') return async (...args: Parameters<BrainEngine['readPageSnapshot']>) => {
             const snapshot = await current.readPageSnapshot(...args);
-            if (retrying && !inTransaction && args[0] === slugs[0] && args[1]?.includeDeleted) {
+            if (retrying && !inTransaction && args[0] === slugs[0] && args[1]?.sourceId === sourceId && args[1]?.includeDeleted) {
               targetReads++;
               if (!injected && (edit === 'after_validation' && targetReads === 1 || edit === 'before_admission' && targetReads === 2)) await independentlyEdit();
             }
@@ -110,7 +110,7 @@ export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof 
           };
           if (key === 'transaction') return async <T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> => {
             const result = await current.transaction(tx => fn(observe(tx, true)));
-            if (retrying && !injected && edit === 'after_admission' && Array.isArray(result) && result.some(row => row.intent?.kind === 'managed_atom_page')) await independentlyEdit();
+            if (retrying && !injected && edit === 'after_admission' && Array.isArray(result) && result.some(row => row.source_id === sourceId && row.intent?.kind === 'managed_atom_page')) await independentlyEdit();
             return result;
           };
           const value = Reflect.get(current, key);

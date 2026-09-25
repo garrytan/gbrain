@@ -10,6 +10,52 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.0] - 2026-09-24
+
+**Know when an accepted write needs attention.**
+
+An accepted write is not always a finished write. When a page or remembered fact is waiting, its receipt can now distinguish ordinary pending work from a known blocker or an unusually old request. Your agent gets a sensible polling interval and a clear instruction to inspect the existing owner when waiting alone is no longer enough. It keeps the original request reference instead of creating a duplicate.
+
+Locked expired work no longer holds up the entire scheduler while unrelated work could proceed. Slow preparation and supported database waits have deadlines, and repeated receipt waits no longer accumulate unfinished reads. A deadline does not turn a pending write into a successful save or authorize another publisher. Work that cannot actually be cancelled stays tracked until it settles, and shutdown keeps the existing safety protections in place. Once contention clears, the original accepted request can finish without losing its identity or applying its content twice.
+
+### How to check a pending write
+
+Keep the original `request_id` and arguments. Read its receipt, then inspect the selected brain's existing owner when advised:
+
+```bash
+gbrain write-request <request-id> --json
+gbrain sources writer status --brain <brain> --probe --json
+```
+
+| What the receipt knows | What to do |
+| --- | --- |
+| Recent request, no known blocker | Poll after 1 second, then 5 seconds as it ages. |
+| Ordinary contention or an earlier write | Retain the original request and poll after 5 seconds. |
+| At least two minutes old, or an operator-required blocker | Inspect the existing owner; poll no faster than every 30 seconds. |
+
+Age is advisory, not proof of a dead owner. Older clients may omit the optional diagnosis. Never remove locks, transfer ownership, or discard recovery records just because a request is old.
+
+## To take advantage of v0.57.0.0
+
+Use `gbrain upgrade` during your approved owner rollout. If automatic migrations did not complete, run:
+
+```bash
+gbrain apply-migrations --yes --no-autopilot-install
+gbrain sources writer status --brain <brain> --probe --json
+gbrain stats
+```
+
+Schema migration 165 adds an index for database-only pending writes. It does not rewrite accepted requests or change the writer protocol. Quiesce the existing owner before replacing or rolling it back, preserve original receipts and recovery state, and verify canonical page or fact readback before calling a deployed incident recovered. If migration or verification fails, report sanitized doctor output and the failing step at https://github.com/garrytan/gbrain/issues; do not include credentials or private content.
+
+### Itemized changes
+
+- Pending receipts include validated, privacy-filtered age, assessment, reason and next action. Initial responses, replay, receipt helpers and frozen memory verbs preserve their existing required fields and error codes.
+- Receipt health enrichment is authorization-first, batched for at most 100 receipts, bounded to a 500ms caller wait, and limited to one unsettled query per engine. The new pending index keeps retained terminal history out of this lookup.
+- Expired-claim sweeps skip locked rows without bypassing same-root order. Supported scheduler and renewal waits use cancellation budgets; ordinary `put_page` and `remember` preparation gets a cooperative deadline with late-result fencing.
+- PostgreSQL timeout cancellation isolates the affected query from neighboring work, including transaction siblings and connections reassigned after a disconnect. Cancellation failures do not authorize blind statement retries.
+- PostgreSQL pool shutdown rejects work still waiting for a connection instead of silently reconnecting after shutdown. Recognized shutdown cancellations no longer appear as resident storage failures.
+- Trusted writer status exposes process-local phases, deadlines and attempts, with inspection advice consistent with receipt health. Operator guidance distinguishes observation from recovery authority and local tests from live recovery.
+
 ## [0.56.2.0] - 2026-09-24
 
 **Keep valid search data, publish the right file, and restore backups safely.**
