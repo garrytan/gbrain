@@ -218,6 +218,111 @@ export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
   return handleDbPlaneRoutedKeys(key, value);
 }
 
+/** `config set` for the FILE_PLANE_DOTTED_KEYS and the memorable consent
+ * gate: every one of these is read from ~/.gbrain/config.json by an
+ * engine-free reader, so the write never touches the engine. */
+async function setFilePlaneKey(key: string, value: string, tail: string[]): Promise<void> {
+  const { loadConfigFileOnly, saveConfig, isConfigTruthy } = await import('../core/config.ts');
+  const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
+  if (key === 'integrations.memorable.enabled') {
+    // Same file-plane rule as the other hook-lane keys: the session-end
+    // relay gate is read by engine-free hook children via loadConfig.
+    //
+    // Enabling is a CONSENT event, not just a config write: the relay
+    // hands session tool-call traces to a closed-source third-party CLI
+    // that sends them off-machine. The gate requires a gbrain-authored
+    // consent stamp that ONLY this flow writes (the memorable CLI flips
+    // the boolean out-of-band on `memorable enable`, but it can never
+    // write the stamp — see hook-heartbeat.ts's consent-stamp section).
+    const hb = await import('../core/context/hook-heartbeat.ts');
+    const on = isConfigTruthy(value);
+    if (!on) {
+      cfg.integrations = { ...(cfg.integrations ?? {}), memorable: { ...(cfg.integrations?.memorable ?? {}), enabled: false } };
+      saveConfig(cfg);
+      await hb.clearMemorableConsent();
+      console.log(`Set ${key} = false (file plane: ~/.gbrain/config.json)`);
+      console.log('Relay disabled and the disclosure consent was revoked — re-enabling shows the disclosure again.');
+      return;
+    }
+    if (!(await hb.memorableConsentValid())) {
+      console.log(hb.MEMORABLE_DISCLOSURE_TEXT);
+      const preConsented = tail.includes('--yes');
+      if (!preConsented) {
+        if (!process.stdin.isTTY) {
+          // Skillpack trust-prompt posture: a non-interactive session
+          // cannot consent on the operator's behalf. Nothing was written.
+          console.error('[config] non-interactive session and no --yes: refusing to enable a third-party relay without explicit consent. Nothing was written.');
+          // Deliberately does NOT mention --yes: this line is printed INTO
+          // agent sessions (the very sessions whose tool calls the relay
+          // egresses), and advertising the non-interactive bypass here
+          // hands a prompt-injected agent the exact string that flips the
+          // gate. Operators find --yes in the docs.
+          console.error('[AGENT] Relay this to your operator: run `gbrain config set integrations.memorable.enabled true` in a terminal and answer the prompt.');
+          process.exit(1);
+        }
+        const { promptYesNo } = await import('../core/confirm-prompt.ts');
+        const accepted = await promptYesNo('[gbrain] Enable the Memorable session-end relay? [y/N] ');
+        if (!accepted) {
+          console.log('Declined. Nothing was written.');
+          return;
+        }
+      }
+      const stampPath = await hb.writeMemorableConsent();
+      console.log(`Consent recorded: ${stampPath}`);
+    }
+    cfg.integrations = { ...(cfg.integrations ?? {}), memorable: { ...(cfg.integrations?.memorable ?? {}), enabled: true } };
+    saveConfig(cfg);
+    console.log(`Set ${key} = true (file plane: ~/.gbrain/config.json)`);
+    console.log(
+      'Session-end traces will now be offered to the locally-installed `memorable` CLI, ' +
+        'which sends redacted tool calls off-machine to its extraction API. ' +
+        'Turn off: gbrain config set integrations.memorable.enabled false (or GBRAIN_MEMORABLE=0)',
+    );
+  } else if (key === 'push.allow_unverified_remote') {
+    const on = isConfigTruthy(value);
+    cfg.push = { ...(cfg.push ?? {}), allow_unverified_remote: on };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
+    if (on) {
+      console.log(
+        'WARNING: workspace pushes now SKIP repo-visibility verification. ' +
+          'This trusts the remote on your word — unset it once verification works: ' +
+          'gbrain config set push.allow_unverified_remote false',
+      );
+    }
+  } else if (key === 'backup.check_enabled') {
+    const on = isConfigTruthy(value);
+    cfg.backup = { ...(cfg.backup ?? {}), check_enabled: on };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
+  } else if (key === 'backup.check_interval_days') {
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      console.error(`[config] ${key} must be an integer >= 1 (days between automatic backup checks)`);
+      process.exit(1);
+    }
+    cfg.backup = { ...(cfg.backup ?? {}), check_interval_days: n };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
+  } else if (key === 'mcp.instructions') {
+    // #4748: deployment identity appended to the MCP initialize contract.
+    // Takes effect on the next `gbrain serve` start (the response is
+    // built once per process from loadConfig()).
+    cfg.mcp = { ...(cfg.mcp ?? {}), instructions: value };
+    saveConfig(cfg);
+    console.log(`Set ${key} (file plane: ~/.gbrain/config.json) — restart \`gbrain serve\` to apply`);
+  } else {
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      console.error(`[config] ${key} must be an integer >= 0 (minutes; 0 = push every turn)`);
+      process.exit(1);
+    }
+    cfg.hooks = { ...(cfg.hooks ?? {}), stop_push_debounce_min: n };
+    saveConfig(cfg);
+    console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
+  }
+}
+
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
 
@@ -627,105 +732,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       return;
     }
     if (FILE_PLANE_DOTTED_KEYS.has(key) || key === 'integrations.memorable.enabled') {
-      const { loadConfigFileOnly, saveConfig, isConfigTruthy } = await import('../core/config.ts');
-      const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
-      if (key === 'integrations.memorable.enabled') {
-        // Same file-plane rule as the other hook-lane keys: the session-end
-        // relay gate is read by engine-free hook children via loadConfig.
-        //
-        // Enabling is a CONSENT event, not just a config write: the relay
-        // hands session tool-call traces to a closed-source third-party CLI
-        // that sends them off-machine. The gate requires a gbrain-authored
-        // consent stamp that ONLY this flow writes (the memorable CLI flips
-        // the boolean out-of-band on `memorable enable`, but it can never
-        // write the stamp — see hook-heartbeat.ts's consent-stamp section).
-        const hb = await import('../core/context/hook-heartbeat.ts');
-        const on = isConfigTruthy(value);
-        if (!on) {
-          cfg.integrations = { ...(cfg.integrations ?? {}), memorable: { ...(cfg.integrations?.memorable ?? {}), enabled: false } };
-          saveConfig(cfg);
-          await hb.clearMemorableConsent();
-          console.log(`Set ${key} = false (file plane: ~/.gbrain/config.json)`);
-          console.log('Relay disabled and the disclosure consent was revoked — re-enabling shows the disclosure again.');
-          return;
-        }
-        if (!(await hb.memorableConsentValid())) {
-          console.log(hb.MEMORABLE_DISCLOSURE_TEXT);
-          const preConsented = tail.includes('--yes');
-          if (!preConsented) {
-            if (!process.stdin.isTTY) {
-              // Skillpack trust-prompt posture: a non-interactive session
-              // cannot consent on the operator's behalf. Nothing was written.
-              console.error('[config] non-interactive session and no --yes: refusing to enable a third-party relay without explicit consent. Nothing was written.');
-              // Deliberately does NOT mention --yes: this line is printed INTO
-              // agent sessions (the very sessions whose tool calls the relay
-              // egresses), and advertising the non-interactive bypass here
-              // hands a prompt-injected agent the exact string that flips the
-              // gate. Operators find --yes in the docs.
-              console.error('[AGENT] Relay this to your operator: run `gbrain config set integrations.memorable.enabled true` in a terminal and answer the prompt.');
-              process.exit(1);
-            }
-            const { promptYesNo } = await import('../core/confirm-prompt.ts');
-            const accepted = await promptYesNo('[gbrain] Enable the Memorable session-end relay? [y/N] ');
-            if (!accepted) {
-              console.log('Declined. Nothing was written.');
-              return;
-            }
-          }
-          const stampPath = await hb.writeMemorableConsent();
-          console.log(`Consent recorded: ${stampPath}`);
-        }
-        cfg.integrations = { ...(cfg.integrations ?? {}), memorable: { ...(cfg.integrations?.memorable ?? {}), enabled: true } };
-        saveConfig(cfg);
-        console.log(`Set ${key} = true (file plane: ~/.gbrain/config.json)`);
-        console.log(
-          'Session-end traces will now be offered to the locally-installed `memorable` CLI, ' +
-            'which sends redacted tool calls off-machine to its extraction API. ' +
-            'Turn off: gbrain config set integrations.memorable.enabled false (or GBRAIN_MEMORABLE=0)',
-        );
-      } else if (key === 'push.allow_unverified_remote') {
-        const on = isConfigTruthy(value);
-        cfg.push = { ...(cfg.push ?? {}), allow_unverified_remote: on };
-        saveConfig(cfg);
-        console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
-        if (on) {
-          console.log(
-            'WARNING: workspace pushes now SKIP repo-visibility verification. ' +
-              'This trusts the remote on your word — unset it once verification works: ' +
-              'gbrain config set push.allow_unverified_remote false',
-          );
-        }
-      } else if (key === 'backup.check_enabled') {
-        const on = isConfigTruthy(value);
-        cfg.backup = { ...(cfg.backup ?? {}), check_enabled: on };
-        saveConfig(cfg);
-        console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
-      } else if (key === 'backup.check_interval_days') {
-        const n = Number.parseInt(value, 10);
-        if (!Number.isFinite(n) || n < 1) {
-          console.error(`[config] ${key} must be an integer >= 1 (days between automatic backup checks)`);
-          process.exit(1);
-        }
-        cfg.backup = { ...(cfg.backup ?? {}), check_interval_days: n };
-        saveConfig(cfg);
-        console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
-      } else if (key === 'mcp.instructions') {
-        // #4748: deployment identity appended to the MCP initialize contract.
-        // Takes effect on the next `gbrain serve` start (the response is
-        // built once per process from loadConfig()).
-        cfg.mcp = { ...(cfg.mcp ?? {}), instructions: value };
-        saveConfig(cfg);
-        console.log(`Set ${key} (file plane: ~/.gbrain/config.json) — restart \`gbrain serve\` to apply`);
-      } else {
-        const n = Number.parseInt(value, 10);
-        if (!Number.isFinite(n) || n < 0) {
-          console.error(`[config] ${key} must be an integer >= 0 (minutes; 0 = push every turn)`);
-          process.exit(1);
-        }
-        cfg.hooks = { ...(cfg.hooks ?? {}), stop_push_debounce_min: n };
-        saveConfig(cfg);
-        console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
-      }
+      await setFilePlaneKey(key, value, tail);
       return;
     }
     // DB-connection keys route to the file plane (or refuse, for `engine`) —
