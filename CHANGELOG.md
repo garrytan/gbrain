@@ -10,6 +10,92 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.2.0] - 2026-09-25
+
+**Drain extraction backlogs in bounded, truthful, budgeted runs.**
+
+`gbrain dream --drain --window 120` now interrupts a model call still running
+when its window closes instead of waiting for the provider timeout. Interrupted
+and unstarted work stays due without a failure strike, the cycle lock is
+released, and the receipt separates completed, deferred, failed, page and
+transcript work. The command exits 3 whenever work remains, including dry-run,
+so schedulers no longer mistake an incomplete drain for success.
+
+Background drains can continue useful partial work without escaping the daily
+budget. Initial runs and follow-ups share one fail-closed policy, reserve room
+for other due sources and deduplicate same-source jobs. Lock contention delays
+the existing continuation without burning an attempt or fabricating model
+rate-pressure telemetry. Transcript-only backlog can now start a drain, while a
+healthy autopilot tick reuses a same-day snapshot instead of rereading the
+transcript corpus.
+
+### How to use it
+
+Existing settings keep their meaning:
+
+```bash
+gbrain dream --drain --window 120 --json
+gbrain dream --drain --dry-run --json
+gbrain config get autopilot.auto_drain.max_usd_per_day
+```
+
+| Situation | Result in v0.57.2.0 |
+| --- | --- |
+| A provider call reaches the window | The call is aborted; its item and unstarted items remain due. |
+| Pages are clear but transcripts remain | The receipt reports transcript work and exits 3. |
+| Every attempted item fails | The receipt reports `provider_failure` and exits 3. |
+| Only transcripts are waiting in autopilot | A drain may be dispatched within the existing daily cap. |
+| Budget state cannot be read | Dispatch fails closed with an explicit reason. |
+| A continuation meets the source cycle lock | It is delayed without an attempt or false lease-pressure event. |
+
+### Things to watch
+
+- Scripts that equated exit 0 with “the command returned” must now handle exit
+  3 as “work remains; run again.”
+- The deadline interrupts provider work. Final persistence, optional pacing and
+  receipt counts can finish just after the window so accepted results are not
+  abandoned mid-write.
+- A background chain is capped at eight follow-ups, and an existing same-source
+  drain suppresses another continuation.
+
+## To take advantage of v0.57.2.0
+
+Run `gbrain upgrade`. There is no schema migration and no new setting. Confirm
+the installed behavior without provider spend:
+
+```bash
+gbrain dream --drain --dry-run --json
+gbrain doctor
+```
+
+If a provider call continues past the configured window or a receipt reports
+`drained` while work is still due, file an issue at
+https://github.com/garrytan/gbrain/issues with the sanitized JSON receipt and
+doctor output. Remove credentials and private content first.
+
+### Itemized changes
+
+- The shared extraction drain checks its window between items and passes a
+  combined deadline/cancellation signal into the provider call. Window cuts
+  defer work without a strike; external cancellation remains a distinct
+  `stopped: aborted` result and never queues a continuation.
+- Drain receipts include `items_completed`, `items_deferred`,
+  `transcripts_remaining`, bounded failure details and a reason for stopping.
+  `drained` now requires both page and transcript backlog to be clear.
+- The Minion handler queues at most one idempotent follow-up after useful
+  partial work. A dedicated job-deferral path preserves the requested delay
+  across process isolation without consuming an attempt, appending an
+  unbounded stack trace or recording false model lease pressure.
+- Autopilot dispatch and continuation rechecks share the same daily cap,
+  disabled/zero/unknown-budget decisions and cross-source fairness. The UTC day
+  used for transcript snapshots matches the daily dispatch key.
+- Transcript discovery is reused across drain batches, and healthy autopilot
+  checks reuse a stat-only same-day snapshot. A file change or a new UTC day
+  forces a recount.
+- Unit and PostgreSQL regressions cover in-flight interruption, process
+  termination, resume receipts, transcript-only work, budget failure, fairness,
+  lock contention, process-isolated delays and page/transcript parity.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**
