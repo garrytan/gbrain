@@ -68,6 +68,12 @@ export interface GoogleSourceState {
    * calendars and was therefore always primary's.
    */
   calendar_id?: string | null;
+  /**
+   * Epoch ms the calendar has been listed through (the last windowed list's
+   * timeMax). The sweep lists the stretch past it once the window's ceiling
+   * moves a day, since a syncToken delta reports changed events only.
+   */
+  calendar_horizon_ms?: number | null;
   contacts_sync_token: string | null;
   last_full_at: string | null;
 }

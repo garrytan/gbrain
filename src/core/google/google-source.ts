@@ -55,6 +55,7 @@ import {
 import {
   ALL_GOOGLE_SERVICES,
   DEFAULT_CALENDAR_ID,
+  type CalendarEventData,
   type GmailThreadData,
   type GoogleService,
   type GoogleSourceConfig,
@@ -129,6 +130,7 @@ function emptyState(): GoogleSourceState {
     gmail_newest_ms: null,
     calendar_sync_token: null,
     calendar_id: null,
+    calendar_horizon_ms: null,
     contacts_sync_token: null,
     last_full_at: null,
   };
@@ -422,6 +424,87 @@ async function calendarPageRelPathByEventId(
 
 
 
+/** Days ahead of now the calendar keeps pages for (the windowed list's timeMax). */
+const CALENDAR_HORIZON_DAYS = 60;
+/** The horizon top-up lists again once the horizon has advanced this far. */
+const CALENDAR_TOPUP_STEP_MS = 86_400_000;
+
+interface CalendarWindow {
+  floorMs: number;
+  ceilMs: number;
+}
+
+function calendarWindowAt(nowMs: number, historyDays: number): CalendarWindow {
+  return {
+    floorMs: nowMs - historyDays * 86_400_000,
+    ceilMs: nowMs + CALENDAR_HORIZON_DAYS * 86_400_000,
+  };
+}
+
+/**
+ * Where an event sits against the window, with the Calendar API's own
+ * semantics: timeMin compares the event's END, timeMax its START. An
+ * unparseable start (a cancelled skeleton) counts as in-window.
+ */
+function calendarWindowPlacement(
+  startIso: string,
+  endIso: string,
+  window: CalendarWindow,
+): 'past' | 'in' | 'future' {
+  const startMs = Date.parse(startIso);
+  if (Number.isFinite(startMs) && startMs >= window.ceilMs) return 'future';
+  const endMs = Date.parse(endIso);
+  const lastMs = Number.isFinite(endMs) ? endMs : startMs;
+  if (Number.isFinite(lastMs) && lastMs <= window.floorMs) return 'past';
+  return 'in';
+}
+
+/** Materialize listed events that fall inside the window; returns the out-of-window count. */
+async function applyCalendarEvents(
+  deps: GoogleSyncDeps,
+  events: CalendarEventData[],
+  window: CalendarWindow,
+  activePack: ActivePack,
+  summary: GoogleSyncSummary,
+  countedSlugs: Set<string>,
+): Promise<number> {
+  let outside = 0;
+  for (const ev of events) {
+    if (deps.opts.signal?.aborted) return outside;
+    const rendered = renderCalendarEventPage(ev);
+    // A syncToken delta cannot carry timeMin/timeMax, and with singleEvents
+    // one change to a recurring series returns every expanded instance, years
+    // back and forward. Aged-out history keeps the page it was imported with.
+    const placement = rendered ? calendarWindowPlacement(ev.startIso, ev.endIso, window) : 'in';
+    if (placement === 'past') {
+      outside++;
+      continue;
+    }
+    // The page path derives from MUTABLE fields (start date, summary) while
+    // identity is the immutable event id — look up the existing page by
+    // frontmatter event_id so reschedules move (old page deleted) and
+    // cancelled skeletons (id + status only, per the Calendar API) still
+    // find their page instead of computing a 1970 ghost path.
+    const existingPath = await calendarPageRelPathByEventId(deps, ev.id);
+    if (!rendered) {
+      await deletePageByRelPath(deps, existingPath ?? calendarRelPath(ev), summary);
+      continue;
+    }
+    if (placement === 'future') {
+      // Rescheduled past the horizon: the horizon top-up lists it again once
+      // it is back in range.
+      outside++;
+      if (existingPath) await deletePageByRelPath(deps, existingPath, summary);
+      continue;
+    }
+    if (existingPath && existingPath !== rendered.relPath) {
+      await deletePageByRelPath(deps, existingPath, summary); // rescheduled → moved
+    }
+    await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
+  }
+  return outside;
+}
+
 async function sweepCalendar(
   deps: GoogleSyncDeps,
   calendar: CalendarClient,
@@ -430,11 +513,12 @@ async function sweepCalendar(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
 ): Promise<void> {
-  const now = Date.now();
+  const window = calendarWindowAt(Date.now(), deps.cfg.historyDays);
   const windowOpts = {
-    timeMinIso: new Date(now - deps.cfg.historyDays * 86_400_000).toISOString(),
-    timeMaxIso: new Date(now + 60 * 86_400_000).toISOString(),
+    timeMinIso: new Date(window.floorMs).toISOString(),
+    timeMaxIso: new Date(window.ceilMs).toISOString(),
   };
+  const signalOpts = deps.opts.signal ? { signal: deps.opts.signal } : {};
   // The stored token is bound to the calendar it was minted for (legacy state
   // without calendar_id predates secondary calendars, so it was primary's).
   // A re-pointed source starts a fresh window; pairing the NEW calendar with
@@ -446,48 +530,54 @@ async function sweepCalendar(
     );
     state.calendar_sync_token = null;
   }
+  let listedWindow = deps.opts.full || !state.calendar_sync_token;
   let result;
   try {
     result = await calendar.listEvents(deps.cfg.account, {
       calendarId: deps.cfg.calendarId,
-      ...(deps.opts.full || !state.calendar_sync_token ? windowOpts : { syncToken: state.calendar_sync_token }),
-      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+      ...(listedWindow ? windowOpts : { syncToken: state.calendar_sync_token }),
+      ...signalOpts,
     });
   } catch (e) {
     if (e instanceof GoogleCursorExpiredError) {
       deps.log('[google] calendar syncToken expired; windowed re-list');
       state.calendar_sync_token = null;
+      listedWindow = true;
       result = await calendar.listEvents(deps.cfg.account, {
         calendarId: deps.cfg.calendarId,
         ...windowOpts,
-        ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+        ...signalOpts,
       });
     } else {
       throw e;
     }
   }
-  for (const ev of result.events) {
-    if (deps.opts.signal?.aborted) return;
-    // The page path derives from MUTABLE fields (start date, summary) while
-    // identity is the immutable event id — look up the existing page by
-    // frontmatter event_id so reschedules move (old page deleted) and
-    // cancelled skeletons (id + status only, per the Calendar API) still
-    // find their page instead of computing a 1970 ghost path.
-    const existingPath = await calendarPageRelPathByEventId(deps, ev.id);
-    const rendered = renderCalendarEventPage(ev);
-    if (!rendered) {
-      await deletePageByRelPath(deps, existingPath ?? calendarRelPath(ev), summary);
-      continue;
-    }
-    if (existingPath && existingPath !== rendered.relPath) {
-      await deletePageByRelPath(deps, existingPath, summary); // rescheduled → moved
-    }
-    await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
-  }
+  let outside = await applyCalendarEvents(deps, result.events, window, activePack, summary, countedSlugs);
+  if (deps.opts.signal?.aborted) return;
   if (result.nextSyncToken) {
     state.calendar_sync_token = result.nextSyncToken;
     state.calendar_id = deps.cfg.calendarId;
   }
+  const horizonMs = state.calendar_horizon_ms;
+  if (listedWindow || typeof horizonMs !== 'number') {
+    // A windowed list covered through the ceiling. Legacy state (no horizon)
+    // counts from this sweep; `sync --full` re-lists the whole window.
+    state.calendar_horizon_ms = window.ceilMs;
+  } else if (window.ceilMs - horizonMs >= CALENDAR_TOPUP_STEP_MS) {
+    // The delta reports changes only, so an unchanged instance that has
+    // entered the horizon since the last list would never arrive. List just
+    // the new stretch; this list's own sync token is not the cursor.
+    const topUp = await calendar.listEvents(deps.cfg.account, {
+      calendarId: deps.cfg.calendarId,
+      timeMinIso: new Date(horizonMs).toISOString(),
+      timeMaxIso: windowOpts.timeMaxIso,
+      ...signalOpts,
+    });
+    outside += await applyCalendarEvents(deps, topUp.events, window, activePack, summary, countedSlugs);
+    if (deps.opts.signal?.aborted) return;
+    state.calendar_horizon_ms = window.ceilMs;
+  }
+  if (outside > 0) deps.log(`[google] calendar: skipped ${outside} event(s) outside the sync window`);
 }
 
 // ── Gmail sweep ──────────────────────────────────────────────────────────────
@@ -948,6 +1038,37 @@ async function deleteStalePages(
   summary.deleted += stale.length;
 }
 
+/**
+ * Soft-delete calendar pages outside the window: past the horizon, or already
+ * before the history floor when they were imported (the recurring-series
+ * overflow an unfiltered delta used to write). History imported inside the
+ * window and aged out since is kept.
+ */
+async function reconcileCalendarWindow(deps: GoogleSyncDeps, summary: GoogleSyncSummary): Promise<void> {
+  const window = calendarWindowAt(Date.now(), deps.cfg.historyDays);
+  const historyMs = deps.cfg.historyDays * 86_400_000;
+  const rows = await deps.engine.executeRaw<{
+    slug: string;
+    source_path: string | null;
+    start_iso: string | null;
+    end_iso: string | null;
+    created_at: string | Date;
+  }>(
+    `SELECT slug, source_path, frontmatter->>'start' AS start_iso, frontmatter->>'end' AS end_iso, created_at
+       FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'calendar/%'`,
+    [deps.sourceId],
+  );
+  const stale: Array<{ slug: string; source_path: string | null }> = [];
+  for (const r of rows) {
+    const createdMs = new Date(r.created_at).getTime();
+    const atImport = { floorMs: createdMs - historyMs, ceilMs: window.ceilMs };
+    const current = calendarWindowPlacement(r.start_iso ?? '', r.end_iso ?? '', window);
+    const imported = calendarWindowPlacement(r.start_iso ?? '', r.end_iso ?? '', atImport);
+    if (current === 'future' || imported === 'past') stale.push({ slug: r.slug, source_path: r.source_path });
+  }
+  await deleteStalePages(deps, stale, summary);
+}
+
 // ── Extract + embed (mirrors github-source's size-gated tail) ───────────────
 
 async function runExtractAndEmbed(
@@ -1136,6 +1257,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       const stop = startHeartbeat(progress, 'calendar sweep');
       try {
         await sweepCalendar(deps, calendar, state, activePack, summary, countedSlugs);
+        if (opts.full) await reconcileCalendarWindow(deps, summary);
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);
         serviceErrors.push(`calendar: ${e instanceof Error ? e.message : String(e)}`);
