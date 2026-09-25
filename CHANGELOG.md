@@ -10,6 +10,10 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.14] - 2026-09-25
+
+**Pool teardown no longer flakes on Windows test runs.** The bounded pool-close guard timer was unref'd, letting the Windows bun test process exit while a close was still pending. The timer stays referenced so the guard can finish.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

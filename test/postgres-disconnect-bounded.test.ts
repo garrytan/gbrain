@@ -37,4 +37,22 @@ describe('endPoolBounded', () => {
     const pool = { end: async () => { throw new Error('pool boom'); } };
     await expect(endPoolBounded(pool)).resolves.toBeUndefined();
   });
+
+  test('guard timer is never unref\'d (unref\'d timers are not serviced under bun test on Windows)', async () => {
+    const original = globalThis.setTimeout;
+    let unrefCalls = 0;
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+      const t = original(fn, ms);
+      const origUnref = (t as { unref?: () => void }).unref;
+      if (origUnref) (t as { unref: () => void }).unref = () => { unrefCalls += 1; return origUnref(); };
+      return t;
+    }) as typeof setTimeout;
+    try {
+      const pool = { end: () => new Promise<void>(() => { /* never resolves */ }) };
+      await endPoolBounded(pool);
+    } finally {
+      globalThis.setTimeout = original;
+    }
+    expect(unrefCalls).toBe(0);
+  });
 });

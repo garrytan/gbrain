@@ -37,8 +37,10 @@ export async function endPoolBounded(
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const guard = new Promise<void>((resolve) => {
+    // Ref'd on purpose: unref'd timers are not serviced under `bun test` on
+    // Windows, which would silently disarm the bound. The finally clearTimeout
+    // keeps the fast path from holding the event loop.
     timer = setTimeout(resolve, POOL_END_TIMEOUT_SECONDS * 1000 + 500);
-    timer.unref?.();
   });
   try {
     await Promise.race([
