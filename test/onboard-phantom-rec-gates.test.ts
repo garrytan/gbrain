@@ -186,7 +186,7 @@ describe('checkEntityLinkCoverage — NER capability gate', () => {
   });
 
   it('low coverage + pack WITHOUT NER rules → WARN but NO extract-ner rec, with a reason', async () => {
-    await seedEntities(3); // entity pages, zero inbound links → coverage 0%
+    await seedEntities(5); // eligible entity pages, zero inbound links → coverage 0%
     await withPack(REGEXLESS_PACK, async () => {
       const { check, remediations } = await checkEntityLinkCoverage(engine);
       expect(check.status).toBe('warn');
@@ -199,7 +199,7 @@ describe('checkEntityLinkCoverage — NER capability gate', () => {
   it('low coverage + pack WITH NER rules → recommends extract-ner', async () => {
     // The positive direction. Without this case, "no rec emitted" passes for
     // any reason at all — including a pack that never resolved.
-    await seedEntities(3);
+    await seedEntities(5);
     await withPack('gbrain-base', async () => {
       const { check, remediations } = await checkEntityLinkCoverage(engine);
       expect(check.status).toBe('warn');
@@ -212,7 +212,7 @@ describe('checkEntityLinkCoverage — NER capability gate', () => {
   it('unresolvable pack → rec withheld, but the message says so distinctly', async () => {
     // Fail-closed must stay VISIBLE. A pack that cannot be resolved is an
     // operator problem, and must not read as "your pack declares no NER rules".
-    await seedEntities(3);
+    await seedEntities(5);
     await withPack('no-such-pack-e2e-fixture', async () => {
       const { check, remediations } = await checkEntityLinkCoverage(engine);
       expect(check.status).toBe('warn');
@@ -233,7 +233,7 @@ describe('recommender / handler parity (the anti-drift invariant)', () => {
   // either side that breaks the pairing fails here.
   for (const [pack, expectRec] of [['gbrain-base', true], [REGEXLESS_PACK, false]] as const) {
     it(`agree on ${pack}: rec emitted=${expectRec} ⇔ handler can run`, async () => {
-      await seedEntities(3);
+      await seedEntities(5);
       await withPack(pack, async () => {
         const { extractNerLinks } = await import('../src/core/extract-ner.ts');
         const { remediations } = await checkEntityLinkCoverage(engine);
@@ -257,7 +257,7 @@ describe('recommender / handler parity (the anti-drift invariant)', () => {
     // handler resolves the tier-7 default gbrain-base and would happily run —
     // a MISSED recommendation, the phantom bug's mirror image. (The home must
     // be regexlessHome so the DB-named pack resolves from disk at all.)
-    await seedEntities(3);
+    await seedEntities(5);
     await engine.setConfig('schema_pack', REGEXLESS_PACK);
     await withEnv({ GBRAIN_HOME: regexlessHome, GBRAIN_SCHEMA_PACK: undefined }, async () => {
       const { extractNerLinks } = await import('../src/core/extract-ner.ts');
@@ -274,7 +274,7 @@ describe('checkTimelineCoverage — datable-meetings gate', () => {
   // Pack-independent: this gate counts dated meeting pages, it never loads a
   // pack. Pinned anyway so the whole file is hermetic by construction.
   it('low coverage + zero dated meetings → WARN but NO rec, with a reason', async () => {
-    await seedEntities(3); // entity pages with no timeline entries → coverage 0%
+    await seedEntities(5); // eligible entity pages with no timeline entries → coverage 0%
     await withPack('gbrain-base-v2', async () => {
       const { check, remediations } = await checkTimelineCoverage(engine);
       expect(check.status).toBe('warn');
@@ -285,7 +285,7 @@ describe('checkTimelineCoverage — datable-meetings gate', () => {
   });
 
   it('low coverage + a dated meeting present → recommends extract-timeline-from-meetings', async () => {
-    await seedEntities(3);
+    await seedEntities(5);
     await engine.putPage('m0', {
       title: 'Standup', type: 'meeting' as never,
       compiled_truth: 'body that is long enough to pass any minimum-length guards in the codebase',
