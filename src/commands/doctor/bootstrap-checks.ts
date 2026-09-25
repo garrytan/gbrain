@@ -8,6 +8,8 @@ import { existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import type { BrainEngine } from '../../core/engine.ts';
 import { LATEST_VERSION } from '../../core/migrate.ts';
+import { assertUnmanagedCanonicalWriter } from '../../core/persistence/maintenance.ts';
+import { OperationError } from '../../core/ops/contract.ts';
 // Agent-bootstrap doctor group (plan B2/B4/ENG-4 + one-live-serve note).
 import { readHarnessReceiptState, readReceipt } from '../../core/bootstrap/format.ts';
 import { probeLivePgliteHolder, resolveBrainDataDir } from '../../core/bootstrap/uninstall.ts';
@@ -488,7 +490,22 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
       const last = runs[0];
       const t = Date.parse(last.ts);
       const ageDays = Number.isFinite(t) ? (Date.now() - t) / 86_400_000 : NaN;
-      if (!last.ok) {
+      let managed = false;
+      if (engine) {
+        try {
+          await assertUnmanagedCanonicalWriter(engine, 'bootstrap verify');
+        } catch (error) {
+          managed = error instanceof OperationError && error.code === 'writer_coordinator_required';
+        }
+      }
+      if (managed) {
+        const result = last.ok ? 'passed' : 'FAILED';
+        checks.push({
+          name: 'bootstrap_last_verify',
+          status: 'ok',
+          message: `bootstrap verify is not yet available for managed brains; last receipt ${last.ts} (${result}) — check managed-writer health with \`gbrain sources writer status --probe --json\``,
+        });
+      } else if (!last.ok) {
         checks.push({ name: 'bootstrap_last_verify', status: 'warn', message: `last bootstrap verify FAILED (${last.ts}): ${last.checks_failed.join(', ') || 'see snapshot'} — re-run \`gbrain bootstrap verify\`` });
       } else if (Number.isFinite(ageDays) && ageDays > 14) {
         checks.push({ name: 'bootstrap_last_verify', status: 'warn', message: `last bootstrap verify passed ${Math.floor(ageDays)}d ago — re-run it as the workspace rot self-check` });
