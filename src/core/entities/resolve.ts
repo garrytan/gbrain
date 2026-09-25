@@ -628,9 +628,10 @@ async function tryPrefixExpansion(
 }
 
 // Slug shape: the word chars slugify keeps (SLUG_WORD_CHARS — every script,
-// ADR-0001) plus `/`, `_`, `-`. Built from the shared grammar so a slug
-// slugify produces always takes the exact-page branch.
-const SLUG_SHAPE_RE = new RegExp(`^[${SLUG_WORD_CHARS}/_-]+$`, 'u');
+// ADR-0001) plus `/`, `_`, `-`, and the `.` sync keeps in path slugs
+// (`notes/v1.0.0`). Built from the shared grammar so an existing page's slug
+// always takes the exact-page branch; it only gates a SELECT by slug.
+const SLUG_SHAPE_RE = new RegExp(`^[${SLUG_WORD_CHARS}/._-]+$`, 'u');
 
 export function looksLikeSlug(s: string): boolean {
   // Anything with whitespace or capital letters is a display name, not a slug.

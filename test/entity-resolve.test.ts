@@ -485,6 +485,9 @@ describe('resolveEntitySlugWithSource — exact_page for non-ASCII slugs', () =>
       // word chars too (SLUG_WORD_CHARS) — not just lowercase letters.
       { slug: 'people/王小明', title: '王小明' },
       { slug: 'people/हिन्दी-नाम', title: 'हिन्दी नाम' },
+      // Sync keeps dots in path slugs (slugifySegment: `notes/v1.0.0`).
+      { slug: 'notes/установка-python-3.11', title: 'Установка Python 3.11' },
+      { slug: 'notes/v1.0.0', title: 'Release notes' },
     ];
     for (const p of seed) {
       await engine.putPage(p.slug, {
@@ -510,6 +513,13 @@ describe('resolveEntitySlugWithSource — exact_page for non-ASCII slugs', () =>
 
   it('caseless-script and combining-mark slugs resolve via exact_page', async () => {
     for (const slug of ['people/王小明', 'people/हिन्दी-नाम']) {
+      const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', slug);
+      expect(r).toEqual({ slug, source: 'exact_page' });
+    }
+  });
+
+  it('slugs with dots (as sync keeps them) resolve via exact_page', async () => {
+    for (const slug of ['notes/установка-python-3.11', 'notes/v1.0.0']) {
       const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', slug);
       expect(r).toEqual({ slug, source: 'exact_page' });
     }
