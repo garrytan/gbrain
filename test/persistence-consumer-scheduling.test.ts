@@ -510,3 +510,89 @@ test('a retryable root becomes eligible again after its backoff expires', async 
     await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
   }
 }), 15_000);
+
+test('a hung claim renewal abandons pending preparation and frees the consumer slot', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const first = await admitWrite(engine, admission(config, sources[0], 'renew-hang-first', 'first body'));
+  const second = await admitWrite(engine, admission(config, sources[1], 'renew-hang-second', 'second body'));
+  const preparation = Promise.withResolvers<ReturnType<typeof prepared>>();
+  const renewal = Promise.withResolvers<Record<string, never>[]>();
+  const started: string[] = [];
+  const errors: unknown[] = [];
+  const originalDirect = engine.executeRawDirect.bind(engine);
+  (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = (sql: string, params?: unknown[]) => {
+    if (sql.includes('claim_expires_at=now()+') && params?.[0] === first.id) return renewal.promise;
+    return originalDirect(sql, params);
+  };
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_engine, row) => {
+    started.push(row.id);
+    if (row.id === first.id) return preparation.promise;
+    return prepared(row, sources);
+  }, { hostId: config.hostId, concurrency: 1, pollMs: 60_000, renewalIntervalMs: 5,
+    phaseMs: 30, onError: error => errors.push(error) });
+  try {
+    consumer.start();
+    await waitFor(() => started[0] === first.id, { timeoutMs: 5_000 });
+    await waitFor(async () => (await getWriteRequestById(engine, first.id))?.state === 'queued',
+      { timeoutMs: 5_000, label: 'timed-out renewal should release the pending request' });
+    await waitFor(() => consumer.status().active_preparations === 0, { timeoutMs: 5_000 });
+    expect(consumer.status().active_preparations).toBe(0);
+    expect((await getWriteRequestById(engine, first.id))?.state).toBe('queued');
+    // The abandoned preparation still runs, so its root stays busy: the next
+    // request on that worktree must not start preparing alongside it.
+    expect((consumer as unknown as { activeRoots: Set<string> }).activeRoots.has(first.worktree_id!)).toBe(true);
+    // Keep the released root in its retry backoff while advancing the consumer
+    // once to prove the other root can use the freed slot.
+    (consumer as unknown as { rootRetryAfter: Map<string, number> }).rootRetryAfter.set(first.worktree_id!, Date.now() + 60_000);
+    await consumer.tick();
+    await waitFor(async () => (await getWriteRequestById(engine, second.id))?.state === 'committed',
+      { timeoutMs: 5_000, label: 'the next independent root should use the freed slot' });
+    expect(started).toEqual([first.id, second.id]);
+    // stop() is the engine-close barrier: it must still drain the abandoned
+    // preparation and the hung renewal query before resolving.
+    let stopped = false;
+    const stopping = consumer.stop().then(() => { stopped = true; });
+    await Bun.sleep(50);
+    expect(stopped).toBe(false);
+    preparation.resolve(prepared(first, sources));
+    renewal.resolve([]);
+    await stopping;
+    expect(stopped).toBe(true);
+    expect((await getWriteRequestById(engine, first.id))?.state).toBe('queued');
+    await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, second.id))!);
+    await assertConservation(engine);
+    expect(errors).toEqual([]);
+  } finally {
+    preparation.resolve(prepared(first, sources));
+    renewal.resolve([]);
+    await consumer.stop();
+    (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = originalDirect;
+    for (const row of [first, second]) await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+  }
+}), 15_000);
+
+test('ordinary claims still renew and commit while preparation continues', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'renew-healthy', 'body'));
+  const originalDirect = engine.executeRawDirect.bind(engine);
+  let renewals = 0;
+  (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = (sql: string, params?: unknown[]) => {
+    if (sql.includes('claim_expires_at=now()+')) renewals++;
+    return originalDirect(sql, params);
+  };
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_engine, current) => {
+    await Bun.sleep(30);
+    return prepared(current, sources);
+  }, { hostId: config.hostId, pollMs: 60_000, renewalIntervalMs: 5, phaseMs: 500 });
+  try {
+    consumer.start();
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'committed', { timeoutMs: 5_000 });
+    expect(renewals).toBeGreaterThan(0);
+    await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, row.id))!);
+    await assertConservation(engine);
+  } finally {
+    await consumer.stop();
+    (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = originalDirect;
+    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+  }
+}), 15_000);
