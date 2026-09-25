@@ -42,7 +42,7 @@ export function assertManagedFilesystemWrite(path: string): void {
   const managed = hasManagedRootMarker(path) || registeredManagedRoots().some(root => encloses(root, path) || encloses(path, root))
     || [...managedRoots.values()].some(roots => [...roots].some(root => encloses(root, path) || encloses(path, root)));
   if (managed && !hasFilesystemPublication(path)) throw new OperationError('writer_coordinator_required',
-    'This file belongs to a managed canonical worktree.', 'Submit the change through the persistence coordinator.');
+    'This path belongs to a managed canonical worktree.', 'Submit the change through the persistence coordinator.');
 }
 /** Invalidate inherited async contexts before the owner releases the kernel lock. */
 export async function withFilesystemPublication<T>(roots: string[], fn: () => Promise<T>): Promise<T> {
