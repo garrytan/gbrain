@@ -14,6 +14,7 @@ import { assertSyncPageOrigin, syncOriginPath } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import type { SyncIntent } from './sync-prepare.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
+import { withCoordinatedWrite } from './context.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { recordManagedSyncFailure, clearManagedSyncFailureAfterSuccess, formatManagedSyncFailure, type ManagedSyncFailure } from './sync-failures.ts';
@@ -272,6 +273,11 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       const fresh: Cursor = { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 }, ...(company ? { companyReceiptId: company.receiptId } : {}) };
       if (opts.dryRun) return result(fresh, 'dry_run');
       if (!fresh.entries.length && fresh.from === fresh.target) {
+        // Bump last_sync_at as a heartbeat; it is a monitoring signal.
+        await engine.transaction(tx => withCoordinatedWrite(tx, [context.sourceId], () => {
+          assertActive();
+          return tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [context.sourceId, context.incarnation]);
+        }));
         await clearManagedSyncFailureAfterSuccess(engine, key);
         assertActive();
         return result(fresh, 'up_to_date');

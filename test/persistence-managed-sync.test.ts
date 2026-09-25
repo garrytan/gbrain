@@ -81,6 +81,67 @@ test('imports files without rewriting bytes and checkpoints only committed page 
   }
 }),120_000);
 
+test('managed sync refreshes quiet-source freshness only after a complete up-to-date check', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine, { 'notes/example.md': 'A stable observation for heartbeat coverage.\n' });
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    const old = '2000-01-01T00:00:00Z';
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_sync_at=$2::timestamptz WHERE id=$1', [f.id, old])));
+    const [before] = await engine.executeRaw<{ last_commit: string; newest_content_at: Date | string | null }>(
+      'SELECT last_commit,newest_content_at FROM sources WHERE id=$1', [f.id]);
+
+    expect((await performManagedSync(engine, { sourceId: f.id, noPull: true })).status).toBe('up_to_date');
+    const [after] = await engine.executeRaw<{ last_sync_at: Date | string; last_commit: string; newest_content_at: Date | string | null }>(
+      'SELECT last_sync_at,last_commit,newest_content_at FROM sources WHERE id=$1', [f.id]);
+    expect(Date.parse(String(after.last_sync_at))).toBeGreaterThan(Date.parse(old));
+    expect(after.last_commit).toBe(before.last_commit);
+    expect(after.newest_content_at).toEqual(before.newest_content_at);
+
+    writeFileSync(join(f.root, 'notes/example.md'), 'A changed observation requiring a partial sync.\n');
+    commit(f.root, 'changed content');
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_sync_at=$2::timestamptz WHERE id=$1', [f.id, old])));
+    const abort = new AbortController();
+    const partial = await performManagedSync(engine, { sourceId: f.id, noPull: true, signal: abort.signal,
+      onProgress: progress => { if (progress.bankedFiles === 1) abort.abort(); } });
+    expect(partial.status).toBe('partial');
+    const [afterPartial] = await engine.executeRaw<{ last_sync_at: Date | string }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]);
+    expect(Date.parse(String(afterPartial.last_sync_at))).toBe(Date.parse(old));
+  }
+}),120_000);
+
+test('managed up-to-date heartbeat is scoped to its source incarnation', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine, { 'notes/example.md': 'A stable observation for incarnation coverage.\n' });
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    const old = '2000-01-01T00:00:00Z';
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_sync_at=$2::timestamptz WHERE id=$1', [f.id, old])));
+    const transaction = engine.transaction;
+    let replaced = false;
+    engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
+      return transaction.call(this, async tx => {
+        const executeRaw = tx.executeRaw;
+        tx.executeRaw = async function <R = Record<string, unknown>>(
+          this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal },
+        ): Promise<R[]> {
+          if (!replaced && sql === 'UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid' && params?.[0] === f.id) {
+            replaced = true;
+            // Simulate the incarnation changing after discovery but before its guarded stamp.
+            return executeRaw.call(this, sql, [f.id, randomUUID()], opts) as Promise<R[]>;
+          }
+          return executeRaw.call(this, sql, params, opts) as Promise<R[]>;
+        };
+        return run(tx);
+      }) as Promise<T>;
+    } as BrainEngine['transaction'];
+    try {
+      expect((await performManagedSync(engine, { sourceId: f.id, noPull: true })).status).toBe('up_to_date');
+    } finally { engine.transaction = transaction; }
+    expect(replaced).toBe(true);
+    const [source] = await engine.executeRaw<{ last_sync_at: Date | string }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]);
+    expect(Date.parse(String(source.last_sync_at))).toBe(Date.parse(old));
+  }
+}),120_000);
+
 test('interrupted cursor resumes its pinned target before a newer HEAD and never advances early', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
     const f = await fixture(engine, {'a.md':'First stable observation about engineering.\n','b.md':'Original second observation about engineering.\n'});

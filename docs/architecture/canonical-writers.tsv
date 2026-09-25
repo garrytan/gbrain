@@ -117,6 +117,7 @@ src/commands/schema.ts	0	filesystem_guard	Schema manifest scaffolding and forks 
 src/core/ingestion/sources/inbox-folder.ts	0	filesystem_guard	Inbox archive moves refuse managed canonical input paths before emitting the event or moving source bytes.
 src/core/persistence/links-preparation.ts	2	coordinator	Automatic graph projections publish inside canonical page transactions; delayed reconciliation locks all affected page keys and compares the originating revision.
 src/core/persistence/sync-prepare.ts	3	coordinator	Managed imports and deletes validate the recorded raw file hash plus enumerated page identity/revision; the source-exclusive final checkpoint requires every selected receipt to be committed.
+src/core/persistence/sync-run.ts	1	coordinator	The managed up-to-date heartbeat stamps only sources.last_sync_at inside withCoordinatedWrite, scoped to the checked source id and incarnation.
 src/commands/enrich.ts	0	early_refusal	Managed batch synthesis refuses before providers until its resume cursor retains prepared writes; legacy synthesis still carries a coherent revision and exposes pending request IDs.
 src/core/persistence/source-lifecycle.ts	6	coordinator	Native affected roots precede topology, source, principal and receipt guards; every shared-root generation and old queued intent changes together.
 src/core/persistence/topology-recovery.ts	2	coordinator	Verified directory-swap recovery checks source incarnation, current logical manifest and physical identity before topology commitment; permanent receipt IDs survive deletion.
