@@ -119,6 +119,78 @@ test('DB-only subjectless withdrawal leaves unrelated pages and chunks unchanged
   }
 });
 
+test('short claims do not invalidate prose substring matches but still clear exact stale chunks and fact cells', async () => {
+  const isolatedSourceId = 'withdrawal-short-claim-test';
+  const claim = 'AI';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      await engine.putPage('prose-substrings', {
+        type: 'note', title: 'Safe prose', compiled_truth: 'Email said the details are ready.',
+      }, { sourceId: isolatedSourceId });
+      await engine.upsertChunks('prose-substrings', [{
+        chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'Email said the details are ready.',
+      }], { sourceId: isolatedSourceId });
+      await engine.putPage('exact-stale', {
+        type: 'note', title: 'Exact stale projection', compiled_truth: 'Current safe body',
+      }, { sourceId: isolatedSourceId });
+      await engine.upsertChunks('exact-stale', [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: claim }],
+        { sourceId: isolatedSourceId });
+      await engine.putPage('fact-cell-stale', {
+        type: 'note', title: 'Fact cell stale projection', compiled_truth: 'Current safe body',
+      }, { sourceId: isolatedSourceId });
+      await engine.upsertChunks('fact-cell-stale', [{
+        chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: `prefix | 1 | ${claim} | fact | suffix`,
+      }], { sourceId: isolatedSourceId });
+      const proseBefore = (await engine.readPageSnapshot('prose-substrings', { sourceId: isolatedSourceId }))!;
+      const stored = await engine.insertFact({ fact: claim, source: 'remember', visibility: 'world' },
+        { source_id: isolatedSourceId });
+
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages.map(page => page.slug))
+        .toEqual(['exact-stale', 'fact-cell-stale']);
+      expect((await engine.readPageSnapshot('prose-substrings', { sourceId: isolatedSourceId }))!.revision)
+        .toBe(proseBefore.revision);
+      expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
+        WHERE p.source_id=$1 AND p.slug=$2`, [isolatedSourceId, 'prose-substrings'])).toHaveLength(1);
+      expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
+        WHERE p.source_id=$1 AND p.slug=ANY($2::text[])`,
+      [isolatedSourceId, ['exact-stale', 'fact-cell-stale']])).toEqual([]);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
+test('malformed-fence scope uses the database fingerprint instead of JavaScript whitespace rules', async () => {
+  const isolatedSourceId = 'withdrawal-db-fingerprint-test';
+  const factClaim = 'alpha beta';
+  const differentClaim = 'alpha\u00a0beta';
+  for (const engine of engines) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [isolatedSourceId]);
+    try {
+      const malformed = renderFactsTable([fact(differentClaim, { context: factClaim })])
+        .replace('| world |', '| impossible |');
+      await engine.putPage('different-db-fingerprint', {
+        type: 'note', title: 'Different database fingerprint', compiled_truth: malformed,
+      }, { sourceId: isolatedSourceId });
+      await engine.upsertChunks('different-db-fingerprint', [{
+        chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: 'unrelated retained chunk',
+      }], { sourceId: isolatedSourceId });
+      const before = (await engine.readPageSnapshot('different-db-fingerprint', { sourceId: isolatedSourceId }))!;
+      const stored = await engine.insertFact({ fact: factClaim, source: 'remember', visibility: 'world' },
+        { source_id: isolatedSourceId });
+
+      expect((await recordFactWithdrawal(engine, stored.id, isolatedSourceId, true)).pages).toEqual([]);
+      expect((await engine.readPageSnapshot('different-db-fingerprint', { sourceId: isolatedSourceId }))!.revision)
+        .toBe(before.revision);
+      expect(await engine.executeRaw(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id
+        WHERE p.source_id=$1 AND p.slug=$2`, [isolatedSourceId, 'different-db-fingerprint'])).toHaveLength(1);
+    } finally {
+      await engine.executeRaw('DELETE FROM sources WHERE id=$1', [isolatedSourceId]);
+    }
+  }
+});
+
 test('subjectless withdrawal removes an exact stale chunk even when the page body no longer carries the claim', async () => {
   const isolatedSourceId = 'withdrawal-stale-chunk-test';
   const claim = 'not now';

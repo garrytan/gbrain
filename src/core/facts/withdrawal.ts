@@ -51,13 +51,17 @@ export async function recordFactWithdrawal(
             AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)
             AND COALESCE(source_markdown_slug,entity_slug) IS NOT NULL
         ), chunk_shortlist AS MATERIALIZED (
-          SELECT c.page_id,c.chunk_text FROM content_chunks c JOIN pages p ON p.id=c.page_id CROSS JOIN target
+          SELECT c.page_id,regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g') AS chunk_text
+          FROM content_chunks c JOIN pages p ON p.id=c.page_id CROSS JOIN target
           WHERE p.source_id=$1 AND target.claim<>''
             AND (target.anchor IS NULL OR position(target.anchor in lower(c.chunk_text))>0)
         ), chunk_pages AS MATERIALIZED (
           SELECT c.page_id,bool_or(
-            position(target.claim in regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g'))>0 OR
-            position(target.escaped_claim in regexp_replace(lower(c.chunk_text),'[[:space:]]+',' ','g'))>0
+            c.chunk_text=target.claim OR c.chunk_text=target.escaped_claim OR
+            position(chr(124)||' '||target.escaped_claim||' '||chr(124) in c.chunk_text)>0 OR
+            position(chr(124)||target.escaped_claim||chr(124) in c.chunk_text)>0 OR
+            position(chr(124)||' '||target.escaped_claim||chr(124) in c.chunk_text)>0 OR
+            position(chr(124)||target.escaped_claim||' '||chr(124) in c.chunk_text)>0
           ) AS chunk_match
           FROM chunk_shortlist c CROSS JOIN target GROUP BY c.page_id
         ), fence_pages AS MATERIALIZED (
@@ -88,15 +92,13 @@ export async function recordFactWithdrawal(
         FROM candidates c JOIN pages p ON p.source_id=$1 AND p.slug=c.slug ORDER BY p.slug`,
       [sourceId, target.visibility, target.fact, escapeFenceCell(target.fact)]);
     const withdrawal: PageWithdrawal = { visibility: target.visibility, fact_hash: target.fact_hash, withdrawn_at: new Date().toISOString() };
-    const ambiguousMatch = (body: string) => ambiguousFenceClaims(body).some(candidate =>
-      normalizeFactClaim(candidate.claim) === normalizeFactClaim(target.fact) &&
-      (candidate.visibility === null || candidate.visibility === target.visibility));
+    const ambiguousSlugs = await ambiguousFenceMatchesFact(tx, target.fact_hash, target.visibility,
+      candidates.filter(page => page.body_match || page.timeline_match));
     const affected = candidates.filter(page =>
       page.provenance || page.chunk_match ||
       overlayWithdrawalBody(page.compiled_truth, page.fingerprint_body ?? '', [withdrawal]) !== page.compiled_truth ||
       overlayWithdrawalBody(page.timeline, page.fingerprint_timeline ?? '', [withdrawal]) !== page.timeline ||
-      page.body_match && ambiguousMatch(page.compiled_truth) ||
-      page.timeline_match && ambiguousMatch(page.timeline),
+      ambiguousSlugs.has(page.slug),
     ).map(page => page.slug);
     await tx.lockPageKeys(affected.map(slug => ({ sourceId, slug })));
     const rows = await tx.executeRaw<{ visibility: string; fact: string }>(
@@ -127,10 +129,6 @@ export async function recordFactWithdrawal(
   });
 }
 
-function normalizeFactClaim(claim: string): string {
-  return claim.trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
 function ambiguousFenceClaims(body: string): Array<{ claim: string; visibility: string | null }> {
   const claims = new Map<string, { claim: string; visibility: string | null }>();
   for (const segment of ambiguousWithdrawalFenceSegments(body)) {
@@ -146,6 +144,23 @@ function ambiguousFenceClaims(body: string): Array<{ claim: string; visibility: 
     }
   }
   return [...claims.values()];
+}
+
+async function ambiguousFenceMatchesFact(
+  engine: BrainEngine,
+  factHash: string,
+  visibility: string,
+  pages: ReadonlyArray<{ slug: string; compiled_truth: string; timeline: string }>,
+): Promise<Set<string>> {
+  const claims = pages.flatMap(page => [page.compiled_truth, page.timeline].flatMap(ambiguousFenceClaims)
+    .map(candidate => ({ slug: page.slug, ...candidate })));
+  if (!claims.length) return new Set();
+  const rows = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT incoming.slug
+    FROM jsonb_to_recordset($1::text::jsonb) incoming(slug text,claim text,visibility text)
+    WHERE gbrain_fact_fingerprint(incoming.claim)=$2
+      AND (incoming.visibility IS NULL OR incoming.visibility=$3)`,
+  [JSON.stringify(claims), factHash, visibility]);
+  return new Set(rows.map(row => row.slug));
 }
 
 async function ambiguousFenceMatchesWithdrawal(engine: BrainEngine, sourceId: string, bodies: readonly string[]): Promise<boolean> {
@@ -195,7 +210,7 @@ export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceI
   const blocked = await ambiguousFenceMatchesWithdrawal(engine, sourceId, [body, timeline]);
   if (changed) {
     throw new OperationError('revision_conflict', 'A fact withdrawal changed during import preparation. Retry the import.',
-      'Retry the same import so the prepared page includes the committed withdrawal.');
+      'Read the current page revision, then submit the updated import with a new request_id.');
   }
   if (blocked) {
     throw new OperationError('invalid_params', 'A malformed fact fence contains a withdrawn claim.',

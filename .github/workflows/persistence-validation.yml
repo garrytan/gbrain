@@ -105,6 +105,7 @@ jobs:
             test/persistence-effect-recovery-fairness.test.ts \
             test/import-publication-guards.test.ts \
             test/persistence-withdrawal-retry.test.ts \
+            test/withdrawal-overlay-concurrency.test.ts \
             test/persistence-tombstone-noop.test.ts \
             test/persistence-version-deletion.test.ts \
             test/version-history-privacy.test.ts \
