@@ -77,7 +77,11 @@ export { fileHash as persistenceFileHash, publishFile as publishPersistenceFile 
 function requestError(error: unknown): { code: string; message: string } {
   if (error instanceof OperationError) return { code: error.code, message: error.message };
   const code = (error as { code?: string })?.code;
-  if (code === 'revision_conflict') return { code, message: 'The page changed after the supplied revision was read.' };
+  if (code === 'revision_conflict') {
+    const message = error instanceof Error && error.message ? error.message
+      : 'The page changed after the supplied revision was read.';
+    return { code, message };
+  }
   return { code: 'storage_error', message: `Publication failed${code ? ` (${code})` : ''}. Inspect owner diagnostics.` };
 }
 function conflictCode(code: string): boolean { return ['revision_required','revision_conflict','source_changed','page_identity_changed'].includes(code); }

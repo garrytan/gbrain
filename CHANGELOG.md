@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.42] - 2026-09-26
+
+**Write conflicts report the real reason again.**
+
+Replacing a page without `expected_revision` once more reports that the
+precondition is missing ("an expected revision is required") instead of blaming
+a concurrent change that never happened — the generic "the page changed after
+the supplied revision was read" wording no longer overwrites the accurate
+conflict message. Refs #5385.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

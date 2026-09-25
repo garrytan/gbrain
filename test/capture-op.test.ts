@@ -176,4 +176,20 @@ describe('capture op', () => {
     const page = await engine.getPage(body.slug);
     expect(page).toBeNull();
   });
+
+  // #5385: replacing a page without expected_revision is a missing
+  // precondition — the conflict message must say so, not blame a
+  // concurrent modification that never happened.
+  test('put_page replace without expected_revision reports the missing precondition', async () => {
+    const slug = 'inbox/replace-needs-revision';
+    const first = parsed(await dispatchToolCall(engine, 'put_page', { slug, content: 'first body' }, { ...STDIO }));
+    expect(first.committed ?? true).not.toBe(false);
+
+    const replace = await dispatchToolCall(engine, 'put_page', { slug, content: 'second body' }, { ...STDIO });
+    expect(replace.isError).toBe(true);
+    const body = parsed(replace);
+    expect(body.write_error).toBe('revision_conflict');
+    expect(body.message).toMatch(/expected revision is required/i);
+    expect(body.message).not.toMatch(/changed after the supplied revision/i);
+  });
 });
