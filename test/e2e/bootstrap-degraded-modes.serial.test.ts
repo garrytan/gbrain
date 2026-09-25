@@ -44,7 +44,7 @@ const ENV_KEYS = [
   'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_HOME', 'CODEX_SANDBOX', 'CODEX_CI',
   // Provider keys — keyless mode means detectCapabilities finds NOTHING
   // (mergedEnv folds these names; GEMINI_API_KEY aliases the google key).
-  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'ZEROENTROPY_API_KEY',
+  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY',
   'OPENROUTER_API_KEY', 'DASHSCOPE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GEMINI_API_KEY',
 ];
 

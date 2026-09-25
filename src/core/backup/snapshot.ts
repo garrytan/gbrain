@@ -1,7 +1,7 @@
 /** Full PGLite state recovery for managed in-agent installations. Never starts workers. */
 import { randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { VERSION } from '../../version.ts';
 import { PGLiteEngine } from '../pglite-engine.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
@@ -9,9 +9,10 @@ import { configDir, type GBrainConfig } from '../config.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, readFileConfigState, readInstallReceipt, syncDirectory, type AgentInstallReceipt } from '../agent-install/state.ts';
 import { extractPgliteDump, hashFile, isBackupArchiveFile, readBackupArchive, writeBackupArchive, type ArchiveManifest } from './archive.ts';
-import { quarantineRestoredExecution, type RestoreQuarantine } from './quarantine.ts';
+import { quarantineRestoredExecution, rebaseRestorePath, relativeBackupPath, type RestoreQuarantine } from './quarantine.ts';
 import { quarantineSharedSkillRestore, validateSharedSkillRestoreMode, type SharedSkillRestore, type SharedSkillRestoreOptions } from '../shared-skills/restore.ts';
 import { isPhysicalRootMetadata } from '../persistence/physical-root-record.ts';
+import { protectNewBackupPath } from './private-path.ts';
 
 interface SourceInventory { id: string; local_path: string | null; managed_relative_path: string | null }
 interface BackupMetadata {
@@ -69,11 +70,6 @@ function walkFiles(root: string, relativePath: string, excluded: string[] = []):
   return result;
 }
 
-function relativeInside(root: string, path: string): string | null {
-  const result = relative(root, resolve(path));
-  return result && result !== '..' && !result.startsWith('..' + sep) && !resolve(path).startsWith(root + sep + '.gbrain' + sep) ? result : null;
-}
-
 /** Persist restored file contents AND directory entries before the ready receipt. */
 function syncRestoredTree(path: string): void {
   const stat = lstatSync(path);
@@ -83,7 +79,7 @@ function syncRestoredTree(path: string): void {
     return;
   }
   if (!stat.isFile()) throw new AgentInstallError('unsupported_file', 'Unexpected file type in restored staging.');
-  const fd = openSync(path, 'r');
+  const fd = openSync(path, 'r+');
   try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
@@ -115,8 +111,8 @@ export function rebaseManagedConfig(config: GBrainConfig, originalRoot: string, 
     const leaf = parts[parts.length - 1];
     const value = Object.getOwnPropertyDescriptor(parent, leaf)?.value;
     if (typeof value !== 'string') continue;
-    const rel = isAbsolute(value) ? relativeInside(originalRoot, value) : null;
-    if (rel && managedPaths.some(p => rel === p || rel.startsWith(p + '/'))) parent[leaf] = confinedPath(root, rel);
+    const rebased = rebaseRestorePath(value, originalRoot, root, managedPaths);
+    if (rebased) parent[leaf] = rebased;
     else {
       detached.push(`External configuration path ${parts.join('.')}: ${value}`);
       // A local backend with no path silently defaults to /tmp; detach the
@@ -148,13 +144,14 @@ export async function createPgliteBackup(options: { output: string; root?: strin
   const engine = new PGLiteEngine();
   try {
     work = mkdtempSync(join(dirname(output), '.gbrain-backup-')); chmodSync(work, 0o700);
+    await protectNewBackupPath(work, 'directory');
     const receipt = readInstallReceipt(root);
     // The engine holds its real PGLite writer lock until publication completes.
     await engine.connect({ engine: 'pglite', database_path: dbPath });
     const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id');
     const managedPaths = checkedManagedPaths(root, receipt?.managed_paths ?? []);
     const sources: SourceInventory[] = rows.map(row => {
-      const rel = row.local_path ? relativeInside(root, row.local_path) : null;
+      const rel = row.local_path ? relativeBackupPath(root, row.local_path) : null;
       return { ...row, managed_relative_path: rel && managedPaths.some(p => rel === p || rel.startsWith(p + '/')) ? rel : null };
     });
     const excludedPaths: string[] = [];
@@ -194,7 +191,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
         'Native harness skills/routines must be reattached and verified; no platform account state is included.',
       ],
     };
-    const manifest = writeBackupArchive(output, { ...metadata }, files);
+    const manifest = await writeBackupArchive(output, { ...metadata }, files);
     return { archive: output, manifest };
   } finally {
     try { await engine.disconnect(); } finally {
@@ -208,13 +205,13 @@ function metadataOf(manifest: ArchiveManifest): BackupMetadata {
   if (value.kind !== 'gbrain-pglite' || value.classification !== 'sensitive-full-database-state' || typeof value.original_root !== 'string' || !Number.isInteger(value.schema_version) || value.schema_version < 1 || !Array.isArray(value.sources) || !Array.isArray(value.managed_paths) || !Array.isArray(value.credential_references) || !Array.isArray(value.omitted)) {
     throw new AgentInstallError('invalid_backup', 'Invalid PGLite backup metadata.');
   }
-  checkedRoot(value.original_root);
+  if (relativeBackupPath(value.original_root, value.original_root) !== '') throw new AgentInstallError('invalid_backup', 'Invalid archived root.');
   if (value.schema_version > LATEST_VERSION) throw new AgentInstallError('newer_backup_schema', 'Upgrade GBrain before restoring this newer database schema.');
-  checkedManagedPaths('/restore', value.managed_paths);
+  checkedManagedPaths(null, value.managed_paths);
   if ([...value.credential_references, ...value.omitted].some(v => typeof v !== 'string')) throw new AgentInstallError('invalid_backup', 'Invalid backup reconnect inventory.');
   for (const source of value.sources) {
     if (!source || typeof source.id !== 'string' || (source.local_path !== null && typeof source.local_path !== 'string')) throw new AgentInstallError('invalid_backup', 'Invalid source inventory.');
-    if (source.managed_relative_path !== null && (typeof source.managed_relative_path !== 'string' || (!value.managed_paths.includes(source.managed_relative_path) && !value.managed_paths.some(p => source.managed_relative_path!.startsWith(p + '/'))))) throw new AgentInstallError('invalid_backup', 'Source path is outside the managed inventory.');
+    if (source.managed_relative_path !== null && (typeof source.managed_relative_path !== 'string' || !source.local_path || relativeBackupPath(value.original_root, source.local_path) !== source.managed_relative_path || (!value.managed_paths.includes(source.managed_relative_path) && !value.managed_paths.some(p => source.managed_relative_path!.startsWith(p + '/'))))) throw new AgentInstallError('invalid_backup', 'Source path is outside the managed inventory.');
   }
   if (value.installation && (!['grok-bot', 'muse'].includes(value.installation.harness) || typeof value.installation.source_id !== 'string' || !value.sources.some(s => s.id === value.installation!.source_id))) throw new AgentInstallError('invalid_backup', 'Invalid installer identity in backup.');
   return value;
@@ -231,6 +228,7 @@ export async function restorePgliteBackup(options: { archive: string; into: stri
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new AgentInstallError('restore_target_exists', 'Restore only into a new, absent root. Existing state is never overwritten.');
     throw error;
   }
+  await protectNewBackupPath(root, 'directory');
   const restoreId = randomUUID();
   const receiptPath = join(root, 'restore-receipt.json');
   privateWrite(receiptPath, JSON.stringify({ format_version: 1, restore_id: restoreId, state: 'restoring', mode }) + '\n');

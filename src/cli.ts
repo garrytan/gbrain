@@ -82,7 +82,7 @@ export function normalizeLocalResult(rawResult: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['mcp', 'init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'connectors', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
+export const CLI_ONLY = new Set(['mcp', 'init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'connectors', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
   // v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep):
   // full handler at `case 'notability-eval'` but never dispatchable.
   'notability-eval',
@@ -195,9 +195,6 @@ const CLI_ONLY_SELF_HELP = new Set([
   // is in CLI_ONLY but not CLI_ONLY_SELF_HELP, so the dispatcher's generic
   // short-circuit fires and the printInitHelp() guard in init.ts is dead code.
   'init',
-  // #3390 — `gbrain migrate embeddings --help` / `gbrain retrieval-upgrade
-  // --help` print the migration flags from runMigrateEmbeddings. `migrate`
-  // (engine transfer) keeps its own dispatch too.
   'migrate', 'retrieval-upgrade',
   // Agent-bootstrap family: each prints its own detailed usage (BOOTSTRAP_HELP
   // in bootstrap.ts, the hook USAGE block, SWEEP_HELP). Omitting them here
@@ -232,9 +229,6 @@ const CLI_ONLY_SELF_HELP = new Set([
   // webhook, harden, ...). That made the pointer circular and those
   // subcommands undiscoverable from the CLI in either direction.
   'sources',
-  // ZE interim cleanup: the retired ze-switch shim ships truthful help
-  // (sunset refusal + canonical migration command); the generic stub hid it.
-  'ze-switch',
   // `gbrain takes --help` printed the generic one-line stub, so the nine
   // subcommands (add/update/supersede/resolve/scorecard/calibration/revisit/
   // extract/search) were undiscoverable from the CLI — the detailed usage
@@ -299,9 +293,6 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // runAgent accepts BrainEngine | null; help (incl. `register --help`) is
   // answered before any engine or job-queue work (cathedral-6).
   agent: async () => (await import('./commands/agent.ts')).runAgent as never,
-  // The retired ze-switch shim answers --help engine-free (arg-order adapter
-  // lives in ze-switch.ts because runZeSwitch takes (args, engine)).
-  'ze-switch': async () => (await import('./commands/ze-switch.ts')).runZeSwitchSelfHelp as never,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -857,7 +848,6 @@ async function main() {
     await finishCliTeardown({ engine, drainTimeoutMs: 1000 });
   }
 }
-
 
 function hasHelpFlag(args: string[]): boolean {
   return args.includes('--help') || args.includes('-h');
@@ -2167,10 +2157,6 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
   if (command === 'bench') {
-    // #3502 sweep: `gbrain bench publish` was documented (docs/eval-bench.md,
-    // KEY_FILES.md, and eval-gate's own --help text) but never dispatched —
-    // the promised-but-unwired class retrieval-upgrade (#3390) fixed before.
-    // Pure file-in/file-out (NDJSON → baseline); no DB, no engine.
     if (args[0] === 'publish') {
       const { runBenchPublish } = await import('./commands/bench-publish.ts');
       await runBenchPublish(args.slice(1));
@@ -2516,44 +2502,7 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
-  if (command === 'ze-switch') {
-    // Retired refusal/redirect shim. Only --undo reads the brain (one config
-    // row); every other invocation must refuse EVEN ON an unconfigured
-    // machine — connecting unconditionally turned the refusal into
-    // "No brain configured" and starved --json callers of the envelope.
-    const { runZeSwitch } = await import('./commands/ze-switch.ts');
-    if (!args.includes('--undo')) {
-      await runZeSwitch(args, null);
-      return;
-    }
-    // --undo reads one config row. An unconfigured machine (or a failed
-    // connect) must still get the shim's truthful --json refusal envelope —
-    // connectEngine would print plain "No brain configured" and exit before
-    // the shim ran, so pre-check the config and degrade to a null engine
-    // (the shim words that as a read failure).
-    if (!loadConfig()) {
-      await runZeSwitch(args, null);
-      return;
-    }
-    let eng: BrainEngine | null = null;
-    try {
-      eng = await connectEngine();
-    } catch {
-      await runZeSwitch(args, null);
-      return;
-    }
-    try {
-      await runZeSwitch(args, eng);
-    } finally {
-      await finishCliTeardown({ engine: eng });
-    }
-    return;
-  }
-
   if (command === 'compile-context') {
-    // cathedral-5: deterministic compiled-context views. Owns its engine
-    // lifecycle (ze-switch pattern); the module returns the exit verdict
-    // (0 ok, 1 check found a difference, 2 error — no partial writes).
     const { runCompileContext } = await import('./commands/compile-context.ts');
     const eng = await connectEngine();
     try {
@@ -3164,8 +3113,6 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       case 'retrieval-upgrade': {
-        // The command README.md + doctor.ts promised since v0.36 but never
-        // dispatched. Alias for `migrate embeddings` (#3390).
         const { runMigrateEmbeddings } = await import('./commands/migrate-embeddings.ts');
         await runMigrateEmbeddings(engine, args);
         break;

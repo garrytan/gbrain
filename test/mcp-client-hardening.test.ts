@@ -191,6 +191,19 @@ describe('extractToolErrorDetail', () => {
     expect(parsed.write_request).toEqual(PENDING_WRITE);
   });
 
+  test('preserves the optional health contract while stripping private nested metadata', () => {
+    const diagnostic = { age_ms: 120000, observed_at: '2026-09-23T00:00:00.000Z',
+      assessment: 'stalled', reason: 'cause_unknown', next_action: 'inspect_owner' } as const;
+    const parsed = extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: {
+      ...PENDING_WRITE, diagnostic: { ...diagnostic, predecessor_id: 'PRIVATE_PREDECESSOR', raw_error: 'PRIVATE_ERROR' },
+    } }));
+    expect(parsed.write_request).toEqual({ ...PENDING_WRITE, diagnostic });
+    expect(JSON.stringify(parsed)).not.toContain('PRIVATE_');
+    expect(extractToolErrorDetail(JSON.stringify({ error: 'unavailable', write_request: {
+      ...PENDING_WRITE, diagnostic: { ...diagnostic, age_ms: -1 },
+    } }))).toEqual({ code: 'unavailable' });
+  });
+
   test('retains backward compatibility with plain text tool errors', () => {
     expect(extractToolErrorDetail('missing scope write')).toEqual({ code: 'missing_scope' });
     expect(extractToolErrorDetail('failed')).toEqual({});

@@ -1,5 +1,6 @@
 import { verbError, OperationError } from '../ops/contract.ts';
 import { isTerminalWriteState, isWriteErrorCode, type WriteErrorCode, type WriteReceipt } from './types.ts';
+import { pendingWriteHint } from './health.ts';
 
 export function writeFailureDiagnostic(code: string, message?: string | null): { reason: string; message: string; suggestion: string } {
   if (code === 'source_changed') {
@@ -75,7 +76,7 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
       ? 'invalid_params' : 'unavailable';
   const diagnostic = writeFailureDiagnostic(writeError, message);
   const suggestion = pending
-    ? `Retry the same verb with the same arguments and request_id ${receipt.request_id}${receipt.retry_after_ms === null ? ' after checking writer availability' : ` after ${receipt.retry_after_ms} ms`}. Do not submit a new request_id for this write.`
+    ? pendingWriteHint(receipt)
     : receipt.state === 'cancelled'
         ? 'This request was cancelled. Submit a new request_id only if you want to make a new write.'
         : `${diagnostic.suggestion} Submit any corrected write with a new request_id. Reusing this request_id returns the same ${receipt.state === 'conflict' ? 'conflict' : 'outcome'}.`;

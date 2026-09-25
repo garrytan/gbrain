@@ -128,6 +128,7 @@ describe("selectTests", () => {
       "test/e2e/search-query-contract-postgres.test.ts",
       "test/e2e/search-readiness-http.test.ts",
       "test/e2e/search-swamp.test.ts",
+      "test/e2e/unsupported-embedding-identity-postgres.test.ts",
       "test/e2e/vector-candidate-safety-postgres.test.ts",
     ]);
   });
@@ -217,6 +218,7 @@ describe("selectTests", () => {
       "test/e2e/search-query-contract-postgres.test.ts",
       "test/e2e/search-readiness-http.test.ts",
       "test/e2e/search-swamp.test.ts",
+      "test/e2e/unsupported-embedding-identity-postgres.test.ts",
       "test/e2e/vector-candidate-safety-postgres.test.ts",
     ]);
   });

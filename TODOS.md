@@ -172,7 +172,7 @@
   **Effort:** S. **Priority:** P3.
 - [ ] **P3 — `scripts/r1-namedthing-rerank-ab.ts`: refuse an implicit embedder and print the fixture set in the verdict header.**
   **What:** without `GBRAIN_EMBEDDING_MODEL` the script fell back to the
-  gateway's stale ZeroEntropy default and exit-2'd at auth after reserving
+  gateway's stale retired hosted provider default and exit-2'd at auth after reserving
   spend; without `--relational --limit 10` it silently ran the 12 core
   questions at page size 3 and printed a PASS that was not the receipt anyone
   wanted. **Fix:** require an explicit embedder (env or flag) and put
@@ -1353,7 +1353,7 @@ deferred M-effort issues above are NOT repeated here.
   setupRun/teardownRun; bank the baseline in the same commit). Context: outside-voice F5.
 - [ ] **P2 — Per-model calibration for `search.evidence_cosine_floor` (0.80) and
   `search.autocut_min_top` (0.35).** Both are provider-scale-dependent; both are
-  config-overridable today. The reranker default flip (zerank-2 →
+  config-overridable today. The reranker default flip (retired-reranker-2 →
   voyage:rerank-2.5) shipped in v0.48.2.0 WITHOUT re-tuning autocut_min_top: the
   re-tune was rule R2 of the ranker wave's pre-registered rerank A/B. **R2
   DECIDED (v0.48.4.0, 2026-09-06):** the shipped default (reranker on, autocut
@@ -1992,7 +1992,7 @@ deferred M-effort issues above are NOT repeated here.
   leak in the dispatch suite's teardown; noticed while triaging the v0.48.2.0 ship.
   **Priority:** P3.
 
-## v0.47 SEPTEMBER REMOVAL — ZeroEntropy (filed v0.46.3.0; TARGET: ship 2026-09-04..2026-09-08)
+## v0.47 SEPTEMBER REMOVAL — retired hosted provider (filed v0.46.3.0; TARGET: ship 2026-09-04..2026-09-08)
 
 <!-- 2026-08-29 fix-wave addenda for the removal executor:
   (a) A post-sunset short-circuit now ships ahead of this wave (refs #3657):
@@ -2003,7 +2003,7 @@ deferred M-effort issues above are NOT repeated here.
   (b) Default-swap decision input from the issue thread: two independent
       corpus reports found reranking actively HURT (2k-page personal brain —
       three rerankers demoted short entity pages; 19k-page Japanese corpus —
-      zerank-2 itself 0/6 vs OFF). DECISION (v0.48.2.0, 2026-09-02): the
+      retired-reranker-2 itself 0/6 vs OFF). DECISION (v0.48.2.0, 2026-09-02): the
       default flipped to voyage:rerank-2.5 in ALL three bundles ahead of the
       sunset (a dead default is strictly worse than an unmeasured live one);
       balanced ON/OFF (rule R1) is decided by rerank-ON vs OFF on
@@ -2025,75 +2025,29 @@ deferred M-effort issues above are NOT repeated here.
       the P2 calibration TODO above) is rule R2 of the same A/B. -->
 
 
-ZeroEntropy's hosted API dies 2026-09-04. v0.46.3.0 deprecated it (split-default:
-new installs → voyage; legacy runtime fallbacks stay ZE; detect-and-notify
-migration). The removal wave deletes the provider and performs the hard cutover.
-Staged-deletion discipline (ship replacements → migrate call sites → update tests
-→ THEN delete; see the skills/_brain-filing-rules precedent below):
+The hosted provider retired on 2026-09-04. This section was filed in
+v0.46.3.0; the historical comparison above retains its original measurements.
+Provider and model identifiers are redacted archival labels, not supported
+configuration. Original identifiers and task detail are preserved at Git revision
+`6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-- [ ] **P1 — HARD CUTOVER: retire the legacy configless runtime fallbacks.**
-  `DEFAULT_EMBEDDING_MODEL`/`DEFAULT_EMBEDDING_DIMENSIONS` (src/core/ai/defaults.ts)
-  stop resolving to `zeroentropyai:*`; unmigrated configless brains get a HARD,
-  actionable error naming `gbrain migrate embeddings --to voyage:voyage-4 --dim 1024`.
-  The reranker half is DONE (v0.48.2.0): `DEFAULT_RERANKER_MODEL` lives in
-  defaults.ts and the three mode-bundle `reranker_model` values resolve to
-  `voyage:rerank-2.5`; the one-time all-modes knobs-hash cache miss was documented
-  in that CHANGELOG. `LEGACY_DEFAULT_RERANKER_MODEL` + the `RERANKER_SUNSETS` row
-  stay until the recipe itself is deleted here. Verify the schema
-  generators' legacy-constant consumers (pglite-schema, postgres-engine,
-  embedding-column.ts registry fallback) get a deliberate post-ZE story.
-- [ ] **P1 — PREREQ before recipe deletion: move gateway.ts's `'/models/rerank'`
-  default path onto explicit per-recipe `path` fields.** llama-server-reranker and
-  dashscope-rerank may ride the implicit ZE-shaped fallback — audit + pin with tests
-  FIRST or their rerank calls 404 the day the fallback goes.
-- [ ] **P1 — Delete the provider surface.** `src/core/ai/recipes/zeroentropyai.ts` +
-  registry entries (recipes/index.ts); `zeroEntropyCompatFetch`,
-  `MAX_ZEROENTROPY_RESPONSE_BYTES`, `ZeroEntropyResponseTooLargeError` + the
-  fetch-ternary arm (gateway.ts); ZE sets in dims.ts; `ze-switch.ts` +
-  `retrieval-upgrade-planner.ts` + cli.ts dispatch/CLI_ONLY/CLI_ONLY_SELF_HELP/
-  SELF_HELP_WITHOUT_ENGINE/flag-registry rows; `checkZeEmbeddingHealth` in doctor
-  (`provider_sunset` STAYS and goes generic — read `recipe.sunset` instead of the
-  hardcoded ZE constants); pricing rows LAST (budget-tracker rerank metering reads
-  them for historical audit rows). NOTE: test/ai/zeroentropy-compat-fetch.test.ts
-  greps gateway.ts SOURCE TEXT — delete the test with the code, in the same commit.
-  ALREADY DONE by the interim ZE cleanup wave (pre-Sept): `retrieval-upgrade-prompt.ts`
-  deleted (banner/marketing copy gone); `ze-switch.ts` is now a ~170-line pure
-  refusal/redirect shim (undo/dry-run ACTIONS retired — apply/undo wrote DB-plane
-  config the file-plane-canonical runtime never read); `providers env`/`explain` are
-  sunset-aware via the shared `sunsetMarker` in providers.ts (generic on
-  `recipe.sunset` — the removal wave inherits it); `ze_embedding_health`'s missing-key
-  copy is migration-first (the check itself still gets deleted here).
-- [ ] **P1 — Self-host continuity decision.** The v0.46.3 playbook's zero-re-embed
-  path keeps the `zeroentropyai:zembed-1` id behind a base-URL override to a
-  ZE-wire-compatible endpoint. Recipe deletion breaks it. Decide: keep a minimal
-  local-only recipe shell (no picker/auto-pick, no hosted default URL), ship a
-  signature-migration tool (rewrite pages.embedding_signature provider ids without
-  re-embedding), or explicitly end the promise with a loud migration note. The
-  playbook (skills/migrations/v0.46.3.0.md) links here — honor it.
-- [ ] **P2 — Tests + CI.** Delete the 8 ZE-dedicated test files
-  (zeroentropy-recipe, zeroentropy-compat-fetch, dims-zeroentropy,
-  e2e/zeroentropy-live, ze-switch-cli [now pins the shim contract — dies with the
-  shim], ze-switch-env-override [pins the planner's test-only functions],
-  doctor-ze-checks, provider-sunset-doctor.serial gets REWRITTEN generic not
-  deleted) + update ~40 coupled files; drop the zeroentropy-live job +
-  ZEROENTROPY_API_KEY secret from .github/workflows/e2e.yml:239,250,377 (line refs
-  refreshed by the interim cleanup wave; already date-skip-gated since v0.46.3);
-  scripts/test-weights.json rows. Also remove 'ze-switch' from the
-  cli-help-without-brain HELP_WITHOUT_BRAIN list when the shim dies.
-- [ ] **P2 — Config + docs.** `zeroentropy_api_key` config key: keep
-  parseable-but-warned (removing it would make old config.json files fail to
-  load); delete docs/ai-providers/zeroentropy.md + its scripts/llms-config.ts
-  entry (+ `bun run build:llms`); v0.46.3 migration stays registered and must
-  degrade gracefully once the recipe is gone (notice-only — verify its copy).
+The current removal wave deletes the provider surface and obsolete switch
+command. It does not change stored vector provenance, auto-migrate a brain,
+or preserve the removed provider-ID self-hosting workaround. Existing brains
+must choose a supported target and explicitly approve a migration using
+`gbrain migrate embeddings`; preview cost and inspect the database first.
+Final integration verification is owned by the removal wave, not this historical
+checklist. The independent follow-ups below remain open.
+
 - [ ] **P2 — Custom-column off-ramp (not removal-gated, but September makes it
   urgent for affected users).** Write-side custom-column migration
   (`gbrain embed --column X --model Y`, embedding-column.ts:60-62 v2 deferral) so
-  ZE-backed `embedding_columns` entries get an executable migration instead of
+  retired provider-backed `embedding_columns` entries get an executable migration instead of
   drop-and-re-embed guidance.
-- [ ] **P3 — Optional `cohere-rerank` recipe.** Cohere rerank-4.0-pro is the
-  strongest surviving hosted reranker (Agentset ELO 1629, behind only the dying
-  zerank-2) for users who want max rerank quality on a dedicated key. Wire shape
-  differs from the ZE/voyage dialect — needs its own `top_param`/response mapping
+- [ ] **P3 — Optional `cohere-rerank` recipe.** Cohere rerank-4.0-pro is a
+  hosted reranker candidate (historical Agentset ELO 1629, behind the
+  retired hosted reranker in that snapshot) for users who want max rerank quality on a dedicated key. Wire shape
+  differs from the retired provider/voyage dialect — needs its own `top_param`/response mapping
   audit. Filed from the v0.46.3 CEO review (deferred cherry-pick).
 - [ ] **P3 — Standalone reranker config-set should purge the query cache.**
   `gbrain config set search.reranker.model ...` (the playbook's manual path)
@@ -2266,7 +2220,7 @@ Each was explicitly deferred in the pass's CEO/eng/outside-voice reviews.
   template-database entry below in this file (CREATE DATABASE … TEMPLATE, ~50ms).
   **Current status:** selected E2E is on the measured PR critical path. Four isolated weighted CI workers now address it without moving tests between lanes; PGLite-only lane moves remain deferred. **Effort:** M. **Priority:** P2.
 - [ ] **Second PGLite snapshot keyed by dims/model.** Implemented for BrainBench default-profile CLI children in the CI optimization pass; extending reuse to other deliberately reconfigured tests remains deferred. **What:** ~34 test files
-  configure zembed/1280 and always cold-init (the snapshot's shape gate correctly
+  configure retired-embedding/1280 and always cold-init (the snapshot's shape gate correctly
   refuses the 1536 fixture). Bake a second snapshot per shape; the version-file
   format already carries dims/model. **Why deferred:** moderate effort, small win,
   and it interacts with the shape gate the memoized loader deliberately keeps hot.
@@ -3703,14 +3657,14 @@ GSTACK REVIEW REPORT at
   `finishCliTeardown` (`src/core/cli-force-exit.ts`) is exactly the shared
   drain-before-disconnect helper this item asked for, and ALL NINE cli.ts
   disconnect sites route through it (op-dispatch, fall-through, dream, doctor
-  ×3, ze-switch, search dashboard, read-only timeout path). Structural guard:
+  ×3, retired-provider-switch, search dashboard, read-only timeout path). Structural guard:
   no bare `await engine.disconnect()` remains in cli.ts
   (`test/fix-wave-structural.test.ts` `#2084` describe).
 
 - [ ] **P2 — command-module `process.exit` sites bypass the #2084 teardown
   contract.** Several CLI_ONLY command modules exit directly on their normal
   paths (`doctor.ts` ~10 sites incl. its verdict exit, `dream.ts` ~23,
-  `ze-switch.ts` ~9, plus friction/claw-test/eval verdict exits in cli.ts) —
+  `retired-provider-switch.ts` ~9, plus friction/claw-test/eval verdict exits in cli.ts) —
   those exits preempt the call-site `finally`, so the background-work drain,
   bounded disconnect, and `flushThenExit` grace are all skipped on those paths
   (pre-existing class, NOT introduced by #2084; pre-fix the same exits skipped
@@ -5603,7 +5557,7 @@ contributor traps.
 
 ## v0.41+ e2e-test-wave follow-ups (filed during v0.40.8.0 ship)
 
-- [ ] **NEW-1 (P2) — Per-check leaf unit tests for the 20+ exported doctor check functions.** `src/commands/doctor.ts:169-1492` exports whoknowsHealthCheck, takesWeightGridCheck, childTableOrphansCheck, checkRerankerHealth, checkBrainstormHealth, checkSearchMode, checkEvalDrift, checkSyncFreshness, checkAbandonedThreads, checkCalibrationFreshness, checkGradeConfidenceDrift, checkVoiceGateHealth, checkZeEmbeddingHealth, checkEmbeddingWidthConsistency, checkSourceRoutingHealth, checkOauthConfidentialHealth, checkAutopilotLockScope, skillBrainFirstCheck. v0.40.8.0 covers them via the orchestrator only. Parameterize a single `test/doctor-leaves.test.ts` over the exported functions; each case seeds the minimum DB state and asserts the returned `Check.status`. Catches per-check render bugs the orchestrator snapshot can't see (codex CMT-2 deep fix). Estimated ~4h CC.
+- [ ] **NEW-1 (P2) — Per-check leaf unit tests for the 20+ exported doctor check functions.** `src/commands/doctor.ts:169-1492` exports whoknowsHealthCheck, takesWeightGridCheck, childTableOrphansCheck, checkRerankerHealth, checkBrainstormHealth, checkSearchMode, checkEvalDrift, checkSyncFreshness, checkAbandonedThreads, checkCalibrationFreshness, checkGradeConfidenceDrift, checkVoiceGateHealth, checkEmbeddingWidthConsistency, checkSourceRoutingHealth, checkOauthConfidentialHealth, checkAutopilotLockScope, skillBrainFirstCheck. v0.40.8.0 covers them via the orchestrator only. Parameterize a single `test/doctor-leaves.test.ts` over the exported functions; each case seeds the minimum DB state and asserts the returned `Check.status`. Catches per-check render bugs the orchestrator snapshot can't see (codex CMT-2 deep fix). Estimated ~4h CC.
 - [ ] **NEW-2 (P2) — Cycle-phase wrappers beyond lint + backlinks.** 7 more phases need result-mapping coverage: sync, extract, embed, orphans, extract_facts, resolve_symbol_edges, recompute_emotional_weight. Each adds a describe block to `test/cycle-legacy-phases.test.ts` following the established pattern. ~30min/phase with CC. Mechanical follow-through.
 - [ ] **NEW-3 (P2) — HTTP-level trust-boundary test that proves serve-http.ts honors the filter at runtime.** v0.40.8.0 ships the source-grep guard at `scripts/check-operations-filter-bypass.sh` plus structural assertions in `test/operations-trust-boundary.test.ts`. The codex CMT-3 strongest defense — runtime proof that a register-OAuth-client → attempt-call-every-localOnly-op flow rejects every one — would extend `test/e2e/serve-http-oauth.test.ts`. Real Postgres dep, ~30s wallclock per case. Closes the bypass class with runtime proof in addition to the existing structural defense.
 - [ ] **NEW-4 (P3) — Render function extraction from runDoctor.** v0.40.8.0 uses a subprocess smoke at `test/doctor-cli-smoke.serial.test.ts` to cover the wrapper's render + exit paths. Pulling the human + JSON render code out into pure formatters would let that smoke move back into the parallel fast loop with no subprocess overhead. ~2h CC. Lower priority — the subprocess smoke does its job; this is a wallclock win, not a coverage win.
@@ -5627,7 +5581,7 @@ contributor traps.
 
 ## Pre-existing flake on master (noticed during v0.40.4 ship)
 
-- [x] **`test/search/embedding-column.test.ts:466,489,522` — `isCacheSafe` returns false when run after gateway-state-mutating siblings in shard 2.** DONE: closed by option (c) — the file was renamed to `test/search/embedding-column.serial.test.ts` in `ca68633f` (v0.41.2.0), giving it its own bun process; entry left open pointed at a filename that no longer exists. If the file is ever un-quarantined, add `beforeEach(() => resetGateway())` (NOT `__unconfigureGatewayForTests` — that falls through to the ZE/1280 defaults; `resetGateway` re-applies the preload's OpenAI/1536 baseline). Original filing: Confirmed pre-existing on master (`git stash` + `SHARD=2/8 bash scripts/run-unit-shard.sh` reproduces 3 fails on a clean working tree). Symptom: `isCacheSafe(default-named-column, empty-cfg)` expects `gwDims=1536` but reads `1280` (the post-v0.37.11.0 ZeroEntropy default). Some test in the shard before embedding-column.test.ts initializes the gateway with the PGLite-default ZeroEntropy/1280 config and leaves it that way. Either: (a) embedding-column.test.ts grows a `beforeEach` that calls `__setEmbedTransportForTests`-style reset, (b) the offending sibling adds an `afterAll(reset)`, or (c) embedding-column.test.ts becomes `*.serial.test.ts` to quarantine. Three test files in shard 2 touch gateway state via PGLite engine connects: `restart-sweep.test.ts`, `init-mode-picker.test.ts`, `doctor.test.ts`. Tests pass in isolation (50/50); only fail under shard-2 ordering. v0.40.4 ships through this flake — not introduced by the wave.
+- [x] **`test/search/embedding-column.test.ts:466,489,522` — `isCacheSafe` returns false when run after gateway-state-mutating siblings in shard 2.** DONE: closed by option (c) — the file was renamed to `test/search/embedding-column.serial.test.ts` in `ca68633f` (v0.41.2.0), giving it its own bun process; entry left open pointed at a filename that no longer exists. If the file is ever un-quarantined, add `beforeEach(() => resetGateway())` (NOT `__unconfigureGatewayForTests` — that falls through to the retired provider/1280 defaults; `resetGateway` re-applies the preload's OpenAI/1536 baseline). Original filing: Confirmed pre-existing on master (`git stash` + `SHARD=2/8 bash scripts/run-unit-shard.sh` reproduces 3 fails on a clean working tree). Symptom: `isCacheSafe(default-named-column, empty-cfg)` expects `gwDims=1536` but reads `1280` (the post-v0.37.11.0 retired hosted provider default). Some test in the shard before embedding-column.test.ts initializes the gateway with the PGLite-default retired hosted provider/1280 config and leaves it that way. Either: (a) embedding-column.test.ts grows a `beforeEach` that calls `__setEmbedTransportForTests`-style reset, (b) the offending sibling adds an `afterAll(reset)`, or (c) embedding-column.test.ts becomes `*.serial.test.ts` to quarantine. Three test files in shard 2 touch gateway state via PGLite engine connects: `restart-sweep.test.ts`, `init-mode-picker.test.ts`, `doctor.test.ts`. Tests pass in isolation (50/50); only fail under shard-2 ordering. v0.40.4 ships through this flake — not introduced by the wave.
 
 ## v0.40.4 graph signals — deferred follow-ups (v0.41+)
 

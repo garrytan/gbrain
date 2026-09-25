@@ -319,7 +319,6 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
   const { parseModelId } = await import('../core/ai/model-resolver.ts');
   const {
     supportsVoyageOutputDimension, isValidVoyageOutputDim, VOYAGE_VALID_OUTPUT_DIMS,
-    supportsZeroEntropyDimension, isValidZeroEntropyDim, ZEROENTROPY_VALID_DIMS,
   } = await import('../core/ai/dims.ts');
 
   const modelStr = getEmbeddingModel();
@@ -341,26 +340,6 @@ async function probeEmbeddingConfig(): Promise<ProbeResult> {
           fix:
             `gbrain config set embedding_dimensions <${VOYAGE_VALID_OUTPUT_DIMS.join('|')}>, ` +
             `or switch to a fixed-dim Voyage model (e.g. voyage-3, voyage-3-lite).`,
-          elapsed_ms: Date.now() - start,
-        };
-      }
-    }
-
-    // ZeroEntropy zembed-1 flexible-dim check. Same bug class as Voyage:
-    // `embedding_model: zeroentropyai:zembed-1` configured without
-    // `embedding_dimensions` falls back to DEFAULT_EMBEDDING_DIMENSIONS=1536
-    // (an OpenAI default) which ZE doesn't accept.
-    if (providerId === 'zeroentropyai' && supportsZeroEntropyDimension(modelId)) {
-      if (!isValidZeroEntropyDim(dims)) {
-        return {
-          model: modelStr,
-          touchpoint: 'embedding_config',
-          status: 'config',
-          message:
-            `embedding_dimensions=${dims} is not a valid ZeroEntropy dimensions ` +
-            `for "${modelId}" (allowed: ${ZEROENTROPY_VALID_DIMS.join('/')}).`,
-          fix:
-            `gbrain config set embedding_dimensions <${ZEROENTROPY_VALID_DIMS.join('|')}>.`,
           elapsed_ms: Date.now() - start,
         };
       }
@@ -437,25 +416,6 @@ export async function resolveLiveRerankerTimeoutMs(engine: BrainEngine): Promise
   }
 }
 
-/**
- * v0.35.0.0+: zero-network reranker config probe. Validates that the
- * configured reranker model resolves through the recipe registry, that the
- * recipe declares a `reranker` touchpoint, and that the model is in the
- * touchpoint's `models[]` allowlist.
- *
- * CDX2-F11: `assertTouchpoint()` does NOT enforce allowlists for
- * openai-compatible recipes — the probe does it directly here. Without
- * this, `search.reranker.model=zeroentropyai:made-up-name` would silently
- * pass config probes and fail at first rerank call.
- *
- * v0.40.6.1: resolves via `resolveLiveRerankerModel(engine)` so probe and
- * live search read the same value (closes the file-plane / DB-plane
- * divergence flagged in plan review).
- *
- * Returns 'ok' when reranker is unconfigured (default state — opt-in
- * feature). Surfaces `status: 'config'` with paste-ready fix hint when
- * model is invalid.
- */
 async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
   const start = Date.now();
   const { resolveRecipe } = await import('../core/ai/model-resolver.ts');

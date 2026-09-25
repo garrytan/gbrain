@@ -12,6 +12,34 @@ is `scripts/bench-reindex-markdown.ts`.
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only.
 
+## CI runner capacity
+
+Repository-owned Linux validation jobs use ephemeral Ubicloud runners pinned to
+Ubuntu 24.04. The Ubicloud Managed Runners GitHub App must have access to this
+repository and active billing in its connected project; runner labels alone do
+not grant access. No Ubicloud API token is passed to workflow jobs.
+
+| Workload | Runner | Capacity |
+| --- | --- | --- |
+| Unit, serial, E2E, browser, compatibility, read-performance and deployment-matrix tests | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
+| Heavy test suite and persistence invariant/soak matrix | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
+| Native ARM64 glibc and musl tests | `ubicloud-standard-16-arm-ubuntu-2404` | 16 vCPU, 48 GB RAM |
+| Coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
+| Planning, status aggregation, dependency audit, gitleaks and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
+
+macOS and Windows matrices stay on GitHub-hosted runners. Release building and
+publishing also stay unchanged. The pinned upstream OSV reusable workflow does
+not expose a runner override, so its runner remains upstream-owned.
+
+The migration does not change shards, test selection, commands, timeouts,
+thresholds, artifact collection or required check identities. The security
+matrix retains its existing OS labels and changes only the Linux execution
+target. `test/scripts/ci-runner-routing.test.ts` pins capacity and platform
+routing; `.github/actionlint.yaml` declares the exact custom runner labels.
+Actual GitHub job records and completed checks establish runner availability;
+local workflow tests do not. More CPU and memory do not guarantee proportional
+speedups for serial tests or external-provider requests.
+
 Shared-skill tests distinguish canonical publication, protocol delivery, installed
 files and native harness use. `test/shared-skills-transports.test.ts` and
 `test/e2e/shared-skills-transports.test.ts` use real HTTP authentication, OAuth
@@ -173,6 +201,24 @@ pass before publication. The native macOS 26.2 smoke is not macOS 27
 certification, and Linux fault injection is not a full native Windows backup
 create/restore test.
 
+The glibc Linux, macOS and Windows matrix also runs
+`persistence-publication-native.serial.test.ts`,
+`persistence-git-publication.test.ts`,
+`persistence-sync-origin-native.serial.test.ts` and
+`backup-portability-native.serial.test.ts` in separate Bun processes. These
+exercise real Git publication, historical source origins and backup restoration
+with fresh-process reopen. macOS and Windows set
+`GBRAIN_TEST_REQUIRE_CASE_INSENSITIVE=1`; a case-sensitive fixture must fail
+rather than silently skip the publication regression. Inspect executed test
+counts before claiming native coverage; a configured lane alone is not evidence.
+
+The publication, sync-origin, processing-option and company-sync suites also
+run separately with an explicit PostgreSQL URL in the persistence deployment
+matrix. `test/e2e/persistence-publication-parity.test.ts` and
+`test/e2e/persistence-sync-{origin,options,company}-parity.test.ts` include them
+in the full local E2E gate; the keyless serial runner alone cannot exercise
+their PostgreSQL branches.
+
 The OpenClaw 2026.9.4 / Node 24.18.0 native-host fixture proves plugin startup,
 restarted-turn saved-page pointer retrieval and same-slug source isolation with
 a deterministic loopback provider:
@@ -308,6 +354,28 @@ active preparation without starting another request.
 do not replace their durable files while unbound, moved and original bound paths
 all remain fenced.
 
+`test/e2e/persistence-http-liveness.test.ts` drives real authenticated HTTP MCP
+with legacy and source-bound OAuth credentials against an isolated PostgreSQL
+database. It covers pending page/fact writes, lost acknowledgments, owner
+interruption, exact canonical readback, 44 pages over three clients, and current
+receipt authorization. Set `GBRAIN_TEST_OLD_BINARY` to a retained compatible
+executable to additionally exercise old/new owner handoffs in both directions
+for queued, actually claimed and recovery-bearing rows. Interrupted owners are
+reaped and native exclusion is verified before their successors start; only the
+abandoned running lease is advanced by the fixture. An omitted executable skips
+these compatibility cases, not proves them.
+`test/e2e/persistence-phase-liveness.test.ts` holds real table/row locks and
+ordinary/direct pool slots to verify phase cancellation (including capacity
+marking), tracked queued `BEGIN`, renewal, expired-head FIFO and shutdown fences.
+A loopback TCP gate separately delays or rejects cold direct initialization,
+checking retained work through shutdown and same-ID completion after retry.
+The memory-mutation tests use a
+deterministic loopback embedding transport for slow and aborted preparation;
+they do not contact a paid provider. Receipt contract, MCP parser, IPC and CLI
+tests pin the same nested allowlist and advisory age policy. Diagnostic tests
+exercise both fresh/index-upgrade parity and a genuinely interrupted PostgreSQL
+concurrent index build when a PostgreSQL fixture is supplied.
+
 `test/persistence-chaos.slow.test.ts` and `test/e2e/persistence-chaos.test.ts`
 execute real journal/coordinator schedules and eight SIGKILL publication
 boundaries, followed by a small multi-process soak. The Postgres test creates
@@ -332,10 +400,14 @@ The required persistence lane also runs `scripts/persistence/performance.ts`
 on both engines and Bun versions. Three independent instances use the
 existing 500-page/200-query read-latency corpus, with public `put_page`
 mutations and actual in-flight interval coverage of at least 90%. Any read
-or write failure invalidates the sample. Median loaded p99 must be at most
-1.5 times median idle p99 on the same runner. Manifests retain each sample,
-admission/commit latency, queue age, RSS, recovery bytes and pool activity.
-The original heavy shell entry invokes this harness; its optional strict
+or write failure invalidates the sample. CI uses `--informational`: the 50%
+loaded-versus-idle p99 threshold is advisory, not a merge blocker. Loaded
+reads compete with additional write work, so this ratio alone is not evidence
+of a change regressing the same workload. Manifests retain the original
+threshold verdict, each sample, admission/commit latency, queue age, RSS,
+recovery bytes and pool activity.
+The CLI without `--informational` still enforces the threshold. The original
+heavy shell entry invokes this harness; its optional `STRICT_LATENCY=1`
 flag affects only the latency threshold, never validity requirements.
 
 ### PGLite schema snapshot (default-on)
@@ -660,7 +732,7 @@ Triage rule: a `warn-pass` EXIT-HANG line in `.context/test-summary.txt` is NOT 
 - `*.test.ts` → fast loop (parallel up-to-4-shard fan-out, memory-adaptive).
 - `*.slow.test.ts` → run via `bun run test:slow` only (intentional cold-path tests; would dominate the fast loop's wallclock).
 - `*.serial.test.ts` → run via `bun run test:serial` after the parallel pass completes; one bun process per file (`--max-concurrency=1` within a shared process is not enough — the module registry still leaks `mock.module`), with those per-file processes POOLED (per-process isolation never required one-at-a-time execution). Files touching machine-global state (launchd/cron) live on the sequential `EXCLUSIVE_FILES` lane inside `scripts/run-serial-tests.sh` — growth-guarded to ≤3 entries with justification comments. Quarantine for tests that share file-wide state and race when run alongside other files in the same `bun test` process. Several dozen files, discovered by the `*.serial.test.ts` glob — no list to maintain. Typical residents: `mock.module(...)` users (top-level mocks leak across files in a shard process, e.g. `test/embed.serial.test.ts`), env-coupled files (e.g. `test/brain-registry.serial.test.ts`), and process-lifecycle suites that assert on `process.exitCode` (e.g. `test/pglite-engine-disconnect.serial.test.ts`). **Do not put the parallelism back on a serial file unless you've fixed the contention root cause** (it just re-introduces the flake).
-- `test/e2e/*.test.ts` → real-Postgres E2E. Skipped when `DATABASE_URL` is unset. One out-of-directory file rides this lane: `test/phantom-redirect-engine-parity.test.ts` (lives in `test/` for its PGLite arm, but its Postgres arm is only reachable through a DATABASE_URL-bearing lane — the unit wrappers strip the URL, so `run-e2e.sh`'s no-args list and CI's parity job carry it). `run-e2e.sh` wraps each file in a hard outer timeout (default 180s; `GBRAIN_E2E_FILE_TIMEOUT=<seconds>` overrides) because a synchronously-blocking PGLite WASM call can outlive bun's timer-based `--timeout`; LLM-bound Tier-2 files (`skills.test.ts`, `zeroentropy-live.test.ts`) automatically get 4× the cap since real provider round-trips legitimately run past 180s.
+- `test/e2e/*.test.ts` → real-Postgres E2E. Skipped when `DATABASE_URL` is unset. One out-of-directory file rides this lane: `test/phantom-redirect-engine-parity.test.ts` (lives in `test/` for its PGLite arm, but its Postgres arm is only reachable through a DATABASE_URL-bearing lane — the unit wrappers strip the URL, so `run-e2e.sh`'s no-args list and CI's parity job carry it). `run-e2e.sh` wraps each file in a hard outer timeout (default 180s; `GBRAIN_E2E_FILE_TIMEOUT=<seconds>` overrides) because a synchronously-blocking PGLite WASM call can outlive bun's timer-based `--timeout`; LLM-bound Tier-2 files (`skills.test.ts`) automatically get 4× the cap since real provider round-trips legitimately run past 180s.
 - `tests/heavy/*.sh` → ops-shape shell scripts. Cost minutes per run; NOT in default `bun test`. Run via `bun run test:heavy` or scheduled nightly via `.github/workflows/heavy-tests.yml`. Examples: pg_upgrade matrix (boot legacy brain → walk to head), RSS budget gate (measure peak worker RSS vs committed baseline), read-latency-under-sync (p50/p95/p99 under concurrent writer load), sync lock regression (N concurrent syncs assert 1 winner + N-1 lock-busy + zero leaked `gbrain_cycle_locks` rows). See `tests/heavy/README.md` for when to add a script here vs `*.slow.test.ts`. Files prefixed with `_` (e.g. `tests/heavy/_build_legacy_fixtures.sh`) are helpers/libs invoked by sibling tests — the runner skips them.
 - `test/fuzz/*.test.ts` → property-based fuzz harness. Pure-validator targets in `pure-validators.test.ts` are guarded by `scripts/check-fuzz-purity.sh` (in `bun run verify`), which `bun build --target=bun` bundles each target and greps the resulting bundle for banned transitive imports (`node:fs`, `node:child_process`, engine modules). Anything that fails the guard moves to `mixed-validators.test.ts` (still property-tested, but no purity guarantee) or `filesystem-validators.test.ts` (fs-backed, uses temp dirs). Fuzz tests run in the default `bun test` loop because they're fast (~3s for ~12 properties × 1000 runs each).
 
@@ -1067,15 +1139,14 @@ Unit tests and what they cover:
 - `test/jobs-embed-stall-wiring.serial.test.ts` — the stall contract at the minion boundary: an embed job whose core result carries `reason: 'stall_timeout'` THROWS (job marked failed, banked progress in the message); a clean result resolves with the embed report.
 - `test/embed.serial.test.ts` — `runEmbedCore` lifecycle on PGLite with `mock.module` seams: abort-signal threading, the stall-watchdog arc against the real lock table (stall fires → single-flight locks released + summary flushed + `reason: 'stall_timeout'` surfaces; non-CLI callers get the error RESULT, no process exit; live progress keeps the watchdog quiet), cleanup aborting an in-flight heartbeat refresh, and the heartbeat tick-timeout arc (a never-settling refresh times out per tick via `GBRAIN_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS`; 3 consecutive failures → `lock_lost` + drain abort).
 - `test/handlers-embed-backfill.test.ts` — the `embed-backfill` job handler's budget-cap classification matrix: default cap dropped for unpriced models, `pricing.overrides` restores enforceability, `off` uncaps, explicit caps fail closed on unpriced models (incl. an explicit $10 equal to the default), the defaulted cap still enforces for priced models, a present-but-garbage cap value keeps the $10 default FAIL-CLOSED (never droppable), and the handler-lane stall watchdog (a wedged drain aborts and fails the job).
-- `test/rerank-sunset-short-circuit.serial.test.ts` — the post-sunset gateway short-circuit: effective-model resolution (absent per-call model → configured/legacy default), the before/on/after date matrix via the injected clock, live models and `base_urls` self-host overrides untouched, the ONE-audit-row-per-process-per-model + single stderr line contract, and `applyReranker` failing open with no per-query audit rows.
-- `test/ai/reranker-readiness.test.ts` — the pure `rerankerReadiness` predicate: the default Voyage model with and without the key (the fix names the key AND the disable command; an empty-string key counts as absent), an explicit ZeroEntropy model across the sunset clock (sunset outranks a missing key in the fix text; a `provider_base_urls` self-host override lifts the block; mixed-case / slash-form ids are still recognized), shape failures that never throw (unknown provider, no reranker touchpoint, unlisted model, keyless local recipe, garbage input), and agreement with `gateway.isAvailable('reranker', model)` on an env × model matrix (the post-sunset divergence is the one intended exception).
-- `test/rerank-no-key.serial.test.ts` — the gateway `no_key` preflight: `RerankError('no_key')` before any HTTP call, ONE audit row per process per model with no stderr line, the per-model memo and its test seam, sunset precedence over `no_key`, no budget reservation for a skipped rerank (and `BudgetExhausted` before the transport call when the key IS present), HTTP 401 staying `auth`; plus `applyReranker` on `no_key` — results unchanged, no per-query rows, `onSkip` fires, a throwing hook never breaks search, and genuine failures never fire it.
+- `test/ai/reranker-readiness.test.ts` — the pure `rerankerReadiness` predicate: the default Voyage model with and without the key (the fix names the key AND the disable command; an empty-string key counts as absent), shape failures that never throw (unknown provider, no reranker touchpoint, unlisted model, keyless local recipe, garbage input), and agreement with `gateway.isAvailable('reranker', model)` on an env × model matrix.
+- `test/rerank-no-key.serial.test.ts` — the gateway `no_key` preflight: `RerankError('no_key')` before any HTTP call, ONE audit row per process per model with no stderr line, the per-model memo and its test seam, no budget reservation for a skipped rerank (and `BudgetExhausted` before the transport call when the key IS present), HTTP 401 staying `auth`; plus `applyReranker` on `no_key` — results unchanged, no per-query rows, `onSkip` fires, a throwing hook never breaks search, and genuine failures never fire it.
 - `test/hybrid-reranker-skipped.serial.test.ts` — balanced search on PGLite without `VOYAGE_API_KEY`: `reranker_skipped (no_key)` stamped on the meta with results kept and nothing printed, fresh searches retain the stamp while shared result caching stays disabled with no cache writes even when requested, and with the key present the reranker runs (`rerank_score` stamped, no skip entry).
 - `test/degraded-stages-recall.test.ts` — `affectsRecall` / `RANKING_ONLY_DEGRADED_STAGES`: `reranker_skipped` is ranking-only, every other closed-vocabulary stage affects recall, and a mixed list is degraded iff a recall-affecting stage is present.
 - `test/cli-explain-degraded-render.test.ts` — `formatResult --explain` threads the captured retrieval meta: a `reranker_skipped` stamp renders as the degraded header, a clean run prints no header, and the plain (non-explain) renderer is unchanged.
-- `test/doctor-reranker-health.test.ts` — the readiness-aware `reranker_health` check: key absent → warn naming the key and the disable command; key present → ok "ready"; disabled by config row or by the conservative bundle → ok; `no_key` skip rows informational once ready; a DB-plane key the CLI folded into the gateway counts; the no-gateway fallback to env > file > DB plane; unknown model, post-sunset ZE (injected clock), self-host override and `auth` rows; a brain with no embedding provider is never blamed; audit rows for a sunset model never warn on the live default.
+- `test/doctor-reranker-health.test.ts` — the readiness-aware `reranker_health` check: key absent → warn naming the key and the disable command; key present → ok "ready"; disabled by config row or by the conservative bundle → ok; `no_key` skip rows informational once ready; a DB-plane key the CLI folded into the gateway counts; the no-gateway fallback to env > file > DB plane; unknown model, self-host override and `auth` rows; a brain with no embedding provider is never blamed; audit rows for another model never warn on the active default.
 - `test/modes-report-reranker.test.ts` — `buildModesReport` attributes the five reranker knobs, the readiness block flips on the key, config overrides are reflected; `formatModesText` prints the runtime `Reranker:` line plus the per-bundle `reranker=… autocut=…` line and surfaces a gateway base-URL override as `self_hosted`; `redactReadinessForRemote` strips `required_key` / `key_present` / `fix` and keeps the verdict.
-- `test/init-reranker-default.test.ts` — `writeNewInstallRerankerDefault`: a Voyage key present → no write regardless of embedding pick; a keyed non-Voyage pick without the key → explicit `search.reranker.enabled=false` (a ZeroEntropy pick included); a keyless install → no write; a Voyage key that lives only in the DB config plane or only in `config.json` counts; never-clobber on an existing explicit row.
+- `test/init-reranker-default.test.ts` — `writeNewInstallRerankerDefault`: a Voyage key present → no write regardless of embedding pick; a keyed non-Voyage pick without the key → explicit `search.reranker.enabled=false`; a keyless install → no write; a Voyage key that lives only in the DB config plane or only in `config.json` counts; never-clobber on an existing explicit row.
 - `test/import-abort-error.test.ts` — `runImport` preflight/argv failures throw typed `ImportAbortError` instead of exiting the process; the calling process survives the abort.
 - `test/lint-fix-single-pass.test.ts` — `gbrain lint --fix` walks the tree once and `total_fixed` reports the fixes THIS run applied.
 - `test/snapshot-shape-guard.test.ts` — PGLite snapshot loader refusal matrix: shape-less version files, dims/model mismatches, and stale schema hashes are all refused; matching hash + shape loads; a migration-handler edit changes the hash.

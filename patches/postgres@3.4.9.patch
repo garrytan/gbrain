@@ -1,0 +1,844 @@
+diff --git a/cjs/src/connection.js b/cjs/src/connection.js
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..be36dfd08e084c7f1c181e42cd1c57d5213e3293 100644
+--- a/cjs/src/connection.js
++++ b/cjs/src/connection.js
+@@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   let socket = null
+     , cancelMessage
++    , cancelResolve
++    , cancelReject
++    , cancelError
+     , errorResponse = null
+     , result = new Result()
+     , incoming = Buffer.alloc(0)
+@@ -143,11 +146,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   async function cancel({ pid, secret }, resolve, reject) {
++    cancelResolve = resolve
++    cancelReject = reject
+     try {
+       cancelMessage = b().i32(16).i32(80877102).i32(pid).i32(secret).end(16)
+       await connect()
+-      socket.once('error', reject)
+-      socket.once('close', resolve)
++      if (!socket)
++        reject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
+     } catch (error) {
+       reject(error)
+     }
+@@ -170,11 +175,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+         : (query = q, query.active = true)
+ 
+       build(q)
++      const mayPipeline = !q.options.onexecute || q.options.onexecute(connection)
+       return write(toBuffer(q))
+         && !q.describeFirst
+         && !q.cursorFn
+         && sent.length < max_pipeline
+-        && (!q.options.onexecute || q.options.onexecute(connection))
++        && mayPipeline
+     } catch (error) {
+       sent.length === 0 && write(Sync)
+       errored(error)
+@@ -295,7 +301,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   /* c8 ignore next 3 */
+   function drain() {
+-    !query && onopen(connection)
++    !query && !connection.reserved && onopen(connection)
+   }
+ 
+   function data(x) {
+@@ -379,6 +385,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function error(err) {
++    if (cancelMessage)
++      cancelError = err
+     if (connection.queue === queues.connecting && options.host[retries + 1])
+       return
+ 
+@@ -388,6 +396,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function errored(err) {
++    if (cancelMessage)
++      cancelError = err
+     stream && (stream.destroy(err), stream = null)
+     query && queryError(query, err)
+     initial && (queryError(initial, err), initial = null)
+@@ -447,6 +457,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     socket.removeAllListeners()
+     socket = null
+ 
++    if (cancelMessage)
++      return cancelError || hadError
++        ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
++        : cancelResolve()
++
+     if (initial)
+       return reconnect()
+ 
+@@ -564,10 +579,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+         return fetchArrayTypes()
+       }
+ 
+-      initial && !initial.reserve && execute(initial)
++      const reserving = initial && initial.reserve
++      initial && !reserving && execute(initial)
+       options.shared.retries = retries = 0
+       initial = null
+-      return
++      if (!reserving)
++        return
+     }
+ 
+     while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
+@@ -580,7 +597,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       ? !connection.reserved.release && x[5] === 73 // I
+         ? ending
+           ? terminate()
+-          : (connection.reserved = null, onopen(connection))
++          : connection.reserved(true)
+         : connection.reserved()
+       : ending
+         ? terminate()
+diff --git a/cjs/src/index.js b/cjs/src/index.js
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..9dc0c7a2303941079f2c3c4e668105444a8ef1af 100644
+--- a/cjs/src/index.js
++++ b/cjs/src/index.js
+@@ -200,40 +200,134 @@ function Postgres(a, b) {
+     return await sql`select pg_notify(${ channel }, ${ '' + payload })`
+   }
+ 
+-  async function reserve() {
++  function own(c) {
+     const queue = Queue()
+-    const c = open.length
+-      ? open.shift()
++    let busy = false, fence = null, holding = null, releasing = false
++    const reservation = c.reserved = (ended = false) => {
++      if (c.reserved !== reservation)
++        return
++      busy = false
++      if (ended) {
++        releasing = true
++        reservation.reject(Errors.generic('CONNECTION_CLOSED', 'Transaction has ended'))
++      }
++      const completed = fence
++      fence = null
++      if (completed && completed.cancelPromise) {
++        holding = completed
++        completed.cancelPromise.then(() => {
++          if (c.reserved !== reservation || holding !== completed)
++            return
++          holding = null
++          pump()
++        }, reservation.discard)
++      } else {
++        pump()
++      }
++    }
++    reservation.enqueue = q => {
++      if (c.reserved !== reservation || releasing)
++        return q.reject(Errors.generic('CONNECTION_CLOSED', 'Connection is no longer owned'))
++      queue.push(q)
++      pump()
++    }
++    reservation.reject = error => {
++      while (queue.length)
++        queue.shift().reject(error)
++    }
++    reservation.discard = () => {
++      if (c.reserved !== reservation)
++        return
++      c.reserved = null
++      reservation.reject(Errors.generic('CONNECTION_CLOSED', 'Connection was discarded'))
++      c.terminate()
++    }
++    reservation.releaseConnection = () => {
++      if (c.reserved !== reservation)
++        return
++      releasing = true
++      pump()
++    }
++    return reservation
++
++    function pump() {
++      if (c.reserved !== reservation || holding || fence)
++        return
++      while (queue.length) {
++        const q = queue.peek()
++        if (q.cancelled) {
++          queue.shift()
++          continue
++        }
++        if (busy && (q.options.cancelFence || c.queue === full))
++          return
++        queue.shift()
++        busy = true
++        if (q.options.cancelFence)
++          fence = q
++        const ready = c.execute(q)
++        move(c, ready ? reserved : full)
++        if (fence || !ready)
++          return
++      }
++      if (!busy) {
++        if (releasing) {
++          c.reserved = null
++          onopen(c)
++        } else {
++          move(c, reserved)
++        }
++      }
++    }
++  }
++
++  async function reserve({ signal } = {}) {
++    signal && signal.throwIfAborted()
++    if (ending)
++      throw Errors.connection('CONNECTION_ENDED', options, options)
++    const sql = open.length
++      ? claim(open.shift())
+       : await new Promise((resolve, reject) => {
+-        const query = { reserve: resolve, reject }
++        let settled = false
++        const query = {
++          reserve: c => { if (settle()) resolve(claim(c)) },
++          reject: error => { if (settle()) reject(error) }
++        }
++        const abort = () => query.reject(signal.reason)
++        function settle() {
++          if (settled)
++            return false
++          settled = true
++          queries.remove(query)
++          signal && signal.removeEventListener('abort', abort)
++          return true
++        }
++        if (signal)
++          signal.addEventListener('abort', abort, { once: true })
+         queries.push(query)
+         closed.length && connect(closed.shift(), query)
+       })
+ 
+-    move(c, reserved)
+-    c.reserved = () => queue.length
+-      ? c.execute(queue.shift())
+-      : move(c, reserved)
+-    c.reserved.release = true
+-
+-    const sql = Sql(handler)
+-    sql.release = () => {
+-      c.reserved = null
+-      onopen(c)
++    if (signal && signal.aborted) {
++      sql.release()
++      signal.throwIfAborted()
+     }
+ 
+     return sql
+ 
+-    function handler(q) {
+-      c.queue === full
+-        ? queue.push(q)
+-        : c.execute(q) || move(c, full)
++    function claim(c) {
++      move(c, reserved)
++      const reservation = own(c)
++      reservation.release = true
++      const sql = Sql(reservation.enqueue)
++      sql.release = reservation.releaseConnection
++      sql.discard = reservation.discard
++      return sql
+     }
+   }
+ 
+   async function begin(options, fn) {
+     !fn && (fn = options, options = '')
+-    const queries = Queue()
+     let savepoints = 0
+       , connection
+       , prepare = null
+@@ -249,9 +343,13 @@ function Postgres(a, b) {
+     }
+ 
+     async function scope(c, fn, name) {
++      const reservation = c.reserved
++      if (!reservation)
++        throw Errors.generic('CONNECTION_CLOSED', 'Transaction connection is no longer owned')
+       const sql = Sql(handler)
+       sql.savepoint = savepoint
+       sql.prepare = x => prepare = x.replace(/[^a-z0-9$-_. ]/gi)
++      sql.discard = reservation.discard
+       let uncaughtError
+         , result
+ 
+@@ -281,6 +379,8 @@ function Postgres(a, b) {
+       return result
+ 
+       function savepoint(name, fn) {
++        if (c.reserved !== reservation)
++          return Promise.reject(Errors.generic('CONNECTION_CLOSED', 'Transaction connection is no longer owned'))
+         if (name && Array.isArray(name.raw))
+           return savepoint(sql => sql.apply(sql, arguments))
+ 
+@@ -290,18 +390,16 @@ function Postgres(a, b) {
+ 
+       function handler(q) {
+         q.catch(e => uncaughtError || (uncaughtError = e))
+-        c.queue === full
+-          ? queries.push(q)
+-          : c.execute(q) || move(c, full)
++        if (!reservation || c.reserved !== reservation)
++          return q.reject(Errors.generic('CONNECTION_CLOSED', 'Transaction connection is no longer owned'))
++        reservation.enqueue(q)
+       }
+     }
+ 
+     function onexecute(c) {
+       connection = c
+       move(c, reserved)
+-      c.reserved = () => queries.length
+-        ? c.execute(queries.shift())
+-        : move(c, reserved)
++      own(c)
+     }
+   }
+ 
+@@ -399,6 +497,11 @@ function Postgres(a, b) {
+   }
+ 
+   function onopen(c) {
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return c.terminate()
++    }
+     if (queries.length === 0)
+       return move(c, open)
+ 
+@@ -420,10 +523,20 @@ function Postgres(a, b) {
+ 
+   function onclose(c, e) {
+     move(c, closed)
++    const reservation = c.reserved
+     c.reserved = null
++    reservation && reservation.reject(e)
+     c.onclose && (c.onclose(e), c.onclose = null)
+     options.onclose && options.onclose(c.id)
+-    queries.length && connect(c, queries.shift())
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return
++    }
++    if (queries.length) {
++      const query = queries.peek()
++      connect(c, query.reserve ? query : queries.shift())
++    }
+   }
+ }
+ 
+diff --git a/cjs/src/query.js b/cjs/src/query.js
+index 45327f2fabcdbf8f8ec5020675012c310c04fee6..1d092504ac1ce1fdac78cb0c4ef3a8aa957676e4 100644
+--- a/cjs/src/query.js
++++ b/cjs/src/query.js
+@@ -23,11 +23,12 @@ const Query = module.exports.Query = class Query extends Promise {
+     this.state = null
+     this.statement = null
+ 
+-    this.resolve = x => (this.active = false, resolve(x))
+-    this.reject = x => (this.active = false, reject(x))
++    this.resolve = x => (this.active = false, this.canceller = null, resolve(x))
++    this.reject = x => (this.active = false, this.canceller = null, reject(x))
+ 
+     this.active = false
+     this.cancelled = null
++    this.cancelPromise = null
+     this.executed = false
+     this.signature = ''
+ 
+@@ -50,7 +51,12 @@ const Query = module.exports.Query = class Query extends Promise {
+   }
+ 
+   cancel() {
+-    return this.canceller && (this.canceller(this), this.canceller = null)
++    if (this.cancelPromise)
++      return this.cancelPromise
++
++    const canceller = this.canceller
++    this.canceller = null
++    return this.cancelPromise = canceller ? canceller(this) : Promise.resolve()
+   }
+ 
+   simple() {
+@@ -96,8 +102,8 @@ const Query = module.exports.Query = class Query extends Promise {
+               resolve({ value, done: false })
+               return new Promise(r => prev = r)
+             }
+-            this.resolve = () => (this.active = false, resolve({ done: true }))
+-            this.reject = x => (this.active = false, reject(x))
++            this.resolve = () => (this.active = false, this.canceller = null, resolve({ done: true }))
++            this.reject = x => (this.active = false, this.canceller = null, reject(x))
+           })
+           this.execute()
+           return promise
+diff --git a/cjs/src/queue.js b/cjs/src/queue.js
+index 8438f5da92cf7637d98a33491d75c75b1c817c25..c444310ff87b0ac81fd19cd3170a0ba607a66781 100644
+--- a/cjs/src/queue.js
++++ b/cjs/src/queue.js
+@@ -15,6 +15,7 @@ function Queue(initial = []) {
+         : (xs.splice(index, 1), x)
+     },
+     push: (x) => (xs.push(x), x),
++    peek: () => xs[index],
+     shift: () => {
+       const out = xs[index++]
+ 
+diff --git a/src/connection.js b/src/connection.js
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..617335d1b039866e86cd63872eeaf9ef7039a13c 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -78,6 +78,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   let socket = null
+     , cancelMessage
++    , cancelResolve
++    , cancelReject
++    , cancelError
+     , errorResponse = null
+     , result = new Result()
+     , incoming = Buffer.alloc(0)
+@@ -143,11 +146,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   async function cancel({ pid, secret }, resolve, reject) {
++    cancelResolve = resolve
++    cancelReject = reject
+     try {
+       cancelMessage = b().i32(16).i32(80877102).i32(pid).i32(secret).end(16)
+       await connect()
+-      socket.once('error', reject)
+-      socket.once('close', resolve)
++      if (!socket)
++        reject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
+     } catch (error) {
+       reject(error)
+     }
+@@ -170,11 +175,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+         : (query = q, query.active = true)
+ 
+       build(q)
++      const mayPipeline = !q.options.onexecute || q.options.onexecute(connection)
+       return write(toBuffer(q))
+         && !q.describeFirst
+         && !q.cursorFn
+         && sent.length < max_pipeline
+-        && (!q.options.onexecute || q.options.onexecute(connection))
++        && mayPipeline
+     } catch (error) {
+       sent.length === 0 && write(Sync)
+       errored(error)
+@@ -295,7 +301,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+ 
+   /* c8 ignore next 3 */
+   function drain() {
+-    !query && onopen(connection)
++    !query && !connection.reserved && onopen(connection)
+   }
+ 
+   function data(x) {
+@@ -379,6 +385,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function error(err) {
++    if (cancelMessage)
++      cancelError = err
+     if (connection.queue === queues.connecting && options.host[retries + 1])
+       return
+ 
+@@ -388,6 +396,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   }
+ 
+   function errored(err) {
++    if (cancelMessage)
++      cancelError = err
+     stream && (stream.destroy(err), stream = null)
+     query && queryError(query, err)
+     initial && (queryError(initial, err), initial = null)
+@@ -447,6 +457,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     socket.removeAllListeners()
+     socket = null
+ 
++    if (cancelMessage)
++      return cancelError || hadError
++        ? cancelReject(cancelError || Errors.connection('CONNECTION_CLOSED', options))
++        : cancelResolve()
++
+     if (initial)
+       return reconnect()
+ 
+@@ -564,10 +579,12 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+         return fetchArrayTypes()
+       }
+ 
+-      initial && !initial.reserve && execute(initial)
++      const reserving = initial && initial.reserve
++      initial && !reserving && execute(initial)
+       options.shared.retries = retries = 0
+       initial = null
+-      return
++      if (!reserving)
++        return
+     }
+ 
+     while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
+@@ -580,7 +597,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+       ? !connection.reserved.release && x[5] === 73 // I
+         ? ending
+           ? terminate()
+-          : (connection.reserved = null, onopen(connection))
++          : connection.reserved(true)
+         : connection.reserved()
+       : ending
+         ? terminate()
+diff --git a/src/index.js b/src/index.js
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..4c9192680a0da45fe13e1f06f1d8d05dcbe5a8a1 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -200,40 +200,134 @@ function Postgres(a, b) {
+     return await sql`select pg_notify(${ channel }, ${ '' + payload })`
+   }
+ 
+-  async function reserve() {
++  function own(c) {
+     const queue = Queue()
+-    const c = open.length
+-      ? open.shift()
++    let busy = false, fence = null, holding = null, releasing = false
++    const reservation = c.reserved = (ended = false) => {
++      if (c.reserved !== reservation)
++        return
++      busy = false
++      if (ended) {
++        releasing = true
++        reservation.reject(Errors.generic('CONNECTION_CLOSED', 'Transaction has ended'))
++      }
++      const completed = fence
++      fence = null
++      if (completed && completed.cancelPromise) {
++        holding = completed
++        completed.cancelPromise.then(() => {
++          if (c.reserved !== reservation || holding !== completed)
++            return
++          holding = null
++          pump()
++        }, reservation.discard)
++      } else {
++        pump()
++      }
++    }
++    reservation.enqueue = q => {
++      if (c.reserved !== reservation || releasing)
++        return q.reject(Errors.generic('CONNECTION_CLOSED', 'Connection is no longer owned'))
++      queue.push(q)
++      pump()
++    }
++    reservation.reject = error => {
++      while (queue.length)
++        queue.shift().reject(error)
++    }
++    reservation.discard = () => {
++      if (c.reserved !== reservation)
++        return
++      c.reserved = null
++      reservation.reject(Errors.generic('CONNECTION_CLOSED', 'Connection was discarded'))
++      c.terminate()
++    }
++    reservation.releaseConnection = () => {
++      if (c.reserved !== reservation)
++        return
++      releasing = true
++      pump()
++    }
++    return reservation
++
++    function pump() {
++      if (c.reserved !== reservation || holding || fence)
++        return
++      while (queue.length) {
++        const q = queue.peek()
++        if (q.cancelled) {
++          queue.shift()
++          continue
++        }
++        if (busy && (q.options.cancelFence || c.queue === full))
++          return
++        queue.shift()
++        busy = true
++        if (q.options.cancelFence)
++          fence = q
++        const ready = c.execute(q)
++        move(c, ready ? reserved : full)
++        if (fence || !ready)
++          return
++      }
++      if (!busy) {
++        if (releasing) {
++          c.reserved = null
++          onopen(c)
++        } else {
++          move(c, reserved)
++        }
++      }
++    }
++  }
++
++  async function reserve({ signal } = {}) {
++    signal && signal.throwIfAborted()
++    if (ending)
++      throw Errors.connection('CONNECTION_ENDED', options, options)
++    const sql = open.length
++      ? claim(open.shift())
+       : await new Promise((resolve, reject) => {
+-        const query = { reserve: resolve, reject }
++        let settled = false
++        const query = {
++          reserve: c => { if (settle()) resolve(claim(c)) },
++          reject: error => { if (settle()) reject(error) }
++        }
++        const abort = () => query.reject(signal.reason)
++        function settle() {
++          if (settled)
++            return false
++          settled = true
++          queries.remove(query)
++          signal && signal.removeEventListener('abort', abort)
++          return true
++        }
++        if (signal)
++          signal.addEventListener('abort', abort, { once: true })
+         queries.push(query)
+         closed.length && connect(closed.shift(), query)
+       })
+ 
+-    move(c, reserved)
+-    c.reserved = () => queue.length
+-      ? c.execute(queue.shift())
+-      : move(c, reserved)
+-    c.reserved.release = true
+-
+-    const sql = Sql(handler)
+-    sql.release = () => {
+-      c.reserved = null
+-      onopen(c)
++    if (signal && signal.aborted) {
++      sql.release()
++      signal.throwIfAborted()
+     }
+ 
+     return sql
+ 
+-    function handler(q) {
+-      c.queue === full
+-        ? queue.push(q)
+-        : c.execute(q) || move(c, full)
++    function claim(c) {
++      move(c, reserved)
++      const reservation = own(c)
++      reservation.release = true
++      const sql = Sql(reservation.enqueue)
++      sql.release = reservation.releaseConnection
++      sql.discard = reservation.discard
++      return sql
+     }
+   }
+ 
+   async function begin(options, fn) {
+     !fn && (fn = options, options = '')
+-    const queries = Queue()
+     let savepoints = 0
+       , connection
+       , prepare = null
+@@ -249,9 +343,13 @@ function Postgres(a, b) {
+     }
+ 
+     async function scope(c, fn, name) {
++      const reservation = c.reserved
++      if (!reservation)
++        throw Errors.generic('CONNECTION_CLOSED', 'Transaction connection is no longer owned')
+       const sql = Sql(handler)
+       sql.savepoint = savepoint
+       sql.prepare = x => prepare = x.replace(/[^a-z0-9$-_. ]/gi)
++      sql.discard = reservation.discard
+       let uncaughtError
+         , result
+ 
+@@ -281,6 +379,8 @@ function Postgres(a, b) {
+       return result
+ 
+       function savepoint(name, fn) {
++        if (c.reserved !== reservation)
++          return Promise.reject(Errors.generic('CONNECTION_CLOSED', 'Transaction connection is no longer owned'))
+         if (name && Array.isArray(name.raw))
+           return savepoint(sql => sql.apply(sql, arguments))
+ 
+@@ -290,18 +390,16 @@ function Postgres(a, b) {
+ 
+       function handler(q) {
+         q.catch(e => uncaughtError || (uncaughtError = e))
+-        c.queue === full
+-          ? queries.push(q)
+-          : c.execute(q) || move(c, full)
++        if (!reservation || c.reserved !== reservation)
++          return q.reject(Errors.generic('CONNECTION_CLOSED', 'Transaction connection is no longer owned'))
++        reservation.enqueue(q)
+       }
+     }
+ 
+     function onexecute(c) {
+       connection = c
+       move(c, reserved)
+-      c.reserved = () => queries.length
+-        ? c.execute(queries.shift())
+-        : move(c, reserved)
++      own(c)
+     }
+   }
+ 
+@@ -399,6 +497,11 @@ function Postgres(a, b) {
+   }
+ 
+   function onopen(c) {
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return c.terminate()
++    }
+     if (queries.length === 0)
+       return move(c, open)
+ 
+@@ -420,10 +523,20 @@ function Postgres(a, b) {
+ 
+   function onclose(c, e) {
+     move(c, closed)
++    const reservation = c.reserved
+     c.reserved = null
++    reservation && reservation.reject(e)
+     c.onclose && (c.onclose(e), c.onclose = null)
+     options.onclose && options.onclose(c.id)
+-    queries.length && connect(c, queries.shift())
++    if (ending) {
++      while (queries.length)
++        queries.shift().reject(Errors.connection('CONNECTION_ENDED', options))
++      return
++    }
++    if (queries.length) {
++      const query = queries.peek()
++      connect(c, query.reserve ? query : queries.shift())
++    }
+   }
+ }
+ 
+diff --git a/src/query.js b/src/query.js
+index 0d44a15cd9e42beaf11d4be6ccde60223e09508a..96967780bdb55671bdcdda0fd0bb6e718e0a0e78 100644
+--- a/src/query.js
++++ b/src/query.js
+@@ -23,11 +23,12 @@ export class Query extends Promise {
+     this.state = null
+     this.statement = null
+ 
+-    this.resolve = x => (this.active = false, resolve(x))
+-    this.reject = x => (this.active = false, reject(x))
++    this.resolve = x => (this.active = false, this.canceller = null, resolve(x))
++    this.reject = x => (this.active = false, this.canceller = null, reject(x))
+ 
+     this.active = false
+     this.cancelled = null
++    this.cancelPromise = null
+     this.executed = false
+     this.signature = ''
+ 
+@@ -50,7 +51,12 @@ export class Query extends Promise {
+   }
+ 
+   cancel() {
+-    return this.canceller && (this.canceller(this), this.canceller = null)
++    if (this.cancelPromise)
++      return this.cancelPromise
++
++    const canceller = this.canceller
++    this.canceller = null
++    return this.cancelPromise = canceller ? canceller(this) : Promise.resolve()
+   }
+ 
+   simple() {
+@@ -96,8 +102,8 @@ export class Query extends Promise {
+               resolve({ value, done: false })
+               return new Promise(r => prev = r)
+             }
+-            this.resolve = () => (this.active = false, resolve({ done: true }))
+-            this.reject = x => (this.active = false, reject(x))
++            this.resolve = () => (this.active = false, this.canceller = null, resolve({ done: true }))
++            this.reject = x => (this.active = false, this.canceller = null, reject(x))
+           })
+           this.execute()
+           return promise
+diff --git a/src/queue.js b/src/queue.js
+index c4ef97164f057db99dce1b9af3401dbb1af37e31..8fba891b879e8f5c7fdb03ea0590753663c824c3 100644
+--- a/src/queue.js
++++ b/src/queue.js
+@@ -15,6 +15,7 @@ function Queue(initial = []) {
+         : (xs.splice(index, 1), x)
+     },
+     push: (x) => (xs.push(x), x),
++    peek: () => xs[index],
+     shift: () => {
+       const out = xs[index++]
+ 
+diff --git a/types/index.d.ts b/types/index.d.ts
+index 13c3432f761e2c2ee5b7dc1bdafe93e49f993dc7..5d8903e3246e1f596e717019db76e87008b25bfc 100644
+--- a/types/index.d.ts
++++ b/types/index.d.ts
+@@ -605,7 +605,7 @@ declare namespace postgres {
+     writable(): Promise<Writable>;
+ 
+     execute(): this;
+-    cancel(): void;
++    cancel(): Promise<void>;
+ 
+     /**
+      * @deprecated `.stream` has been renamed to `.forEach`
+@@ -659,6 +659,7 @@ declare namespace postgres {
+   | Fragment[]
+ 
+   interface UnsafeQueryOptions {
++    cancelFence?: boolean;
+     /**
+      * When executes query as prepared statement.
+      * @default false
+@@ -717,10 +718,11 @@ declare namespace postgres {
+     begin<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
+     begin<T>(options: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
+ 
+-    reserve(): Promise<ReservedSql<TTypes>>
++    reserve(options?: { signal?: AbortSignal }): Promise<ReservedSql<TTypes>>
+   }
+ 
+   interface TransactionSql<TTypes extends Record<string, unknown> = {}> extends ISql<TTypes>  {
++    discard(): void;
+     savepoint<T>(cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
+     savepoint<T>(name: string, cb: (sql: TransactionSql<TTypes>) => T | Promise<T>): Promise<UnwrapPromiseArray<T>>;
+ 
+@@ -728,6 +730,7 @@ declare namespace postgres {
+   }
+ 
+   interface ReservedSql<TTypes extends Record<string, unknown> = {}> extends Sql<TTypes> {
++    discard(): void;
+     release(): void;
+   }
+ }

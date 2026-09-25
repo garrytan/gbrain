@@ -14,6 +14,8 @@ import { localHostId } from './identity.ts';
 import { sha256 } from './digest.ts';
 import { currentCompanyBrainSync } from '../company-brain/profile.ts';
 import type { CompanyBrainPlan } from '../company-brain/types.ts';
+import { assertDistinctSyncOrigins, syncOriginPath } from './sync-origin.ts';
+import { assertManagedSyncActive } from './sync-authority.ts';
 
 export interface SyncEntry { path: string; sourcePath: string; action: 'import' | 'delete'; working: boolean; slug?: string; pageId?: number | null; revision?: string | null; }
 export interface SyncDiscovery { binding: WorktreeBinding; root: string; gitRoot: string; sourceId: string; incarnation: string;
@@ -42,8 +44,45 @@ export function readSyncFile(root: string, path: string): Buffer | null {
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
 export const syncRawHash = (root: string, path: string): string | null => { const bytes = readSyncFile(root, path); return bytes === null ? null : sha256(bytes); };
+export function assertConfiguredSyncRoot(root: string, configuredRoot: string | null): void {
+  if (configuredRoot === null) return;
+  try { if (realpathSync.native(resolve(configuredRoot)) === realpathSync.native(root) && realpathSync(root) === root) return; } catch {}
+  throw new OperationError('source_changed', 'The configured source directory no longer matches the accepted sync owner.');
+}
+function syncGitPath(context: Pick<SyncDiscovery, 'root' | 'gitRoot'>, path: string): string {
+  return relative(realpathSync.native(context.gitRoot), resolve(realpathSync.native(context.root), path)).split(sep).join('/');
+}
+export function assertSyncEntryOrigin(context: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'slugMode'>,
+  entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'action'> & { working?: boolean }): void {
+  const gitPath = syncGitPath(context, entry.path);
+  const expected = context.slugMode === 'source-root' ? relative(context.root, resolve(context.root, entry.path)).split(sep).join('/') : gitPath;
+  const origin = syncOriginPath(entry.sourcePath);
+  if (origin !== syncOriginPath(expected)) throw new OperationError('page_identity_changed', 'The sync path does not match its accepted origin.');
+  if (entry.action !== 'delete') return;
+  if (typeof entry.working !== 'boolean') throw new OperationError('page_identity_changed', 'The legacy deletion does not identify its Git or working-tree origin.',
+    'Inspect the source identity, then explicitly retry failed sync discovery; the accepted request has not been rewritten.');
+  if (entry.working === true) {
+    if (readSyncFile(context.root, entry.path) !== null) throw new OperationError('source_changed', 'The working-tree deletion no longer exists.');
+    return;
+  }
+  let tree = context.target;
+  const parts = syncOriginPath(gitPath).split('/');
+  for (const [index, part] of parts.entries()) {
+    const matches = syncGit(context.gitRoot, ['ls-tree', '-z', tree]).split('\0').filter(Boolean).map(row => {
+      const tab = row.indexOf('\t'), [mode, kind, object] = row.slice(0, tab).split(' ');
+      return { mode, kind, object, name: row.slice(tab + 1) };
+    }).filter(item => item.name === part || process.platform === 'win32' && item.name.toLowerCase() === part.toLowerCase());
+    if (!matches.length) return;
+    if (matches.length !== 1 || index === parts.length - 1 || matches[0].kind !== 'tree') {
+      throw new OperationError('page_identity_changed', 'The pinned Git target still contains or aliases the origin selected for deletion.',
+        'Inspect the source identity, then explicitly retry failed sync discovery; the accepted request has not been rewritten.');
+    }
+    tree = matches[0].object;
+  }
+}
 /** Validate the current owner and source without enumerating a new manifest. */
 export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncOpts): Promise<ManagedSyncContext> {
+  await assertManagedSyncActive(engine);
   if (!opts.noPull && !opts.dryRun) throw new OperationError('writer_coordinator_required', 'Managed sync requires --no-pull; Git pull/rebase needs an explicit drained maintenance window.');
   if (opts.includeGitignored || opts.skipFailed) throw new OperationError('writer_coordinator_required', 'Managed sync cannot bypass ignored-file or failed-receipt guards.');
   const sourceId = opts.sourceId ?? 'default';
@@ -57,9 +96,10 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
   const registeredRoot = resolve(binding.local_path, binding.relative_path);
   const root = realpathSync(registeredRoot);
   if (root !== registeredRoot) throw new OperationError('source_changed', 'The registered source root identity changed.');
+  assertConfiguredSyncRoot(root, source.local_path);
   const gitRoot = realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim());
   const requested = realpathSync(opts.srcSubpath ? resolve(opts.repoPath ?? gitRoot, opts.srcSubpath) : opts.repoPath ?? root);
-  if (requested !== root || !isWriteTargetContained(root, gitRoot)) throw new OperationError('source_changed', 'Sync path does not match this source binding.');
+  if (realpathSync.native(requested) !== realpathSync.native(root) || !isWriteTargetContained(realpathSync.native(root), realpathSync.native(gitRoot))) throw new OperationError('source_changed', 'Sync path does not match this source binding.');
   if (source.config?.kind != null) throw new OperationError('writer_coordinator_required', 'Connector sync requires its dedicated coordinator.');
   return { binding, root, gitRoot, sourceId, incarnation: source.incarnation, source };
 }
@@ -67,7 +107,8 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const { binding, root, gitRoot, sourceId, incarnation, source } = context ?? await resolveManagedSyncContext(engine, opts);
   const company = currentCompanyBrainSync(sourceId);
   const strategy = opts.strategy ?? source.config?.strategy ?? 'markdown';
-  const scope = relative(gitRoot, root).split(sep).join('/');
+  const nativeRoot = realpathSync.native(root), nativeGitRoot = realpathSync.native(gitRoot);
+  const scope = relative(nativeGitRoot, nativeRoot).split(sep).join('/');
   const probe = resolveSlugForPath(join(scope, 'x.md'));
   const slugMode = company ? 'source-root' : scope ? await resolveSlugRootMode(engine, { sourceId, explicitGitRoot: opts.srcSubpath !== undefined,
     slugPrefix: probe.slice(0, -2), dryRun: true }) : 'git-root';
@@ -86,18 +127,25 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   const delta = !opts.full && source.last_commit ? computeSyncDelta(gitRoot, source.last_commit, target) : null;
   const entries = new Map<string, SyncEntry>();
   const put = (path: string, action: SyncEntry['action'], working = false) => {
-    if (eligible(path)) entries.set(path, { path: relative(root, join(gitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
+    if (process.platform === 'win32' && path.includes('\\')) throw new OperationError('page_identity_changed', 'Git paths containing literal backslashes are not safe Windows sync targets.');
+    if (eligible(path)) entries.set(path, { path: relative(nativeRoot, join(nativeGitRoot, path)).split(sep).join('/'), sourcePath: sourcePath(path), action, working });
   };
   if (delta?.status === 'ok') {
     for (const path of [...delta.manifest.added, ...delta.manifest.modified]) put(path, 'import');
     for (const path of delta.manifest.deleted) put(path, 'delete');
     for (const rename of delta.manifest.renamed) { put(rename.from, 'delete'); put(rename.to, 'import'); }
   } else {
-    const paths = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0').filter(Boolean);
-    const present = new Set(paths.map(sourcePath));
+    const paths = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0')
+      .filter(path => path && (!scope || path.startsWith(`${scope}/`)));
+    assertDistinctSyncOrigins(paths);
+    const present = new Set(paths.map(path => syncOriginPath(sourcePath(path))));
     for (const path of paths) put(path, 'import');
     const pages = await engine.executeRaw<{ source_path: string }>('SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
-    for (const page of pages) if (!present.has(page.source_path)) put(slugMode === 'source-root' && scope ? `${scope}/${page.source_path}` : page.source_path, 'delete');
+    assertDistinctSyncOrigins([...present, ...pages.map(page => page.source_path)]);
+    for (const page of pages) {
+      const origin = syncOriginPath(page.source_path);
+      if (!present.has(origin)) put(slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin, 'delete');
+    }
   }
   if (working) {
     for (const path of [...dirty.added, ...dirty.modified]) put(path, 'import', true);
@@ -107,10 +155,14 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   if (company) {
     entries.clear();
     const included = company.plan.manifest.filter(entry => entry.disposition === 'included');
-    const present = new Set(included.map(entry => entry.path));
+    const present = new Set(included.map(entry => syncOriginPath(entry.path)));
     for (const entry of included) entries.set(entry.path, { path: entry.path, sourcePath: entry.path, action: 'import', working: false, slug: entry.page!.slug });
     const pages = await engine.executeRaw<{ source_path: string }>('SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
-    for (const page of pages) if (!present.has(page.source_path)) entries.set(page.source_path, { path: page.source_path, sourcePath: page.source_path, action: 'delete', working: false });
+    assertDistinctSyncOrigins([...present, ...pages.map(page => page.source_path)]);
+    for (const page of pages) {
+      const origin = syncOriginPath(page.source_path);
+      if (!present.has(origin)) entries.set(origin, { path: origin, sourcePath: origin, action: 'delete', working: false });
+    }
   }
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
   if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
@@ -122,15 +174,19 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     'SELECT id,slug,source_path,knowledge_revision FROM pages WHERE source_id=$1', [sourceId]);
   const bySlug = new Map(identities.map(p => [p.slug, p]));
   const byPath = new Map<string, typeof identities>();
-  for (const page of identities) if (page.source_path) byPath.set(page.source_path, [...(byPath.get(page.source_path) ?? []), page]);
+  assertDistinctSyncOrigins([...selected.map(entry => entry.sourcePath), ...identities.flatMap(page => page.source_path ? [page.source_path] : [])]);
+  for (const page of identities) if (page.source_path) {
+    const origin = syncOriginPath(page.source_path);
+    byPath.set(origin, [...(byPath.get(origin) ?? []), page]);
+  }
   for (const entry of selected) {
-    const origins = byPath.get(entry.sourcePath) ?? [];
+    const origins = byPath.get(syncOriginPath(entry.sourcePath)) ?? [];
     if (origins.length > 1) throw new OperationError('page_identity_changed', 'Several pages claim the same imported origin.');
     let slug = entry.slug ?? origins[0]?.slug ?? resolveSlugForPath(entry.sourcePath);
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw new OperationError('invalid_params', 'The imported file has no usable page slug.');
     const page = origins[0] ?? bySlug.get(slug);
-    if (page?.source_path != null && page.source_path !== entry.sourcePath) throw new OperationError('page_identity_changed', 'A different origin occupies the imported slug.');
+    if (page?.source_path != null && syncOriginPath(page.source_path) !== syncOriginPath(entry.sourcePath)) throw new OperationError('page_identity_changed', 'A different origin occupies the imported slug.');
     Object.assign(entry, { slug, pageId: page?.id ?? null, revision: page?.knowledge_revision ?? null });
   }
   if (!working) {
@@ -147,5 +203,5 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
     if (bytes === null) throw new OperationError('source_changed', 'The discovered working-tree file disappeared.');
     return bytes.toString('utf8');
   }
-  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${relative(discovery.gitRoot, join(discovery.root, entry.path)).split(sep).join('/')}`]);
+  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
 }

@@ -1,8 +1,8 @@
 /** Detach restored execution configuration without deleting memory or history. */
 import type { BrainEngine } from '../engine.ts';
 import { parseSourceConfig } from '../sources-load.ts';
-import { AgentInstallError, confinedPath } from '../agent-install/state.ts';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { AgentInstallError, checkedRelativePath, confinedPath } from '../agent-install/state.ts';
+import { posix, win32 } from 'node:path';
 
 export interface RestoredSource { id: string; local_path: string | null; managed_relative_path: string | null }
 export interface RestoreQuarantine {
@@ -11,10 +11,22 @@ export interface RestoreQuarantine {
   reconnect: string[];
 }
 
+export function relativeBackupPath(root: string, value: string): string | null {
+  const windows = /^(?:[a-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/i;
+  const paths = windows.test(root) ? win32 : posix;
+  if (!paths.isAbsolute(root) || !paths.isAbsolute(value)
+    || (paths === win32 && !windows.test(value))
+    || [root, value].some(path => /[\x00-\x1f\x7f]/.test(path))
+    || paths.dirname(root) === root
+    || [root, value].some(path => path.split(paths === win32 ? /[\\/]/ : '/').some(p => p === '.' || p === '..'))) return null;
+  const rel = paths.relative(root, value).split(paths.sep).join('/');
+  if (!rel) return '';
+  try { return checkedRelativePath(rel); } catch { return null; }
+}
+
 export function rebaseRestorePath(value: string, originalRoot: string, root: string, managedPaths: readonly string[]): string | null {
-  if (!isAbsolute(value)) return null;
-  const rel = relative(originalRoot, resolve(value));
-  if (!rel || rel === '..' || rel.startsWith('..' + sep) || !managedPaths.some(p => rel === p || rel.startsWith(p + '/'))) return null;
+  const rel = relativeBackupPath(originalRoot, value);
+  if (!rel || !managedPaths.some(p => rel === p || rel.startsWith(p + '/'))) return null;
   return confinedPath(root, rel);
 }
 
@@ -50,9 +62,15 @@ export async function quarantineRestoredExecution(tx: BrainEngine, options: {
     } else {
       await tx.executeRaw('UPDATE sources SET local_path = $1 WHERE id = $2', [rebased, row.id]);
     }
-    if (rebased && source.local_path) {
-      await tx.executeRaw(`UPDATE pages SET source_path = $1 || substring(source_path from $2::integer) WHERE source_id = $3 AND (source_path = $4 OR source_path LIKE $5 ESCAPE '!')`,
-        [rebased, source.local_path.length + 1, row.id, source.local_path, source.local_path.replace(/[!%_]/g, '!$&') + '/%']);
+    if (rebased && source.local_path && !external) {
+      const pages = await tx.executeRaw<{ id: number; source_path: string }>('SELECT id, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL', [row.id]);
+      let preserved = 0;
+      for (const page of pages) {
+        const rel = relativeBackupPath(source.local_path, page.source_path);
+        if (rel) await tx.executeRaw('UPDATE pages SET source_path = $1 WHERE id = $2', [confinedPath(rebased, rel), page.id]);
+        else if (posix.isAbsolute(page.source_path) || win32.isAbsolute(page.source_path)) preserved++;
+      }
+      if (preserved) inventory.reconnect.push(`Source ${row.id}: ${preserved} legacy absolute page origins were preserved unchanged because they could not be safely rebased; review before syncing. Remembered text is unchanged.`);
     }
   }
 

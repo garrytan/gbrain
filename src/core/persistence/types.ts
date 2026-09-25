@@ -19,6 +19,19 @@ export const WRITE_ERROR_CODES = [
 
 export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];
 
+export const WRITE_HEALTH_REASONS = ['pending', 'waiting_on_earlier_write', 'database_contention', 'writer_busy',
+  'revision_changed_repreparing', 'recovery_required', 'writer_pool_capacity', 'owner_unavailable',
+  'writer_lock_unavailable', 'consumer_stopping', 'cause_unknown'] as const;
+export const WRITE_HEALTH_ASSESSMENTS = ['pending', 'blocked', 'stalled'] as const;
+export const WRITE_HEALTH_ACTIONS = ['poll', 'inspect_owner'] as const;
+export interface WriteDiagnostic {
+  age_ms: number;
+  observed_at?: string;
+  assessment: typeof WRITE_HEALTH_ASSESSMENTS[number];
+  reason: typeof WRITE_HEALTH_REASONS[number];
+  next_action: typeof WRITE_HEALTH_ACTIONS[number];
+}
+
 export interface WriteReceipt {
   request_id: string;
   state: WriteRequestState;
@@ -34,6 +47,7 @@ export interface WriteReceipt {
   };
   created_at?: string;
   updated_at?: string;
+  diagnostic?: WriteDiagnostic;
 }
 
 /** Wire names stay separate from the engine's camelCase precondition. */
@@ -61,6 +75,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+export function isWriteDiagnostic(value: unknown): value is WriteDiagnostic {
+  if (!isRecord(value) || !Number.isSafeInteger(value.age_ms) || Number(value.age_ms) < 0
+    || !(WRITE_HEALTH_ASSESSMENTS as readonly unknown[]).includes(value.assessment)
+    || !(WRITE_HEALTH_REASONS as readonly unknown[]).includes(value.reason)
+    || !(WRITE_HEALTH_ACTIONS as readonly unknown[]).includes(value.next_action)) return false;
+  if (value.observed_at !== undefined) {
+    if (typeof value.observed_at !== 'string') return false;
+    const utc = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/.exec(value.observed_at);
+    if (!utc || !Number.isFinite(Date.parse(value.observed_at))
+      || new Date(value.observed_at).toISOString() !== `${utc[1]}.${(utc[2] ?? '').padEnd(3, '0')}Z`) return false;
+  }
+  return true;
+}
+
 /** Validate a receipt received over a transport before exposing structured retry information. */
 export function isWriteReceipt(value: unknown): value is WriteReceipt {
   if (!isRecord(value) || !isWriteRequestId(value.request_id)
@@ -73,6 +101,8 @@ export function isWriteReceipt(value: unknown): value is WriteReceipt {
   if (value.outcome !== undefined && !isRecord(value.outcome)) return false;
   if (value.created_at !== undefined && typeof value.created_at !== 'string') return false;
   if (value.updated_at !== undefined && typeof value.updated_at !== 'string') return false;
+  if (value.diagnostic !== undefined && (!isWriteDiagnostic(value.diagnostic)
+    || isTerminalWriteState(value.state as WriteRequestState))) return false;
   if (value.persistence !== undefined) {
     if (!isRecord(value.persistence) || !['filesystem', 'database'].includes(String(value.persistence.mode))) return false;
     if (value.persistence.file_written !== undefined && typeof value.persistence.file_written !== 'boolean') return false;
@@ -97,5 +127,10 @@ export function publicWriteReceipt(receipt: WriteReceipt): WriteReceipt {
     } } : {}),
     ...(receipt.created_at !== undefined ? { created_at: receipt.created_at } : {}),
     ...(receipt.updated_at !== undefined ? { updated_at: receipt.updated_at } : {}),
+    ...(!isTerminalWriteState(receipt.state) && isWriteDiagnostic(receipt.diagnostic) ? { diagnostic: {
+      age_ms: receipt.diagnostic.age_ms, assessment: receipt.diagnostic.assessment,
+      reason: receipt.diagnostic.reason, next_action: receipt.diagnostic.next_action,
+      ...(receipt.diagnostic.observed_at !== undefined ? { observed_at: receipt.diagnostic.observed_at } : {}),
+    } } : {}),
   };
 }

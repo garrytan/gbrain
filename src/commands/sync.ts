@@ -1,4 +1,5 @@
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
+import { assertSyncDispatchActive, resolveSyncPersistenceMode } from '../core/persistence/sync-authority.ts';
 import { formatManagedSyncFailure, readManagedSyncFailures, syncFailureJsonFields, type ManagedSyncFailure } from '../core/persistence/sync-failures.ts';
 import { readSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
 import { currentJobSignal } from '../core/minions/submission-authority.ts';
@@ -626,6 +627,7 @@ async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, managed: bo
   const sourceId = opts.sourceId ?? 'default';
   const [source] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
     'SELECT local_path,config FROM sources WHERE id=$1', [sourceId]);
+  assertSyncDispatchActive();
   if (!source) {
     if (opts.githubItem) throw new Error(`github_item refresh requires a github-kind source; source "${sourceId}" not found.`);
     return null;
@@ -651,27 +653,17 @@ async function runConnectorSync(engine: BrainEngine, opts: SyncOpts, managed: bo
 }
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
-  if (opts.sourceId && !currentCompanyBrainSync(opts.sourceId) && await getCompanyBrainProfile(engine, opts.sourceId)) {
-    return (await import('../core/company-brain/runtime.ts')).performCompanyBrainSync(engine, opts);
-  }
-  const [managed] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (managed?.enabled) {
-    const connector = await runConnectorSync(engine, opts, true);
-    return connector ?? (await import('../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
-  }
-  assertSourceFilesystemActive(true);
-  const jobSignal = currentJobSignal();
-  if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
+  assertSyncDispatchActive();
+  const inheritedSignal = currentSourceFilesystemSignal();
+  if (inheritedSignal) opts = { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, inheritedSignal]) : inheritedSignal };
+  const managed = await resolveSyncPersistenceMode(engine, opts);
   const finish = async (result: SyncResult, refresh = false): Promise<SyncResult> => {
-    assertSourceFilesystemActive(true);
-    if (jobSignal?.aborted) throw jobSignal.reason ?? new Error('Sync job cancelled');
+    assertSyncDispatchActive();
     if (refresh && (result.pagesAffected.length > 0 || result.deleted > 0)) {
       await refreshProjectionStatistics(engine);
     }
     return result;
   };
-  const inheritedSignal = currentSourceFilesystemSignal();
-  if (inheritedSignal) opts = { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, inheritedSignal]) : inheritedSignal };
   const interruptedBeforeWork = async (): Promise<SyncResult> => {
     assertSourceFilesystemActive(true);
     const lastCommit = opts.full ? null : await readSyncAnchor(engine, opts.sourceId, 'last_commit');
@@ -681,9 +673,18 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
       reason: 'timeout',
     });
   };
-  // The delegated runner treats interruption as a resumable partial result,
-  // including cancellation before acquisition of the new filesystem lock.
+  const company = !opts.signal?.aborted && opts.sourceId && !currentCompanyBrainSync(opts.sourceId) && await getCompanyBrainProfile(engine, opts.sourceId);
+  assertSyncDispatchActive();
+  if (company) {
+    if (opts.signal?.aborted) return finish(await interruptedBeforeWork());
+    return (await import('../core/company-brain/runtime.ts')).performCompanyBrainSync(engine, opts);
+  }
+  if (managed) {
+    const connector = await runConnectorSync(engine, opts, true);
+    if (connector) return connector;
+  }
   if (opts.signal?.aborted) return finish(await interruptedBeforeWork());
+  if (managed) return (await import('../core/persistence/sync-run.ts')).performManagedSync(engine, opts);
   const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (filesystemRoot && !hasSourceFilesystemLock(filesystemRoot)) {
     let entered = false;
@@ -696,7 +697,7 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     } catch (err) {
       if (err instanceof LockStolenError) throw err;
       const isCallerAbort = err === opts.signal?.reason || (err instanceof Error && err.name === 'AbortError');
-      if (opts.signal?.aborted && isCallerAbort && !jobSignal?.aborted) {
+      if (opts.signal?.aborted && isCallerAbort && !currentJobSignal()?.aborted) {
         if (result?.status === 'partial') return finish(result);
         if (!entered) return finish(await interruptedBeforeWork());
       }

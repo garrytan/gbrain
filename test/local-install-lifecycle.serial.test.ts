@@ -96,7 +96,7 @@ describe('isolated Bun-linked keyless installation lifecycle', () => {
     expect(afterUpgrade.some((r: { slug: string; keyword_hit: boolean }) => r.slug === slug && r.keyword_hit)).toBe(true);
     expect(JSON.parse(run(['recall', 'people/example', '--json'])).facts.some((f: { fact: string }) => f.fact === fact)).toBe(true);
     const doctor = JSON.parse(run(['doctor', '--json']));
-    for (const name of ['embedding_width_consistency', 'embedding_column_registry', 'ze_embedding_health', 'provider_sunset']) {
+    for (const name of ['embedding_width_consistency', 'embedding_column_registry']) {
       expect(doctor.checks.find((c: { name: string }) => c.name === name)?.status, name).toBe('ok');
     }
     expect(JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf8')).embedding_disabled).toBe(true);

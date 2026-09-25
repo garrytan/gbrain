@@ -29,6 +29,7 @@ import { dispatchFactsBackstopEffect } from './effect-facts.ts';
 import type { EffectRecovery, PersistenceEffect } from './effect-model.ts';
 import { recoveryStagingFile } from './staging.ts';
 import { selectEffectRecoveries } from './effect-recovery-scan.ts';
+import { nativeFileTarget } from './native-file-target.ts';
 
 export interface EffectWorkerOptions {
   hostId: string;
@@ -105,6 +106,7 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
     if (!effect.data.relative_path) throw new OperationError('storage_error', 'The Git effect lost its target.');
     path = join(binding.local_path, effect.data.relative_path);
     if (!isWriteTargetContained(path, join(binding.local_path, binding.relative_path))) throw new OperationError('source_changed', 'The Git target escaped its registered source.');
+    path = nativeFileTarget(binding.local_path, path, 'git_target_unsafe');
     if (persistenceFileHash(path) !== effect.data.expected_hash) { await completeEffect(engine, effect, { git: 'superseded' }); return; }
   }
   if (!isWriteTargetContained(path, join(binding.local_path, binding.relative_path))) throw new OperationError('source_changed', 'The Git target escaped its registered source.');

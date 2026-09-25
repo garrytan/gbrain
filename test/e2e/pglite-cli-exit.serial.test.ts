@@ -95,7 +95,6 @@ beforeAll(() => {
   // runs with --no-embed below and search/get are keyword-only paths.
   runEnv = { ...process.env, GBRAIN_HOME: tmpHome };
   delete runEnv.VOYAGE_API_KEY;
-  delete runEnv.ZEROENTROPY_API_KEY;
   delete runEnv.OPENAI_API_KEY;
   delete runEnv.ANTHROPIC_API_KEY;
   delete runEnv.GOOGLE_API_KEY;
@@ -395,16 +394,6 @@ describe('#2084 — explicit-exit teardown: every swept site exits clean, exit c
       rmSync(copy, { recursive: true, force: true });
     }
   }, 90_000);
-
-  test('ze-switch --dry-run (Site H) exits without hanging, no banner', async () => {
-    const { code, durationMs, stderr } = await runWithTimeout(
-      ['ze-switch', '--dry-run'],
-      30_000,
-    );
-    expect(durationMs).toBeLessThan(30_000);
-    expect(stderr).not.toContain(TEARDOWN_BANNER);
-    expect(code).not.toBeNull();
-  }, 45_000);
 
   test('D11: teardown deadline does NOT cover handler time (slow-handler regression)', async () => {
     // Post-fix the deadline arms at teardown start, so a 500ms deadline cannot

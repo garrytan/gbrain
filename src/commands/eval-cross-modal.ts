@@ -23,6 +23,7 @@ import { createHash } from 'crypto';
 
 import { gbrainPath, loadConfig } from '../core/config.ts';
 import { configureGateway, getChatModel, isAvailable } from '../core/ai/gateway.ts';
+import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
 import { runWithLimit } from '../core/worker-pool.ts';
 import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
 import {
@@ -280,16 +281,7 @@ function configureGatewayForCli(): boolean {
     });
     return true;
   }
-  configureGateway({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    chat_fallback_chain: config.chat_fallback_chain,
-    base_urls: config.provider_base_urls,
-    provider_chat_options: config.provider_chat_options,
-    env: { ...process.env },
-  });
+  configureGateway(buildGatewayConfig(config));
   return true;
 }
 

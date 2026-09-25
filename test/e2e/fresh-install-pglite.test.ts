@@ -3,7 +3,7 @@
  *
  * The headline behavior the v0.37 fix wave exists to fix. Pre-fix, this
  * exact path broke: schema sized to 1536 (stale default), embed pipeline
- * used ZE/1280, first chunk insert failed with vector dim mismatch.
+ * used Voyage/1024, first chunk insert failed with vector dim mismatch.
  *
  * Hermetic: in-process (NOT a CLI subprocess), GBRAIN_HOME pinned to a
  * tmpdir, embed transport stubbed via `__setEmbedTransportForTests` so we
@@ -30,13 +30,13 @@ import {
 describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end', () => {
   let tmpHome: string;
   let origHome: string | undefined;
-  // v0.46.3: the single-ready provider for a fresh install is VOYAGE (ZE is
+  // v0.46.3: the single-ready provider for a fresh install is VOYAGE (unsupported providers are
   // sunset-excluded from auto-pick). Scrub EVERY embedding-capable key a dev
   // machine might carry so init sees exactly one ready provider — otherwise
   // ambient multi-provider env (Garry's setup) fails the disambiguation gate
   // before the test body runs.
   const SCRUB_KEYS = [
-    'ZEROENTROPY_API_KEY',
+
     'OPENAI_API_KEY',
     'VOYAGE_API_KEY',
     'OPENROUTER_API_KEY',
@@ -132,10 +132,6 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     expect(cfg.embedding_model).toBe(NEW_INSTALL_DEFAULT_EMBEDDING_MODEL);
     expect(cfg.embedding_dimensions).toBe(NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS);
 
-    // The actual schema column dim matches, and the voyage-picked install
-    // wrote the explicit reranker override (v0.46.3 split-default: the bundle
-    // default stays legacy-ZE, so a fresh voyage brain needs this config or
-    // it resolves a reranker whose key it doesn't have).
     const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
     const engine = new PGLiteEngine();
     await engine.connect({ database_path: cfg.database_path, engine: 'pglite' });
@@ -199,40 +195,6 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
     }
   }, 60000);
 
-  test('explicit --embedding-model on a sunset provider proceeds WITH a loud warning (D3 allow-explicit)', async () => {
-    resetGateway();
-    process.env.ZEROENTROPY_API_KEY = 'ze-test-explicit';
-    const synthVec = Array.from({ length: 1280 }, () => 0.01);
-    __setEmbedTransportForTests(async (args: any) => ({
-      embeddings: args.values.map(() => synthVec),
-    }) as any);
-    const origLog = console.log;
-    const origWarn = console.warn;
-    const origError = console.error;
-    let errBuf = '';
-    console.log = () => {};
-    console.warn = () => {};
-    console.error = (...args: unknown[]) => { errBuf += args.join(' ') + '\n'; };
-    try {
-      const { runInit } = await import('../../src/commands/init.ts');
-      await runInit([
-        '--pglite', '--non-interactive',
-        '--embedding-model', 'zeroentropyai:zembed-1',
-        '--embedding-dimensions', '1280',
-      ]);
-      const cfg = JSON.parse(readFileSync(join(tmpHome, '.gbrain', 'config.json'), 'utf-8'));
-      // Allowed until the September removal — explicit choice is honored...
-      expect(cfg.embedding_model).toBe('zeroentropyai:zembed-1');
-      // ...but never silently: the sunset warning names the date + escape route.
-      expect(errBuf).toContain('2026-09-04');
-      expect(errBuf).toContain('migrate embeddings');
-    } finally {
-      console.log = origLog;
-      console.warn = origWarn;
-      console.error = origError;
-    }
-  }, 30000);
-
   test('v0.46.3: keyed NON-voyage install disables the reranker explicitly (no doomed legacy default)', async () => {
     resetGateway();
     delete process.env.VOYAGE_API_KEY;
@@ -251,7 +213,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
       await engine.connect({ database_path: cfg.database_path, engine: 'pglite' });
       try {
         // No voyage key on either plane → the fresh brain must not silently
-        // inherit the legacy sunset bundle reranker it has no key for.
+        // inherit the unavailable bundle reranker it has no key for.
         expect(await engine.getConfig('search.reranker.model')).toBeNull();
         expect(await engine.getConfig('search.reranker.enabled')).toBe('false');
       } finally {

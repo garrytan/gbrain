@@ -5,6 +5,9 @@ import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
 import { parseMutationPrecondition } from '../src/core/persistence/preconditions.ts';
 import { committedVerbOutcome, frozenVerbWriteError } from '../src/core/persistence/verb-errors.ts';
 import { isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../src/core/persistence/types.ts';
+import { receiptFor } from '../src/core/persistence/journal.ts';
+import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { writeHealth, pendingWriteHint } from '../src/core/persistence/health.ts';
 
 const REQUEST_ID = 'd7599b95-65c2-4d54-aa4e-cb5745af90cf';
 const receipt = (state: WriteReceipt['state']): WriteReceipt => ({
@@ -32,6 +35,58 @@ describe('mutation preconditions', () => {
 });
 
 describe('public write receipts', () => {
+  test.each([[0, 1000], [29999, 1000], [30000, 5000], [30001, 5000], [119999, 5000], [120000, 30000], [120001, 30000]])('age %d has advisory poll %d', (age, retry) => {
+    const health = writeHealth({ state: 'running', created_at: new Date(0) }, {}, age);
+    expect(health.retry_after_ms).toBe(retry);
+    expect(health.diagnostic?.age_ms).toBe(age);
+    expect(health.diagnostic?.next_action).toBe(age >= 120000 ? 'inspect_owner' : 'poll');
+  });
+
+  test('clock movement, terminal state and unknown internal reasons remain conservative', () => {
+    expect(writeHealth({ state: 'queued', created_at: new Date(1000) }, {}, 0).diagnostic?.age_ms).toBe(0);
+    expect(writeHealth({ state: 'committed', created_at: new Date(0) }, {}, 999999)).toEqual({ retry_after_ms: null });
+    const health = writeHealth({ state: 'queued', created_at: new Date(0), blocked_reason: 'PRIVATE_UNKNOWN_MARKER' }, {}, 120000);
+    expect(health.diagnostic?.reason).toBe('cause_unknown');
+    expect(JSON.stringify(health)).not.toContain('PRIVATE_');
+    expect(health.diagnostic).not.toHaveProperty('observed_at');
+  });
+
+  test('nested diagnostics are validated and explicitly redacted', () => {
+    const health = writeHealth({ state: 'queued', created_at: new Date(0), blocked_reason: 'unexpected_file_bytes' }, { observed_at: '2026-01-01T00:00:00.000Z' }, 100);
+    const value = { ...receipt('queued'), ...health };
+    expect(isWriteReceipt(value)).toBe(true);
+    expect(value.diagnostic?.next_action).toBe('inspect_owner');
+    expect(pendingWriteHint(value)).toContain('inspect');
+    expect(frozenVerbWriteError(value).suggestion).toBe(pendingWriteHint(value));
+    expect(validateAgainstSchema(frozenVerbWriteError(value).toJSON(), ERROR_SCHEMA)).toEqual([]);
+    for (const patch of [{ age_ms: -1 }, { age_ms: 1.5 }, { age_ms: NaN }, { age_ms: Infinity },
+      { age_ms: '1' }, { assessment: 'dead' }, { reason: 'PRIVATE' }, { next_action: 'transfer' },
+      { observed_at: 'yesterday' }, { observed_at: '2026-02-30T00:00:00.000Z' }]) {
+      expect(isWriteReceipt({ ...value, diagnostic: { ...value.diagnostic, ...patch } })).toBe(false);
+    }
+    for (const diagnostic of [null, [], 'pending']) expect(isWriteReceipt({ ...value, diagnostic })).toBe(false);
+    expect(isWriteReceipt({ ...receipt('committed'), diagnostic: value.diagnostic })).toBe(false);
+    const extra = { ...value, diagnostic: { ...value.diagnostic!, path: 'PRIVATE_MARKER' } };
+    expect(JSON.stringify(publicWriteReceipt(extra))).not.toContain('PRIVATE_MARKER');
+  });
+  test('accepted contention survives public serialization with actionable polling', () => {
+    const row = { request_id: REQUEST_ID, state: 'queued', blocked_reason: 'database_contention',
+      created_at: new Date(), updated_at: new Date() } as WriteRequest;
+    expect(publicWriteReceipt(receiptFor(row))).toMatchObject({ retry_after_ms: 5000,
+      diagnostic: { assessment: 'blocked', reason: 'database_contention', next_action: 'poll' } });
+  });
+
+  test('renewed aged requests request inspection without inventing owner failure', () => {
+    const row = { request_id: REQUEST_ID, state: 'running', created_at: new Date(Date.now() - 130_000),
+      updated_at: new Date() } as WriteRequest;
+    expect(publicWriteReceipt(receiptFor(row))).toMatchObject({ retry_after_ms: 30000,
+      diagnostic: { assessment: 'stalled', reason: 'cause_unknown', next_action: 'inspect_owner' } });
+  });
+  test.each([29999, 30000, 119999, 120000, 120001])('known contention remains blocked while its advice ages at %d', age => {
+    expect(writeHealth({ state: 'queued', created_at: new Date(0), blocked_reason: 'database_contention' }, {}, age))
+      .toMatchObject({ retry_after_ms: age >= 120000 ? 30000 : 5000,
+        diagnostic: { assessment: 'blocked', reason: 'database_contention', next_action: age >= 120000 ? 'inspect_owner' : 'poll' } });
+  });
   test('serialization excludes journal payload and execution details', () => {
     const internal = { ...receipt('recovering'), payload: 'private content', claim_token: 'private token', recovery_path: '/private/root' };
     const error = new OperationError('recovery_required', 'Publication is recovering.');

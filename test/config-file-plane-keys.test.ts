@@ -197,7 +197,6 @@ describe('config set — backup.* file-plane keys', () => {
 const GATEWAY_MAPPED_KEYS = [
   'openai_api_key',
   'anthropic_api_key',
-  'zeroentropy_api_key',
   'openrouter_api_key',
   'voyage_api_key',
   'dashscope_api_key',

@@ -132,7 +132,7 @@ describe('embedMultimodal — openai-compat routing (#875)', () => {
   test('D12 — default embedding_dimensions (1280 as of v0.36.0.0) applies when not explicitly set', async () => {
     // configureGateway normalizes embedding_dimensions to DEFAULT_EMBEDDING_DIMENSIONS
     // when unset. v0.36.0.0 flipped the default from 1536 (OpenAI) to 1280
-    // (ZE Matryoshka step). LiteLLM recipe's default_dims=0 so we fall back
+    // (custom Matryoshka step). LiteLLM recipe's default_dims=0 so we fall back
     // to the brain's configured value. This test pins the "always validate
     // via the configured/default dim" contract — there is no skip-when-unset
     // path in practice because configureGateway always populates it.

@@ -110,7 +110,10 @@ these are the densest source of real bugs in the whole backlog.
   *(A footgun that bites contributors of this very repo.)*
 - **dim-aware embed write target** (#1263, @DmitryBMsk) — **OPEN, high.** `upsertChunks`
   always writes the legacy `embedding vector(1536)` column, so brains on an alternate
-  column (`embedding_ze halfvec(2560)`) fail with dim-mismatch on every write.
+  column (`embedding_retired_provider halfvec(2560)`) fail with dim-mismatch on every write.
+  The column label is redacted; the dimensions and attribution are unchanged. The
+  original label is retained at this path in revision
+  `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`.
 - **Oversized chunks silently unembedded** (#1675, @lubos-buracinsky) — **OPEN, high.**
   The code chunker emits giant literals/template strings whole; the embedder rejects
   them and they vanish from semantic search. Cap chunk size so they stay embeddable.

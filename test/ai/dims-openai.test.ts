@@ -10,7 +10,7 @@
  *    openai-compatible path (line 167) — Azure-OpenAI hosts text-3 via the
  *    compat adapter, same validation contract there.
  *
- * Why: the v0.36.0.0 wave flips the default embedding to ZE at 1024d. The
+ * Why: the v0.36.0.0 wave flips the default embedding to Voyage at 1024d. The
  * fallback path is OpenAI text-embedding-3-large at 1024d (also valid per
  * Matryoshka). Without range validation, a user who mis-configures
  * `embedding_dimensions=5000` against text-embedding-3-small gets opaque
@@ -34,7 +34,7 @@ describe('OpenAI text-embedding-3 model recognition', () => {
 
   test('isOpenAITextEmbedding3Model rejects ada-002 and unrelated', () => {
     expect(isOpenAITextEmbedding3Model('text-embedding-ada-002')).toBe(false);
-    expect(isOpenAITextEmbedding3Model('zembed-1')).toBe(false);
+    expect(isOpenAITextEmbedding3Model('fixture-embedding-v1')).toBe(false);
     expect(isOpenAITextEmbedding3Model('voyage-3-large')).toBe(false);
   });
 

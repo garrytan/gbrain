@@ -117,7 +117,6 @@ async function restampVisibilityPosture(newRaw: string | null): Promise<void> {
 export const FILE_PLANE_API_KEYS: readonly string[] = [
   'openai_api_key',
   'anthropic_api_key',
-  'zeroentropy_api_key',
   'openrouter_api_key',
   'voyage_api_key',
   'dashscope_api_key',

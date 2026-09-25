@@ -79,6 +79,16 @@ describe('native lock distribution integrity', () => {
         expect(job.steps.some(step => step.run?.includes('test/openclaw-context-engine-native.serial.test.ts'))).toBe(true);
         continue;
       }
+      if (name === 'windows-backup-console') {
+        expect(job.steps.some(step => step.run?.includes('Windows backup console controls:'))).toBe(true);
+        expect(job.steps.some(step => step.run === 'bun scripts/native/verify.ts')).toBe(true);
+        continue;
+      }
+      if (name === 'windows-backup-dotnet') {
+        expect(job.steps.some(step => step.run?.includes('Windows backup dotnet controls:'))).toBe(true);
+        expect(job.steps.some(step => step.run === 'bun scripts/native/verify.ts')).toBe(true);
+        continue;
+      }
       const matrix = job.strategy.matrix;
       expect(matrix.bun).toEqual(['1.3.11', '1.3.13', '1.4.2']);
       const script = job.steps.map(step => step.run ?? '').join('\n');
