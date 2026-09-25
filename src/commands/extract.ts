@@ -86,6 +86,7 @@ import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted } from '../core/abort-check.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 import { loadAllSources } from '../core/sources-load.ts';
+import { withCoordinatedWrite } from '../core/persistence/context.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -2156,7 +2157,46 @@ async function extractTimelineFromDB(
  * make re-extraction idempotent). EVERY processed page is stamped, including
  * zero-link pages — they WERE processed.
  */
+/**
+ * Run the stale sweep through the managed-writer capability when it is active.
+ *
+ * Extraction writes only derived projections (links, timeline rows, and the
+ * extraction watermark), but those are still protected by the database writer
+ * guard. The pre-0.57 command path called the sweep directly, so a correctly
+ * activated brain rejected its own safe maintenance work. The core sweep opens
+ * one coordinated transaction per keyset batch, retaining the source-scoped
+ * capability while bounding database resources for large backlogs.
+ */
 export async function extractStaleFromDB(
+  engine: BrainEngine,
+  opts: {
+    dryRun: boolean;
+    jsonMode: boolean;
+    quiet?: boolean;
+    includeFrontmatter?: boolean;
+    sourceIdFilter?: string;
+    catchUp: boolean;
+    timeBudgetMs?: number;
+  },
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number }> {
+  if (opts.dryRun) return extractStaleFromDBCore(engine, opts);
+
+  const [persistence] = await engine.executeRaw<{ enabled: boolean }>(
+    'SELECT enabled FROM persistence_brain WHERE singleton=1',
+  );
+  if (!persistence?.enabled) return extractStaleFromDBCore(engine, opts);
+
+  // An unscoped sweep may touch any source.  Name every configured source
+  // rather than widening the guard; include `default` for older brains whose
+  // source row predates the registry migration.
+  const sourceIds = opts.sourceIdFilter
+    ? [opts.sourceIdFilter]
+    : [...new Set(['default', ...(await engine.listAllSources()).map(source => source.id)])];
+
+  return extractStaleFromDBCore(engine, { ...opts, coordinatedSourceIds: sourceIds });
+}
+
+async function extractStaleFromDBCore(
   engine: BrainEngine,
   opts: {
     dryRun: boolean;
@@ -2175,6 +2215,8 @@ export async function extractStaleFromDB(
      * explicit `gbrain extract --stale` command. Ignored when catchUp.
      */
     timeBudgetMs?: number;
+    /** Source-scoped coordinator capability used for each bounded write batch. */
+    coordinatedSourceIds?: string[];
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
@@ -2212,7 +2254,6 @@ export async function extractStaleFromDB(
   // resolution even with `link_resolution.global_basename` enabled, stamping
   // pages as extracted with their bare wikilinks dropped. Mirrors
   // extractLinksFromDB (including the codex-[P1] `sourceId` scoping).
-  const resolvers = new Map<string, ReturnType<typeof makeResolver>>();
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware verbs + frontmatter_links (see extractLinksFromDB).
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
@@ -2259,15 +2300,20 @@ export async function extractStaleFromDB(
     });
     if (rows.length === 0) break;
 
-    const timelineRows: TimelineBatchInput[] = [];
-    const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
+    const processBatch = async (writeEngine: BrainEngine) => {
+      const resolvers = new Map<string, ReturnType<typeof makeResolver>>();
+      const timelineRows: TimelineBatchInput[] = [];
+      const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
+      let batchLinksCreated = 0;
+      let batchSkippedMissingTarget = 0;
+      let batchSkippedCrossSource = 0;
 
-    for (const page of rows) {
-      const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
+      for (const page of rows) {
+      const snapshot = await writeEngine.readPageSnapshot(page.slug, { sourceId: page.source_id });
       if (!snapshot) throw new Error('Link extraction origin changed during the stale scan');
       const fullContent = snapshot.page.compiled_truth + '\n' + snapshot.page.timeline;
       const linkRows: LinkBatchInput[] = [];
-      if (!resolvers.has(page.source_id)) resolvers.set(page.source_id, makeResolver(engine, { mode: 'batch', sourceId: page.source_id }));
+      if (!resolvers.has(page.source_id)) resolvers.set(page.source_id, makeResolver(writeEngine, { mode: 'batch', sourceId: page.source_id }));
       const resolver = resolvers.get(page.source_id)!;
       const extracted = await extractPageLinks(
         page.slug, fullContent, snapshot.page.frontmatter, snapshot.page.type, resolver,
@@ -2284,8 +2330,8 @@ export async function extractStaleFromDB(
           { crossSource, defaultSourceId: linkDefaultSourceId },
         );
         if (!r.ok) {
-          if (r.reason === 'cross_source') skippedCrossSource++;
-          else skippedMissingTarget++;
+          if (r.reason === 'cross_source') batchSkippedCrossSource++;
+          else batchSkippedMissingTarget++;
           continue;
         }
         linkRows.push({
@@ -2295,10 +2341,10 @@ export async function extractStaleFromDB(
           to_source_id: r.toSourceId, origin_source_id: page.source_id,
         });
       }
-      const written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId: page.source_id,
+      const written = await writeEngine.replaceDerivedLinks({ slug: page.slug, sourceId: page.source_id,
         expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, linkRows, { includeFrontmatter,
         expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) });
-      linksCreated += written.created;
+      batchLinksCreated += written.created;
       for (const entry of parseTimelineEntries(fullContent)) {
         // #3957: carry the parsed source label — omitting it wrote source=''
         // while the FS path wrote the split label, so the same bullet
@@ -2328,14 +2374,25 @@ export async function extractStaleFromDB(
         ? page.updated_at_iso
         : versionTs;
       processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
-    }
+      }
 
-    for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
-      timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
-    }
+      let batchTimelineCreated = 0;
+      for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
+        batchTimelineCreated += await writeEngine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
+      }
     // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
     // failure surfaces instead of looping forever.
-    await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+      await writeEngine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+      return { batchLinksCreated, batchTimelineCreated, batchSkippedMissingTarget, batchSkippedCrossSource };
+    };
+
+    const batch = opts.coordinatedSourceIds
+      ? await engine.transaction(tx => withCoordinatedWrite(tx, opts.coordinatedSourceIds!, () => processBatch(tx)))
+      : await processBatch(engine);
+    linksCreated += batch.batchLinksCreated;
+    timelineCreated += batch.batchTimelineCreated;
+    skippedMissingTarget += batch.batchSkippedMissingTarget;
+    skippedCrossSource += batch.batchSkippedCrossSource;
 
     pagesProcessed += rows.length;
     progress.tick(rows.length);

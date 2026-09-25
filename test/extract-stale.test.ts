@@ -18,6 +18,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract, extractStaleFromDB } from '../src/commands/extract.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 import type { PageInput } from '../src/core/types.ts';
+import { assertCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
 
 let engine: PGLiteEngine;
 
@@ -102,6 +104,46 @@ describe('engine: stale-page extraction methods', () => {
 });
 
 describe('gbrain extract --stale', () => {
+  test('uses the coordinated writer capability when persistence is active', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      await withManagedFixtureWrite(engine, ['default'], async tx => {
+        await tx.putPage('people/alice', personPage('Alice'));
+        await tx.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) advises [Acme](companies/acme).'));
+      });
+
+      // PGLite does not install the production writer trigger. Model its
+      // production behavior here: derived writes must hold the same
+      // coordinator capability that the Postgres trigger requires.
+      const guarded = new Proxy(engine, {
+        get(target, property) {
+          if (property === 'transaction') {
+            return async (callback: (tx: PGLiteEngine) => Promise<unknown>) => target.transaction(
+              tx => callback(new Proxy(tx, this) as PGLiteEngine),
+            );
+          }
+          const value = Reflect.get(target, property, target);
+          if (['replaceDerivedLinks', 'addTimelineEntriesBatch', 'markPagesExtractedBatch'].includes(String(property))) {
+            return async (...args: unknown[]) => {
+              await assertCoordinatedWrite(target, 'default');
+              return value.apply(target, args);
+            };
+          }
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      }) as PGLiteEngine;
+
+      const result = await extractStaleFromDB(guarded, {
+        dryRun: false, jsonMode: true, quiet: true, sourceIdFilter: 'default', catchUp: false,
+      });
+
+      expect(result.pagesProcessed).toBe(2);
+      expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    }
+  });
+
   test('extracts typed edges + stamps every processed page (incl. zero-link)', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) is the CEO of [Acme](companies/acme).'));
