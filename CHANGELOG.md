@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.46] - 2026-09-25
+
+**Hooks no longer feed gbrain's own LLM calls back into the dream
+corpus.**
+
+Every claude-cli scratch session fired the SessionEnd hook, which wrote
+the extraction prompt and page content into the dream corpus; the idle
+sweep then re-ingested its own calls every tick, and synthesize minted
+near-duplicate idea pages. Sessions whose transcript path or working
+directory carries the scratch fingerprint are now skipped — the
+heartbeat records `self_transcript` — matching the filter
+`transcripts ingest` already applied. (#5413)
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**
