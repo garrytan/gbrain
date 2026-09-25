@@ -169,7 +169,7 @@ const SUPPORT_HINT =
  * Per-subcommand `--help`/`-h`/`help` usage text for the subcommands that
  * MUTATE state (create a repo, register MCP/hooks, run the verify contract,
  * adopt a workspace, remove receipt-tracked paths, record an interview
- * answer). `runBootstrap`'s dispatch checks `args[0]` for top-level help
+ * answer, wire a harness to a running serve). `runBootstrap`'s dispatch checks `args[0]` for top-level help
  * (`--help`/`-h`/`help`/no args), but a help token AFTER the subcommand name
  * (e.g. `gbrain bootstrap repo --help`, `gbrain bootstrap uninstall help`)
  * previously fell straight into the subcommand's own arg parsing, which had
@@ -203,6 +203,12 @@ const SUBCOMMAND_HELP: Record<string, string> = {
   interview:
     'gbrain bootstrap interview --init | --set KEY "value" | --skip KEY | --status | --show | --confirm <hash>\n' +
     '  Create/record/read interview state. See `gbrain bootstrap --help` for the per-flag description.',
+  harness:
+    'gbrain bootstrap harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]\n' +
+    '  [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]... [--no-hooks] [--no-capture]\n' +
+    '  [--force] [--status] [--remove] [--yes] [--json]\n' +
+    '  Wire framework-spawned Claude Code / Codex / opencode sessions to a RUNNING `gbrain serve --http`\n' +
+    '  on this box. Idempotent; --remove tears it down.',
 };
 
 /**
@@ -1988,7 +1994,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
 
   // Subcommand-level help: BEFORE any subcommand body runs, so a help token
   // after a mutating subcommand (repo/hooks/verify/attach/uninstall/render/
-  // interview) never falls through into the real operation, regardless of
+  // interview/harness) never falls through into the real operation, regardless of
   // what other flags/values precede it in `rest`. No install-log entry
   // either — this isn't a phase run.
   if (Object.hasOwn(SUBCOMMAND_HELP, sub) && hasHelpToken(rest, sub !== 'interview')) {
