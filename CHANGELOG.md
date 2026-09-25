@@ -57,6 +57,20 @@ from Markdown alone.
   inline documentation, already-struck rows, and malformed legacy segments.
 - Add PGLite and PostgreSQL coverage for concurrent saves, stale chunks, DB-only
   facts, soft-deleted pages, parser edge cases, and publication rollback.
+- Skip fenced pages that lack the claim's longest word, normalize each remaining
+  page once, and consider only chunks that actually match, so the scan inside the
+  write budget does less work.
+
+### Known limitation
+
+A withdrawal still reads every fenced page that contains the claim's longest word.
+Most claims have a distinctive word, and those pages are skipped cheaply. When that
+word is common across the source, for example a word in every fact table's header
+or a name on every related page, every such page is read. In PostgreSQL tests with
+pages of about 4–5 KB, 2,500 such pages took about 1.5 seconds and 5,000 took about
+3 seconds. Around 10,000 pages can exceed the 5-second write budget. `forget` then
+reports a retryable database-contention error and withdraws nothing; the
+withdrawal does not partly apply.
 
 ## [0.57.0.0] - 2026-09-24
 

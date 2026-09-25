@@ -60,6 +60,27 @@ describePg('Postgres fact-withdrawal scope', () => {
       });
       expect(performance.now() - stopwordStarted).toBeLessThan(5000);
       expect(stopwordResult.pages.map(page => page.slug)).toEqual(['notes/scale-2498']);
+
+      // Slow path: the claim's longest safe token ("realistic") is on every
+      // page, so the anchor prefilter keeps all of them and every body is
+      // normalized. This is the common-anchor ceiling, not the rare-anchor path.
+      const commonAnchorClaim = 'realistic page claim zz';
+      await engine.executeRaw(`UPDATE pages SET compiled_truth=$3||chr(10)||repeat('realistic page padding ',200)
+        WHERE source_id=$1 AND slug=$2`, [sourceId, 'notes/scale-2497', renderFactsTable([{ rowNum: 1,
+        claim: commonAnchorClaim, kind: 'fact', confidence: 1, visibility: 'world', notability: 'medium', active: true }])]);
+      const [anchored] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages
+        WHERE source_id=$1 AND position('realistic' in lower(compiled_truth))>0
+          AND position('gbrain:facts:begin' in compiled_truth)>0`, [sourceId]);
+      expect(anchored.n).toBeGreaterThanOrEqual(2499);
+      const commonFact = await engine.insertFact({ fact: commonAnchorClaim, source: 'test', visibility: 'world' },
+        { source_id: sourceId });
+      const commonStarted = performance.now();
+      const commonResult = await engine.transaction(async tx => {
+        await tx.executeRaw(`SELECT set_config('statement_timeout','5000ms',true)`);
+        return recordFactWithdrawal(tx, commonFact.id, sourceId, true);
+      });
+      expect(performance.now() - commonStarted).toBeLessThan(5000);
+      expect(commonResult.pages.map(page => page.slug)).toEqual(['notes/scale-2497']);
     } finally {
       await fixture.close();
     }

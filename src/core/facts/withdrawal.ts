@@ -42,8 +42,9 @@ export async function recordFactWithdrawal(
             -- Language-independent chunk prefilter: every normalized match contains the
             -- claim's longest pipe/backslash-free token verbatim. Stored FTS vectors may
             -- use a different configuration than the current one, so they are not used.
+            -- Ties break lexically so the same claim always scans the same way.
             (SELECT t FROM regexp_split_to_table(regexp_replace(lower(btrim($3::text)),'[[:space:]]+',' ','g'),' ') AS t
-              WHERE t<>'' AND strpos(t,chr(124))=0 AND strpos(t,chr(92))=0 ORDER BY length(t) DESC LIMIT 1) AS anchor
+              WHERE t<>'' AND strpos(t,chr(124))=0 AND strpos(t,chr(92))=0 ORDER BY length(t) DESC, t LIMIT 1) AS anchor
         ), provenance AS (
           SELECT DISTINCT COALESCE(source_markdown_slug,entity_slug) AS slug FROM facts
           WHERE source_id=$1 AND visibility=$2
@@ -56,28 +57,31 @@ export async function recordFactWithdrawal(
           WHERE p.source_id=$1 AND target.claim<>''
             AND (target.anchor IS NULL OR position(target.anchor in lower(c.chunk_text))>0)
         ), chunk_pages AS MATERIALIZED (
-          SELECT c.page_id,bool_or(
+          -- Only matching chunks make a page a candidate; an anchor-only chunk
+          -- would just ship an unrelated body to the overlay check.
+          SELECT c.page_id,true AS chunk_match
+          FROM chunk_shortlist c CROSS JOIN target GROUP BY c.page_id HAVING bool_or(
             c.chunk_text=target.claim OR c.chunk_text=target.escaped_claim OR
             position(chr(124)||' '||target.escaped_claim||' '||chr(124) in c.chunk_text)>0 OR
             position(chr(124)||target.escaped_claim||chr(124) in c.chunk_text)>0 OR
             position(chr(124)||' '||target.escaped_claim||chr(124) in c.chunk_text)>0 OR
             position(chr(124)||target.escaped_claim||' '||chr(124) in c.chunk_text)>0
-          ) AS chunk_match
-          FROM chunk_shortlist c CROSS JOIN target GROUP BY c.page_id
+          )
         ), fence_pages AS MATERIALIZED (
-          SELECT p.id,p.compiled_truth FROM pages p CROSS JOIN target
+          -- Normalize each anchored body once; both claim spellings reuse it.
+          SELECT p.id,regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g') AS body FROM pages p CROSS JOIN target
           WHERE p.source_id=$1 AND btrim($3::text)<>'' AND position('gbrain:facts:begin' in p.compiled_truth)>0
             AND (target.anchor IS NULL OR position(target.anchor in lower(p.compiled_truth))>0)
         ), body_pages AS MATERIALIZED (
           SELECT p.id FROM fence_pages p CROSS JOIN target WHERE
-            position(target.claim in regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g'))>0 OR
-            position(target.escaped_claim in regexp_replace(lower(p.compiled_truth),'[[:space:]]+',' ','g'))>0
+            position(target.claim in p.body)>0 OR position(target.escaped_claim in p.body)>0
+        ), timeline_fence_pages AS MATERIALIZED (
+          SELECT p.id,regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g') AS timeline FROM pages p CROSS JOIN target
+          WHERE p.source_id=$1 AND target.claim<>'' AND position('gbrain:facts:begin' in p.timeline)>0
+            AND (target.anchor IS NULL OR position(target.anchor in lower(p.timeline))>0)
         ), timeline_pages AS MATERIALIZED (
-          SELECT p.id FROM pages p CROSS JOIN target
-          WHERE p.source_id=$1 AND target.claim<>'' AND position('gbrain:facts:begin' in p.timeline)>0 AND (
-            target.anchor IS NULL OR position(target.anchor in lower(p.timeline))>0) AND (
-            position(target.claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0 OR
-            position(target.escaped_claim in regexp_replace(lower(p.timeline),'[[:space:]]+',' ','g'))>0)
+          SELECT p.id FROM timeline_fence_pages p CROSS JOIN target WHERE
+            position(target.claim in p.timeline)>0 OR position(target.escaped_claim in p.timeline)>0
         ), candidate_slugs AS (
           SELECT slug,true AS provenance,false AS chunk_match,false AS body_match,false AS timeline_match FROM provenance
           UNION ALL SELECT p.slug,false,c.chunk_match,false,false FROM chunk_pages c JOIN pages p ON p.id=c.page_id
