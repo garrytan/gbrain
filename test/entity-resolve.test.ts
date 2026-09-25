@@ -469,3 +469,60 @@ describe('alias_exact — liveness before uniqueness (v0.46.15 codex ship-review
     expect(r!.source).not.toBe<ResolutionSource>('alias_exact');
   });
 });
+
+// Slugs keep letters of every script (ADR-0001), so an exact non-ASCII slug
+// is a normal resolver input and must take the exact_page branch — not fall
+// through to fuzzy / fallback_slugify (#9).
+describe('resolveEntitySlugWithSource — exact_page for non-ASCII slugs', () => {
+  beforeAll(async () => {
+    const seed = [
+      // Title deliberately unlike the slug, so the title side of fuzzy can't carry it.
+      { slug: 'people/иван-пример', title: 'И. Пример' },
+      { slug: 'people/мария-пример', title: 'Мария Пример' },
+      // ADR-0001: й and ё survive slugify, so they survive exact lookup too.
+      { slug: 'people/пётр-йорк-пример', title: 'Пётр Йорк Пример' },
+      // Caseless scripts (\p{Lo}) and combining vowel signs (\p{M}) are slug
+      // word chars too (SLUG_WORD_CHARS) — not just lowercase letters.
+      { slug: 'people/王小明', title: '王小明' },
+      { slug: 'people/हिन्दी-नाम', title: 'हिन्दी नाम' },
+    ];
+    for (const p of seed) {
+      await engine.putPage(p.slug, {
+        type: 'person', title: p.title, compiled_truth: 'b', timeline: '', frontmatter: {},
+      } as never);
+    }
+  });
+
+  it('an existing Cyrillic slug resolves via exact_page even when its title does not resemble it', async () => {
+    const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/иван-пример');
+    expect(r).toEqual({ slug: 'people/иван-пример', source: 'exact_page' });
+  });
+
+  it('an existing Cyrillic slug whose title matches resolves via exact_page, not fuzzy_match', async () => {
+    const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/мария-пример');
+    expect(r).toEqual({ slug: 'people/мария-пример', source: 'exact_page' });
+  });
+
+  it('slugs keeping й and ё resolve via exact_page', async () => {
+    const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/пётр-йорк-пример');
+    expect(r).toEqual({ slug: 'people/пётр-йорк-пример', source: 'exact_page' });
+  });
+
+  it('caseless-script and combining-mark slugs resolve via exact_page', async () => {
+    for (const slug of ['people/王小明', 'people/हिन्दी-नाम']) {
+      const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', slug);
+      expect(r).toEqual({ slug, source: 'exact_page' });
+    }
+  });
+
+  it('a Cyrillic display name (spaces, capitals) is not taken for a slug', async () => {
+    const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'Мария Пример');
+    expect(r!.slug).toBe('people/мария-пример');
+    expect(r!.source).not.toBe<ResolutionSource>('exact_page');
+  });
+
+  it('a capitalized Cyrillic slug is not taken for a slug', async () => {
+    const r = await resolveEntitySlugWithSource(engine as unknown as BrainEngine, 'default', 'people/Мария-пример');
+    expect(r!.source).not.toBe<ResolutionSource>('exact_page');
+  });
+});
