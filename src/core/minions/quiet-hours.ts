@@ -67,7 +67,7 @@ export function evaluateQuietHours(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function isValidConfig(cfg: QuietHoursConfig): boolean {
+export function isValidConfig(cfg: QuietHoursConfig): boolean {
   if (!Number.isInteger(cfg.start) || cfg.start < 0 || cfg.start > 23) return false;
   if (!Number.isInteger(cfg.end) || cfg.end < 0 || cfg.end > 23) return false;
   if (cfg.start === cfg.end) return false; // zero-width window is ambiguous

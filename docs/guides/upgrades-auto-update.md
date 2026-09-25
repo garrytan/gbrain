@@ -57,6 +57,15 @@ action on the user's local sleep window — is owned by
 [quiet-hours.md](quiet-hours.md); this doc only covers the self-upgrade
 hook into it.
 
+`gbrain config set self_upgrade.<key>` writes `~/.gbrain/config.json` (the
+file plane every self-upgrade reader uses) and refuses a value the readers
+would ignore: an unknown key or mode, a quiet-hours window with an hour
+outside 0-23, equal bounds, or an unknown timezone. Versions are stored in the
+four-segment form (`0.57.1` becomes `0.57.1.0`). The keys are machine-local,
+so they work on a thin client too. Older versions wrote these keys to the
+database, where nothing reads them; the next `config set` or `config unset` of
+the key removes that row.
+
 ## Implementation
 
 ### The Check (cron-initiated)

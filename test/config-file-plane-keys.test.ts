@@ -22,7 +22,8 @@ import {
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-// The file-plane branch returns before any engine access — a null stub proves it.
+// The file-plane write never depends on the engine — a null stub proves it.
+// (Its best-effort stale-DB-row cleanup warns on the null stub and continues.)
 const noEngine = null as unknown as BrainEngine;
 
 async function captureLog(fn: () => Promise<void>): Promise<string> {
@@ -378,4 +379,212 @@ describe('config set integrations.memorable.enabled — the disclosure consent g
       expect(gate).toEqual({ allowed: false, reason: 'disclosure_missing' });
     });
   });
+});
+
+/**
+ * #5489: every `self_upgrade.*` reader is file-plane — the cli.ts startup
+ * check (loadConfigFileOnly, before any DB connect), the autopilot silent
+ * channel and doctor's self_upgrade_health (loadConfig). `config set
+ * self_upgrade.mode auto` used to write the DB plane, print "Set ... = auto"
+ * and change nothing. The null engine is the discriminator again: the write
+ * must land in config.json without reaching the engine.
+ */
+import {
+  parseSelfUpgradeConfigValue,
+  resolveQuietHoursWindow,
+  resolveSelfUpgradeMode,
+} from '../src/core/self-upgrade.ts';
+import { checkSelfUpgradeHealth } from '../src/commands/doctor.ts';
+import { tryRunConfigThinClient } from '../src/commands/config.ts';
+import { routeThinClientCommand } from '../src/commands/thin-client-routing.ts';
+import type { GBrainConfig } from '../src/core/config.ts';
+
+/** A DB plane holding rows an earlier, pre-routing `config set` wrote. */
+function staleRowEngine(rows: Record<string, string>): { engine: BrainEngine; rows: Map<string, string> } {
+  const map = new Map(Object.entries(rows));
+  const engine = {
+    getConfig: async (k: string) => map.get(k) ?? null,
+    unsetConfig: async (k: string) => (map.delete(k) ? 1 : 0),
+  } as unknown as BrainEngine;
+  return { engine, rows: map };
+}
+
+describe('config set — self_upgrade.* keys are FILE-plane canonical (#5489)', () => {
+  const VALID_CASES: ReadonlyArray<{ leaf: string; raw: string; stored: unknown }> = [
+    { leaf: 'mode', raw: 'auto', stored: 'auto' },
+    { leaf: 'mode', raw: 'off', stored: 'off' },
+    { leaf: 'mode_prompted', raw: 'false', stored: false },
+    { leaf: 'mode_prompted', raw: 'yes', stored: true },
+    { leaf: 'quiet_hours', raw: '{"start":1,"end":5,"tz":"UTC"}', stored: { start: 1, end: 5, tz: 'UTC' } },
+    { leaf: 'failed_versions', raw: '0.57.0.0, 0.57.1.0', stored: ['0.57.0.0', '0.57.1.0'] },
+    { leaf: 'failed_versions', raw: '["0.57.0.0"]', stored: ['0.57.0.0'] },
+    { leaf: 'failed_versions', raw: '[]', stored: [] },
+    { leaf: 'attempting_version', raw: '0.57.2.0', stored: '0.57.2.0' },
+    // stored in the 4-segment form the upgrade check compares by string
+    { leaf: 'attempting_version', raw: 'v0.57.2', stored: '0.57.2.0' },
+    { leaf: 'failed_versions', raw: '0.57.1, v0.57.1.0', stored: ['0.57.1.0'] },
+    { leaf: 'last_check_ts', raw: '1790000000000', stored: 1790000000000 },
+    { leaf: 'last_applied_version', raw: '0.57.1.0', stored: '0.57.1.0' },
+  ];
+
+  test('the cases cover every registered self_upgrade.* key', async () => {
+    const { KNOWN_CONFIG_KEYS } = await import('../src/core/config.ts');
+    const registered = KNOWN_CONFIG_KEYS.filter((k) => k.startsWith('self_upgrade.')).sort();
+    const covered = [...new Set(VALID_CASES.map((c) => `self_upgrade.${c.leaf}`))].sort();
+    expect(covered).toEqual(registered);
+  });
+
+  for (const c of VALID_CASES) {
+    test(`self_upgrade.${c.leaf} ${c.raw} lands nested in config.json`, async () => {
+      const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-'));
+      await withEnv({ GBRAIN_HOME: parent }, async () => {
+        const r = await captureAll(() => runConfig(noEngine, ['set', `self_upgrade.${c.leaf}`, c.raw]));
+        expect(r.exitCode).toBeNull();
+        expect(r.out).toContain('file plane');
+        const cfg = JSON.parse(readFileSync(join(parent, '.gbrain', 'config.json'), 'utf8')) as {
+          self_upgrade?: Record<string, unknown>;
+        };
+        expect(cfg.self_upgrade?.[c.leaf]).toEqual(c.stored);
+      });
+    });
+  }
+
+  test('the readers see the new mode: startup check, doctor, and unset restores the notify default', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-read-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_SELF_UPGRADE_MODE: undefined }, async () => {
+      const { loadConfigFileOnly } = await import('../src/core/config.ts');
+      await captureAll(() => runConfig(noEngine, ['set', 'self_upgrade.mode', 'auto']));
+      expect(resolveSelfUpgradeMode(loadConfigFileOnly())).toBe('auto');
+      expect(checkSelfUpgradeHealth().message).toContain('mode=auto');
+
+      const r = await captureAll(() => runConfig(noEngine, ['unset', 'self_upgrade.mode']));
+      expect(r.out).toContain('Unset self_upgrade.mode (file plane)');
+      expect(resolveSelfUpgradeMode(loadConfigFileOnly())).toBe('notify');
+    });
+  });
+
+  test('an empty failed_versions list clears the known-bad set', () => {
+    expect(parseSelfUpgradeConfigValue('failed_versions', '')).toEqual({ ok: true, value: [] });
+  });
+
+  test('resolveQuietHoursWindow fills 23:00-08:00 in the system timezone, keeping configured bounds', () => {
+    const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    expect(resolveQuietHoursWindow(undefined)).toEqual({ start: 23, end: 8, tz: systemTz });
+    expect(resolveQuietHoursWindow({ end: 5, tz: 'UTC' })).toEqual({ start: 23, end: 5, tz: 'UTC' });
+  });
+
+  test('a stale DB-plane row is never reported as the value, and set/unset remove it', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-stale-'));
+    await withEnv({ GBRAIN_HOME: parent }, async () => {
+      const { engine, rows } = staleRowEngine({ 'self_upgrade.mode': 'auto', 'self_upgrade.quiet_hours': '{"start":1,"end":5}' });
+
+      // get: the file has no mode, so the answer is not-found plus a pointer at the stale row.
+      const got = await captureAll(() => runConfig(engine, ['get', 'self_upgrade.mode']));
+      expect(got.exitCode).toBe(1);
+      expect(got.out).toBe('');
+      expect(got.err).toContain('stale DB-plane row');
+
+      // set writes the file and deletes the stale row.
+      const set = await captureAll(() => runConfig(engine, ['set', 'self_upgrade.mode', 'off']));
+      expect(set.out).toContain('Removed a stale DB-plane row for self_upgrade.mode');
+      expect(rows.has('self_upgrade.mode')).toBe(false);
+
+      // unset with no file value still removes the stale row instead of "not found".
+      const unset = await captureAll(() => runConfig(engine, ['unset', 'self_upgrade.quiet_hours']));
+      expect(unset.exitCode).toBeNull();
+      expect(unset.out).toContain('Unset self_upgrade.quiet_hours (stale db-plane row)');
+      expect(rows.size).toBe(0);
+    });
+  });
+
+  test('set/unset self_upgrade.mode say when GBRAIN_SELF_UPGRADE_MODE overrides the file', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-env-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_SELF_UPGRADE_MODE: 'off' }, async () => {
+      const set = await captureAll(() => runConfig(noEngine, ['set', 'self_upgrade.mode', 'auto']));
+      expect(set.err).toContain('GBRAIN_SELF_UPGRADE_MODE=off is set and overrides the file');
+      const unset = await captureAll(() => runConfig(noEngine, ['unset', 'self_upgrade.mode']));
+      expect(unset.err).toContain('GBRAIN_SELF_UPGRADE_MODE=off');
+    });
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_SELF_UPGRADE_MODE: undefined }, async () => {
+      const set = await captureAll(() => runConfig(noEngine, ['set', 'self_upgrade.mode', 'auto']));
+      expect(set.err).not.toContain('GBRAIN_SELF_UPGRADE_MODE');
+    });
+  });
+
+  test('a thin client sets, reads and unsets self_upgrade.* on its own file plane', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-thin-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_SELF_UPGRADE_MODE: undefined }, async () => {
+      const thinCfg = { engine: 'pglite', remote_mcp: { mcp_url: 'https://brain.example.test/mcp' } } as unknown as GBrainConfig;
+      const set = await captureAll(async () => {
+        expect(await routeThinClientCommand(thinCfg, 'config', ['set', 'self_upgrade.mode', 'off'])).toBe(true);
+      });
+      expect(set.out).toContain('Set self_upgrade.mode = "off" (file plane');
+      const { loadConfigFileOnly } = await import('../src/core/config.ts');
+      expect(resolveSelfUpgradeMode(loadConfigFileOnly())).toBe('off');
+
+      const got = await captureAll(async () => { expect(await tryRunConfigThinClient(['get', 'self_upgrade.mode'])).toBe(true); });
+      expect(got.out.trim()).toBe('off');
+
+      const unset = await captureAll(async () => { expect(await tryRunConfigThinClient(['unset', 'self_upgrade.mode'])).toBe(true); });
+      expect(unset.out).toContain('Unset self_upgrade.mode (file plane)');
+      expect(resolveSelfUpgradeMode(loadConfigFileOnly())).toBe('notify');
+
+      // Host-plane keys and flags keep the thin-client refusal.
+      expect(await tryRunConfigThinClient(['set', 'search.mode', 'balanced'])).toBe(false);
+      expect(await tryRunConfigThinClient(['set', 'self_upgrade.mode', 'off', '--force'])).toBe(false);
+    });
+  });
+
+  test('set keeps the sibling self_upgrade state the upgrade machinery wrote', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-merge-'));
+    await withEnv({ GBRAIN_HOME: parent }, async () => {
+      const gb = join(parent, '.gbrain');
+      mkdirSync(gb, { recursive: true });
+      writeFileSync(join(gb, 'config.json'), JSON.stringify({
+        engine: 'pglite',
+        self_upgrade: { mode: 'notify', mode_prompted: true, failed_versions: ['0.50.0.0'] },
+      }));
+      await captureAll(() => runConfig(noEngine, ['set', 'self_upgrade.mode', 'auto']));
+      const cfg = JSON.parse(readFileSync(join(gb, 'config.json'), 'utf8')) as { engine?: string; self_upgrade?: Record<string, unknown> };
+      expect(cfg.engine).toBe('pglite');
+      expect(cfg.self_upgrade).toEqual({ mode: 'auto', mode_prompted: true, failed_versions: ['0.50.0.0'] });
+    });
+  });
+
+  const INVALID_CASES: ReadonlyArray<{ leaf: string; raw: string }> = [
+    { leaf: 'mode', raw: 'yes' },
+    { leaf: 'mode', raw: 'Auto' },
+    { leaf: 'mode_prompted', raw: 'maybe' },
+    { leaf: 'quiet_hours', raw: 'not-json' },
+    { leaf: 'quiet_hours', raw: '[1,5]' },
+    { leaf: 'quiet_hours', raw: '{"start":24,"end":5}' },
+    { leaf: 'quiet_hours', raw: '{"start":2.5,"end":5}' },
+    // end defaults to 8 at the reader, so start 8 alone is a zero-width window
+    { leaf: 'quiet_hours', raw: '{"start":8}' },
+    { leaf: 'quiet_hours', raw: '{"start":1,"end":5,"tz":"Mars/Olympus_Mons"}' },
+    { leaf: 'quiet_hours', raw: '{"start":1,"end":5,"policy":"skip"}' },
+    { leaf: 'failed_versions', raw: 'latest' },
+    { leaf: 'failed_versions', raw: '[1]' },
+    { leaf: 'failed_versions', raw: '[0.57' },
+    { leaf: 'attempting_version', raw: 'v-next' },
+    { leaf: 'last_check_ts', raw: '1.5' },
+    { leaf: 'last_check_ts', raw: '12abc' },
+    { leaf: 'last_applied_version', raw: '0.57.x' },
+    { leaf: 'last_applied_version', raw: '0.57' },
+    // unregistered leaves are refused, never written to a DB row nothing reads
+    { leaf: 'modee', raw: 'auto' },
+    { leaf: 'quiet_hours.start', raw: '1' },
+  ];
+
+  for (const c of INVALID_CASES) {
+    test(`self_upgrade.${c.leaf} ${c.raw} is refused and nothing is written`, async () => {
+      const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-bad-'));
+      await withEnv({ GBRAIN_HOME: parent }, async () => {
+        const r = await captureAll(() => runConfig(noEngine, ['set', `self_upgrade.${c.leaf}`, c.raw]));
+        expect(r.exitCode).toBe(1);
+        expect(r.err).toContain(`self_upgrade.${c.leaf}`);
+        expect(existsSync(join(parent, '.gbrain', 'config.json'))).toBe(false);
+      });
+    });
+  }
 });

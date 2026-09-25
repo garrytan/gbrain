@@ -83,7 +83,10 @@ describe('#4748 config set mcp.instructions lands on the plane resolveMcpInstruc
 
           const unset = await runConfigCapture(engine, ['unset', 'mcp.instructions']);
           expect(unset.exit).toBeNull();
-          expect(unsetCalls).toEqual([]);
+          // The DB plane is never written; set and unset each delete a stale
+          // pre-routing DB row (#5489), which the stub reports as absent.
+          expect(setCalls).toEqual([]);
+          expect(unsetCalls).toEqual(['mcp.instructions', 'mcp.instructions']);
           expect(resolveMcpInstructions(loadConfig(), {})).toBe(GBRAIN_MCP_INSTRUCTIONS);
         },
       );
