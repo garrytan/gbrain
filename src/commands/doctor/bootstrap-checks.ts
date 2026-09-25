@@ -13,6 +13,8 @@ import { readHarnessReceiptState, readReceipt } from '../../core/bootstrap/forma
 import { probeLivePgliteHolder, resolveBrainDataDir } from '../../core/bootstrap/uninstall.ts';
 import { readRunbookStamp, hooksInstalled, listVerifyRuns } from '../../core/bootstrap/status.ts';
 import { resolveGbrainHome } from '../../core/gbrain-home.ts';
+import { isManagedFilesystemPath } from '../../core/persistence/filesystem-guard.ts';
+import { withoutPhysicalRootMetadata } from '../../core/persistence/root-metadata.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../version.ts';
 import type { Check } from '../doctor.ts';
 
@@ -235,10 +237,13 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         const s = failing[0]!;
         const target = s.repoRoot ?? ws ?? undefined;
         const rest = failing.length > 1 ? ` [+${failing.length - 1} more workspace(s)]` : '';
+        const guidance = target && isManagedFilesystemPath(target)
+          ? ' — this is a managed canonical worktree, where legacy bulk push is not available. Inspect the managed writer with `gbrain sources writer status --probe --json`; changes must be written through gbrain (put_page / capture), direct file edits here are not published.'
+          : ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``;
         checks.push({
           name: 'bootstrap_push_health',
           status: 'warn',
-          message: `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest} — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``,
+          message: `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest}${guidance}`,
         });
       } else {
         const stamps = pushStatuses.map((s) => Date.parse(s.ts ?? '')).filter((t) => Number.isFinite(t));
@@ -265,9 +270,9 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         let known = false;
         if (ws) {
           try {
-            const statusOut = execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
+            const statusOut = withoutPhysicalRootMetadata(execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
               stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-            }).toString();
+            }).toString());
             if (statusOut.trim() !== '') {
               dirty = true;
               known = true;
@@ -321,10 +326,13 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
           } catch { dirty = false; known = false; }
         }
         if (stale && dirty) {
+          const managed = Boolean(ws && isManagedFilesystemPath(ws));
           checks.push({
             name: 'bootstrap_push_health',
             status: 'fail',
-            message: `last successful push ${staleIso} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]. Run \`gbrain sources push --path ${ws}\`.`,
+            message: managed
+              ? `last successful push ${staleIso} (>48h) with a DIRTY workspace tree — recent agent memory is unpublished [B4]; this is a managed canonical worktree, where legacy bulk push is not available. Inspect the managed writer with \`gbrain sources writer status --probe --json\`; changes must be written through gbrain (put_page / capture), direct file edits here are not published.`
+              : `last successful push ${staleIso} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]. Run \`gbrain sources push --path ${ws}\`.`,
           });
         } else if (stale && !targetMatchesWs) {
           // Multiple tracked push targets (or the one target names a
@@ -344,11 +352,14 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
           // the states that name a real fix.
           checks.push({ name: 'bootstrap_push_health', status: 'ok', message: `no push activity since ${staleIso}; tree confirmed clean, nothing to push` });
         } else if (stale) {
+          const managed = Boolean(ws && isManagedFilesystemPath(ws));
           checks.push({
             name: 'bootstrap_push_health',
             status: 'warn',
             message: ws
-              ? `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed) — check ${ws} manually, or run \`gbrain sources push --path ${ws}\` to be safe`
+              ? managed
+                ? `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed) — this is a managed canonical worktree, where legacy bulk push is not available. Inspect the managed writer with \`gbrain sources writer status --probe --json\`.`
+                : `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed) — check ${ws} manually, or run \`gbrain sources push --path ${ws}\` to be safe`
               : `last successful push ${staleIso} (>48h ago); workspace tree state unverified (no bootstrap receipt on this machine names a workspace to check) — check the workspace manually`,
           });
         } else {

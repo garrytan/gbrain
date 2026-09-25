@@ -362,6 +362,24 @@ describe('bootstrap_push_health', () => {
     expect(c?.message).toContain('push_failed');
   }, T);
 
+  test('a recorded managed-writer refusal stays informational and points to writer status', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace();
+    writeFileSync(join(ws, '.gbrain-owner.json'), '{}');
+    writePushStatus(home, JSON.stringify({
+      ts: new Date().toISOString(),
+      ok: false,
+      reason: 'writer_coordinator_required: This file belongs to a managed canonical worktree.',
+      repoRoot: ws,
+    }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('managed canonical worktree');
+    expect(c?.message).toContain('legacy bulk push is not available');
+    expect(c?.message).toContain('gbrain sources writer status --probe --json');
+    expect(c?.message).not.toContain('gbrain sources push');
+  }, T);
+
   test('>48h stale + no receipt/workspace (state unverified) → warn, not ok', async () => {
     const { parent, home } = makeHome();
     // No receipt → ws is null → tree state can't be probed at all.
@@ -375,6 +393,17 @@ describe('bootstrap_push_health', () => {
   test('>48h stale + git-VERIFIED clean tree (in sync with origin) → ok', async () => {
     const { parent, home } = makeHome();
     const ws = makeWorkspace({ clean: true });
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('ok');
+    expect(c?.message).toContain('confirmed clean');
+  }, T);
+
+  test('>48h stale + tree whose only change is the managed ownership stamp → ok (stamp is not unpushed work)', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ clean: true });
+    writeFileSync(join(ws, '.gbrain-owner.json'), '{}');
     writeReceipt(home, ws);
     writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
     const c = byName(await run(parent), 'bootstrap_push_health');
@@ -431,6 +460,22 @@ describe('bootstrap_push_health', () => {
     expect(c?.status).toBe('fail');
     expect(c?.message).toContain('DIRTY');
     expect(c?.message).toContain(ws);
+    expect(c?.message).toContain(`Run \`gbrain sources push --path ${ws}\`.`);
+  }, T);
+
+  test('>48h stale + DIRTY managed canonical worktree → still fail, with managed-writer guidance', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ dirty: true });
+    writeFileSync(join(ws, '.gbrain-owner.json'), '{}');
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toContain('managed canonical worktree');
+    expect(c?.message).toContain('legacy bulk push is not available');
+    expect(c?.message).toContain('gbrain sources writer status --probe --json');
+    expect(c?.message).toContain('direct file edits here are not published');
+    expect(c?.message).not.toContain('gbrain sources push');
   }, T);
 
   test('unparseable ts → not stale (NaN guard) → ok', async () => {

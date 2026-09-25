@@ -1139,6 +1139,15 @@ describe('stop-hook per-turn push [D3]', () => {
     expect(readdirSync(bufDir).some((n) => n.includes('sess-stop-push'))).toBe(true);
   });
 
+  test('tree whose only change is the managed ownership stamp: push_clean, no spawn', async () => {
+    const repo = bootRepo('stop-stamp-only', { clean: true });
+    writeFileSync(join(repo, '.gbrain-owner.json'), '{}');
+    const spawned: string[] = [];
+    await runHook(['stop'], stopIo(repo, spawned));
+    expect(spawned).toEqual([]);
+    expect((await lastHeartbeat())?.reason).toBe('push_clean');
+  });
+
   test('corrupt per-root state file is treated as due (fail-open)', async () => {
     process.env.GBRAIN_STOP_PUSH_DEBOUNCE_MIN = '5';
     const repo = bootRepo('stop-corrupt');
