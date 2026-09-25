@@ -10,6 +10,54 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.58.1.0] - 2026-09-25
+
+**Withdraw one fact without making the rest of its source disappear.**
+
+When you correct or withdraw a remembered fact, GBrain now limits the cleanup to
+pages and search chunks that actually contain that claim. Unrelated notes from the
+same source stay searchable, keep their current revision, and are not rewritten.
+This is especially important for sources that hold many people, meetings, or facts:
+one correction no longer makes the entire source look stale.
+
+The withdrawal guard also applies while a page is being saved. If the fact is
+withdrawn after preparation but before publication, the save is rejected before
+the canonical Markdown file can publish the stale claim. The database checks the
+same withdrawal record again inside the final transaction, so a concurrent save
+cannot slip through between file preparation and indexing.
+
+Malformed or legacy fact fences remain fail-closed, but their ambiguity is scoped
+to the segment that contains the withdrawn claim. Inline examples and unrelated
+broken fences no longer poison every later page update. Already struck rows stay
+inactive, and canonical parser ordering is preserved for prefixed or formatted
+fence markers.
+
+| Situation | Result after this release |
+| --- | --- |
+| One fact is withdrawn from a multi-page source | Only pages carrying that evidence are invalidated. |
+| A matching page save races the withdrawal | Publication is refused before the stale claim becomes canonical. |
+| A different page from the same source is saved | The page remains publishable and searchable. |
+| A malformed fence contains the withdrawn row | The matching segment is blocked without widening to unrelated content. |
+
+## To take advantage of v0.58.1.0
+
+Run `gbrain upgrade`. No schema migration, backfill, ownership change, paid
+enrichment, or source rewrite is required. Existing withdrawal records begin using
+the narrower publication and invalidation rules immediately. Keep normal database
+backups because withdrawal history and database-only facts are not reconstructed
+from Markdown alone.
+
+### Itemized changes
+
+- Scope page and chunk invalidation to exact provenance, normalized fact rows, or
+  stale indexed evidence instead of every page in a source.
+- Recheck the withdrawal ledger immediately before canonical publication and again
+  during transactional apply across direct imports and prepared persistence paths.
+- Match facts-fence markers in canonical parser order, including prefixed markers,
+  inline documentation, already-struck rows, and malformed legacy segments.
+- Add PGLite and PostgreSQL coverage for concurrent saves, stale chunks, DB-only
+  facts, soft-deleted pages, parser edge cases, and publication rollback.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**
