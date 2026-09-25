@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.7] - 2026-09-25
+
+**MCP clients that send `types: []` can search again.**
+
+Some MCP clients fill every optional tool parameter, sending an empty array
+for a filter they have no value for. `search` and `query` rejected that empty
+`types` array as `invalid_params`, so those clients could not call the tools
+at all. An empty `types` array now means "no type filter", matching how the
+other optional parameters already behave. A list whose entries are all blank
+(`[""]`, or `--types ,,` on the CLI) still fails loudly, so genuine typos are
+unchanged.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

@@ -89,6 +89,17 @@ describe('search op — types param (#3985)', () => {
       searchOp.handler(ctxOf(), { query: 'zebra telescope', types: ' , ' }),
     ).rejects.toThrow(/no usable page-type/i);
   });
+
+  test('structurally empty array means no filter (#5390)', async () => {
+    const out = await searchOp.handler(ctxOf(), { query: 'zebra telescope', types: [] });
+    expect(slugsOf(out)).toEqual(['companies/acme-example', 'notes/telescope-note', 'people/alice-example']);
+  });
+
+  test('array of only blank strings still rejects (#5390)', async () => {
+    await expect(
+      searchOp.handler(ctxOf(), { query: 'zebra telescope', types: ['', '  '] }),
+    ).rejects.toThrow(/no usable page-type/i);
+  });
 });
 
 describe('query op — types param (#3985)', () => {
@@ -114,5 +125,12 @@ describe('query op — types param (#3985)', () => {
     await expect(
       queryOp.handler(ctxOf(), { query: 'zebra telescope', types: { person: true } }),
     ).rejects.toThrow(/types.*must be an array/i);
+  });
+
+  test('structurally empty array means no filter (#5390)', async () => {
+    await withEnv({ OPENAI_API_KEY: undefined }, async () => {
+      const out = await queryOp.handler(ctxOf(), { query: 'zebra telescope', expand: false, types: [] });
+      expect(slugsOf(out)).toEqual(['companies/acme-example', 'notes/telescope-note', 'people/alice-example']);
+    });
   });
 });

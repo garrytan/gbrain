@@ -161,14 +161,17 @@ async function buildRetrievalResponseMeta(
 
 /**
  * #3985: normalize the `types` param. MCP passes a real array; the CLI
- * passes `--types person,company` as one string. Rejects non-string entries
- * and an all-empty list loudly (invalid_params) instead of silently
- * dropping the filter. The SQL-level plumbing (SearchOpts.types → both
- * engines' keyword/title/vector legs) has existed since v0.33 (whoknows);
+ * passes `--types person,company` as one string. A structurally empty
+ * array means "no filter" (MCP clients emit `[]` for unset optionals);
+ * rejects non-string entries and a list whose entries are all blank
+ * loudly (invalid_params) instead of silently dropping the filter.
+ * The SQL-level plumbing (SearchOpts.types → both engines'
+ * keyword/title/vector legs) has existed since v0.33 (whoknows);
  * this just exposes it on the public search/query ops.
  */
 function normalizeTypesParam(raw: unknown): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
+  if (Array.isArray(raw) && raw.length === 0) return undefined;
   const arr = Array.isArray(raw)
     ? raw
     : typeof raw === 'string'
