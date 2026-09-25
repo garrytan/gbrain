@@ -1,8 +1,11 @@
 /**
  * #1685 GAP D — autopilot auto-drain wiring regression guards.
  *
- * The submission is inline in the autopilot tick body, so these are
- * source-shape assertions (the proven `autopilot-*-wiring.test.ts` pattern).
+ * autopilot.ts gates (Postgres-only, pack) and delegates the submission to
+ * src/core/cycle/extract-atoms-auto-drain.ts, the policy module it shares with
+ * the drain handler's continuation. Source-shape assertions over both files
+ * (the proven `autopilot-*-wiring.test.ts` pattern); behaviour is pinned in
+ * test/extract-atoms-auto-drain.test.ts.
  * The load-bearing one is CODEX #2: the idempotency key MUST carry a time slot,
  * else queue.add returns the first completed job forever and the source never
  * drains again.
@@ -11,13 +14,15 @@ import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-const SRC = readFileSync(join(import.meta.dir, '../src/commands/autopilot.ts'), 'utf8');
+const AUTOPILOT = readFileSync(join(import.meta.dir, '../src/commands/autopilot.ts'), 'utf8');
+const SRC = readFileSync(join(import.meta.dir, '../src/core/cycle/extract-atoms-auto-drain.ts'), 'utf8');
 
 describe('autopilot auto-drain wiring', () => {
   test('CODEX #2: idempotency key includes a UTC-day time slot (not static)', () => {
-    expect(SRC).toContain('autopilot-extract-atoms-drain:${src.id}:${utcDay}');
+    expect(SRC).toContain('`autopilot-extract-atoms-drain:${sourceId}:${utcDay}`');
+    expect(SRC).toContain('autoDrainKey(src.id, policy.utcDay)');
     // A static key would be the regression — guard against the bare form.
-    expect(SRC).not.toContain('`autopilot-extract-atoms-drain:${src.id}`');
+    expect(SRC).not.toContain('`autopilot-extract-atoms-drain:${sourceId}`');
   });
 
   test('CODEX #1: submits with allowProtectedSubmit', () => {
@@ -26,11 +31,13 @@ describe('autopilot auto-drain wiring', () => {
 
   test('CODEX #3: enumerates sources and counts backlog per source', () => {
     expect(SRC).toContain('loadAllSources(engine)');
-    expect(SRC).toContain('countExtractAtomsBacklog(engine, src.id)');
+    expect(SRC).toContain('readDrainBacklog(engine, src.id, src.local_path, policy.utcDay)');
+    expect(SRC).toContain('countExtractAtomsBacklog(engine, sourceId)');
+    expect(AUTOPILOT).toContain('dispatchAutoDrains(engine, queue,');
   });
 
   test('gates on pack NOT declaring extract_atoms (the silent-backlog condition)', () => {
-    expect(SRC).toContain("packDeclaresPhase(engine, 'extract_atoms')");
+    expect(AUTOPILOT).toContain("packDeclaresPhase(engine, 'extract_atoms')");
   });
 
   test('gates on the enabled flag and a daily spend cap (DECISION 3C)', () => {
@@ -40,7 +47,7 @@ describe('autopilot auto-drain wiring', () => {
   });
 
   test('is Postgres-gated (PGLite has no worker surface)', () => {
-    expect(SRC).toMatch(/engine\.kind === 'postgres'[\s\S]{0,400}auto_drain/);
+    expect(AUTOPILOT).toMatch(/engine\.kind === 'postgres'[\s\S]{0,800}dispatchAutoDrains/);
   });
 
   // issue #3218 (codex P1): with the handler now throwing on an

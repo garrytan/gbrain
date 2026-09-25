@@ -1989,6 +1989,28 @@ export class MinionQueue {
     return rowToMinionJob(rows[0]);
   }
 
+  /**
+   * Requeue an active job after a `JobDeferredError`: `delayed` for exactly
+   * `delayMs`; `attempts_made` and `stacktrace` UNCHANGED (a deferral repeats
+   * while its condition holds, so appending would grow without bound);
+   * `error_text` = latest reason. `failJob`'s fence; null on token mismatch.
+   */
+  async deferJob(id: number, lockToken: string, reason: string, delayMs: number): Promise<MinionJob | null> {
+    const rows = await this.engine.executeRaw<Record<string, unknown>>(
+      `UPDATE minion_jobs SET
+        status = 'delayed',
+        error_text = $1,
+        delay_until = now() + ($2::double precision * interval '1 millisecond'),
+        started_at = NULL,
+        lock_token = NULL, lock_until = NULL, updated_at = now()
+       WHERE id = $3 AND status = 'active' AND lock_token = $4
+       RETURNING *`,
+      [reason, Math.max(0, delayMs), id, lockToken],
+    );
+    if (rows.length === 0) return null;
+    return rowToMinionJob(rows[0]);
+  }
+
   /** Update job progress (token-fenced). */
   async updateProgress(id: number, lockToken: string, progress: unknown): Promise<boolean> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(

@@ -9,6 +9,8 @@ import { MinionWorker } from '../src/core/minions/worker.ts';
 import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import {
   formatDrainProviderFailure,
+  MAX_DRAIN_CONTINUATIONS,
+  queueDrainContinuation,
   type ExtractAtomsDrainResult,
 } from '../src/core/cycle/extract-atoms-drain.ts';
 
@@ -71,5 +73,63 @@ describe('extract-atoms-drain handler', () => {
     expect(msg).toContain('ANTHROPIC_API_KEY');
     // A clean-run shape (no representative error) keeps the original message.
     expect(formatDrainProviderFailure({ ...result, last_error: null })).not.toContain('last error');
+  });
+});
+
+describe('extract-atoms-drain background continuation', () => {
+  const cut = (over: Partial<ExtractAtomsDrainResult> = {}): ExtractAtomsDrainResult => ({
+    phase: 'extract_atoms', status: 'ok', extracted: 2, skipped: 0, remaining: 3, transcripts_remaining: 0,
+    batches: 1, items_completed: 2, items_deferred: 1, stopped: 'window', failure_count: 0, failures: [],
+    omitted_failure_count: 0, last_error: null, ...over,
+  });
+  async function parent(data: Record<string, unknown> = { sourceId: 'default', window: 120 }) {
+    return queue.add('extract-atoms-drain', data, { queue: 'default', max_attempts: 3, timeout_ms: 600_000 },
+      { allowProtectedSubmit: true });
+  }
+
+  test('a window cut with progress chains exactly one continuation carrying the parent budget', async () => {
+    const job = await parent();
+    const first = await queueDrainContinuation(engine, { id: job.id, data: job.data }, cut());
+    expect(first).toMatchObject({ queued: true, depth: 1 });
+    const again = await queueDrainContinuation(engine, { id: job.id, data: job.data }, cut());
+    expect(again).toEqual(first); // a retried parent handler cannot fork the chain
+    const rows = await engine.executeRaw<{ data: Record<string, unknown>; timeout_ms: number; max_attempts: number }>(
+      "SELECT data, timeout_ms, max_attempts FROM minion_jobs WHERE name='extract-atoms-drain' AND id <> $1", [job.id]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ timeout_ms: 600_000, max_attempts: 3 });
+    expect(rows[0].data).toMatchObject({ sourceId: 'default', window: 120, continuation_of: job.id, continuation_depth: 1 });
+  });
+
+  test('no continuation while another drain for the same source is already queued', async () => {
+    const job = await parent();
+    const other = await parent(); // e.g. a manual submit for the same source, still waiting
+    const elsewhere = await parent({ sourceId: 'wiki', window: 120 }); // other sources never block
+    expect(await queueDrainContinuation(engine, job, cut()))
+      .toEqual({ queued: false, reason: 'already_in_flight', in_flight_job_id: other.id });
+    expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE data ? 'continuation_of'")).toEqual([]);
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed' WHERE id = $1", [other.id]);
+    expect(await queueDrainContinuation(engine, job, cut())).toMatchObject({ queued: true, depth: 1 });
+    expect(elsewhere.id).toBeGreaterThan(0);
+  });
+
+  test('deferred transcripts alone still count as work left', async () => {
+    const job = await parent();
+    expect(await queueDrainContinuation(engine, job, cut({ remaining: 0, transcripts_remaining: 2, items_deferred: 2 })))
+      .toMatchObject({ queued: true });
+  });
+
+  test('no continuation when drained, stalled, failing, or at the chain limit — and the reason says why', async () => {
+    const job = await parent();
+    expect(await queueDrainContinuation(engine, job, cut({ remaining: 0, items_deferred: 0, stopped: 'drained' })))
+      .toEqual({ queued: false, reason: 'drained' });
+    expect(await queueDrainContinuation(engine, job, cut({ items_completed: 0 })))
+      .toEqual({ queued: false, reason: 'no_forward_progress' });
+    expect(await queueDrainContinuation(engine, job, cut({ stopped: 'no_progress', items_deferred: 0 })))
+      .toEqual({ queued: false, reason: 'not_window_cut' });
+    expect(await queueDrainContinuation(engine, job, cut({ status: 'provider_failure', stopped: 'provider_failure' })))
+      .toEqual({ queued: false, reason: 'not_window_cut' });
+    const deep = await parent({ sourceId: 'default', continuation_depth: MAX_DRAIN_CONTINUATIONS });
+    expect(await queueDrainContinuation(engine, deep, cut())).toEqual({ queued: false, reason: 'continuation_limit' });
+    expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE data ? 'continuation_of'")).toEqual([]);
   });
 });

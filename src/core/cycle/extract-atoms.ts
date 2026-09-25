@@ -71,7 +71,7 @@ import { truncateUtf8 } from '../text-safe.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
@@ -217,6 +217,12 @@ export interface ExtractAtomsOpts {
    * `heartbeat()` on the passed reporter.
    */
   progress?: ProgressReporter;
+  /** Stop checkpoint before each item (never mid-item). True defers every unstarted item:
+   *  untouched, still due, reported as pages_/transcripts_deferred (`--drain --window`). */
+  shouldStop?: () => boolean;
+  /** Cancellation (Minion timeout/cancel): stops like `shouldStop` AND aborts the in-flight
+   *  provider call; the interrupted item is deferred, never recorded as a failure. */
+  abortSignal?: AbortSignal;
 }
 
 interface ExtractedAtom {
@@ -639,6 +645,93 @@ export async function resolveExtractAtomsModel(engine: BrainEngine): Promise<str
   return (await resolveExtractAtomsModelWithSource(engine)).model;
 }
 
+type TranscriptInput = { filePath: string; content: string; contentHash: string };
+
+/**
+ * Discover transcripts (default source only; `_transcripts` test seam wins)
+ * and drop those already extracted (atom row for the content hash) or
+ * tombstoned. `live` is exactly the transcript work the phase will attempt.
+ * Pages are counted separately by `countExtractAtomsBacklog`.
+ */
+export async function loadLiveTranscripts(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig' | 'progress'> & { quiet?: boolean },
+): Promise<{ transcripts: TranscriptInput[]; live: TranscriptInput[]; duplicatesSkipped: number }> {
+  const transcripts = opts._transcripts ?? await discoverTranscriptCorpus(engine, sourceId, opts);
+  // Transcript-side source-hash idempotency in ONE batch query instead of N
+  // per-hash round trips. Page-side idempotency lives in the discovery SQL.
+  const live: TranscriptInput[] = [];
+  let duplicatesSkipped = 0;
+  const allHashes16 = transcripts.map(t => t.contentHash.slice(0, 16));
+  // Heartbeat before the batch query so even an instant short-circuit shows life.
+  opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
+  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
+  const tombstoned = await tombstonedTranscriptsForHashes(engine, sourceId, allHashes16);
+  for (const t of transcripts) {
+    const hash16 = t.contentHash.slice(0, 16);
+    if (existingHashes.has(hash16) || tombstoned.has(transcriptStateKey(t.filePath, hash16))) duplicatesSkipped++;
+    else live.push(t);
+  }
+  return { transcripts, live, duplicatesSkipped };
+}
+
+/** Configured transcript corpus dirs (default source with a brain dir only), else null. */
+export async function resolveTranscriptCorpusDirs(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_loadConfig'>,
+): Promise<{ corpusDir: string; meetingTranscriptsDir?: string } | null> {
+  // Configured transcript corpus paths are brain-global, so only default discovers them.
+  if (sourceId !== 'default' || opts.brainDir === undefined) return null;
+  const { loadConfigWithEngine } = await import('../config.ts');
+  // loadConfigWithEngine: the dream.* DB-plane merge reaches this phase.
+  const cfgRaw = opts._loadConfig ? await opts._loadConfig() : await loadConfigWithEngine(engine);
+  const dream = ((cfgRaw ?? {}) as unknown as Record<string, unknown>).dream as
+    | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
+    | undefined;
+  const corpusDir = dream?.synthesize?.session_corpus_dir;
+  return corpusDir === undefined ? null : { corpusDir, meetingTranscriptsDir: dream?.synthesize?.meeting_transcripts_dir };
+}
+
+/**
+ * Read the configured transcript corpus from disk ([] when none). File I/O
+ * only — liveness is a separate DB check, so a caller may read the corpus
+ * once and pass it back as `_transcripts` while `loadLiveTranscripts`
+ * rechecks liveness each time. `quiet` drops per-file skip lines (a
+ * due-check is not a run).
+ */
+export async function discoverTranscriptCorpus(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_loadConfig'> & { quiet?: boolean },
+): Promise<TranscriptInput[]> {
+  try {
+    const dirs = await resolveTranscriptCorpusDirs(engine, sourceId, opts);
+    if (!dirs) return [];
+    const { discoverTranscripts } = await import('./transcript-discovery.ts');
+    return discoverTranscripts({ ...dirs, quiet: opts.quiet })
+      .map((d) => ({ filePath: d.filePath, content: d.content, contentHash: d.contentHash }));
+  } catch {
+    return []; // No transcripts available — phase no-ops cleanly.
+  }
+}
+
+/** Distinct live transcript contents still due for atom extraction (the drain's non-page backlog). */
+export async function countPendingTranscripts(
+  engine: BrainEngine,
+  sourceId: string,
+  opts: Pick<ExtractAtomsOpts, 'brainDir' | '_transcripts' | '_loadConfig'> & { quiet?: boolean },
+): Promise<number | null> {
+  try {
+    const { live } = await loadLiveTranscripts(engine, sourceId, opts);
+    return new Set(live.map(t => t.contentHash)).size;
+  } catch (err) {
+    console.error(`[extract_atoms] transcript backlog count failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 /**
  * v0.41 minimal extract_atoms body, rebuilt for v0.41.2.1.
  *
@@ -656,44 +749,12 @@ export async function runPhaseExtractAtoms(
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry);
   const writeRequests: WriteReceipt[] = [];
 
-  // 1a. Get transcripts (test seam OR production discovery).
-  //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
-  //     dream.* DB-plane merge from Phase 1 reaches this phase.
-  let transcripts: Array<{ filePath: string; content: string; contentHash: string }> = opts._transcripts ?? [];
-  // Configured transcript corpus paths are brain-global, so only default discovers them.
-  if (
-    sourceId === 'default'
-    && transcripts.length === 0
-    && opts.brainDir !== undefined
-    && opts._transcripts === undefined
-  ) {
-    try {
-      const { discoverTranscripts } = await import('./transcript-discovery.ts');
-      const { loadConfigWithEngine } = await import('../config.ts');
-      const cfgRaw = opts._loadConfig
-        ? await opts._loadConfig()
-        : await loadConfigWithEngine(engine);
-      const cfg = (cfgRaw ?? {}) as unknown as Record<string, unknown>;
-      const dream = cfg.dream as
-        | { synthesize?: { session_corpus_dir?: string; meeting_transcripts_dir?: string } }
-        | undefined;
-      const corpusDir = dream?.synthesize?.session_corpus_dir;
-      const meetingDir = dream?.synthesize?.meeting_transcripts_dir;
-      if (corpusDir !== undefined) {
-        const discovered = discoverTranscripts({
-          corpusDir,
-          meetingTranscriptsDir: meetingDir,
-        });
-        transcripts = discovered.map((d) => ({
-          filePath: d.filePath,
-          content: d.content,
-          contentHash: d.contentHash,
-        }));
-      }
-    } catch {
-      // No transcripts available — phase no-ops cleanly.
-    }
-  }
+  // 1a+2. Transcripts (test seam OR production discovery) filtered by the
+  //     batched source-hash idempotency + tombstone checks. Shared with the
+  //     drain's pending-work count so the two can never disagree.
+  const { transcripts, live: transcriptsLive, duplicatesSkipped: transcriptDuplicates } =
+    await loadLiveTranscripts(engine, sourceId, opts);
+  let duplicatesSkipped = transcriptDuplicates;
 
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
@@ -712,33 +773,6 @@ export async function runPhaseExtractAtoms(
     );
   }
 
-  // 2. Apply transcript-side source-hash idempotency in ONE batch query
-  //    instead of N per-hash round trips. Page-side idempotency lives in
-  //    the discovery SQL's NOT EXISTS subquery (already batched).
-  const transcriptsLive: typeof transcripts = [];
-  let duplicatesSkipped = 0;
-  const allHashes16 = transcripts.map(t => t.contentHash.slice(0, 16));
-  // Surface a heartbeat before the batch query so even an instant
-  // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
-  opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
-  const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
-  const tombstonedTranscriptKeys = await tombstonedTranscriptsForHashes(
-    engine,
-    sourceId,
-    allHashes16,
-  );
-  for (const t of transcripts) {
-    const hash16 = t.contentHash.slice(0, 16);
-    if (existingHashes.has(hash16)) {
-      duplicatesSkipped++;
-      continue;
-    }
-    if (tombstonedTranscriptKeys.has(transcriptStateKey(t.filePath, hash16))) {
-      duplicatesSkipped++;
-      continue;
-    }
-    transcriptsLive.push(t);
-  }
 
   // 3. Dual-source merge: transcripts + pages, dedup by contentHash.
   //    Transcripts win on COLLISION (origin attribution stays with the raw
@@ -1065,9 +1099,14 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  let transcriptsDeferred = 0, pagesDeferred = 0;
+  const deferFrom = (idx: number) => {
+    for (const rest of work.slice(idx)) { if (rest.kind === 'transcript') transcriptsDeferred++; else pagesDeferred++; }
+  };
   await withBudgetTracker(budgetTracker, async () => {
-  for (const item of work) {
+  for (const [idx, item] of work.entries()) {
     await maybeYield();
+    if (opts.shouldStop?.() || opts.abortSignal?.aborted) { deferFrom(idx); break; }
     if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
       if (item.kind === 'transcript') transcriptsSkipped++;
       else pagesSkipped++;
@@ -1097,6 +1136,7 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: maxOutputTokens,
+        ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
@@ -1319,6 +1359,9 @@ export async function runPhaseExtractAtoms(
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
       if (err instanceof OperationError && err.writeRequest) writeRequests.push(err.writeRequest);
+      // Cancelled mid-item: the provider call was aborted, not the content at fault.
+      // Nothing was completed for this item, so it stays due (no failure, no strike).
+      if (opts.abortSignal?.aborted) { deferFrom(idx); break; }
       if (err instanceof BudgetExhausted) {
         budgetExhausted = true;
         if (item.kind === 'transcript') transcriptsSkipped++;
@@ -1376,7 +1419,8 @@ export async function runPhaseExtractAtoms(
         cost_usd: estimatedSpendUsd,
         summary:
           `Extracted ${totalAtomsExtracted} atoms from ` +
-          `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.`,
+          `${transcriptsProcessed} transcripts + ${pagesProcessed} pages.` +
+          (transcriptsDeferred + pagesDeferred > 0 ? ` ${transcriptsDeferred + pagesDeferred} deferred at stop checkpoint.` : ''),
       });
     } catch (err) {
       console.error(`[extract_atoms] receipt write failed: ${(err as Error).message}`);
@@ -1389,12 +1433,12 @@ export async function runPhaseExtractAtoms(
     // failures.length (which stays inclusive, for CLI/receipt reporting),
     // so a heavy run that only ever hit transient errors doesn't trip the
     // doctor extract_health halt-rate warning.
+    // A shouldStop deferral is an expected limit (#4482 deadline_hit), not a round or a failure.
     await upsertExtractRollup(engine, {
       kind: 'atoms',
       source_id: sourceId,
       cost_delta: estimatedSpendUsd,
-      round_completed_delta: hardFailureCount === 0 ? 1 : 0,
-      halt_delta: hardFailureCount > 0 ? 1 : 0,
+      ...classifyRunStop({ error: hardFailureCount > 0, deadline_hit: transcriptsDeferred + pagesDeferred > 0 }),
     });
   }
 
@@ -1418,6 +1462,9 @@ export async function runPhaseExtractAtoms(
       (failures.length > 0 ? ` (${failures.length} failed)` : '') +
       (transcriptsSkipped + pagesSkipped > 0
         ? ` (${transcriptsSkipped + pagesSkipped} budget-skipped)`
+        : '') +
+      (transcriptsDeferred + pagesDeferred > 0
+        ? ` (${transcriptsDeferred + pagesDeferred} deferred at stop checkpoint)`
         : ''),
     details: {
       atoms_extracted: totalAtomsExtracted,
@@ -1427,6 +1474,8 @@ export async function runPhaseExtractAtoms(
       pages_processed: pagesProcessed,
       pages_total: pages.length,
       pages_skipped_budget: pagesSkipped,
+      transcripts_deferred: transcriptsDeferred,
+      pages_deferred: pagesDeferred,
       duplicates_skipped: duplicatesSkipped,
       failures,
       ...(managed ? { write_requests: writeRequests } : {}),

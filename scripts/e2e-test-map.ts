@@ -197,7 +197,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/shared-skills-transports.test.ts",
   ],
   "src/commands/source-reconcile.ts": ["test/e2e/reconcile-crash.test.ts", "test/e2e/reconcile-crash-unactivated.test.ts", "test/e2e/reconcile-pgbouncer.test.ts"],
-  "src/core/cycle/extract-atoms.ts": ["test/e2e/extract-atoms-page-state.test.ts", "test/e2e/cycle.test.ts", "test/e2e/dream.test.ts", "test/e2e/multi-source-bug-class.test.ts", "test/e2e/managed-extract-atoms.test.ts", "test/e2e/managed-atom-regressions.test.ts", "test/e2e/managed-atom-compaction.test.ts"],
+  // Bounded drain: window checkpoint + background policy (cap, fairness, transcript dispatch).
+  "src/core/cycle/extract-atoms-drain.ts": ["test/e2e/extract-atoms-window-checkpoint.test.ts", "test/e2e/extract-atoms-auto-drain-postgres.test.ts"],
+  "src/core/cycle/extract-atoms-auto-drain.ts": ["test/e2e/extract-atoms-auto-drain-postgres.test.ts"],
+  "src/core/cycle/extract-atoms.ts": ["test/e2e/extract-atoms-window-checkpoint.test.ts", "test/e2e/extract-atoms-page-state.test.ts", "test/e2e/cycle.test.ts", "test/e2e/dream.test.ts", "test/e2e/multi-source-bug-class.test.ts", "test/e2e/managed-extract-atoms.test.ts", "test/e2e/managed-atom-regressions.test.ts", "test/e2e/managed-atom-compaction.test.ts"],
   "src/core/cycle/synthesize*.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/managed-synthesis-postprocess.test.ts"],
   "src/core/cycle/extract-atoms-page-state.ts": ["test/e2e/extract-atoms-page-state.test.ts", "test/e2e/reconcile-crash.test.ts", "test/e2e/reconcile-crash-unactivated.test.ts", "test/e2e/reconcile-pgbouncer.test.ts"],
   "src/commands/migrations/v0_13_1.ts": ["test/e2e/grandfather-projection-postgres.test.ts"],

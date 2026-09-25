@@ -135,6 +135,51 @@ describe('queue.releaseLeaseFullJob (Bug 2 load-bearing)', () => {
   });
 });
 
+describe('queue.deferJob (JobDeferredError transition)', () => {
+  async function deferState(id: number) {
+    const [row] = await engine.executeRaw<{
+      status: string; attempts_made: number; attempts_started: number; stacktrace: unknown;
+      error_text: string | null; lock_token: string | null; started_at: unknown; delay_ms: number;
+    }>(
+      `SELECT status, attempts_made, attempts_started, stacktrace, error_text, lock_token, started_at,
+              (EXTRACT(EPOCH FROM (delay_until - now())) * 1000)::float8 AS delay_ms
+         FROM minion_jobs WHERE id = $1`, [id]);
+    return row!;
+  }
+
+  test('T3: active → delayed for exactly the caller delay; no attempt, no stacktrace, repeated', async () => {
+    await queue.add('test-defer', {});
+    for (let i = 0; i < 3; i++) {
+      const { id, lockToken } = await claimJobReal('test-defer');
+      const deferred = await queue.deferJob(id, lockToken, `cycle lock busy ${i}`, 30_000);
+      expect(deferred).not.toBeNull();
+      const row = await deferState(id);
+      expect(row.status).toBe('delayed');
+      expect(row.attempts_made).toBe(0);
+      expect(row.attempts_started).toBe(i + 1);
+      expect(row.stacktrace === null || (Array.isArray(row.stacktrace) && row.stacktrace.length === 0)).toBe(true);
+      expect(row.error_text).toBe(`cycle lock busy ${i}`); // overwritten, not accumulated
+      expect(row.lock_token).toBeNull();
+      expect(row.started_at).toBeNull();
+      expect(row.delay_ms).toBeGreaterThan(29_000);
+      expect(row.delay_ms).toBeLessThanOrEqual(30_000);
+      await engine.executeRaw(`UPDATE minion_jobs SET status = 'waiting', delay_until = NULL WHERE id = $1`, [id]);
+    }
+    // A deferral is not lease pressure.
+    expect(await countRecentLeasePressure(engine, 3600_000)).toBe(0);
+  });
+
+  test('T3b: a wrong lock token returns null and leaves the claimed row untouched', async () => {
+    await queue.add('test-defer-fence', {});
+    const { id } = await claimJobReal('test-defer-fence');
+    expect(await queue.deferJob(id, 'wrong-token', 'r', 30_000)).toBeNull();
+    const row = await deferState(id);
+    expect(row.status).toBe('active');
+    expect(row.lock_token).not.toBeNull();
+    expect(row.error_text).toBeNull();
+  });
+});
+
 describe('logLeasePressure (Eng D8 audit writer)', () => {
   test('persists denormalized context inline', async () => {
     const job = await queue.add('test-name', {});
