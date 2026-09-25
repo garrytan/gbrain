@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.34] - 2026-09-25
+
+**Repaired quotes no longer start in the middle of a word.**
+
+`synthesize` quote verification rewrites near-matched quotes to the exact
+transcript wording, but a collapsed whitespace run mapped back to the
+previous word's last letter — repairs could begin mid-word ("g every
+approved frame"). The run's first whitespace character is now the map
+target, so replacements always begin on a word boundary.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

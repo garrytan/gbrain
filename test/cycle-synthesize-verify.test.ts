@@ -42,6 +42,16 @@ describe('normalizeForGrounding', () => {
     expect(normForGrounding('')).toBe('');
     expect(normForGrounding('   \n\t ')).toBe('');
   });
+
+  test('a collapsed whitespace run maps to the run\'s first whitespace char (#5451)', () => {
+    const s = 'I am normalizing every approved frame.';
+    const { norm, map } = normalizeForGrounding(s);
+    const sp = norm.indexOf(' every');
+    expect(s[map[sp]]).toBe(' ');
+    // Rung-3-style slice + trim must start on a word boundary, not mid-word.
+    const end = map[norm.indexOf('frame') + 'frame'.length - 1] + 1;
+    expect(s.slice(map[sp], end).trim()).toBe('every approved frame');
+  });
 });
 
 describe('extractQuoteSpans', () => {
@@ -115,6 +125,19 @@ describe('groundQuote — the repair ladder', () => {
   test('short quotes never near-match (min 4 tokens)', () => {
     const g = groundQuote('checker beats judge', t);
     expect(g.status).toBe('none');
+  });
+
+  test('near-match replacement starts on a word boundary, never mid-word (#5451)', () => {
+    const g = groundQuote('the team agreed the mechanical checker beats an LLM judge today', t);
+    expect(g.status).toBe('near');
+    if (g.status === 'near') {
+      const at = transcript.indexOf(g.replacement);
+      expect(at).toBeGreaterThanOrEqual(0);
+      const before = at === 0 ? ' ' : transcript[at - 1];
+      // The char before the replacement must not be a word char — a letter
+      // there means the slice started inside the previous word.
+      expect(/[\p{L}\p{N}]/u.test(before)).toBe(false);
+    }
   });
 
   test('ambiguous near-match (two similar homes) → none, never guess', () => {

@@ -157,7 +157,10 @@ export function normalizeForGrounding(s: string): { norm: string; map: number[] 
 function foldForGrounding(s: string, withMap: boolean): { norm: string; map: number[] } | string {
   const out: string[] = [];
   const map: number[] = [];
-  let pendingSpace = false;
+  // First whitespace char of a pending run; the collapsed space maps to
+  // it so slices land on real whitespace, not the previous word's last
+  // char (#5451).
+  let pendingSpaceIdx = -1;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
   // per-unit loop would silently leave non-BMP text unfolded and diverge
@@ -168,7 +171,7 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
     idx += cp.length;
     let ch = cp;
     if (/\s/.test(ch)) {
-      pendingSpace = out.length > 0;
+      if (out.length > 0 && pendingSpaceIdx < 0) pendingSpaceIdx = i;
       continue;
     }
     if (ch === '‘' || ch === '’' || ch === 'ʼ') ch = "'";
@@ -178,10 +181,10 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
     // grounding agree. One-to-many like the toLowerCase expansions below —
     // every emitted unit maps to the ellipsis' original index.
     else if (ch === '…') ch = '...';
-    if (pendingSpace) {
+    if (pendingSpaceIdx >= 0) {
       out.push(' ');
-      if (withMap) map.push(map.length > 0 ? map[map.length - 1] : i);
-      pendingSpace = false;
+      if (withMap) map.push(pendingSpaceIdx);
+      pendingSpaceIdx = -1;
     }
     const low = ch.toLowerCase();
     for (const lowCp of low) {
