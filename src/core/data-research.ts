@@ -384,6 +384,7 @@ const EMAIL_HTML_TAGS = new Set((
 
 function stripEmailMarkup(text: string): string {
   return text
+    .replace(/<!\[if(?=[\s\]])[^\]]*\]>[\s\S]*?<!\[endif\s*\]>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<(style|script)(?=[\s>])(?:[^<>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<br\s*\/?>/gi, '\n')

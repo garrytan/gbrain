@@ -275,6 +275,13 @@ describe('data-research', () => {
     });
 
     test.each([
+      'Real<!-- tracking comment -->body<![if mso]>outlook only junk<![endif]>tail',
+      'Real&lt;!-- tracking comment --&gt;body&lt;![if mso]&gt;outlook only junk&lt;![endif]&gt;tail',
+    ])('removes Outlook conditional blocks and their contents: %s', (html) => {
+      expect(stripEmailHtml(html)).toBe('Realbodytail');
+    });
+
+    test.each([
       ['1 < 2 and 3 > 1; R&D says "yes".', '1 < 2 and 3 > 1; R&D says "yes".'],
       ['1 &lt; 2 and 3 &gt; 1; R&amp;D says &quot;yes&quot;.', '1 < 2 and 3 > 1; R&D says "yes".'],
       ['中文 café 😀 &amp; &#128512; &#39;fine&#39;', "中文 café 😀 & 😀 'fine'"],
