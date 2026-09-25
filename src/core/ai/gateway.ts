@@ -58,7 +58,7 @@ import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
-import { AIConfigError, AITransientError, isStructuredOutputRejection, normalizeAIError } from './errors.ts';
+import { AIServiceError, AIConfigError, AITransientError, isStructuredOutputRejection, normalizeAIError } from './errors.ts';
 import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
@@ -114,6 +114,7 @@ import {
   renderCanonicalMigrationCommands,
 } from './defaults.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
+import { stampModelProvenance, enrichModelNotFoundError } from './model-provenance.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
@@ -567,12 +568,19 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
       fileCfg = null;
     }
   }
-  const newChat = needsFileCfg(chatDetailed.source)
-    ? resolveEffectiveChatModel(fileCfg, cfg.env ?? process.env).model
-    : chatDetailed.model;
-  const newExpansion = needsFileCfg(expansionDetailed.source)
-    ? resolveEffectiveExpansionModel(fileCfg, cfg.env ?? process.env).model
-    : expansionDetailed.model;
+  const chatEff = needsFileCfg(chatDetailed.source)
+    ? resolveEffectiveChatModel(fileCfg, cfg.env ?? process.env)
+    : null;
+  const expansionEff = needsFileCfg(expansionDetailed.source)
+    ? resolveEffectiveExpansionModel(fileCfg, cfg.env ?? process.env)
+    : null;
+  const newChat = chatEff ? chatEff.model : chatDetailed.model;
+  const newExpansion = expansionEff ? expansionEff.model : expansionDetailed.model;
+
+  // #5304: remember WHICH resolution step produced each model so a later
+  // provider 404 can name the config key to fix instead of just the model id.
+  stampModelProvenance('chat', chatEff, chatDetailed, { configKey: 'models.chat', tier: 'reasoning' });
+  stampModelProvenance('expansion', expansionEff, expansionDetailed, { configKey: 'models.expansion', tier: 'utility' });
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to
@@ -2658,9 +2666,9 @@ export async function expand(query: string): Promise<string[]> {
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
     // Expansion is best-effort: on failure, fall back to the original query alone.
-    const normalized = normalizeAIError(err, 'expand');
+    const normalized = enrichModelNotFoundError(normalizeAIError(err, 'expand'), 'expansion');
     if (normalized instanceof AIConfigError) {
-      console.warn(`[ai.gateway] expansion disabled: ${normalized.message}`);
+      console.warn(`[ai.gateway] expansion disabled: ${normalized.message}${normalized.fix ? ` ${normalized.fix}` : ''}`);
     }
     return [query];
   }
@@ -3852,7 +3860,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       outputTokens: maxOutputTokens,
     });
     _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
-    throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
+    throw enrichModelNotFoundError(normalizeAIError(err, `chat(${recipe.id}:${modelId})`), opts.model ? null : 'chat');
   }
 }
 

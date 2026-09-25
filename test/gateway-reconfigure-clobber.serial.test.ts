@@ -140,3 +140,67 @@ describe('expansion-side effective resolution (review-army addition)', () => {
     expect(stderrCapture).toContain('expansion_model');
   });
 });
+
+describe('model 404 provenance (#5304)', () => {
+  test('tier_config resolution records models.tier.<tier> as the selecting key', async () => {
+    writeFileConfig({});
+    configureGateway({ env: { ANTHROPIC_API_KEY: 'sk-ant-test' } });
+    stub.set('models.tier.reasoning', 'anthropic:claude-opus-4-7');
+    await reconfigureGatewayWithEngine(stub as never);
+    const { __getModelProvenanceForTests } = await import('../src/core/ai/model-provenance.ts');
+    expect(__getModelProvenanceForTests().chat).toEqual({ key: 'models.tier.reasoning', source: 'tier_config' });
+  });
+
+  test('config_key resolution records models.chat; file_pin records chat_model', async () => {
+    writeFileConfig({});
+    configureGateway({ env: { ANTHROPIC_API_KEY: 'sk-ant-test' } });
+    stub.set('models.chat', 'anthropic:claude-opus-4-7');
+    await reconfigureGatewayWithEngine(stub as never);
+    const { __getModelProvenanceForTests } = await import('../src/core/ai/model-provenance.ts');
+    expect(__getModelProvenanceForTests().chat).toEqual({ key: 'models.chat', source: 'config_key' });
+  });
+
+  test('servable file pin records chat_model (file plane)', async () => {
+    writeFileConfig({ chat_model: 'openai:gpt-5.2' });
+    configureGateway({ chat_model: 'openai:gpt-5.2', env: { OPENAI_API_KEY: 'sk-test' } });
+    await reconfigureGatewayWithEngine(stub as never);
+    const { __getModelProvenanceForTests } = await import('../src/core/ai/model-provenance.ts');
+    expect(__getModelProvenanceForTests().chat).toEqual({ key: 'chat_model', source: 'file_pin' });
+  });
+
+  test('404 names the selecting key + config set fix; explicit-model calls get the discovery hint', async () => {
+    writeFileConfig({});
+    configureGateway({ env: { ANTHROPIC_API_KEY: 'sk-ant-test' } });
+    stub.set('models.tier.reasoning', 'anthropic:claude-gone-1');
+    await reconfigureGatewayWithEngine(stub as never);
+    const { enrichModelNotFoundError } = await import('../src/core/ai/model-provenance.ts');
+    const { normalizeAIError } = await import('../src/core/ai/errors.ts');
+    const raw404 = { name: 'AI_APICallError', status: 404, message: 'The model `claude-gone-1` does not exist or you do not have access to it' };
+    const enriched = enrichModelNotFoundError(normalizeAIError(raw404, 'chat(anthropic:claude-gone-1)'), 'chat');
+    expect((enriched as { fix?: string }).fix).toContain('Selected via models.tier.reasoning');
+    expect((enriched as { fix?: string }).fix).toContain('gbrain config set models.tier.reasoning <provider>:<model>');
+    // Per-call model (provenance unknown): discovery command, not a wrong key.
+    const generic = enrichModelNotFoundError(normalizeAIError(raw404, 'chat(anthropic:claude-gone-1)'), null);
+    expect((generic as { fix?: string }).fix).toContain('gbrain config get models.tier.reasoning');
+    // Non-404 config errors and transient errors pass through untouched.
+    const raw401 = { name: 'AI_APICallError', status: 401, message: 'invalid api key' };
+    const unmodified = enrichModelNotFoundError(normalizeAIError(raw401, 'chat'), 'chat');
+    expect((unmodified as { fix?: string }).fix).not.toContain('Selected via');
+    const raw500 = { name: 'AI_APICallError', status: 500, message: 'internal' };
+    const transient = enrichModelNotFoundError(normalizeAIError(raw500, 'chat'), 'chat');
+    expect(transient.name).toBe('AITransientError');
+  });
+
+  test('tier default provenance points at models.tier.<tier>, not a nonexistent key', async () => {
+    writeFileConfig({});
+    configureGateway({ env: { ANTHROPIC_API_KEY: 'sk-ant-test' } });
+    await reconfigureGatewayWithEngine(stub as never);
+    const { enrichModelNotFoundError, __getModelProvenanceForTests } = await import('../src/core/ai/model-provenance.ts');
+    const { normalizeAIError } = await import('../src/core/ai/errors.ts');
+    expect(__getModelProvenanceForTests().chat).toEqual({ key: null, source: 'tier_default' });
+    const raw404 = { name: 'AI_APICallError', status: 404, message: 'model gone' };
+    const enriched = enrichModelNotFoundError(normalizeAIError(raw404, 'chat'), 'chat');
+    expect((enriched as { fix?: string }).fix).toContain('tier default');
+    expect((enriched as { fix?: string }).fix).toContain('gbrain config set models.tier.reasoning');
+  });
+});

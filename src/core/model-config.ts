@@ -170,7 +170,7 @@ function realEnv(env: Record<string, string | undefined>): Record<string, string
  * else→chat_model): an unmapped future caller mislabeling the warn would be a
  * silent doc bug with a ternary.
  */
-const PIN_KEY_BY_TIER: Record<ModelTier, 'expansion_model' | 'chat_model'> = {
+export const PIN_KEY_BY_TIER: Record<ModelTier, 'expansion_model' | 'chat_model'> = {
   utility: 'expansion_model', reasoning: 'chat_model', deep: 'chat_model', subagent: 'chat_model',
 };
 
@@ -494,6 +494,33 @@ export async function resolveModel(
   opts: ResolveModelOpts,
 ): Promise<string> {
   return (await resolveModelDetailed(engine, opts)).model;
+}
+
+/**
+ * Map a resolution `source` back to the config key an operator would edit —
+ * the provenance #5304 asks to surface on model_not_found errors. Returns
+ * null for sources with no editable key (tier default, CLI flag, fallback),
+ * where the right fix is pinning `models.tier.<tier>`.
+ *
+ * `env:` / `cli flag:` / `file:` prefixed strings are descriptive labels, not
+ * `gbrain config set`-able keys — callers render them as provenance, not as
+ * the fix target.
+ */
+export function describeModelSource(
+  source: ResolveSource | EffectiveModelSource,
+  opts: { configKey?: string; deprecatedConfigKey?: string; tier?: ModelTier; envVar?: string; pinKey?: string } = {},
+): string | null {
+  switch (source) {
+    case 'config_key': return opts.configKey ?? null;
+    case 'deprecated_key': return opts.deprecatedConfigKey ?? null;
+    case 'tier_config': return opts.tier ? `models.tier.${opts.tier}` : null;
+    case 'models_default': return 'models.default';
+    case 'env': return `env:${opts.envVar ?? 'GBRAIN_MODEL'}`;
+    case 'env_model': return 'env:GBRAIN_MODEL';
+    case 'file_pin': return opts.pinKey ?? (opts.tier ? PIN_KEY_BY_TIER[opts.tier] : null);
+    case 'cli_flag': return 'cli flag';
+    default: return null;
+  }
 }
 
 /**

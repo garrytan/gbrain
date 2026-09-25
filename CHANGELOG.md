@@ -10,6 +10,10 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.15] - 2026-09-25
+
+**A 404 model name now tells you which setting picked it.** `model_not_found` errors named the model but not the config key that chose it, so a stale `config set` value masqueraded as a provider bug. The error now names the selecting key — `models.chat`, `chat_model`, or `models.tier.<tier>` — and points at the fix command.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**
