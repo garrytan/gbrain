@@ -3,6 +3,8 @@ import { journalLimitKey, readJournalLimits } from './limits.ts';
 import type { JournalLimits } from './model.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
+import { writeHealth } from './health.ts';
+import type { WriteRequestState } from './types.ts';
 
 export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   unexpected_staging_bytes: 'Keep the worktree blocked and retain its staging files and recovery capacity. Compare the recorded staging size and hash, then reconcile unexpected bytes explicitly before retrying; never discard unverified staging files.',
@@ -58,9 +60,9 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     FROM persistence_worktrees w LEFT JOIN persistence_requests r ON r.worktree_id=w.id
     GROUP BY w.id ORDER BY w.id`);
   const counters = await engine.executeRaw<Counter>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,terminal_bytes::text,recovery_bytes::text FROM persistence_counters ORDER BY key`);
-  const blockers = await engine.executeRaw<{ request_id: string; worktree_id: string | null; state: string; blocked_reason: string | null; error_code: string | null }>(
+  const blockers = await engine.executeRaw<{ request_id: string; worktree_id: string | null; state: WriteRequestState; created_at: Date | string; blocked_reason: string | null; error_code: string | null }>(
     `SELECT request_id,worktree_id,state,blocked_reason,error_code,created_at
-    FROM persistence_requests WHERE state='recovering' OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`);
+    FROM persistence_requests WHERE state IN ('queued','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`);
   const queue = await engine.executeRaw(`SELECT state,COUNT(*)::integer AS count,COALESCE(SUM(intent_bytes),0)::text AS intent_bytes,
     MIN(created_at) AS oldest_request_at,
     MAX(EXTRACT(EPOCH FROM (now()-created_at))*1000)::bigint::text AS oldest_age_ms
@@ -73,5 +75,10 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const ingress = persistenceConsumerStatus(engine);
   return { ...brain, sampled_at: new Date().toISOString(), publication_concurrency: publicationConcurrency(engine),
     ingress, worktrees, counters, queue, effects, limits, capacity: capacityDiagnostics(counters, limits),
-    blockers: blockers.map(row => ({ ...row, next_action: writerNextAction(row.blocked_reason ?? row.error_code) })) };
+    blockers: blockers.map(row => {
+      const health = writeHealth(row);
+      const advice = writerNextAction(row.blocked_reason ?? row.error_code);
+      return { ...row, ...health, next_action: health.diagnostic?.next_action === 'inspect_owner' && advice !== WRITER_INSPECTION_HINT
+        ? `${WRITER_INSPECTION_HINT} ${advice}` : advice };
+    }) };
 }

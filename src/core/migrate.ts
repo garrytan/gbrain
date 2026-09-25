@@ -1,7 +1,7 @@
 import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-schema.ts';
 import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
 import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
-import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL } from './persistence/schema.ts';
+import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL, PERSISTENCE_DATABASE_PENDING_INDEX_SQL } from './persistence/schema.ts';
 import { PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
 import { PAGE_PROJECTION_SCHEMA_SQL, PAGE_PROJECTION_ACTIVATION_SQL } from './page-state/projection-schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
@@ -6217,15 +6217,6 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 142,
     name: 'takes_embedding_dimension_matches_config',
-    // #2089: takes was created with a hard-coded vector(1536), while the
-    // configured embedding model can emit another width (for example the
-    // default zembed-1 2560d). The vector writer cannot be useful until the
-    // column shares the configured dimension with content_chunks/facts.
-    // Renumbered v141 → v142: the wave-k branch shipped this AS v141 while
-    // master consumed v141 for extract_rollup_expected_limit (#4482), so a
-    // brain that ran the branch pre-merge recorded version 141 and would
-    // skip master's v141 forever. The guarded DDL below re-applies it here
-    // as a redundant first statement — idempotent, a no-op on fresh paths.
     idempotent: true,
     sql: '',
     handler: async (engine) => {
@@ -6658,6 +6649,15 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
           EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
             AND table_name='persistence_requests' AND column_name='target_kind') AS protocol`);
       return Boolean(row?.heads && row?.members && row?.protocol);
+    },
+  },
+  {
+    version: 165, name: 'index_database_only_pending_writes', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 165, 'persistence_requests_database_pending');
+      await engine.runMigration(165, engine.kind === 'postgres'
+        ? PERSISTENCE_DATABASE_PENDING_INDEX_SQL.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')
+        : PERSISTENCE_DATABASE_PENDING_INDEX_SQL);
     },
   },
 ];

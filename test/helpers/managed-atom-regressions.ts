@@ -21,6 +21,44 @@ import { exerciseManagedAtomAuthority } from './managed-atoms-contract.ts';
 export const retryStates = ['failed', 'conflict', 'committed'] as const;
 export const retryEdits = ['unchanged', 'before_retry', 'after_validation', 'before_admission', 'after_admission'] as const;
 
+export async function exerciseAtomRetrySourceIsolation(engine: BrainEngine): Promise<void> {
+  const priorSource = 'fence-committed-before-admission';
+  let phase: 'hold' | 'drain' | 'done' = 'hold';
+  let pendingRetryId = '';
+  const observe = (target: BrainEngine): BrainEngine => new Proxy(target, {
+    get(current, key) {
+      if (key === 'transaction' || key === 'transactionDirect') {
+        return async <T>(fn: (tx: BrainEngine) => Promise<T>) => current[key](tx => fn(observe(tx)));
+      }
+      if (key === 'executeRaw') return async (sql: string, args?: unknown[]) => {
+        if (sql.includes('SELECT r.* FROM persistence_requests r') && sql.includes('FOR UPDATE OF r SKIP LOCKED')) {
+          if (phase === 'hold') {
+            const failed = await current.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent ? 'checkpointKey' AND intent->>'kind'='managed_atom_page' AND state='conflict'", [priorSource]);
+            if (failed.length) return [];
+          }
+          if (phase === 'drain') {
+            const pending = await current.executeRaw("SELECT id FROM persistence_requests WHERE id=$1::uuid AND state IN ('queued','running')", [pendingRetryId]);
+            if (pending.length) return current.executeRaw(sql.replace("WHERE r.state='queued'", "WHERE r.source_id=$3 AND r.state='queued'"), [...args!, priorSource]);
+            phase = 'done';
+          }
+        }
+        return current.executeRaw(sql, args);
+      };
+      const value = Reflect.get(current, key);
+      return typeof value === 'function' ? value.bind(current) : value;
+    },
+  });
+  const observedEngine = observe(engine);
+  await exerciseAtomRetryFence(observedEngine, 'committed', 'before_admission');
+  const pending = await engine.executeRaw<{ id: string; kind: string }>("SELECT id,intent->>'kind' AS kind FROM persistence_requests WHERE source_id=$1 AND intent ? 'checkpointKey' AND state='queued' ORDER BY sequence", [priorSource]);
+  expect(pending.map(row => row.kind)).toEqual(['managed_atom_page', 'managed_atom_complete']);
+  pendingRetryId = pending[0].id;
+  phase = 'drain';
+  await exerciseAtomRetryFence(observedEngine, 'committed', 'after_admission');
+  expect<string>(phase).toBe('done');
+  expect(await engine.executeRaw('SELECT state FROM persistence_requests WHERE id=$1::uuid', [pendingRetryId])).toEqual([{ state: 'committed' }]);
+}
+
 export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof retryStates[number], edit: typeof retryEdits[number]): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-atom-retry-fence-'));
   const sourceId = `fence-${state}-${edit.replaceAll('_', '-')}`;
@@ -54,7 +92,8 @@ export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof 
         get(current, key) {
           if (key === 'addLinksBatch') return async (...args: Parameters<BrainEngine['addLinksBatch']>) => {
             const links = args[0];
-            if (!retrying && !failureInjected && links.some(link => link.to_slug === slugs.at(-1))) {
+            if (!retrying && !failureInjected && links.some(link => link.to_slug === slugs.at(-1)
+              && link.from_source_id === sourceId && link.to_source_id === sourceId)) {
               failureInjected = true;
               if (state === 'conflict') throw new OperationError('revision_conflict', 'Fixture publication conflict');
               throw new Error('Fixture publication failure');
@@ -63,7 +102,7 @@ export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof 
           };
           if (key === 'readPageSnapshot') return async (...args: Parameters<BrainEngine['readPageSnapshot']>) => {
             const snapshot = await current.readPageSnapshot(...args);
-            if (retrying && !inTransaction && args[0] === slugs[0] && args[1]?.includeDeleted) {
+            if (retrying && !inTransaction && args[0] === slugs[0] && args[1]?.sourceId === sourceId && args[1]?.includeDeleted) {
               targetReads++;
               if (!injected && (edit === 'after_validation' && targetReads === 1 || edit === 'before_admission' && targetReads === 2)) await independentlyEdit();
             }
@@ -71,7 +110,7 @@ export async function exerciseAtomRetryFence(engine: BrainEngine, state: typeof 
           };
           if (key === 'transaction') return async <T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> => {
             const result = await current.transaction(tx => fn(observe(tx, true)));
-            if (retrying && !injected && edit === 'after_admission' && Array.isArray(result) && result.some(row => row.intent?.kind === 'managed_atom_page')) await independentlyEdit();
+            if (retrying && !injected && edit === 'after_admission' && Array.isArray(result) && result.some(row => row.source_id === sourceId && row.intent?.kind === 'managed_atom_page')) await independentlyEdit();
             return result;
           };
           const value = Reflect.get(current, key);

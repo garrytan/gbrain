@@ -10,7 +10,7 @@ import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, isPhysicalRootMetadata, preparePhysicalRootTransfer, readPhysicalRootReservation } from './physical-root.ts';
-import { canonicalFilesystemPath } from './root-registry.ts';
+import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 
@@ -99,7 +99,8 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
         VALUES($1::uuid,$2::uuid,$3,$4)`, [id, hostId, root, physical.coordinationPath]);
     }
     await tx.executeRaw(`INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id,relative_path)
-      VALUES($1,$2::uuid,$3::uuid,$4)`, [sourceId, source.incarnation, id, relative(root, sourceRoot).split(sep).join('/')]);
+      VALUES($1,$2::uuid,$3::uuid,$4)`, [sourceId, source.incarnation, id,
+      relative(nativeFilesystemPath(root), nativeFilesystemPath(sourceRoot)).split(sep).join('/')]);
     await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
   });
   return (await getWorktreeBinding(engine, sourceId, hostId))!;

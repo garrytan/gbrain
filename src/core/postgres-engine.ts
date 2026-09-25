@@ -103,6 +103,7 @@ import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, b
 import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
+import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
@@ -453,11 +454,6 @@ export class PostgresEngine implements BrainEngine {
       ? await this.connectionManager.ddl()
       : this.sql;
 
-    // Resolve the embedding dim/model from the gateway. v0.37 fix wave:
-    // fallbacks track the canonical defaults in `ai/defaults.ts` instead of
-    // stale v0.13 OpenAI literals, AND we store the full `provider:model`
-    // string in the DB config table — consumers like ze-switch and doctor
-    // expect the provider prefix. (Round-1 CDX-4 + A.8.)
     let dims: number = DEFAULT_EMBEDDING_DIMENSIONS;
     let model: string = DEFAULT_EMBEDDING_MODEL;
     try {
@@ -470,6 +466,12 @@ export class PostgresEngine implements BrainEngine {
       model = gw.getEmbeddingModel();
     } catch { /* gateway not yet configured — use defaults */ }
 
+    const storedIdentity = await readStoredEmbeddingIdentity(this);
+    if (storedIdentity) {
+      if (!storedIdentity.model) throw new Error('Stored embedding model is unknown. Run gbrain migrate embeddings --status and explicitly migrate before schema initialization.');
+      dims = storedIdentity.dimensions;
+      model = storedIdentity.model;
+    }
     const sqlText = getPostgresSchema(dims, model);
 
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
@@ -2345,38 +2347,24 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
-    // Provenance fallback for chunks that don't carry an explicit `model`:
-    // resolve the model the gateway ACTUALLY uses at runtime, not the
-    // compile-time DEFAULT_EMBEDDING_MODEL constant. Callers like `embed`
-    // build ChunkInputs without a `model` field (src/commands/embed.ts), so
-    // the old `chunk.model || DEFAULT_EMBEDDING_MODEL` fallback stamped the
-    // hardcoded default (e.g. zeroentropyai:zembed-1) onto rows whose vectors
-    // were produced by a different, config-resolved model — corrupting the
-    // provenance that signature-drift staleness + dim-migration logic trust.
-    //
-    // #3461: getEmbeddingModel() THROWS when the gateway is unconfigured —
-    // it never returns falsy — so an `||` guard here is dead code and the
-    // catch path used to stamp the compile-time default onto rows whose
-    // vectors came from the config-resolved provider. On the throw path we
-    // now fall back to the brain's own `config.embedding_model` row (kept
-    // current by init / migrate / retrieval-upgrade), which names the model
-    // that actually produced this brain's vectors. The compile-time default
-    // is the LAST resort (fresh brain whose config row doesn't exist yet).
     let resolvedModel: string | null = null;
     try {
       // Keep the gateway lazy so module-load failure remains inside this soft
       // fallback boundary; eager evaluation would bypass the config-row fallback.
       const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
-      resolvedModel = gw.getEmbeddingModel();
-    } catch {
+      resolvedModel = gw.getEmbeddingModelProvenance();
+    } catch {}
+    if (!resolvedModel) {
       try {
         const cfg = await sql`SELECT value FROM config WHERE key = 'embedding_model'`;
         resolvedModel = (cfg[0]?.value as string | undefined) ?? null;
-      } catch {
-        // config table unreadable — fall through to the compile-time default.
-      }
+      } catch {}
     }
-    if (!resolvedModel) resolvedModel = DEFAULT_EMBEDDING_MODEL;
+    resolvedModel = writeCol.embeddingModel || resolvedModel;
+    if (!resolvedModel && chunks.some(chunk => chunk.embedding && !chunk.model)) {
+      throw new Error('Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.');
+    }
+    if (!resolvedModel) resolvedModel = 'unconfigured';
 
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
@@ -5296,14 +5284,8 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Shared body for executeRaw / executeRawDirect: run a raw statement on the
    * given connection and wire AbortSignal cancellation onto the pending query.
-   * The ONLY difference between the two public methods is which connection they
-   * pick (read pool vs direct session pool), so the cancellation plumbing lives
-   * here in one place rather than being copy-pasted.
-   *
-   * v0.41.18.0 (A20, codex #7): real cancellation via postgres.js's .cancel()
-   * on the pending query. Init nudge (3s wallclock cap) is the first consumer;
-   * the AbortSignal fires when the timer trips. An already-aborted signal
-   * short-circuits before the network round-trip.
+   * Cancellable statements retain an exclusive connection through query and
+   * cancellation settlement so a late CancelRequest cannot hit its successor.
    */
   private runUnsafe<T>(
     conn: ReturnType<typeof postgres>,
@@ -5311,30 +5293,38 @@ export class PostgresEngine implements BrainEngine {
     params?: unknown[],
     opts?: { signal?: AbortSignal },
   ): Promise<T[]> {
-    // #4145 R2-2 preflight: an ALREADY-aborted signal must short-circuit
-    // BEFORE the query is dispatched — the previous order created the
-    // pending query first and cancelled it after, which still burned a
-    // round-trip (and on a saturated pool, a slot). Cancellation remains
-    // BEST-EFFORT overall (PG protocol cancel is async); callers that need
-    // correctness must rely on their own fencing, not this signal.
     if (opts?.signal?.aborted) {
       throw new DOMException('aborted', 'AbortError');
     }
-    const pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]);
-    if (opts?.signal) {
-      const onAbort = () => {
+    return (async () => {
+      const signal = opts?.signal;
+      let reserved: postgres.ReservedSql | undefined;
+      let pending: ReturnType<typeof conn.unsafe> | undefined;
+      let cancellation: Promise<void> | undefined;
+      let retired = false;
+      let owner: postgres.TransactionSql | postgres.ReservedSql = conn as unknown as postgres.TransactionSql;
+      signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        reserved = signal && typeof conn.reserve === 'function' ? await conn.reserve({ signal }) : undefined;
+        if (reserved) conn = reserved;
+        owner = reserved ?? conn as unknown as postgres.TransactionSql;
+        if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+        if (signal && typeof owner.discard !== 'function') throw new Error('Postgres cancellation requires the pinned driver patch');
+        pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], { cancelFence: !!signal });
+        return await pending as unknown as T[];
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
         try {
-          (pending as unknown as { cancel?: () => void }).cancel?.();
-        } catch {
-          // best-effort; the .finally below settles regardless
-        }
-      };
-      opts.signal.addEventListener('abort', onAbort, { once: true });
-      return (pending as unknown as Promise<T[]>).finally(() => {
-        opts.signal?.removeEventListener('abort', onAbort);
-      });
-    }
-    return pending as unknown as Promise<T[]>;
+          if (cancellation) await cancellation;
+          if (retired) owner.discard();
+        } finally { reserved?.release(); }
+      }
+      function onAbort() {
+        if (!pending || cancellation) return;
+        try { cancellation = pending.cancel().catch(() => { retired = true; }); }
+        catch { retired = true; }
+      }
+    })();
   }
 
   async executeRaw<T = Record<string, unknown>>(

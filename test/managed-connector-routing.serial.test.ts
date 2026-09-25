@@ -8,6 +8,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { APPLICATION_AUTHORITY, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -27,6 +28,52 @@ beforeAll(async () => {
     engines.push(pg.engine); closePostgres = pg.close;
   }
 }, 120_000);
+
+for (const kind of ['google', 'github']) for (const caller of ['explicit', 'job']) for (const boundary of ['entry', 'source-read']) {
+  test(`${kind} connector preserves ${caller} cancellation at ${boundary} without publishing`, async () => {
+    for (const engine of engines) {
+      const home = join(directory, randomUUID()); mkdirSync(home, { recursive: true });
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_SOURCE: undefined, GBRAIN_BRAIN_ID: 'host' }, async () => {
+        const sourceId = `cancel-${randomUUID()}`, root = join(home, 'uncreated');
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)',
+          [sourceId, root, JSON.stringify(kind === 'google' ? googleConfig : githubConfig)]);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+        const before = await engine.executeRaw('SELECT * FROM sources WHERE id=$1', [sourceId]);
+        const checkpoints = await engine.executeRaw('SELECT op,fingerprint,completed_keys FROM op_checkpoints ORDER BY op,fingerprint');
+        const effects = await engine.executeRaw('SELECT id,state FROM persistence_effects ORDER BY id');
+        const controller = new AbortController();
+        const reason = new Error('connector fixture cancelled');
+        const execute = engine.executeRaw;
+        let reached = boundary === 'entry', calls = 0;
+        const fetcher = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+          calls++; throw new Error('Unexpected connector fixture network call');
+        }) as unknown as typeof fetch);
+        if (boundary === 'entry') controller.abort(reason);
+        else engine.executeRaw = async function(this: BrainEngine, sql, params) {
+          const rows = await execute.call(this, sql, params);
+          if (sql === 'SELECT local_path,config FROM sources WHERE id=$1' && params?.[0] === sourceId) {
+            reached = true; controller.abort(reason);
+          }
+          return rows;
+        } as BrainEngine['executeRaw'];
+        try {
+          const run = () => performSync(engine, { sourceId, ...(caller === 'explicit' ? { signal: controller.signal } : {}) });
+          await expect(caller === 'job' ? withSubmissionAuthority(APPLICATION_AUTHORITY, run, controller.signal) : run())
+            .rejects.toMatchObject({ name: caller === 'job' ? 'AbortError' : 'Error', message: reason.message });
+          expect(reached).toBe(true);
+          expect(calls).toBe(0);
+          expect(existsSync(root)).toBe(false);
+          expect(await engine.executeRaw('SELECT * FROM sources WHERE id=$1', [sourceId])).toEqual(before);
+          expect(await engine.executeRaw('SELECT id FROM pages WHERE source_id=$1', [sourceId])).toHaveLength(0);
+          expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [sourceId])).toHaveLength(0);
+          expect(await engine.executeRaw('SELECT op,fingerprint,completed_keys FROM op_checkpoints ORDER BY op,fingerprint')).toEqual(checkpoints);
+          expect(await engine.executeRaw('SELECT id,state FROM persistence_effects ORDER BY id')).toEqual(effects);
+        } finally { engine.executeRaw = execute; fetcher.mockRestore(); }
+      });
+    }
+  }, 120_000);
+}
 
 afterAll(async () => {
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }

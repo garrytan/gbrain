@@ -4,6 +4,7 @@
  * path lives in a tmpdir. No network, no real supervisor, no process.env writes.
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import * as dnsPromises from 'node:dns/promises';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -2585,6 +2586,48 @@ describe('scoped off + honest recovery (adversarial-review batch)', () => {
     expect(isUnresolvedLookupError(new Error('getaddrinfo EAI_AGAIN your-machine.your-tailnet.ts.net'))).toBe(true);
     expect(isUnresolvedLookupError(Object.assign(new Error('queryA ESERVFAIL'), { code: 'ESERVFAIL' }))).toBe(false);
     expect(isUnresolvedLookupError(new Error('Unable to connect. Is the computer able to access the url?'))).toBe(false);
+  });
+
+  test('the default resolver rejects reserved invalid names without consulting system DNS', async () => {
+    const lookup = spyOn(dnsPromises, 'lookup').mockResolvedValue({ address: '127.0.0.1', family: 4 });
+    try {
+      for (const host of ['invalid', 'INVALID', 'invalid.', 'INVALID.', 'gbrain.invalid', 'gbrain.INVALID.', 'nested.gbrain.invalid.']) {
+        await expect(defaultLookup(host)).rejects.toMatchObject({ code: 'ENOTFOUND' });
+      }
+      expect(lookup).not.toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  test('the default resolver preserves invalid label boundaries and delegates other names', async () => {
+    const lookup = spyOn(dnsPromises, 'lookup').mockResolvedValue({ address: '127.0.0.1', family: 4 });
+    const hosts = ['notinvalid', 'notinvalid.', 'gbrain.notinvalid', 'invalid.example', 'gbrain.invalid.example', 'invalid.example.'];
+    try {
+      for (const host of hosts) await expect(defaultLookup(host)).resolves.toBeUndefined();
+      expect(lookup.mock.calls.map(([host]) => host)).toEqual(hosts);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  test('the default resolver still resolves localhost through the system resolver', async () => {
+    await expect(defaultLookup('localhost')).resolves.toBeUndefined();
+  });
+
+  test('an unanswered lookup and unclassified resolver errors remain unknown', async () => {
+    const deps = {
+      fetch: async () => { throw Object.assign(new Error('Unable to connect. Is the computer able to access the url?'), { code: 'ConnectionRefused' }); },
+      tcpProbe: async () => false,
+      lookup: async () => new Promise<void>(() => {}),
+      now: () => new Date(), sleep: async () => {}, healthIntervalMs: 1,
+    };
+    const url = 'https://diagnostic.example/health';
+    expect(await tryFetch(deps, url, 25)).toEqual({ res: null, unresolved: false });
+    for (const code of ['ETIMEDOUT', 'ESERVFAIL', 'ECANCELLED']) {
+      expect(await tryFetch({ ...deps, lookup: async () => { throw Object.assign(new Error(code), { code }); } }, url, 25))
+        .toEqual({ res: null, unresolved: false });
+    }
   });
 
   test('the real default resolver: a .invalid name never resolves (RFC 6761; a resolver outage classifies as unresolved too), so Bun\'s refused-looking rejection is reported as unresolved', async () => {

@@ -36,7 +36,6 @@ import type { GBrainConfig } from './config.ts';
 export const DB_MERGED_PROVIDER_KEY_FIELDS = [
   'openai_api_key',
   'anthropic_api_key',
-  'zeroentropy_api_key',
   'openrouter_api_key',
   'voyage_api_key',
   'dashscope_api_key',

@@ -284,11 +284,20 @@ Response: `{ id, expired, reason, protocol_version }`.
 
 Write receipts distinguish accepted work from committed memory. Their public
 shape is `{request_id, state, retry_after_ms, revision?, outcome?, persistence?,
-compacted?, created_at?, updated_at?}`. States are `queued`, `running`,
+compacted?, created_at?, updated_at?, diagnostic?}`. States are `queued`, `running`,
 `recovering`, `committed`, `conflict`, `failed`, and `cancelled`. Terminal
 receipts have `retry_after_ms: null`. `persistence.mode` distinguishes a
 filesystem-backed write from an intentional database-only write; Git progress
 does not change the meaning of committed memory.
+
+Nonterminal receipts may include `diagnostic: {age_ms, assessment, reason,
+next_action, observed_at?}`. `assessment` is `pending`, `blocked`, or `stalled`;
+`reason` uses a closed allowlist, and `next_action` is `poll` or `inspect_owner`.
+Age measures time since acceptance, not time since the last lease renewal.
+`observed_at` is omitted when fresh dependency evidence is unavailable. These
+fields are advisory, not proof of owner death or permission to repair. Honor
+`retry_after_ms`, retain the original request ID, and inspect the existing owner
+before replay when advised. Older servers may omit `diagnostic` entirely.
 
 A pending write is a protocol `unavailable` error with a populated suggestion,
 `protocol_version: 1`, and optional `write_request` and `write_error` fields.

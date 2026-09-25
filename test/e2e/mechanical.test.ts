@@ -1388,8 +1388,8 @@ describeE2E('E2E: Doctor Command', () => {
 
   test('gbrain doctor exits 0 on healthy DB', () => {
     // Init first so config exists for CLI. Pin --embedding-model explicitly
-    // so the spawned doctor doesn't pick a different default (e.g. ZE-1280d
-    // when ZEROENTROPY_API_KEY is in env) that mismatches the fixture's
+    // so the spawned doctor doesn't pick a different default (e.g. Voyage-1024d
+    // when VOYAGE_API_KEY is in env) that mismatches the fixture's
     // 1536d schema. Mirrors the same pattern in 'Setup Journey'.
     const init = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive',

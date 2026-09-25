@@ -23,10 +23,10 @@ function basisEmbedding(idx: number, dim = 1536): Float32Array {
 }
 
 beforeAll(async () => {
-  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1280 (ZE Matryoshka). This test
+  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1024 (Voyage Matryoshka). This test
   // inserts 1536-dim unit vectors below. Without pinning, initSchema() sizes
-  // content_chunks.embedding at vector(1280) and the upserts throw
-  // "expected 1280 dimensions, not 1536". The local fast loop hides this when
+  // content_chunks.embedding at vector(1024) and the upserts throw
+  // "expected 1024 dimensions, not 1536". The local fast loop hides this when
   // a prior test in the shard pre-configured the gateway at 1536d; CI shards
   // hit it cold. Pin to 1536d so this file is hermetic.
   resetGateway();

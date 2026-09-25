@@ -1136,7 +1136,13 @@ chmod 700 /workspace/gbrain-backups
 
 Each output filename must be new. The command holds the real PGLite writer
 lock, takes a full database dump, checks the managed file inventory for changes,
-and publishes a checksummed archive with mode `0600`. A busy database or a
+and publishes a checksummed archive with POSIX mode `0600`. On Windows, built-in
+Windows PowerShell establishes and verifies access for the current owner and
+SYSTEM before writing backup payloads. It protects only newly created backup
+paths, never changes existing parent permissions, and refuses with
+`private_backup_path_unavailable` if enforcement is unavailable. Use a new private
+destination on a local filesystem with Windows ACL support and permitted
+Windows PowerShell. A busy database or a
 changing file fails the operation instead of publishing a success receipt.
 
 | Included | Excluded or inventoried for reconnection |
@@ -1176,6 +1182,14 @@ source, page, and known config paths; detaches external source/config paths; and
 cancels every unfinished background job in one transaction, preserving its
 previous status for inspection. Completed history remains. No worker, connector,
 sync, native routine, or paid operation starts.
+
+Archive paths are portable forward-slash names; traversal, reserved Windows
+names and ambiguous case or normalization collisions are rejected. Recognized
+nested paths are rebased using the recorded platform's path rules. Unrecognized
+legacy absolute page origins remain unchanged and appear in the reconnect
+inventory for review before sync. Remembered text is never rewritten to replace
+old paths, and restoration is not a promise that every historical origin is
+portable.
 
 External checkout and API sources keep their remembered pages available, but
 their live connector configuration is quarantined and sync is disabled. The
@@ -2031,6 +2045,51 @@ Pass `job.updateProgress` from minion handlers. Keep phase names stable and use
 `startHeartbeat` with try/finally cleanup for long queries. Read
 [progress events](docs/progress-events.md) before wiring a new command.
 
+## PR acceptance: evidence, not trust
+
+**Treat every PR as untrusted, potentially incorrect, incomplete or unsafe,
+including our own.** Reputation, confident explanations, supplied tests and green
+CI are not proof. Judge the work, not unsubstantiated claims about its author.
+
+- **Prove the problem separately from the patch.** Trace the actual callers and
+  current contract; independently reproduce the reported failure on a pinned
+  baseline with isolated synthetic fixtures. Record commands, environments, exit
+  statuses and wrong results. Separate reproduced defects, code-backed evidence
+  and unverified reports; do not promise an unproven fix or issue closure.
+- **Read the entire diff before executing it.** Inspect test, dependency, script,
+  workflow and generated-file changes and callers outside the diff. Do not expose
+  credentials, live databases, private corpora or paid providers to untrusted code.
+- **Make tests discriminate.** Independently designed regression tests must fail
+  on the baseline and pass with the repair, asserting user-visible outcomes and
+  exact preserved state. Reject bug-bypassing mocks, vacuous assertions and hidden
+  skips. Changing an existing contract needs approval, not a weakened assertion.
+- **Attack the boundaries.** Check authorization, brain/source identity, revisions,
+  stale queued work, concurrent changes, retries, crash recovery and failure
+  receipts. Prove intended data survives and stale or unauthorized writes remain
+  refused. Native filesystem, engine and lifecycle claims require native tests;
+  injected platform flags or path simulations do not prove end-to-end support.
+- **Keep a verdict and evidence ledger.** Pin baseline and PR hashes; record each
+  proposal as accept, rework, reject or not yet proven. Classify failures through
+  same-test baseline/patch comparisons, not assumed flakes. Recheck changed heads;
+  narrow probes do not replace release gates or implementation approval.
+
+## Fix waves: ONE PR
+
+**A fix wave ships as ONE PR unless the user overrides this for that wave.**
+Parallel tasks are fine; integrate reviewed work into one branch with reviewable
+commits. Do not open per-issue or per-task PRs, or a PR stack.
+
+1. Investigate the named issues and adjacent failures in the same safety boundary.
+   Apply the acceptance standard above. Exclude unrelated features; record
+   deferrals and unresolved reports rather than assuming closure.
+2. Run `/plan-ceo-review` and `/plan-eng-review`. Incorporate recommendations within
+   the requested scope, respecting the user's directions on review decisions.
+   Explain the revised plan in plain language (ELI10) and wait for approval before
+   product implementation. A plan review is not implementation or merge consent.
+3. Implement only the approved scope, integrate and verify the whole wave, then
+   use `/ship` and the full gates in [docs/RELEASING.md](docs/RELEASING.md), including
+   the community-wave security scan. Publish one PR; do not merge without approval.
+
 ## Capturing test output (NEVER pipe through `tail` / `head`)
 
 Preserve full logs and the real exit status; piping tests into `tail` can hide
@@ -2358,11 +2417,11 @@ GBrain is keyless. Explain these boundaries before enabling a capability; see
 
 Skip API-key setup for the initial keyless memory path. If the user enables semantic retrieval or paid enrichment, configure the selected provider explicitly. GBrain defaults to the Voyage embedding + reranker stack
 (`voyage:voyage-4` @ 1024d + `voyage:rerank-2.5` — one key covers both); OpenAI is the
-main alternative, chosen at init via `--embedding-model <provider:model>`. ZeroEntropy
-is deprecated (its hosted API shuts down 2026-09-04): init auto-pick and the picker
-exclude it, and every ZE embed/rerank prints a deprecation warning. **Existing brain
-still on ZeroEntropy (or any need to switch embedding/reranker models later)?** Follow
-the playbook at `skills/migrations/v0.46.3.0.md` — one command migrates both.
+main alternative, chosen at init via `--embedding-model <provider:model>`.
+**Need to switch an existing brain's embedding or reranker model?** Follow
+the explicit-consent playbook at `skills/migrations/v0.46.3.0.md`. Preview the
+work and cost, obtain approval, then migrate; an upgrade never converts existing
+vectors or authorizes a paid re-embed.
 
 ```bash
 export VOYAGE_API_KEY=pa-...          # default embedding + reranker (one key covers both)
@@ -3035,7 +3094,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "connect grok bot to my brain", "connect muse to my brain", "connect claude desktop to my brain", "reach my brain from my phone" | `skills/remote-mcp/SKILL.md` (host-side publishing, then `skills/mcp-access/SKILL.md` / hosted access selects native OAuth or a private machine handoff) |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
 | "connect our company brain", "connect our existing company brain", "import an existing company brain" | `skills/migrate/SKILL.md` (company repository workflow; preview and approval before import, not sanitization) |
-| "Switch embedding provider" / "migrate my embeddings" / "switch reranker" / "ZeroEntropy" / "provider_sunset" / "search stopped working after a provider shutdown" | `skills/migrations/v0.46.3.0.md` |
+| "Switch embedding provider" / "migrate my embeddings" / "switch reranker" / "unsupported embedding provider" / "search stopped working after a provider shutdown" | `skills/migrations/v0.46.3.0.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run", "retriage the backlog", "re-score the triage" | `skills/maintain/SKILL.md` (dream cycle section) |
@@ -3475,8 +3534,8 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Gmail + Calendar + Contacts (native)**: the google source kind syncs threads, events, and contacts through your own OAuth client and runs the open-loop engine on top (`gbrain waiting`). Setup: [`docs/guides/google-connect.md`](docs/guides/google-connect.md); recipes: [`recipes/email-to-brain.md`](recipes/email-to-brain.md), [`recipes/calendar-to-brain.md`](recipes/calendar-to-brain.md).
 - **Email + calendar (webhooks)**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
-- **Embedding providers**: a dozen providers covered — Voyage (default: `voyage-4` @ 1024d), OpenAI, OpenRouter, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy, plus ZeroEntropy (deprecated — hosted API ends 2026-09-04). Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
-- **Rerankers**: Voyage `rerank-2.5` hosted (the default; reranking is on in `balanced` and `tokenmax` modes, same `VOYAGE_API_KEY` as embeddings; the preview `rerank-3` / `rerank-3-lite` are selectable with `gbrain config set search.reranker.model voyage:rerank-3`), ZeroEntropy `zerank-2` (deprecated — hosted API ends 2026-09-04; an explicit config short-circuits past that date), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted zerank weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
+- **Embedding providers**: Voyage (new-install default: `voyage-4` @ 1024d), OpenAI, OpenRouter, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LM Studio, Together, and LiteLLM proxy. Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md). Existing vectors are never converted by changing the default; use the explicitly approved [embedding migration](docs/guides/embedding-migration.md).
+- **Rerankers**: Voyage `rerank-2.5` hosted (the default; reranking is on in `balanced` and `tokenmax` modes, same `VOYAGE_API_KEY` as embeddings; the preview `rerank-3` / `rerank-3-lite` are selectable with `gbrain config set search.reranker.model voyage:rerank-3`), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp running Qwen3-Reranker against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
 - **Credential vault + gateway**: `gbrain creds` manages OAuth and API credentials in a local vault ([`recipes/credential-gateway.md`](recipes/credential-gateway.md)); agent-side vault-aware secret distribution: [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
 - **Memorable (procedural memory)**: optional, off by default. Your brain remembers *what* happened; Memorable makes your agent remember *how* — finished sessions become replayable procedures stored on your machine (in a standalone local store, or inside your brain database if you opt in), recalled when a similar task comes back. See the section below, and [`docs/memorable-agents.md`](docs/memorable-agents.md) for the agent-facing detail.
@@ -3538,7 +3597,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [`docs/integrations/`](docs/integrations/) — connecting external data sources (voice, email, calendar, embedding providers)
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
-- [`docs/eval/`](docs/eval/) — eval framework, metric glossary, methodology
+- [Evals](docs/eval/) and [research](docs/research/) — methods and results
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
@@ -3559,7 +3618,7 @@ MIT. I built GBrain to run my OpenClaw and Hermes deployments — the production
 
 Origin story: [`docs/ethos/ORIGIN.md`](docs/ethos/ORIGIN.md).
 
-Community PR contributors are credited in `CHANGELOG.md` per release. ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the ZeroEntropy embedding + reranker integration. Voyage AI for the asymmetric-encoding recipe template. Ramp Labs for the search quality improvements lineage.
+Community PR contributors are credited in `CHANGELOG.md` per release. Attribution for the retired provider's historical embedding and reranker integration remains in Git at `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29`. Voyage AI for the asymmetric-encoding recipe template. Ramp Labs for the search quality improvements lineage.
 
 ---
 
@@ -7017,11 +7076,20 @@ Response: `{ id, expired, reason, protocol_version }`.
 
 Write receipts distinguish accepted work from committed memory. Their public
 shape is `{request_id, state, retry_after_ms, revision?, outcome?, persistence?,
-compacted?, created_at?, updated_at?}`. States are `queued`, `running`,
+compacted?, created_at?, updated_at?, diagnostic?}`. States are `queued`, `running`,
 `recovering`, `committed`, `conflict`, `failed`, and `cancelled`. Terminal
 receipts have `retry_after_ms: null`. `persistence.mode` distinguishes a
 filesystem-backed write from an intentional database-only write; Git progress
 does not change the meaning of committed memory.
+
+Nonterminal receipts may include `diagnostic: {age_ms, assessment, reason,
+next_action, observed_at?}`. `assessment` is `pending`, `blocked`, or `stalled`;
+`reason` uses a closed allowlist, and `next_action` is `poll` or `inspect_owner`.
+Age measures time since acceptance, not time since the last lease renewal.
+`observed_at` is omitted when fresh dependency evidence is unavailable. These
+fields are advisory, not proof of owner death or permission to repair. Honor
+`retry_after_ms`, retain the original request ID, and inspect the existing owner
+before replay when advised. Older servers may omit `diagnostic` entirely.
 
 A pending write is a protocol `unavailable` error with a populated suggestion,
 `protocol_version: 1`, and optional `write_request` and `write_error` fields.

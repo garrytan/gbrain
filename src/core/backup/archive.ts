@@ -2,7 +2,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, fstatSync, linkSync, mkdirSync, openSync, readSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { AgentInstallError, assertNoSymlinks, confinedPath, syncDirectory } from '../agent-install/state.ts';
+import { AgentInstallError, assertNoSymlinks, checkedRelativePath, confinedPath, syncDirectory } from '../agent-install/state.ts';
+import { protectNewBackupPath } from './private-path.ts';
 
 const MAGIC = Buffer.from('GBRAIN-BACKUP-1\n');
 const MAX_MANIFEST = 8 * 1024 * 1024;
@@ -57,13 +58,10 @@ export function hashFile(file: string): { size: number; sha256: string } {
 }
 
 /** Publication uses link(2), which refuses an existing target atomically. */
-export function writeBackupArchive(output: string, metadata: Record<string, unknown>, files: ArchiveInput[]): ArchiveManifest {
+export async function writeBackupArchive(output: string, metadata: Record<string, unknown>, files: ArchiveInput[]): Promise<ArchiveManifest> {
   assertNoSymlinks(output);
-  const paths = new Set<string>();
   const entries = files.map(input => {
-    confinedPath('/archive', input.path);
-    if (paths.has(input.path)) fail('Duplicate archive entry.');
-    paths.add(input.path);
+    checkedRelativePath(input.path);
     const actual = hashFile(input.file);
     if (input.expected && (actual.size !== input.expected.size || actual.sha256 !== input.expected.sha256)) fail('A file changed after the database snapshot; quiesce writers and retry.');
     return { path: input.path, ...actual };
@@ -76,6 +74,7 @@ export function writeBackupArchive(output: string, metadata: Record<string, unkn
   const temporary = `${output}.partial-${randomUUID()}`;
   const fd = openSync(temporary, 'wx', 0o600);
   try {
+    await protectNewBackupPath(temporary, 'file');
     writeAll(fd, MAGIC); writeAll(fd, sizeHeader); writeAll(fd, encoded);
     const buffer = Buffer.alloc(1024 * 1024);
     for (let i = 0; i < files.length; i++) {
@@ -103,15 +102,26 @@ function validateManifest(input: unknown): asserts input is ArchiveManifest {
   const value = input as ArchiveManifest;
   if (!value || value.format_version !== 1 || !Array.isArray(value.entries) || !value.entries.length || value.entries.length > MAX_FILES) fail('Unsupported backup format or file inventory.');
   let total = 0;
-  const paths = new Set<string>();
+  const paths = new Map<string, { path: string; directory: boolean }>();
   for (const entry of value.entries) {
     if (!entry || typeof entry.path !== 'string' || !Number.isSafeInteger(entry.size) || entry.size < 0 || !/^[a-f0-9]{64}$/.test(entry.sha256)) fail('Invalid backup entry.');
-    confinedPath('/archive', entry.path);
-    if (paths.has(entry.path)) fail('Duplicate backup path.');
-    paths.add(entry.path);
+    checkEntryPath(paths, entry.path, false);
     total += entry.size;
   }
   if (total > MAX_BYTES) fail('Backup exceeds the 8 GiB recovery limit.');
+}
+
+function checkEntryPath(paths: Map<string, { path: string; directory: boolean }>, path: string, directory: boolean): void {
+  checkedRelativePath(path);
+  const parts = path.split('/');
+  for (let i = 1; i <= parts.length; i++) {
+    const prefix = parts.slice(0, i).join('/');
+    const key = prefix.normalize('NFC').toLowerCase();
+    const previous = paths.get(key);
+    const parent = i < parts.length;
+    if (previous && (previous.path !== prefix || !previous.directory || (!parent && !directory))) fail('Duplicate or conflicting backup path.');
+    paths.set(key, { path: prefix, directory: parent || directory });
+  }
 }
 
 /** Extract ONLY into a caller-created private, empty staging directory. */
@@ -158,6 +168,7 @@ export function extractPgliteDump(file: string, destination: string): void {
   const length = fstatSync(fd).size;
   let offset = 0;
   const seen = new Set<string>();
+  const paths = new Map<string, { path: string; directory: boolean }>();
   try {
     while (offset + 512 <= length) {
       const header = readExactly(fd, 512, offset); offset += 512;
@@ -185,9 +196,10 @@ export function extractPgliteDump(file: string, destination: string): void {
       const path = raw.replace(/^\//, '').replace(/\/$/, '');
       const type = header[156]; const size = octal(124, 136);
       if (type !== 48 && type !== 53 && type !== 0) fail('PGLite tar contains an unsupported entry type.');
-      if (!path && type === 53) continue;
-      const target = confinedPath(destination, path);
+      if (!path && type === 53 && (raw === '/' || raw === '')) continue;
       if (seen.has(path)) fail('Duplicate PGLite tar entry.');
+      checkEntryPath(paths, path, type === 53);
+      const target = confinedPath(destination, path);
       seen.add(path);
       if (seen.size > MAX_FILES || offset + size > length) fail('PGLite tar exceeds bounds.');
       // Node-backed dumpDataDir also sees GBrain's live owner lock. It is a

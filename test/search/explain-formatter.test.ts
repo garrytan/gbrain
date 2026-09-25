@@ -273,8 +273,8 @@ describe('formatDegradedSummary — v0.48.2 skipped-stage line', () => {
       'degraded: reranker_skipped (no_key)',
     );
     expect(
-      formatDegradedSummary([{ stage: 'keyword_zero' }, { stage: 'reranker_skipped', reason: 'sunset_short_circuit' }]),
-    ).toBe('degraded: keyword_zero, reranker_skipped (sunset_short_circuit)');
+      formatDegradedSummary([{ stage: 'keyword_zero' }, { stage: 'reranker_skipped', reason: 'no_key' }]),
+    ).toBe('degraded: keyword_zero, reranker_skipped (no_key)');
   });
 
   test('formatResultsExplain prepends the degraded line', () => {

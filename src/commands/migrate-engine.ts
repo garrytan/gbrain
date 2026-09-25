@@ -370,27 +370,6 @@ export async function copyMigrationFacts(
   return result;
 }
 
-/**
- * #4350: engine-LOCAL config rows that must not follow the data to the
- * target. Everything else in the config table copies verbatim — the pre-fix
- * allowlist of 3 keys silently dropped sync anchors (`sync.repo_path`),
- * search settings, feature toggles: everything an operator had tuned.
- *
- * - 'engine': the seeded engine-identity row; the target's own initSchema
- *   stamped the correct value for itself.
- * - 'version': the schema-migration ledger position. The target's own
- *   initSchema stamped it at the current latest; overwriting it with the
- *   source's (potentially older) value would make apply-migrations re-run
- *   against a schema that already has them.
- * - 'embedding_columns' / 'search_embedding_column': registry of (and active
- *   pointer into) PHYSICAL vector columns added to the source database by
- *   ze-switch DDL. The copy does not create those columns on the target, so
- *   carrying the registry would advertise columns that don't exist — and
- *   break search outright if the active pointer names one. Re-run
- *   `gbrain ze switch` on the target to rebuild them.
- *
- * Skipped keys are printed in the migration summary — never silent.
- */
 export const MIGRATE_CONFIG_ENGINE_LOCAL_KEYS: ReadonlySet<string> = new Set([
   'engine',
   'version',

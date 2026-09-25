@@ -31,7 +31,7 @@ import {
   migrationSignature,
   MIGRATION_STATE_KEY,
 } from '../../src/core/embedding-migration.ts';
-import { runSchemaTransition } from '../../src/core/retrieval-upgrade-planner.ts';
+import { runSchemaTransition } from '../../src/core/embedding-migration.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
 const RUN = hasDatabase();
@@ -147,7 +147,7 @@ d('embedding migration (live Postgres + pgvector)', () => {
 
     // Brain state: one current-signature page, one pre-v108 NULL-signature
     // page, one never-embedded page.
-    await seedEmbedded('mig/current', 'aaaaa', migrationSignature('zeroentropyai:zembed-1', originalDims));
+    await seedEmbedded('mig/current', 'aaaaa', migrationSignature('fixture-provider:embedding-v1', originalDims));
     await seedEmbedded('mig/legacy', 'bbbbb', null);
     await engine.putPage('mig/pending', { type: 'note', title: 'pending', compiled_truth: '# pending' });
     await installFixtureChunks(engine, 'mig/pending', [
@@ -157,7 +157,7 @@ d('embedding migration (live Postgres + pgvector)', () => {
     const plan = await planEmbeddingMigration(engine, {
       to: toModel,
       dim: targetDims,
-      fromModel: 'zeroentropyai:zembed-1',
+      fromModel: 'fixture-provider:embedding-v1',
       fromDims: originalDims,
     });
     expect(plan.dim_change).toBe(true);

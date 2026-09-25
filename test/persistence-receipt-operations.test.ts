@@ -60,6 +60,83 @@ async function call(name: string, params: Record<string, unknown>, local = owner
 }
 
 describe('own-principal write receipt operations', () => {
+  test('one hundred authorized receipts use one projected diagnostic query', async () => {
+    for (let i = 0; i < 100; i++) await accept(owner, `allowed/batch-${i}`);
+    let queries = 0;
+    const proxy = new Proxy(engine, { get(target, key) {
+      if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+        if (args[0].includes('WITH roots AS')) {
+          queries++;
+          expect(args[0]).not.toContain('r.*');
+          expect(args[0]).not.toContain('intent');
+          expect((args[1]![0] as string[])).toHaveLength(1);
+        }
+        return target.executeRaw(...args);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const result = await call('list_write_requests', { limit: 100 }, owner, context(proxy));
+    expect(result.requests).toHaveLength(100);
+    expect(queries).toBe(1);
+    expect(result.requests.every((row: any) => row.diagnostic.observed_at)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+    await expect(call('get_write_request', { request_id: randomUUID() }, foreign, context(proxy))).rejects.toMatchObject({ code: 'not_found' });
+    expect(queries).toBe(1);
+  });
+  test('a foreign FIFO head yields only a coarse dependency after own authorization', async () => {
+    const first = await accept(foreign, 'PRIVATE_FOREIGN_HEAD');
+    const own = await accept(owner, 'allowed/follower');
+    const receipt = await call('get_write_request', { request_id: own.request_id });
+    expect(receipt.diagnostic).toMatchObject({ assessment: 'blocked', reason: 'waiting_on_earlier_write', next_action: 'poll' });
+    expect(receipt.retry_after_ms).toBe(5000);
+    expect(JSON.stringify(receipt)).not.toContain(first.request_id);
+    expect(JSON.stringify(receipt)).not.toContain('PRIVATE_');
+  });
+  test('another source sharing a worktree contributes no predecessor identity to health', async () => {
+    const first = await accept(foreign, 'PRIVATE_OTHER_SOURCE_HEAD', otherSource);
+    const own = await accept();
+    const worktree = randomUUID();
+    await engine.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id) VALUES($1,$2)', [worktree, randomUUID()]);
+    await engine.executeRaw('UPDATE persistence_requests SET worktree_id=$2 WHERE id=ANY($1::uuid[])', [[first.id, own.id], worktree]);
+    const result = await call('list_write_requests', {});
+    expect(result.requests).toHaveLength(1);
+    expect(result.requests[0].diagnostic.reason).toBe('waiting_on_earlier_write');
+    for (const hidden of [first.id, first.request_id, otherSource, 'PRIVATE_OTHER_SOURCE_HEAD']) expect(JSON.stringify(result)).not.toContain(hidden);
+    expect(result.next).toBeNull();
+  });
+  test('source incarnation and delegated namespace changes refuse before enrichment', async () => {
+    const row = await accept();
+    let queries = 0;
+    const proxy = new Proxy(engine, { get(target, key) {
+      if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+        if (args[0].includes('WITH roots AS')) queries++;
+        return target.executeRaw(...args);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await expect(call('get_write_request', { request_id: row.request_id }, owner,
+      { ...context(proxy), viaSubagent: true, allowedSlugPrefixes: ['different/*'] })).rejects.toMatchObject({ code: 'not_found' });
+    await engine.executeRaw('UPDATE sources SET incarnation=$2 WHERE id=$1', [source, randomUUID()]);
+    await expect(call('get_write_request', { request_id: row.request_id }, owner, context(proxy))).rejects.toMatchObject({ code: 'not_found' });
+    expect(queries).toBe(0);
+  });
+  test('authorization query failures fail closed rather than using optional diagnostic fallback', async () => {
+    const row = await accept();
+    let queries = 0;
+    const proxy = new Proxy(engine, { get(target, key) {
+      if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+        if (args[0].includes('WITH roots AS')) queries++;
+        if (args[0].startsWith('SELECT incarnation,archived FROM sources')) throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE');
+        return target.executeRaw(...args);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await expect(call('get_write_request', { request_id: row.request_id }, owner, context(proxy))).rejects.toThrow('AUTHORIZATION_DATABASE_UNAVAILABLE');
+    expect(queries).toBe(0);
+  });
   test('get_write_request returns public metadata and never journal payload, execution or recovery bytes', async () => {
     const row = await accept();
     await engine.executeRaw('UPDATE persistence_requests SET execution_token=$2,recovery=$3::jsonb,error_message=$4,error_code=$5 WHERE id=$1',

@@ -2,6 +2,225 @@
 
 All notable changes to GBrain will be documented in this file.
 
+Historical entries use generic identifiers for the retired hosted provider
+and its removed commands.
+Those identifiers and any sample command containing them are non-executable
+archival labels, not supported configuration. Dates, measurements and contributor
+credits are retained; no result has been reassigned to another provider. Original
+identifiers and attribution are available in the pre-removal Git revision
+`6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
+
+## [0.57.1.0] - 2026-09-24
+
+**More capacity for Linux CI, with the same acceptance checks.**
+
+Contributors' Linux tests run on larger, single-job Ubicloud machines rather
+than waiting for GitHub's standard Linux runner pool. Ordinary test and database
+jobs have 16 virtual CPUs and 64 GB of memory; the heavy suite and long-running
+persistence checks have 30 virtual CPUs and 120 GB. Lightweight reporting stays
+on smaller machines. Test coverage, failure handling and acceptance thresholds
+remain unchanged. This release does not change installed memory behavior.
+
+### To take advantage of v0.57.1.0
+
+The workflow routing takes effect in repository CI after merging; no local
+upgrade is needed. Forks must authorize the Ubicloud Managed Runners app and
+configure billing before using these runner labels. See
+[CI runner capacity](docs/TESTING.md#ci-runner-capacity) for sizes and prerequisites.
+More capacity does not guarantee a proportional speedup for serial tests.
+
+### Itemized changes
+
+### For contributors
+
+- Move repository-owned Linux CI jobs to Ubuntu 24.04 Ubicloud runners, including
+  native ARM64 validation on 16-vCPU, 48-GB machines.
+- Preserve all shards, test commands, timeouts, artifacts and status-check names.
+  Keep macOS, Windows, release publishing and the upstream OSV workflow unchanged.
+- Validate custom runner labels with actionlint and regression tests covering
+  workload sizes, native platforms and the unchanged security matrix identities.
+
+## [0.57.0.0] - 2026-09-24
+
+**Know when an accepted write needs attention.**
+
+An accepted write is not always a finished write. When a page or remembered fact is waiting, its receipt can now distinguish ordinary pending work from a known blocker or an unusually old request. Your agent gets a sensible polling interval and a clear instruction to inspect the existing owner when waiting alone is no longer enough. It keeps the original request reference instead of creating a duplicate.
+
+Locked expired work no longer holds up the entire scheduler while unrelated work could proceed. Slow preparation and supported database waits have deadlines, and repeated receipt waits no longer accumulate unfinished reads. A deadline does not turn a pending write into a successful save or authorize another publisher. Work that cannot actually be cancelled stays tracked until it settles, and shutdown keeps the existing safety protections in place. Once contention clears, the original accepted request can finish without losing its identity or applying its content twice.
+
+### How to check a pending write
+
+Keep the original `request_id` and arguments. Read its receipt, then inspect the selected brain's existing owner when advised:
+
+```bash
+gbrain write-request <request-id> --json
+gbrain sources writer status --brain <brain> --probe --json
+```
+
+| What the receipt knows | What to do |
+| --- | --- |
+| Recent request, no known blocker | Poll after 1 second, then 5 seconds as it ages. |
+| Ordinary contention or an earlier write | Retain the original request and poll after 5 seconds. |
+| At least two minutes old, or an operator-required blocker | Inspect the existing owner; poll no faster than every 30 seconds. |
+
+Age is advisory, not proof of a dead owner. Older clients may omit the optional diagnosis. Never remove locks, transfer ownership, or discard recovery records just because a request is old.
+
+## To take advantage of v0.57.0.0
+
+Use `gbrain upgrade` during your approved owner rollout. If automatic migrations did not complete, run:
+
+```bash
+gbrain apply-migrations --yes --no-autopilot-install
+gbrain sources writer status --brain <brain> --probe --json
+gbrain stats
+```
+
+Schema migration 165 adds an index for database-only pending writes. It does not rewrite accepted requests or change the writer protocol. Quiesce the existing owner before replacing or rolling it back, preserve original receipts and recovery state, and verify canonical page or fact readback before calling a deployed incident recovered. If migration or verification fails, report sanitized doctor output and the failing step at https://github.com/garrytan/gbrain/issues; do not include credentials or private content.
+
+### Itemized changes
+
+- Pending receipts include validated, privacy-filtered age, assessment, reason and next action. Initial responses, replay, receipt helpers and frozen memory verbs preserve their existing required fields and error codes.
+- Receipt health enrichment is authorization-first, batched for at most 100 receipts, bounded to a 500ms caller wait, and limited to one unsettled query per engine. The new pending index keeps retained terminal history out of this lookup.
+- Expired-claim sweeps skip locked rows without bypassing same-root order. Supported scheduler and renewal waits use cancellation budgets; ordinary `put_page` and `remember` preparation gets a cooperative deadline with late-result fencing.
+- PostgreSQL timeout cancellation isolates the affected query from neighboring work, including transaction siblings and connections reassigned after a disconnect. Cancellation failures do not authorize blind statement retries.
+- PostgreSQL pool shutdown rejects work still waiting for a connection instead of silently reconnecting after shutdown. Recognized shutdown cancellations no longer appear as resident storage failures.
+- Trusted writer status exposes process-local phases, deadlines and attempts, with inspection advice consistent with receipt health. Operator guidance distinguishes observation from recovery authority and local tests from live recovery.
+
+## [0.56.2.0] - 2026-09-24
+
+**Keep valid search data, publish the right file, and restore backups safely.**
+
+Rebuilding search indexes no longer throws away valid older search data just
+because a newer bookkeeping field is missing. Saving a note publishes the
+intended file when its spelling differs only by capitalization on a
+case-insensitive disk. Punctuation in filenames stays literal, and unrelated
+staged edits stay out of that commit.
+
+Sync retains your choices to skip embedding and schema handling when work is
+resumed. Cancellation is checked after reads and before new cursor or request
+transactions commit; already accepted work remains resumable. Historical Windows
+file origins keep their original page identity instead of becoming a deletion
+and replacement.
+
+Backups reject ambiguous archive names rather than guessing which file wins.
+Restoration uses the recorded path format for recognized managed directories
+and keeps uncertain old origins available for review. On Windows, unavailable
+private access controls stop the operation before backup payloads are written.
+The original installation is never replaced by a restore.
+
+The retired hosted provider integration and its obsolete switch command have
+been removed. Existing vectors are not silently converted to another model.
+Re-initialization also protects brains whose only vectors are in facts,
+takes or the query cache. An approved model migration invalidates incompatible
+companion vectors even at the same width, without deleting the memory text.
+Choose a supported provider, preview `gbrain migrate embeddings --dry-run`
+with an explicit target, and approve the migration before any schema change
+or paid re-embedding. See the [migration guide](docs/guides/embedding-migration.md).
+
+### Inspect before resuming work
+
+```bash
+gbrain sources writer status --json
+gbrain backup check --json
+```
+
+Use the original source and options when resuming a pending sync. A blocked
+historical request stays blocked until its cause is reviewed and an explicit
+retry is approved; upgrading does not rewrite its receipt.
+
+| Situation | What changes |
+| --- | --- |
+| Older search data lacks a text-hash stamp | Compatible vectors survive a projection rebuild; genuinely changed content still invalidates them. |
+| Git publishes but the completion record fails | The same effect can retry without creating another commit or including unrelated staged files. |
+| Sync is cancelled before admission | New cursor/request transactions roll back; already accepted receipts remain resumable. |
+| A backup contains conflicting portable names | Verification refuses it instead of overwriting another entry. |
+
+### Things to watch
+
+Claiming a source still does not authorize sync before deliberate writer
+activation. Stop older writers before upgrading owners and consumers together.
+Old imports without recorded processing choices require a reviewed retry.
+This release does not restore previously deleted pages, recompute missing
+vectors, or claim to fix the reported macOS reindex hang. An archive is
+checksummed, not encrypted; test restoration into a new disposable root.
+
+## To take advantage of v0.56.2.0
+
+Follow [the guarded upgrade and retry instructions](skills/migrations/v0.56.2.0.md).
+No new schema migration or automatic repair is required. Keep the original
+database and a verified full backup, preserve existing opt-outs, and inspect
+blocked work before approving a new attempt. No ownership transfer, service
+installation, paid backfill or live repair is implied.
+
+### Itemized changes
+
+- Preserve compatible legacy vectors with NULL text-hash provenance during
+  page projection rebuilds, without treating missing provenance as embedding
+  completion. Contributed by @spiky02plateau.
+- Resolve native file spelling at preparation and queued Git execution,
+  retain frozen request/effect identities and enforce literal target-only Git
+  publication with bounded deletion checks.
+- Guard historical sync origins at discovery, freeze, preparation and locked
+  publication. Retain explicit processing choices and reject unknown old
+  consent, changed authority, roots and unsafe deletion records.
+- Separate portable archive validation from native confinement, rebase
+  recognized nested paths, retain quarantine and enforce Windows private
+  staging before payload writes.
+
+### For contributors
+
+- Add raw-state vector, real-journal Git, native origin, backup roundtrip and
+  cancellation/restart controls; repair gateway fixture isolation and the
+  serve-owner crash test's retained-lease expectations.
+- Run native safety contracts and explicit PostgreSQL parity lanes, require
+  evidence-backed wave acceptance, and document the bounded Linux PGLite
+  pressure reproduction without changing the engine or closing #5284.
+- Report loaded-versus-idle read latency as advisory in CI. Keep measured
+  threshold misses visible, while invalid workloads and failed reads or
+  writes still block the check. Explicit local strict runs remain available.
+
+## [0.56.1.0] - 2026-09-24
+
+**Meeting imports tell you what they could read, and crowded timelines no longer stall extraction.**
+
+Some meeting exports put each speaker's name inside a small structured label instead of a plain heading. GBrain can now read the supported single-quoted form without guessing who spoke. Labels that are malformed, nested, or quoted as examples stay unparsed. When a page cannot be read, the extraction summary says so instead of implying that its facts were already extracted.
+
+You can also preview extraction without asking a model to interpret the transcript. The preview explains whether a page has the wrong type, too few turns, unsupported formatting, or no eligible turns after your chosen cutoff time. Pages with a fresh completion record are counted separately. Existing skip totals remain available to scripts.
+
+Timeline extraction handles long runs of spaces without the previous slowdown. Text hidden inside code stays hidden without joining the real lines around it. The email text-conversion helper also cleans supported escaped markup while preserving ordinary addresses, comparisons, and valid Unicode. This helper change does not add a new email-import path.
+
+### What changes in practice
+
+| Input | What you see |
+|---|---|
+| A supported speaker-object transcript | Utterances retain the explicitly named speaker. |
+| An unsupported transcript | A parse-skip explanation, not a false already-processed message. |
+| A timeline line with excessive leading spaces | Bounded parsing instead of a long stall. |
+| Escaped email formatting | Cleaned text, with unsupported or invalid entities left literal. |
+
+## To take advantage of v0.56.1.0
+
+Run `gbrain upgrade`. For a read-only preview of one meeting source:
+
+```bash
+gbrain extract-conversation-facts --source-id meetings --dry-run
+```
+
+**Say to your agent:** *"Run `extract-conversation-facts --dry-run` on my meeting source and explain why any pages were skipped."*
+
+This release adds no schema migration and does not automatically reprocess historical pages. Correcting a previously unparsed transcript leaves it eligible for a later extraction; fresh completion outcomes keep their existing meaning. The email helper uses a fixed decoding limit and is a text converter, not a browser sanitizer.
+
+### Itemized changes
+
+- Add the narrow `python-dict-utterance` conversation pattern with explicit attribution, conservative wrapper rejection, and normal section boundaries. Contributed by @furuchanchan in #5365; fixes #5364.
+- Preserve `pages_skipped` and add `pages_skipped_unparsed`, `pages_skipped_type_mismatch`, `pages_skipped_insufficient_turns`, and `pages_skipped_since` through CLI and worker aggregation. Keep dry-run parsing model-free.
+- Make both timeline date-prefix matchers non-ambiguous and preserve every CR/LF position and UTF-16 offset when masking code. Contributed by @Masashi-Ono0611 in #5369.
+- Keep `stripEmailHtml` capped before processing, remove recognized markup with quote-aware matching around at most two entity-decoding passes, and validate numeric Unicode scalars. Contributed by @furuchanchan in #5388; fixes #5327.
+
+### For contributors
+
+- Add parser corpus, real-core retry/source/provenance, model-free preview, oversized-page, timeline-consumer, and bounded email-conversion regressions without weakening existing assertions.
+
 ## [0.54.1.1] - 2026-09-24
 
 **Your agent can now open administration and guide another agent through a working connection.**
@@ -1871,7 +2090,7 @@ before retrying.
 **Your search reranker now runs on Voyage, and every surface tells you whether it is actually running.**
 
 The cross-encoder reranker that `balanced` and `tokenmax` search modes run
-after fusion used to default to a ZeroEntropy model whose hosted API shuts
+after fusion used to default to a retired hosted provider model whose hosted API shuts
 down on 2026-09-04. This release moves the default to Voyage `rerank-2.5`
 ahead of that date. It rides the same `VOYAGE_API_KEY` as the embedding
 default, so a brain that already embeds with Voyage reranks with no extra
@@ -1900,7 +2119,7 @@ No Voyage key and no wish to rerank: `gbrain config set search.reranker.enabled 
 - Every cached search result set is re-keyed once by this flip (the reranker
   model is part of the cache key in all three modes). One cold pass, then the
   cache refills within `cache.ttl_seconds` (default 3600).
-- A brain that explicitly configured a ZeroEntropy `zerank-*` reranker keeps
+- A brain that explicitly configured a retired hosted provider `retired-reranker-*` reranker keeps
   it until 2026-09-04; from that date the dead hosted call is skipped before
   any HTTP, with one audit row per process and a single stderr line naming
   the switch command.
@@ -2024,8 +2243,8 @@ warns about the reranker:
 - **Reranker default → `voyage:rerank-2.5` in all three mode bundles.**
   `DEFAULT_RERANKER_MODEL` in `src/core/ai/defaults.ts` is the one code home;
   `src/core/search/mode.ts` and `src/core/ai/gateway.ts` import it. The
-  retired ZeroEntropy value stays a named constant (`LEGACY_DEFAULT_RERANKER_MODEL`)
-  for the sunset row, so an explicit `zeroentropyai:*` config still
+  retired hosted provider value stayed a named historical constant
+  for the sunset row, so an explicit `retired-provider:*` config still
   short-circuits past the date instead of hanging five seconds per query.
 - **Keyless brains fail open quietly.** `gateway.rerank()` skips a reranker
   whose provider key is absent before any HTTP call (`RerankError('no_key')`):
@@ -2068,11 +2287,11 @@ warns about the reranker:
 - **Remote MCP callers** (`search_modes`) get the reranker verdict without the
   host's provider-key inventory or self-host topology; the local CLI dashboard
   keeps the full readiness line.
-- **Init:** a ZeroEntropy embedding pick is treated like any other keyed
+- **Init:** a retired hosted provider embedding pick is treated like any other keyed
   non-Voyage install (`search.reranker.enabled false` without a Voyage key), and
   a `--force` re-init sees a Voyage key that lives only in the brain's config
   table.
-- **ZeroEntropy detection everywhere** (`rerankerSunset`, the upgrade banner,
+- **retired hosted provider detection everywhere** (`rerankerSunset`, the upgrade banner,
   the doctor checks, init) matches the provider id case-insensitively and in the
   `provider/model` form, the same way the gateway resolves it.
 
@@ -2088,7 +2307,7 @@ warns about the reranker:
   `test/rerank-no-key.serial.test.ts`, `test/hybrid-reranker-skipped.serial.test.ts`,
   `test/doctor-reranker-health.test.ts`, `test/modes-report-reranker.test.ts`,
   `test/init-reranker-default.test.ts`; the sunset short-circuit suite now
-  pins the explicit-ZE scenario plus the live-default-after-the-date case.
+  pins the explicit-retired provider scenario plus the live-default-after-the-date case.
 
 ## [0.48.1.0] - 2026-09-02
 
@@ -4824,7 +5043,7 @@ open community PRs by @Masashi-Ono0611 — thank you.
   save failed with a dim mismatch. Model-id matching is now case-folded at
   every lookup (dimensions, init-time validation, pricing), while wire
   strings and error messages keep your original casing. Deliberate
-  consequence: a cased Voyage/ZeroEntropy/Perplexity config that was
+  consequence: a cased Voyage/retired hosted provider/Perplexity config that was
   silently producing wrong-width vectors now fails loudly at init with the
   valid sizes, instead of corrupting quietly.
 - **Query-expansion and image-OCR spend now count against budget caps.**
@@ -5237,7 +5456,7 @@ that impossible.
 
 ### Changed
 
-- **`gbrain ze-switch` is now a pure refusal/redirect shim.** `--help` leads
+- **`gbrain retired-provider-switch` is now a pure refusal/redirect shim.** `--help` leads
   with RETIRED, the sunset date, and the one maintained off-ramp
   (`gbrain migrate embeddings --to voyage:voyage-4 --dim 1024`), and it now
   actually reaches you through the compiled binary (the generic help
@@ -5246,12 +5465,12 @@ that impossible.
   `--non-interactive`, `--force`, …) are still accepted so old scripts get
   the refusal message instead of an unknown-flag error — even on a machine
   with no brain configured.
-- **Two scripted contracts changed deliberately:** `ze-switch --undo` no
+- **Two scripted contracts changed deliberately:** `retired-provider-switch --undo` no
   longer acts — it prints the exact `gbrain migrate embeddings` command that
   returns the brain to its pre-switch provider (the retired action wrote
   config the runtime never read and emptied vectors with no verified
-  re-embed); and `ze-switch --dry-run --json` now returns
-  `{status:'refused', reason:'provider_sunset'}` with exit 1 instead of a
+  re-embed); and `retired-provider-switch --dry-run --json` now returns
+  a provider-retirement refusal envelope with exit 1 instead of a
   machine-readable plan targeting the dying provider (`status:'planned'`,
   exit 0). JSON envelopes carry both `…_preview` (cost preview) and live
   command fields, and every command those envelopes render preserves an
@@ -5305,8 +5524,8 @@ that impossible.
    gbrain migrate embeddings --to voyage:voyage-4 --dim 1024
    ```
    Your agent can follow `skills/migrations/v0.46.3.0.md` end to end.
-3. **Things to watch:** scripts that parsed `ze-switch --dry-run --json`'s
-   old `planned` envelope or relied on `ze-switch --undo` acting in place
+3. **Things to watch:** scripts that parsed `retired-provider-switch --dry-run --json`'s
+   old `planned` envelope or relied on `retired-provider-switch --undo` acting in place
    must switch to `gbrain migrate embeddings` (the printed guidance names
    the exact command, including your `--brain` selector). If anything looks
    wrong, file an issue with `gbrain doctor` output:
@@ -5852,7 +6071,7 @@ nothing changes; this release adds a client, it doesn't modify brain
 behavior.
 ## [0.46.3.0] - 2026-08-15
 
-**ZeroEntropy is shutting down on 2026-09-04 — gbrain now gets you off it
+**retired hosted provider is shutting down on 2026-09-04 — gbrain now gets you off it
 before that date costs you retrieval.** The provider that shipped as the
 default embedding + reranking stack from v0.36 through v0.46 is winding down
 its hosted API. This release makes the transition a guided, one-command move
@@ -5867,7 +6086,7 @@ instead of a surprise outage:
   touchpoints. The v4 family shares one embedding space, so you can later
   point queries at `voyage-4-large` or `-lite` without re-indexing.
 - **Nothing changes out from under existing brains.** A brain configured for
-  ZeroEntropy (or riding the old default) keeps working exactly as before until
+  retired hosted provider (or riding the old default) keeps working exactly as before until
   the shutdown date — this release only detects, warns, and hands you the
   playbook. Every surface that used to steer you toward the dying provider
   (init auto-pick, the interactive picker, `gbrain providers`, setup hints)
@@ -5884,13 +6103,12 @@ instead of a surprise outage:
   columns), prints an ACTION REQUIRED notice with the blast radius and cost
   estimate, and files a durable action item pointing at the agent playbook
   (`skills/migrations/v0.46.3.0.md`). `gbrain doctor`'s provider check now
-  prints width-aware paste-ready commands, and its documented suppression
-  switch (`gbrain config set doctor.suppress_provider_sunset true`) actually
-  works now.
-- `gbrain ze-switch` no longer switches brains onto the sunsetting provider
+  printed width-aware paste-ready commands, and the historical
+  provider-warning suppression switch became effective.
+- `gbrain retired-provider-switch` no longer switches brains onto the sunsetting provider
   (`--undo` still moves brains off it), and `gbrain migrate embeddings` refuses
   a re-embed onto a provider with an announced shutdown — self-hosters with a
-  wire-compatible endpoint pass `--force-sunset-target`. Voyage's
+  wire-compatible endpoint had an explicit override (now removed). Voyage's
   `voyage-code-4` is available for code-heavy brains.
 - Setup fixes that ride along: init now detects provider keys stored in
   `~/.gbrain/config.json` (file plane), not just env vars; a keyless brain
@@ -5908,7 +6126,7 @@ instead of a surprise outage:
    gbrain doctor
    ```
 2. **If the upgrade printed ACTION REQUIRED** (or doctor flags
-   `provider_sunset`): run the printed migrate command before 2026-09-04, or
+   the historical provider-retirement check): run the printed migrate command before 2026-09-04, or
    hand your agent `skills/migrations/v0.46.3.0.md` — it walks the whole
    switch, including the reranker and edge cases.
 3. **Things to watch:** existing brains see zero behavior change from this
@@ -7714,7 +7932,7 @@ More AI providers work out of the box, including OpenRouter prompt caching, Mini
 - Provider base URL config merges from the DB. (#1676, contributed by @TheLordArgus)
 - The gateway falls back to the pooler when the derived direct host is unreachable. (#1641, #3088, contributed by @time-attack)
 - Config-plane `voyage_api_key` folds into `VOYAGE_API_KEY` like the other hosted keys. (#3236, contributed by @Masashi-Ono0611)
-- The `zeroentropyai:zerank-2` reranker has a pricing entry so the budget tracker can meter it. (#3223, #3233, contributed by @Masashi-Ono0611)
+- The `retired-provider:retired-reranker-2` reranker has a pricing entry so the budget tracker can meter it. (#3223, #3233, contributed by @Masashi-Ono0611)
 - llama-server embedding batches are capped at its 32-input request limit. (#1281, contributed by @mmekkaoui)
 - Matryoshka dimensions thread through for Qwen3-Embedding on Ollama. (#1072, contributed by @mgandal)
 - `init` seeds AI options from env on cold install, and `whoami` reports the stdio transport. (#3091, contributed by @time-attack)
@@ -8196,7 +8414,7 @@ Along the way the wave fixed a deeper, silent bug: PGLite's WASM runtime writes 
 - **Slow operations are no longer killed mid-run with a false success.** The teardown deadline starts at teardown, never before the operation handler — a 30-second sync or a deep query runs to completion.
 - **Error exits on PGLite report exit 1, not 0.** Failed operations (e.g. `gbrain get <missing-page>`) now exit non-zero on every engine; the exit code reports the operation, not the cleanup.
 - **Piped output survives the exit.** Output is fenced and given a delivery window before the process exits, on every routed exit path including the backstop (the truncation class from gbrain#1959).
-- **`gbrain doctor` no longer leaks its connection pool when DB checks throw**, and `dream`, `doctor`, `ze-switch`, and the search dashboards route their dispatcher teardown through the same bounded path (closing a long-standing drain gap on the overnight-cron path).
+- **`gbrain doctor` no longer leaks its connection pool when DB checks throw**, and `dream`, `doctor`, `retired-provider-switch`, and the search dashboards route their dispatcher teardown through the same bounded path (closing a long-standing drain gap on the overnight-cron path).
 - **Daemon safety with space-separated global flags.** `gbrain --timeout 30s serve` is recognized as the daemon it is — the exit gate resolves the command exactly the way dispatch does.
 
 ### Added
@@ -9017,9 +9235,9 @@ If anything looks off, file an issue with the output of `gbrain doctor`: https:/
 - **`src/core/code-graph-readiness.ts` (new)** — `resolveCodeReadiness(engine, {kind, count, sourceId?, allSources?})` returns `{status: 'not_built' | 'indexing' | 'ready' | 'unknown', ready, has_code, pending_edges}`. `count > 0` short-circuits to `ready` with no query; on empty it runs `EXISTS` probes (no `page_kind` index needed; the pending probe rides the partial `idx_content_chunks_edges_backfill`). `kind: 'symbol'` (code-def/refs) is 2-state and brain-wide; `kind: 'edge'` (callers/callees) is 3-state and source-scoped, with the pending predicate mirroring the resolver (`edges_backfilled_at IS NULL OR < EDGE_EXTRACTOR_VERSION_TS`) so a resolver-version bump doesn't falsely report `ready`. Scope matches the result query's `deleted_at` posture; any DB error returns `unknown` (fail-open). `readinessHint()` renders the human one-liner.
 - **`src/commands/code-def.ts`, `code-refs.ts`, `code-callers.ts`, `code-callees.ts`** — each JSON envelope gains `status` + `ready`; human output prints the hint when not ready. callers/callees pass their resolved `sourceId` / `allSources`; def/refs query brain-wide.
 - **`src/core/operations.ts`** — the four `code_*` MCP op handlers stamp `status` + `ready` on their result envelopes.
-- **`src/core/init-embed-check.ts` (new)** — `runInitEmbedCheck()` builds the effective env (process.env + file-plane `openai/anthropic/zeroentropy_api_key` + `--key`), reconfigures the gateway via `buildGatewayConfig`, runs `diagnoseEmbedding` (config-only), then a best-effort `liveTestEmbed` (1 token, 5s `AbortController` timeout, never throws). Init-specific warning names `--no-embedding` / `--skip-embed-check`.
+- **`src/core/init-embed-check.ts` (new)** — `runInitEmbedCheck()` builds the effective env (process.env + file-plane `openai/anthropic/retired-provider_api_key` + `--key`), reconfigures the gateway via `buildGatewayConfig`, runs `diagnoseEmbedding` (config-only), then a best-effort `liveTestEmbed` (1 token, 5s `AbortController` timeout, never throws). Init-specific warning names `--no-embedding` / `--skip-embed-check`.
 - **`src/core/ai/build-gateway-config.ts` (new)** — `buildGatewayConfig` extracted from `src/cli.ts` (which now re-exports it) so core modules reuse it without importing the CLI entrypoint. Folds file-plane API keys + provider base URLs into the gateway config; `process.env` wins.
-- **`src/commands/init.ts`** — new `--skip-embed-check` flag (also `GBRAIN_INIT_SKIP_EMBED_CHECK=1`); replaces the prior ZeroEntropy-only warning in both the PGLite and Postgres paths with the generalized check; `embedding_check {ok, reason?, live_ok?}` added to the `--json` success envelope; help text updated.
+- **`src/commands/init.ts`** — new `--skip-embed-check` flag (also `GBRAIN_INIT_SKIP_EMBED_CHECK=1`); replaces the prior retired hosted provider-only warning in both the PGLite and Postgres paths with the generalized check; `embedding_check {ok, reason?, live_ok?}` added to the `--json` success envelope; help text updated.
 - **`src/core/db-lock.ts`** — `tryAcquireDbLock` adds same-host dead-pid auto-takeover (guarded `DELETE WHERE id=$1 AND holder_pid=$2` + one normal-upsert retry returning the standard handle). New exported `classifyHolderLiveness` / `isHolderDeadLocally` (injectable `process.kill` seam; `HOLDER_TAKEOVER_GRACE_MS = 60_000`; EPERM classified as `alive`, never reclaimed). TTL-expired locks stay the upsert's job; cross-host stays TTL-only.
 - **`src/commands/sync.ts`** — `runBreakLock`'s safe path consumes the shared `classifyHolderLiveness` predicate, fixing the prior bug where any `process.kill` throw (including EPERM) counted the holder as dead.
 - **Tests** — `test/code-graph-readiness.test.ts` (11), `test/db-lock-auto-takeover.test.ts` (11), `test/init-embed-check.test.ts` (9, hermetic via the gateway embed-transport seam + `withEnv`), plus readiness-envelope cases added to `test/e2e/code-intel-mcp-ops-pglite.test.ts`. Closes #1780.
@@ -13434,7 +13652,7 @@ lifecycle to manage and no duplicate-extraction risk.
   The next run picks them up cleanly.
 - **`facts.embedding` now warns on dimension drift.** If your brain's
   `facts.embedding` column is `halfvec(1536)` and you've configured a
-  1280-dim provider (like ZeroEntropy's `zembed-1`), `gbrain doctor`
+  1280-dim provider (like retired hosted provider's `retired-embedding-1`), `gbrain doctor`
   surfaces the mismatch with a paste-ready ALTER recipe. Also fires as
   a preflight at the top of every fact-writing path (extraction,
   cycle phase, `facts:absorb` op) so new users get a clear ALTER
@@ -14166,7 +14384,7 @@ All six folded into the shipped wave per the codex consult on the plan file. The
 
 ### Itemized changes
 
-**Closes:** [#1422](https://github.com/garrytan/gbrain/issues/1422), [#1433](https://github.com/garrytan/gbrain/issues/1433), [#1434](https://github.com/garrytan/gbrain/issues/1434), [#1436](https://github.com/garrytan/gbrain/issues/1436), [#1309](https://github.com/garrytan/gbrain/issues/1309). Verified-fixed: [#1437](https://github.com/garrytan/gbrain/issues/1437) (closed). Deferred to v0.42+: [#1435](https://github.com/garrytan/gbrain/issues/1435) (closed with TODO), [#1432](https://github.com/garrytan/gbrain/issues/1432) (overlaps PR #1450 ze-switch), [#1438](https://github.com/garrytan/gbrain/issues/1438) (covered by PR #1440's `validateEmbeddingCreds()` preflight).
+**Closes:** [#1422](https://github.com/garrytan/gbrain/issues/1422), [#1433](https://github.com/garrytan/gbrain/issues/1433), [#1434](https://github.com/garrytan/gbrain/issues/1434), [#1436](https://github.com/garrytan/gbrain/issues/1436), [#1309](https://github.com/garrytan/gbrain/issues/1309). Verified-fixed: [#1437](https://github.com/garrytan/gbrain/issues/1437) (closed). Deferred to v0.42+: [#1435](https://github.com/garrytan/gbrain/issues/1435) (closed with TODO), [#1432](https://github.com/garrytan/gbrain/issues/1432) (overlaps PR #1450 retired-provider-switch), [#1438](https://github.com/garrytan/gbrain/issues/1438) (covered by PR #1440's `validateEmbeddingCreds()` preflight).
 
 **Reports:** infiniteGameExp's seven-issue triage on 2026-05-25 + foxhoundinc's #1422 separately. All from real production deployments hitting the bugs in the first 24 hours of use.
 
@@ -14229,9 +14447,9 @@ New tests: `test/operations-fuzzy-source-scope.test.ts` (6 PGLite cases: scalar 
 ### To take advantage of v0.41.13.0
 ## [0.41.12.0] - 2026-05-25
 
-**`gbrain ze-switch` no longer silently breaks multimodal search on brains that mix text and image embeddings.**
+**`gbrain retired-provider-switch` no longer silently breaks multimodal search on brains that mix text and image embeddings.**
 
-If you had a brain with image content embedded via Voyage multimodal-3 (1024 dims) and you switched the TEXT embedding model from OpenAI (1536 dims) to ZeroEntropy (1280 dims), the ze-switch transition would silently rewrite the `embedding_image` column to 1280 dims too. Voyage then could not write into it. Image search just stopped returning results. No error. No log line. The column was the wrong shape.
+If you had a brain with image content embedded via Voyage multimodal-3 (1024 dims) and you switched the TEXT embedding model from OpenAI (1536 dims) to retired hosted provider (1280 dims), the retired-provider-switch transition would silently rewrite the `embedding_image` column to 1280 dims too. Voyage then could not write into it. Image search just stopped returning results. No error. No log line. The column was the wrong shape.
 
 The fix carves the multimodal columns (`embedding_image` and `embedding_multimodal`) out of the schema transition entirely. Only the primary text `embedding` column moves to the new dim. The HNSW index on `embedding_image` is rebuilt to keep the search path warm, but the column type is preserved.
 
@@ -14243,17 +14461,17 @@ To take advantage of v0.41.12.0:
 gbrain upgrade
 ```
 
-No manual action needed. If you already ran `gbrain ze-switch` on a brain with image embeddings before this fix landed and your image search has been broken since, restore by re-embedding the image content (`gbrain embed --stale` or rerun your multimodal ingest path).
+No manual action needed. If you already ran `gbrain retired-provider-switch` on a brain with image embeddings before this fix landed and your image search has been broken since, restore by re-embedding the image content (`gbrain embed --stale` or rerun your multimodal ingest path).
 
 ### Itemized changes
 
 #### Fixed
-- `gbrain ze-switch` preserves `embedding_image` and `embedding_multimodal` column dimensions during schema transition. Pre-fix, both columns were dropped and recreated at the new text-embedding target dim, breaking the multimodal provider's writes. Cherry-picked from community PR #1443 (originally authored by `@garrytan-agents`).
-- `idx_chunks_embedding_image` is recreated with the canonical `WHERE embedding_image IS NOT NULL` partial-index predicate (matches `src/schema.sql:258-260`). Without it, ze-switch silently turned a sparse partial index into a full HNSW index, wasting space proportional to total chunk count on brains with few image chunks.
+- `gbrain retired-provider-switch` preserves `embedding_image` and `embedding_multimodal` column dimensions during schema transition. Pre-fix, both columns were dropped and recreated at the new text-embedding target dim, breaking the multimodal provider's writes. Cherry-picked from community PR #1443 (originally authored by `@garrytan-agents`).
+- `idx_chunks_embedding_image` is recreated with the canonical `WHERE embedding_image IS NOT NULL` partial-index predicate (matches `src/schema.sql:258-260`). Without it, retired-provider-switch silently turned a sparse partial index into a full HNSW index, wasting space proportional to total chunk count on brains with few image chunks.
 - `runSchemaTransition`'s `information_schema.columns` probe now scopes by `table_schema = 'public'` so the EXISTS check can't false-positive against same-named tables in other schemas.
 
 #### Added
-- Three regression tests in `test/retrieval-upgrade-planner.test.ts` pinning the multimodal-column preservation invariant: dim is still `vector(1024)` post-switch on both `embedding_image` and `embedding_multimodal`, the partial WHERE clause survives the index recreation, and the EXISTS guard short-circuits cleanly on fresh brains that lack the column.
+- Three regression tests in `test/historical-provider-migration-planner.test.ts` pinning the multimodal-column preservation invariant: dim is still `vector(1024)` post-switch on both `embedding_image` and `embedding_multimodal`, the partial WHERE clause survives the index recreation, and the EXISTS guard short-circuits cleanly on fresh brains that lack the column.
 
 ### For contributors
 
@@ -14495,7 +14713,7 @@ If you see unexpected behavior or the doctor check stays in WARN after a run, fi
 
 **Background sweeps stop silently losing rows, `dream.*` config you set actually reaches the cycle, and switching embedding providers won't quietly corrupt your brain when env vars override the switch.** Three production reliability fixes landed in one wave, rebuilt from three closed community PRs (#1414, #1416, #1421 from `@garrytan-agents`) with structural improvements from `/plan-eng-review` + codex outside-voice review.
 
-You can now configure `dream.synthesize.session_corpus_dir` (and 6 other dream.* keys) via `gbrain config set` and have it actually reach the cycle phase that reads it. Pre-fix the cycle silently skipped with "no transcripts to process" even though the config wrote successfully to the DB. The `extract` and `sync` commands now retry batched inserts once on transient PgBouncer connection drops instead of losing the whole batch — closes a ~30% data-loss rate observed on 96K-page brains during heavy cycles. And `gbrain ze-switch` now refuses to start a schema transition when `GBRAIN_EMBEDDING_MODEL` is pinned to a model that disagrees with the target, instead of silently corrupting 716K chunks the way the original incident did.
+You can now configure `dream.synthesize.session_corpus_dir` (and 6 other dream.* keys) via `gbrain config set` and have it actually reach the cycle phase that reads it. Pre-fix the cycle silently skipped with "no transcripts to process" even though the config wrote successfully to the DB. The `extract` and `sync` commands now retry batched inserts once on transient PgBouncer connection drops instead of losing the whole batch — closes a ~30% data-loss rate observed on 96K-page brains during heavy cycles. And `gbrain retired-provider-switch` now refuses to start a schema transition when `GBRAIN_EMBEDDING_MODEL` is pinned to a model that disagrees with the target, instead of silently corrupting 716K chunks the way the original incident did.
 
 To turn it on: `gbrain upgrade`.
 
@@ -14507,15 +14725,15 @@ What you'd see in a concrete example.
 - **Before:** Run `gbrain extract all` on a brain hitting PgBouncer pool recycles. ~30% of batched inserts throw "No database connection: connect() has not been called" and silently drop 100 rows each — visible in stderr but easy to miss in a long run.
 - **After:** Same setup, transient connection errors trigger one 500ms retry. Stderr shows `[extract.links_fs] connection blip, retrying 100 rows in 500ms (Connection terminated unexpectedly)` and the retry succeeds. Snapshot-before-clear contract means the retry sends the same data even if the producer wrote more during the delay.
 
-- **Before:** `GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain ze-switch --non-interactive --force`. Schema migrates to 2560-dim ZE columns. Embed sweep reads env, embeds with OpenAI's 1536-dim model, writes 1536d vectors into 2560d columns. Brain corrupts.
+- **Before:** `GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain retired-provider-switch --non-interactive --force`. Schema migrates to 2560-dim retired provider columns. Embed sweep reads env, embeds with OpenAI's 1536-dim model, writes 1536d vectors into 2560d columns. Brain corrupts.
 - **After:** Same command refuses pre-apply with an ASCII warning box: schema not mutated, paste-ready `unset GBRAIN_EMBEDDING_MODEL` command surfaced. Apply with `--ignore-env-override` if you really mean it. The gate fires on `--resume` too, so there's no bypass path.
 
 Things to know about. **(1)** Idempotency upgrade for `extract_atoms`. The phase now checks "do any atoms already exist for this content hash?" before calling Haiku, replacing the date-stamped slug that caused duplicate atoms when re-discovered on a new day. Page-side and transcript-side both covered. Re-running the cycle on unchanged content produces zero new atoms; the original incident is closed. **(2)** Known limitation: if Haiku writes atom 1 of 3 then atom 2 throws, source-hash filter sees atom 1 exists and skips on next discovery — atoms 2+3 stay missing until content changes. Documented in TODOS.md as a v0.42+ per-atom idempotency follow-up. Rare in practice. **(3)** A new `embedding_env_override` doctor check runs every doctor pass: surfaces when `GBRAIN_EMBEDDING_MODEL` / `GBRAIN_EMBEDDING_DIMENSIONS` disagree with DB config so users see the drift before the embed sweep corrupts vectors. Wired into both local doctor and the HTTP MCP doctor surface.
 
 What we caught and fixed before merging. Codex outside-voice review caught 10 real correctness gaps in the plan:
 - `extract-atoms` was calling `engine.putPage(slug, page)` without sourceId — on non-default brain sources, atoms always wrote to `default` and the NOT EXISTS idempotency check became ineffective. Fixed: sourceId threaded through every putPage call.
-- The original `ze-switch` env-gate placement (post-apply warning) would have shipped the same 716K-chunk damage class. Fixed: gate fires BEFORE the snapshot write at line ~294, not just before runSchemaTransition at ~304. Test asserts ZERO setConfig calls fire on a refused apply.
-- `resumeRetrievalUpgrade` would have been a bypass path. Fixed: same gate on resume.
+- The original `retired-provider-switch` env-gate placement (post-apply warning) would have shipped the same 716K-chunk damage class. Fixed: gate fires BEFORE the snapshot write at line ~294, not just before runSchemaTransition at ~304. Test asserts ZERO setConfig calls fire on a refused apply.
+- `resumeHistoricalProviderMigration` would have been a bypass path. Fixed: same gate on resume.
 - Discovery SQL would have crashed on pages with NULL content_hash. Fixed: `AND p.content_hash IS NOT NULL` filter added.
 - Discovery would have chewed its own dream-generated output. Fixed: `AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'` filter.
 - cycle.ts was passing `affectedSlugs = syncPagesAffected` only, missing pages just-written by the synthesize phase in the same cycle. Fixed: union of sync + synthesize affected slugs.
@@ -14549,14 +14767,14 @@ What we caught and fixed before merging. Codex outside-voice review caught 10 re
 - `PhaseResult.details` extended with additive fields: `pages_processed`, `pages_total`, `pages_skipped_budget`, `duplicates_skipped`. All existing fields preserved (regression-tested).
 - `cycle.ts` passes union of `syncPagesAffected + synthesizeWrittenSlugs` as `affectedSlugs` to `runPhaseExtractAtoms`.
 
-**Phase 4: ze-switch pre-apply + pre-resume env-override gate (`src/core/retrieval-upgrade-planner.ts`, `src/commands/ze-switch.ts`, `src/core/retrieval-upgrade-prompt.ts`)**
+**Phase 4: retired-provider-switch pre-apply + pre-resume env-override gate (`src/core/historical-provider-migration-planner.ts`, `src/commands/retired-provider-switch.ts`, `src/core/historical-provider-migration-prompt.ts`)**
 
 - New pure exports `detectEnvOverride(targetModel, targetDim, env?)` and `formatEnvOverrideWarning(warning)`. ASCII box (no Unicode per repo D10), line width ≤78 cols, includes paste-ready `unset` command.
 - `ApplyResult` tagged union extended with `{status: 'refused', reason: 'env_override', warning}` variant. `ApplyOpts` interface adds `ignoreEnvOverride?: boolean`.
-- Gate fires FIRST in `applyRetrievalUpgrade` — BEFORE `setConfig(KEY_PREVIOUS_SNAPSHOT)`, BEFORE `runSchemaTransition`. Zero side effects on refusal. Pinned by test that asserts ZERO setConfig calls fire on refused apply.
-- Same gate fires FIRST in `resumeRetrievalUpgrade`. No bypass path.
+- Gate fires FIRST in `applyHistoricalProviderMigration` — BEFORE `setConfig(KEY_PREVIOUS_SNAPSHOT)`, BEFORE `runSchemaTransition`. Zero side effects on refusal. Pinned by test that asserts ZERO setConfig calls fire on refused apply.
+- Same gate fires FIRST in `resumeHistoricalProviderMigration`. No bypass path.
 - CLI flag `--ignore-env-override` mirrors the existing `--ignore-missing-key` precedent. Loud stderr line when set.
-- Planner stays data-pure — returns the warning struct; CLI handles rendering. Interactive prompt path (`runRetrievalUpgradePrompt`) also handles the new variant gracefully.
+- Planner stays data-pure — returns the warning struct; CLI handles rendering. Interactive prompt path (`runHistoricalProviderMigrationPrompt`) also handles the new variant gracefully.
 
 **Phase 5: doctor `embedding_env_override` check (`src/commands/doctor.ts`)**
 
@@ -14568,7 +14786,7 @@ What we caught and fixed before merging. Codex outside-voice review caught 10 re
 
 - New `test/extract-batch-retry.test.ts` (16 cases) — withRetry primitive, GBrainError shape recognition, logBatchRetry, snapshot-mutation regression contract.
 - New `test/extract-atoms-page-discovery.test.ts` (17 cases, PGLite) — discovery SQL filters, NOT EXISTS idempotency, dual-source merge, transcript-side idempotency, sourceId threading.
-- New `test/ze-switch-env-override.test.ts` (17 cases, PGLite + withEnv) — pure helpers, applyRetrievalUpgrade integration with engine-setConfig-spy ZERO-mutation assertion, resumeRetrievalUpgrade parity.
+- New `test/retired-provider-switch-env-override.test.ts` (17 cases, PGLite + withEnv) — pure helpers, applyHistoricalProviderMigration integration with engine-setConfig-spy ZERO-mutation assertion, resumeHistoricalProviderMigration parity.
 - New `test/doctor-embedding-env-override.test.ts` (7 cases, PGLite + withEnv) — all status branches + cross-surface parity source-grep.
 - New `test/e2e/extract-atoms-discovery-sql.test.ts` (4 cases, real Postgres) — D10 reversal: validates ANY($::text[]) + JSONB ->> + NOT EXISTS + substring through `postgres.unsafe` against real PG.
 - Extended `test/cycle/extract-atoms-synthesize-concepts.test.ts` — `_pages: []` added to all existing cases + 1 critical regression case (legacy PhaseResult.details fields byte-identical to v0.41.2.0 transcript-only path).
@@ -14592,8 +14810,8 @@ warns about a partial migration:
    gbrain config get dream.synthesize.session_corpus_dir
    # should print /tmp/test, not the file-plane default
 
-   # ze-switch env-override gate
-   GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain ze-switch --non-interactive --force
+   # retired-provider-switch env-override gate
+   GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large gbrain retired-provider-switch --non-interactive --force
    # should refuse with the ASCII warning box, NOT mutate schema
 
    # doctor surfaces env disagreement
@@ -15041,7 +15259,7 @@ gbrain config set models.dream.synthesize_verdict deepseek:deepseek-chat
 
 ### What's safe to know about
 
-- **Voyage/Google brains relying on `gbrain config set voyage_api_key` (no env var):** `gbrain doctor --remediation-plan` is now strict about which provider's key it checks. If you set the key via `gbrain config set` (not env), the remediation planner sees it as not-yet-configured because those config keys aren't threaded to the gateway yet. Workaround: set the env var (`VOYAGE_API_KEY=...`, `GOOGLE_GENERATIVE_AI_API_KEY=...`). This is honest about a real gap — the previous behavior silently passed because of a wide-net fallback that accepted any OpenAI/ZE key.
+- **Voyage/Google brains relying on `gbrain config set voyage_api_key` (no env var):** `gbrain doctor --remediation-plan` is now strict about which provider's key it checks. If you set the key via `gbrain config set` (not env), the remediation planner sees it as not-yet-configured because those config keys aren't threaded to the gateway yet. Workaround: set the env var (`VOYAGE_API_KEY=...`, `GOOGLE_GENERATIVE_AI_API_KEY=...`). This is honest about a real gap — the previous behavior silently passed because of a wide-net fallback that accepted any OpenAI/retired provider key.
 - **Dream synthesize verdict model change:** if you had `dream.synthesize.verdict_model` set (deprecated key), it'll keep working via the legacy fallback. The canonical key is now `models.dream.synthesize_verdict`.
 - **The new CI guard `scripts/check-gateway-routed-no-direct-anthropic.sh`** prevents `synthesize.ts` and `think/index.ts` from regressing back to `new Anthropic()`. Type-only imports stay allowed (the adapter needs `Anthropic.Message` as a type).
 
@@ -15054,10 +15272,10 @@ gbrain config set models.dream.synthesize_verdict deepseek:deepseek-chat
 - `FREE_LOCAL_EMBED_PROVIDERS = {ollama, llama-server}` joins existing `FREE_LOCAL_RERANK_PROVIDERS` in `src/core/budget/budget-tracker.ts`. `--max-cost`-bounded embed/reindex jobs no longer hard-fail TX2 on local providers. `lmstudio` deliberately excluded (no recipe); `litellm` excluded (proxy can front paid).
 - New `probeEmbeddingReachability()` in `src/commands/models.ts` mirrors `probeRerankerReachability` — a 1-input embed with 5s abort timeout, new `embedding_reachability` touchpoint, gated on the zero-network config probe returning `ok` first.
 
-**Local reranker via llama.cpp (was: ZeroEntropy-hosted only):**
+**Local reranker via llama.cpp (was: retired hosted provider-hosted only):**
 
 - New recipe `llama-server-reranker` at `src/core/ai/recipes/llama-server-reranker.ts`. Distinct from `llama-server` (embedding) because llama.cpp's `--reranking` and `--embeddings` flags are mutually exclusive at launch — one process per mode, two recipes, two base URLs. Default port 8081 vs 8080.
-- `RerankerTouchpoint.path?: string` + `default_timeout_ms?: number` in `src/core/ai/types.ts`. Absent on ZE's recipe → behavior there unchanged. New recipe declares `path: '/rerank'` (concat with `/v1` base URL → `…/v1/rerank`) and `default_timeout_ms: 30000` (CPU-cold-start headroom).
+- `RerankerTouchpoint.path?: string` + `default_timeout_ms?: number` in `src/core/ai/types.ts`. Absent on retired provider's recipe → behavior there unchanged. New recipe declares `path: '/rerank'` (concat with `/v1` base URL → `…/v1/rerank`) and `default_timeout_ms: 30000` (CPU-cold-start headroom).
 - `src/core/search/mode.ts` reranker-timeout precedence: per-call > config > recipe `default_timeout_ms` > mode bundle. Closes the dead-default-timeout class.
 - `src/cli.ts` env passthrough: `LLAMA_SERVER_RERANKER_BASE_URL` → `provider_base_urls.llama-server-reranker`. Sibling of `LLAMA_SERVER_BASE_URL`.
 - `resolveLiveRerankerModel(engine)` + `resolveLiveRerankerTimeoutMs(engine)` in `src/commands/models.ts` so probe and live search read the SAME config (closes file-plane / DB-plane divergence). Probe's `getRerankerModel()` was reading `GBrainConfig.reranker_model` — a file-plane field nothing writes; live search read the DB plane via `loadSearchModeConfig`.
@@ -16220,7 +16438,7 @@ gbrain mounts disable team-brain-id            # toggle off without removing
 | `balanced` (default) | title-only prefix | $0 (string concat) | $0 (current text-embedding-3 calls reused) |
 | `tokenmax` | per-chunk Haiku synopsis | $0 (one-time only) | ~$1-5 per 10K pages, ~17h at Anthropic's default Haiku rate limit |
 
-The wrapper is asymmetric: chunks get the context prefix when going into the embed call, but queries stay clean. Voyage + ZeroEntropy distinguish `inputType: 'query'` from `'document'` natively, so this works correctly; OpenAI symmetric users still benefit from document-side orientation.
+The wrapper is asymmetric: chunks get the context prefix when going into the embed call, but queries stay clean. Voyage + retired hosted provider distinguish `inputType: 'query'` from `'document'` natively, so this works correctly; OpenAI symmetric users still benefit from document-side orientation.
 
 ### What you'd see in a concrete example
 
@@ -17191,7 +17409,7 @@ What you'd see when picking providers:
 | google:gemini-1.5-pro | Yes | No | 1M-token context; good for big-context agents |
 | openrouter:* | Yes | Depends on underlying | The cost-arbitrage path |
 | openai-compatible (Ollama, LiteLLM, vLLM, llama-server) | If the model supports tools | No | Refused-at-submit when the model lacks tool calling |
-| voyage, zeroentropy | No chat touchpoint | n/a | Embeddings only — refused with a clear hint |
+| voyage, retired-provider | No chat touchpoint | n/a | Embeddings only — refused with a clear hint |
 
 `gbrain doctor` warns when your subagent tier resolves to a degraded provider (no prompt caching = higher cost) and refuses to dispatch when the provider doesn't support tool calling at all. The check is `subagent_capability` (was `subagent_provider`).
 
@@ -17523,7 +17741,7 @@ warns about a partial migration:
 
 **Fresh `gbrain init --pglite` works out of the box now.**
 
-Before this release a brand-new install was broken: `gbrain init --pglite` made a brain whose schema didn't match what the embed pipeline actually used, so the first `gbrain embed --stale` failed every page with a vector dimension error. The default model the gateway shipped (ZeroEntropy at 1280 dimensions) and the default column the schema created (OpenAI's 1536) silently disagreed, and every documented escape hatch was also broken: `gbrain config set embedding_model X` wrote to a database table the embed pipeline doesn't read, the doctor remediation hint pointed at that no-op command, and the docs prescribed `ALTER COLUMN TYPE vector(N)` which fails on PGLite because pgvector ships as embedded WASM. The user spent an hour in source code to figure out you had to hand-edit `~/.gbrain/config.json` after init — completely undocumented. This release closes the bug class end-to-end.
+Before this release a brand-new install was broken: `gbrain init --pglite` made a brain whose schema didn't match what the embed pipeline actually used, so the first `gbrain embed --stale` failed every page with a vector dimension error. The default model the gateway shipped (retired hosted provider at 1280 dimensions) and the default column the schema created (OpenAI's 1536) silently disagreed, and every documented escape hatch was also broken: `gbrain config set embedding_model X` wrote to a database table the embed pipeline doesn't read, the doctor remediation hint pointed at that no-op command, and the docs prescribed `ALTER COLUMN TYPE vector(N)` which fails on PGLite because pgvector ships as embedded WASM. The user spent an hour in source code to figure out you had to hand-edit `~/.gbrain/config.json` after init — completely undocumented. This release closes the bug class end-to-end.
 
 ### How to upgrade
 
@@ -17531,29 +17749,29 @@ Before this release a brand-new install was broken: `gbrain init --pglite` made 
 gbrain upgrade
 # Already on a 1536-d brain that works? You don't have to do anything.
 # Starting fresh or wanting to switch models? Use the new one-liner:
-gbrain reinit-pglite --embedding-model zeroentropyai:zembed-1 --embedding-dimensions 1280
+gbrain reinit-pglite --embedding-model retired-provider:retired-embedding-1 --embedding-dimensions 1280
 ```
 
 ### What's new for everyone
 
-- **`gbrain init --pglite` produces a vector(1280) schema by default** that matches the embed model the gateway actually uses. Embedding succeeds on the first call. Init prints the resolved choice up front so you see what shipped: `Embedding: zeroentropyai:zembed-1 (1280d) [default]`.
+- **`gbrain init --pglite` produces a vector(1280) schema by default** that matches the embed model the gateway actually uses. Embedding succeeds on the first call. Init prints the resolved choice up front so you see what shipped: `Embedding: retired-provider:retired-embedding-1 (1280d) [default]`.
 - **`gbrain reinit-pglite --embedding-model X --embedding-dimensions N`** — single-command wipe-and-reinit for switching providers on PGLite. Backs up the brain to `.bak`, runs init with the new flags, re-syncs the brain repo. `--no-sync` to defer the resync, `--yes` to skip the TTY confirmation, `--json` for scripts.
 - **`gbrain init` re-run no longer destroys your settings.** Existing `~/.gbrain/config.json` fields are merged on top of new init flags, so re-running with no args preserves `embedding_model`, `chat_model`, API keys, and every other field you set.
 - **`gbrain sync --help` actually documents `--no-embed` now.** The flag has existed for releases but was unreachable through `--help` because sync wasn't wired into the dispatcher's self-help set.
 - **`gbrain config set embedding_model X` refuses with the right recipe.** That command wrote to the DB plane while the embed pipeline read the file plane, so it silently lied for releases. It now exits 1 with a paste-ready wipe-and-reinit recipe pointing at the engine you're actually running on (`gbrain reinit-pglite` on PGLite, the `ALTER COLUMN` SQL recipe on Postgres). No `--force` escape — keeping the no-op write path was the original footgun.
-- **ZeroEntropy API key plumbing works.** Before this release the embed pipeline only mapped `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from your config into the gateway env, so `zeroentropy_api_key` in `~/.gbrain/config.json` was dead config. Now it propagates correctly. `ZEROENTROPY_API_KEY` env var also routes through.
+- **retired hosted provider API key plumbing works.** Before this release the embed pipeline only mapped `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from your config into the gateway env, so `retired-provider_api_key` in `~/.gbrain/config.json` was dead config. Now it propagates correctly. `RETIRED_PROVIDER_API_KEY` env var also routes through.
 - **`gbrain embed --stale` fails fast with a paste-ready recipe** when the schema column and the gateway disagree. Pre-fix the worker pool would fire 20 parallel API calls into dim-rejected inserts and surface only the raw Postgres error. Now you see the wipe-and-reinit recipe before any embed call goes out.
 - **`gbrain sync` surfaces the recipe + `--no-embed` tip** when its inline embed step hits a dim mismatch. Previously the sync step silently swallowed embed errors at two different catch sites. Both sites now print the recipe.
-- **`gbrain doctor` reads the embed checks from the gateway, not the DB plane.** The width-consistency and ZE-key checks were stale on fresh installs whose DB rows hadn't been written yet. They now see what the embed pipeline sees. Provider-aware key detection too: a ZE brain no longer looks "healthy" because `OPENAI_API_KEY` happens to be set.
+- **`gbrain doctor` reads the embed checks from the gateway, not the DB plane.** The width-consistency and retired provider-key checks were stale on fresh installs whose DB rows hadn't been written yet. They now see what the embed pipeline sees. Provider-aware key detection too: a retired provider brain no longer looks "healthy" because `OPENAI_API_KEY` happens to be set.
 
 ### What's new for contributors
 
-- **New `src/core/ai/defaults.ts` leaf module** is the canonical source for `DEFAULT_EMBEDDING_MODEL` and `DEFAULT_EMBEDDING_DIMENSIONS`. Eight other places used to hardcode `'text-embedding-3-large'` / `1536` independently — those are all migrated to import from defaults.ts. Changing the default in one place now propagates correctly. Includes the PGLite + Postgres engine fallbacks, both `getPGLiteSchema()` / `getPostgresSchema()` default args, the embedding-column registry's builtin row, the chunk-row INSERT default, and the schema seed (which previously stripped the provider prefix and stored bare `zembed-1` instead of `zeroentropyai:zembed-1`).
+- **New `src/core/ai/defaults.ts` leaf module** is the canonical source for `DEFAULT_EMBEDDING_MODEL` and `DEFAULT_EMBEDDING_DIMENSIONS`. Eight other places used to hardcode `'text-embedding-3-large'` / `1536` independently — those are all migrated to import from defaults.ts. Changing the default in one place now propagates correctly. Includes the PGLite + Postgres engine fallbacks, both `getPGLiteSchema()` / `getPostgresSchema()` default args, the embedding-column registry's builtin row, the chunk-row INSERT default, and the schema seed (which previously stripped the provider prefix and stored bare `retired-embedding-1` instead of `retired-provider:retired-embedding-1`).
 - **New `loadConfigFileOnly()` in `src/core/config.ts`** is the safe write-back source for `gbrain init` 's config merge. Pre-fix init called `loadConfig()` (which merges env vars + infers engine from `DATABASE_URL`) to read existing config before saving — so any transient env value would get baked into `~/.gbrain/config.json`. The new helper reads the JSON file only.
 - **`embeddingMismatchMessage()` takes an `engineKind` argument now.** PGLite branch emits the new `gbrain reinit-pglite` recipe; Postgres branch keeps the SQL ALTER. The `databasePath` arg lets the recipe use the brain's actual path instead of `~/.gbrain/brain.pglite` (honors `GBRAIN_HOME`, `--path` overrides).
 - **`EmbeddingDimMismatchError` is a tagged class exported from `src/commands/embed.ts`.** `runEmbedCore` pre-flights via the existing `readContentChunksEmbeddingDim` helper and throws this error before the worker pool starts. Sync catches it specifically for the recipe + `--no-embed` tip.
-- **CDX2-5+6 from codex review:** the ZE key fix v1 landed in the wrong file (`gateway.ts:configureGateway` instead of `cli.ts:buildGatewayConfig`). Round 2 caught + fixed it. Pinning regression at `test/v0_37_fix_wave.test.ts`'s Lane C.3 describe.
-- **30+ unit tests + 1 in-process E2E** cover every lane. Highlights: `test/v0_37_fix_wave.test.ts` (structural lane assertions), `test/v0_37_gap_fill.test.ts` (end-to-end behavior + reinit-pglite contracts), `test/e2e/fresh-install-pglite.test.ts` (headline scenario via `__setEmbedTransportForTests` mock). The legacy `test/embedding-dim-check.test.ts` and `test/doctor-ze-checks.test.ts` and `test/search/embedding-column.test.ts` are also updated for the new behaviors.
+- **CDX2-5+6 from codex review:** the retired provider key fix v1 landed in the wrong file (`gateway.ts:configureGateway` instead of `cli.ts:buildGatewayConfig`). Round 2 caught + fixed it. Pinning regression at `test/v0_37_fix_wave.test.ts`'s Lane C.3 describe.
+- **30+ unit tests + 1 in-process E2E** cover every lane. Highlights: `test/v0_37_fix_wave.test.ts` (structural lane assertions), `test/v0_37_gap_fill.test.ts` (end-to-end behavior + reinit-pglite contracts), `test/e2e/fresh-install-pglite.test.ts` (headline scenario via `__setEmbedTransportForTests` mock). The legacy `test/embedding-dim-check.test.ts` and `test/historical-provider-doctor-checks.test.ts` and `test/search/embedding-column.test.ts` are also updated for the new behaviors.
 - **`bunfig.toml` preload** at `test/helpers/legacy-embedding-preload.ts` configures the gateway to OpenAI/1536 once per shard process, so the 20+ test files that hardcode `new Float32Array(1536)` fixtures keep working without per-file edits.
 - 26 codex outside-voice findings across two review rounds folded into the plan before code landed. Plan file: `~/.claude/plans/system-instruction-you-are-working-piped-mitten.md`.
 
@@ -17572,11 +17790,11 @@ Filed in TODOS.md:
 1. **Confirm everything's in order:**
    ```bash
    gbrain doctor
-   # Expect: embedding_width_consistency ok, ze_embedding_health ok
+   # Expect: embedding_width_consistency ok, retired_provider_embedding_health ok
    ```
 2. **If you want to switch embedding models on PGLite (now or in the future):**
    ```bash
-   gbrain reinit-pglite --embedding-model zeroentropyai:zembed-1 --embedding-dimensions 1280
+   gbrain reinit-pglite --embedding-model retired-provider:retired-embedding-1 --embedding-dimensions 1280
    ```
 3. **If `gbrain doctor` flags a width mismatch,** the message now includes a paste-ready recipe for your specific engine kind (PGLite or Postgres). Run it.
 4. **If any step fails,** please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
@@ -17601,14 +17819,14 @@ What you'd see in concrete scenarios:
 
 | Scenario | Before v0.37.10.0 | After |
 |---|---|---|
-| `OPENAI_API_KEY` set, run `init --pglite` | Silent ZE 1280d default, schema becomes `vector(1536)`, first import explodes | Auto-picks `openai:text-embedding-3-large` (1536d), config persisted, import succeeds |
-| `OPENAI_API_KEY` + `VOYAGE_API_KEY` both set | Same silent ZE default | Interactive picker fires, user chooses |
+| `OPENAI_API_KEY` set, run `init --pglite` | Silent retired provider 1280d default, schema becomes `vector(1536)`, first import explodes | Auto-picks `openai:text-embedding-3-large` (1536d), config persisted, import succeeds |
+| `OPENAI_API_KEY` + `VOYAGE_API_KEY` both set | Same silent retired provider default | Interactive picker fires, user chooses |
 | No keys, non-TTY (Docker `RUN`) | Silent broken state | Exit 1 with paste-ready `export OPENAI_API_KEY=...` hint |
 | `OPENAPI_API_KEY=sk-…` (typo) | Silent broken state | Exit 1 + "did you mean OPENAI_API_KEY?" suggestion |
 | `--embedding-dimensions 9999` (invalid) | Silently created broken schema, exploded at first embed | Preflight rejects BEFORE any disk write |
 | `gbrain config set embedding.provider openai` | Silently accepted, no-op | Exit 1, suggests `embedding_model`. `--force` overrides with stderr WARN |
 
-If you upgrade and `gbrain doctor` warns about a silent-default v0.36 install (vector(1536) column + empty config), it now prints the exact repair command. For an empty brain, that's `gbrain init --force --embedding-model <id>`. For a populated brain, `gbrain retrieval-upgrade --to <id> --reindex`. You should never need `rm -rf ~/.gbrain` again.
+If you upgrade and `gbrain doctor` warns about a silent-default v0.36 install (vector(1536) column + empty config), it now prints the exact repair command. For an empty brain, that's `gbrain init --force --embedding-model <id>`. For a populated brain, `gbrain historical-provider-migration --to <id> --reindex`. You should never need `rm -rf ~/.gbrain` again.
 
 Things to watch:
 
@@ -17619,7 +17837,7 @@ Things to watch:
 ### Itemized changes
 
 - **`src/core/levenshtein.ts`** (NEW) — small ~50-line `editDistance(a, b)` + `suggestNearest(input, candidates, maxDistance)` helper. Used by `gbrain config set` for "did you mean?" suggestions and by init for env-var typo detection.
-- **`src/core/embedding-dim-check.ts`** — three new pure functions: `resolveSchemaEmbeddingDim(opts)` and `resolveSchemaMultimodalDim(opts)` validate the resolved dim against recipe's `default_dims` plus per-provider Matryoshka allow-lists (OpenAI text-3, Voyage flexible-dim models, ZeroEntropy zembed-1) BEFORE any DB write; `EmbeddingDisabledError` + `assertEmbeddingEnabled(cfg)` guard the deferred-setup runtime path. New `PGVECTOR_COLUMN_MAX_DIMS = 16000` exported constant.
+- **`src/core/embedding-dim-check.ts`** — three new pure functions: `resolveSchemaEmbeddingDim(opts)` and `resolveSchemaMultimodalDim(opts)` validate the resolved dim against recipe's `default_dims` plus per-provider Matryoshka allow-lists (OpenAI text-3, Voyage flexible-dim models, retired hosted provider retired-embedding-1) BEFORE any DB write; `EmbeddingDisabledError` + `assertEmbeddingEnabled(cfg)` guard the deferred-setup runtime path. New `PGVECTOR_COLUMN_MAX_DIMS = 16000` exported constant.
 - **`src/commands/init-provider-picker.ts`** (NEW) — interactive picker mirroring `init-mode-picker.ts`. Filters candidate recipes to env-ready ones, prompts via `readLineSafe`, surfaces the subagent-Anthropic caveat when picking a non-Anthropic chat-capable recipe without `ANTHROPIC_API_KEY` set. Exports `printSubagentAnthropicCaveat(write)` for reuse from `initPGLite` and `initPostgres` so the post-init auto-pick path also surfaces it.
 - **`src/commands/init.ts:resolveAIOptions`** — rewritten with a per-touchpoint env-detection tier. Precedence: explicit flag → shorthand → env auto-pick (group by provider id, codex finding #2) → picker (TTY) or fail-loud (non-TTY). Each touchpoint (embedding / expansion / chat) resolves independently. New `--no-embedding` opt-in flag for D9 deferred-setup mode. Exported `groupReadyByProvider(touchpoint, env)` + `findEnvKeyTypos(env)` for unit testing.
 - **`src/commands/init.ts:initPGLite` + `initPostgres`** — drop the conditional `configureGateway` gate so the schema substitution and runtime gateway use one resolved dim. Preflight `resolveSchemaEmbeddingDim` BEFORE `engine.initSchema()` — invalid dim refuses with paste-ready hint, no disk write. Atomic config persist (either resolved tuple or `embedding_disabled: true` sentinel, never partial). Post-init invariant assertion stays as regression guardrail. Subagent caveat fires post-init for both auto-pick + picker paths when chat_model is non-Anthropic AND `ANTHROPIC_API_KEY` is missing.
@@ -17627,7 +17845,7 @@ Things to watch:
 - **`src/commands/config.ts`** — strict unknown-key rejection with `--force` escape hatch. Levenshtein suggestion against `KNOWN_CONFIG_KEYS` + `KNOWN_CONFIG_KEY_PREFIXES` (well-known prefixes like `search.`, `models.`, `dream.` accept sub-keys without `--force`). Bug-reporter's three no-op config keys now all exit 1 with the right suggestion.
 - **`src/core/config.ts`** — adds `embedding_disabled?: boolean` to `GBrainConfig` (D9 sentinel). Exports `KNOWN_CONFIG_KEYS` (60+ canonical config keys, both file-plane and DB-plane) + `KNOWN_CONFIG_KEY_PREFIXES` (well-known prefixes for namespaced keys).
 - **`src/commands/embed.ts`** + **`src/commands/import.ts`** — `runEmbedCore` and `runImport` consult `assertEmbeddingEnabled(loadConfig())` and refuse cleanly with a `gbrain config set embedding_model <id>` hint when `embedding_disabled: true` is set. `gbrain import --no-embed` flag still works (chunks land without vectors).
-- **`src/commands/doctor.ts`** — `embedding_provider` check extended for the v0.36 silent-default repair case. Empty-brain vs non-empty-brain repair branching (drop-and-re-init vs `gbrain retrieval-upgrade`). `subagent_provider` check (v0.31.12) extended per D7 to warn when `chat_model` is non-Anthropic AND `ANTHROPIC_API_KEY` is missing.
+- **`src/commands/doctor.ts`** — `embedding_provider` check extended for the v0.36 silent-default repair case. Empty-brain vs non-empty-brain repair branching (drop-and-re-init vs `gbrain historical-provider-migration`). `subagent_provider` check (v0.31.12) extended per D7 to warn when `chat_model` is non-Anthropic AND `ANTHROPIC_API_KEY` is missing.
 - **`src/commands/reindex-multimodal.ts`** — preflight `resolveSchemaMultimodalDim` BEFORE the reindex sweep, mirroring the text-side contract from `initPGLite`.
 - **`src/core/pglite-engine.ts` + `src/core/postgres-engine.ts`** — empty brain (`pageCount === 0`) now scores **100/100**, not 0/100. Vacuous truth: an empty brain has no coverage problem to penalize. Pre-fix, fresh `gbrain init --pglite` users saw `Brain score 0/100` on first `gbrain doctor` run, which was structurally surprising. Same fix on both engines, breakdown components unchanged for non-empty brains.
 - **`test/levenshtein.test.ts`** (18 cases), **`test/embedding-dim-check.test.ts`** (23 cases, extended), **`test/providers.test.ts`** (10 cases), **`test/init-provider-picker.test.ts`** (7 cases), **`test/init-env-detection.test.ts`** (21 cases), **`test/config-set.test.ts`** (19 cases) — 98 new unit cases pinning the env-detection grouping, Matryoshka validation, picker caveat behavior, Levenshtein suggestions, and bug-reporter regression for the three no-op keys.
@@ -17646,7 +17864,7 @@ Things to watch:
 
 `gbrain upgrade` should pick this up automatically. If `gbrain doctor` warns about a v0.36 silent-default install:
 
-1. **Run the suggested repair from the doctor output.** Empty brain → `gbrain init --force --pglite --embedding-model <id>`. Non-empty brain → `gbrain retrieval-upgrade --to <id> --reindex`.
+1. **Run the suggested repair from the doctor output.** Empty brain → `gbrain init --force --pglite --embedding-model <id>`. Non-empty brain → `gbrain historical-provider-migration --to <id> --reindex`.
 2. **For CI/Docker:** review whether your image-build path runs `gbrain init --pglite` without an API key present. If so, switch to either Pattern 1 (key at build) or Pattern 2 (`--no-embedding` opt-in + runtime config) from `docs/operations/headless-install.md`.
 3. **For downstream tooling writing config keys:** if you have scripts that `gbrain config set` an unknown key (e.g. a custom plugin), pass `--force` to keep them working. Or migrate to a known prefix (`search.X`, `dream.X`, `models.X`).
 4. **Verify:**
@@ -18889,9 +19107,9 @@ gate, doctor_run_id GIN index, op_checkpoints GC).
 
 ## [0.36.3.0] - 2026-05-18
 
-**Search now routes through any embedding column you've populated, not just OpenAI 1536. Voyage and ZeroEntropy columns become first-class search targets in one config flip.**
+**Search now routes through any embedding column you've populated, not just OpenAI 1536. Voyage and retired hosted provider columns become first-class search targets in one config flip.**
 
-Until this release, gbrain hardcoded `embedding` (OpenAI 1536) as the only column hybrid search could read from. If you'd backfilled `embedding_voyage` (1024d) or `embedding_zeroentropy` (halfvec 2560d) on the side, the index was paid for but unusable. Now `gbrain config set search_embedding_column embedding_voyage` flips your whole brain to Voyage in a single line. The query op also takes `embedding_column` per-call for A/B benchmarking. Adversarial reviews on both the planning and shipping paths caught fifteen real bugs that aren't shipping today — config-plane drift, cosine-rescore corruption when the descriptor's space doesn't match the cache, prototype-pollution via `constructor` as a column key, validation bypass on the descriptor passthrough, and a doctor false-warn on fresh brains.
+Until this release, gbrain hardcoded `embedding` (OpenAI 1536) as the only column hybrid search could read from. If you'd backfilled `embedding_voyage` (1024d) or `embedding_retired-provider` (halfvec 2560d) on the side, the index was paid for but unusable. Now `gbrain config set search_embedding_column embedding_voyage` flips your whole brain to Voyage in a single line. The query op also takes `embedding_column` per-call for A/B benchmarking. Adversarial reviews on both the planning and shipping paths caught fifteen real bugs that aren't shipping today — config-plane drift, cosine-rescore corruption when the descriptor's space doesn't match the cache, prototype-pollution via `constructor` as a column key, validation bypass on the descriptor passthrough, and a doctor false-warn on fresh brains.
 
 The numbers that matter:
 
@@ -18960,7 +19178,7 @@ What this means: you can run a side-by-side provider eval today. Set `embedding_
    ```bash
    gbrain config set embedding_columns '{
      "embedding_voyage": { "provider": "voyage:voyage-3-large", "dimensions": 1024, "type": "vector" },
-     "embedding_zeroentropy": { "provider": "zeroentropyai:zembed-1", "dimensions": 2560, "type": "halfvec" }
+     "embedding_retired-provider": { "provider": "retired-provider:retired-embedding-1", "dimensions": 2560, "type": "halfvec" }
    }'
    ```
 3. Verify with doctor:
@@ -18977,15 +19195,15 @@ What this means: you can run a side-by-side provider eval today. Set `embedding_
 If any step fails, file an issue at https://github.com/garrytan/gbrain/issues with `gbrain doctor` output and `~/.gbrain/upgrade-errors.jsonl` if it exists.
 ## [0.36.2.0] - 2026-05-17
 
-**ZeroEntropy is the new default. Faster, cheaper, better quality on real queries. Existing users get a one-shot switch prompt with cost estimate; new installs land on it out of the box. README rewritten to match what gbrain actually is in 2026.**
+**retired hosted provider is the new default. Faster, cheaper, better quality on real queries. Existing users get a one-shot switch prompt with cost estimate; new installs land on it out of the box. README rewritten to match what gbrain actually is in 2026.**
 
-Track A flips the default embedding + reranker stack to ZeroEntropy. `zembed-1` at 1280 dims via Matryoshka for embeddings, `zerank-2` cross-encoder reranker on by default in the `balanced` mode bundle. The decision is reversible: `gbrain ze-switch --undo` restores your prior config with a symmetric cost-warning prompt. Track B is a zero-based README rewrite from 884 lines to 139, with the deep-dive content moved into dedicated docs files (`docs/INSTALL.md`, `docs/architecture/RETRIEVAL.md`, `docs/ethos/ORIGIN.md`).
+Track A flips the default embedding + reranker stack to retired hosted provider. `retired-embedding-1` at 1280 dims via Matryoshka for embeddings, `retired-reranker-2` cross-encoder reranker on by default in the `balanced` mode bundle. The decision is reversible: `gbrain retired-provider-switch --undo` restores your prior config with a symmetric cost-warning prompt. Track B is a zero-based README rewrite from 884 lines to 139, with the deep-dive content moved into dedicated docs files (`docs/INSTALL.md`, `docs/architecture/RETRIEVAL.md`, `docs/ethos/ORIGIN.md`).
 
 ### The numbers that matter
 
 Comparison numbers come from a real-corpus benchmark across 20 hand-curated queries on a 17K-page brain. Three providers, head-to-head:
 
-| Metric | OpenAI | Voyage | ZeroEntropy |
+| Metric | OpenAI | Voyage | retired hosted provider |
 |---|---|---|---|
 | Top-1 wins (of 20 queries) | 6 | 4 | **11** |
 | Avg latency | 973ms | 559ms | **442ms** |
@@ -18993,11 +19211,11 @@ Comparison numbers come from a real-corpus benchmark across 20 hand-curated quer
 | Reshuffle of top-1 as reranker | n/a | n/a | **60%** |
 | Cross-provider overlap | 10-18% (any pair) | — | — |
 
-The cross-provider overlap is the most interesting number: providers literally see different things. Pairing zembed-1 (primary) + zerank-2 (reranker) compounds; that's why default-balanced mode now enables the reranker (it was off in v0.35).
+The cross-provider overlap is the most interesting number: providers literally see different things. Pairing retired-embedding-1 (primary) + retired-reranker-2 (reranker) compounds; that's why default-balanced mode now enables the reranker (it was off in v0.35).
 
 ### What this means for the user
 
-**New installs ship faster, cheaper retrieval by default.** No config required: `gbrain init` lands on `zeroentropyai:zembed-1` at 1280d with reranker on. Get a key from [zeroentropy.dev](https://dashboard.zeroentropy.dev), set it via `gbrain config set zeroentropy_api_key sk-...`, done. If you'd rather stay on OpenAI/Voyage, `gbrain config set embedding_model <provider:model>` overrides the default — your choice sticks.
+**New installs ship faster, cheaper retrieval by default.** No config required: `gbrain init` lands on `retired-provider:retired-embedding-1` at 1280d with reranker on. The release used a provider-issued key; the obsolete signup and key-setting instructions have been removed. If you'd rather stay on OpenAI/Voyage, `gbrain config set embedding_model <provider:model>` overrides the default — your choice sticks.
 
 **Existing brains see a one-shot upgrade prompt** the first time you run `gbrain upgrade` to v0.36.2.0. The prompt:
 - Shows the comparison numbers above
@@ -19005,55 +19223,55 @@ The cross-provider overlap is the most interesting number: providers literally s
 - Defaults on Enter to STAY (safest); explicit `s` to switch, `l` to ask later, `n` to never ask
 - Re-asks after 90 days if you said never (so a year-later contributor's "we have better benchmarks now" data gets surfaced)
 
-The prompt is TTY-only — non-TTY upgrades (CI, cron, docker) print an informational stderr line and skip. Re-run the switch interactively any time via `gbrain ze-switch`.
+The prompt is TTY-only — non-TTY upgrades (CI, cron, docker) print an informational stderr line and skip. Re-run the switch interactively any time via `gbrain retired-provider-switch`.
 
-**The switch consolidates with the v0.32.7 chunker-bump prompt.** If your brain has both pending (chunker version is stale AND you're switching providers), the `RetrievalUpgradePlanner` computes one combined cost and runs ONE re-embed pass. No double-charging. This was a real bug the original cutover plan had; codex outside-voice caught it pre-implementation.
+**The switch consolidates with the v0.32.7 chunker-bump prompt.** If your brain has both pending (chunker version is stale AND you're switching providers), the `HistoricalProviderMigrationPlanner` computes one combined cost and runs ONE re-embed pass. No double-charging. This was a real bug the original cutover plan had; codex outside-voice caught it pre-implementation.
 
 ### What you can now do
 
-**Run with the data behind the default.** `gbrain ze-switch --dry-run` shows you the exact pages-pending, cost estimate, and schema-change time before any change. `--json` makes it agent-readable. `--undo` reverses the switch with a symmetric cost prompt (re-embedding back to the old width costs real money — the prompt is honest about that).
+**Run with the data behind the default.** `gbrain retired-provider-switch --dry-run` shows you the exact pages-pending, cost estimate, and schema-change time before any change. `--json` makes it agent-readable. `--undo` reverses the switch with a symmetric cost prompt (re-embedding back to the old width costs real money — the prompt is honest about that).
 
-**Switch without TTY.** `gbrain ze-switch --non-interactive` is scripted-deploy-friendly. Errors out without `ZEROENTROPY_API_KEY` set unless you also pass `--ignore-missing-key` (lets you stage the schema change before the key is ready; embeddings will fail loud until the key arrives).
+**Switch without TTY.** `gbrain retired-provider-switch --non-interactive` is scripted-deploy-friendly. Errors out without `RETIRED_PROVIDER_API_KEY` set unless you also pass `--ignore-missing-key` (lets you stage the schema change before the key is ready; embeddings will fail loud until the key arrives).
 
-**Recover from a half-applied switch.** Power loss or SIGKILL between schema change and config write puts your brain in a known-bad state: schema width is 1280d but config still says 1536d. `gbrain doctor`'s new `embedding_width_consistency` check catches this and recommends `gbrain ze-switch --resume`, which completes whichever step was missing.
+**Recover from a half-applied switch.** Power loss or SIGKILL between schema change and config write puts your brain in a known-bad state: schema width is 1280d but config still says 1536d. `gbrain doctor`'s new `embedding_width_consistency` check catches this and recommends `gbrain retired-provider-switch --resume`, which completes whichever step was missing.
 
-**Verify your config matches your schema.** `gbrain doctor` ships two new ZE-aware checks: `ze_embedding_health` (warns if you configured ZE but no key is set), `embedding_width_consistency` (asserts config dim matches the actual vector(N) column width). Both have paste-ready `gbrain config set` fix hints in the message.
+**Verify your config matches your schema.** `gbrain doctor` ships two new retired provider-aware checks: `retired_provider_embedding_health` (warns if you configured retired provider but no key is set), `embedding_width_consistency` (asserts config dim matches the actual vector(N) column width). Both have paste-ready `gbrain config set` fix hints in the message.
 
 ### Itemized changes
 
-#### Track A — ZeroEntropy as default
+#### Track A — retired hosted provider as default
 
-- `src/core/ai/gateway.ts:45-54` — `DEFAULT_EMBEDDING_MODEL='zeroentropyai:zembed-1'`, `DEFAULT_EMBEDDING_DIMENSIONS=1280`, `DEFAULT_RERANKER_MODEL='zeroentropyai:zerank-2'`. 1280d is the Matryoshka step closest to the prior OpenAI 1536d default; 1024 (Voyage's step) is NOT on ZE's valid-dim list — `ZEROENTROPY_VALID_DIMS = {2560, 1280, 640, 320, 160, 80, 40}`.
+- `src/core/ai/gateway.ts:45-54` — `DEFAULT_EMBEDDING_MODEL='retired-provider:retired-embedding-1'`, `DEFAULT_EMBEDDING_DIMENSIONS=1280`, `DEFAULT_RERANKER_MODEL='retired-provider:retired-reranker-2'`. 1280d is the Matryoshka step closest to the prior OpenAI 1536d default; 1024 (Voyage's step) is NOT on retired provider's valid-dim list — `RETIRED_PROVIDER_VALID_DIMS = {2560, 1280, 640, 320, 160, 80, 40}`.
 - `src/core/search/mode.ts` — `balanced.reranker_enabled` flipped to `true`. The 60% top-1 reshuffle reaches every default install. Missing-key fail-open contract in `src/core/search/rerank.ts` handles unauthenticated cases (logs to audit JSONL, returns input order unchanged). Opt out with `gbrain config set search.reranker.enabled false`.
-- **NEW** `src/core/retrieval-upgrade-planner.ts` — `RetrievalUpgradePlanner` consolidates the v0.32.7 chunker-bump prompt with the new ZE-switch prompt. Tagged-union `ApplyResult` enum (six states: `applied`, `skipped_already_applied`, `skipped_no_work`, `declined`, `planned`, `failed`). Three config keys (`ze_switch_prompt_shown`, `ze_switch_requested`, `ze_switch_applied`) separate UI state from intent from work-done. `ze_switch_previous_snapshot` JSON captures full prior state for `--undo`. Cost math uses MAX not SUM for the consolidation case — one re-embed pass invalidates both chunker and dim surfaces.
-- **NEW** `src/core/retrieval-upgrade-prompt.ts` — interactive prompt UI. Two-line cost split (schema change ~Xs + re-embed ~$Y for N pages). Privacy callout when reranker flips on. Default-on-Enter = stay (safest). 90-day re-ask window for "never ask again".
-- **NEW** `src/commands/ze-switch.ts` — manual CLI lever (`--dry-run`, `--json`, `--resume`, `--force`, `--undo`, `--non-interactive`, `--confirm-reembed`, `--ignore-missing-key`).
+- **NEW** `src/core/historical-provider-migration-planner.ts` — `HistoricalProviderMigrationPlanner` consolidates the v0.32.7 chunker-bump prompt with the new retired-provider-switch prompt. Tagged-union `ApplyResult` enum (six states: `applied`, `skipped_already_applied`, `skipped_no_work`, `declined`, `planned`, `failed`). Three config keys (`retired_provider_switch_prompt_shown`, `retired_provider_switch_requested`, `retired_provider_switch_applied`) separate UI state from intent from work-done. `retired_provider_switch_previous_snapshot` JSON captures full prior state for `--undo`. Cost math uses MAX not SUM for the consolidation case — one re-embed pass invalidates both chunker and dim surfaces.
+- **NEW** `src/core/historical-provider-migration-prompt.ts` — interactive prompt UI. Two-line cost split (schema change ~Xs + re-embed ~$Y for N pages). Privacy callout when reranker flips on. Default-on-Enter = stay (safest). 90-day re-ask window for "never ask again".
+- **NEW** `src/commands/retired-provider-switch.ts` — manual CLI lever (`--dry-run`, `--json`, `--resume`, `--force`, `--undo`, `--non-interactive`, `--confirm-reembed`, `--ignore-missing-key`).
 - `src/core/ai/dims.ts` — `AIConfigError` extended to OpenAI text-embedding-3-{small,large}. Fail-loud at the embed boundary when configured dim is outside the model's Matryoshka range, with a paste-ready `gbrain config set embedding_dimensions <N>` fix.
-- `src/commands/doctor.ts` — two new checks (`ze_embedding_health`, `embedding_width_consistency`).
+- `src/commands/doctor.ts` — two new checks (`retired_provider_embedding_health`, `embedding_width_consistency`).
 - Schema transition runs inside a single `engine.transaction()`: DROP indexes → ALTER COLUMN → CREATE INDEX. HNSW indexes are recreated atomically with the column change — no silent slow-search window where vector queries degrade to sequential scan.
-- **NEW** `skills/migrations/v0.36.2.0.md` — agent-facing migration skill. Tells the agent to surface the retrieval-upgrade prompt to the user post-upgrade.
+- **NEW** `skills/migrations/v0.36.2.0.md` — agent-facing migration skill. Tells the agent to surface the historical-provider-migration prompt to the user post-upgrade.
 
 #### Track B — README rewrite
 
 - `README.md` — 884 lines → 139 lines. 33 H2s → 8. Three "New in vX.Y.Z" hero blocks deleted (CHANGELOG carries history; release notes don't belong in the front door). The 136-line `Commands` section moved to `gbrain --help`. The 6-table skills enumeration collapsed to a one-paragraph capability description + link to `skills/RESOLVER.md`.
 - **NEW** `docs/INSTALL.md` — every install path consolidated into one place. Agent platform, CLI standalone, MCP server (stdio + HTTP). Thin-client mode included.
 - **NEW** `docs/architecture/RETRIEVAL.md` — "why the hybrid + graph stack works." BrainBench numbers, why each strategy alone fails, how source-aware ranking + intent classification + multi-query expansion fit. Lifted from the old README's deep-dive section so the front door stays clean.
-- **NEW** `docs/ethos/ORIGIN.md` — origin story moved out of README. The hero stays factual + concrete (production numbers, benchmark numbers, ZE comparison numbers); the narrative arc lives in its own file.
-- Hero retains every load-bearing fact: OpenClaw + Hermes credit, production numbers (17,888 pages / 4,383 people / 723 companies), BrainBench numbers (P@5 49.1% / R@5 97.9% / +31.4 lift), ZE comparison numbers, install timing claim.
+- **NEW** `docs/ethos/ORIGIN.md` — origin story moved out of README. The hero stays factual + concrete (production numbers, benchmark numbers, retired provider comparison numbers); the narrative arc lives in its own file.
+- Hero retains every load-bearing fact: OpenClaw + Hermes credit, production numbers (17,888 pages / 4,383 people / 723 companies), BrainBench numbers (P@5 49.1% / R@5 97.9% / +31.4 lift), retired provider comparison numbers, install timing claim.
 
 #### Tests
 
-- **NEW** `test/retrieval-upgrade-planner.test.ts` (24 cases) — full state-machine coverage. C3 eligibility logic. Cost math C4 (MAX-not-SUM). Schema transition + HNSW recreation atomicity (D18). Crash recovery via `--resume`. Snapshot captured BEFORE config writes (D16). Undo round-trip.
-- **NEW** `test/ze-switch-cli.test.ts` (11 cases) — CLI shape: `--help`, `--dry-run`, `--json`, `--non-interactive`, `--ignore-missing-key`, `--resume`, `--undo`, `--confirm-reembed`.
+- **NEW** `test/historical-provider-migration-planner.test.ts` (24 cases) — full state-machine coverage. C3 eligibility logic. Cost math C4 (MAX-not-SUM). Schema transition + HNSW recreation atomicity (D18). Crash recovery via `--resume`. Snapshot captured BEFORE config writes (D16). Undo round-trip.
+- **NEW** `test/retired-provider-switch-cli.test.ts` (11 cases) — CLI shape: `--help`, `--dry-run`, `--json`, `--non-interactive`, `--ignore-missing-key`, `--resume`, `--undo`, `--confirm-reembed`.
 - **NEW** `test/asymmetric-encoding-contract.test.ts` (6 cases) — D17 behavior-test (replaces text-grep). `__setEmbedTransportForTests` captures the HTTP body; asserts `input_type='query'` for the search-time call. Source-text guard is the cheap second layer.
 - **NEW** `test/balanced-reranker-default.test.ts` (10 cases) — D6 mode-bundle flip pinned. Fail-open contract on missing key. Recall-preserving tail when topNIn < results.length.
-- **NEW** `test/doctor-ze-checks.test.ts` (8 cases) — A5 doctor checks.
+- **NEW** `test/historical-provider-doctor-checks.test.ts` (8 cases) — A5 doctor checks.
 - **NEW** `test/ai/dims-openai.test.ts` (16 cases) — D13 OpenAI Matryoshka range validation. Paste-ready fix hint in `fix` field.
-- **NEW** `test/readme-hero-anchors.test.ts` (5 cases) — D9 regression guard. Five load-bearing strings: OpenClaw, Hermes, ZE, production-numbers regex, P@5/R@5.
+- **NEW** `test/readme-hero-anchors.test.ts` (5 cases) — D9 regression guard. Five load-bearing strings: OpenClaw, Hermes, retired provider, production-numbers regex, P@5/R@5.
 
 ### To take advantage of v0.36.2.0
 
-`gbrain upgrade` runs the consolidated retrieval-upgrade prompt automatically.
+`gbrain upgrade` runs the consolidated historical-provider-migration prompt automatically.
 
 1. **Run the upgrade:**
    ```bash
@@ -19069,14 +19287,14 @@ The prompt is TTY-only — non-TTY upgrades (CI, cron, docker) print an informat
    ```bash
    gbrain doctor
    ```
-   `ze_embedding_health` should be green; `embedding_width_consistency` should report schema and config both at 1280.
-5. **If you regret it:** `gbrain ze-switch --undo`. Restores your prior model + dim + reranker state. Re-embeds at the old width with the same symmetric cost prompt.
+   `retired_provider_embedding_health` should be green; `embedding_width_consistency` should report schema and config both at 1280.
+5. **If you regret it:** `gbrain retired-provider-switch --undo`. Restores your prior model + dim + reranker state. Re-embeds at the old width with the same symmetric cost prompt.
 
-If the prompt didn't fire (non-TTY upgrade, you already said "never"), run `gbrain ze-switch` manually to see it, or `gbrain ze-switch --force` to bypass the prompt-shown gate.
+If the prompt didn't fire (non-TTY upgrade, you already said "never"), run `gbrain retired-provider-switch` manually to see it, or `gbrain retired-provider-switch --force` to bypass the prompt-shown gate.
 
 If any step misbehaves, please file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor --json` and the relevant `~/.gbrain/upgrade-errors.jsonl` if it exists.
 
-Credit: ZeroEntropy ([@zeroentropy](https://zeroentropy.dev)) for the embedding + reranker stack. Codex outside-voice review caught the double-re-embed bug class pre-implementation.
+Credit: the retired hosted provider for the embedding + reranker stack (original attribution is preserved in the pre-removal Git revision cited above). Codex outside-voice review caught the double-re-embed bug class pre-implementation.
 ## [0.36.1.1] - 2026-05-18
 
 **Twenty-eight community-reported bugs fix themselves on your next `gbrain upgrade`.** The most painful ones first: fresh installs work again, `/admin` actually serves the dashboard, `gbrain config set openai_api_key` stops echoing your secret to stderr, and `extract_facts` no longer dead-letters autopilot when a sync no-op passes an empty slug list.
@@ -19512,7 +19730,7 @@ This is the wave the original temporal-contradiction RFC deferred to "Phases 2-4
 
 **Your search results stop letting weak pages climb to the top just because they have a lot of links pointing at them.** Off by default; turn it on with one config key.
 
-Here's the problem this fixes. When your agent searches your brain, gbrain ranks pages by how well they match the query, then it gives a small bonus to pages that have lots of inbound links, pages you write about often, and pages you touched recently. Those bonuses are small individually. But on a big brain indexed with a strong embedding model (the kind shipped in v0.35.0.0 with ZeroEntropy zembed-1, or anyone running OpenAI text-embedding-3-large or Voyage 3+), the strong embedder treats "topically adjacent" content as more similar than it really is. So a page that barely matches your query still lands in the candidate pool, picks up all three bonuses, and ends up ranked higher than the page that actually answers your question.
+Here's the problem this fixes. When your agent searches your brain, gbrain ranks pages by how well they match the query, then it gives a small bonus to pages that have lots of inbound links, pages you write about often, and pages you touched recently. Those bonuses are small individually. But on a big brain indexed with a strong embedding model (the kind shipped in v0.35.0.0 with retired hosted provider retired-embedding-1, or anyone running OpenAI text-embedding-3-large or Voyage 3+), the strong embedder treats "topically adjacent" content as more similar than it really is. So a page that barely matches your query still lands in the candidate pool, picks up all three bonuses, and ends up ranked higher than the page that actually answers your question.
 
 The fix is a "floor." When you turn it on, gbrain only gives the metadata bonuses to pages near the top of the result list. Pages way down the list (far from the best match) get NO bonus, no matter how popular or important they are by other measures. So a weak match stays weak. A strong match stays on top.
 
@@ -19885,7 +20103,7 @@ Two real bugs, both in shipping code on master since v0.28+, both fixed at the a
 - `test/mcp-tool-defs.test.ts` adds: (a) explicit fixture for `extract_facts.entity_hints.items.type === 'string'`, (b) synthetic nested-array ParamDef pinning `items.items.type` recursion, (c) `findArrayWithoutItems` walker that fails the suite with a property path on any `type: 'array'` lacking `items.type`. `legacyInlineMap` reference mirrors the new recursive helper.
 - `test/git-remote.test.ts` snapshot split: `GIT_SSRF_FLAGS` pins to 3 elements (no submodules), new `GIT_SSRF_SUBCOMMAND_FLAGS` snapshot pins to 1. `cloneRepo` + `pullRepo` argv tests assert `indexOf(--no-recurse-submodules) > indexOf(verb)` — position-anchored regression guard. Pre-v0.35.3 the existing test at `:233` baked the bug in via `argv.slice(0, GIT_SSRF_FLAGS.length)`.
 - `test/resolvers.test.ts` (existing file) gets a new `describe` block. Explicitly imports `xHandleToTweetResolver` + `urlReachableResolver` and walks both `inputSchema` AND `outputSchema` recursively. Negative coverage guard asserts `builtins.length >= 2` so a future autoformatter dropping the array can't silently turn the walk into a no-op.
-- `test/e2e/zeroentropy-live.test.ts` raises rerank test timeouts to handle ZeroEntropy's cold-start latency (observed ~5-6s on Tier 2 runners; subsequent calls < 500ms). Passes explicit `timeoutMs: 25000` to each rerank() call and a 30s bun:test per-test timeout. Production `DEFAULT_RERANK_TIMEOUT_MS = 5000` in `gateway.ts` stays put for the search hot path.
+- `test/e2e/retired-provider-live.test.ts` raises rerank test timeouts to handle retired hosted provider's cold-start latency (observed ~5-6s on Tier 2 runners; subsequent calls < 500ms). Passes explicit `timeoutMs: 25000` to each rerank() call and a 30s bun:test per-test timeout. Production `DEFAULT_RERANK_TIMEOUT_MS = 5000` in `gateway.ts` stays put for the search hot path.
 - Contributed by: @DmitryBMsk (PR #910 — deepest variant of the entity_hints + candidates double-fix); cleanest naming from PR #846 (`GIT_SSRF_SUBCOMMAND_FLAGS`). 17 superseded PRs being closed with thank-you notes after this merge: #1028, #1023, #1020, #999, #985, #980, #979, #963, #904, #863, #862, #847, #846, #842, #832, #812.
 
 ## To take advantage of v0.35.3.0
@@ -19942,11 +20160,11 @@ A pre-spend smoke for the upcoming embedder shootout caught three tightly-couple
 
 **Embedder shootout prereqs: pricing, public gateway export, and resume-from for long eval runs.**
 
-A focused infrastructure release setting up the upcoming OpenAI vs Voyage vs ZeroEntropy comparison documented in `docs/designs/2026_05_EVAL_PLAN.md`. Three changes, each independently useful: `gbrain upgrade` now estimates costs correctly for `voyage:voyage-4-large` and `zeroentropyai:zembed-1` (previously fell through to "estimate unavailable"); external eval consumers can swap embedding providers per cell via the newly-public `gbrain/ai/gateway` subpath; multi-hour LongMemEval runs survive mid-run aborts via `--resume-from`.
+A focused infrastructure release setting up the upcoming OpenAI vs Voyage vs retired hosted provider comparison documented in `docs/designs/2026_05_EVAL_PLAN.md`. Three changes, each independently useful: `gbrain upgrade` now estimates costs correctly for `voyage:voyage-4-large` and `retired-provider:retired-embedding-1` (previously fell through to "estimate unavailable"); external eval consumers can swap embedding providers per cell via the newly-public `gbrain/ai/gateway` subpath; multi-hour LongMemEval runs survive mid-run aborts via `--resume-from`.
 
 ### What you can now do
 
-**See real cost estimates for Voyage 4 Large and ZeroEntropy zembed-1.** Before this release, `gbrain upgrade`'s post-upgrade reembed prompt silently fell back to "estimate unavailable" for these two models, even though both shipped with first-class recipe support in v0.35.0.0. Now: `voyage:voyage-4-large` resolves at $0.18/MTok (matching voyage-3-large) and `zeroentropyai:zembed-1` at $0.05/MTok. The lookup is case-insensitive on the provider name and falls back cleanly on unknown providers — no fabricated numbers.
+**See real cost estimates for Voyage 4 Large and retired hosted provider retired-embedding-1.** Before this release, `gbrain upgrade`'s post-upgrade reembed prompt silently fell back to "estimate unavailable" for these two models, even though both shipped with first-class recipe support in v0.35.0.0. Now: `voyage:voyage-4-large` resolves at $0.18/MTok (matching voyage-3-large) and `retired-provider:retired-embedding-1` at $0.05/MTok. The lookup is case-insensitive on the provider name and falls back cleanly on unknown providers — no fabricated numbers.
 
 **Drive gbrain's embedding gateway from outside the binary.** `package.json` exports gain `gbrain/ai/gateway` so external consumers (`gbrain-evals`, custom eval harnesses, third-party integrations) can call `configureGateway({embedding_model, embedding_dimensions, reranker_model})` directly instead of forking gbrain or duplicating the recipe wiring. This unblocks per-cell provider swapping in eval matrices without a brain DB. The exports surface count goes 17→18, locked by the canary contract test.
 
@@ -19954,7 +20172,7 @@ A focused infrastructure release setting up the upcoming OpenAI vs Voyage vs Zer
 
 ### Itemized changes
 
-- `src/core/embedding-pricing.ts` adds `voyage:voyage-4-large` ($0.18/MTok) and `zeroentropyai:zembed-1` ($0.05/MTok). New test file `test/embedding-pricing.test.ts` pins both entries, case-insensitive provider matching, bare-model openai-default fallback, table integrity (lowercase providers, finite non-negative prices), and the `estimateCostFromChars` approximation — 11 cases, 46 expect() calls.
+- `src/core/embedding-pricing.ts` adds `voyage:voyage-4-large` ($0.18/MTok) and `retired-provider:retired-embedding-1` ($0.05/MTok). New test file `test/embedding-pricing.test.ts` pins both entries, case-insensitive provider matching, bare-model openai-default fallback, table integrity (lowercase providers, finite non-negative prices), and the `estimateCostFromChars` approximation — 11 cases, 46 expect() calls.
 - `package.json` exports map adds `"./ai/gateway": "./src/core/ai/gateway.ts"`. `scripts/check-exports-count.sh` bumps `EXPECTED_COUNT` 17→18. `test/public-exports.test.ts` adds canary entries for `configureGateway` and `embed` symbols and bumps the inline count assertion. The pre-existing import-resolution failures in this test file are unchanged (longstanding Bun package self-import behavior, not introduced or worsened by this release).
 - `src/commands/eval-longmemeval.ts` adds `--resume-from <path>` CLI flag. New exported helper `loadResumeSet(path)` is the parser (file-not-found → empty set; corrupt lines silently skipped; error-rows retry). `makeEmitter()` takes a second `append` arg; runner sets it true when `--resume-from path === --output path`. 6 new test cases in `test/eval-longmemeval.test.ts` covering file-not-found, well-formed load, retry semantics, SIGKILL-recovery corrupt-line tolerance, end-to-end append-mode resume against the 5-question mini fixture, and all-done early-return (stub client must NOT be invoked).
 
@@ -19985,26 +20203,26 @@ A focused infrastructure release setting up the upcoming OpenAI vs Voyage vs Zer
 
 ## [0.35.0.0] - 2026-05-15
 
-**ZeroEntropy in the box: zembed-1 embeddings + zerank-2 cross-encoder reranking, on by default for tokenmax mode.**
+**retired hosted provider in the box: retired-embedding-1 embeddings + retired-reranker-2 cross-encoder reranking, on by default for tokenmax mode.**
 
-ZeroEntropy ships two specialized small models that target the two weakest retrieval moments in a gbrain pipeline: `zembed-1` (a 32K-context embedding distilled from zerank-2 with flexible Matryoshka dims at 2560/1280/640/320/160/80/40) and `zerank-2` (a multilingual cross-encoder reranker, $0.025/1M tokens, ~50% cheaper than Cohere/Voyage rerankers). Both land as a new openai-compatible recipe alongside OpenAI/Voyage. The reranker is the bigger story: search had no reranker stage before this release. Hybrid search now ends with `RRF → dedup → reranker → token-budget` when reranker is enabled, with one configuration flip to opt in.
+retired hosted provider ships two specialized small models that target the two weakest retrieval moments in a gbrain pipeline: `retired-embedding-1` (a 32K-context embedding distilled from retired-reranker-2 with flexible Matryoshka dims at 2560/1280/640/320/160/80/40) and `retired-reranker-2` (a multilingual cross-encoder reranker, $0.025/1M tokens, ~50% cheaper than Cohere/Voyage rerankers). Both land as a new openai-compatible recipe alongside OpenAI/Voyage. The reranker is the bigger story: search had no reranker stage before this release. Hybrid search now ends with `RRF → dedup → reranker → token-budget` when reranker is enabled, with one configuration flip to opt in.
 
 ### What you can now do
 
-**Switch to ZeroEntropy embeddings on either supported plane.** Set `embedding_model: zeroentropyai:zembed-1` and `embedding_dimensions: 2560` (or any of the 7 Matryoshka dims: 1280/640/320/160/80/40) in `~/.gbrain/config.json`, or export `GBRAIN_EMBEDDING_MODEL=zeroentropyai:zembed-1` + `GBRAIN_EMBEDDING_DIMENSIONS=2560`. The `gbrain config set` plane intentionally does NOT live-switch embedding models — they size the schema and must stay stable across engine connects. `gbrain models doctor` now probes the ZE config before spending any tokens, so an invalid `embedding_dimensions` value (the most common trip: leaving it unset and falling back to 1536, which ZE rejects) gets caught at install time with a paste-ready fix hint.
+**Switch to retired hosted provider embeddings on either supported plane.** Set `embedding_model: retired-provider:retired-embedding-1` and `embedding_dimensions: 2560` (or any of the 7 Matryoshka dims: 1280/640/320/160/80/40) in `~/.gbrain/config.json`, or export `GBRAIN_EMBEDDING_MODEL=retired-provider:retired-embedding-1` + `GBRAIN_EMBEDDING_DIMENSIONS=2560`. The `gbrain config set` plane intentionally does NOT live-switch embedding models — they size the schema and must stay stable across engine connects. `gbrain models doctor` now probes the retired provider config before spending any tokens, so an invalid `embedding_dimensions` value (the most common trip: leaving it unset and falling back to 1536, which retired provider rejects) gets caught at install time with a paste-ready fix hint.
 
-**Get cross-encoder reranking on every tokenmax query, automatically.** `tokenmax` mode now defaults `search.reranker.enabled = true` with `zerank-2` as the model. The cost is ~$0.0003/query at 30-document topNIn (~12K tokens × $0.025/1M) — rounding error against the tier's existing $700/mo @ Opus pairing per the CLAUDE.md cost matrix. `balanced` and `conservative` modes default reranker off; opt in with `gbrain config set search.reranker.enabled true`. The reranker re-orders the top 30 deduped candidates by cross-encoder relevance and preserves the un-reranked long tail in its original RRF order, so recall is protected even when the reranker drops items.
+**Get cross-encoder reranking on every tokenmax query, automatically.** `tokenmax` mode now defaults `search.reranker.enabled = true` with `retired-reranker-2` as the model. The cost is ~$0.0003/query at 30-document topNIn (~12K tokens × $0.025/1M) — rounding error against the tier's existing $700/mo @ Opus pairing per the CLAUDE.md cost matrix. `balanced` and `conservative` modes default reranker off; opt in with `gbrain config set search.reranker.enabled true`. The reranker re-orders the top 30 deduped candidates by cross-encoder relevance and preserves the un-reranked long tail in its original RRF order, so recall is protected even when the reranker drops items.
 
 **Search keeps working when the reranker is flaky.** Every error class — auth, rate-limit, network, timeout, payload-too-large — fails open. The original RRF order passes through unchanged and the failure logs to `~/.gbrain/audit/rerank-failures-YYYY-Www.jsonl` (ISO-week rotation, mirrors the slug-fallback audit). `gbrain doctor` reads the audit and warns on any auth failure (config-time problem doctor's own probe should have caught) and on >=5 transient failures in the last 7 days. The check reads `search.reranker.enabled` first so "no events" means different things when reranker is on vs off (disabled = healthy by definition; enabled = healthy because nothing has failed yet).
 
-**Use asymmetric query/document encoding where the provider supports it.** ZE zembed-1 and Voyage v3+ models accept an `input_type: 'query' | 'document'` knob for asymmetric retrieval. Hybrid search's two query-side embed sites (`hybrid.ts:400` vector seed and `hybrid.ts:629` cache lookup) now call a new `embedQuery()` companion that threads `input_type: 'query'`. All ingest paths (sync, import, embed CLI) continue using `embed()` which defaults to document encoding. Symmetric providers (OpenAI text-3, DashScope, Zhipu) ignore the field — no behavior change. MiniMax embo-01's asymmetric quirk stays as it was; opting it into the new seam is a deferred follow-up.
+**Use asymmetric query/document encoding where the provider supports it.** retired provider retired-embedding-1 and Voyage v3+ models accept an `input_type: 'query' | 'document'` knob for asymmetric retrieval. Hybrid search's two query-side embed sites (`hybrid.ts:400` vector seed and `hybrid.ts:629` cache lookup) now call a new `embedQuery()` companion that threads `input_type: 'query'`. All ingest paths (sync, import, embed CLI) continue using `embed()` which defaults to document encoding. Symmetric providers (OpenAI text-3, DashScope, Zhipu) ignore the field — no behavior change. MiniMax embo-01's asymmetric quirk stays as it was; opting it into the new seam is a deferred follow-up.
 
 **Cache key versioning is bumped to v=2.** `KNOBS_HASH_VERSION` rolls 1 → 2 to fold the five new reranker fields (`reranker_enabled`, `reranker_model`, `reranker_top_n_in`, `reranker_top_n_out`, `reranker_timeout_ms`) into the `query_cache.knobs_hash` column. A tokenmax-with-reranker cache write can't be served to a reranker-off lookup. Mid-rolling-deploy operators should expect a temporary cache hit-rate dip and a brief doubling of cache rows for hot queries — v=1 rows TTL out within `cache.ttl_seconds` (default 3600s), then the hit rate recovers.
 
 ### Itemized changes
 
-- `src/core/ai/recipes/zeroentropyai.ts` declares the new recipe with `implementation: 'openai-compatible'` (NOT the misspelled `'openai-compat'` the original plan draft had — pinned by F1 regression test). Both `touchpoints.embedding` (`zembed-1`, 7 Matryoshka dims) and `touchpoints.reranker` (`zerank-2` / `zerank-1` / `zerank-1-small`, 5MB payload cap) are declared.
-- `src/core/ai/gateway.ts` adds `zeroEntropyCompatFetch` — a fetch wrapper that rewrites the request URL from `/embeddings` to `/models/embed` (since ZE is NOT OpenAI-compatible at the wire level), injects `input_type` + explicit `encoding_format: 'float'`, and rewrites the response from `{results: [{embedding}]}` to `{data: [{embedding, index}]}` with `usage.prompt_tokens` added (Voyage's shim hit the same SDK schema requirement at `:655`). Layer 1 (Content-Length) + Layer 2 (per-embedding) OOM caps mirror Voyage's pattern via a new `ZeroEntropyResponseTooLargeError` class.
+- `src/core/ai/recipes/retired-provider.ts` declares the new recipe with `implementation: 'openai-compatible'` (NOT the misspelled `'openai-compat'` the original plan draft had — pinned by F1 regression test). Both `touchpoints.embedding` (`retired-embedding-1`, 7 Matryoshka dims) and `touchpoints.reranker` (`retired-reranker-2` / `retired-reranker-1` / `retired-reranker-1-small`, 5MB payload cap) are declared.
+- `src/core/ai/gateway.ts` adds `retiredProviderCompatFetch` — a fetch wrapper that rewrites the request URL from `/embeddings` to `/models/embed` (since retired provider is NOT OpenAI-compatible at the wire level), injects `input_type` + explicit `encoding_format: 'float'`, and rewrites the response from `{results: [{embedding}]}` to `{data: [{embedding, index}]}` with `usage.prompt_tokens` added (Voyage's shim hit the same SDK schema requirement at `:655`). Layer 1 (Content-Length) + Layer 2 (per-embedding) OOM caps mirror Voyage's pattern via a new `RetiredProviderResponseTooLargeError` (historical identifier) class.
 - `gateway.rerank()` is the new native HTTP path — no AI-SDK reranking abstraction exists. Returns `RerankResult[]` sorted by `relevanceScore`; errors classify into `RerankError.reason` (`auth | rate_limit | network | timeout | payload_too_large | unknown`). 5-second default timeout (search hot path; long stalls degrade UX worse than fallthrough). Pre-flight payload guard rejects bodies over the recipe's `max_payload_bytes` cap so the caller can fail-open without an HTTP call. `_rerankTransport` test seam mirrors `_embedTransport`.
 - `gateway.embedQuery(text)` companion routes `inputType: 'query'` through `dimsProviderOptions()` (now a 4-arg signature; the 4th `inputType` param defaults to undefined for back-compat). `src/core/embedding.ts` re-exports it; `hybrid.ts` flips the two query-side embed call sites.
 - `src/core/search/rerank.ts` is the call-site abstraction. `applyReranker(query, results, opts)` slices the top `opts.topNIn` candidates, re-orders by reranker score, appends the un-reranked tail, and optionally truncates to `opts.topNOut`. `topNOut: null` is the explicit "don't truncate" signal — distinct from undefined which means "fall through to mode bundle" (per the CDX2-F16 null-vs-undefined contract).
@@ -20013,18 +20231,18 @@ ZeroEntropy ships two specialized small models that target the two weakest retri
 - `src/core/ai/types.ts` widens `TouchpointKind` with `'reranker'`, adds `RerankerTouchpoint` interface, and extends `Recipe.touchpoints` and `AIGatewayConfig` with the reranker fields. `src/core/ai/model-resolver.ts` widens `KnownTouchpointKey` and `getTouchpoint()` to thread reranker. `assertTouchpoint()` does NOT enforce allowlists for openai-compatible recipes (existing v0.31.12 behavior); `rerank()` and `probeRerankerConfig` do the allowlist check directly so a typo'd `search.reranker.model` surfaces at probe time, not first call.
 - `src/commands/models.ts` adds `probeRerankerConfig` (zero-network: model + touchpoint + allowlist) and `probeRerankerReachability` (1-token-equivalent: minimal rerank against real API). Both surface paste-ready `gbrain config set` fix hints. `ProbeResult.touchpoint` widens to include `'reranker_config'`.
 - `src/commands/doctor.ts` adds `checkRerankerHealth`. Reads `search.reranker.enabled` first; warns on any auth failure (singular signal) or >=5 transient failures (volume signal) in the last 7 days. Engine-agnostic (file-based + one config-key read).
-- New tests: `test/ai/zeroentropy-recipe.test.ts`, `test/ai/dims-zeroentropy.test.ts`, `test/search/rerank.test.ts`, `test/rerank-audit.test.ts` — 42 cases pinning recipe shape, dim allowlist, 4th-arg inputType plumbing, reranker fail-open across every error class, null-vs-undefined topNOut semantics, and the no-success-logging contract.
+- New tests: `test/ai/retired-provider-recipe.test.ts`, `test/ai/dims-retired-provider.test.ts`, `test/search/rerank.test.ts`, `test/rerank-audit.test.ts` — 42 cases pinning recipe shape, dim allowlist, 4th-arg inputType plumbing, reranker fail-open across every error class, null-vs-undefined topNOut semantics, and the no-success-logging contract.
 - The plan that drove this release went through two Codex rounds (47 source-grounded findings across consult + adversarial challenge) before any code was written. Every must-fix landed; nine deferred bugs (the cache-wrapper double-embed, MiniMax embo-01 asymmetry, openai-compat allowlist gap, cache-hit limit/budget divergence) are documented in the plan file at `~/.claude/plans/system-instruction-you-are-working-linked-moonbeam.md`.
 
 ## To take advantage of v0.35.0.0
 
-`gbrain upgrade` does NOT auto-switch your embedding or reranker model. ZeroEntropy is opt-in; you choose when to flip. To try it:
+`gbrain upgrade` does NOT auto-switch your embedding or reranker model. retired hosted provider is opt-in; you choose when to flip. To try it:
 
-1. **Get an API key:** `https://dashboard.zeroentropy.dev` → create key → `export ZEROENTROPY_API_KEY=...`
-2. **(Optional) Switch embedding to zembed-1.** Note: switching embedding models invalidates the vector index; you'll need to re-embed. Add to `~/.gbrain/config.json`:
+1. **Historical prerequisite:** a provider-issued API key. The obsolete signup instructions have been removed.
+2. **(Optional) Switch embedding to retired-embedding-1.** Note: switching embedding models invalidates the vector index; you'll need to re-embed. Add to `~/.gbrain/config.json`:
    ```json
    {
-     "embedding_model": "zeroentropyai:zembed-1",
+     "embedding_model": "retired-provider:retired-embedding-1",
      "embedding_dimensions": 2560
    }
    ```

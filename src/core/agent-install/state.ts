@@ -85,12 +85,20 @@ export function assertNoSymlinks(path: string): void {
   }
 }
 
-export function confinedPath(root: string, relative: string): string {
-  if (!relative || isAbsolute(relative) || relative.includes('\\') || relative.split('/').some(p => !p || p === '.' || p === '..') || /[\0\r\n]/.test(relative)) {
+export function checkedRelativePath(relative: string): string {
+  if (!relative || /[\\<>:"|?*\x00-\x1f\x7f]/.test(relative)
+    || relative.split('/').some(p => !p || p === '.' || p === '..' || /[. ]$/.test(p)
+      || /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?: *\.| *$)/i.test(p))) {
     throw new AgentInstallError('invalid_relative_path', `Invalid managed relative path: ${JSON.stringify(relative)}`);
   }
-  const target = resolve(root, relative);
-  if (!target.startsWith(root + sep)) throw new AgentInstallError('path_escape', 'Managed path escapes storage root.');
+  return relative;
+}
+
+export function confinedPath(root: string, relative: string): string {
+  checkedRelativePath(relative);
+  const base = checkedRoot(root);
+  const target = resolve(base, relative);
+  if (!target.startsWith(base.endsWith(sep) ? base : base + sep)) throw new AgentInstallError('path_escape', 'Managed path escapes storage root.');
   assertNoSymlinks(target);
   return target;
 }
@@ -130,15 +138,17 @@ export function privateWrite(path: string, contents: string | Uint8Array, mode =
 export function installReceiptPath(root: string): string { return join(root, '.gbrain', 'agent-install', 'receipt.json'); }
 
 /** A data inventory cannot include installer internals, credentials or another inventory root. */
-export function checkedManagedPaths(root: string, input: unknown): string[] {
+export function checkedManagedPaths(root: string | null, input: unknown): string[] {
   if (!Array.isArray(input) || input.some(path => typeof path !== 'string')) throw new AgentInstallError('invalid_managed_paths', 'Invalid managed path inventory.');
   const paths = input as string[];
   for (const path of paths) {
-    confinedPath(root, path);
-    const first = path.split('/')[0];
+    if (root === null) checkedRelativePath(path);
+    else confinedPath(root, path);
+    const first = path.split('/')[0].toLowerCase();
     if (['.gbrain', 'runtime', 'bin', 'restore-receipt.json'].includes(first) || first.startsWith('.restore-') || first.startsWith('.gbrain-')) throw new AgentInstallError('invalid_managed_paths', 'Managed data cannot include installer, credential or restore state.');
   }
-  if (paths.some((path, i) => paths.some((other, j) => i !== j && (path === other || path.startsWith(other + '/'))))) throw new AgentInstallError('invalid_managed_paths', 'Managed inventory paths overlap.');
+  const keys = paths.map(path => path.normalize('NFC').toLowerCase());
+  if (keys.some((path, i) => keys.some((other, j) => i !== j && (path === other || path.startsWith(other + '/'))))) throw new AgentInstallError('invalid_managed_paths', 'Managed inventory paths overlap.');
   return paths;
 }
 

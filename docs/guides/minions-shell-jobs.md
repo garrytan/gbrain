@@ -164,7 +164,7 @@ child-spawn time:
 - `inherit: ["openai_api_key"]` → child env `OPENAI_API_KEY`
 - `inherit: ["openrouter_api_key"]` → child env `OPENROUTER_API_KEY`
 - `inherit: ["voyage_api_key"]` → child env `VOYAGE_API_KEY`
-- `inherit: ["groq_api_key", "zeroentropy_api_key"]` → both injected
+- `inherit: ["groq_api_key"]` → child env `GROQ_API_KEY`
 - Or any arbitrary config-key your worker has (`my_custom_field` →
   `MY_CUSTOM_FIELD`)
 

@@ -105,26 +105,26 @@ test('generated executable launcher really scrubs environment and survives a hos
   expect(output.split('\n')).toEqual([temporary, 'host', 'default', '', 'unset', temporary, '--brain', 'host', 'recall', 'example', '']);
 });
 
-test('private archive round trip verifies exact bytes and refuses an existing output', () => {
+test('private archive round trip verifies exact bytes and refuses an existing output', async () => {
   const source = join(temporary, 'source'); writeFileSync(source, 'private memory\n');
   const archive = join(temporary, 'snapshot.gbrain-backup');
-  writeBackupArchive(archive, { kind: 'test' }, [{ path: 'memory/fact.txt', file: source }]);
+  await writeBackupArchive(archive, { kind: 'test' }, [{ path: 'memory/fact.txt', file: source }]);
   expect(statSync(archive).mode & 0o777).toBe(0o600);
-  expect(() => writeBackupArchive(archive, {}, [{ path: 'other', file: source }])).toThrow();
+  await expect(writeBackupArchive(archive, {}, [{ path: 'other', file: source }])).rejects.toThrow();
   const into = join(temporary, 'into'); mkdirSync(into, { mode: 0o700 });
   readBackupArchive(archive, into);
   expect(readFileSync(join(into, 'memory', 'fact.txt'), 'utf8')).toBe('private memory\n');
   expect(statSync(join(into, 'memory', 'fact.txt')).mode & 0o777).toBe(0o600);
 });
 
-test('corrupt archive fails checksum and untrusted manifest paths cannot escape', () => {
+test('corrupt archive fails checksum and untrusted manifest paths cannot escape', async () => {
   const source = join(temporary, 'source'); writeFileSync(source, 'original');
   const archive = join(temporary, 'snapshot');
-  writeBackupArchive(archive, {}, [{ path: 'memory', file: source }]);
+  await writeBackupArchive(archive, {}, [{ path: 'memory', file: source }]);
   const bytes = readFileSync(archive); bytes[bytes.length - 1] ^= 1; writeFileSync(archive, bytes);
   const into = join(temporary, 'into'); mkdirSync(into);
   expect(() => readBackupArchive(archive, into)).toThrow('checksum');
-  expect(() => writeBackupArchive(join(temporary, 'unsafe'), {}, [{ path: '../escaped', file: source }])).toThrow();
+  await expect(writeBackupArchive(join(temporary, 'unsafe'), {}, [{ path: '../escaped', file: source }])).rejects.toThrow();
   expect(existsSync(join(temporary, 'escaped'))).toBe(false);
 });
 

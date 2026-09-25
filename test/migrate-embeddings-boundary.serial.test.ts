@@ -36,7 +36,7 @@ import { runEmbedCore } from '../src/commands/embed.ts';
 import { runMigrateEmbeddings } from '../src/commands/migrate-embeddings.ts';
 import { MIGRATION_STATE_KEY, MIGRATION_COMPLETED_KEY } from '../src/core/embedding-migration.ts';
 
-const FROM_DIMS = 1280;
+const FROM_DIMS = 1024;
 const TO_DIMS = 1536;
 const PAGES = ['b-1', 'b-2', 'b-3'];
 const PROBE_TEXT = 'gbrain embedding migration probe';
@@ -63,7 +63,7 @@ async function runMigrate(args: string[]): Promise<number> {
 }
 
 beforeAll(async () => {
-  for (const k of ['GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS', 'OPENAI_API_KEY', 'ZEROENTROPY_API_KEY', 'DATABASE_URL']) {
+  for (const k of ['GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS', 'OPENAI_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL']) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
   }
@@ -72,17 +72,17 @@ beforeAll(async () => {
   mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
   writeFileSync(join(tmpHome, '.gbrain', 'config.json'), JSON.stringify({
     engine: 'pglite',
-    embedding_model: 'zeroentropyai:zembed-1',
+    embedding_model: 'voyage:voyage-4',
     embedding_dimensions: FROM_DIMS,
-    zeroentropy_api_key: 'ze-test-fake',
+    voyage_api_key: 'voyage-test-fake',
     openai_api_key: 'sk-test-fake',
   }, null, 2));
 
   resetGateway();
   configureGateway({
-    embedding_model: 'zeroentropyai:zembed-1',
+    embedding_model: 'voyage:voyage-4',
     embedding_dimensions: FROM_DIMS,
-    env: { ZEROENTROPY_API_KEY: 'ze-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
+    env: { VOYAGE_API_KEY: 'voyage-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
   });
   __setEmbedTransportForTests(async ({ values }: { values: string[] }) => {
     for (const v of values) if (v !== PROBE_TEXT) embeddedTexts.push(v);

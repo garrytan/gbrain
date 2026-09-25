@@ -47,7 +47,7 @@ jobs:
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-30-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -136,7 +136,7 @@ jobs:
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 20
     env:
       # Open the hermes/grok opt-in doors here so binary/auth absence — not
@@ -202,7 +202,7 @@ jobs:
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     # Four serial door tests at 600s each plus the installer budget cannot
     # fit the sibling job's 20 minutes.
     timeout-minutes: 40
@@ -435,7 +435,7 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'real-agent-e2e')) ||
       (github.event_name == 'workflow_dispatch' &&
         inputs.run_grok_door == true)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     # Measured local door wall-time: keyless tier ~29s + one-time compiled
     # gbrain build (~2-4 min) + npm install (~10s); paid SMOKE turn budget
     # 2 x 240s. 20 min = measured + >50% headroom (GROK-CLI-PIN.md).
@@ -671,7 +671,7 @@ jobs:
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     env:
       CODEX_NPM_VERSION: "0.147.0"
@@ -745,7 +745,7 @@ jobs:
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'real-agent-e2e') ||
       contains(github.event.pull_request.labels.*.name, 'heavy-tests')
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -969,7 +969,7 @@ jobs:
   opencode-door-canary:
     name: opencode door canary (latest, keyless, non-gating)
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 20
     continue-on-error: true
     env:

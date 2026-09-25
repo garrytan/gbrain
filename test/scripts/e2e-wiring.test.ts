@@ -44,7 +44,6 @@ function jobBlock(name: string): string {
 
 const LIVE_KEY_FILES = new Set([
   'test/e2e/skills.test.ts',
-  'test/e2e/zeroentropy-live.test.ts',
   'test/e2e/voyage-rerank-live.test.ts',
   'test/e2e/voyage-multimodal.test.ts',
 ]);
@@ -72,7 +71,7 @@ describe('selected-e2e job wiring', () => {
   });
 
   test('fork-runnable: no live provider keys anywhere in the job block', () => {
-    for (const secret of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'ZEROENTROPY', 'VOYAGE_API_KEY', 'secrets.']) {
+    for (const secret of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'VOYAGE_API_KEY', 'secrets.']) {
       expect(job).not.toContain(secret);
     }
   });

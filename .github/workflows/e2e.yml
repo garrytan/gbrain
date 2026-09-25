@@ -29,7 +29,7 @@ jobs:
     # Postgres and HARD-FAILS if DATABASE_URL is missing, so the guard can never
     # silently skip.
     name: JSONB parity (#2339 regression guard)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 15
     services:
       postgres:
@@ -103,7 +103,7 @@ jobs:
 
   # Freeze selection before setup; each worker owns a separate Postgres service.
   prepare-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
@@ -142,7 +142,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 60
     services:
       postgres:
@@ -196,7 +196,7 @@ jobs:
 
   tier1:
     name: Tier 1 (Mechanical)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -322,10 +322,10 @@ jobs:
     # PARALLEL with tier1 (own postgres service — the old `needs: tier1`
     # serialized ~2min for no shared state). The jsonb-parity gate (~40s)
     # stays in front as the broken-build SPEND gate: this job burns real
-    # OpenAI/Anthropic/ZeroEntropy tokens and must not fire when the build
+    # OpenAI/Anthropic tokens and must not fire when the build
     # can't even pass the cheapest DB guard.
     needs: jsonb-parity
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -408,18 +408,13 @@ jobs:
           }
           EOF
       - name: Run Tier 2 skill tests
-        run: bun test --timeout=60000 test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts
+        run: bun test --timeout=60000 test/e2e/skills.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           # #3485 preload guard: this job intentionally tests against a DB.
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # v0.33.3.0: ZE live API tests skip gracefully when this is unset,
-          # so forks without the secret stay green. The test exercises the
-          # zeroEntropyCompatFetch response-rewriter + URL rewrite + flexible
-          # dim handling + gateway.rerank against the real provider.
-          ZEROENTROPY_API_KEY: ${{ secrets.ZEROENTROPY_API_KEY }}
 
   # ──────────────────────────────────────────────────────────────────────
   # Nightly coverage-full pipeline (schedule-only). The honest
@@ -432,7 +427,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -460,7 +455,7 @@ jobs:
 
   coverage-full-serial:
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -483,7 +478,7 @@ jobs:
 
   coverage-full-slow:
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -513,7 +508,7 @@ jobs:
 
   coverage-full-e2e:
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 60
     services:
       postgres:
@@ -554,7 +549,6 @@ jobs:
           E2E_FILE_TIMEOUT_SECS: '300'
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ZEROENTROPY_API_KEY: ${{ secrets.ZEROENTROPY_API_KEY }}
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
@@ -568,7 +562,7 @@ jobs:
   coverage-full-report:
     needs: [coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -615,7 +609,7 @@ jobs:
   e2e-status:
     needs: [jsonb-parity, tier1, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Aggregate result

@@ -26,7 +26,7 @@ beforeAll(async () => {
   eng = new PGLiteEngine();
   await eng.connect({});
   await eng.initSchema();
-  DIM = await probeEmbeddingDim(eng); // match the schema's column width (1280 ZE / 1536 OpenAI)
+  DIM = await probeEmbeddingDim(eng); // match the schema's column width (1024 Voyage / 1536 OpenAI)
 
   const pages: Array<[string, string, string]> = [
     ['companies/widget-co', 'company', 'Widget Co'],

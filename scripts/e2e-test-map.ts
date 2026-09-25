@@ -54,6 +54,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
   "src/core/search/**": [
+    "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/projection-statistics-postgres.test.ts",
     "test/e2e/search-query-contract-postgres.test.ts",
     "test/e2e/vector-candidate-safety-postgres.test.ts",
@@ -133,7 +134,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // #3390: runSchemaTransition's DDL path + the stale predicates behave
   // differently on real pgvector than on PGLite.
   "src/core/embedding-migration.ts": ["test/e2e/migrate-embeddings-postgres.test.ts"],
-  "src/core/retrieval-upgrade-planner.ts": ["test/e2e/migrate-embeddings-postgres.test.ts"],
+  "src/core/stored-embedding-identity.ts": ["test/e2e/unsupported-embedding-identity-postgres.test.ts"],
   "src/commands/extract.ts": ["test/e2e/multi-source-bug-class.test.ts"],
   "src/commands/migrate-engine.ts": [
     "test/e2e/multi-source-bug-class.test.ts",
@@ -163,6 +164,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts", "test/e2e/managed-connector-fencing.test.ts", "test/e2e/managed-connector-recovery.test.ts"],
   "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
   "src/core/persistence/**": [
+    "test/e2e/persistence-http-liveness.test.ts",
+    "test/e2e/persistence-phase-liveness.test.ts",
+    "test/e2e/persistence-publication-parity.test.ts",
+    "test/e2e/persistence-sync-origin-parity.test.ts",
+    "test/e2e/persistence-sync-options-parity.test.ts",
+    "test/e2e/persistence-sync-company-parity.test.ts",
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/persistence-runtime-matrix.test.ts",
     "test/e2e/persistence-admin-intent.test.ts",
@@ -197,6 +204,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/pool-budget.ts": ["test/e2e/persistence-runtime-matrix.test.ts"],
   "src/core/connection-manager.ts": ["test/e2e/persistence-runtime-matrix.test.ts", "test/e2e/pgbouncer-teardown.test.ts"],
   "src/core/postgres-engine.ts": [
+    "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/db-lock-acquisition-token.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
@@ -216,6 +224,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
+    "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
@@ -228,6 +237,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Engine method modules peeled from the façades carry the same blast
   // radius as the façades themselves.
   "src/core/postgres-engine/**": [
+    "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
@@ -241,6 +251,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/source-boundary-mutation-postgres.test.ts",
   ],
   "src/core/pglite-engine/**": [
+    "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",

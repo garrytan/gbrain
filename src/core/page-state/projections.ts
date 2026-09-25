@@ -114,7 +114,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
       await tx.executeRaw(`DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))`, [snapshot.page.id, matching]);
       await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(context.column.name)}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL WHERE page_id=$1 AND
-        (model IS DISTINCT FROM $2 OR embedded_text_hash IS DISTINCT FROM md5(chunk_text) OR $3::boolean)`,
+        (model IS DISTINCT FROM $2 OR embedded_text_hash <> md5(chunk_text) OR $3::boolean)`,
       [snapshot.page.id, context.column.name === 'embedding' ? context.model : context.column.embeddingModel,
         ![null, undefined, 'none'].includes(snapshot.page.contextual_retrieval_mode)]);
     } else if (opts.seal) await tx.deleteChunks(slug, { sourceId });
