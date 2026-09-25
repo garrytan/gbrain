@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join, relative } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
+import { DELETE_BATCH_SIZE } from '../engine-constants.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { CredentialError, isCredentialError } from '../creds/errors.ts';
 import { GOOGLE_PROVIDER, GoogleTokenProvider, fetchSendAsAliases } from '../creds/providers/google.ts';
@@ -428,6 +429,12 @@ async function calendarPageRelPathByEventId(
 const CALENDAR_HORIZON_DAYS = 60;
 /** The horizon top-up lists again once the horizon has advanced this far. */
 const CALENDAR_TOPUP_STEP_MS = 86_400_000;
+/**
+ * Slack on the reconcile's import-time floor: the sweep's floor was taken at
+ * sweep start, a page's created_at later, so an event just inside the window
+ * must not read as imported-already-expired.
+ */
+const CALENDAR_RECONCILE_SLACK_MS = 86_400_000;
 
 interface CalendarWindow {
   floorMs: number;
@@ -1010,8 +1017,10 @@ async function reconcileGmailDeletes(
 }
 
 /**
- * Delete reconcile-stale pages (DB rows + managed files), behind the
- * mass-delete guard: more than 200 at once needs GBRAIN_ALLOW_MASS_RECONCILE.
+ * Soft-delete reconcile-stale pages (72h recovery window before the autopilot
+ * purge) and remove their managed files, behind the mass-delete guard: more
+ * than 200 at once needs GBRAIN_ALLOW_MASS_RECONCILE, and a refusal marks the
+ * run partial so an incomplete --full does not read as done.
  */
 async function deleteStalePages(
   deps: GoogleSyncDeps,
@@ -1021,28 +1030,41 @@ async function deleteStalePages(
   if (stale.length === 0) return;
   const { massReconcileAllowed } = await import('../../commands/sync.ts');
   if (stale.length > 200 && !massReconcileAllowed()) {
-    deps.log(`[google] mass-delete guard refused ${stale.length} deletes for source ${deps.sourceId}`);
+    deps.log(
+      `[google] mass-delete guard refused ${stale.length} deletes for source ${deps.sourceId}; ` +
+        `set GBRAIN_ALLOW_MASS_RECONCILE=1 to proceed`,
+    );
+    summary.status = 'partial';
     return;
   }
   if (deps.managed) {
     for (const page of stale) if (await deps.managed.delete(page.slug, page.source_path)) summary.deleted++;
     return;
   }
-  await deps.engine.deletePages(stale.map((s) => s.slug), { sourceId: deps.sourceId });
+  // softDeletePages is a single-batch primitive: the caller chunks.
+  let deleted = 0;
+  for (let i = 0; i < stale.length; i += DELETE_BATCH_SIZE) {
+    const flipped = await deps.engine.softDeletePages(
+      stale.slice(i, i + DELETE_BATCH_SIZE).map((s) => s.slug),
+      { sourceId: deps.sourceId },
+    );
+    deleted += flipped.length;
+  }
   for (const s of stale) {
     if (!s.source_path) continue;
     // Containment guard mirrors the write path (defense-in-depth on DB rows).
     const target = join(deps.cfg.dir, s.source_path);
     if (isWriteTargetContained(target, deps.cfg.dir)) rmSync(target, { force: true });
   }
-  summary.deleted += stale.length;
+  summary.deleted += deleted;
 }
 
 /**
  * Soft-delete calendar pages outside the window: past the horizon, or already
  * before the history floor when they were imported (the recurring-series
  * overflow an unfiltered delta used to write). History imported inside the
- * window and aged out since is kept.
+ * window and aged out since is kept, and only pages the sweep wrote (they
+ * carry an event_id) are considered.
  */
 async function reconcileCalendarWindow(deps: GoogleSyncDeps, summary: GoogleSyncSummary): Promise<void> {
   const window = calendarWindowAt(Date.now(), deps.cfg.historyDays);
@@ -1055,13 +1077,14 @@ async function reconcileCalendarWindow(deps: GoogleSyncDeps, summary: GoogleSync
     created_at: string | Date;
   }>(
     `SELECT slug, source_path, frontmatter->>'start' AS start_iso, frontmatter->>'end' AS end_iso, created_at
-       FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'calendar/%'`,
+       FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'calendar/%'
+        AND frontmatter->>'event_id' IS NOT NULL`,
     [deps.sourceId],
   );
   const stale: Array<{ slug: string; source_path: string | null }> = [];
   for (const r of rows) {
     const createdMs = new Date(r.created_at).getTime();
-    const atImport = { floorMs: createdMs - historyMs, ceilMs: window.ceilMs };
+    const atImport = { floorMs: createdMs - historyMs - CALENDAR_RECONCILE_SLACK_MS, ceilMs: window.ceilMs };
     const current = calendarWindowPlacement(r.start_iso ?? '', r.end_iso ?? '', window);
     const imported = calendarWindowPlacement(r.start_iso ?? '', r.end_iso ?? '', atImport);
     if (current === 'future' || imported === 'past') stale.push({ slug: r.slug, source_path: r.source_path });
@@ -1257,7 +1280,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       const stop = startHeartbeat(progress, 'calendar sweep');
       try {
         await sweepCalendar(deps, calendar, state, activePack, summary, countedSlugs);
-        if (opts.full) await reconcileCalendarWindow(deps, summary);
+        if (opts.full && !opts.signal?.aborted) await reconcileCalendarWindow(deps, summary);
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);
         serviceErrors.push(`calendar: ${e instanceof Error ? e.message : String(e)}`);
