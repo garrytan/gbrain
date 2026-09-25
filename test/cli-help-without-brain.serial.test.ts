@@ -27,6 +27,9 @@ const HELP_WITHOUT_BRAIN = [
   'extract-conversation-facts',
   'transcripts',
   'jobs',
+  // runEmbed's --help branch prints usage before the engine is read
+  // (SELF_HELP_WITHOUT_ENGINE entry, same shape as jobs/dream).
+  'embed',
   // #4152: dream answers --help (and the retriage subverb help) engine-free.
   'dream',
   // cathedral-5: runCompileContext honours help before reading the engine
@@ -47,7 +50,6 @@ const HELP_WITHOUT_BRAIN = [
 const STILL_NEEDS_A_BRAIN = [
   'brainstorm',
   'config',
-  'embed',
   'lsd',
   'migrate',
   'pages',

@@ -293,6 +293,9 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // runAgent accepts BrainEngine | null; help (incl. `register --help`) is
   // answered before any engine or job-queue work (cathedral-6).
   agent: async () => (await import('./commands/agent.ts')).runAgent as never,
+  // runEmbed's --help/-h branch prints EMBED_USAGE and returns before the
+  // engine is read — help must not bind an engine or apply migrations.
+  embed: async () => (await import('./commands/embed.ts')).runEmbed as never,
 };
 
 /** Returns true when the command's own help was printed. */

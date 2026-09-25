@@ -10,6 +10,10 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.9] - 2026-09-25
+
+**`gbrain embed --help` answers without opening the database.** Asking for embed help used to bind the engine and apply migrations first, which could fail or touch a brain just to print usage. Help now answers engine-free through the same self-help path the other commands use.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

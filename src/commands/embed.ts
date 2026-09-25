@@ -831,7 +831,36 @@ export function isKeylessStaleRefusal(args: string[], embeddingDisabled: boolean
     && embeddingDisabled === true;
 }
 
+const EMBED_USAGE = `Usage: gbrain embed [<slug>] [options]
+  gbrain embed --all|--stale [options]
+  gbrain embed --slugs <s1> <s2> ... [options]
+  gbrain embed --facts [options]
+
+Embed page content into the vector index.
+
+Options:
+  --all                      embed every page
+  --stale                    embed pages whose signature changed
+  --slugs <s1..sN>           embed an explicit slug list
+  --facts                    embed stale fact claims instead of pages
+  --source <id>              restrict to one source
+  --dry-run                  report what would embed without writing
+  --batch-size <n>           chunks per batch (max 10000)
+  --priority recent          prioritize recently updated pages
+  --catch-up                 include unprocessed backlog
+  --include-null-signature   re-embed pages without an embedding signature
+  --background               submit as a background job and exit
+  --help, -h                 show this help
+`;
+
 export async function runEmbed(engine: BrainEngine, args: string[], selectedConfig: GBrainConfig | null = null): Promise<EmbedResult | EmbedFactsResult | undefined> {
+  // Help answers before anything touches the engine: the CLI dispatches
+  // `embed --help` here with a null engine (SELF_HELP_WITHOUT_ENGINE), so the
+  // usage block must print and return without reading `engine` or exiting 1.
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(EMBED_USAGE);
+    return;
+  }
   if (args.includes('--facts')) {
     const result = await embedStaleFacts(engine, parseFactEmbedArgs(args), selectedConfig);
     console.log(JSON.stringify(result, null, 2));
