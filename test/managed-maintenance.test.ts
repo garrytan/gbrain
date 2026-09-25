@@ -25,16 +25,20 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 const engines: BrainEngine[] = [];
 const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-maintenance-db-'));
 let closePostgres: (() => Promise<void>) | undefined;
 beforeAll(async () => {
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
-  const engine = new PGLiteEngine();
-  await engine.connect({ database_path: dataDir }); await engine.initSchema(); engines.push(engine);
-  if (process.env.DATABASE_URL) {
-    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+  if (backends.includes('pglite')) {
+    const engine = new PGLiteEngine();
+    await engine.connect({ database_path: dataDir }); await engine.initSchema(); engines.push(engine);
+  }
+  if (backends.includes('postgres')) {
+    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
     engines.push(pg.engine); closePostgres = pg.close;
   }
 }, 120_000);

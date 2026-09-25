@@ -8,7 +8,9 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
 const sourceId = 'projection-origin-test';
@@ -16,12 +18,14 @@ const body = Array.from({ length: 80 }, (_, i) => `Example sentence ${i} describ
 const chunk = (text: string) => ({ chunk_index: 0, chunk_source: 'compiled_truth' as const, chunk_text: text });
 
 beforeAll(async () => {
-  const lite = new PGLiteEngine();
-  await lite.connect({});
-  await lite.initSchema();
-  engines.push(lite);
-  if (process.env.DATABASE_URL) {
-    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+  if (backends.includes('pglite')) {
+    const lite = new PGLiteEngine();
+    await lite.connect({});
+    await lite.initSchema();
+    engines.push(lite);
+  }
+  if (backends.includes('postgres')) {
+    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
     engines.push(pg.engine);
     closePostgres = pg.close;
   }

@@ -7,18 +7,22 @@ import { resolveSymbolEdgesIncremental } from '../src/core/chunkers/symbol-resol
 import { resolveCodeReadiness } from '../src/core/code-graph-readiness.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 describe('code projection recovery preserves graph correctness', () => {
   const engines: BrainEngine[] = [];
   let closePostgres: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
-    const lite = new PGLiteEngine();
-    await lite.connect({});
-    await lite.initSchema();
-    engines.push(lite);
-    if (process.env.DATABASE_URL) {
-      const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+    if (backends.includes('pglite')) {
+      const lite = new PGLiteEngine();
+      await lite.connect({});
+      await lite.initSchema();
+      engines.push(lite);
+    }
+    if (backends.includes('postgres')) {
+      const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
       engines.push(pg.engine);
       closePostgres = pg.close;
     }

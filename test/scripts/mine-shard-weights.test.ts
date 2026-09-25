@@ -12,6 +12,7 @@ import {
   mineWeights,
   parseLog,
   serializeWeights,
+  sourceE2ECorpus,
 } from "../../scripts/mine-shard-weights.ts";
 
 const SAMPLE = `test (1)\tUNKNOWN STEP\t2026-05-25T11:26:40.000000Z ##[group]test/alpha.test.ts:
@@ -72,6 +73,46 @@ describe("parseLog", () => {
     const noise =
       "test (1)\tUNKNOWN\t2026-05-25T11:26:40.000Z ##[group]Run actions/checkout\n";
     expect(parseLog(noise)).toEqual([]);
+  });
+});
+
+describe('full E2E timing extraction', () => {
+  const expectedFiles = ['test/e2e/alpha.test.ts', 'test/phantom-redirect-engine-parity.test.ts'];
+  const line = (job: string, text: string) => `${job}\tstep\t2026-09-24T06:00:00.000Z ${text}\n`;
+  const file = (job: string, name: string) => line(job, `=== ${name} ===`) + line(job, ' 0 fail') + line(job, 'Ran 1 test across 1 file. [2.50s]');
+  const complete = (job: string, names: string[]) => names.map(name => file(job, name)).join('') + line(job, `Files: ${names.length} total, ${names.length} passed, 0 failed`);
+  const raw = complete('coverage-full-e2e', ['alpha.test.ts', 'phantom-redirect-engine-parity.test.ts']);
+  const opts = { e2eProfile: 'full' as const, expectedFiles, expectedJobs: ['coverage-full-e2e'] };
+  it('resolves the outside-directory parity file without including selected-job timings', () => {
+    const noise = complete('Selected E2E (diff-relevant) 1', ['unrelated.test.ts']);
+    expect(Object.fromEntries(mineWeights(raw + noise, 'e2e', opts))).toEqual(Object.fromEntries(expectedFiles.map(file => [file, 2500])));
+    expect(Object.fromEntries(mineWeights(raw + noise, 'e2e'))).toEqual({ 'test/e2e/unrelated.test.ts': 2500 });
+  });
+  it('uses the final parent summary rather than a nested child summary', () => {
+    for (const [job, options] of [['coverage-full-e2e', opts], ['Selected E2E (diff-relevant) 1', {}]] as const) {
+      const nested = line(job, '=== alpha.test.ts ===') + line(job, ' 0 fail') + line(job, 'Ran 1 test across 1 file. [1.00ms]')
+        + line(job, ' 0 fail') + line(job, 'Ran 1 test across 1 file. [80.00ms]')
+        + file(job, 'phantom-redirect-engine-parity.test.ts') + line(job, 'Files: 2 total, 2 passed, 0 failed');
+      expect(mineWeights(nested, 'e2e', options).get(expectedFiles[0])).toBe(80);
+      expect(() => mineWeights(nested.replace(' 0 fail\n' + line(job, 'Ran 1 test across 1 file. [80.00ms]'), ' 1 fail\n' + line(job, 'Ran 1 test across 1 file. [80.00ms]')), 'e2e', options)).toThrow();
+    }
+  });
+  it('requires complete, disjoint matrix jobs and rejects missing, ambiguous and extra files', () => {
+    const jobs = ['coverage-full-e2e (1)', 'coverage-full-e2e (2)'];
+    const matrix = complete(jobs[0], ['alpha.test.ts']) + complete(jobs[1], ['phantom-redirect-engine-parity.test.ts']);
+    expect(mineWeights(matrix, 'e2e', { ...opts, expectedJobs: jobs }).size).toBe(2);
+    for (const bad of [
+      complete(jobs[0], ['alpha.test.ts']),
+      complete(jobs[0], ['alpha.test.ts']) + complete(jobs[1], ['alpha.test.ts']),
+      matrix.replace(' 0 fail', ' 1 fail'),
+      matrix.replace('1 passed, 0 failed', '0 passed, 1 failed'),
+      matrix.replace('1 passed, 0 failed', '0 passed, 0 failed'),
+      matrix.replace('phantom-redirect-engine-parity.test.ts', 'unknown.test.ts'),
+      matrix.replace('Ran 1 test across 1 file. [2.50s]', ''),
+    ]) expect(() => mineWeights(bad, 'e2e', { ...opts, expectedJobs: jobs })).toThrow();
+    expect(() => mineWeights(raw, 'e2e', { ...opts, expectedFiles: [...expectedFiles, 'test/alpha.test.ts'] })).toThrow('ambiguous');
+    expect(() => mineWeights(raw, 'e2e', { ...opts, expectedFiles: [...expectedFiles, 'test/e2e/missing.test.ts'] })).toThrow('missing source files');
+    expect(() => mineWeights(raw, 'e2e', { e2eProfile: 'full' })).toThrow('source corpus');
   });
 });
 
@@ -297,3 +338,62 @@ it('GitHub refresh verifies every eligible job before replacing the complete lan
     expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({ commit: 'fixture-commit', measuredFiles: 2, totalFiles: 2, mergeExisting: false });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+it('full-profile CLI pins source, attempt and job provenance and preserves both outputs on refused evidence', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-full-'));
+  try {
+    const repo = join(import.meta.dir, '../..');
+    const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+    const corpus = sourceE2ECorpus(sha);
+    expect(corpus).toContain('test/phantom-redirect-engine-parity.test.ts');
+    expect(() => sourceE2ECorpus('wrong-commit')).toThrow('source SHA');
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'gh'), `#!/bin/sh
+case "$*" in
+  "run view 123 --json attempt,conclusion,headSha,jobs") cat "$FIXTURE_GH_INFO" ;;
+  "run view 123 --attempt 2 --job 456 --log") cat "$FIXTURE_GH_LOG" ;;
+  *) exit 2 ;;
+esac
+`, { mode: 0o755 });
+    const infoPath = join(dir, 'run.json');
+    const logPath = join(dir, 'full.log');
+    const out = join(dir, 'weights.json');
+    const meta = join(dir, 'weights.metadata.json');
+    const info = { attempt: 2, conclusion: 'success', headSha: sha, jobs: [{ name: 'coverage-full-e2e', databaseId: 456, conclusion: 'success' }] };
+    const line = (text: string) => `coverage-full-e2e\tstep\t2026-09-24T06:00:00.000Z ${text}\n`;
+    const files = corpus.map(path => line(`=== ${path.split('/').at(-1)} ===`) + line(' 0 fail') + line('Ran 1 test across 1 file. [1.00ms]'));
+    const complete = files.join('') + line(`Files: ${files.length} total, ${files.length} passed, 0 failed`);
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: infoPath, FIXTURE_GH_LOG: logPath };
+    const base = [join(repo, 'scripts/mine-shard-weights.ts'), '--lane', 'e2e', '--e2e-profile', 'full', '--out', out];
+    const run = (args = ['--run', '123']) => spawnSync(process.execPath, [...base, ...args], { env, encoding: 'utf8' });
+    writeFileSync(out, '{"keep":123}\n');
+    writeFileSync(meta, '{"prior":true}\n');
+    for (const [metadata, log] of [
+      [{ ...info, conclusion: 'failure' }, complete],
+      [{ ...info, headSha: 'other-commit' }, complete],
+      [{ ...info, attempt: undefined }, complete],
+      [{ ...info, jobs: [{ ...info.jobs[0], conclusion: 'cancelled' }] }, complete],
+      [{ ...info, jobs: [{ ...info.jobs[0], databaseId: undefined }] }, complete],
+      [info, files.slice(1).join('') + line(`Files: ${files.length - 1} total, ${files.length - 1} passed, 0 failed`)],
+      [info, complete.replace(' 0 fail', ' 1 fail')],
+    ] as const) {
+      writeFileSync(infoPath, JSON.stringify(metadata));
+      writeFileSync(logPath, log);
+      expect(run().status).not.toBe(0);
+      expect(readFileSync(out, 'utf8')).toBe('{"keep":123}\n');
+      expect(readFileSync(meta, 'utf8')).toBe('{"prior":true}\n');
+    }
+    expect(run(['--from-file', logPath]).status).not.toBe(0);
+    writeFileSync(infoPath, JSON.stringify(info));
+    writeFileSync(logPath, complete);
+    const result = run();
+    expect(result.status, result.stderr).toBe(0);
+    expect(Object.keys(JSON.parse(readFileSync(out, 'utf8'))).sort()).toEqual([...corpus].sort());
+    expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({
+      lane: 'e2e', e2eProfile: 'full', run: '123', commit: sha, attempt: 2, source: 'github',
+      jobs: [{ name: 'coverage-full-e2e', databaseId: 456 }], measuredFiles: corpus.length, totalFiles: corpus.length, mergeExisting: false,
+      logSha256: expect.stringMatching(/^[0-9a-f]{64}$/), corpusSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}, 30000);

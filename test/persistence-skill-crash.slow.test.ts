@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 const worker = join(import.meta.dir, 'fixtures/persistence-skill-worker.ts');
 
 test('independent SIGKILL bundle publication and repeated restoration preserve receipts and quotas', async () => {
-  for (const kind of process.env.DATABASE_URL ? ['pglite', 'postgres'] : ['pglite']) {
+  for (const kind of backends) {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-bundle-crash-'));
     const configPath = join(home, 'worker.json');
     const database = `gbrain_test_bundle_${randomUUID().replaceAll('-', '')}`;
