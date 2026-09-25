@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.57.0.1] - 2026-09-25
+## [0.57.1.1] - 2026-09-25
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.57.0.1
+## To take advantage of v0.57.1.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,35 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+## [0.57.1.0] - 2026-09-24
+
+**More capacity for Linux CI, with the same acceptance checks.**
+
+Contributors' Linux tests run on larger, single-job Ubicloud machines rather
+than waiting for GitHub's standard Linux runner pool. Ordinary test and database
+jobs have 16 virtual CPUs and 64 GB of memory; the heavy suite and long-running
+persistence checks have 30 virtual CPUs and 120 GB. Lightweight reporting stays
+on smaller machines. Test coverage, failure handling and acceptance thresholds
+remain unchanged. This release does not change installed memory behavior.
+
+### To take advantage of v0.57.1.0
+
+The workflow routing takes effect in repository CI after merging; no local
+upgrade is needed. Forks must authorize the Ubicloud Managed Runners app and
+configure billing before using these runner labels. See
+[CI runner capacity](docs/TESTING.md#ci-runner-capacity) for sizes and prerequisites.
+More capacity does not guarantee a proportional speedup for serial tests.
+
+### Itemized changes
+
+### For contributors
+
+- Move repository-owned Linux CI jobs to Ubuntu 24.04 Ubicloud runners, including
+  native ARM64 validation on 16-vCPU, 48-GB machines.
+- Preserve all shards, test commands, timeouts, artifacts and status-check names.
+  Keep macOS, Windows, release publishing and the upstream OSV workflow unchanged.
+- Validate custom runner labels with actionlint and regression tests covering
+  workload sizes, native platforms and the unchanged security matrix identities.
 
 ## [0.57.0.0] - 2026-09-24
 

@@ -10,7 +10,7 @@ permissions:
 jobs:
   read-performance:
     name: Read latency / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
-    runs-on: ubuntu-24.04
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 55
     strategy:
       fail-fast: false
@@ -49,7 +49,7 @@ jobs:
 
   deployment-matrix:
     name: PgBouncer, RLS and pool capacity / Bun ${{ matrix.bun }}
-    runs-on: ubuntu-24.04
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -154,7 +154,7 @@ jobs:
 
   invariants:
     name: ${{ matrix.engine }} / Bun ${{ matrix.bun }}
-    runs-on: ubuntu-24.04
+    runs-on: ubicloud-standard-30-ubuntu-2404
     timeout-minutes: 110
     strategy:
       fail-fast: false
