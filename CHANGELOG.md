@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.58.1.0] - 2026-09-25
+## [0.58.2.0] - 2026-09-25
 
 **Withdraw one fact without making the rest of its source disappear.**
 
@@ -39,7 +39,7 @@ fence markers.
 | A different page from the same source is saved | The page remains publishable and searchable. |
 | A malformed fence contains the withdrawn row | The matching segment is blocked without widening to unrelated content. |
 
-## To take advantage of v0.58.1.0
+## To take advantage of v0.58.2.0
 
 Run `gbrain upgrade`. No schema migration, backfill, ownership change, paid
 enrichment, or source rewrite is required. Existing withdrawal records begin using
