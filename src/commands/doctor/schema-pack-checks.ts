@@ -4,6 +4,7 @@
  * multiSourceDriftAdvice and doctorReportRemote consumes the three checks.
  */
 import type { BrainEngine } from '../../core/engine.ts';
+import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
 import type { Check } from '../doctor.ts';
 
 // =================================================================
@@ -128,6 +129,15 @@ export async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<C
   }
 }
 
+export async function managedSyncAdviceEnabled(engine: BrainEngine): Promise<boolean> {
+  try {
+    return await managedPersistenceEnabled(engine);
+  } catch {
+    // Managed advice is valid for unmanaged brains too, so use it when metadata is unavailable.
+    return true;
+  }
+}
+
 /**
  * #1123 — multi_source_drift remediation advice. Exported so the regression
  * test can pin that it only references CLI surfaces that actually exist
@@ -136,11 +146,10 @@ export async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<C
  * targets the ACTIVE source — following it literally on a multi-source
  * brain deletes the correctly-routed row).
  */
-export function multiSourceDriftAdvice(count: number, sampleStr: string): string {
-  // #4490: cause (3) + the --include-gitignored pointer must precede the
-  // delete step — an operator whose file is simply not git-tracked would
-  // otherwise re-sync (which imports nothing for that file) and then delete
-  // a row nothing will recreate.
+export function multiSourceDriftAdvice(count: number, sampleStr: string, managed = false): string {
+  // #4490: for unmanaged brains, the --include-gitignored pointer must
+  // precede the delete step — otherwise an operator whose file is simply not
+  // git-tracked would re-sync nothing, then delete a row nothing will recreate.
   return (
     `${count} page slug(s) appear at 'default' but NOT at the intended source ` +
     `(e.g., ${sampleStr}). Three possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
@@ -148,9 +157,11 @@ export function multiSourceDriftAdvice(count: number, sampleStr: string): string
     `(3) the file behind the slug is not git-tracked in the source repo — the sync walker ` +
     `reads through git objects, so a re-sync imports nothing for it. ` +
     `Verify with 'gbrain sources status', then re-sync with ` +
-    `'gbrain sync --source <id> --full' (reconciles drift without deleting data); ` +
-    `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
-    `(full filesystem walk that also picks up ignored/untracked syncable files). ` +
+    `'gbrain sync --source <id> ${managed ? '--no-pull --full' : '--full'}' (reconciles drift without deleting data); ` +
+    (managed
+      ? `for cause (3), commit the file; managed sync cannot include ignored/untracked files. `
+      : `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
+        `(full filesystem walk that also picks up ignored/untracked syncable files). `) +
     `Only if a misrouted default-source row remains after that, remove it with ` +
     `'GBRAIN_SOURCE=default gbrain delete <slug>' — delete targets the active source, ` +
     `so pin it to 'default' explicitly.`

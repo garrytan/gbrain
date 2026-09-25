@@ -124,7 +124,7 @@ test/doctor.test.ts	stub_guard_24h check (v0.34.5)	5	doctor-source-helper
 test/doctor.test.ts	supervisor crash classifier wiring (v0.35.x)	4	bun-file,doctor-source-helper
 test/doctor.test.ts	sync_freshness — clone-unavailable content-lag fallback	6	doctor-source-helper
 test/doctor.test.ts	v0.31.8 — wedge migration force-retry hint (D19)	4	doctor-source-helper
-test/doctor.test.ts	v0.32.4 — sync_freshness check	12	doctor-source-helper
+test/doctor.test.ts	v0.32.4 — sync_freshness check	14	doctor-source-helper
 test/doctor.test.ts	v0.40.4 — graph_signals_coverage check	7	doctor-source-helper
 test/doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-source-helper
 test/doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper

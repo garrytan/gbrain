@@ -31,7 +31,7 @@ export { checkProjectionReadiness } from './doctor/checks/projection-readiness.t
 // original name so existing importers (tests, scripts/live-brain-first-check.ts,
 // the run_doctor op's dynamic import of doctorReportRemote) keep working
 // unchanged.
-import { multiSourceDriftAdvice, multiSourceDriftGitRootSkipNote } from './doctor/schema-pack-checks.ts';
+import { managedSyncAdviceEnabled, multiSourceDriftAdvice, multiSourceDriftGitRootSkipNote } from './doctor/schema-pack-checks.ts';
 import { bootstrapDoctorChecks } from './doctor/bootstrap-checks.ts';
 import { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable.ts';
 export { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable.ts';
@@ -1659,13 +1659,14 @@ export async function buildChecks(
         });
       } else if (result.count > 0) {
         const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
+        const managed = await managedSyncAdviceEnabled(engine!);
         const skipNote = result.git_root_skipped.length > 0
           ? multiSourceDriftGitRootSkipNote(result.git_root_skipped)
           : '';
         checks.push({
           name: 'multi_source_drift',
           status: 'warn',
-          message: multiSourceDriftAdvice(result.count, sampleStr) + skipNote,
+          message: multiSourceDriftAdvice(result.count, sampleStr, managed) + skipNote,
         });
       } else {
         // #4712: if EVERY candidate source was skipped as git-root-pinned,

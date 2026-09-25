@@ -825,8 +825,13 @@ describe('v0.31.8 — wedge migration force-retry hint (D19)', () => {
 describe('v0.32.4 — sync_freshness check', () => {
   // Stub engine: only checkSyncFreshness's executeRaw matters. Per-case rows
   // shape is `{id, name, local_path, last_sync_at}`.
-  function makeStubEngine(rows: any[]): any {
-    return { executeRaw: async () => rows };
+  function makeStubEngine(rows: any[], managed = false): any {
+    return {
+      executeRaw: async (query: string) => {
+        if (query.includes('FROM persistence_brain')) return [{ enabled: managed }];
+        return rows;
+      },
+    };
   }
 
   function agoMs(ms: number): Date {
@@ -850,6 +855,29 @@ describe('v0.32.4 — sync_freshness check', () => {
     expect(result.message).toContain('never been synced');
     expect(result.message).toContain(`'wiki'`); // source.id embedded
     expect(result.message).toContain('gbrain sync --source <id>');
+    expect(result.message).not.toContain('--no-pull');
+  });
+
+  test('managed stale source advice includes --no-pull', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const result = await checkSyncFreshness(makeStubEngine([
+      { id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: null },
+    ], true));
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('gbrain sync --source <id> --no-pull');
+  });
+
+  test('predicate error falls back to the managed-safe sync hint', async () => {
+    const { checkSyncFreshness } = await import('../src/commands/doctor.ts');
+    const engine = {
+      executeRaw: async (query: string) => {
+        if (query.includes('FROM persistence_brain')) throw new Error('metadata temporarily unavailable');
+        return [{ id: 'wiki', name: '', local_path: '/tmp/wiki', last_sync_at: null }];
+      },
+    };
+    const result = await checkSyncFreshness(engine as any);
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain('gbrain sync --source <id> --no-pull');
   });
 
   test('last_sync_at > 72h ago → fail with day-rounded "Nd ago"', async () => {
