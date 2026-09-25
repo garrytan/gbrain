@@ -366,6 +366,25 @@ describe('dedicated persistence IPC', () => {
     }
   });
 
+  test('an oversized read result cannot counterfeit a committed write receipt', async () => {
+    const path = socketPath();
+    await bind(path, async () => ({
+      page: { write_request: committedReceipt(ID) },
+      content: 'x'.repeat(PERSISTENCE_IPC_MAX_BYTES),
+    }));
+    try {
+      await requestPersistenceOperation(path, { ...request(), operation: 'get_page' });
+      throw new Error('Expected oversized result error.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(OperationError);
+      const body = (error as OperationError).toJSON();
+      expect(body.error).toBe('response_too_large');
+      expect(body).not.toHaveProperty('write_request');
+      expect(body).not.toHaveProperty('write_requests');
+      expect(body.detail).toBeUndefined();
+    }
+  });
+
   test('private driver failures are not reflected', async () => {
     const path = socketPath();
     await bind(path, async () => { throw new Error(`secret=${REGISTRATION.credential}`); });

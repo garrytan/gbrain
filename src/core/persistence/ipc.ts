@@ -198,6 +198,10 @@ function resultReceipts(result: unknown, depth = 0, into: SalvagedReceipts = { r
  */
 export function resultFrame(result: unknown, operation?: string): string {
   try { return responseFrame({ version: 1, ok: true, result }); } catch (error) {
+    // Only mutation results may attest a committed write. Read results can contain
+    // arbitrary page data, including receipt-shaped objects, and must never turn
+    // that content into a successful write acknowledgement.
+    if (operation === undefined || !isPersistenceIpcMutation(operation)) throw error;
     const salvaged = resultReceipts(result);
     const receipts = salvaged.receipts.map(receipt => {
       const outcomeFree = publicWriteReceipt(receipt);
