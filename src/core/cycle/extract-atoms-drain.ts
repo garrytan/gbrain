@@ -34,6 +34,8 @@ import { anySignal } from '../abort-check.ts';
 
 /** #4730: bounded operator-facing failure detail; totals stay exact above the cap. */
 export const MAX_DRAIN_FAILURE_RECORDS = 25;
+/** Bun/Node clamp larger timer delays to ~1ms; cap instead of firing early. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** Matches the repo's audit/error-summary privacy cap. */
 export const MAX_DRAIN_FAILURE_SOURCE_CHARS = 256;
 export const MAX_DRAIN_FAILURE_REASON_CHARS = 200;
@@ -283,7 +285,10 @@ export async function runExtractAtomsDrain(
     // the window. The window's abort is distinguishable from an external
     // cancel: `aborted()` reads only the external signal.
     const windowAbort = new AbortController();
-    const timer = setTimeout(() => windowAbort.abort(new Error(DRAIN_WINDOW_ELAPSED)), Math.max(0, opts.windowMs));
+    const timer = setTimeout(
+      () => windowAbort.abort(new Error(DRAIN_WINDOW_ELAPSED)),
+      Math.min(MAX_TIMER_DELAY_MS, Math.max(0, opts.windowMs)),
+    );
     (timer as { unref?: () => void }).unref?.();
     const callSignal = anySignal(windowAbort.signal, opts.signal);
     const windowUp = () => windowAbort.signal.aborted || deps.now() >= deadline;

@@ -452,10 +452,10 @@ Options:
                       A follow-up run picks up deferred transcripts too. Use this to
                       grind down an extract_atoms backlog on a brain whose
                       pack doesn't run the phase in the routine cycle.
-  --window <seconds>  Drain wallclock budget. Default 300 (5 min). Checked
-                      before each item, so the run ends within one item's
-                      time of the window; unstarted items are reported as
-                      deferred and stay due for the next run.
+  --window <seconds>  Drain wallclock budget. Default 300 (5 min). The deadline
+                      aborts an in-flight provider call; interrupted and
+                      unstarted items are reported as deferred and stay due
+                      for the next run.
 
   --unsafe-bypass-dream-guard
                       Disable the self-consumption guard. Use only when you

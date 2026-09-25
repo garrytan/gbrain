@@ -8,7 +8,7 @@
  *  - a busy lock (withLock throws) propagates so the caller reports skipped
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, spyOn } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
@@ -398,6 +398,28 @@ describe('hard window deadline', () => {
     );
     await new Promise((r) => setTimeout(r, 80));
     expect(seen[0].aborted).toBe(false); // the timer was cleared when the drain returned
+  });
+
+  it('caps an oversized timer instead of letting Bun turn it into an immediate timeout', async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    let scheduledMs: number | undefined;
+    const timerSpy = spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+      scheduledMs = timeout;
+      return realSetTimeout(handler, timeout, ...args);
+    }) as typeof setTimeout);
+    try {
+      const result = await runExtractAtomsDrain(
+        {
+          withLock: passThroughLock, countRemaining: seq([1, 0, 0]),
+          runBatch: async () => ({ extracted: 1, skipped: 0, completed: 1 }), now: () => 0,
+        },
+        { windowMs: 2_147_483_648 },
+      );
+      expect(result.stopped).toBe('drained');
+      expect(scheduledMs).toBe(2_147_483_647);
+    } finally {
+      timerSpy.mockRestore();
+    }
   });
 });
 

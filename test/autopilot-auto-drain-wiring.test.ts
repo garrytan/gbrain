@@ -31,7 +31,7 @@ describe('autopilot auto-drain wiring', () => {
 
   test('CODEX #3: enumerates sources and counts backlog per source', () => {
     expect(SRC).toContain('loadAllSources(engine)');
-    expect(SRC).toContain('readDrainBacklog(engine, src.id, src.local_path)');
+    expect(SRC).toContain('readDrainBacklog(engine, src.id, src.local_path, policy.utcDay)');
     expect(SRC).toContain('countExtractAtomsBacklog(engine, sourceId)');
     expect(AUTOPILOT).toContain('dispatchAutoDrains(engine, queue,');
   });
