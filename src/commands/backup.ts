@@ -134,7 +134,9 @@ export async function runBackupCli(
       return { exitCode: 0 };
     } catch (error) {
       const detail = error as Error & { code?: string; retryable?: boolean };
-      if (json) console.log(JSON.stringify({ ok: false, reason: detail.code ?? 'backup_failed', message: detail.message, ...(detail.retryable ? { retryable: true } : {}) }));
+      // #5312: some engine errors carry no .message (e.g. PGLite ErrnoError) —
+      // fall back to String(error) so the JSON envelope is never bare.
+      if (json) console.log(JSON.stringify({ ok: false, reason: detail.code ?? 'backup_failed', message: detail.message ?? String(error), ...(detail.retryable ? { retryable: true } : {}) }));
       else console.error(detail.message);
       return { exitCode: 1 };
     }
