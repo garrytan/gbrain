@@ -68,9 +68,11 @@ Most claims have a distinctive word, and those pages are skipped cheaply. When t
 word is common across the source, for example a word in every fact table's header
 or a name on every related page, every such page is read. In PostgreSQL tests with
 pages of about 4–5 KB, 2,500 such pages took about 1.5 seconds and 5,000 took about
-3 seconds. Around 10,000 pages can exceed the 5-second write budget. `forget` then
-reports a retryable database-contention error and withdraws nothing; the
-withdrawal does not partly apply.
+3 seconds. Around 7,500–10,000 pages can reach the 5-second write budget on the
+test machine, and slower hardware can reach it sooner. `forget` then reports a
+database-contention error and withdraws nothing; retrying the same withdrawal
+without reducing the source does not help, and the withdrawal does not partly
+apply.
 
 ## [0.57.0.0] - 2026-09-24
 
