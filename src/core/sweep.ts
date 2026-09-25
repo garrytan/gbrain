@@ -1,3 +1,4 @@
+import { lookupRefsForSlugs } from './link-reconciliation.ts';
 /**
  * Serve-resident maintenance sweep [CX-P0.1, CX-P0.3, CX2-4].
  *
@@ -278,6 +279,7 @@ async function runLinksTimelinePass(
 
   const {
     extractPageLinks,
+    resolvedLinkCandidate,
     parseTimelineEntries,
     makeResolver,
     isGlobalBasenameEnabled,
@@ -326,13 +328,15 @@ async function runLinksTimelinePass(
   // #3190: pack-aware verbs — the sweep must type edges the same way the
   // extract command does or reconciliation flip-flops the link_type.
   const { loadActivePackForLocalEngine } = await import('./schema-pack/best-effort.ts');
-  const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  const pack = (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null;
+  if (linksEnabled && !pack) throw new Error('Cannot extract links: active schema pack is unavailable.');
 
   type Extracted = Awaited<ReturnType<typeof extractPageLinks>>;
 
   const tlBatch: TimelineBatchInput[] = [];
   const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
   const pageCandidates: Array<{ slug: string; candidates: Extracted['candidates'] }> = [];
+  const snapshots = new Map<string, NonNullable<Awaited<ReturnType<BrainEngine['readPageSnapshot']>>>>();
 
   // Phase 1: per-page extraction. The per-slug getPage loop stays a loop —
   // BrainEngine has no batch read-by-slug-list primitive (resolveSlugsByPaths
@@ -345,6 +349,10 @@ async function runLinksTimelinePass(
     const slug = recent[i].slug;
     const page = await engine.getPage(slug, { sourceId });
     if (!page) continue;
+    const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+    if (!snapshot || snapshot.page.compiled_truth !== page.compiled_truth || snapshot.page.timeline !== page.timeline
+      || snapshot.page.type !== page.type || JSON.stringify(snapshot.page.frontmatter) !== JSON.stringify(page.frontmatter)) continue;
+    snapshots.set(slug, snapshot);
 
     const fullContent = page.compiled_truth + '\n' + page.timeline;
 
@@ -387,6 +395,8 @@ async function runLinksTimelinePass(
   // so resolveCandidateSources' F10 resolution is unchanged — it just sees
   // only the rows it can possibly use. Zero candidates ⇒ zero queries.
   const linkBatch: LinkBatchInput[] = [];
+  const endpointMetadata = new Map<string, { slug: string; source_id: string; type: string; knowledge_revision: string }>();
+  const incomplete = new Set<string>();
   if (pageCandidates.length > 0) {
     const needed = new Set<string>();
     for (const { slug, candidates } of pageCandidates) {
@@ -396,7 +406,8 @@ async function runLinksTimelinePass(
         if (c.fromSlug) needed.add(c.fromSlug);
       }
     }
-    const { allSlugs, slugToSources } = await lookupRefsForSlugs(engine, [...needed]);
+    const { allSlugs, slugToSources, metadata } = await lookupRefsForSlugs(engine, [...needed]);
+    for (const row of metadata) endpointMetadata.set(`${row.source_id}\0${row.slug}`, row);
     // #3478: the 'default' fallback is a federation feature — a sweep over an
     // isolated source must not push cross-source edges. Single-row fetchSource
     // (not loadAllSources) keeps the sweep's bounded-cost discipline; a missing
@@ -413,7 +424,19 @@ async function runLinksTimelinePass(
       resolveLinkFallbackDefault(engine),
     ]);
     let crossSourceDrops = 0;
-    for (const { slug, candidates } of pageCandidates) {
+    for (const { slug } of pageCandidates) {
+      const page = snapshots.get(slug)!.page;
+      const { candidates, attendanceComplete } = await extractPageLinks(slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter,
+        page.type, resolver, { skipFrontmatter: true, globalBasename, pack, targetType: (targetSlug, targetSourceId) => {
+          const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, slug,
+            sourceId, allSlugs, slugToSources, allowCrossSource, { crossSource, defaultSourceId: linkDefaultSourceId });
+          return resolved.ok ? endpointMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;
+        } });
+      if (!attendanceComplete) {
+        incomplete.add(slug);
+        skip('attendance_resolution_incomplete');
+        continue;
+      }
       for (const c of candidates) {
         // #2589: a cross_source drop here means the target exists only in
         // other sources and cross-source links are off — counted in the
@@ -426,18 +449,7 @@ async function runLinksTimelinePass(
           if (resolved.reason === 'cross_source') crossSourceDrops++;
           continue;
         }
-        linkBatch.push({
-          from_slug: resolved.fromSlug,
-          to_slug: c.targetSlug,
-          link_type: c.linkType,
-          context: c.context,
-          link_source: c.linkSource,
-          origin_slug: c.originSlug,
-          origin_field: c.originField,
-          from_source_id: resolved.fromSourceId,
-          to_source_id: resolved.toSourceId,
-          origin_source_id: sourceId,
-        });
+        linkBatch.push(resolvedLinkCandidate(c, slug, sourceId, resolved));
       }
     }
     if (crossSourceDrops > 0) skip('cross_source_link', crossSourceDrops);
@@ -445,9 +457,6 @@ async function runLinksTimelinePass(
 
   // Engine batch primitives self-retry; default auditSite labels apply
   // (BATCH_AUDIT_SITES is a closed enum owned by retry.ts).
-  if (linkBatch.length > 0) {
-    report.linksExtracted += await engine.addLinksBatch(linkBatch); // gbrain-allow-direct-insert: the sweep IS the extract path for workspace pages — remote put_page skips extraction by design [CX-P0.3]
-  }
   if (tlBatch.length > 0) {
     report.timelineExtracted += await engine.addTimelineEntriesBatch(tlBatch); // gbrain-allow-direct-insert: same extract-path rationale as addLinksBatch above [CX-P0.3]
   }
@@ -463,49 +472,30 @@ async function runLinksTimelinePass(
   // fails (or is cut by budget) is left unstamped so the next sweep retries.
   const stampable = new Set(processedRefs.map(r => r.slug));
   if (linksEnabled) {
-    const { autoLinkLockKey } = await import('./ops/pages.ts');
-    const desiredBySlug = new Map<string, Set<string>>(
-      processedRefs.map(r => [r.slug, new Set<string>()]),
+    const desiredBySlug = new Map<string, LinkBatchInput[]>(
+      processedRefs.map(r => [r.slug, []]),
     );
     for (const b of linkBatch) {
-      // runAutoLink's exact key shape (ops/pages.ts outKeys).
-      desiredBySlug.get(b.from_slug)?.add(
-        `${b.to_slug}\u0000${b.link_type}\u0000${b.link_source ?? 'markdown'}`,
-      );
+      desiredBySlug.get(b.origin_slug ?? b.from_slug)?.push(b);
     }
     for (const ref of processedRefs) {
-      if (overBudget()) {
-        skip('budget_exhausted:link_reconcile');
+      if (incomplete.has(ref.slug) || overBudget()) {
+        if (!incomplete.has(ref.slug)) skip('budget_exhausted:link_reconcile');
         stampable.delete(ref.slug);
         continue;
       }
       const desired = desiredBySlug.get(ref.slug)!;
       try {
-        report.linksRemoved += await engine.transaction(async (tx) => {
-          try {
-            // Same advisory lock runAutoLink takes, so sweep reconciliation
-            // serializes against a concurrent local put_page on the slug.
-            await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [
-              autoLinkLockKey(sourceId, ref.slug),
-            ]);
-          } catch { /* engine without advisory locks — PGLite is single-process */ }
-          const existing = await tx.getLinks(ref.slug, { sourceId });
-          let removed = 0;
-          for (const l of existing) {
-            const reconcilable =
-              l.link_source === 'markdown' || l.link_source == null ||
-              l.link_source === 'wikilink-resolved';
-            if (!reconcilable) continue;
-            const key = `${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}`;
-            if (desired.has(key)) continue;
-            await tx.removeLink(ref.slug, l.to_slug, l.link_type, l.link_source ?? undefined, {
-              fromSourceId: sourceId,
-              toSourceId: l.to_source_id,
-            });
-            removed++;
-          }
-          return removed;
-        });
+        const snapshot = snapshots.get(ref.slug)!;
+        const result = await engine.replaceDerivedLinks({ slug: ref.slug, sourceId,
+          expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation }, desired,
+        { includeFrontmatter: false, preserveExisting: true, expectedEndpoints: [...new Set(desired.flatMap(row =>
+          [`${row.from_source_id}\0${row.from_slug}`, `${row.to_source_id}\0${row.to_slug}`]))].map(key => {
+          const endpoint = endpointMetadata.get(key)!;
+          return { slug: endpoint.slug, sourceId: endpoint.source_id, revision: endpoint.knowledge_revision };
+        }) });
+        report.linksRemoved += result.removed;
+        report.linksExtracted += result.created;
       } catch {
         skip('link_reconcile_failed');
         stampable.delete(ref.slug);
@@ -521,36 +511,6 @@ async function runLinksTimelinePass(
     const toStamp = processedRefs.filter(r => stampable.has(r.slug));
     if (toStamp.length > 0) await stampExtracted(engine, toStamp);
   }
-}
-
-/**
- * (slug, source_id) refs for EXACTLY the given slugs, chunked IN-list —
- * the bounded replacement for listAllPageRefs in the sweep's pass 2. Same
- * visibility as listAllPageRefs (deleted_at IS NULL).
- */
-async function lookupRefsForSlugs(
-  engine: BrainEngine,
-  slugs: string[],
-): Promise<{ allSlugs: Set<string>; slugToSources: Map<string, string[]> }> {
-  const allSlugs = new Set<string>();
-  const slugToSources = new Map<string, string[]>();
-  const CHUNK = 200;
-  for (let i = 0; i < slugs.length; i += CHUNK) {
-    const chunk = slugs.slice(i, i + CHUNK);
-    const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
-    const rows = await engine.executeRaw<{ slug: string; source_id: string }>(
-      `SELECT slug, source_id FROM pages
-        WHERE deleted_at IS NULL AND slug IN (${placeholders})`,
-      chunk,
-    );
-    for (const ref of rows) {
-      allSlugs.add(ref.slug);
-      const list = slugToSources.get(ref.slug) ?? [];
-      list.push(ref.source_id);
-      slugToSources.set(ref.slug, list);
-    }
-  }
-  return { allSlugs, slugToSources };
 }
 
 /**

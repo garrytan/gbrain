@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.57.1.1] - 2026-09-25
+## [0.58.0.1] - 2026-09-25
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.57.1.1
+## To take advantage of v0.58.0.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,89 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+## [0.58.0.0] - 2026-09-24
+
+**Separate confirmed attendance from mentions, and give question evidence room in recall.**
+
+Meeting notes often name people who were invited, absent, or simply discussed.
+When your active schema does not define its own attendance rules, GBrain now
+requires an explicit attendee list with confirmed person references before
+recording attendance. Mentioning someone elsewhere in a note is not enough.
+Examples in code blocks and hidden comments do not count either.
+
+For a question about your notes, you can now give matching pages first use of
+recall's limited reading budget. Stored facts fill the remaining space. The
+existing facts-first default stays unchanged because questions about those
+facts can get worse when pages take their place.
+
+Historical attendance cleanup is a separate, local-only operation. Preview a
+small source-scoped window, review its proposed changes, then approve that
+exact preview only after verifying a full database backup. Upgrading alone
+does not authorize or run this repair.
+
+### Try question-first recall
+
+```bash
+gbrain recall --query 'What did the planning meeting decide?' \
+  --budget-tokens 512 --budget-policy query_first --json
+```
+
+The same `budget_policy` option is available on the `recall` memory verb.
+Omit it to retain existing behavior, or explicitly select `facts_first`.
+
+| Controlled comparison | Complete evidence with the default | With the selected policy |
+| --- | --- | --- |
+| Eleven synthetic page-evidence questions | 1 of 11 | 9 of 11 with query-first |
+| Three fact-focused controls | 3 of 3 | 3 of 3 with facts-first |
+| One deliberately misrouted fact question | 1 of 1 | 0 of 1 with query-first |
+
+These are measurements of retained evidence, not generated-answer accuracy or
+a broad semantic-search benchmark. See the [evaluation record](docs/eval/ATTENDANCE_RECALL_EVALUATION.md)
+for the matched baseline, fixture identity and excluded expansion experiment.
+
+### Things to watch
+
+Schema-pack-owned attendance directions remain unchanged, including the shipped
+base and company packs; they do not gain incoming attendance lookup. Missing
+packs or unresolved attendees preserve the prior graph for retry instead of
+guessing. Historical repair requires separate operator approval, briefly locks
+link writes database-wide, and cannot be undone by reverting the binary.
+
+## To take advantage of v0.58.0.0
+
+Follow [the upgrade and verification guide](skills/migrations/v0.58.0.0.md).
+No new schema migration, automatic backfill, provider change or capture opt-in
+is required. Preserve existing service and re-embedding opt-outs. If an earlier
+migration failed, inspect that failure before running
+`gbrain apply-migrations --yes --no-autopilot-install`; that command is not an
+attendance repair. Follow the [attendance operator guide](docs/guides/attendance-evidence.md)
+before previewing or applying historical changes.
+
+### Itemized changes
+
+- **Attendance evidence:** Canonical attendee lists resolve live person pages
+  in the allowed source scope. Origin-owned reconciliation preserves unrelated
+  and manual links, honors each source's schema pack, and keeps incomplete
+  extraction retryable across publication, filesystem, DB, stale and sweep
+  paths. Timeline extraction consumes supported attendance evidence.
+- **Recall packing:** One-shot CLI and memory-verb callers can select
+  `budget_policy: "query_first"` or `"facts_first"`, with explicit packing
+  accounting and matching validation across local and remote transports.
+  Conditional query expansion is not included.
+- **Historical repair:** Trusted-local `extract links --repair-attendance`
+  supports bounded previews, exact-digest approval, private receipts and
+  checkpoints, transactional source/endpoint revalidation, and crash replay.
+  MCP and thin clients cannot run it; `--yes` alone cannot authorize an apply.
+- **Concurrent write admission:** When several tools write at once, PostgreSQL
+  admissions get more time to progress behind short counter transactions.
+  Individual lock waits allow up to 100ms while preserving the five-second
+  retry budget, retained request IDs, and pool access for reads between attempts.
+
+### For contributors
+
+Attendance and repair regressions run against PGLite and PostgreSQL. Each E2E
+file now receives its own temporary HOME and GBRAIN_HOME, preventing one file's
+initialization from changing the schema configuration used by the next file.
 ## [0.57.1.0] - 2026-09-24
 
 **More capacity for Linux CI, with the same acceptance checks.**

@@ -287,12 +287,15 @@ for f in "${files[@]}"; do
   else
     TIMEOUT_CMD=""
   fi
+  FILE_HOME="$E2E_TMP_HOME/file-$file_idx"
+  mkdir -p "$FILE_HOME/.gbrain"
   rc=0
-  $TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
+  HOME="$FILE_HOME" GBRAIN_HOME="$FILE_HOME" $TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
   ACTIVE_E2E_PID=$!
   wait "$ACTIVE_E2E_PID" || rc=$?
   ACTIVE_E2E_PID=""
   output=$(cat "$E2E_TMP_HOME/current.log")
+  rm -rf "$FILE_HOME"
   if [ "$rc" -eq 0 ]; then
     if [ "$f" = "test/e2e/pgbouncer-teardown.test.ts" ] && \
        [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ] && \
