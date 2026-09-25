@@ -581,11 +581,15 @@ const PAGES_BLOCK_TOTAL_BUDGET_CHARS = 12_000;
 const PAGES_BLOCK_EXCERPT_CEILING_CHARS = 2_400;
 
 /** Budget-aware per-page excerpt length for the pages block (#4510). */
-export function pagesBlockExcerptLen(pageCount: number, floor = 600): number {
+export function pagesBlockExcerptLen(pageCount: number, floor = 600, totalBudget = PAGES_BLOCK_TOTAL_BUDGET_CHARS): number {
   if (pageCount <= 0) return floor;
+  // The per-page ceiling scales with the configured budget so a raised
+  // `synthesize.pages_budget_chars` actually widens excerpts; at the 12k
+  // default the math is identical to the fixed-ceiling behavior.
+  const ceiling = Math.ceil(PAGES_BLOCK_EXCERPT_CEILING_CHARS * totalBudget / PAGES_BLOCK_TOTAL_BUDGET_CHARS);
   return Math.max(floor, Math.min(
-    PAGES_BLOCK_EXCERPT_CEILING_CHARS,
-    Math.floor(PAGES_BLOCK_TOTAL_BUDGET_CHARS / pageCount),
+    ceiling,
+    Math.floor(totalBudget / pageCount),
   ));
 }
 

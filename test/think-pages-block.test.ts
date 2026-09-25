@@ -266,4 +266,18 @@ describe('renderPagesBlock — #4510 truncation honesty', () => {
     expect(pagesBlockExcerptLen(1)).toBe(2400);   // ceiling
     expect(pagesBlockExcerptLen(0)).toBe(600);
   });
+
+  test('pagesBlockExcerptLen: a larger total budget widens excerpts and the scaled ceiling (#5461)', () => {
+    // 18 pages at the default 12k budget get only ~666 chars/page.
+    expect(pagesBlockExcerptLen(18)).toBe(666);
+    // The same gather with a 36k budget yields 2000 chars/page.
+    expect(pagesBlockExcerptLen(18, 600, 36_000)).toBe(2000);
+    // The per-page ceiling scales with the budget: 120k over 18 pages no
+    // longer clamps at 2400.
+    expect(pagesBlockExcerptLen(18, 600, 120_000)).toBe(6666);
+    // Default-budget behavior is unchanged: 1 page still caps at 2400.
+    expect(pagesBlockExcerptLen(1, 600, 12_000)).toBe(2400);
+    // A tiny budget still honors the floor.
+    expect(pagesBlockExcerptLen(20, 600, 3_000)).toBe(600);
+  });
 });

@@ -78,6 +78,12 @@ export interface RunThinkOpts {
   /** Optional time window for temporal questions. */
   since?: string;
   until?: string;
+  /**
+   * #5461 — total character budget for the gathered-pages evidence block.
+   * Falls back to `synthesize.pages_budget_chars` config, then the 12k
+   * default. Per-page excerpt ceiling scales with it.
+   */
+  pagesBudgetChars?: number;
   /** When set, MCP-bound calls forward this to the gather phase (server-side filter). */
   takesHoldersAllowList?: string[];
   /** Resolved operation-layer page visibility policy. */
@@ -544,7 +550,21 @@ export async function runThink(
   // budget-aware — 600 chars is the FLOOR (a big gather never collapses each
   // page below it) and a small gather spreads the block budget into much
   // larger, often complete, per-page windows.
-  const pagesBlock = renderPagesBlock(gather.pages, pagesBlockExcerptLen(gather.pages.length), opts.question);
+  const cfgBudget = Number(await engine.getConfig('synthesize.pages_budget_chars'));
+  const pagesBudget = Number.isFinite(opts.pagesBudgetChars) && (opts.pagesBudgetChars as number) > 0
+    ? Math.floor(opts.pagesBudgetChars as number)
+    : (Number.isFinite(cfgBudget) && cfgBudget > 0 ? Math.floor(cfgBudget) : undefined);
+  const pagesBlock = renderPagesBlock(
+    gather.pages,
+    pagesBlockExcerptLen(gather.pages.length, 600, pagesBudget),
+    opts.question,
+  );
+  {
+    const cutCount = (pagesBlock.match(/continues beyond this excerpt|earlier page content omitted/g) ?? []).length;
+    if (cutCount > 0) {
+      warnings.push(`PAGES_EXCERPT_TRUNCATED_${cutCount}`);
+    }
+  }
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
