@@ -14,6 +14,7 @@ import { cancelWriteRequest } from '../src/core/persistence/control.ts';
 import { publishMutation, recoverPublication } from '../src/core/persistence/coordinator.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
+import { PageRevisionConflictError } from '../src/core/page-state/types.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -222,6 +223,35 @@ describe('durable mutation journal', () => {
       const conflict = await publishMutation(engine, second, { observedRevision: null, apply: async () => { throw new Error('must not execute'); } }, hostId);
       expect(conflict.state).toBe('conflict');
       expect((await engine.readPageSnapshot(first.slug, { sourceId }))!.revision).toBe(String(committed.outcome!.revision));
+    }
+  });
+  test('revision-conflict receipts keep the precondition message (#5300)', async () => {
+    for (const engine of engines) {
+      // A mutation that supplied no expected_revision must not blame a page
+      // change: the precondition was missing, so say so.
+      const a = await admission(engine, `conflict-message-${engine.kind}`);
+      await admitWrite(engine, a);
+      const claimed = (await claimNextWrite(engine, hostId))!;
+      const conflict = await publishMutation(engine, claimed, { observedRevision: null,
+        apply: async () => { throw new PageRevisionConflictError(null, randomUUID()); } }, hostId);
+      expect(conflict.state).toBe('conflict');
+      expect(conflict.error_message).toBe('The page already exists; an expected revision is required.');
+      // A genuinely drifted revision still reports the change.
+      const b = await admission(engine, `conflict-drift-${engine.kind}`);
+      await admitWrite(engine, b);
+      const claimedB = (await claimNextWrite(engine, hostId))!;
+      const drifted = await publishMutation(engine, claimedB, { observedRevision: null,
+        apply: async () => { throw new PageRevisionConflictError(randomUUID(), randomUUID()); } }, hostId);
+      expect(drifted.state).toBe('conflict');
+      expect(drifted.error_message).toBe('The page changed after it was read. Read its current revision before retrying.');
+      // An opaque driver error with the same code keeps the generic message.
+      const c = await admission(engine, `conflict-opaque-${engine.kind}`);
+      await admitWrite(engine, c);
+      const claimedC = (await claimNextWrite(engine, hostId))!;
+      const opaque = await publishMutation(engine, claimedC, { observedRevision: null,
+        apply: async () => { throw Object.assign(new Error('driver internals'), { code: 'revision_conflict' }); } }, hostId);
+      expect(opaque.state).toBe('conflict');
+      expect(opaque.error_message).toBe('The page changed after the supplied revision was read.');
     }
   });
   test('stale no-op loses its revision precondition before no-op detection', async () => {

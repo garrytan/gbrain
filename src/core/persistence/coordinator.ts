@@ -10,6 +10,7 @@ import { localHostId } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
 import { clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type RecoveryRecord, type WriteRequest } from './model.ts';
+import { PageRevisionConflictError } from '../page-state/types.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
@@ -77,6 +78,10 @@ export { fileHash as persistenceFileHash, publishFile as publishPersistenceFile 
 function requestError(error: unknown): { code: string; message: string } {
   if (error instanceof OperationError) return { code: error.code, message: error.message };
   const code = (error as { code?: string })?.code;
+  // PageRevisionConflictError already distinguishes the three real cases
+  // (missing precondition, drifted revision, deleted page); keep its message
+  // instead of blaming a page change on a submit that supplied no revision.
+  if (error instanceof PageRevisionConflictError) return { code: error.code, message: error.message };
   if (code === 'revision_conflict') return { code, message: 'The page changed after the supplied revision was read.' };
   return { code: 'storage_error', message: `Publication failed${code ? ` (${code})` : ''}. Inspect owner diagnostics.` };
 }
