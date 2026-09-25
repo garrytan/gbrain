@@ -82,7 +82,7 @@ export async function runValidation(options: ValidationOptions) {
     async function phase(name: string): Promise<{ config: HarnessConfig; path: string }> {
       const root = join(scratch, name); mkdirSync(root);
       manifest.phase_inputs[name] = Object.fromEntries(['scripts/persistence/harness.ts', 'scripts/persistence/schedules.ts',
-        'scripts/persistence/worker.ts', 'scripts/persistence/validate.ts', 'scripts/persistence/failure-diagnostics.ts',
+        'scripts/persistence/worker.ts', 'scripts/persistence/validate.ts', 'scripts/persistence/failure-diagnostics.ts', 'scripts/persistence/resource-sampling.ts',
         'src/core/atomic-write.ts', 'src/core/persistence/staging.ts', 'src/core/persistence/model.ts',
         'src/core/persistence/effect-recovery.ts', 'src/core/persistence/effect-model.ts', 'src/core/persistence/effects.ts',
         'src/core/persistence/coordinator.ts', 'src/core/persistence/consumer.ts',

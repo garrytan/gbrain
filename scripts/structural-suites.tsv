@@ -227,6 +227,7 @@ test/ocr-run-budget.test.ts	doctor ocr_health surfaces the budget-skip counter (
 test/openclaw-plugin-manifest.test.ts	bundled-skill reference closure (nothing bundled points at a non-bundled skill)	1	readFileSync
 test/openclaw-plugin-manifest.test.ts	plugin membership curation (skills = plugin ∪ exclusions, disjoint)	9	readFileSync
 test/openclaw-plugin-manifest.test.ts	root OpenClaw plugin manifest	2	readFileSync
+test/persistence-resource-sampling.test.ts	RSS sampler wiring	1	readFileSync
 test/persistence-sync-options.serial.test.ts	(file-level)	1	readFileSync
 test/pg-access-classify.test.ts	marker contract (skill↔binary lockstep, the UPGRADE_AVAILABLE pattern)	3	bun-file
 test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	1	readFileSync
