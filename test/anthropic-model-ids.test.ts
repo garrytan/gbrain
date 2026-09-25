@@ -42,6 +42,7 @@ describe('Anthropic recipe model IDs', () => {
     const chatModels = anthropic.touchpoints?.chat?.models ?? [];
     expect(chatModels).toContain('claude-fable-5');
     expect(chatModels).toContain('claude-opus-5');
+    expect(chatModels).toContain('claude-opus-5-5');
     expect(chatModels).toContain('claude-opus-4-8');
     expect(chatModels).toContain('claude-sonnet-5');
   });
