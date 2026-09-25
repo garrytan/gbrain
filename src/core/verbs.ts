@@ -404,6 +404,17 @@ const SYNTHESIS_STATUS_ENUM = [
   'ok', 'empty_answer', 'not_json', 'output_truncated', 'no_llm', 'model_unusable', 'llm_error', 'extractive_fallback',
 ];
 
+const RECALL_BUDGET_ARM_SCHEMA = {
+  type: 'object',
+  required: ['candidates', 'kept', 'dropped', 'used'],
+  properties: {
+    candidates: { type: 'integer', minimum: 0, description: 'Authorized, filtered, limit-capped candidates before packing.' },
+    kept: { type: 'integer', minimum: 0 },
+    dropped: { type: 'integer', minimum: 0 },
+    used: { type: 'integer', minimum: 0, description: 'Estimated tokens in retained evidence, excluding the JSON envelope.' },
+  },
+};
+
 export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
   recall: {
     type: 'object',
@@ -445,9 +456,21 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
         },
       },
       search_degraded: { type: 'string', description: 'Present when the search arm fell back to keyword-only (no embedding provider).' },
-      budget_tokens: { type: 'integer', description: 'Present when budget_tokens was passed.' },
+      budget_tokens: { type: 'integer', description: 'Present for a positive finite numeric budget, including when its floor is zero.' },
       budget_used: { type: 'integer' },
       dropped_count: { type: 'integer' },
+      budget_packing: {
+        type: 'object',
+        description: 'Present only when a valid budget_policy is supplied. Per-arm used and dropped sums match budget_used and dropped_count when those fields exist.',
+        required: ['policy', 'applied', 'reason', 'facts', 'results'],
+        properties: {
+          policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Effective policy; ineligible query_first requests fall back to facts_first.' },
+          applied: { type: 'boolean', description: 'Whether the requested budget policy applied, not whether all required evidence fit.' },
+          reason: { type: 'string', enum: ['no_query', 'no_positive_finite_budget', 'budget_below_one', 'no_candidates', 'first_items_exceed_budget', 'packed'] },
+          facts: RECALL_BUDGET_ARM_SCHEMA,
+          results: RECALL_BUDGET_ARM_SCHEMA,
+        },
+      },
     },
   },
   remember: {

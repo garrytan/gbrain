@@ -19,6 +19,7 @@ triggers:
   - "connections"
   - "graph query"
 tools:
+  - recall
   - search
   - query
   - get_page
@@ -100,6 +101,41 @@ Answers should include:
 
 Search returns **chunks**, not full pages. Read the excerpts first before deciding
 whether to load a full page.
+
+For a question about saved **page evidence** with a tight budget, explicitly choose
+`recall` with `budget_policy: "query_first"`. It gives the existing ranked page
+results first use of the budget, then packs recent/filtered facts into what remains.
+This is an opt-in packing choice, not a new relevance model: an irrelevant page can
+displace a useful fact. Keep entity-first, session/event-filtered and fact-focused
+questions on their existing facts-first route. Do not change `context_pack` or
+existing third-party calls.
+
+```bash
+gbrain recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json
+```
+
+Equivalent MCP request:
+
+```json
+{"name":"recall","arguments":{"query":"zebra telescope","budget_tokens":75,"budget_policy":"query_first"}}
+```
+
+**Say to your agent:** “Recall the saved notes about the zebra telescope using a
+75-token estimated budget and query-first packing. Cite the returned evidence;
+if the first page cannot fit, tell me rather than treating that as missing memory.”
+
+Use the resolved brain and source as usual; the option does not widen permissions.
+`budget_packing` reports the effective policy and per-arm candidate/kept/dropped/used
+counts. Costs estimate `ceil(fact.length/4)` or
+`ceil(title.length/4) + ceil(chunk.length/4)`, not exact tokenizer or JSON-envelope
+size. Packing never skips an oversized prefix item or truncates it; multiple
+required pages may still not fit. With no nonblank query or no positive finite
+budget, the operation keeps legacy behavior. An eligible positive budget below one
+token returns empty arms. See the protocol for fractional-budget compatibility.
+
+This guidance and advertised tool schemas do not prove native-harness adoption.
+Confirm an observed query-first call in a fresh harness conversation before
+claiming activation; otherwise report adoption as unverified.
 
 - `gbrain search` / `gbrain query` return ranked chunks with context snippets.
   These are often enough to answer the question directly.

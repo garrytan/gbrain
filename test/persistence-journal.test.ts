@@ -133,6 +133,45 @@ describe('durable mutation journal', () => {
     await cancelWriteRequest(engine, a.principal, a.requestId!);
   });
 
+  test('Postgres admission progresses while short counter transactions keep the lock queue occupied', async () => {
+    const engine = engines.find(candidate => candidate.kind === 'postgres');
+    if (!engine) return;
+    const a = await admission(engine, 'admission-queue-progress');
+    await engine.executeRaw("INSERT INTO persistence_counters(key) VALUES('brain') ON CONFLICT DO NOTHING");
+    const [before] = await engine.executeRaw<{ lifetime_ids: string }>("SELECT lifetime_ids::text FROM persistence_counters WHERE key='brain'");
+    let stop = false;
+    let cycles = 0;
+    const lockers: Promise<void>[] = [];
+    const ready = Array.from({ length: 2 }, () => {
+      let held!: () => void;
+      const holding = new Promise<void>(resolve => { held = resolve; });
+      lockers.push((async () => {
+        while (!stop) await engine.transaction(async tx => {
+          await tx.executeRaw("SELECT key FROM persistence_counters WHERE key='brain' FOR UPDATE");
+          cycles++;
+          held();
+          await Bun.sleep(40);
+        });
+      })());
+      return holding;
+    });
+    let accepted: Awaited<ReturnType<typeof admitWrite>>;
+    try {
+      await Promise.all(ready);
+      accepted = await admitWrite(engine, a);
+    } finally {
+      stop = true;
+      await Promise.all(lockers);
+    }
+    expect(cycles).toBeGreaterThan(2);
+    expect(accepted.state).toBe('queued');
+    expect(accepted.request_id).toBe(a.requestId!);
+    expect((await admitWrite(engine, a)).id).toBe(accepted.id);
+    const [after] = await engine.executeRaw<{ lifetime_ids: string }>("SELECT lifetime_ids::text FROM persistence_counters WHERE key='brain'");
+    expect(Number(after.lifetime_ids) - Number(before.lifetime_ids)).toBe(1);
+    await cancelWriteRequest(engine, a.principal, a.requestId!);
+  }, 15000);
+
   test('contended admissions release PostgreSQL pool capacity for reads before the counter unlocks', async () => {
     const engine = engines.find(candidate => candidate.kind === 'postgres');
     if (!engine) return;

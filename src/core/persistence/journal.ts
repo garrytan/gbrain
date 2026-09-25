@@ -79,7 +79,7 @@ export async function admitWrite(engine: BrainEngine, input: WriteAdmission, ove
   const { requestId, apply } = await prepareAdmission(engine, input, overrides);
   return retryWriteAdmission(requestId, remaining => engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
-      [`${Math.min(10, remaining)}ms`, `${remaining}ms`]);
+      [`${Math.min(100, remaining)}ms`, `${remaining}ms`]);
     return apply(tx);
   }));
 }
