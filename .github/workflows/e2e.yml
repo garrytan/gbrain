@@ -34,7 +34,7 @@ jobs:
     # Postgres and HARD-FAILS if DATABASE_URL is missing, so the guard can never
     # silently skip.
     name: JSONB parity (#2339 regression guard)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 15
     services:
       postgres:
@@ -108,7 +108,7 @@ jobs:
 
   # Freeze selection before setup; each worker owns a separate Postgres service.
   prepare-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
@@ -149,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 60
     services:
       postgres:
@@ -203,7 +203,7 @@ jobs:
 
   tier1:
     name: Tier 1 (Mechanical)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -332,7 +332,7 @@ jobs:
     # OpenAI/Anthropic tokens and must not fire when the build
     # can't even pass the cheapest DB guard.
     needs: jsonb-parity
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -434,7 +434,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -462,7 +462,7 @@ jobs:
 
   coverage-full-serial:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -485,7 +485,7 @@ jobs:
 
   coverage-full-slow:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -515,7 +515,7 @@ jobs:
 
   coverage-full-e2e:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -601,7 +601,7 @@ jobs:
   coverage-full-report:
     needs: [coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -653,7 +653,7 @@ jobs:
   e2e-status:
     needs: [jsonb-parity, tier1, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Aggregate result

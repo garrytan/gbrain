@@ -12,6 +12,34 @@ is `scripts/bench-reindex-markdown.ts`.
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only.
 
+## CI runner capacity
+
+Repository-owned Linux validation jobs use ephemeral Ubicloud runners pinned to
+Ubuntu 24.04. The Ubicloud Managed Runners GitHub App must have access to this
+repository and active billing in its connected project; runner labels alone do
+not grant access. No Ubicloud API token is passed to workflow jobs.
+
+| Workload | Runner | Capacity |
+| --- | --- | --- |
+| Unit, serial, E2E, browser, compatibility, read-performance and deployment-matrix tests | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
+| Heavy test suite and persistence invariant/soak matrix | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
+| Native ARM64 glibc and musl tests | `ubicloud-standard-16-arm-ubuntu-2404` | 16 vCPU, 48 GB RAM |
+| Coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
+| Planning, status aggregation, dependency audit, gitleaks and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
+
+macOS and Windows matrices stay on GitHub-hosted runners. Release building and
+publishing also stay unchanged. The pinned upstream OSV reusable workflow does
+not expose a runner override, so its runner remains upstream-owned.
+
+The migration does not change shards, test selection, commands, timeouts,
+thresholds, artifact collection or required check identities. The security
+matrix retains its existing OS labels and changes only the Linux execution
+target. `test/scripts/ci-runner-routing.test.ts` pins capacity and platform
+routing; `.github/actionlint.yaml` declares the exact custom runner labels.
+Actual GitHub job records and completed checks establish runner availability;
+local workflow tests do not. More CPU and memory do not guarantee proportional
+speedups for serial tests or external-provider requests.
+
 Shared-skill tests distinguish canonical publication, protocol delivery, installed
 files and native harness use. `test/shared-skills-transports.test.ts` and
 `test/e2e/shared-skills-transports.test.ts` use real HTTP authentication, OAuth
