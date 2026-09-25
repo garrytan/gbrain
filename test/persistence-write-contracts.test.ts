@@ -81,6 +81,15 @@ describe('public write receipts', () => {
       diagnostic: { assessment: 'blocked', reason: 'database_contention', next_action: 'poll' } });
   });
 
+  test('a claim released at the preparation deadline keeps its blocked reason beside the derived health', () => {
+    const row = { request_id: REQUEST_ID, state: 'queued', blocked_reason: 'preparation_deadline',
+      created_at: new Date(), updated_at: new Date() } as WriteRequest;
+    const pending = publicWriteReceipt(receiptFor(row));
+    expect(pending).toMatchObject({ state: 'queued', blocked_reason: 'preparation_deadline',
+      diagnostic: { assessment: 'pending', reason: 'cause_unknown', next_action: 'poll' } });
+    expect(validateAgainstSchema(frozenVerbWriteError(pending).toJSON(), ERROR_SCHEMA)).toEqual([]);
+  });
+
   test('renewed aged requests request inspection without inventing owner failure', () => {
     const row = { request_id: REQUEST_ID, state: 'running', created_at: new Date(Date.now() - 130_000),
       updated_at: new Date() } as WriteRequest;
@@ -156,7 +165,7 @@ describe('public write receipts', () => {
     }
     // Producers found by the scan: claim release, recovery marks, pool capacity and recovery blocks.
     for (const expected of ['owner_unavailable', 'writer_busy', 'database_contention', 'revision_changed_repreparing', 'recovery_required',
-      'recovery_capacity', 'consumer_stopping', 'publication_failed', 'commit_outcome_uncertain', 'publication_not_started',
+      'recovery_capacity', 'consumer_stopping', 'preparation_deadline', 'publication_failed', 'commit_outcome_uncertain', 'publication_not_started',
       'writer_pool_capacity', 'database_unavailable', 'unexpected_staging_bytes', 'unexpected_file_bytes'])
       expect(found.has(expected)).toBe(true);
     const unknown = [...found].filter(([literal]) => !isWriteBlockedReason(literal));

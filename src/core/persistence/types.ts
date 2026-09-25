@@ -28,7 +28,7 @@ export type WriteErrorCode = typeof WRITE_ERROR_CODES[number];
 export const WRITE_BLOCKED_REASONS = [
   'writer_busy', 'writer_pool_capacity', 'owner_unavailable', 'writer_lock_unavailable',
   'recovery_required', 'recovery_capacity', 'database_contention', 'database_unavailable',
-  'consumer_stopping', 'revision_changed_repreparing', 'publication_not_started', 'publication_failed',
+  'consumer_stopping', 'preparation_deadline', 'revision_changed_repreparing', 'publication_not_started', 'publication_failed',
   'commit_outcome_uncertain', 'unexpected_file_bytes', 'unexpected_staging_bytes',
 ] as const;
 

@@ -155,7 +155,8 @@ describe('own-principal write receipt operations', () => {
 
     await engine.executeRaw("UPDATE persistence_requests SET blocked_reason='owner_unavailable' WHERE id=$1", [queued.id]);
     expect(await call('get_write_request', { request_id: queued.request_id }))
-      .toMatchObject({ state: 'queued', retry_after_ms: 1000, blocked_reason: 'owner_unavailable' });
+      .toMatchObject({ state: 'queued', retry_after_ms: 30000, blocked_reason: 'owner_unavailable',
+        diagnostic: { assessment: 'blocked', reason: 'owner_unavailable', next_action: 'inspect_owner' } });
 
     const uncertain = await accept();
     await engine.executeRaw("UPDATE persistence_requests SET state='recovering',blocked_reason='commit_outcome_uncertain' WHERE id=$1", [uncertain.id]);

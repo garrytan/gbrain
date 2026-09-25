@@ -208,7 +208,8 @@ and recovery bytes are never part of the receipt.
 
 `state` alone decides commitment. `blocked_reason` explains why accepted work
 is not progressing, for example `owner_unavailable` (the canonical owner is
-offline or changed), `writer_busy`, `writer_pool_capacity`,
+offline or changed), `writer_busy`, `writer_pool_capacity`, `preparation_deadline`
+(an unpublished attempt was released at its preparation deadline),
 `database_contention`, or, while `recovering`, `commit_outcome_uncertain`
 (publication ran but the commit acknowledgment was lost). It is a fixed,
 content-free vocabulary, and its absence means ordinary queueing. It appears on
