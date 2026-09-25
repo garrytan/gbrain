@@ -50,10 +50,10 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
   const engine = observeAdmissionTransactions(kind === 'postgres' ? new PostgresEngine() : new PGLiteEngine(), (requestId, now) => {
     timings.admitted(requestId, now);
   });
-  const sampleRecords = new BoundedRecords<{ at_ms: number; queue_count: number; queue_age_ms: number; recovery_bytes: number; rss_bytes: number; pool: unknown }>(4096);
+  const sampleRecords = new BoundedRecords<{ at_ms: number; queue_count: number; queue_age_ms: number; recovery_bytes: number; rss_bytes: number | null; pool: unknown }>(4096);
   const samples = sampleRecords.records;
   result.metrics = samples;
-  let peakQueueAge = 0; let peakRecovery = 0; let peakRss = 0;
+  let peakQueueAge = 0; let peakRecovery = 0; let peakRss: number | null = null; let rssUnavailable = 0;
   // Production search can degrade when one lexical arm fails. A benchmark
   // must not count that cheaper, partial read as a successful measurement.
   const keyword = engine.searchKeyword; const titles = engine.searchTitles;
@@ -130,8 +130,14 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
           'idle', count(*) FILTER(WHERE state='idle'), 'idle_in_transaction', count(*) FILTER(WHERE state='idle in transaction'))
           FROM pg_stat_activity WHERE datname=current_database()) AS database_sessions` : ''} FROM persistence_requests`);
       sampleStage = 'metrics_rss';
-      const rss = process.memoryUsage().rss;
-      peakQueueAge = Math.max(peakQueueAge, Number(row.age)); peakRecovery = Math.max(peakRecovery, Number(row.recovery)); peakRss = Math.max(peakRss, rss);
+      let rss: number | null;
+      try { rss = process.memoryUsage().rss; }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Failed to get memory usage') throw error;
+        rss = null; rssUnavailable++;
+      }
+      peakQueueAge = Math.max(peakQueueAge, Number(row.age)); peakRecovery = Math.max(peakRecovery, Number(row.recovery));
+      if (rss !== null) peakRss = Math.max(peakRss ?? 0, rss);
       sampleRecords.add({ at_ms: performance.now() - at, queue_count: row.pending, queue_age_ms: Number(row.age), recovery_bytes: Number(row.recovery),
         rss_bytes: rss, pool: engine instanceof PostgresEngine ? {
           tracked_subset: engine.getPoolDiagnostics(), database_sessions: row.database_sessions,
@@ -162,9 +168,6 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
     stage = 'validate';
     assert.equal(admissionMs.length, completed, 'every completed write needs an observed durable admission');
     result.metrics = samples; result.throughput_writes_per_second = completed * 1000 / (performance.now() - queryStart);
-    result.peak_queue_age_ms = peakQueueAge;
-    result.peak_recovery_bytes = peakRecovery;
-    result.peak_rss_bytes = peakRss;
     for (const p of ['p50', 'p95', 'p99']) result[`delta_${p}_pct`] = 100 * (result.phase_b[`${p}_ms`] / result.phase_a[`${p}_ms`] - 1);
     result.brain_page_count = Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::integer AS n FROM pages'))[0].n);
     assert(result.phase_b.writes_committed_during_reads > 0, 'actual writes must commit while reads are still running');
@@ -178,6 +181,10 @@ export async function runReadLatencyWorkload(options: ReadWorkloadOptions = {}) 
     catch (error) { diagnostics.failure('shutdown', error); result.ok = false; result.error = 'benchmark workload failed'; }
     if (backgroundFailure || diagnostics.failures.total > 0) { result.ok = false; result.error = 'benchmark workload failed'; }
     restoreBegin?.(); diagnostics.stop();
+    result.peak_queue_age_ms = peakQueueAge;
+    result.peak_recovery_bytes = peakRecovery;
+    result.peak_rss_bytes = peakRss;
+    result.rss_unavailable_samples = rssUnavailable;
     result.metrics_retention = { limit: sampleRecords.limit, total: sampleRecords.total, dropped: sampleRecords.dropped };
     result.elapsed_ms = performance.now() - at;
   }

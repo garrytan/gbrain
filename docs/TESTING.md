@@ -380,6 +380,28 @@ active preparation without starting another request.
 do not replace their durable files while unbound, moved and original bound paths
 all remain fenced.
 
+`test/e2e/persistence-http-liveness.test.ts` drives real authenticated HTTP MCP
+with legacy and source-bound OAuth credentials against an isolated PostgreSQL
+database. It covers pending page/fact writes, lost acknowledgments, owner
+interruption, exact canonical readback, 44 pages over three clients, and current
+receipt authorization. Set `GBRAIN_TEST_OLD_BINARY` to a retained compatible
+executable to additionally exercise old/new owner handoffs in both directions
+for queued, actually claimed and recovery-bearing rows. Interrupted owners are
+reaped and native exclusion is verified before their successors start; only the
+abandoned running lease is advanced by the fixture. An omitted executable skips
+these compatibility cases, not proves them.
+`test/e2e/persistence-phase-liveness.test.ts` holds real table/row locks and
+ordinary/direct pool slots to verify phase cancellation (including capacity
+marking), tracked queued `BEGIN`, renewal, expired-head FIFO and shutdown fences.
+A loopback TCP gate separately delays or rejects cold direct initialization,
+checking retained work through shutdown and same-ID completion after retry.
+The memory-mutation tests use a
+deterministic loopback embedding transport for slow and aborted preparation;
+they do not contact a paid provider. Receipt contract, MCP parser, IPC and CLI
+tests pin the same nested allowlist and advisory age policy. Diagnostic tests
+exercise both fresh/index-upgrade parity and a genuinely interrupted PostgreSQL
+concurrent index build when a PostgreSQL fixture is supplied.
+
 `test/persistence-chaos.slow.test.ts` and `test/e2e/persistence-chaos.test.ts`
 execute real journal/coordinator schedules and eight SIGKILL publication
 boundaries, followed by a small multi-process soak. The Postgres test creates

@@ -2189,11 +2189,10 @@ four numeric segments are required first. Historical 3-segment versions
 DRIFT_STALE_PKG / DRIFT_UNEXPECTED, and refuses to proceed on
 DRIFT_UNEXPECTED. This is why the two must move together.
 
-**The CI version-gate** rejects pushes where `VERSION` and
-`package.json` disagree, OR where `VERSION` is not strictly greater
-than master's VERSION. If a queue collision claims your version on
-master before yours lands, /ship's queue-aware allocator (Step 12)
-will detect drift and re-bump on the next run.
+**Auto-renumber when needed; never ask.** Use `/ship`'s queue-aware allocator,
+update all version stamps and the PR title, then report the number. This overrides
+its ALREADY_BUMPED rebump prompt, not scope, merge or deployment approvals.
+CI rejects mismatched `VERSION`/`package.json` or versions not newer than master.
 
 ### Version consistency and conflict recovery
 
@@ -3597,7 +3596,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [`docs/integrations/`](docs/integrations/) — connecting external data sources (voice, email, calendar, embedding providers)
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
-- [`docs/eval/`](docs/eval/) — eval framework, metric glossary, methodology
+- [Evals](docs/eval/) and [research](docs/research/) — methods and results
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents
 - [`CLAUDE.md`](CLAUDE.md) — entry point for Claude Code (deep operating context)
@@ -7076,11 +7075,20 @@ Response: `{ id, expired, reason, protocol_version }`.
 
 Write receipts distinguish accepted work from committed memory. Their public
 shape is `{request_id, state, retry_after_ms, revision?, outcome?, persistence?,
-compacted?, created_at?, updated_at?}`. States are `queued`, `running`,
+compacted?, created_at?, updated_at?, diagnostic?}`. States are `queued`, `running`,
 `recovering`, `committed`, `conflict`, `failed`, and `cancelled`. Terminal
 receipts have `retry_after_ms: null`. `persistence.mode` distinguishes a
 filesystem-backed write from an intentional database-only write; Git progress
 does not change the meaning of committed memory.
+
+Nonterminal receipts may include `diagnostic: {age_ms, assessment, reason,
+next_action, observed_at?}`. `assessment` is `pending`, `blocked`, or `stalled`;
+`reason` uses a closed allowlist, and `next_action` is `poll` or `inspect_owner`.
+Age measures time since acceptance, not time since the last lease renewal.
+`observed_at` is omitted when fresh dependency evidence is unavailable. These
+fields are advisory, not proof of owner death or permission to repair. Honor
+`retry_after_ms`, retain the original request ID, and inspect the existing owner
+before replay when advised. Older servers may omit `diagnostic` entirely.
 
 A pending write is a protocol `unavailable` error with a populated suggestion,
 `protocol_version: 1`, and optional `write_request` and `write_error` fields.
