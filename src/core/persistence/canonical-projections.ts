@@ -9,13 +9,40 @@ import { extractTimelineFromContent } from '../timeline-extract.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { OperationError } from '../ops/contract.ts';
 
+/** Remove Markdown backtick-fenced code while preserving line boundaries. */
+function withoutBacktickFences(body: string): string {
+  let fenceLength = 0;
+  const lines: string[] = [];
+
+  for (const line of body.split('\n')) {
+    if (fenceLength > 0) {
+      const close = line.match(/^ {0,3}(`+)[ \t]*$/);
+      if (close && close[1].length >= fenceLength) fenceLength = 0;
+      lines.push('');
+      continue;
+    }
+
+    const open = line.match(/^ {0,3}(`{3,})(.*)$/);
+    if (open && !open[2].includes('`')) {
+      fenceLength = open[1].length;
+      lines.push('');
+      continue;
+    }
+
+    lines.push(line);
+  }
+
+  return lines.join('\n');
+}
+
 /** Compile synchronous, provider-free projections before entering publication. */
 export function prepareCanonicalProjections(page: ParsedPage, slug: string, sourceId: string): (tx: BrainEngine) => Promise<void> {
   const fields=[page.compiled_truth,page.timeline ?? ''];
-  for(const field of fields) for(const marker of [FACTS_FENCE_BEGIN,FACTS_FENCE_END,TAKES_FENCE_BEGIN,TAKES_FENCE_END]) {
-    if(field.split(marker).length>2) throw new OperationError('invalid_params','Each canonical body section must contain at most one facts fence and one takes fence.');
+  const parseFields = fields.map(withoutBacktickFences);
+  for(const field of parseFields) for(const marker of [FACTS_FENCE_BEGIN,FACTS_FENCE_END,TAKES_FENCE_BEGIN,TAKES_FENCE_END]) {
+    if(field.split(marker).length > 2) throw new OperationError('invalid_params','Each canonical body section must contain at most one facts fence and one takes fence.');
   }
-  const factSets=fields.map(parseFactsFence),takeSets=fields.map(parseTakesFence);
+  const factSets=parseFields.map(parseFactsFence),takeSets=parseFields.map(parseTakesFence);
   if ([...factSets,...takeSets].some(set=>set.warnings.length)) throw new OperationError('invalid_params','A canonical facts or takes fence cannot be parsed losslessly.');
   const facts=factSets.flatMap(set=>set.facts),takes=takeSets.flatMap(set=>set.takes);
   for(const rows of [facts,takes]) if(new Set(rows.map(row=>row.rowNum)).size!==rows.length) {
