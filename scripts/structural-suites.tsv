@@ -157,6 +157,7 @@ test/extract-atoms-drain.test.ts	protected-names register comment names the real
 test/extract-atoms-drain.test.ts	shared wiring helper holds the cycle lock (5A)	2	readFileSync
 test/extract-include-frontmatter-config.serial.test.ts	no extraction path hardcodes includeFrontmatter	1	readFileSync
 test/extract-workers.test.ts	extract.ts → workers wiring (T7)	10	readFileSync
+test/fact-withdrawal-prepare-wiring.test.ts	(file-level)	1	readFileSync
 test/facts-backstop-remedy-verb.test.ts	facts backstop thin-client-fallback remedy verb (#4489)	3	readFileSync
 test/features.test.ts	CLI routing	2	bun-file
 test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFileSync
