@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.0.2] - 2026-09-25
+
+**Voice-gate calibration runs without an Anthropic key.** The calibration
+judge was hard-wired to a utility-tier default that unconditionally resolved
+to an Anthropic model, so keyless installs failed every voice-gate run. The
+judge now resolves through the normal tier-default chain and follows whatever
+provider you actually configured.
+
+**Say to your agent:** *"Re-run the calibration profile — the voice gate now
+uses your configured tier default."*
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**
