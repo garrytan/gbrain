@@ -26,6 +26,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/facts/withdrawal*.ts": [
     "test/e2e/delegated-grants-withdrawal.test.ts",
     "test/e2e/fact-withdrawal-scope-postgres.test.ts",
+    "test/e2e/facts-forget.test.ts",
   ],
   "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the
