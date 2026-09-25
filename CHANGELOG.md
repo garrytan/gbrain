@@ -83,6 +83,10 @@ before previewing or applying historical changes.
   supports bounded previews, exact-digest approval, private receipts and
   checkpoints, transactional source/endpoint revalidation, and crash replay.
   MCP and thin clients cannot run it; `--yes` alone cannot authorize an apply.
+- **Concurrent write admission:** When several tools write at once, PostgreSQL
+  admissions get more time to progress behind short counter transactions.
+  Individual lock waits allow up to 100ms while preserving the five-second
+  retry budget, retained request IDs, and pool access for reads between attempts.
 
 ### For contributors
 
