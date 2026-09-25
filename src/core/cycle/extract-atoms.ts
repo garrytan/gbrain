@@ -71,7 +71,7 @@ import { truncateUtf8 } from '../text-safe.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { upsertExtractRollup, type HaltReason } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
@@ -989,6 +989,7 @@ export async function runPhaseExtractAtoms(
   // EXCEPT the ones TRANSIENT_EXTRACT_ERROR_RE + the rate_limit abort class
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
+  let haltReason: HaltReason | undefined;
 
   async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
     await writeAtomPageState(engine, sourceId, item, 'complete');
@@ -1115,6 +1116,7 @@ export async function runPhaseExtractAtoms(
       if (!parseOutcome.ok) {
         malformedOutputs++;
         hardFailureCount++;
+        haltReason ??= 'item_error';
         if (!opts.dryRun && managed && origin) writeRequests.push(...await publishManagedAtoms(engine, managed, origin, [], parseOutcome.reason));
         const failCount = await recordItemFailureCount(item);
         failures.push({
@@ -1338,7 +1340,14 @@ export async function runPhaseExtractAtoms(
       const decision = llmHalt.observe(err);
       if (decision !== 'continue') {
         abortedGlobalError = haltedClassOf(decision);
-        if (abortedGlobalError !== 'rate_limit') hardFailureCount++;
+        if (abortedGlobalError !== 'rate_limit') {
+          hardFailureCount++;
+          haltReason = abortedGlobalError === 'auth'
+            ? 'provider_auth'
+            : abortedGlobalError === 'billing'
+              ? 'provider_billing'
+              : 'provider_rate_limit';
+        }
         failures.push({
           source: originLabel,
           error: `aborting phase: ${llmHalt.note()} (${message})`,
@@ -1350,6 +1359,11 @@ export async function runPhaseExtractAtoms(
       if (!transient) {
         await recordItemFailureCount(item);
         hardFailureCount++;
+        if (err instanceof OperationError && err.code === 'writer_coordinator_required') {
+          haltReason ??= 'coordinator_refused';
+        } else {
+          haltReason ??= 'item_error';
+        }
       }
       failures.push({
         source: originLabel,
@@ -1395,6 +1409,7 @@ export async function runPhaseExtractAtoms(
       cost_delta: estimatedSpendUsd,
       round_completed_delta: hardFailureCount === 0 ? 1 : 0,
       halt_delta: hardFailureCount > 0 ? 1 : 0,
+      halt_reason: haltReason,
     });
   }
 

@@ -1007,6 +1007,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
+      halt_reason: result.aborted_global_error === 'auth'
+        ? 'provider_auth'
+        : result.aborted_global_error === 'billing'
+          ? 'provider_billing'
+          : result.aborted_global_error === 'rate_limit'
+            ? 'provider_rate_limit'
+            : undefined,
       ...classifyRunStop({
         budget_exhausted: result.budget_exhausted === true,
         deadline_hit: result.deadline_hit === true,

@@ -361,6 +361,13 @@ describe('runPhaseExtractAtoms — extract_health rollup excludes transient fail
     expect(row).toBeDefined();
     expect(row!.halt_count).toBe(1);
     expect(row!.round_completed_count).toBe(0);
+    const [reasons] = await engine.executeRaw<{ halt_reasons: Record<string, number> | string }>(
+      `SELECT halt_reasons FROM extract_rollup_7d WHERE kind='atoms' AND source_id='default'`,
+    );
+    const reasonCounts = typeof reasons!.halt_reasons === 'string'
+      ? JSON.parse(reasons!.halt_reasons) as Record<string, number>
+      : reasons!.halt_reasons;
+    expect(reasonCounts.provider_auth).toBe(1);
   });
 
   test('a rate_limit-streak abort (3 consecutive 429s) does NOT count as a halt', async () => {

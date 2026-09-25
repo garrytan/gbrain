@@ -6660,6 +6660,16 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
         : PERSISTENCE_DATABASE_PENDING_INDEX_SQL);
     },
   },
+  {
+    version: 166,
+    name: 'extract_rollup_halt_reasons',
+    idempotent: true,
+    sql: `ALTER TABLE extract_rollup_7d
+      ADD COLUMN IF NOT EXISTS halt_reasons JSONB NOT NULL DEFAULT '{}'::jsonb;
+      UPDATE extract_rollup_7d
+        SET halt_reasons = jsonb_build_object('unknown', halt_count)
+        WHERE halt_count > 0 AND halt_reasons = '{}'::jsonb;`,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

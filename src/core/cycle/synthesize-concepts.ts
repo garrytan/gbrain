@@ -452,6 +452,13 @@ export async function runPhaseSynthesizeConcepts(
       kind: 'concepts',
       source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
+      halt_reason: abortedGlobalError === 'auth'
+        ? 'provider_auth'
+        : abortedGlobalError === 'billing'
+          ? 'provider_billing'
+          : abortedGlobalError === 'rate_limit'
+            ? 'provider_rate_limit'
+            : undefined,
       round_completed_delta: failures.length === 0 ? 1 : 0,
       halt_delta: failures.length > 0 ? 1 : 0,
     });

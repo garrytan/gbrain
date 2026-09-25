@@ -67,6 +67,46 @@ describe('classifyRunStop (#4482)', () => {
 });
 
 describe('extract_rollup_7d.expected_limit_count (#4482)', () => {
+  test('halt reasons increment atomically and omitted reasons reconcile as unknown', async () => {
+    await engine.executeRaw('DELETE FROM extract_rollup_7d');
+    await upsertExtractRollup(engine, {
+      kind: 'atoms', source_id: 'default', halt_delta: 1, halt_reason: 'provider_auth',
+    });
+    await upsertExtractRollup(engine, { kind: 'atoms', source_id: 'default', halt_delta: 1 });
+    await upsertExtractRollup(engine, {
+      kind: 'atoms', source_id: 'default', halt_delta: 2, halt_reason: 'provider_auth',
+    });
+    const [row] = await engine.executeRaw<{
+      halt_count: number; halt_reasons: Record<string, number> | string;
+    }>(`SELECT halt_count, halt_reasons FROM extract_rollup_7d WHERE kind='atoms'`);
+    const reasons = typeof row!.halt_reasons === 'string'
+      ? JSON.parse(row!.halt_reasons) as Record<string, number>
+      : row!.halt_reasons;
+    expect(Number(row!.halt_count)).toBe(4);
+    expect(reasons).toEqual({ provider_auth: 3, unknown: 1 });
+    expect(Object.values(reasons).reduce((sum, count) => sum + Number(count), 0)).toBe(Number(row!.halt_count));
+  });
+
+  test('a pre-v166 brain without halt_reasons still records the counters', async () => {
+    await engine.executeRaw('DELETE FROM extract_rollup_7d');
+    await engine.executeRaw('ALTER TABLE extract_rollup_7d DROP COLUMN halt_reasons');
+    try {
+      const res = await upsertExtractRollup(engine, {
+        kind: 'atoms', source_id: 'default', halt_delta: 1, halt_reason: 'provider_auth',
+      });
+      expect(res.ok).toBe(true);
+      const [row] = await engine.executeRaw<{ halt_count: number }>(
+        `SELECT halt_count FROM extract_rollup_7d WHERE kind='atoms'`,
+      );
+      expect(Number(row!.halt_count)).toBe(1);
+    } finally {
+      await engine.executeRaw(
+        `ALTER TABLE extract_rollup_7d ADD COLUMN IF NOT EXISTS halt_reasons JSONB NOT NULL DEFAULT '{}'::jsonb`,
+      );
+      await engine.executeRaw('DELETE FROM extract_rollup_7d');
+    }
+  });
+
   test('migration added the column and the writer records the delta', async () => {
     const res = await upsertExtractRollup(engine, {
       kind: 'facts.conversation',

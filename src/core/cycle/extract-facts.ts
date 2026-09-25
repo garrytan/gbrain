@@ -470,6 +470,7 @@ export async function runExtractFacts(
         cost_delta: 0,
         round_completed_delta: 0,
         halt_delta: 1,
+        halt_reason: 'migration_pending',
       });
     }
     return result;

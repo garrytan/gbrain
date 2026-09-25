@@ -53,6 +53,7 @@ describe('extract_facts rollup telemetry (#3683)', () => {
     expect(p[1]).toBe('default');
     expect(p[4]).toBe(1); // halt_delta
     expect(p[7]).toBe(0); // round_completed_delta
+    expect(p[10]).toBe('migration_pending'); // #5495 halt_reason
   });
 
   test('healthy run books round_completed_delta=1, halt_delta=0', async () => {
