@@ -85,6 +85,22 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const DEFAULT_RATE_KEY = 'anthropic:messages';
 
 /**
+ * Rolling-cache eligibility for a conversation content block.
+ *
+ * `cache_control` is rejected on `thinking` and `redacted_thinking` blocks, and
+ * an assistant turn can legitimately end on one when extended thinking is
+ * enabled. Marking it fails the whole request (#5326). Deliberately minimal:
+ * the turn's breakpoint is skipped rather than walked back to the last
+ * eligible block — moving the cache boundary is a behavioural change that
+ * deserves its own discussion, and the next turn re-establishes it.
+ */
+export function canMarkRollingCacheBlock(block: unknown): boolean {
+  if (!block || typeof block !== 'object') return false;
+  const type = (block as { type?: unknown }).type;
+  return type !== 'thinking' && type !== 'redacted_thinking';
+}
+
+/**
  * Resolve the per-turn output-token cap (#2778). Per-job data wins, then the
  * `agent.max_output_tokens` config row, then a model-aware default: 32000 for
  * thinking-by-default models (#4087 Claude 5 by name, #4172 recipe-declared
@@ -863,7 +879,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           }
           if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
             const lastBlock = lastMsg.content[lastMsg.content.length - 1];
-            if (lastBlock && typeof lastBlock === 'object') {
+            // Never mark a thinking block: the API rejects cache_control there.
+            if (canMarkRollingCacheBlock(lastBlock)) {
               lastBlock.cache_control = { type: 'ephemeral' };
             }
           }
