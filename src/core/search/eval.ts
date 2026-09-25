@@ -10,7 +10,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { embed } from '../embedding.ts';
+import { embedQuery } from '../embedding.ts';
 import { hybridSearch } from './hybrid.ts';
 import type { HybridSearchOpts } from './hybrid.ts';
 import { dedupeRankedKeys } from '../eval/ranked-docs.ts';
@@ -238,7 +238,7 @@ async function runQuery(
   }
 
   if (strategy === 'vector') {
-    const embedding = await embed(query);
+    const embedding = await embedQuery(query);
     const results = await engine.searchVector(embedding, { limit });
     return results.map(r => r.slug);
   }

@@ -10,6 +10,34 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.57.1.1] - 2026-09-25
+
+**Qwen searches now include the model’s retrieval instruction.**
+
+Qwen3 Embedding expects a task instruction on search queries, but GBrain sent
+plain query text. Searches and vector-only evaluations now use the recommended
+retrieval instruction. Documents remain unchanged, so existing Qwen document
+vectors do not need to be rebuilt for this fix. Other embedding models keep
+their current behavior.
+
+### To take advantage of v0.57.1.1
+
+Upgrade GBrain and restart long-running MCP or server processes. No new config
+is required. If your endpoint already adds the Qwen instruction, set
+`GBRAIN_QUERY_INSTRUCT=""` in the process environment (or `~/.gbrain/.env`)
+before startup to disable client-side formatting. A non-empty value customizes
+the retrieval task. See [embedding providers](docs/integrations/embedding-providers.md#qwen3-query-instructions).
+
+### Itemized changes
+
+- Add query-only formatting for Qwen3 Embedding across supported provider routes.
+- Preserve explicit opt-out through the canonical environment merge and use the
+  configured environment snapshot for both requests and search identity.
+- Include the effective instruction in the search-knob hash.
+- Route vector-only evaluation through the query embedding API.
+- Continue paul-0320’s contribution in #3584, updated for current gateway and
+  configuration handling; address the query-formatting request in #5075.
+
 ## [0.57.1.0] - 2026-09-24
 
 **More capacity for Linux CI, with the same acceptance checks.**

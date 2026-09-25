@@ -57,6 +57,7 @@ import { snapshotConfigReader } from '../config-snapshot.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
+import { applyQueryInstruction, queryInstructionForModel } from './query-instruct.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, normalizeAIError } from './errors.ts';
 import { getProviderCapabilities } from './capabilities.ts';
@@ -781,6 +782,18 @@ export function getEmbeddingModel(): string {
   const cfg = requireConfig();
   if (cfg.embedding_identity_unverified) throw unverifiedEmbeddingIdentityError();
   return cfg.embedding_model ?? DEFAULT_EMBEDDING_MODEL;
+}
+
+/** Same configure-time instruction as embed(); used to separate persisted search caches. */
+export function getQueryInstruction(modelString?: string): string | undefined {
+  if (!_config) return undefined;
+  try {
+    const { modelId } = parseModelId(modelString || getEmbeddingModel());
+    return queryInstructionForModel(modelId, _config.env);
+  } catch {
+    // Cache bookkeeping must not turn unavailable embeddings into a keyword-search failure.
+    return undefined;
+  }
 }
 
 export function getEmbeddingModelProvenance(): string | null {
@@ -1567,7 +1580,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => truncateUtf8(t ?? '', MAX_CHARS));
+  const truncated = applyQueryInstruction(texts, modelId, opts?.inputType, cfg.env).map(t => truncateUtf8(t ?? '', MAX_CHARS));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
