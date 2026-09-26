@@ -175,6 +175,27 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
     expect(details.totals.recoverable_repos).toBe(1);
     expect(details.totals.no_remote).toBe(0);
   });
+
+  test('warn with zero no_remote assets names the assets and reasons that caused it', async () => {
+    const dirty = makeHealthyRepo('src-dirty');
+    writeFileSync(join(dirty, 'note.md'), '# edited, not committed\n');
+    const plain = join(tmp, 'src-plain');
+    mkdirSync(plain, { recursive: true });
+
+    const check = await checkBackupCoverage(
+      makeEngine([
+        { id: 'src-dirty', local_path: dirty },
+        { id: 'src-plain', local_path: plain },
+      ]),
+      { localOnly: true },
+    );
+
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('src-dirty (dirty)');
+    expect(check.message).toContain('src-plain (not_a_git_repo)');
+    expect(check.message).not.toContain('no git remote');
+    expect(check.message).toContain('gbrain backup status');
+  });
 });
 
 // ── Remote (untrusted) path: cache-only reader, zero git, zero engine ────────
@@ -209,6 +230,25 @@ describe('checkBackupCoverage — remote surface (no localOnly)', () => {
     expect(details.note).toBe('cache-only (remote surface never probes git; aggregate counts only)');
     expect(details.computed_by).toBeUndefined(); // remote details drop provenance
     expect(typeof details.cache_age).toBe('string');
+  });
+
+  test('warn cache with zero no_remote → aggregate counts by reason, never a "0 ... no git remote" claim', async () => {
+    saveBackupStatus({
+      ...makeWarnCache('private-src-id'),
+      totals: { assets: 2, no_remote: 0, unpushed: 0, failing: 0, recoverable_repos: 0, pages_at_risk: 0 },
+      assets: [
+        { kind: 'db_only', id: 'private-src-id', state: 'info', fix_argv: null },
+        { kind: 'source_repo', id: 'private-src-id', state: 'dirty', detail: 'uncommitted changes', configured_remote: true },
+      ],
+    });
+
+    const check = await checkBackupCoverage(makeThrowingEngine(), {});
+
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('1 of 2');
+    expect(check.message).toContain('1 dirty');
+    expect(check.message).not.toContain('no git remote');
+    expect(check.message).not.toContain('private-src-id');
   });
 
   test('ok cache → ok from cache with the cache-only note', async () => {
