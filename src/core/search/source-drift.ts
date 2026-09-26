@@ -22,7 +22,6 @@ export async function stampAtomSourceDrift(engine: BrainEngine, results: SearchR
           AND origin.source_id = atom.source_id
         WHERE atom.id = ANY($1::int[])
           AND atom.type = 'atom'
-          AND atom.frontmatter->>'source_slug' IS NOT NULL
           AND atom.frontmatter->>'source_hash' IS NOT NULL`,
       [ids],
     );

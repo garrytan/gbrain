@@ -21,6 +21,7 @@ import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sou
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
+import { stampAtomSourceDrift } from '../search/source-drift.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { packToBudget, estimateTokens, resultTokens } from '../search/token-budget.ts';
 import { isAvailable } from '../ai/gateway.ts';
@@ -433,6 +434,9 @@ const recall: Operation = {
           ...searchScope,
         });
       }
+      // recall uses both direct keyword and cached hybrid paths; neither
+      // ordinary fact projection nor cache state certifies atom provenance.
+      await stampAtomSourceDrift(ctx.engine, searchResults);
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
     }
 
@@ -535,6 +539,7 @@ const recall: Operation = {
               evidence: r.evidence,
               create_safety: r.create_safety,
               provenance: r.slug,
+              ...(r.unverified_source_drift ? { unverified_source_drift: true } : {}),
             })),
             ...(searchDegraded ? { search_degraded: searchDegraded } : {}),
           }

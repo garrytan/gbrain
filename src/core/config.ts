@@ -1530,6 +1530,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.
   'auto_timeline',
+  'doctor.provenance_review_enabled',
   // #2606: chronicle judge output-token cap (default 4000). Event-dense
   // pages overflowed the old hardcoded 1500 and were misrecorded as
   // no_events; the cap is now configurable and truncation is surfaced.

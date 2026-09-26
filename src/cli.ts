@@ -1762,7 +1762,9 @@ export function formatResult(
       if (r.error === 'ambiguous_slug') {
         return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
       }
-      return (r.unverified_source_drift === true ? '[unverified_source_drift: source missing or changed]\n' : '') + serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', {
+      // Keep stdout canonical Markdown for get/put round trips; warn on stderr.
+      if (r.unverified_source_drift === true) console.error('unverified_source_drift: source missing or changed');
+      return serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', {
         type: r.type, title: r.title, tags: r.tags || [],
       });
     }

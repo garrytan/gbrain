@@ -4,6 +4,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { formatResult } from '../src/cli.ts';
 import { formatResultExplain } from '../src/core/search/explain-formatter.ts';
 import { stampAtomSourceDrift } from '../src/core/search/source-drift.ts';
+import { runGather } from '../src/core/think/gather.ts';
 
 let engine: PGLiteEngine;
 const op = (name: string) => operations.find(o => o.name === name)!;
@@ -37,6 +38,10 @@ beforeAll(async () => {
       type: 'atom', title: 'Legacy', compiled_truth: 'uniquedriftneedle legacy', frontmatter: {},
     }, { sourceId });
   }
+  await engine.putPage('atoms/hash-without-origin', {
+    type: 'atom', title: 'Missing origin locator', compiled_truth: 'uniquedriftneedle missing origin locator',
+    frontmatter: { source_hash: 'abcdabcdabcdabcd' },
+  });
 });
 afterAll(async () => { await engine.disconnect(); });
 
@@ -72,6 +77,7 @@ describe('source-drift provenance on retrieval', () => {
     expect((await run('get_page', { slug: 'atoms/driftcase', source_id: 'other' })).unverified_source_drift).toBeUndefined();
     expect((await run('get_page', { slug: 'atoms/orphancase' })).unverified_source_drift).toBe(true);
     expect((await run('get_page', { slug: 'atoms/legacycase' })).unverified_source_drift).toBeUndefined();
+    expect((await run('get_page', { slug: 'atoms/hash-without-origin' })).unverified_source_drift).toBe(true);
   });
 
   test('live source edits change provenance; lookup failures never assert verification', async () => {
@@ -86,12 +92,30 @@ describe('source-drift provenance on retrieval', () => {
     expect(atoms[1].unverified_source_drift).toBeUndefined();
   });
 
+  test('recall labels historical page hits and think excludes them as evidence', async () => {
+    const recalled = await run('recall', { query: 'uniquedriftneedle', source_id: 'default', limit: 30 });
+    const row = recalled.results?.find((r: any) => r.slug === 'atoms/driftcase');
+    expect(row?.unverified_source_drift).toBe(true);
+    const gathered = await runGather(engine, { question: 'uniquedriftneedle', sourceId: 'default' });
+    expect(gathered.pages.some(r => r.slug === 'atoms/driftcase')).toBe(false);
+    expect(gathered.warnings).toContain('GATHER_UNVERIFIED_SOURCE_DRIFT_EXCLUDED');
+  });
+
   test('human CLI output visibly warns; JSON keeps structured field', () => {
     const row = { slug: 'atoms/driftcase', score: 0.5, chunk_text: 'synthetic', unverified_source_drift: true };
     expect(formatResult('search', [row])).toContain('unverified_source_drift');
     expect(formatResult('query', [row])).toContain('unverified_source_drift');
     expect(formatResultExplain(row as any, 1)).toContain('unverified_source_drift');
-    expect(formatResult('get_page', { ...row, type: 'atom', title: 'Synthetic', frontmatter: {}, tags: [], compiled_truth: 'synthetic', timeline: '' })).toContain('unverified_source_drift');
+    const originalError = console.error;
+    const warnings: string[] = [];
+    console.error = (...args: unknown[]) => { warnings.push(args.join(' ')); };
+    try {
+      const markdown = formatResult('get_page', { ...row, type: 'atom', title: 'Synthetic', frontmatter: {}, tags: [], compiled_truth: 'synthetic', timeline: '' });
+      expect(markdown).toStartWith('---\n');
+      expect(warnings.join(' ')).toContain('unverified_source_drift');
+    } finally {
+      console.error = originalError;
+    }
     expect(JSON.parse(formatResult('search', [row], { json: true }))[0].unverified_source_drift).toBe(true);
   });
 });

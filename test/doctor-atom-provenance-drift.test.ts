@@ -24,6 +24,9 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { doctorFileSource } from './helpers/doctor-source.ts';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 let engine: PGLiteEngine;
 
@@ -69,6 +72,62 @@ async function seedAtom(slug: string, sourceSlug: string, sourceHash: string) {
 }
 
 describe('computeAtomProvenanceDriftCheck', () => {
+  it('acknowledges only exact reviewed historical drift and warns on one new atom', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-provenance-'));
+    try {
+      const items = [];
+      for (let i = 0; i < 30; i++) {
+        const slug = `atoms/2026-01-01/reviewed-${String(i).padStart(6, '0')}`;
+        const source_slug = `retired-${i}`;
+        const source_hash = `deadbeef${String(i).padStart(8, '0')}`;
+        await seedAtom(slug, source_slug, source_hash);
+        const atom_content_hash = (await engine.executeRaw<{ content_hash: string }>(
+          'SELECT content_hash FROM pages WHERE slug=$1 AND source_id=$2', [slug, 'default'],
+        ))[0].content_hash;
+        items.push({ slug, source_id: 'default', source_slug, source_hash, atom_content_hash });
+      }
+      const manifest = join(dir, 'reviewed.json');
+      writeFileSync(manifest, JSON.stringify({ items }));
+      const acknowledged = await computeAtomProvenanceDriftCheck(engine, { reviewManifestPath: manifest });
+      expect(acknowledged.status).toBe('ok');
+      expect((acknowledged.details as Record<string, number>).reviewed_drift).toBe(30);
+      expect((acknowledged.details as Record<string, number>).new_drift).toBe(0);
+      await engine.putPage(items[2].slug, { type: 'atom', title: items[2].slug,
+        compiled_truth: 'revised claim body', frontmatter: {
+          type: 'atom', source_slug: items[2].source_slug,
+          source_hash: items[2].source_hash, extracted_at: new Date().toISOString(),
+        },
+      });
+      const bodyChanged = await computeAtomProvenanceDriftCheck(engine, { reviewManifestPath: manifest });
+      expect(bodyChanged.status).toBe('warn');
+      expect((bodyChanged.details as Record<string, number>).new_drift).toBe(1);
+      expect((bodyChanged.details as Record<string, number>).stale_reviews).toBe(1);
+      // Rebaseline only for the remainder of this fixture, not in production.
+      items[2].atom_content_hash = (await engine.executeRaw<{ content_hash: string }>(
+        'SELECT content_hash FROM pages WHERE slug=$1', [items[2].slug],
+      ))[0].content_hash;
+      writeFileSync(manifest, JSON.stringify({ items }));
+      await seedAtom('atoms/2026-01-01/unreviewed-000000', 'missing', 'abcdabcdabcdabcd');
+      const changed = await computeAtomProvenanceDriftCheck(engine, { reviewManifestPath: manifest });
+      expect(changed.status).toBe('warn');
+      expect((changed.details as Record<string, number>).new_drift).toBe(1);
+      expect((changed.details as Record<string, number>).reviewed_drift).toBe(30);
+      await seedAtom(items[0].slug, items[0].source_slug, 'changedhash00000');
+      const invalidated = await computeAtomProvenanceDriftCheck(engine, { reviewManifestPath: manifest });
+      expect((invalidated.details as Record<string, number>).new_drift).toBe(2);
+      expect((invalidated.details as Record<string, number>).stale_reviews).toBe(1);
+      await seedSource(items[1].source_slug, 'reappeared as a new file');
+      const reappeared = await computeAtomProvenanceDriftCheck(engine, { reviewManifestPath: manifest });
+      expect(reappeared.status).toBe('warn');
+      expect((reappeared.details as Record<string, number>).stale_reviews).toBe(2);
+      writeFileSync(manifest, '{"items":[{"slug":"broken"}]}');
+      const malformed = await computeAtomProvenanceDriftCheck(engine, { reviewManifestPath: manifest });
+      expect(malformed.status).toBe('warn');
+      expect(malformed.message).toContain('check failed');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   it('is ok on a brain with no atoms', async () => {
     const c = await computeAtomProvenanceDriftCheck(engine);
     expect(c.name).toBe('atom_provenance_drift');
@@ -102,6 +161,17 @@ describe('computeAtomProvenanceDriftCheck', () => {
     const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
     expect(d.drifted).toBe(1);
     expect(d.source_changed).toBe(0);
+    expect(d.source_gone).toBe(1);
+  });
+
+  it('does not let a different same-source page with an identical hash validate the recorded source slug', async () => {
+    await seedSource('src-original', 'shared body');
+    const oldHash = await hashOf('src-original');
+    await seedAtom('atoms/2026-01-01/alias-000000', 'src-original', oldHash);
+    await seedSource('src-copy', 'shared body');
+    await engine.executeRaw('DELETE FROM pages WHERE slug=$1', ['src-original']);
+    const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d.drifted).toBe(1);
     expect(d.source_gone).toBe(1);
   });
 
@@ -205,6 +275,7 @@ describe('computeAtomProvenanceDriftCheck', () => {
 
   it('a throwing executeRaw degrades to a warn that names the check — never throws, never fails doctor', async () => {
     const broken = {
+      getConfig: async () => null,
       executeRaw: async () => { throw new Error('relation "pages" does not exist'); },
     } as unknown as BrainEngine;
     const c = await computeAtomProvenanceDriftCheck(broken);
