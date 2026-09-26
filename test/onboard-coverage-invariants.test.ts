@@ -10,11 +10,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
+  checkEmbedStaleness,
   checkEntityLinkCoverage,
   checkTimelineCoverage,
 } from '../src/core/onboard/checks.ts';
 import { buildQuarantineMarker } from '../src/core/quarantine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 let engine: PGLiteEngine;
 
@@ -57,6 +59,47 @@ async function seedVisibleAndQuarantinedEntities(): Promise<void> {
 }
 
 describe('onboard entity coverage invariants', () => {
+  test('embed staleness excludes intentional embed_skip pages', async () => {
+    await engine.putPage('notes/embed-target-example', {
+      type: 'note', title: 'Embed Target Example', compiled_truth: 'target', timeline: '',
+    });
+    await engine.putPage('notes/embed-skip-example', {
+      type: 'note', title: 'Embed Skip Example', compiled_truth: 'skip', timeline: '',
+    });
+    await installFixtureChunks(engine, 'notes/embed-target-example', [{
+      chunk_index: 0, chunk_text: 'target stale', chunk_source: 'compiled_truth', token_count: 2,
+    }]);
+    await installFixtureChunks(engine, 'notes/embed-skip-example', [{
+      chunk_index: 0, chunk_text: 'skip stale', chunk_source: 'compiled_truth', token_count: 2,
+    }]);
+    await engine.executeRaw(
+      `UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"embed_skip": true}'::jsonb WHERE slug = $1`,
+      ['notes/embed-skip-example'],
+    );
+
+    const result = await checkEmbedStaleness(engine);
+
+    expect(result.check.message).toBe('1 stale chunks (small backlog)');
+  });
+
+  test('embed_skip-only brain reports no actionable stale backlog', async () => {
+    await engine.putPage('notes/embed-skip-only-example', {
+      type: 'note', title: 'Embed Skip Only Example', compiled_truth: 'skip', timeline: '',
+    });
+    await installFixtureChunks(engine, 'notes/embed-skip-only-example', [{
+      chunk_index: 0, chunk_text: 'skip stale', chunk_source: 'compiled_truth', token_count: 2,
+    }]);
+    await engine.executeRaw(
+      `UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"embed_skip": true}'::jsonb WHERE slug = $1`,
+      ['notes/embed-skip-only-example'],
+    );
+
+    const result = await checkEmbedStaleness(engine);
+
+    expect(result.check.message).toBe('No stale chunks');
+    expect(result.remediations).toHaveLength(0);
+  });
+
   test('uses the actual Bernoulli sample size and never emits >100% or NaN', async () => {
     const queries: string[] = [];
     let call = 0;

@@ -18,6 +18,7 @@ import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
 import { buildOnboardReport, toOnboardRecommendation } from '../../src/core/onboard/render.ts';
 import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
 import { makeRemediationStep } from '../../src/core/remediation-step.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 
 let engine: PGLiteEngine;
 
@@ -35,6 +36,34 @@ describe('onboard E2E — captureMetric', () => {
   test('captureMetric returns 0 for stale_count on empty brain', async () => {
     const v = await captureMetric(engine, 'stale_count');
     expect(v).toBe(0);
+  });
+
+  test('captureMetric stale_count excludes embed_skip chunks', async () => {
+    const fixture = new PGLiteEngine();
+    await fixture.connect({});
+    await fixture.initSchema();
+    try {
+      await fixture.putPage('notes/impact-target-example', {
+        type: 'note', title: 'Impact Target Example', compiled_truth: 'target', timeline: '',
+      });
+      await fixture.putPage('notes/impact-skip-example', {
+        type: 'note', title: 'Impact Skip Example', compiled_truth: 'skip', timeline: '',
+      });
+      await installFixtureChunks(fixture, 'notes/impact-target-example', [{
+        chunk_index: 0, chunk_text: 'target stale', chunk_source: 'compiled_truth', token_count: 2,
+      }]);
+      await installFixtureChunks(fixture, 'notes/impact-skip-example', [{
+        chunk_index: 0, chunk_text: 'skip stale', chunk_source: 'compiled_truth', token_count: 2,
+      }]);
+      await fixture.executeRaw(
+        `UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"embed_skip": true}'::jsonb WHERE slug = $1`,
+        ['notes/impact-skip-example'],
+      );
+
+      expect(await captureMetric(fixture, 'stale_count')).toBe(1);
+    } finally {
+      await fixture.disconnect();
+    }
   });
 
   test('captureMetric returns 0 for orphan_count on empty brain', async () => {

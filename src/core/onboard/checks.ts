@@ -19,6 +19,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
+import { EMBED_SKIP_FILTER_FRAGMENT } from '../embed-skip.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -120,15 +121,20 @@ function coverageWithConfidence(sample: EntityCoverageSample): { coverage: numbe
 /**
  * embed_staleness: count of chunks awaiting embedding.
  *
- * Backed by content_chunks_stale_idx partial index (v100) so the count
- * is cheap even on big brains.
+ * Mirrors the embed stale selector, including its embed_skip exclusion. The
+ * raw NULL count is intentionally not used: embed_skip pages are expected to
+ * have no vector and must not be reported as actionable backlog.
  */
 export async function checkEmbedStaleness(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
   const staleCount = await safeCount(
     engine,
-    `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+    `SELECT COUNT(*) AS count
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+      WHERE cc.embedding IS NULL
+        AND ${EMBED_SKIP_FILTER_FRAGMENT}`,
   );
   const remediations: RemediationStep[] = [];
   let status: 'ok' | 'warn' | 'fail' = 'ok';
