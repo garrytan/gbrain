@@ -39,6 +39,7 @@ beforeAll(async () => {
     { slug: 'people/charlie-example', title: 'Charlie Example', type: 'person' },
     { slug: 'people/charlie-bankcroft', title: 'Charlie Bankcroft', type: 'person' },
     { slug: 'people/dave-example', title: 'Dave Example', type: 'person' },
+    { slug: 'people/한글-예시', title: '한글 예시', type: 'person' },
     { slug: 'companies/stripe', title: 'Stripe', type: 'company' },
     { slug: 'companies/stripe-atlas', title: 'Stripe Atlas', type: 'company' },
     { slug: 'companies/benton-capital', title: 'Benton Capital', type: 'company' },
@@ -137,6 +138,11 @@ describe('resolveEntitySlug — prefix expansion', () => {
   it('exact match still works for fully-qualified slugs', async () => {
     const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/alice-example');
     expect(result).toBe('people/alice-example');
+  });
+
+  it('exact match works for fully-qualified Unicode slugs', async () => {
+    const result = await resolveEntitySlug(engine as unknown as BrainEngine, 'default', 'people/한글-예시');
+    expect(result).toBe('people/한글-예시');
   });
 
   it('multi-word input does NOT trigger prefix expansion', async () => {
