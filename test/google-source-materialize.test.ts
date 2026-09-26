@@ -1012,6 +1012,55 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('gmail: a thread page left at an older-grammar path moves to the current path on re-render (#12)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-thread-move-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.messages.push(
+      gmsg('18c2f4a9b3d21e06', T_A, daysAgoMs(2), {
+        headers: { From: 'Charlie Example <charlie@example.com>', To: 'a@example.com', Subject: 'Встреча в пятницу' },
+      }),
+    );
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+        const [current] = await slugsWhere(`slug LIKE 'emails/%'`);
+        expect(current).toContain('-встреча-в-пятницу-');
+
+        // Recreate what the ASCII-only grammar left behind: the same thread
+        // page at the `no-subject` path, and nothing at the current path.
+        const legacy = current.replace('встреча-в-пятницу', 'no-subject');
+        const md = readFileSync(join(dir, `${current}.md`), 'utf-8');
+        await engine.deletePages([current], { sourceId: 'gsrc' });
+        rmSync(join(dir, `${current}.md`));
+        writeFileSync(join(dir, `${legacy}.md`), md, 'utf-8');
+        const imported = await importFile(engine, join(dir, `${legacy}.md`), `${legacy}.md`, { sourceId: 'gsrc', noEmbed: true });
+        expect(imported.status).toBe('imported');
+
+        // A reply touches the thread; the re-render must move the page, not
+        // leave a duplicate behind at the legacy path.
+        fx.messages.push(
+          gmsg('18c2f4a9b3d21e07', T_A, hoursAgoMs(1), {
+            headers: { From: 'A Example <a@example.com>', To: 'charlie@example.com', Subject: 'Re: Встреча в пятницу' },
+            labelIds: ['SENT'],
+            body: 'Подтверждаю.',
+          }),
+        );
+        fx.history = [[T_A]];
+        fx.historyResponseId = '1010';
+        const res = await sweep(dir, fx, vault, {}, 'gmail');
+        expect(res.status).toBe('synced');
+        expect(res.deleted).toBe(1);
+        expect(await slugsWhere(`slug LIKE 'emails/%'`)).toEqual([current]);
+        expect(existsSync(join(dir, `${legacy}.md`))).toBe(false);
+        expect(readFileSync(join(dir, `${current}.md`), 'utf-8')).toContain('Подтверждаю.');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('open_loops: an old unanswered inbound opens a loop; the reply closes it as reply_detected', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-loops-'));
     const fx = emptyFx();

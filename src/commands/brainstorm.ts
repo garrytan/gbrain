@@ -28,6 +28,7 @@ import { serializeMarkdown } from '../core/markdown.ts';
 import { importFromContent } from '../core/import-file.ts';
 import { writePageThrough, type WriteThroughResult } from '../core/write-through.ts';
 import { randomBytes } from 'crypto';
+import { slugifyText } from '../core/cjk.ts';
 
 export interface BrainstormCliArgs {
   question?: string;
@@ -455,12 +456,7 @@ export function buildIdeaSlug(
   nonce?: string,
 ): string {
   const date = new Date().toISOString().slice(0, 10);
-  const stem = question
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
-    .replace(/^-+|-+$/g, '');
+  const stem = slugifyText(question, 60);
   const suffix = nonce ?? randomBytes(3).toString('hex');
   return `wiki/ideas/${date}-${label}-${stem || 'untitled'}-${suffix}`;
 }

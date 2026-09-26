@@ -243,6 +243,18 @@ describe('subjectSlug', () => {
     expect(subjectSlug('Re: ')).toBe('no-subject');
     expect(subjectSlug('!!!')).toBe('no-subject');
   });
+
+  // #12: letters of every script survive (shared slug grammar, ADR-0001).
+  test('keeps non-Latin subjects; folds Latin accents; keeps й/ё', () => {
+    expect(subjectSlug('Re: Встреча в пятницу')).toBe('встреча-в-пятницу');
+    expect(subjectSlug('Fwd: Отчёт за май')).toBe('отчёт-за-май');
+    expect(subjectSlug('Café plans für Zoë')).toBe('cafe-plans-fur-zoe');
+  });
+
+  test('the 48 cap counts code points, never splitting a surrogate pair', () => {
+    // U+20000 is a CJK letter outside the BMP (two UTF-16 units).
+    expect(subjectSlug(`a${'\u{20000}'.repeat(60)}`)).toBe(`a${'\u{20000}'.repeat(47)}`);
+  });
 });
 
 describe('threadRelPath', () => {
@@ -454,6 +466,13 @@ describe('personSlugFromContact', () => {
 
   test('null when neither name nor email', () => {
     expect(personSlugFromContact(contact({ displayName: null, emails: [] }))).toBeNull();
+  });
+
+  // #12: a Cyrillic-only name used to slug to empty → null → no page at all.
+  test('non-Latin display names keep their letters; accents fold', () => {
+    expect(personSlugFromContact(contact({ displayName: 'Алиса Пример' }))).toBe('people/алиса-пример');
+    expect(personSlugFromContact(contact({ displayName: 'Алёна Йорк-Пример' }))).toBe('people/алёна-йорк-пример');
+    expect(personSlugFromContact(contact({ displayName: 'Zoë Exámple' }))).toBe('people/zoe-example');
   });
 });
 

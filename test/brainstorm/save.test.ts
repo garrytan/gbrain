@@ -179,6 +179,12 @@ describe('buildIdeaSlug', () => {
     expect(a).not.toBe(b);
   });
 
+  test('a non-Latin question keeps its letters in the stem (#12)', () => {
+    expect(buildIdeaSlug('Почему небо голубое?', 'lsd', 'n1')).toMatch(
+      /^wiki\/ideas\/\d{4}-\d{2}-\d{2}-lsd-почему-небо-голубое-n1$/,
+    );
+  });
+
   test('production nonce (no arg) is random → two calls differ', () => {
     const a = buildIdeaSlug('q', 'brainstorm');
     const b = buildIdeaSlug('q', 'brainstorm');

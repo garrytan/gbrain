@@ -92,7 +92,7 @@ const SLUG_HEBREW_POINTS_RE = /[\u0591-\u05C7]/g;
  * points; NFD macOS filenames match NFC ones), drop variation selectors,
  * lowercase.
  *
- * Callers: sync.ts:slugifySegment, enrichment-service.ts:slugifyEntity,
+ * Callers: sync.ts:slugifySegment, enrichment-service.ts:slugifyEntity, slugifyText,
  * entities/resolve.ts:slugify, link-extraction.ts:normalizeBasename. For one
  * input they keep the same letters. What each grammar then does with
  * NON-letters is its own contract and differs on purpose: slugifySegment
@@ -122,6 +122,20 @@ export const SLUG_GRAMMAR_VERSION = 2;
 
 /** A run of characters outside SLUG_WORD_CHARS: the hyphenating grammars' separator. */
 export const SLUG_NON_WORD_RUN_RE = new RegExp(`[^${SLUG_WORD_CHARS}]+`, 'gu');
+
+/**
+ * One hyphenated slug segment minted from free text (a contact name, an email
+ * subject, a question): the shared letter fold, every non-letter run → one
+ * hyphen, trimmed. Letters of every script survive, so a Cyrillic-only name
+ * no longer mints an empty slug (#12). `maxCodePoints` caps by code point, so
+ * the cut never splits a surrogate pair. The result passes PAGE_SLUG_SEG and
+ * is a fixed point of sync.ts:slugifySegment, so a file written at
+ * `<result>.md` syncs back to the same slug.
+ */
+export function slugifyText(s: string, maxCodePoints: number): string {
+  const slug = foldSlugText(s).replace(SLUG_NON_WORD_RUN_RE, '-').replace(/^-+|-+$/g, '');
+  return Array.from(slug).slice(0, maxCodePoints).join('').replace(/-+$/, '');
+}
 
 /**
  * Page-slug segment grammar (no anchors): word-char lead, then word-char or

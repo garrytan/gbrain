@@ -380,7 +380,6 @@ async function sweepContacts(
 
 // ── Calendar sweep ───────────────────────────────────────────────────────────
 
-/** Existing calendar page's source_path for an event id, or null. */
 /** Existing person page's source_path for a google contact id, or null. */
 async function contactPageRelPathByContactId(
   deps: GoogleSyncDeps,
@@ -401,6 +400,7 @@ async function contactPageRelPathByContactId(
   }
 }
 
+/** Existing calendar page's source_path for an event id, or null. */
 async function calendarPageRelPathByEventId(
   deps: GoogleSyncDeps,
   eventId: string,
@@ -494,6 +494,30 @@ async function sweepCalendar(
 
 const BACKFILL_BATCH_THREADS = 25;
 
+/**
+ * Existing email-thread page's source_path for a gmail thread id, or null.
+ * Runs once per fetched thread, so it uses containment (`@>`), which the GIN
+ * index on frontmatter serves; `->>` equality would scan every email page.
+ */
+async function threadPageRelPathByThreadId(
+  deps: GoogleSyncDeps,
+  threadId: string,
+): Promise<string | null> {
+  try {
+    const rows = await deps.engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages
+       WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'emails/%'
+         AND frontmatter @> jsonb_build_object('thread_id', $2::text)
+       LIMIT 1`,
+      [deps.sourceId, threadId],
+    );
+    return rows[0]?.source_path ?? null;
+  } catch (error) {
+    if (deps.managed) throw error;
+    return null;
+  }
+}
+
 async function processThread(
   deps: GoogleSyncDeps,
   gmail: GmailClient,
@@ -510,6 +534,13 @@ async function processThread(
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
+  // The path derives from the subject through the slug grammar, so a page
+  // rendered under an older grammar (#12: non-Latin subjects used to slug to
+  // `no-subject`) sits elsewhere — look it up by thread_id and move it.
+  const existingPath = await threadPageRelPathByThreadId(deps, thread.threadId);
+  if (existingPath && existingPath !== rendered.relPath) {
+    await deletePageByRelPath(deps, existingPath, summary);
+  }
   const slug = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
   await applyLoopDetection(deps, thread, slug);
   // LLM extraction candidates: trickle + the bounded recent window only —

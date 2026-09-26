@@ -83,7 +83,7 @@ import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
 import { safeSplitIndex } from '../text-safe.ts';
-import { PAGE_SLUG_SEG } from '../cjk.ts';
+import { PAGE_SLUG_SEG, slugifyText } from '../cjk.ts';
 import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
 import { passesTriageGate, rescueConfigOf, DEFAULT_RESCUE_FLOOR, DEFAULT_RESCUE_MIN_SEGMENTS, DEFAULT_RESCUE_CONTENT_TYPES, DEFAULT_RESCUE_CONFIG, type RescueConfig, type RescueVerdictLike } from './triage-rescue.ts';
@@ -2655,7 +2655,7 @@ function buildSynthesisPrompt(
   // #4348: UTC projection retained here on purpose — this is a slug-name
   // hint for undated sources, not calendar provenance.
   const dateHint = t.inferredDate ?? utcDate();
-  const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
+  const baseSlugSegment = slugifyText(t.basename, 60) || `session-${dateHint}`;
   const isChunked = chunkTotal > 1;
   const hashSuffix = isChunked
     ? `${t.contentHash.slice(0, 6)}-c${chunkIdx}`
@@ -2719,14 +2719,6 @@ ${chunkText}
 ---${mode === 'agentic'
     ? '\n\nWhen done, briefly list the slugs you wrote in your final message so the orchestrator can audit.'
     : ''}`;
-}
-
-function sanitizeForSlug(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
 }
 
 // ── Slug collection from child put_page calls (codex #2 + D6) ────────
