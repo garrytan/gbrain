@@ -26,6 +26,7 @@ import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import type { Check } from '../../doctor.ts';
 import { ownedContentFreshness } from '../../../core/shared-skills/content-freshness.ts';
+import { connectorAuthorities } from '../../../core/persistence/connector-authority.ts';
 
 /** Local aliases; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveEnvNumber = resolveEnvNumber;
@@ -373,19 +374,27 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
   try {
     // #3880: archived sources are out of scope for filesystem audits (v34
     // legacy fallback, house style per pickSoleNonDefaultSource).
-    let sources: Array<{ id: string; local_path: string | null }>;
+    type SourceRow = { id: string; local_path: string | null; kind: string | null };
+    let sources: SourceRow[];
     try {
-      sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
-        `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+      sources = await engine.executeRaw<SourceRow>(
+        `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
       );
     } catch {
-      sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
-        `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+      sources = await engine.executeRaw<SourceRow>(
+        `SELECT id, local_path, config->>'kind' AS kind FROM sources WHERE local_path IS NOT NULL`,
       );
     }
-    const checkable = sources.filter(s => s.local_path && existsSync(s.local_path));
+    // #5503: connector_database sources are DB-only by design; a leftover
+    // pre-activation cache at local_path is not their canonical copy.
+    const authorities = await connectorAuthorities(engine, sources);
+    const connectorDb = new Set([...authorities].filter(([, a]) => a === 'connector_database').map(([id]) => id));
+    const connectorNote = connectorDb.size > 0
+      ? ` ${connectorDb.size} API connector source(s) skipped: connector_database pages are DB-only by design (back them up with gbrain export).`
+      : '';
+    const checkable = sources.filter(s => s.local_path && existsSync(s.local_path) && !connectorDb.has(s.id));
     if (checkable.length === 0) {
-      return { name, status: 'ok', message: 'Not applicable (no sources with a local repo path on this host)' };
+      return { name, status: 'ok', message: `Not applicable (no sources with a local repo path on this host).${connectorNote}` };
     }
     let total = 0;
     const samples: string[] = [];
@@ -428,7 +437,7 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       return {
         name,
         status: 'ok',
-        message: `Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: ${DERIVE_PHASE_DB_ONLY_DEFAULTS.join(' ')})`,
+        message: `Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: ${DERIVE_PHASE_DB_ONLY_DEFAULTS.join(' ')}).${connectorNote}`,
       };
     }
     return {

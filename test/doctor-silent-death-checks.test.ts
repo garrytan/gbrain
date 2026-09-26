@@ -5,6 +5,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -383,6 +384,36 @@ describe('undeclared_db_only_pages (#2784)', () => {
     const c = await checkUndeclaredDbOnlyPages(engine);
     expect(c.status).toBe('ok');
     expect(c.message).toContain('Not applicable');
+  });
+
+  // #5503: an unbound API connector under managed persistence writes with
+  // connector_database authority, so its pages are DB-only by design even
+  // when a pre-activation cache dir still sits at local_path.
+  test.each([
+    { label: 'managed + unbound Google source → exempt', managed: true, bound: false, status: 'ok' },
+    { label: 'unmanaged Google source (writes files) → still flagged', managed: false, bound: false, status: 'warn' },
+    { label: 'managed + bound Google source (publishes files) → still flagged', managed: true, bound: true, status: 'warn' },
+  ] as const)('connector source: $label', async ({ managed, bound, status }) => {
+    const cache = makeRepo();
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('conn-src', 'conn-src', $1, '{"kind":"google"}'::jsonb)`,
+      [cache],
+    );
+    await addPage('emails/thread-example', { sourceId: 'conn-src' });
+    if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    if (bound) {
+      const worktreeId = randomUUID();
+      const [src] = await engine.executeRaw<{ incarnation: string }>(`SELECT incarnation FROM sources WHERE id='conn-src'`);
+      await engine.executeRaw('INSERT INTO persistence_worktrees(id,owner_host_id) VALUES($1::uuid,$2::uuid)', [worktreeId, randomUUID()]);
+      await engine.executeRaw('INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,$2::uuid,$3::uuid)',
+        ['conn-src', src.incarnation, worktreeId]);
+    }
+
+    const c = await checkUndeclaredDbOnlyPages(engine);
+
+    expect(c.status).toBe(status);
+    if (status === 'ok') expect(c.message).toContain('connector_database');
+    else expect(c.message).toContain('emails/thread-example');
   });
 
   test('effectiveDbOnlyDirs unions declared + defaults, deduped', () => {
