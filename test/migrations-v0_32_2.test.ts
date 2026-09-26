@@ -140,6 +140,12 @@ describe('phaseBFenceFacts — dry-run reporting', () => {
   test('reports counts without writing FS or updating DB', async () => {
     await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Founded Acme' });
     await seedLegacyFact({ entity_slug: null, fact: 'Unparented claim' });
+    // Fork intent retained over upstream v0.58.1.0: bob is seeded as an
+    // ONTOLOGY row (dimension IS NOT NULL), not a legacy fact, to prove the
+    // sweep leaves DB-owned ontology rows unfenced. Upstream seeds bob as a
+    // second legacy fact and expects "would fence 2 rows"; the merge kept
+    // upstream's assertions against the fork's seeds, which asserted a
+    // people/bob.md that seedOntologyFact never creates.
     await seedOntologyFact({ entity_slug: 'people/bob', fact: 'Ontology founder' });
 
     const r = await __testing.phaseBFenceFacts(engine, DRY_OPTS);
@@ -148,8 +154,10 @@ describe('phaseBFenceFacts — dry-run reporting', () => {
     expect(r.detail).toContain('would fence 1 rows');
     expect(r.detail).toContain('1 unfenceable');
 
+    // alice has a real page (seedLegacyFact writes it); dry-run must not touch it.
     expect(readFileSync(join(brainDir, 'people/alice.md'), 'utf8')).toBe('# Existing page\n');
-    expect(readFileSync(join(brainDir, 'people/bob.md'), 'utf8')).toBe('# Existing page\n');
+    // The ontology row is DB-owned: no page is seeded and none may be created.
+    expect(existsSync(join(brainDir, 'people/bob.md'))).toBe(false);
     // DB rows still have NULL row_num.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = await (engine as any).db.query(
