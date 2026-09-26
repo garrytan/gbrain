@@ -11,6 +11,7 @@
     "skill-optimizer": "requires host-side skillopt engine access and benchmark files",
     "db-repair": "host-side database access repair (engine-free CLI ladder); downstream openclaw clients do not own the DB",
     "postgres-adopt": "host-side engine detection/adoption (init ladder + engine migration); downstream openclaw clients do not own the engine",
-    "remote-mcp": "host-side publication of the brain over MCP (Tailscale serve/funnel + user service); downstream openclaw clients do not own the server"
+    "remote-mcp": "host-side publication of the brain over MCP (Tailscale serve/funnel + user service); downstream openclaw clients do not own the server",
+    "oss-loop": "coding-agent contribution workflow for Claude Code and Codex; not an OpenClaw runtime skill"
   }
 }
