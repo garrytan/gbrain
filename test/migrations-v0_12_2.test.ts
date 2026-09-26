@@ -56,4 +56,18 @@ describe('v0.12.2 — JSONB double-encode repair migration', () => {
       expect(p.detail).toContain('dry-run');
     }
   });
+
+  test('resolves installed, compiled, and source CLI forms without a shell', async () => {
+    const { resolveGbrainCliInvocation } = await import('../src/commands/migrations/in-process.ts');
+    expect(resolveGbrainCliInvocation({ pathBinary: '/opt/bin/gbrain', execPath: '/usr/bin/bun', argv1: '/repo/src/cli.ts' }))
+      .toEqual({ command: '/usr/bin/bun', argsPrefix: ['/repo/src/cli.ts'] });
+    expect(resolveGbrainCliInvocation({ execPath: '/opt/bin/gbrain', argv1: undefined }))
+      .toEqual({ command: '/opt/bin/gbrain', argsPrefix: [] });
+    expect(resolveGbrainCliInvocation({ execPath: '/opt/bin/bun', argv1: '/repo/src/cli.ts' }))
+      .toEqual({ command: '/opt/bin/bun', argsPrefix: ['/repo/src/cli.ts'] });
+    expect(resolveGbrainCliInvocation({ pathBinary: '/opt/bin/gbrain', execPath: '/usr/bin/node', argv1: undefined }))
+      .toEqual({ command: '/opt/bin/gbrain', argsPrefix: [] });
+    expect(() => resolveGbrainCliInvocation({ execPath: '/usr/bin/node', argv1: '/tmp/not-cli.ts' }))
+      .toThrow('Could not resolve');
+  });
 });
