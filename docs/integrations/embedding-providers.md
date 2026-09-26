@@ -152,7 +152,7 @@ CJK-dominant content tokenizes denser than OpenAI tiktoken; gbrain declares `cha
 
 ### Zhipu AI (BigModel)
 
-Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims), `embedding-2`. The default is 1024 (HNSW-compatible). The 2048-dim option works but falls into the exact-scan branch (see Voyage 4 Large note above).
+Set `ZHIPUAI_API_KEY`, or `gbrain config set zhipu_api_key <key>` so daemon, launchd and MCP processes that do not inherit your shell env receive it too (the zhipu recipe also serves GLM chat/subagent tiers — `zhipu:glm-5.3-flash`). International (Z.AI) endpoint: `gbrain config set provider_base_urls.zhipu https://api.z.ai/api/paas/v4`. Models: `embedding-3` (current; Matryoshka 256-2048 dims), `embedding-2`. The default is 1024 (HNSW-compatible). The 2048-dim option works but falls into the exact-scan branch (see Voyage 4 Large note above).
 
 ### Ollama (local)
 

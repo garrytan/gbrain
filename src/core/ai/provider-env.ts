@@ -45,6 +45,11 @@ export function mergedProviderEnv(
   // way voyage's #2662 did).
   if (cfg?.litellm_api_key) fromConfig.LITELLM_API_KEY = cfg.litellm_api_key;
   if (cfg?.together_api_key) fromConfig.TOGETHER_API_KEY = cfg.together_api_key;
+  // Zhipu was the last chat-capable recipe without a file-plane slot: the
+  // zhipu recipe requires ZHIPUAI_API_KEY, so every launcher that did not
+  // export it (launchd workers, MCP stdio servers) failed GLM calls with
+  // Unauthorized while the CLI shell worked.
+  if (cfg?.zhipu_api_key) fromConfig.ZHIPUAI_API_KEY = cfg.zhipu_api_key;
   if (cfg?.google_api_key) fromConfig.GOOGLE_GENERATIVE_AI_API_KEY = cfg.google_api_key;
   // #4031: the Azure key was the only member of the group below left unfolded,
   // so a config.json-only setup failed every embed from keyless shells
