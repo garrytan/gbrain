@@ -45,9 +45,29 @@ describe('S3Storage constructor seam', () => {
     expect(sent.length).toBe(1);
   });
 
-  test('without an injected client, missing credentials still throw', () => {
-    expect(() => new S3Storage(CONFIG))
-      .toThrow('S3 storage requires accessKeyId and secretAccessKey in config');
+  test('no static keys → constructs and leaves credentials to the SDK default chain', () => {
+    // Discriminates: pre-fix code threw here. No network is touched — the SDK
+    // provider chain is lazy and only resolves on the first `send`.
+    const storage = new S3Storage(CONFIG);
+    const client = (storage as any).client as S3Client;
+    // The SDK always installs a credential provider function; with none
+    // supplied it is the default chain (env → shared config/SSO → IMDS/ECS/Lambda).
+    expect(typeof client.config.credentials).toBe('function');
+  });
+
+  test('static keys are passed through as SDK credentials', async () => {
+    const storage = new S3Storage({ ...CONFIG, accessKeyId: 'AKIAEXAMPLE', secretAccessKey: 'secret' });
+    const client = (storage as any).client as S3Client;
+    const creds = await (client.config.credentials as any)();
+    expect(creds.accessKeyId).toBe('AKIAEXAMPLE');
+    expect(creds.secretAccessKey).toBe('secret');
+  });
+
+  test('exactly one of accessKeyId / secretAccessKey throws a configuration error', () => {
+    expect(() => new S3Storage({ ...CONFIG, accessKeyId: 'AKIAEXAMPLE' }))
+      .toThrow('accessKeyId and secretAccessKey must be set together');
+    expect(() => new S3Storage({ ...CONFIG, secretAccessKey: 'secret' }))
+      .toThrow('accessKeyId and secretAccessKey must be set together');
   });
 });
 
