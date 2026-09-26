@@ -17,7 +17,7 @@ import { sha256 } from '../src/core/persistence/digest.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, writeResponse } from '../src/core/persistence/service.ts';
 import { adoptSharedSkillpack } from '../src/core/shared-skills/publication.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import { assertKnowledgePublicationAllowed } from '../src/core/shared-skills/knowledge-guard.ts';
@@ -42,6 +42,9 @@ import { saveState, SKILLPACK_STATE_SCHEMA_VERSION } from '../src/core/skillpack
 import { packTarball, extractTarball } from '../src/core/skillpack/tarball.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { testBackends } from './helpers/test-backends.ts';
+
+const postgresUrl = testBackends().includes('postgres') ? process.env.DATABASE_URL : undefined;
 
 interface Fixture { engine: BrainEngine; ctx: OperationContext; root: string; scratch: string; incarnation: string; }
 const prose = '---\nname: alpha\ndescription: A synthetic shared skill\n---\n\nApproved instructions.\n';
@@ -52,7 +55,7 @@ async function fixture(run: (f: Fixture) => Promise<void>) {
   const scratch = mkdtempSync(join(tmpdir(), 'gbrain-skill-writers-'));
   try {
     await withEnv({ GBRAIN_HOME: join(scratch, 'home'), DATABASE_URL: undefined }, async () => {
-      const isolated = await isolatedSharedSkillsEngine();
+      const isolated = await isolatedSharedSkillsEngine(postgresUrl);
       const engine = isolated.engine;
       try {
         const root = join(scratch, 'brain'); mkdirSync(root);
@@ -66,6 +69,7 @@ async function fixture(run: (f: Fixture) => Promise<void>) {
           ['notes/path-alias', 'skills/alpha/SKILL.md', null],
           ['notes/manifest-alias', 'skillpack.json', null],
           ['notes/uri-alias', null, pathToFileURL(join(root, 'skills/alpha/references/guide.md')).href],
+          ['notes/invalid-uri-alias', 'notes/invalid-uri-alias.md', 'file:///notes/%2F.md'],
         ]) {
           await engine.putPage(slug!, { title: 'Synthetic alias', type: 'note', compiled_truth: '', timeline: '', frontmatter: {} }, { sourceId: 'default' });
           await engine.executeRaw('UPDATE pages SET source_path=$1,source_uri=$2 WHERE source_id=$3 AND slug=$4', [sourcePath, sourceUri, 'default', slug]);
@@ -73,7 +77,7 @@ async function fixture(run: (f: Fixture) => Promise<void>) {
         await claimWorktree(engine, 'default', root);
         await claimWorktree(engine, 'alias-source', aliasRoot);
         await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
-        const ctx: OperationContext = { engine, config: { engine: 'pglite' }, remote: false, sourceId: 'default', dryRun: false,
+        const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, sourceId: 'default', dryRun: false,
           logger: { info() {}, warn() {}, error() {} } };
         await engine.setConfig('mcp.publish_skills', 'true');
         await setSharedSkillPolicy(ctx, 'default', { version: 1, enabled: true, classes: ['prose', 'reference'], audiences: ['readers'], requirements: [], allow_follow: true }, null);
@@ -116,6 +120,50 @@ test('registered source roots, aliases and symlinks deny page publication withou
   }
   await expect(assertKnowledgePublicationAllowed(f.engine, row, { root: f.root, path: join(f.root, 'notes/example.md') })).resolves.toBeUndefined();
   await expect(assertKnowledgePublicationAllowed(f.engine, { ...row, target_kind: 'skill_bundle' }, { root: f.root, path: join(f.root, protectedFiles[1]) })).resolves.toBeUndefined();
+  expect(await canonicalState(f)).toEqual(before);
+}), 120_000);
+
+test('unresolvable stored file aliases fail closed with a metadata diagnostic instead of skill publication advice', () => fixture(async f => {
+  const before = await canonicalState(f);
+  const row = { source_id: 'default', source_incarnation: f.incarnation, slug: 'notes/invalid-uri-alias' };
+  for (const preparedFile of [undefined, { root: f.root, path: join(f.root, 'notes/invalid-uri-alias.md') }]) {
+    await expect(assertKnowledgePublicationAllowed(f.engine, row, preparedFile)).rejects.toMatchObject({
+      code: 'invalid_source_uri',
+      message: 'The page has a stored file source_uri that cannot be resolved to a local filesystem path. Have the source owner inspect and repair the stored source_uri before retrying.',
+      suggestion: 'Have the source owner inspect and repair the stored source_uri before retrying the knowledge write. Shared skillpack protection remains enabled.',
+    });
+  }
+  expect(await canonicalState(f)).toEqual(before);
+  const [page] = await f.engine.executeRaw<{ source_uri: string }>(
+    'SELECT source_uri FROM pages WHERE source_id=$1 AND slug=$2', ['default', row.slug]);
+  expect(page.source_uri).toBe('file:///notes/%2F.md');
+  const snapshot = await f.engine.readPageSnapshot(row.slug, { sourceId: 'default' });
+  await expect(submitPageMutation(f.ctx, { operation: 'put_page', params: {
+    slug: row.slug, content: note, request_id: randomUUID(), expected_revision: snapshot!.revision,
+  } })).rejects.toMatchObject({ code: 'invalid_source_uri' });
+  expect(await f.engine.readPageSnapshot(row.slug, { sourceId: 'default' })).toEqual(snapshot);
+  expect(existsSync(join(f.root, 'notes/invalid-uri-alias.md'))).toBe(false);
+  expect(await canonicalState(f)).toEqual(before);
+  // The coordinator stores the message, but not OperationError.suggestion.
+  // Verify that a queued failure retains both its classification and repair hint.
+  await disposePersistenceConsumer(f.engine);
+  const binding = (await getWorktreeBinding(f.engine, 'default'))!;
+  const authority = await submissionAuthority(f.ctx, 'put_page', 'default', f.incarnation, row.slug);
+  const accepted = await admitWrite(f.engine, { principal: authority.principal, operation: 'put_page', sourceId: 'default',
+    sourceIncarnation: f.incarnation, slug: row.slug, requestId: randomUUID(), callerIntent: { slug: row.slug },
+    intent: { slug: row.slug }, authority, worktreeId: binding.worktree_id, topologyGeneration: binding.topology_generation });
+  const claimed = (await claimNextWrite(f.engine, localHostId()))!;
+  expect(claimed.id).toBe(accepted.id);
+  let applied = false;
+  const result = await publishMutation(f.engine, claimed, { observedRevision: snapshot!.revision,
+    file: { root: f.root, path: join(f.root, 'notes/invalid-uri-alias.md'), content: note },
+    apply: async () => { applied = true; return {}; } }, localHostId());
+  expect(result).toMatchObject({ state: 'failed', error_code: 'invalid_source_uri', recovery: null, publication_started: false });
+  expect(result.error_message).toContain('inspect and repair the stored source_uri');
+  expect(() => writeResponse(result)).toThrow(expect.objectContaining({ code: 'invalid_source_uri', writeError: 'invalid_source_uri' }));
+  expect(applied).toBe(false);
+  expect(existsSync(join(f.root, 'notes/invalid-uri-alias.md'))).toBe(false);
+  expect(await f.engine.readPageSnapshot(row.slug, { sourceId: 'default' })).toEqual(snapshot);
   expect(await canonicalState(f)).toEqual(before);
 }), 120_000);
 
