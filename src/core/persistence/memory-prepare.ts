@@ -2,7 +2,7 @@ import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
 import { assertPageRevision } from '../page-state/types.ts';
-import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, upsertFactRow } from '../facts-fence.ts';
+import { parseFactsFence, renderFactsTable, renderFenceInstantCell, replaceOrInsertFactsFence, upsertFactRow } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { assertFactNotWithdrawn, decideSingleFact, prepareFactEmbedding, type SingleFactIntent } from '../facts/single-prepare.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
@@ -59,8 +59,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     const parsed = parseFactsFence(snapshot.page.compiled_truth);
     if (parsed.warnings.length) throw new OperationError('storage_error', 'The entity facts fence is malformed; repair it before appending memory.');
     const appended = upsertFactRow(snapshot.page.compiled_truth, { claim: input.fact, kind: input.kind, visibility: input.visibility,
+      // valid_from stays day-granular (a claim is made on a day); valid_until
+      // keeps its time of day or a sub-day ttl expires at midnight = in the past.
       confidence: 1, notability: 'medium', validFrom: validFrom.toISOString().slice(0, 10),
-      validUntil: validUntil?.toISOString().slice(0, 10), source: fact.source });
+      validUntil: validUntil ? renderFenceInstantCell(validUntil) : undefined, source: fact.source });
     rowNum = appended.rowNum;
     let body = appended.body;
     const old = decision.candidate;

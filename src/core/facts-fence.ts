@@ -72,6 +72,31 @@ const KIND_VALUES: ReadonlySet<string> = new Set([
 const VISIBILITY_VALUES: ReadonlySet<string> = new Set(['private', 'world']);
 const NOTABILITY_VALUES: ReadonlySet<string> = new Set(['high', 'medium', 'low']);
 
+/**
+ * Render an instant into a fence date cell WITHOUT losing its time of day.
+ *
+ * A fence cell is day-granular by convention ('YYYY-MM-DD') and that is the
+ * right shape for `valid_from`: a claim is made on a DAY. `valid_until` is
+ * different — it can carry a sub-day `ttl` ('12h', '45m'), and truncating it
+ * to a date does not round the expiry, it moves it BACKWARDS to midnight,
+ * i.e. into the past. A fact written at 07:55 with ttl '1h' was stored as
+ * expiring at 00:00 the same day and was born already lapsed: every read arm
+ * filters on `valid_until > now()`, so it answered nothing but
+ * `include_expired`, while `expired_at` stayed null so it did not even look
+ * expired. `remember` still reported the correct un-truncated timestamp, so
+ * the loss was invisible at the call site.
+ *
+ * So: emit the bare date when the instant IS exactly UTC midnight (every
+ * existing row, and every date-only authored cell, renders byte-identically),
+ * and the full ISO instant otherwise. This is a pure widening — the reader
+ * (`extract-from-fence.ts` `parseValidDate`) already accepts both shapes, so
+ * no round-trip changes except that a time of day now survives it.
+ */
+export function renderFenceInstantCell(d: Date): string {
+  const iso = d.toISOString();
+  return iso.endsWith('T00:00:00.000Z') ? iso.slice(0, 10) : iso;
+}
+
 /** Parsed shape of a single fence row. */
 export interface ParsedFact {
   rowNum: number;
@@ -81,6 +106,7 @@ export interface ParsedFact {
   visibility: FactVisibility;
   notability: FactNotability;
   validFrom?: string;     // ISO date 'YYYY-MM-DD' (or empty)
+  /** 'YYYY-MM-DD', or a full ISO instant when a sub-day ttl set it. */
   validUntil?: string;
   source?: string;
   context?: string;
