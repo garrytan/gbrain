@@ -55,6 +55,7 @@ export const claudeCli: Recipe = {
         'claude-haiku-4-5-20251001',
         'claude-fable-5',
         'claude-fable-5-1',
+        'claude-opus-5-5',
         'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',
@@ -71,9 +72,14 @@ export const claudeCli: Recipe = {
       default_timeout_ms: 30_000,
     },
     chat: {
+      // Advertised, not enforced: the gateway has no chat model allowlist, so
+      // any id the local `claude` binary serves routes fine. Nothing flags a
+      // new CLI model missing here; add it (and to expansion above) when the
+      // CLI ships one.
       models: [
         'claude-fable-5',
         'claude-fable-5-1',
+        'claude-opus-5-5',
         'claude-opus-5',
         'claude-opus-4-8',
         'claude-opus-4-7',
