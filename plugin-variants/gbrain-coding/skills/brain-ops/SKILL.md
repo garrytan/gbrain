@@ -169,14 +169,18 @@ the write path:
   `gbrain call put_page`) auto-link inline and return
   `auto_links: { created, removed, errors }`.
 - **MCP callers (stdio AND HTTP)** return `auto_links: { skipped: "remote", hint }`
-  and `auto_timeline: { skipped: "remote" }`. Body wikilinks are saved as text.
+  by default. Body wikilinks are saved as text. With server
+  `GBRAIN_REMOTE_AUTO_LINK=1`, exact same-source body references to visible
+  pages create or remove typed graph edges in the page transaction. This
+  mode excludes fuzzy names, frontmatter links, and reverse attendance.
   A stdio `gbrain serve` reconciles the edges asynchronously with its
   maintenance sweep (startup + 10-minute idle ticks).
   `gbrain serve --http` does not self-sweep — reconcile on demand with
   `gbrain sweep --once` (delegates to the live serve over IPC) or
   `gbrain extract links --source db`.
-  Use `add_link` for relationships you need immediately. Untrusted body text can plant
-  ranking-boosting edges, which is why the inline path is local-only.
+  Use `add_link` for relationships you need immediately when the opt-in mode
+  is off. Untrusted body text can plant ranking-boosting edges, so enable
+  remote extraction only for clients whose writes you trust.
 - Inferred link types: `attended` (meeting -> person), `works_at`, `invested_in`,
   `founded`, `advises`, `source` (frontmatter), `mentions` (default).
 - To disable: `gbrain config set auto_link false`. Default is on.

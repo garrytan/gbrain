@@ -215,8 +215,14 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     : prepareCanonicalProjections(ready.parsedPage,row.slug,row.source_id);
   const ordinaryPage = ['put_page','capture','restore_page','revert_version'].includes(row.operation);
   const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage);
-  const links = !noop && !targetDeleted && ordinaryPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
-    ? await prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id) : undefined;
+  const remoteAutoLink = row.authority.remote && !row.authority.autoLinkTrusted
+    && process.env.GBRAIN_REMOTE_AUTO_LINK === '1';
+  const links = !noop && !targetDeleted && ordinaryPage && ((row.authority.autoLinkTrusted ?? !row.authority.remote) || remoteAutoLink)
+    && await isAutoLinkEnabled(engine)
+    ? await prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,
+      remoteAutoLink ? { excludePrivate: row.authority.excludePrivate ?? true } : undefined) : undefined;
+  const disabledRemoteLinks = remoteAutoLink && !links && !noop && !targetDeleted && ordinaryPage
+    ? { auto_links: { skipped: 'disabled' } } : {};
   const file = await prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered);
   const sourcePath = file ? scannerSourcePath(file.root, file.path) : undefined;
   return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, apply: async tx => {
@@ -239,7 +245,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       // Index installation and terminal receipt share this transaction.
       await sealPageTextProjection(tx, row.slug, row.source_id);
     }
-    return { ...advisories, ...(autoLinks ? {auto_links:autoLinks} : {}),
+    return { ...advisories, ...disabledRemoteLinks, ...(autoLinks ? {auto_links:autoLinks} : {}),
       status: noop ? 'skipped' : row.operation === 'restore_page' ? 'restored' : row.operation === 'revert_version' ? 'reverted' : 'created_or_updated',
       slug: row.slug, source_id: row.source_id, chunks: ready.result.chunks, noop,
       ...(ready.result.chunks === 0 ? {chunk_skip_reason: noop ? 'write_skipped'
