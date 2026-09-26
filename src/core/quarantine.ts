@@ -79,13 +79,11 @@ export function buildQuarantineMarker(
   };
 }
 
-/** JS-side predicate. True when the frontmatter has the quarantine key set
- *  to any non-null value. Accepts null/undefined frontmatter. Key-existence
- *  is the trigger; marker contents are diagnostic (mirrors the SQL fragment). */
+/** JS-side predicate. Key presence hides, including a JSON null value;
+ *  this matches the SQL JSONB `?` existence filter. */
 export function isQuarantined(frontmatter: Record<string, unknown> | null | undefined): boolean {
   if (!frontmatter) return false;
-  const value = frontmatter[QUARANTINE_KEY];
-  return value !== undefined && value !== null;
+  return Object.prototype.hasOwnProperty.call(frontmatter, QUARANTINE_KEY);
 }
 
 /** JS-side filter: returns a new array with quarantined pages excluded. */

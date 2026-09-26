@@ -18,6 +18,7 @@
 import type { BrainEngine, TakeHit, Take } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
+import { stampAtomSourceDrift } from '../search/source-drift.ts';
 import type { Page, SearchResult } from '../types.ts';
 import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
@@ -271,6 +272,13 @@ export async function runGather(
     });
   }
 
+  // Historical atoms remain discoverable through search and recall, but
+  // think must not synthesize a sourced answer from an unverified receipt.
+  // Covers hybrid, window-floor and synthetic anchor pages alike.
+  await stampAtomSourceDrift(engine, pages);
+  const verifiedPages = pages.filter(p => p.unverified_source_drift !== true);
+  if (verifiedPages.length !== pages.length) warnings.push('GATHER_UNVERIFIED_SOURCE_DRIFT_EXCLUDED');
+
   // Fuse takes streams (keyword + vector). Key by (page_slug, row_num).
   const fusedTakes = fuseRanked(
     takesKw, takesVec,
@@ -278,7 +286,7 @@ export async function runGather(
   ).slice(0, takesLimit);
 
   return {
-    pages: pages.slice(0, gatherLimit),
+    pages: verifiedPages.slice(0, gatherLimit),
     takes: fusedTakes,
     graphSlugs,
     warnings,

@@ -837,6 +837,9 @@ export interface SearchResult {
    * pages.
    */
   unverified?: boolean;
+  /** Source-backed atom whose recorded source is missing or changed. Rechecked
+   * at retrieval (including cache hits); absent for current/legacy pages. */
+  unverified_source_drift?: boolean;
   /**
    * #4220: the page's raw `frontmatter.status` value (e.g. 'draft',
    * 'superseded', 'restricted', 'unverified', 'verified'), surfaced so agents

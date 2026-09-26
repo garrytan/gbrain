@@ -247,6 +247,20 @@ describe('recommender / handler parity (the anti-drift invariant)', () => {
     });
   }
 
+  it('extract-ner does not scan quarantined page bodies', async () => {
+    await seedEntities(3);
+    await engine.putPage('notes/retired', {
+      type: 'note', title: 'Retired', compiled_truth: 'Alice Example advises Acme Corp.', timeline: '',
+      frontmatter: { quarantine: { reason: 'operator_retired_source' } },
+    });
+    await withPack('gbrain-base', async () => {
+      const { extractNerLinks } = await import('../src/core/extract-ner.ts');
+      const result = await extractNerLinks(engine, { dryRun: true });
+      expect(result.pack_unavailable).toBe(false);
+      expect(result.pages).toBe(3);
+    });
+  });
+
   it('agree after a DB-side pack flip that the file plane cannot see', async () => {
     // The case that proves sharing the RESOLVER matters, not just the
     // predicate. Flip the pack at tier 4 (brain-wide DB config) with no env

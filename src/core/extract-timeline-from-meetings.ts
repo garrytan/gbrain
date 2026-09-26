@@ -87,6 +87,7 @@ export async function extractTimelineFromMeetings(
        FROM pages
       WHERE ${MEETING_PAGE_PREDICATE}
         AND deleted_at IS NULL
+        AND NOT (COALESCE(frontmatter, '{}'::jsonb) ? 'quarantine')
         ${sourceFilter}
       ORDER BY effective_date DESC NULLS LAST, slug`,
     meetingParams,
@@ -110,6 +111,7 @@ export async function extractTimelineFromMeetings(
       WHERE l.link_type = 'attended'
         AND ${MEETING_EDGE_PREDICATE}
         AND attendee.type = 'person'
+        AND NOT (COALESCE(meeting.frontmatter, '{}'::jsonb) ? 'quarantine')
         AND meeting.deleted_at IS NULL
         AND attendee.deleted_at IS NULL`,
   );

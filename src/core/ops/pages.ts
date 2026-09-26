@@ -19,6 +19,7 @@ import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
+import { atomSourceDrift } from '../search/source-drift.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
@@ -179,6 +180,7 @@ const get_page: Operation = {
     // it" signal it would get from search. The marker is also in frontmatter;
     // this is the clean, documented accessor.
     const content_flag = getContentFlag(page.frontmatter as Record<string, unknown> | null);
+    const unverified_source_drift = await atomSourceDrift(ctx.engine, page);
     // #2225: `content` is the canonical serialized markdown (frontmatter +
     // compiled_truth + `<!-- timeline -->` sentinel + timeline). Clients that
     // edit-and-put_page this field round-trip losslessly; hand-concatenating
@@ -195,6 +197,7 @@ const get_page: Operation = {
       ...(includeContent ? { content: serializePageToMarkdown(visibleBody as Page, tags) } : {}),
       ...(resolved_slug ? { resolved_slug } : {}),
       ...(content_flag ? { content_flag } : {}),
+      ...(unverified_source_drift ? { unverified_source_drift: true } : {}),
     };
   },
   scope: 'read',
@@ -251,6 +254,7 @@ const fetch_page: Operation = {
     const visibleBody = ctx.remote === false
       ? page
       : stripPrivacyFencesForRemoteReader(page);
+    const unverified_source_drift = await atomSourceDrift(ctx.engine, page);
     return {
       id: identity ? id : page.slug,
       title: page.title,
@@ -258,12 +262,14 @@ const fetch_page: Operation = {
       // Pages have no public http home; a stable brain-local URI satisfies
       // the contract's citation slot without inventing a fake web URL.
       url: deepResearchPageUrl(page.source_id, page.slug),
+      ...(unverified_source_drift ? { unverified_source_drift: true } : {}),
       metadata: {
         revision: snapshot!.revision,
         type: page.type,
         source_id: page.source_id,
         updated_at: page.updated_at,
         tags,
+        ...(unverified_source_drift ? { unverified_source_drift: true } : {}),
       },
     };
   },

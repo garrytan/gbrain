@@ -110,6 +110,16 @@ async function runCli(args: string[]): Promise<void> {
 }
 
 describe('gbrain extract links --by-mention — integration', () => {
+  test('quarantined page body does not produce mention links', async () => {
+    await seedEntities();
+    await engine.putPage('notes/retired', {
+      type: 'note', title: 'Retired', compiled_truth: 'Alice Example met Acme Corp.', timeline: '',
+      frontmatter: { quarantine: { reason: 'operator_retired_source' } },
+    });
+    await runCli(['links', '--by-mention', '--source', 'db']);
+    expect(await engine.getLinks('notes/retired')).toHaveLength(0);
+  });
+
   test('1. end-to-end happy path — links created with link_source=mentions', async () => {
     await seedEntities();
     await seedContentPage('writing/post-1', 'We met with Acme Corp and Alice Example yesterday.');

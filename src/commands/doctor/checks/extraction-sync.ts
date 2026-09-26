@@ -5,7 +5,8 @@
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
 import { join } from 'path';
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
+import { homedir } from 'os';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { probeSourceGitState } from '../../../core/git-head.ts';
 // v0.41.32.0: remote staleness reads the stored newest_content_at column via
@@ -102,8 +103,8 @@ export async function checkLinksExtractionLag(
   try {
     const totalRows = await engine.executeRaw<{ count: number }>(
       sourceId
-        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
-        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(frontmatter, '{}'::jsonb) ? 'quarantine') AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(frontmatter, '{}'::jsonb) ? 'quarantine')`,
       sourceId ? [sourceId] : [],
     );
     const total = Number(totalRows[0]?.count ?? 0);
@@ -801,6 +802,7 @@ export async function computeExtractAtomsBacklogCheck(
  */
 export async function computeAtomProvenanceDriftCheck(
   engine: BrainEngine,
+  opts?: { reviewManifestPath?: string },
 ): Promise<Check> {
   const name = 'atom_provenance_drift';
   // Both must trip: the ratio alone flaps on brains with a handful of atoms,
@@ -808,9 +810,33 @@ export async function computeAtomProvenanceDriftCheck(
   const MIN_DRIFTED = 25;
   const WARN_RATIO = 0.1;
   try {
+    // Audit loading precedes a single SQL snapshot of drift and reviewed drift.
+    const enabled = opts?.reviewManifestPath ||
+      (await engine.getConfig('doctor.provenance_review_enabled')) === 'true';
+    const items: Array<Record<string, unknown>> = [];
+    if (enabled) {
+      const reviewPath = opts?.reviewManifestPath ?? join(homedir(), '.gbrain', 'provenance-reviews.json');
+      const manifest = JSON.parse(readFileSync(reviewPath, 'utf8')) as { items?: unknown };
+      if (!Array.isArray(manifest.items)) throw new Error('provenance review manifest has no items array');
+      const unique = new Set<string>();
+      for (const item of manifest.items as Array<Record<string, unknown>>) {
+        if (typeof item.slug !== 'string' || !item.slug ||
+            typeof item.source_id !== 'string' || !item.source_id ||
+            typeof item.source_slug !== 'string' || !item.source_slug ||
+            typeof item.source_hash !== 'string' || !/^[a-f0-9]{16}$/.test(item.source_hash) ||
+            typeof item.atom_content_hash !== 'string' || !/^[a-f0-9]{64}$/.test(item.atom_content_hash)) {
+          throw new Error('provenance review manifest contains an invalid receipt');
+        }
+        const key = `${item.source_id}\0${item.slug}`;
+        if (unique.has(key)) throw new Error('provenance review manifest contains duplicate pages');
+        unique.add(key);
+        items.push(item);
+      }
+    }
     const rows = await engine.executeRaw<{
       total: string | number; slug_unbound: string | number; drifted: string | number;
       source_changed: string | number; source_gone: string | number;
+      reviewed_drift: string | number;
       oldest_ext: string | null;
     }>(
       // extracted_at stays TEXT end to end (review fix): an unguarded
@@ -821,7 +847,7 @@ export async function computeAtomProvenanceDriftCheck(
       // parsing can never throw (semantically-invalid dates become NaN →
       // metric omitted, verdict untouched).
       `WITH atom AS (
-         SELECT a.source_id,
+         SELECT a.slug, a.source_id, a.content_hash,
                 a.frontmatter->>'source_hash' AS sh,
                 -- NULL = slug-unbound: transcript-minted (source_path only) or
                 -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
@@ -832,6 +858,8 @@ export async function computeAtomProvenanceDriftCheck(
            FROM pages a
           WHERE a.type = 'atom'
             AND a.deleted_at IS NULL
+            -- Hidden atoms are retained for review, not actionable search drift.
+            AND NOT (COALESCE(a.frontmatter, '{}'::jsonb) ? 'quarantine')
             AND a.frontmatter->>'source_hash' IS NOT NULL
             -- in-flight marker written before the extraction commits
             AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
@@ -842,8 +870,12 @@ export async function computeAtomProvenanceDriftCheck(
        -- DISTINCT is load-bearing: duplicate live content_hash values are a
        -- real state and would otherwise fan one atom out into several rows.
        ), live_hashes AS MATERIALIZED (
-         SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh
+         SELECT DISTINCT source_id, slug, substring(content_hash from 1 for 16) AS sh
            FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+       ), reviewed AS MATERIALIZED (
+         SELECT slug, source_id, source_slug, source_hash, atom_content_hash
+           FROM jsonb_to_recordset($1::text::jsonb)
+             AS r(slug text, source_id text, source_slug text, source_hash text, atom_content_hash text)
        ), live_slugs AS MATERIALIZED (
          SELECT DISTINCT source_id, slug FROM pages WHERE deleted_at IS NULL
        ), drift AS (
@@ -851,10 +883,14 @@ export async function computeAtomProvenanceDriftCheck(
                 -- a slug-unbound atom is never drift: its hash is over a file,
                 -- not a page, so the page probe is meaningless (#4806)
                 (atom.ss IS NOT NULL AND h.sh IS NULL) AS drifted,
-                (s.slug IS NOT NULL) AS src_alive
+                (s.slug IS NOT NULL) AS src_alive,
+                (r.slug IS NOT NULL) AS reviewed
            FROM atom
-           LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
+           LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.slug = atom.ss AND h.sh = atom.sh
            LEFT JOIN live_slugs  s ON s.source_id = atom.source_id AND s.slug = atom.ss
+           LEFT JOIN reviewed r ON r.source_id = atom.source_id AND r.slug = atom.slug
+             AND r.source_slug = atom.ss AND r.source_hash = atom.sh
+             AND r.atom_content_hash = atom.content_hash
        )
        SELECT count(*) FILTER (WHERE ss IS NOT NULL) AS total,
               count(*) FILTER (WHERE ss IS NULL) AS slug_unbound,
@@ -863,11 +899,12 @@ export async function computeAtomProvenanceDriftCheck(
               -- drifted implies a slug binding, so "gone" is always a binding
               -- that failed to resolve — never a slug-unbound atom (#4799)
               count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
+              count(*) FILTER (WHERE drifted AND reviewed AND NOT src_alive) AS reviewed_drift,
               -- lexicographic min of ISO-shaped strings ≈ chronological min
               -- (oldest); informational only, never verdict-bearing
               min(ext) FILTER (WHERE drifted) AS oldest_ext
          FROM drift`,
-      [],
+      [JSON.stringify(items)],
     );
     const r = rows?.[0];
     if (!r) return { name, status: 'warn', message: 'atom provenance query returned no rows' };
@@ -897,6 +934,19 @@ export async function computeAtomProvenanceDriftCheck(
     const su = slugUnbound > 0
       ? `; ${slugUnbound} slug-unbound atom(s) (no source_slug: transcript-minted source_path-only, or pre-binding-era) are file-bound and not page-checked`
       : '';
+    if (enabled) {
+      const matched = num(r.reviewed_drift);
+      const newDrift = drifted - matched;
+      const staleReviews = items.length - matched;
+      const reviewedDetails = { ...details, reviewed_drift: matched, new_drift: newDrift, stale_reviews: staleReviews };
+      if (newDrift > 0 || staleReviews > 0) {
+        return { name, status: 'warn', details: reviewedDetails,
+          message: `${newDrift} newly unreviewed drifted atom(s); ${staleReviews} stale provenance review(s). ` +
+            `${matched} historical atom(s) remain searchable with unverified provenance. Review changes, not old source hashes.${su}` };
+      }
+      return { name, status: 'ok', details: reviewedDetails,
+        message: `${matched} historical atom(s) acknowledged as unverified provenance; no new drift${su}` };
+    }
     if (total === 0) {
       return { name, status: 'ok', message: (slugUnbound > 0 ? 'no page-bound atoms to check' : 'no atoms to check') + su, details };
     }
@@ -906,9 +956,11 @@ export async function computeAtomProvenanceDriftCheck(
       const fix =
         "review before acting — most drift is an edited source, not a dead one. " +
         "List them with: SELECT slug, frontmatter->>'source_slug' FROM pages a WHERE a.type='atom' " +
-        "AND a.deleted_at IS NULL AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL " +
+        "AND a.deleted_at IS NULL AND NOT (COALESCE(a.frontmatter, '{}'::jsonb) ? 'quarantine') " +
+        "AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL " +
         "AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id " +
-        "AND p.deleted_at IS NULL AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')";
+        "AND p.deleted_at IS NULL AND p.slug=a.frontmatter->>'source_slug' " +
+        "AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')";
       return {
         name, status: 'warn',
         message:

@@ -50,6 +50,19 @@ describe('links_extraction_lag doctor check', () => {
     expect(c.message).toContain('too few');
   });
 
+  test('quarantined pages are not in the extraction lag denominator', async () => {
+    await seedPages(120);
+    await engine.executeRaw(
+      `UPDATE pages SET frontmatter = '{"quarantine":{"reason":"operator_retired_source"}}'::jsonb WHERE id IN (SELECT id FROM pages ORDER BY id LIMIT 105)`,
+    );
+    const c = await checkLinksExtractionLag(engine);
+    expect(c.status).toBe('ok');
+    expect(c.message).toContain('15 pages — too few');
+    const scoped = await checkLinksExtractionLag(engine, { sourceId: 'default' });
+    expect((scoped.details as any).total).toBe(15);
+    expect((scoped.details as any).stale).toBe(15);
+  });
+
   test('>100 pages, all un-extracted → warn (>20%)', async () => {
     await seedPages(120);
     const c = await checkLinksExtractionLag(engine);

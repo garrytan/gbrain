@@ -9,6 +9,7 @@ import { readHolders } from './context.ts';
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
 import { resolveSearchDateBounds } from '../search/date-bounds.ts';
+import { stampAtomSourceDrift } from '../search/source-drift.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
 import {
@@ -313,6 +314,7 @@ const search: Operation = {
       // to cancel on this path — keyword-only never applies the compiled-
       // truth boost — but the provenance marker must still surface).
       await stampUnverifiedExtractions(ctx.engine, results, { ...scope, excludePrivate });
+      await stampAtomSourceDrift(ctx.engine, results);
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
@@ -338,6 +340,7 @@ const search: Operation = {
       onMeta: (m) => { capturedMeta = m; },
     })).map(r => ({ ...r }));
     stampDeepResearchIds(results);
+    await stampAtomSourceDrift(ctx.engine, results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
@@ -545,6 +548,7 @@ const query: Operation = {
         },
       })).map(r => ({ ...r }));
       stampDeepResearchIds(results);
+      await stampAtomSourceDrift(ctx.engine, results);
       imageMeta.retrieved_count = results.length;
       return searchOutput(ctx, results, await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }), snippetCap);
     }
@@ -756,6 +760,7 @@ const query: Operation = {
 
     results = results.map(r => ({ ...r }));
     stampDeepResearchIds(results);
+    await stampAtomSourceDrift(ctx.engine, results);
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
     // search handler — fire-and-forget, internal callers bypass this path.

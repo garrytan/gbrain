@@ -2878,7 +2878,9 @@ export class PostgresEngine implements BrainEngine {
 
   /** Shared stale-for-extraction predicate. Returns `{ where, params }`. */
   private buildStalePagesWhere(opts?: { sourceId?: string; versionTs?: string }): { where: string; params: unknown[] } {
-    const conds: string[] = ['deleted_at IS NULL'];
+    // Quarantined pages are hidden from search and must not be re-extracted
+    // into links/timeline by a scheduled --stale pass.
+    const conds: string[] = ['deleted_at IS NULL', quarantineFilterFragment('pages')];
     const params: unknown[] = [];
     if (opts?.versionTs) {
       params.push(opts.versionTs);

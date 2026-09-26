@@ -3143,7 +3143,7 @@ export async function buildChecks(
       name: 'quarantined_pages',
       status: n > 0 ? 'warn' : 'ok',
       message: n > 0
-        ? `${n} page(s) quarantined as junk (hidden from search). Review with 'gbrain quarantine list'; clear a false positive with 'gbrain quarantine clear <slug>'.`
+        ? `${n} page(s) quarantined (hidden from search). Review reasons with 'gbrain quarantine list'; clear a false positive with 'gbrain quarantine clear <slug>'.`
         : 'No quarantined pages',
     });
   } catch (err) {

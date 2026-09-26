@@ -95,6 +95,33 @@ describe('engine: stale-page extraction methods', () => {
     expect(batch2[0].id).toBeGreaterThan(batch1[0].id);
   });
 
+  test('quarantined pages are excluded from stale count and keyset listing', async () => {
+    await engine.putPage('people/visible', personPage('Visible'));
+    await engine.putPage('people/retired', {
+      ...personPage('Retired', '[Visible](people/visible) has private context.'),
+      frontmatter: { quarantine: { reason: 'operator_retired_source' } },
+    });
+    expect(await engine.countStalePagesForExtraction()).toBe(1);
+    expect((await engine.listStalePagesForExtraction({ batchSize: 10 })).map(p => p.slug)).toEqual(['people/visible']);
+    await runExtract(engine, ['--stale']);
+    expect(await engine.getLinks('people/retired')).toHaveLength(0);
+  });
+
+  test('manual DB link and timeline extraction skip quarantined source pages', async () => {
+    await engine.putPage('people/visible', personPage('Visible'));
+    await engine.putPage('people/retired', {
+      ...personPage('Retired', '[Visible](people/visible) has private context.\n2026-06-01: Private meeting.'),
+      frontmatter: { quarantine: { reason: 'operator_retired_source' } },
+    });
+    await runExtract(engine, ['links', '--source', 'db']);
+    await runExtract(engine, ['timeline', '--source', 'db']);
+    expect(await engine.getLinks('people/retired')).toHaveLength(0);
+    const entries = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.slug='people/retired'`,
+    );
+    expect(Number(entries[0].n)).toBe(0);
+  });
+
   test('markPagesExtractedBatch: empty input is a no-op', async () => {
     await engine.markPagesExtractedBatch([], new Date().toISOString());
     expect(true).toBe(true); // no throw
