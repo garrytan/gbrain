@@ -22,6 +22,7 @@ import { acquireWorktree, getWorktreeBinding, type WorktreeBinding } from './own
 import { persistenceFileHash, transientDatabaseFailure } from './coordinator.ts';
 import { sha256 } from './digest.ts';
 import { prepareFileTarget } from './page-prepare.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
 import { advanceEffectCursor, claimPersistenceEffect, completeEffect, failEffect, renewPersistenceEffectClaim, retryEffect } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
 import { publishGitEffect } from './effect-git.ts';
@@ -110,6 +111,14 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
     if (persistenceFileHash(path) !== effect.data.expected_hash) { await completeEffect(engine, effect, { git: 'superseded' }); return; }
   }
   if (!isWriteTargetContained(path, join(binding.local_path, binding.relative_path))) throw new OperationError('source_changed', 'The Git target escaped its registered source.');
+  // Declared db_only content stays out of Git. Its gitignored local cache file
+  // is invisible to `git status`, so publishing it would be refused as unsafe.
+  // An invalid gbrain.yml (logged by the loader) publishes as before.
+  const slug = snapshot?.page.slug ?? effect.data.slug;
+  if (slug && isSourceDbOnlySlug(join(binding.local_path, binding.relative_path), slug, 'not_db_only')) {
+    await finishPage(engine, effect, snapshot, { git: 'skipped', reason: 'db_only' });
+    return;
+  }
   const result = await publishGitEffect(binding.local_path, relative(binding.local_path, path).split(sep).join('/'), opts.signal);
   if (result.reason === 'durability_not_enabled') await completeEffect(engine, effect, result);
   else await finishPage(engine, effect, snapshot, result);

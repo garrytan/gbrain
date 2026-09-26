@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -13,10 +13,12 @@ import { grandfatherCanonicalPage } from '../src/core/persistence/grandfather.ts
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 
 type FixtureOptions = { databaseUrl?: string; setup?: (f: { engine: BrainEngine; root: string }) => Promise<void> };
@@ -144,12 +146,21 @@ test('archived sources and non-Markdown artifacts are not rewritten by managed g
 }), 120_000);
 
 const DB_ONLY_SLUG = 'conversations/sessions/probe-session';
+const DB_ONLY_CACHE = `${DB_ONLY_SLUG}.md`;
+// A durability-hardened Git worktree makes Git effects publish for real, so an
+// ignored db_only cache file reaches the path that refuses unsafe targets.
 // Transcript ingestion publishes db_only pages before persistence activation;
 // a direct import is refused once the source is managed.
-const dbOnlySource = (gbrainYml: string) => async ({ engine, root }: { engine: BrainEngine; root: string }) => {
+const dbOnlySource = (gbrainYml: string, { cache = false } = {}) => async ({ engine, root }: { engine: BrainEngine; root: string }) => {
   writeFileSync(join(root, 'gbrain.yml'), gbrainYml);
   writeFileSync(join(root, '.gitignore'), 'conversations/\n');
+  durableGitRepo(root, ['.gitignore', 'gbrain.yml']);
   await importFromContent(engine, DB_ONLY_SLUG, '---\ntype: conversation\ntitle: Probe session\n---\n\nTranscript body.\n', { sourceId: 'default', noEmbed: true });
+  if (cache) {
+    const snapshot = (await engine.readPageSnapshot(DB_ONLY_SLUG, { sourceId: 'default' }))!;
+    mkdirSync(dirname(join(root, DB_ONLY_CACHE)), { recursive: true });
+    writeFileSync(join(root, DB_ONLY_CACHE), serializePageToMarkdown(snapshot.page, snapshot.tags));
+  }
 };
 const declaring = (dir: string) => `storage:\n  db_only:\n    - ${dir}\n`;
 const replacePage = async (ctx: OperationContext, slug: string, body: string) => {
@@ -157,6 +168,8 @@ const replacePage = async (ctx: OperationContext, slug: string, body: string) =>
   return submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), expected_revision: current.revision,
     content: serializePageToMarkdown({ ...current.page, compiled_truth: body }, current.tags) } });
 };
+const deletePage = async (ctx: OperationContext, slug: string, purge: boolean) => submitPageMutation(ctx, { operation: 'delete_page',
+  params: { slug, request_id: randomUUID(), expected_revision: (await ctx.engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision, purge } });
 // Runs every queued Git effect and returns their final rows.
 async function settledGitEffects(engine: BrainEngine, ctx: OperationContext) {
   await disposePersistenceConsumer(engine);
@@ -179,6 +192,35 @@ for (const declared of ['conversations/', 'Conversations/']) {
     expect((await settledGitEffects(engine, ctx)).filter(effect => effect.slug === DB_ONLY_SLUG)).toEqual([]);
   }, { setup: dbOnlySource(declaring(declared)) }), 120_000);
 }
+
+const cacheCases: Array<[string, (ctx: OperationContext) => Promise<unknown>, string | null]> = [
+  ['an edit rewrites', ctx => replacePage(ctx, DB_ONLY_SLUG, 'Revised transcript body.'), 'Revised transcript body.'],
+  ['a soft delete removes', ctx => deletePage(ctx, DB_ONLY_SLUG, false), null],
+  ['a purge removes', ctx => deletePage(ctx, DB_ONLY_SLUG, true), null],
+];
+for (const [name, act, expected] of cacheCases) {
+  test(`${name} a present db_only cache file and completes its Git effect as skipped`, () => fixture(async ({ engine, ctx, root }) => {
+    expect(await act(ctx)).toMatchObject({ state: 'committed', write_through: { written: true } });
+    const cache = join(root, DB_ONLY_CACHE);
+    if (expected === null) expect(existsSync(cache)).toBe(false);
+    else expect(readFileSync(cache, 'utf8')).toContain(expected);
+    const effects = await settledGitEffects(engine, ctx);
+    expect(effects.filter(effect => effect.slug === DB_ONLY_SLUG)).toEqual([
+      { slug: DB_ONLY_SLUG, state: 'committed', error_code: null, outcome: { git: 'skipped', reason: 'db_only' } }]);
+    expect(effects.filter(effect => effect.error_code === 'git_target_unsafe')).toEqual([]);
+    expect(git(root, 'log', '--name-only', '--pretty=format:')).not.toContain('conversations');
+  }, { setup: dbOnlySource(declaring('conversations/'), { cache: true }) }), 120_000);
+}
+
+test('an uncoordinated edit of a db_only cache file still refuses a managed write', () => fixture(async ({ engine, ctx, root }) => {
+  const cache = join(root, DB_ONLY_CACHE);
+  const edited = readFileSync(cache, 'utf8').replace('Transcript body.', 'Local unpublished edit.');
+  writeFileSync(cache, edited);
+  const before = (await engine.readPageSnapshot(DB_ONLY_SLUG, { sourceId: 'default' }))!;
+  await expect(replacePage(ctx, DB_ONLY_SLUG, 'Revised transcript body.')).rejects.toMatchObject({ code: 'source_changed' });
+  expect(readFileSync(cache, 'utf8')).toBe(edited);
+  expect((await engine.readPageSnapshot(DB_ONLY_SLUG, { sourceId: 'default' }))?.revision).toBe(before.revision);
+}, { setup: dbOnlySource(declaring('conversations/'), { cache: true }) }), 120_000);
 
 test('the missing-file guard still refuses outside declared db_only dirs', () => fixture(async ({ ctx, root, slug }) => {
   rmSync(join(root, `${slug}.md`));
@@ -203,4 +245,21 @@ for (const [name, gbrainYml] of invalidStorage) {
       expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('Created body.');
     }
   }, { setup: dbOnlySource(declaring('conversations/')) }), 120_000);
+}
+
+// cache=false is a regression guard (passes on baseline); cache=true fails there with an unsafe Git target.
+for (const cache of [false, true]) {
+  test(`a Git source scan passes a db_only page ${cache ? 'with' : 'without'} a cache file`, () => fixture(async ({ engine, ctx }) => {
+    // Source scans walk every page in slug order, so the db_only page is visited first.
+    const [effect] = await engine.executeRaw<{ id: number }>(
+      "SELECT e.id FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.kind='git' AND r.slug='notes/example'");
+    await engine.transaction(async tx => {
+      await declarePersistenceProtocol(tx);
+      await tx.executeRaw(`UPDATE persistence_effects SET data='{"source_scan":true}'::jsonb,state='queued',execution_token=NULL,
+        claim_expires_at=NULL,next_attempt_at=now(),error_code=NULL WHERE id=$1`, [effect.id]);
+    });
+    await runPersistenceEffects(engine, ctx.config, { hostId: localHostId(), limit: 5 });
+    expect(await engine.executeRaw('SELECT state,error_code FROM persistence_effects WHERE id=$1', [effect.id]))
+      .toEqual([{ state: 'committed', error_code: null }]);
+  }, { setup: dbOnlySource(declaring('conversations/'), { cache }) }), 120_000);
 }
