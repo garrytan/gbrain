@@ -1762,7 +1762,7 @@ export function formatResult(
       if (r.error === 'ambiguous_slug') {
         return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
       }
-      return serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', {
+      return (r.unverified_source_drift === true ? '[unverified_source_drift: source missing or changed]\n' : '') + serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', {
         type: r.type, title: r.title, tags: r.tags || [],
       });
     }
@@ -1803,7 +1803,7 @@ export function formatResult(
         return formatResultsExplain(results, meta ?? undefined);
       }
       return incompleteNotice + results.map(r =>
-        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,
+        `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}${r.unverified_source_drift === true ? ' (unverified_source_drift: source missing or changed)' : ''}`,
       ).join('\n') + '\n';
     }
     case 'get_tags': {

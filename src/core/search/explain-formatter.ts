@@ -42,6 +42,9 @@ export function formatResultExplain(
 ): string {
   const lines: string[] = [];
   lines.push(`${rank}. ${result.slug} (score=${fmt(result.score)})`);
+  if (result.unverified_source_drift === true) {
+    lines.push('   unverified_source_drift: source missing or changed');
+  }
 
   // base_score is the pre-boost RRF+cosine result. When undefined
   // (result wasn't routed through runPostFusionStages), fall back to
