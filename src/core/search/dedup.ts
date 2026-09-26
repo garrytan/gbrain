@@ -115,9 +115,16 @@ function dedupByTextSimilarity(results: SearchResult[], threshold: number): Sear
     let tooSimilar = false;
 
     for (const kWords of samePageKept) {
-      const intersection = new Set([...rWords].filter(w => kWords.has(w)));
-      const union = new Set([...rWords, ...kWords]);
-      const jaccard = intersection.size / union.size;
+      // Allocation-free Jaccard: |A ∩ B| by iterating the smaller set,
+      // |A ∪ B| = |A| + |B| - |A ∩ B|. Bit-identical to building the
+      // intersection/union Sets (both sides hold unique words), without
+      // the two Set allocations per comparison.
+      const [smaller, larger] =
+        rWords.size <= kWords.size ? [rWords, kWords] : [kWords, rWords];
+      let intersectionSize = 0;
+      for (const w of smaller) if (larger.has(w)) intersectionSize++;
+      const unionSize = rWords.size + kWords.size - intersectionSize;
+      const jaccard = unionSize === 0 ? 0 : intersectionSize / unionSize;
 
       if (jaccard > threshold) {
         tooSimilar = true;
@@ -181,40 +188,61 @@ function capPerPage(results: SearchResult[], maxPerPage: number): SearchResult[]
 /**
  * Final pass: for each page in results that has no compiled_truth chunk,
  * swap in the best compiled_truth chunk from the pre-dedup set (if one exists).
+ *
+ * Linear-time: page keys are computed once per row (the old code rebuilt the
+ * `source:slug` template string on every inner-loop iteration — O(pages × N)
+ * string builds), and the per-page best-truth candidate is found in one
+ * pre-dedup scan instead of a filter+sort per page. Tie order is preserved:
+ * first-seen max wins (as with a stable sort + [0]), and the swap replaces
+ * the first lowest-scored chunk of the page (as with the strict-< reduce).
  */
 function guaranteeCompiledTruth(results: SearchResult[], preDedup: SearchResult[]): SearchResult[] {
-  // Group results by composite page key (source_id, slug).
-  const byPage = new Map<string, SearchResult[]>();
-  for (const r of results) {
-    const k = pageKey(r);
-    const existing = byPage.get(k) || [];
-    existing.push(r);
-    byPage.set(k, existing);
+  // One pass: memoize the composite page key for every row scanned below.
+  const keyMemo = new Map<SearchResult, string>();
+  const keyOf = (r: SearchResult): string => {
+    let k = keyMemo.get(r);
+    if (k === undefined) {
+      k = pageKey(r);
+      keyMemo.set(r, k);
+    }
+    return k;
+  };
+
+  // One scan: best compiled_truth candidate per page (first max wins).
+  const bestTruthByPage = new Map<string, SearchResult>();
+  for (const r of preDedup) {
+    if (r.chunk_source !== 'compiled_truth') continue;
+    const k = keyOf(r);
+    const cur = bestTruthByPage.get(k);
+    if (cur === undefined || r.score > cur.score) bestTruthByPage.set(k, r);
   }
 
+  // One pass: group results by page and record each page's output indices.
+  const byPage = new Map<string, { hasTruth: boolean; idxs: number[] }>();
   const output = [...results];
+  for (let i = 0; i < output.length; i++) {
+    const r = output[i];
+    const k = keyOf(r);
+    let e = byPage.get(k);
+    if (e === undefined) {
+      e = { hasTruth: false, idxs: [] };
+      byPage.set(k, e);
+    }
+    if (r.chunk_source === 'compiled_truth') e.hasTruth = true;
+    e.idxs.push(i);
+  }
 
-  for (const [key, pageChunks] of byPage) {
-    const hasCompiledTruth = pageChunks.some(c => c.chunk_source === 'compiled_truth');
-    if (hasCompiledTruth) continue;
+  for (const [key, e] of byPage) {
+    if (e.hasTruth) continue;
+    const candidate = bestTruthByPage.get(key);
+    if (candidate === undefined) continue;
 
-    // Find the best compiled_truth chunk from pre-dedup input for this
-    // (source_id, slug) combination. Pre-v0.17 single-source match was
-    // "r.slug === slug"; now it's the composite key so two same-slug
-    // pages in different sources don't mistakenly swap chunks across.
-    const candidate = preDedup
-      .filter(r => pageKey(r) === key && r.chunk_source === 'compiled_truth')
-      .sort((a, b) => b.score - a.score)[0];
-
-    if (!candidate) continue;
-
-    // Swap: replace the lowest-scored chunk from this page (same
-    // composite key match).
-    const lowestIdx = output.reduce((minIdx, r, idx) => {
-      if (pageKey(r) !== key) return minIdx;
-      if (minIdx === -1) return idx;
-      return r.score < output[minIdx].score ? idx : minIdx;
-    }, -1);
+    // Swap: replace the lowest-scored chunk from this page; first index
+    // wins on ties.
+    let lowestIdx = -1;
+    for (const idx of e.idxs) {
+      if (lowestIdx === -1 || output[idx].score < output[lowestIdx].score) lowestIdx = idx;
+    }
 
     if (lowestIdx !== -1) {
       output[lowestIdx] = candidate;
