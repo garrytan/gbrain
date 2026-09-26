@@ -71,6 +71,7 @@ beforeEach(async () => {
     `INSERT INTO sources (id, name) VALUES ('default', 'Default'), ('connector-a', 'Connector A')
      ON CONFLICT DO NOTHING`,
   );
+  await engine.executeRaw(`DELETE FROM config WHERE key = 'sync.repo_path'`);
 });
 
 afterEach(() => {
@@ -322,7 +323,7 @@ describe('export --restore-only keys pages on (source_id, slug)', () => {
   test('a db_only slug in two sources refuses and writes nothing', async () => {
     await put('default', 'media/x/clip', 'default clip');
     await put('connector-a', 'media/x/clip', 'connector-a clip');
-    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repo]);
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repo, '--source', '__all__']);
 
     expect(exitCode).toBe(1);
     const err = stderr.join('\n');
@@ -403,5 +404,84 @@ describe('export --restore-only restores into the source that owns the repo', ()
     expect(err).toContain('connector-a');
     expect(err).toContain('--repo');
     expect(existsSync(outDir)).toBe(false);
+  });
+});
+
+describe('export --restore-only picks the owning source by registered local_path', () => {
+  const yml = 'storage:\n  db_tracked: []\n  db_only:\n    - media/\n';
+  let repo: string;
+
+  beforeEach(() => {
+    repo = join(tmp, 'brain', 'repo');
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, 'gbrain.yml'), yml);
+  });
+
+  async function seedBothSources(): Promise<void> {
+    await put('default', 'media/default-clip', 'default clip');
+    await put('connector-a', 'media/connector-clip', 'connector-a clip');
+  }
+
+  test('an ancestor .gbrain-source does not override the local_path owner', async () => {
+    writeFileSync(join(tmp, '.gbrain-source'), 'default\n');
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'connector-a'`, [repo]);
+    await seedBothSources();
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repo]);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/connector-clip')).toContain('connector-a clip');
+    expect(existsSync(join(outDir, 'media/default-clip.md'))).toBe(false);
+  });
+
+  test.each([
+    { name: 'same path', archivedPath: () => repo },
+    { name: 'deeper archived path', archivedPath: () => repo, activePath: () => join(tmp, 'brain') },
+  ])('an active source wins over an archived one at the $name', async ({ archivedPath, activePath }) => {
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1, archived = true WHERE id = 'default'`,
+      [archivedPath()],
+    );
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = 'connector-a'`,
+      [(activePath ?? archivedPath)()],
+    );
+    await seedBothSources();
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repo]);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/connector-clip')).toContain('connector-a clip');
+    expect(existsSync(join(outDir, 'media/default-clip.md'))).toBe(false);
+  });
+
+  test('legacy sync.repo_path brain: --repo with two sources and no --source refuses', async () => {
+    await engine.setConfig('sync.repo_path', repo);
+    await seedBothSources();
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repo]);
+
+    expect(exitCode).toBe(1);
+    const err = stderr.join('\n');
+    expect(err).toContain('--source <id>');
+    expect(err).toContain('--source __all__');
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  test('legacy sync.repo_path brain: no --repo scopes to the resolved default source', async () => {
+    await engine.setConfig('sync.repo_path', repo);
+    await seedBothSources();
+    await tryRunExport(['--dir', outDir, '--restore-only']);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/default-clip')).toContain('default clip');
+    expect(existsSync(join(outDir, 'media/connector-clip.md'))).toBe(false);
+  });
+
+  test('single-source brain: an unregistered --repo restores that source', async () => {
+    await engine.executeRaw(`DELETE FROM sources WHERE id = 'connector-a'`);
+    await put('default', 'media/default-clip', 'default clip');
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repo]);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/default-clip')).toContain('default clip');
+    expect(stdout).toContain(`Restored 1 pages to ${outDir}/`);
   });
 });

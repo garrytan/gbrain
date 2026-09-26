@@ -94,14 +94,20 @@ gbrain export --restore-only --source <source-id> --dir /path/to/that/source
 
 The `--restore-only` flag:
 
-- Resolves the repo it checks via the chain `--repo` → the `--source`'s own
-  `local_path` → the default source's path → hard error. Never falls through
-  to the current directory.
+- Picks the repo it checks and the source whose pages it restores:
+  - `--source <id>`: that source's pages; the repo is `--repo`, else that
+    source's own `local_path` (hard error when it has none).
+    `--source __all__` restores every source's pages.
+  - Neither `--source` nor `--repo`: the source `gbrain` resolves for the
+    current directory when no `--source` is given, with that source's repo.
+  - `--repo` alone: the source registered with that `local_path` (an active
+    source wins over an archived one; `.gbrain-source` files are ignored).
+    When no source is registered there, a brain with exactly one active
+    source uses it; any other brain refuses and asks for `--source <id>` or
+    `--source __all__`.
 - Checks that repo for missing files but writes them to `--dir` (default
   `./export`). Pass `--dir` with the repo path to restore in place.
 - Only exports pages that match `db_only` patterns AND are missing from disk.
-- Without `--source`, restores only the pages of the source that owns the
-  repo; a repo no source is registered at takes every source's pages.
 - Refuses, writing nothing, when a slug to restore exists in more than one
   source (both would land on the same `<slug>.md`). Restore one source at a
   time with `--source <id>`.

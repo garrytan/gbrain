@@ -717,19 +717,45 @@ export async function getDefaultSourcePath(
   engine: BrainEngine,
   cwd: string = process.cwd(),
 ): Promise<string | null> {
+  return (await resolveDefaultSourceWithPath(engine, cwd)).path;
+}
+
+/**
+ * The source the resolveSourceId chain picks for `cwd`, with its on-disk
+ * repo path (same path rules as `getDefaultSourcePath`). For callers that
+ * act on that repo AND must scope their reads to the same source, e.g.
+ * `gbrain export --restore-only` with neither --source nor --repo.
+ */
+export async function resolveDefaultSourceWithPath(
+  engine: BrainEngine,
+  cwd: string = process.cwd(),
+): Promise<{ sourceId: string; path: string | null }> {
   const sourceId = await resolveSourceId(engine, null, cwd);
   const rows = await engine.executeRaw<{ local_path: string | null }>(
     `SELECT local_path FROM sources WHERE id = $1`,
     [sourceId],
   );
-  if (rows[0]?.local_path) return rows[0].local_path;
+  if (rows[0]?.local_path) return { sourceId, path: rows[0].local_path };
 
   // Legacy fallback: pre-v0.18 brains stored the repo path in the global
   // config table under sync.repo_path. The sources table exists but its
   // local_path is NULL for the seeded 'default' row. Fall back so storage
   // tiering works without forcing a `gbrain sources add . --path .` migration.
   const legacyPath = await engine.getConfig('sync.repo_path');
-  return legacyPath ?? null;
+  return { sourceId, path: legacyPath ?? null };
+}
+
+/**
+ * The registered source whose `local_path` contains `dir` (longest prefix,
+ * active sources over archived ones), from the registrations alone: no
+ * dotfile, env or cwd signal. Null when no registration contains `dir`;
+ * throws SourceTargetError when only an archived source does.
+ */
+export async function resolveRegisteredRepoOwner(engine: BrainEngine, dir: string): Promise<string | null> {
+  const match = await resolveRegisteredPathMatch(engine, dir);
+  if (!match) return null;
+  await assertSourceExists(engine, match.id);
+  return match.id;
 }
 
 /**

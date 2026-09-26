@@ -8,8 +8,9 @@ import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
 import { slugifyPath } from '../core/sync.ts';
 import {
   getDefaultSourcePath,
+  resolveDefaultSourceWithPath,
+  resolveRegisteredRepoOwner,
   resolveSourceId,
-  resolveSourceForRepoPath,
   isResolverUserError,
 } from '../core/source-resolver.ts';
 import { ALL_SOURCES } from '../core/source-id.ts';
@@ -108,6 +109,77 @@ async function resolveExportSource(
   }
 }
 
+/**
+ * Which repo `--restore-only` checks for missing files, and whose pages it
+ * restores (undefined = every source):
+ *  1. `--source <id>`: that source; `__all__` spans every source. The repo
+ *     is --repo, else the source's own local_path (refuse when it has none).
+ *  2. Neither --source nor --repo: the source the resolver chain picks for
+ *     the cwd, with its repo.
+ *  3. --repo alone: the source registered at that path (active over
+ *     archived; dotfiles ignored), else the brain's only active source, else
+ *     refuse: pages of some other source must never land in this repo.
+ * Exits 1 on refusal.
+ */
+async function resolveRestoreTarget(
+  engine: BrainEngine,
+  opts: { sourceId: string | undefined; allSources: boolean; explicitRepoPath: string | null },
+): Promise<{ repoPath: string; sourceId: string | undefined }> {
+  let repoPath = opts.explicitRepoPath;
+  let sourceId = opts.sourceId;
+  try {
+    if (sourceId && !repoPath) {
+      const rows = await engine.executeRaw<{ local_path: string | null }>(
+        `SELECT local_path FROM sources WHERE id = $1`,
+        [sourceId],
+      );
+      repoPath = rows[0]?.local_path ?? null;
+      if (!repoPath) {
+        console.error(
+          `Error: source "${sourceId}" has no local_path, so --restore-only has no repo\n` +
+            `to check for missing files. Pass --repo <path> for that source's repo.`,
+        );
+        process.exit(1);
+      }
+    } else if (opts.allSources && !repoPath) {
+      repoPath = await getDefaultSourcePath(engine);
+    } else if (!sourceId && !opts.allSources && !repoPath) {
+      const resolved = await resolveDefaultSourceWithPath(engine);
+      repoPath = resolved.path;
+      sourceId = resolved.sourceId === ALL_SOURCES ? undefined : resolved.sourceId;
+    } else if (!sourceId && !opts.allSources && repoPath) {
+      sourceId = (await resolveRegisteredRepoOwner(engine, repoPath)) ?? undefined;
+      if (!sourceId) {
+        const active = await engine.executeRaw<{ id: string }>(
+          `SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id`,
+        );
+        if (active.length !== 1) {
+          console.error(
+            `Error: no registered source has ${repoPath} as its local_path, so --restore-only\n` +
+              `cannot tell whose pages belong in it. Pass --source <id> for that repo's source,\n` +
+              `or --source __all__ to restore every source's pages into it.`,
+          );
+          process.exit(1);
+        }
+        sourceId = active[0].id;
+      }
+    }
+  } catch (e) {
+    if (!isResolverUserError(e)) throw e;
+    console.error(`Error: ${(e as Error).message}`);
+    process.exit(1);
+  }
+  if (!repoPath) {
+    console.error(
+      `Error: gbrain export --restore-only requires --repo <path> or a configured\n` +
+        `default source with a local_path. Run \`gbrain sources list\` to inspect\n` +
+        `sources, or pass --repo explicitly.`,
+    );
+    process.exit(1);
+  }
+  return { repoPath, sourceId };
+}
+
 export async function runExport(engine: BrainEngine, args: string[]) {
   const dirIdx = args.indexOf('--dir');
   const outDir = dirIdx !== -1 ? args[dirIdx + 1] : './export';
@@ -125,35 +197,16 @@ export async function runExport(engine: BrainEngine, args: string[]) {
 
   const { sourceId, allSources: allSourcesRequested } = await resolveExportSource(engine, args);
 
-  // Resolution chain (D5): explicit --repo → the --source's own local_path →
-  // typed sources.getDefault() → hard-error for restore-only paths (never
-  // fall through to cwd). For non-restore exports, repoPath stays null
-  // because regular export doesn't need a brain repo to run.
+  // For non-restore exports, repoPath stays null because regular export
+  // doesn't need a brain repo to run.
   let repoPath: string | null = explicitRepoPath;
-  if (restoreOnly && !repoPath && sourceId) {
-    const rows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    repoPath = rows[0]?.local_path ?? null;
-    if (!repoPath) {
-      console.error(
-        `Error: source "${sourceId}" has no local_path, so --restore-only has no repo\n` +
-          `to check for missing files. Pass --repo <path> for that source's repo.`,
-      );
-      process.exit(1);
-    }
-  }
-  if (restoreOnly && !repoPath) {
-    repoPath = await getDefaultSourcePath(engine);
-    if (!repoPath) {
-      console.error(
-        `Error: gbrain export --restore-only requires --repo <path> or a configured\n` +
-          `default source with a local_path. Run \`gbrain sources list\` to inspect\n` +
-          `sources, or pass --repo explicitly.`,
-      );
-      process.exit(1);
-    }
+  let restoreSourceId: string | undefined;
+  if (restoreOnly) {
+    ({ repoPath, sourceId: restoreSourceId } = await resolveRestoreTarget(engine, {
+      sourceId,
+      allSources: allSourcesRequested,
+      explicitRepoPath,
+    }));
   }
 
   // Load storage configuration if repo path is provided
@@ -178,21 +231,8 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   const filters: Omit<PageFilters, 'limit' | 'offset' | 'sort'> = {};
   if (typeFilter) filters.type = typeFilter as PageType;
   if (slugPrefix) filters.slugPrefix = slugPrefix;
-  if (sourceId) filters.sourceId = sourceId;
-
-  // A restore without --source fills in the repo it checks, so it restores
-  // only the pages of the source that owns that repo. An unregistered repo
-  // keeps every source as a candidate (collisions still refuse below).
-  if (restoreOnly && repoPath && !sourceId && !allSourcesRequested) {
-    try {
-      const owner = await resolveSourceForRepoPath(engine, repoPath);
-      if (owner) filters.sourceId = owner.source_id;
-    } catch (e) {
-      if (!isResolverUserError(e)) throw e;
-      console.error(`Error: ${(e as Error).message}`);
-      process.exit(1);
-    }
-  }
+  const scopeSourceId = restoreOnly ? restoreSourceId : sourceId;
+  if (scopeSourceId) filters.sourceId = scopeSourceId;
 
   let pages: Page[];
 
