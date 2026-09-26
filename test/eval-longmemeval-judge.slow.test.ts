@@ -32,7 +32,7 @@ import { tmpdir } from 'os';
 import type Anthropic from '@anthropic-ai/sdk';
 import { runEvalLongMemEval } from '../src/commands/eval-longmemeval.ts';
 import { createBenchmarkBrain } from '../src/eval/longmemeval/harness.ts';
-import { READER_PROMPT_SHA } from '../src/eval/longmemeval/reader.ts';
+import { READER_PROMPT_SHA, readerConfigHash, resolveReaderConfig } from '../src/eval/longmemeval/reader.ts';
 import { JUDGE_PROMPT_VERSION } from '../src/eval/longmemeval/judge.ts';
 import type { JudgeChatFn } from '../src/eval/shared/judge-runner.ts';
 import type { ThinkLLMClient } from '../src/core/think/index.ts';
@@ -41,8 +41,9 @@ import { configureGateway, resetGateway, type ChatOpts, type ChatResult } from '
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'longmemeval-mixedcase.jsonl');
 const READER_MODEL = 'openai:gpt-5.2';
-const BASE = ['--keyword-only', '--no-trajectory', '--top-k', '5', '--model', READER_MODEL];
+const BASE = ['--keyword-only', '--no-trajectory', '--top-k', '5', '--model', READER_MODEL, '--reader-mode', 'direct'];
 const JUDGE = ['--judge', '--max-usd', '1', '--yes'];
+const READER_PINS = { reader_config_hash: readerConfigHash(resolveReaderConfig({ mode: 'direct' }), READER_MODEL) };
 
 const QUESTIONS: Record<string, string> = {
   'mc-1': 'kayak brand alice-example wants to buy for the river trip',
@@ -473,6 +474,7 @@ describe('--judge publishability gate reads qa.complete (unjudged rows count)', 
     const write = () => writeFileSync(out, readRows(FIXTURE).map(q => JSON.stringify({
       question_id: q.question_id, question: q.question, question_type: q.question_type,
       hypothesis: q.question_id === 'mc-3_abs' ? '' : ANSWERS[q.question_id],
+      ...READER_PINS,
     })).join('\n') + '\n', 'utf8');
     write();
     const j1 = judgeClient({ 'mc-1': 'Yes', 'mc-2': 'Yes' });

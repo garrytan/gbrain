@@ -159,6 +159,7 @@ export interface RunConfigInput {
   excluded_abstention: number;
   question_ids_file: string | null;
   errors: number;
+  reader?: { mode: string; prompt_version: string; prompt_sha: string; max_tokens: number; model: string; config_hash: string };
 }
 
 /** The `run_config` object stamped on the by_type_summary (schema v2). */
@@ -192,6 +193,7 @@ export function buildRunConfig(input: RunConfigInput): Record<string, unknown> {
     slug_collisions: input.slug_collisions,
     excluded_abstention: input.excluded_abstention,
     errors: input.errors,
+    ...(input.reader ? { reader: input.reader } : {}),
   };
 }
 
