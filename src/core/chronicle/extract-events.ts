@@ -10,6 +10,7 @@
 // configured it returns zero events (auto-emit is a no-op, never an error).
 import type { BrainEngine } from '../engine.ts';
 import { computeContentHash } from '../ingestion/types.ts';
+import { findJsonCloseIndex } from '../llm-json.ts';
 
 export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
@@ -242,6 +243,10 @@ function defaultJudge(engine: BrainEngine): ChronicleJudge {
  * #2606: returns `null` on parse FAILURE (empty text, no `[...]` found,
  * JSON.parse throw, non-array result) so callers can distinguish "the model
  * said no events" (a legitimate `[]`) from "the response was unusable".
+ *
+ * The array's own closing bracket is found via `findJsonCloseIndex`
+ * (see `llm-json.ts`) rather than a naive `lastIndexOf(']')`, so trailing
+ * prose after the array can't hijack the recovery.
  */
 export function parseJudgeJson(text: string): ChronicleEventProposal[] | null {
   if (!text) return null;
@@ -249,8 +254,10 @@ export function parseJudgeJson(text: string): ChronicleEventProposal[] | null {
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) s = fence[1].trim();
   const start = s.indexOf('[');
-  const end = s.lastIndexOf(']');
-  if (start === -1 || end === -1 || end < start) return null;
+  if (start === -1) return null;
+  const closeOffset = findJsonCloseIndex(s.slice(start));
+  if (closeOffset === -1) return null;
+  const end = start + closeOffset;
   try {
     const arr = JSON.parse(s.slice(start, end + 1));
     return Array.isArray(arr) ? arr : null;
