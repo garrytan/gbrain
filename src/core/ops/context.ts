@@ -16,7 +16,7 @@ import { OperationError, opError } from './contract.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, paramUse, readFix } from './op-fix.ts';
-import { CJK_SLUG_CHARS, SLUG_WORD_CHARS } from '../cjk.ts';
+import { CASED_WORD_CHARS, CJK_SLUG_CHARS, SLUG_WORD_CHARS } from '../cjk.ts';
 import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
@@ -561,6 +561,11 @@ export function enforceBoundClientOpAllowList(
   throw err;
 }
 
+// Letters and digits of every script, either case. CJK_SLUG_CHARS stays for
+// the non-letters inside its ranges (\u30FB U+30FB, \u30A0 U+30A0, \u309B U+309B), which
+// filenames accept.
+const FILENAME_WORD_CHARS = `${CASED_WORD_CHARS}${CJK_SLUG_CHARS}`;
+
 /**
  * Allowlist validator for uploaded file basenames. Rejects control chars, backslashes,
  * RTL overrides (\u202E), leading dot (hidden files) and leading dash (CLI flag confusion).
@@ -573,12 +578,11 @@ export function validateFilename(name: string): void {
   if (name.length > 255) {
     throw opError('invalid_params', 'Filename exceeds 255 characters', 'Shorten the file name to 255 characters or fewer.');
   }
-  // v0.32.7: CJK ranges (Han / Hiragana / Katakana / Hangul) allowed in filenames.
   // Leading-dot / leading-dash rejection preserved.
-  const FILENAME_RE = new RegExp(`^[a-zA-Z0-9${CJK_SLUG_CHARS}][a-zA-Z0-9${CJK_SLUG_CHARS}._\\-]*$`);
+  const FILENAME_RE = new RegExp(`^[${FILENAME_WORD_CHARS}][${FILENAME_WORD_CHARS}._\\-]*$`, 'u');
   if (!FILENAME_RE.test(name)) {
-    throw opError('invalid_params', `Invalid filename: ${name} (allowed: alphanumeric, CJK, dot, underscore, hyphen — no leading dot/dash, no control chars or backslash)`,
-      'Rename the file to letters, digits, CJK, dots, underscores and hyphens, starting with a letter or digit (e.g. report-2026.pdf).');
+    throw opError('invalid_params', `Invalid filename: ${name} (allowed: letters and digits of any script, dot, underscore, hyphen — no leading dot/dash, no control chars or backslash)`,
+      'Rename the file to letters, digits, dots, underscores and hyphens, starting with a letter or digit (e.g. report-2026.pdf).');
   }
 }
 

@@ -43,6 +43,13 @@ export const CJK_RANGES_REGEX = new RegExp(`[${CJK_SLUG_CHARS}]`);
 export const SLUG_WORD_CHARS = '\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}\\p{N}';
 
 /**
+ * SLUG_WORD_CHARS plus uppercase and titlecase letters, for validators of
+ * user input that keeps its case (upload filenames, `book-mirror --slug`).
+ * Compose with the `u` flag.
+ */
+export const CASED_WORD_CHARS = `${SLUG_WORD_CHARS}\\p{Lu}\\p{Lt}`;
+
+/**
  * Unicode variation selectors (emoji VS1–VS16 U+FE00–FE0F, ideographic IVS
  * U+E0100–E01EF): Mn-category invisibles that survive the \p{M} keep above.
  * Both slug grammars — `sync.ts:slugifySegment` and its #4855 twin

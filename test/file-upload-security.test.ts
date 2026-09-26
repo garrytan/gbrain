@@ -208,6 +208,22 @@ describe('validateFilename', () => {
     expect(() => validateFilename('v1.0.0_release.md')).not.toThrow();
   });
 
+  it('accepts filenames in any script and case (#13)', () => {
+    expect(() => validateFilename('Отчёт-2026.pdf')).not.toThrow();
+    expect(() => validateFilename('заметки_йога.md')).not.toThrow();
+    expect(() => validateFilename('Photo.JPG')).not.toThrow();
+    expect(() => validateFilename('会议记录.md')).not.toThrow();
+    expect(() => validateFilename('会議・メモ.md')).not.toThrow();
+  });
+
+  it('keeps the safety rules for non-Latin filenames (#13)', () => {
+    expect(() => validateFilename('-отчёт.pdf')).toThrow(OperationError);
+    expect(() => validateFilename('.отчёт')).toThrow(OperationError);
+    expect(() => validateFilename('отчёт‮.exe')).toThrow(OperationError);
+    expect(() => validateFilename('папка/отчёт.pdf')).toThrow(OperationError);
+    expect(() => validateFilename('отчёт\n.pdf')).toThrow(OperationError);
+  });
+
   it('rejects control chars', () => {
     expect(() => validateFilename('file\nwith\nnewlines.txt')).toThrow(OperationError);
     expect(() => validateFilename('file\x00nul.txt')).toThrow(OperationError);
