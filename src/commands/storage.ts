@@ -24,6 +24,8 @@ export type DiskUsageByTier = Record<StorageTier, number> & { __brand?: 'disk-by
 export interface StorageStatusResult {
   config: StorageConfig | null;
   repoPath: string | null;
+  /** The source whose pages were counted; null means every source. */
+  sourceId: string | null;
   totalPages: number;
   pagesByTier: PageCountsByTier;
   missingFiles: Array<{ slug: string; expectedPath: string }>;
@@ -167,6 +169,7 @@ export async function getStorageStatus(
   return {
     config,
     repoPath,
+    sourceId: source?.source_id ?? null,
     totalPages: pages.length,
     pagesByTier,
     missingFiles,
@@ -243,7 +246,9 @@ export function formatStorageStatusHuman(result: StorageStatusResult): string {
       lines.push(`  ... and ${result.missingFiles.length - 10} more`);
     }
     lines.push('');
-    lines.push(`Use: gbrain export --restore-only --repo "${result.repoPath}" --dir "${result.repoPath}"`);
+    // Name the source counted here: export picks its own source otherwise.
+    const source = result.sourceId ? ` --source ${result.sourceId}` : '';
+    lines.push(`Use: gbrain export --restore-only${source} --repo "${result.repoPath}" --dir "${result.repoPath}"`);
   }
 
   if (result.warnings.length > 0) {

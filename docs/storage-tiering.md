@@ -159,7 +159,7 @@ Missing Files (need restore):
   media/x/tweet-0987654321
   ... and 47 more
 
-Use: gbrain export --restore-only --repo "/data/brain" --dir "/data/brain"
+Use: gbrain export --restore-only --source default --repo "/data/brain" --dir "/data/brain"
 
 Configuration:
 --------------

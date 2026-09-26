@@ -19,6 +19,7 @@ const baseResult: StorageStatusResult = {
     db_only: ['media/x/', 'media/articles/'],
   },
   repoPath: '/data/brain',
+  sourceId: null,
   totalPages: 12500,
   pagesByTier: { db_tracked: 2156, db_only: 10100, unspecified: 244 },
   missingFiles: [],
@@ -81,6 +82,17 @@ describe('formatStorageStatusHuman', () => {
     expect(out).toContain('and 15 more');
     // Restore writes to --dir (default ./export), so the hint names the repo twice.
     expect(out).toContain('gbrain export --restore-only --repo "/data/brain" --dir "/data/brain"');
+  });
+
+  test('names the source it counted in the restore hint', () => {
+    const out = formatStorageStatusHuman({
+      ...baseResult,
+      sourceId: 'connector-a',
+      missingFiles: [{ slug: 'media/x/clip', expectedPath: '/data/brain/media/x/clip.md' }],
+    });
+    expect(out).toContain(
+      'gbrain export --restore-only --source connector-a --repo "/data/brain" --dir "/data/brain"',
+    );
   });
 
   test('shows configuration listing for both tiers', () => {
