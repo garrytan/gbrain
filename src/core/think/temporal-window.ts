@@ -86,3 +86,70 @@ export function filterPagesToWindow<T extends DatedPage>(pages: T[], window: Tem
   }
   return { kept, droppedOutOfWindow, undatedKept };
 }
+
+// Question→temporal-window support. Full month names only (no abbreviations,
+// no bare year, no "in + year"), matched case-insensitively.
+const MONTH_NAMES: Record<string, number> = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+};
+
+/**
+ * Derive a temporal window from EXACTLY ONE unambiguous explicit date token in a
+ * free-text question, reusing the shipped
+ * `parseTemporalWindow`/`parseBound` contract (this adds no new date semantics).
+ *
+ * Supported tokens (the ONLY forms; no relative civil-time semantics):
+ *   - ISO day     `YYYY-MM-DD`                 → that calendar day
+ *   - ISO month   `YYYY-MM`                    → that month
+ *   - month-name + 4-digit year (e.g. "September 2026") → that month
+ *
+ * Fail-closed to null (no invented dates, no silent narrowing): zero tokens,
+ * two or more DISTINCT tokens, a bare 4-digit year ("GPT-4 in 2024", "v2026"),
+ * or any partial/invalid token (`2026-13`, `2026-9`) all return null. Explicit
+ * caller `since`/`until` remain authoritative — the `runThink` call site tries
+ * `parseTemporalWindow(since, until)` first and only falls back to this when both
+ * are absent. Deterministic (no `now`), so no timezone/DST ambiguity.
+ */
+export function parseQuestionWindow(question: string | null | undefined): TemporalWindow | null {
+  if (typeof question !== 'string' || !question) return null;
+  const tokens: string[] = [];
+  // ISO day: YYYY-MM-DD.
+  for (const m of question.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
+    tokens.push(`${m[1]}-${m[2]}-${m[3]}`);
+  }
+  // ISO month: YYYY-MM NOT immediately followed by -DD (so a day token is not
+  // double-counted as a month).
+  for (const m of question.matchAll(/\b(\d{4})-(\d{2})\b(?!-\d)/g)) {
+    tokens.push(`${m[1]}-${m[2]}`);
+  }
+  // Full month name + 4-digit year, e.g. "September 2026".
+  const monthRe = new RegExp(`\\b(${Object.keys(MONTH_NAMES).join('|')})\\s+(\\d{4})\\b`, 'gi');
+  for (const m of question.matchAll(monthRe)) {
+    const mm = String(MONTH_NAMES[m[1].toLowerCase()]).padStart(2, '0');
+    tokens.push(`${m[2]}-${mm}`);
+  }
+  const distinct = [...new Set(tokens)];
+  if (distinct.length !== 1) return null; // zero, or 2+ distinct tokens → ambiguous → null
+  try {
+    // A single token spans itself: since=token (start), until=token (end).
+    return parseTemporalWindow(distinct[0], distinct[0]);
+  } catch {
+    return null; // partial/invalid (e.g. 2026-13) → null, never throw into synthesis
+  }
+}
+
+/**
+ * The production temporal-window resolver used by `runThink`.
+ * Explicit caller `since`/`until` are AUTHORITATIVE; only when BOTH are absent does an
+ * explicit date token in the question derive a window. Exported (not an inline `??` at
+ * the call site) so the precedence/fallback contract is tested directly and cannot
+ * silently drift from production. Pure — no engine, no LLM, no `now`.
+ */
+export function resolveTemporalWindow(
+  question: string | null | undefined,
+  since?: string | null,
+  until?: string | null,
+): TemporalWindow | null {
+  return parseTemporalWindow(since, until) ?? parseQuestionWindow(question);
+}
