@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExport } from '../src/commands/export.ts';
 import { __resetMissingStorageWarning } from '../src/core/storage-config.ts';
+import { getDefaultSourcePath } from '../src/core/source-resolver.ts';
 import type { PageFilters } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -71,7 +72,7 @@ beforeEach(async () => {
     `INSERT INTO sources (id, name) VALUES ('default', 'Default'), ('connector-a', 'Connector A')
      ON CONFLICT DO NOTHING`,
   );
-  await engine.executeRaw(`DELETE FROM config WHERE key = 'sync.repo_path'`);
+  await engine.executeRaw(`DELETE FROM config WHERE key IN ('sync.repo_path', 'sources.default')`);
 });
 
 afterEach(() => {
@@ -506,5 +507,33 @@ describe('export --restore-only intersects --slug-prefix with the db_only tiers'
     expect(readOut('media/x/clip')).toContain('clip under both');
     expect(existsSync(join(outDir, 'media/y/other.md'))).toBe(false);
     expect(stdout).toContain(`Restored 1 pages to ${outDir}/`);
+  });
+});
+
+describe('export --restore-only: legacy repo path and the sole-source fallback', () => {
+  const yml = 'storage:\n  db_tracked: []\n  db_only:\n    - media/\n';
+
+  function makeRepo(name: string): string {
+    const repo = join(tmp, name);
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, 'gbrain.yml'), yml);
+    return repo;
+  }
+
+  test('the legacy sync.repo_path belongs to default, not to another resolved source', async () => {
+    const legacy = makeRepo('legacy');
+    await engine.setConfig('sync.repo_path', legacy);
+    await engine.setConfig('sources.default', 'connector-a');
+    await put('default', 'media/default-clip', 'default clip');
+    await put('connector-a', 'media/connector-clip', 'connector-a clip');
+    await tryRunExport(['--dir', outDir, '--restore-only']);
+
+    expect(exitCode).toBe(1);
+    const err = stderr.join('\n');
+    expect(err).toContain('connector-a');
+    expect(err).toContain('--repo');
+    expect(existsSync(outDir)).toBe(false);
+    // getDefaultSourcePath's other callers (sync, extract) keep the unbound fallback.
+    expect(await getDefaultSourcePath(engine)).toBe(legacy);
   });
 });

@@ -717,14 +717,19 @@ export async function getDefaultSourcePath(
   engine: BrainEngine,
   cwd: string = process.cwd(),
 ): Promise<string | null> {
-  return (await resolveDefaultSourceWithPath(engine, cwd)).path;
+  const { sourceId, path } = await resolveDefaultSourceWithPath(engine, cwd);
+  if (path || sourceId === 'default') return path;
+  // Callers of this function keep the unbound legacy fallback: the
+  // sync.repo_path answers for whichever source resolved.
+  return (await engine.getConfig('sync.repo_path')) ?? null;
 }
 
 /**
  * The source the resolveSourceId chain picks for `cwd`, with its on-disk
- * repo path (same path rules as `getDefaultSourcePath`). For callers that
- * act on that repo AND must scope their reads to the same source, e.g.
- * `gbrain export --restore-only` with neither --source nor --repo.
+ * repo path: its local_path, or for the `default` source only, the legacy
+ * `sync.repo_path` (a pre-multi-source brain's repo belongs to `default`,
+ * never to a source resolved some other way). For callers that act on that
+ * repo AND scope their reads to the same source, e.g. the restore target.
  */
 export async function resolveDefaultSourceWithPath(
   engine: BrainEngine,
@@ -741,6 +746,7 @@ export async function resolveDefaultSourceWithPath(
   // config table under sync.repo_path. The sources table exists but its
   // local_path is NULL for the seeded 'default' row. Fall back so storage
   // tiering works without forcing a `gbrain sources add . --path .` migration.
+  if (sourceId !== 'default') return { sourceId, path: null };
   const legacyPath = await engine.getConfig('sync.repo_path');
   return { sourceId, path: legacyPath ?? null };
 }
@@ -804,11 +810,20 @@ export async function resolveRestoreTarget(
         };
       }
     } else if (sourceId === ALL_SOURCES && !repoPath) {
-      repoPath = await getDefaultSourcePath(engine, cwd);
+      repoPath = (await resolveDefaultSourceWithPath(engine, cwd)).path;
     } else if (!sourceId && !repoPath) {
       const resolved = await resolveDefaultSourceWithPath(engine, cwd);
       repoPath = resolved.path;
       sourceId = resolved.sourceId;
+      if (!repoPath && sourceId !== 'default' && sourceId !== ALL_SOURCES) {
+        return {
+          ok: false,
+          message:
+            `the current source "${sourceId}" has no local_path (a legacy sync.repo_path\n` +
+            `belongs to the default source only), so there is no repo to restore into.\n` +
+            `Pass --repo <path> for that source's repo, or --source <id>.`,
+        };
+      }
     } else if (!sourceId && repoPath) {
       sourceId = await resolveRegisteredRepoOwner(engine, repoPath);
       if (!sourceId) {
