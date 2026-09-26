@@ -10,6 +10,27 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.58.1.1] - 2026-09-25
+
+**Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
+
+Now gbrain reads that hidden error and turns the response into a real 429 (or 5xx) before anything else looks at it, so the normal retry-and-back-off behavior kicks in exactly like it does for an honest HTTP error. If OpenRouter tells you how long to wait, gbrain honors that too.
+
+**Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
+
+## To take advantage of v0.58.1.1
+
+Upgrade, then re-run the phase that was failing:
+
+```bash
+gbrain --version
+gbrain dream --phase synthesize --once
+```
+
+### Itemized changes
+
+- `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
+- Closes #5473.
 ## [0.58.1.0] - 2026-09-24
 
 **Spend less time rebuilding test fixtures without dropping database coverage.**
