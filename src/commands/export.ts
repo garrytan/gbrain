@@ -51,11 +51,13 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   // --source honors the explicit flag only: with no flag, export keeps
   // spanning every source (the GBRAIN_SOURCE / dotfile / default tiers do
   // not narrow it). `__all__` is the resolver's span-everything sentinel.
-  const sourceIdx = args.indexOf('--source');
+  const sourceIdx = args.findIndex((arg) => arg === '--source' || arg.startsWith('--source='));
   let sourceId: string | undefined;
   let allSourcesRequested = false;
   if (sourceIdx !== -1) {
-    const requested = args[sourceIdx + 1];
+    const requested = args[sourceIdx].startsWith('--source=')
+      ? args[sourceIdx].slice('--source='.length)
+      : args[sourceIdx + 1];
     if (!requested || requested.startsWith('--')) {
       console.error('Error: --source requires a source id. Run `gbrain sources list` to see registered sources.');
       process.exit(1);

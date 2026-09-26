@@ -139,8 +139,11 @@ describe('export refuses slugs shared by two sources', () => {
     expect(stdout.some((l) => l.startsWith('Exported'))).toBe(false);
   });
 
-  test('bounds the listed collisions and counts the rest', async () => {
-    for (let i = 0; i < 23; i++) {
+  test.each([
+    { count: 20, more: null },
+    { count: 23, more: 'and 3 more' },
+  ])('lists at most 20 of $count collisions', async ({ count, more }) => {
+    for (let i = 0; i < count; i++) {
       const slug = `notes/shared-${String(i).padStart(2, '0')}`;
       await put('default', slug, 'default body');
       await put('connector-a', slug, 'connector-a body');
@@ -149,11 +152,12 @@ describe('export refuses slugs shared by two sources', () => {
 
     expect(exitCode).toBe(1);
     const err = stderr.join('\n');
-    expect(err).toContain('23');
+    expect(err).toContain(`${count} slug(s)`);
     expect(err).toContain('notes/shared-00');
     expect(err).toContain('notes/shared-19');
     expect(err).not.toContain('notes/shared-20');
-    expect(err).toContain('and 3 more');
+    if (more) expect(err).toContain(more);
+    else expect(err).not.toMatch(/and \d+ more/);
     expect(existsSync(outDir)).toBe(false);
   });
 });
@@ -161,18 +165,23 @@ describe('export refuses slugs shared by two sources', () => {
 describe('export --source scopes the page set', () => {
   test.each([
     {
-      source: 'connector-a',
+      flag: ['--source', 'connector-a'],
       files: { 'people/alice-example': 'body from connector-a', 'notes/only-connector': 'connector-only body' },
       absent: [] as string[],
     },
     {
-      source: 'default',
+      flag: ['--source', 'default'],
       files: { 'people/alice-example': 'body from default' },
       absent: ['notes/only-connector'],
     },
-  ])('--source $source exports only that source', async ({ source, files, absent }) => {
+    {
+      flag: ['--source=connector-a'],
+      files: { 'people/alice-example': 'body from connector-a', 'notes/only-connector': 'connector-only body' },
+      absent: [] as string[],
+    },
+  ])('$flag exports only that source', async ({ flag, files, absent }) => {
     await seedCollision();
-    await tryRunExport(['--dir', outDir, '--source', source]);
+    await tryRunExport(['--dir', outDir, ...flag]);
 
     expect(exitCode).toBeNull();
     expect(stderr.join('\n')).toBe('');
@@ -187,9 +196,11 @@ describe('export --source scopes the page set', () => {
 
   test.each([
     { name: 'unknown source', args: ['--source', 'no-such-source'], mentions: 'no-such-source' },
+    { name: 'unknown source after =', args: ['--source=no-such-source'], mentions: 'no-such-source' },
     { name: 'invalid source id', args: ['--source', 'Bad_Id'], mentions: 'Bad_Id' },
-    { name: 'missing value', args: ['--source'], mentions: '--source' },
-    { name: 'flag as value', args: ['--source', '--type'], mentions: '--source' },
+    { name: 'missing value', args: ['--source'], mentions: '--source requires a source id' },
+    { name: 'flag as value', args: ['--source', '--type'], mentions: '--source requires a source id' },
+    { name: 'empty value after =', args: ['--source='], mentions: '--source requires a source id' },
   ])('$name fails and writes nothing', async ({ args, mentions }) => {
     await seedCollision();
     await tryRunExport(['--dir', outDir, ...args]);
@@ -197,6 +208,28 @@ describe('export --source scopes the page set', () => {
     expect(exitCode).toBe(1);
     expect(stderr.join('\n')).toContain(mentions);
     expect(existsSync(outDir)).toBe(false);
+  });
+});
+
+describe('export --source __all__ spans every source', () => {
+  test('still refuses a cross-source collision', async () => {
+    await seedCollision();
+    await tryRunExport(['--dir', outDir, '--source', '__all__']);
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join('\n')).toContain('people/alice-example');
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  test('exports distinct slugs from both sources', async () => {
+    await put('default', 'notes/from-default', 'default body');
+    await put('connector-a', 'notes/from-connector', 'connector body');
+    await tryRunExport(['--dir', outDir, '--source', '__all__']);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('notes/from-default')).toContain('default body');
+    expect(readOut('notes/from-connector')).toContain('connector body');
+    expect(stdout).toContain(`Exported 2 pages to ${outDir}/`);
   });
 });
 
