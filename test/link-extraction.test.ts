@@ -952,6 +952,44 @@ describe('parseTimelineEntries', () => {
     expect(entries.map(e => e.date)).toEqual(['2026-01-15', '2026-02-20', '2026-03-10']);
   });
 
+  test('parses dated level-three headings used by compiled wiki pages', () => {
+    const entries = parseTimelineEntries(
+      '### 2026-08-07 — Example orchestration event',
+    );
+    expect(entries).toEqual([{
+      date: '2026-08-07',
+      summary: 'Example orchestration event',
+      detail: '',
+      source: 'markdown',
+    }]);
+  });
+
+  test('captures body text below a dated heading as timeline detail', () => {
+    const content = `## Evidence updates
+
+### 2026-08-07 — Example orchestration event
+- Evidence: [[sources/example-source|Example source]]
+- Interpretation: bounded implementation lanes.
+
+### 2026-08-08 — Follow-up review
+Review completed.`;
+    const entries = parseTimelineEntries(content);
+    expect(entries).toEqual([
+      {
+        date: '2026-08-07',
+        summary: 'Example orchestration event',
+        detail: '- Evidence: [[sources/example-source|Example source]] - Interpretation: bounded implementation lanes.',
+        source: 'markdown',
+      },
+      {
+        date: '2026-08-08',
+        summary: 'Follow-up review',
+        detail: 'Review completed.',
+        source: 'markdown',
+      },
+    ]);
+  });
+
   test('skips invalid dates (2026-13-45)', () => {
     const entries = parseTimelineEntries('- **2026-13-45** | Bad date');
     expect(entries.length).toBe(0);
