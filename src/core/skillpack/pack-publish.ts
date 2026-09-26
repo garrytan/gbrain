@@ -14,6 +14,7 @@
  * log so the publish-gate skill can read the local-run history.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 
@@ -100,6 +101,7 @@ export async function runPackPublish(opts: PackPublishOptions): Promise<PackPubl
 
   // Pack tarball into <outDir>/<name>-<version>.tgz.
   const outDir = opts.outDir ?? opts.packRoot;
+  assertLegacySkillFilesystemWrite(outDir);
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, `${manifest.name}-${manifest.version}.tgz`);
 

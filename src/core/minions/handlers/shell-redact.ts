@@ -30,14 +30,19 @@
  * scrubbed text; original is not mutated.
  *
  * @param text     The stdout/stderr/error text to scrub.
- * @param secrets  Map of inherit-name → resolved value. Empty values are skipped.
- *                 Order doesn't matter (each value is independently replaced).
+ * @param secrets  inherit-name → resolved value pairs: a Map, or any ordered
+ *                 iterable of `[name, value]` (secret-scan passes an array so
+ *                 two values can share a pattern name). Empty values are
+ *                 skipped. Values are replaced in iteration order; that only
+ *                 matters when one value is a substring of another — put the
+ *                 longer value first, or its span is corrupted by the shorter
+ *                 replacement before it is reached.
  */
 export function redactSecretsInText(
   text: string,
-  secrets: ReadonlyMap<string, string>,
+  secrets: Iterable<readonly [string, string]>,
 ): string {
-  if (text.length === 0 || secrets.size === 0) return text;
+  if (text.length === 0) return text;
   let result = text;
   for (const [name, value] of secrets) {
     if (value.length === 0) continue;

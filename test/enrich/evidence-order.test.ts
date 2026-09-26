@@ -170,6 +170,38 @@ describe('runEnrichCore evidence + counters (#2085)', () => {
     expect(r.pages_skipped_insufficient).toBe(1);
   }, 30000);
 
+  test('an edit during synthesis wins and the stale enrichment is not checkpointed', async () => {
+    const slug = 'people/concurrent-example';
+    await seedStub(slug, 'Concurrent Example');
+    await seedFact(slug, 'A grounded synthetic fact gives this stub sufficient context for enrichment.');
+    const result = await runEnrichCore(engine, {
+      ...coreOpts, minContextChars: 20,
+      synthesizeFn: async () => {
+        await engine.addTag(slug, 'concurrent-edit', { sourceId: 'default' });
+        return '## Overview\nA stale synthesis must not replace the newly tagged page.';
+      },
+    });
+    expect(result.pages_enriched).toBe(0);
+    expect(result.pages_failed).toBe(1);
+    expect(result.write_requests).toHaveLength(1);
+    expect(result.write_requests![0].state).toBe('conflict');
+    const current = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+    expect(current?.page.compiled_truth).toBe(STUB);
+    expect(current?.tags).toContain('concurrent-edit');
+    const requests = await engine.executeRaw<{ state: string }>(
+      'SELECT state FROM persistence_requests WHERE slug=$1', [slug]);
+    expect(requests.map(row => row.state)).toEqual(['conflict']);
+  }, 30000);
+
+  test('managed enrichment refuses before invoking providers or advancing checkpoints', async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    let calls = 0;
+    await expect(runEnrichCore(engine, { ...coreOpts, synthesizeFn: async () => { calls++; return 'SKIP'; } }))
+      .rejects.toMatchObject({ code: 'writer_coordinator_required' });
+    expect(calls).toBe(0);
+    expect(await engine.executeRaw("SELECT * FROM op_checkpoints WHERE op='enrich'")).toEqual([]);
+  });
+
   test('model SKIP → pages_model_skip; empty output → pages_empty_output', async () => {
     await seedStub('people/alice-example', 'Alice Example');
     await seedBacklink('people/alice-example', 'meetings/m1',

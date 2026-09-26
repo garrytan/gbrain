@@ -19,6 +19,7 @@ import { bindResolveIpcForServe } from '../src/mcp/resolve-ipc-binding.ts';
 import { resolveSocketPath, socketHasLiveListener } from '../src/core/context/resolve-ipc.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { requestPersistenceCapabilities } from '../src/core/persistence/ipc.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..');
 const readSrc = (rel: string) => Bun.file(join(REPO_ROOT, rel));
@@ -34,6 +35,29 @@ afterEach(() => {
 });
 
 describe('bindResolveIpcForServe (#4474)', () => {
+  it('binds the dedicated persistence listener through the same lifecycle', async () => {
+    const dataDir = join(tmp, 'db');
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(join(tmp, '.gbrain'), { recursive: true });
+    writeFileSync(join(tmp, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dataDir }));
+    await withEnv({ GBRAIN_HOME: tmp, GBRAIN_DATABASE_URL: undefined, DATABASE_URL: undefined }, async () => {
+      const binding = await bindResolveIpcForServe({} as BrainEngine, 'owner-source', {
+        brainId: '10000000-0000-4000-8000-000000000001', dispatch: async () => ({}),
+      });
+      try {
+        expect(binding.server).not.toBeNull();
+        expect(binding.persistence).toBeDefined();
+        const capabilities = await requestPersistenceCapabilities(binding.persistence!.socketPath);
+        expect(capabilities.brain_id).toBe('10000000-0000-4000-8000-000000000001');
+        expect(binding.persistence!.socketPath).not.toBe(binding.socketPath!);
+      } finally {
+        const closed = [binding.server, binding.persistence?.server].filter(Boolean).map(server => once(server!, 'close'));
+        binding.close(); binding.close();
+        await Promise.all(closed);
+      }
+    });
+  });
+
   it('binds a PGLite listener and close permits safe rebinding', async () => {
     const dataDir = join(tmp, 'db');
     mkdirSync(dataDir, { recursive: true });
@@ -119,7 +143,9 @@ describe('both serve transports bind through the shared helper (#4474)', () => {
     // error (ENOENT / ECONNREFUSED) may authorize cleanup.
     const src = await readSrc('src/core/context/resolve-ipc.ts').text();
     expect(src).toContain("probe.once('timeout', () => finish('unknown'))");
-    expect(src).toContain("probe.once('error', () => finish('dead'))");
+    expect(src).toContain("probe.once('error', failed)");
+    expect(src).toContain("['ENOENT', 'ECONNREFUSED', 'ENOTSOCK']");
+    expect(src).toContain("? 'dead' : 'unknown'");
     expect(src).not.toContain("probe.once('timeout', () => finish(false))");
     // One budget constant, not a literal that can drift from the client's.
     expect(src).toContain('probe.setTimeout(CLIENT_TIMEOUT_MS)');

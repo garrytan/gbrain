@@ -21,6 +21,7 @@
 import { describe, expect, test } from 'bun:test';
 import { buildProtocolDocument } from '../src/commands/protocol.ts';
 import { MEMORY_VERBS_VERSION, VERB_NAMES } from '../src/core/verbs.ts';
+import { validateAgainstSchema } from '../src/core/verbs/conformance.ts';
 
 interface VerbEntry {
   description: string;
@@ -120,5 +121,43 @@ describe('buildProtocolDocument — MEMORY_VERBS v1 document shape', () => {
 
     // Error envelopes ride the same frozen version stamp.
     expect(props.protocol_version.const).toBe(1);
+  });
+
+  test('recall advertises optional budget accounting without changing its required fields or version', () => {
+    const schema = verbs.recall.response_schema!;
+    expect(schema.required).toEqual(['facts', 'total', 'protocol_version']);
+    expect(validateAgainstSchema({ facts: [], total: 0, protocol_version: 1 }, schema)).toEqual([]);
+    const properties = schema.properties as Record<string, any>;
+    expect(properties.protocol_version.const).toBe(1);
+    expect(properties.budget_packing).toMatchObject({
+      type: 'object', required: ['policy', 'applied', 'reason', 'facts', 'results'],
+      properties: {
+        policy: { type: 'string', enum: ['facts_first', 'query_first'] },
+        applied: { type: 'boolean' },
+        reason: { type: 'string', enum: ['no_query', 'no_positive_finite_budget', 'budget_below_one', 'no_candidates', 'first_items_exceed_budget', 'packed'] },
+      },
+    });
+    for (const arm of ['facts', 'results']) {
+      expect(properties.budget_packing.properties[arm]).toMatchObject({
+        type: 'object', required: ['candidates', 'kept', 'dropped', 'used'],
+        properties: {
+          candidates: { type: 'integer' }, kept: { type: 'integer' },
+          dropped: { type: 'integer' }, used: { type: 'integer' },
+        },
+      });
+    }
+  });
+
+  test.each([
+    { policy: 'unknown' }, { applied: 'yes' }, { reason: 'unknown' },
+    { facts: { candidates: 1, kept: 1, dropped: 0, used: 0.5 } },
+    { results: { kept: 0, dropped: 0, used: 0 } },
+  ])('recall schema rejects malformed opted-in accounting: %j', invalid => {
+    const arm = { candidates: 0, kept: 0, dropped: 0, used: 0 };
+    const valid = { facts: [], total: 0, protocol_version: 1,
+      budget_packing: { policy: 'query_first', applied: true, reason: 'no_candidates', facts: arm, results: arm } };
+    expect(validateAgainstSchema(valid, verbs.recall.response_schema!)).toEqual([]);
+    expect(validateAgainstSchema({ ...valid, budget_packing: { ...valid.budget_packing, ...invalid } },
+      verbs.recall.response_schema!).length).toBeGreaterThan(0);
   });
 });

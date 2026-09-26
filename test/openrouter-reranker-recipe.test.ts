@@ -25,7 +25,7 @@ describe('OpenRouter recipe — reranker touchpoint', () => {
     expect(tp.models).toContain(tp.default_model);
   });
 
-  test('path is /rerank (NOT ZeroEntropy default /models/rerank)', () => {
+  test('path is /rerank (not /models/rerank)', () => {
     const tp = getRecipe('openrouter')!.touchpoints.reranker!;
     expect(tp.path).toBe('/rerank');
   });

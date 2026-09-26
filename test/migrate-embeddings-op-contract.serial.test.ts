@@ -38,6 +38,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import {
   configureGateway,
   resetGateway,
@@ -54,8 +55,8 @@ import {
 } from '../src/core/embedding-migration.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 
-const FROM_MODEL = 'zeroentropyai:zembed-1';
-const FROM_DIMS = 1280;
+const FROM_MODEL = 'voyage:voyage-4';
+const FROM_DIMS = 1024;
 const TO_MODEL = 'openai:text-embedding-3-small';
 const TO_DIMS = 1536;
 
@@ -119,7 +120,7 @@ async function runOp(params: Record<string, unknown>): Promise<OpEnvelope> {
 beforeAll(async () => {
   for (const k of [
     'GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS',
-    'OPENAI_API_KEY', 'ZEROENTROPY_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL',
+    'OPENAI_API_KEY', 'VOYAGE_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL',
   ]) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
@@ -131,7 +132,7 @@ beforeAll(async () => {
     engine: 'pglite',
     embedding_model: FROM_MODEL,
     embedding_dimensions: FROM_DIMS,
-    zeroentropy_api_key: 'ze-test-fake',
+    voyage_api_key: 'voyage-test-fake',
     openai_api_key: 'sk-test-fake',
   }, null, 2));
 
@@ -139,7 +140,7 @@ beforeAll(async () => {
   configureGateway({
     embedding_model: FROM_MODEL,
     embedding_dimensions: FROM_DIMS,
-    env: { ZEROENTROPY_API_KEY: 'ze-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
+    env: { VOYAGE_API_KEY: 'voyage-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
   });
   installTransport();
 
@@ -151,7 +152,7 @@ beforeAll(async () => {
   // real invalidation + drain work.
   for (const slug of ['op-a', 'op-b']) {
     await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}\n\nbody of ${slug}` });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: `chunk of ${slug}`, chunk_source: 'compiled_truth', token_count: 4 },
     ]);
   }

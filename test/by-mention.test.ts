@@ -276,6 +276,37 @@ describe('findMentionedEntities — pure cases', () => {
     }
   });
 
+  // Slug uniqueness is (source_id, slug): with the cross-source guard lifted,
+  // a foreign page that merely shares the scanning page's slug is a real
+  // target, not a self-link.
+  test('17d. allowCrossSource — foreign namesakes of the scanning page are not self-links', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'entities/shared', source_id: 'team-b', title: 'Beta Entity' },
+      { slug: 'entities/shared', source_id: 'team-c', title: 'Gamma Entity' },
+    ]);
+    const mentions = findMentionedEntities('Beta Entity met Gamma Entity.', g, {
+      fromSlug: 'entities/shared', fromSourceId: 'team-a', allowCrossSource: true,
+    });
+    expect(mentions.map(({ source_id, slug }) => [source_id, slug])).toEqual([
+      ['team-b', 'entities/shared'],
+      ['team-c', 'entities/shared'],
+    ]);
+  });
+
+  test('17e. allowCrossSource — first-mention dedup keys on (source_id, slug), not bare slug', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'entities/shared', source_id: 'team-b', title: 'Beta Entity' },
+      { slug: 'entities/shared', source_id: 'team-c', title: 'Gamma Entity' },
+    ]);
+    const mentions = findMentionedEntities('Beta Entity met Gamma Entity.', g, {
+      fromSlug: 'writing/post-1', fromSourceId: 'team-a', allowCrossSource: true,
+    });
+    expect(mentions.map(({ source_id, slug }) => [source_id, slug])).toEqual([
+      ['team-b', 'entities/shared'],
+      ['team-c', 'entities/shared'],
+    ]);
+  });
+
   test('20. code-block + token interaction — body text outside block linked, inside skipped', () => {
     const g = gazetteerFromEntries([
       { slug: 'companies/acme', source_id: 'default', title: 'Acme' },

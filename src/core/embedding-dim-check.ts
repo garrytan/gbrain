@@ -24,9 +24,6 @@ import {
   supportsVoyageOutputDimension,
   isValidVoyageOutputDim,
   VOYAGE_VALID_OUTPUT_DIMS,
-  supportsZeroEntropyDimension,
-  isValidZeroEntropyDim,
-  ZEROENTROPY_VALID_DIMS,
   isOpenAITextEmbedding3Model,
   isValidOpenAITextEmbedding3Dim,
   maxOpenAITextEmbedding3Dim,
@@ -366,24 +363,6 @@ export function resolveSchemaMultimodalDim(opts: ResolveSchemaMultimodalDimOpts)
   }
 }
 
-/**
- * Shared validation of a requested dim against a recipe touchpoint's
- * declared dims, including provider-specific Matryoshka allow-lists.
- *
- * Recipes (`src/core/ai/recipes/*.ts`) declare `default_dims` per touchpoint
- * but do NOT generally encode Matryoshka steps as `dims_options`. The
- * per-provider valid-dim allow-lists live in `src/core/ai/dims.ts`:
- *   - `VOYAGE_VALID_OUTPUT_DIMS` (256/512/1024/2048) for flexible Voyage models
- *   - `ZEROENTROPY_VALID_DIMS` (2560/1280/640/320/160/80/40) for ZE zembed-1
- *   - OpenAI text-embedding-3-* accepts ANY positive integer up to the
- *     model's native size (1536 small / 3072 large)
- *
- * Validation order:
- *   1. recipe-declared `dims_options` (highest precedence — recipe author
- *      knows their backend)
- *   2. provider-specific dim.ts allow-lists (for known Matryoshka providers)
- *   3. fall through to "this model only emits default_dims" rejection
- */
 function validateDimAgainstTouchpoint(
   modelId: string,
   recipe: Recipe,
@@ -475,15 +454,6 @@ function isCustomDimValidForProvider(
         `(allowed: ${VOYAGE_VALID_OUTPUT_DIMS.join(', ')}).`,
     };
   }
-  if (recipe.id === 'zeroentropyai' && supportsZeroEntropyDimension(modelId)) {
-    if (isValidZeroEntropyDim(requestedDims)) return { valid: true, error: '' };
-    return {
-      valid: false,
-      error:
-        `ZeroEntropy model "${modelId}" does not support custom dimensions ${requestedDims} ` +
-        `(allowed: ${ZEROENTROPY_VALID_DIMS.join(', ')}).`,
-    };
-  }
   if (recipe.id === 'perplexity' && isPerplexityEmbeddingModel(modelId)) {
     if (isValidPerplexityDim(modelId, requestedDims)) return { valid: true, error: '' };
     return {
@@ -503,14 +473,6 @@ function isCustomDimValidForProvider(
     };
   }
 
-  // Passthrough tier (#2271): local / bring-your-own-backend recipes (ollama,
-  // llama-server, litellm) flag trust_custom_dims because the user knows their
-  // model's native dim and we can't enumerate every locally-pulled model. Trust
-  // the requested dim; the provider's /embeddings response-dim validation catches
-  // a genuine mismatch pre-storage. Runs AFTER Tier 1 (recipe dims_options) and
-  // Tier 2 (provider Matryoshka allowlists) so a recipe that DOES declare fixed
-  // options (e.g. openrouter) is still governed by those, and fixed-dim hosted
-  // providers (openai/voyage/zeroentropy) never reach here as valid.
   if (recipe.touchpoints.embedding?.trust_custom_dims === true) {
     return { valid: true, error: '' };
   }

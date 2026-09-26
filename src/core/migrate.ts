@@ -1,3 +1,11 @@
+import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from './company-brain/receipt-schema.ts';
+import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
+import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
+import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL, PERSISTENCE_DATABASE_PENDING_INDEX_SQL } from './persistence/schema.ts';
+import { PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
+import { PAGE_PROJECTION_SCHEMA_SQL, PAGE_PROJECTION_ACTIVATION_SQL } from './page-state/projection-schema.ts';
+import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
+import { PAGE_STATE_SCHEMA_SQL, PAGE_VERSION_DELETION_SCHEMA_SQL } from './page-state/schema.ts';
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
 import { getFtsLanguage } from './fts-language.ts';
@@ -10,9 +18,12 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
+import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
 import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
 import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL } from './facts/withdrawal-schema.ts';
 import { repairLegacyClientGrants } from './grants/migration.ts';
+import { PROJECTION_STATISTICS_SQL, verifyProjectionStatistics } from './search/projection-statistics.ts';
+import { SHARED_SKILLS_SCHEMA_SQL } from './shared-skills/schema-all.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -6206,15 +6217,6 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 142,
     name: 'takes_embedding_dimension_matches_config',
-    // #2089: takes was created with a hard-coded vector(1536), while the
-    // configured embedding model can emit another width (for example the
-    // default zembed-1 2560d). The vector writer cannot be useful until the
-    // column shares the configured dimension with content_chunks/facts.
-    // Renumbered v141 → v142: the wave-k branch shipped this AS v141 while
-    // master consumed v141 for extract_rollup_expected_limit (#4482), so a
-    // brain that ran the branch pre-merge recorded version 141 and would
-    // skip master's v141 forever. The guarded DDL below re-applies it here
-    // as a redundant first statement — idempotent, a no-op on fresh paths.
     idempotent: true,
     sql: '',
     handler: async (engine) => {
@@ -6550,6 +6552,113 @@ DROP TRIGGER IF EXISTS minion_queue_protocol ON minion_jobs;
 CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
   FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
     `,
+  },
+  { version: 150, name: 'canonical_page_revisions_and_guards', idempotent: true, sql: PAGE_STATE_SCHEMA_SQL },
+  { version: 151, name: 'durable_concurrent_persistence', idempotent: true, sql: PERSISTENCE_SCHEMA_STATEMENTS.join(';\n') + ';' },
+  { version: 152, name: 'unique_lock_acquisition_tokens', idempotent: true, sql: LEASE_TOKEN_SCHEMA_SQL },
+  { version: 153, name: 'verified_text_projection_activation', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL + PAGE_PROJECTION_ACTIVATION_SQL },
+  { version: 154, name: 'preserve_sanitized_page_search_vectors', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL },
+  { version: 155, name: 'recoverable_postcommit_persistence_effects', idempotent: true, sql: PERSISTENCE_EFFECT_SCHEMA_SQL },
+  { version: 156, name: 'managed_alias_and_source_checkpoint_guards', idempotent: true, sql: MANAGED_WRITER_GUARD_SQL },
+  { version: 157, name: 'recoverable_source_topology', idempotent: true, sql: PERSISTENCE_TOPOLOGY_SCHEMA_SQL },
+  { version: 158, name: 'canonical_version_deletion_state', idempotent: true, sql: PAGE_VERSION_DELETION_SCHEMA_SQL },
+  { version: 159, name: 'index_retained_publication_recovery', idempotent: true, sql: PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL + ';' },
+  {
+    version: 160,
+    name: 'current_text_projection_planner_statistics',
+    idempotent: true,
+    sql: PROJECTION_STATISTICS_SQL,
+    sqlFor: { postgres: "SET LOCAL statement_timeout = '30s'; SET LOCAL lock_timeout = '2s';" + PROJECTION_STATISTICS_SQL },
+    handler: verifyProjectionStatistics,
+  },
+  {
+    version: 161,
+    name: 'index_pending_text_projections',
+    idempotent: true,
+    sql: `CREATE INDEX IF NOT EXISTS idx_pages_projection_pending
+      ON pages(source_id, page_kind, slug)
+      WHERE deleted_at IS NULL AND text_projection_revision IS DISTINCT FROM knowledge_revision;`,
+    sqlFor: {
+      postgres: `SET LOCAL statement_timeout = '30s'; SET LOCAL lock_timeout = '2s';
+        CREATE INDEX IF NOT EXISTS idx_pages_projection_pending
+        ON pages(source_id, page_kind, slug)
+        WHERE deleted_at IS NULL AND text_projection_revision IS DISTINCT FROM knowledge_revision;`,
+    },
+  },
+  { version: 162, name: 'source_ingestion_receipts_with_policy', idempotent: true, sql: SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL },
+  {
+    version: 163,
+    name: 'derived_atom_page_scan_state',
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
+        source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+        page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        content_hash TEXT NOT NULL,
+        fail_count INTEGER NOT NULL DEFAULT 0 CHECK (fail_count >= 0),
+        tombstoned BOOLEAN NOT NULL DEFAULT false,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_incarnation, page_id, content_hash)
+      );
+      CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
+        ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
+      CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
+      CREATE OR REPLACE FUNCTION gbrain_clear_atom_page_state() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF NEW.deleted_at IS DISTINCT FROM OLD.deleted_at OR NEW.source_id IS DISTINCT FROM OLD.source_id THEN
+          DELETE FROM extract_atoms_page_state WHERE page_id=OLD.id;
+        END IF;
+        RETURN NEW;
+      END $fn$;
+      DROP TRIGGER IF EXISTS pages_clear_atom_scan_state ON pages;
+      CREATE TRIGGER pages_clear_atom_scan_state AFTER UPDATE ON pages
+        FOR EACH ROW EXECUTE FUNCTION gbrain_clear_atom_page_state();
+      INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
+        SELECT s.incarnation, p.id, p.content_hash,
+          CASE WHEN p.frontmatter ? 'atoms_fail_count' THEN (p.frontmatter->>'atoms_fail_count')::integer ELSE 0 END,
+          COALESCE(p.frontmatter->>'atoms_scan_hash'=substring(p.content_hash from 1 for 16), false)
+        FROM pages p JOIN sources s ON s.id=p.source_id
+        WHERE p.deleted_at IS NULL AND p.content_hash ~ '^[0-9a-f]{64}$'
+          AND p.frontmatter ?| ARRAY['atoms_scan_hash','atoms_fail_hash','atoms_fail_count']
+          AND (NOT (p.frontmatter ? 'atoms_scan_hash') OR
+            (jsonb_typeof(p.frontmatter->'atoms_scan_hash')='string'
+             AND p.frontmatter->>'atoms_scan_hash'=substring(p.content_hash from 1 for 16)))
+          AND (NOT (p.frontmatter ?| ARRAY['atoms_fail_hash','atoms_fail_count']) OR
+            (jsonb_typeof(p.frontmatter->'atoms_fail_hash')='string'
+             AND p.frontmatter->>'atoms_fail_hash'=substring(p.content_hash from 1 for 16)
+             AND CASE WHEN jsonb_typeof(p.frontmatter->'atoms_fail_count')='number'
+               AND p.frontmatter->>'atoms_fail_count' ~ '^[1-9][0-9]{0,9}$'
+               THEN (p.frontmatter->>'atoms_fail_count')::numeric <= 2147483647 ELSE false END))
+        ON CONFLICT (source_incarnation, page_id, content_hash) DO NOTHING;
+      DO $rls$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname=current_user AND rolbypassrls) THEN
+          ALTER TABLE extract_atoms_page_state ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END $rls$;
+    `,
+  },
+  {
+    version: 164,
+    name: 'shared_brain_skills_and_membership',
+    idempotent: true,
+    sql: SHARED_SKILLS_SCHEMA_SQL,
+    verify: async (engine) => {
+      const [row] = await engine.executeRaw<{ heads: string | null; members: string | null; protocol: boolean }>(
+        `SELECT to_regclass('shared_skill_heads')::text AS heads,
+          to_regclass('shared_skill_members')::text AS members,
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+            AND table_name='persistence_requests' AND column_name='target_kind') AS protocol`);
+      return Boolean(row?.heads && row?.members && row?.protocol);
+    },
+  },
+  {
+    version: 165, name: 'index_database_only_pending_writes', idempotent: true, transaction: false, sql: '',
+    handler: async engine => {
+      if (engine.kind === 'postgres') await dropInvalidConcurrentIndex(engine, 165, 'persistence_requests_database_pending');
+      await engine.runMigration(165, engine.kind === 'postgres'
+        ? PERSISTENCE_DATABASE_PENDING_INDEX_SQL.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')
+        : PERSISTENCE_DATABASE_PENDING_INDEX_SQL);
+    },
   },
 ];
 
@@ -6924,6 +7033,27 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
       );
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
+  // #4613: same drift class for links_link_source_check. A brain stamped past
+  // v114 whose CHECK still carries the pre-v114 allowlist rejects every kebab
+  // provenance write; the version counter can't see it. Refuses loudly on
+  // violators. Ledger-gated: below v114 the pending loop replays v114 itself
+  // (the repair would rewrite the constraint twice; pre-v11 has no column).
+  if (current >= LINK_SOURCE_GATE_MIGRATION_VERSION) {
+    try {
+      const l = await repairLinkSourceCheck(engine);
+      if (l.repaired) {
+        console.error(`[migrate] restored links_link_source_check to the v114 kebab-case gate (#4613)`);
+      } else if (l.reason === 'violations') {
+        console.error(
+          `[migrate] cannot restore links_link_source_check: ${l.violations} links row(s) have a ` +
+          `non-kebab link_source — fix or delete them, then re-run (#4613). See \`gbrain doctor\`.`,
+        );
+      }
+    } catch (e) {
+      console.error(`[migrate] links_link_source_check self-heal could not run (#4613): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   if (pending.length === 0) {
     return { applied: 0, current };

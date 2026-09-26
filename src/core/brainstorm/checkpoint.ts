@@ -63,6 +63,12 @@ export interface BrainstormCheckpoint {
   completed_crosses: CheckpointCross[];
   failed_crosses: FailedCross[];
   judge_done: boolean;
+  /**
+   * Slug the caller saved this run's idea page under. Carried across
+   * `--resume` so a re-scored run overwrites that page instead of forking a
+   * second one under a fresh nonce. Absent when the caller did not save.
+   */
+  idea_slug?: string;
 }
 
 const CURRENT_SCHEMA: 2 = 2;

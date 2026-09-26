@@ -142,6 +142,7 @@ export function parseCodexHookTranscript(
   }
 
   const turns: WindowTurn[] = [];
+  const genuineUserTurnIndexes: number[] = [];
   const toolCalls: ToolCallRecord[] = [];
   const toolCallTurnIndexes: number[] = [];
   const boundaryTurnIndexes: number[] = [];
@@ -164,10 +165,15 @@ export function parseCodexHookTranscript(
     const mapped = mapCodexLine(entry);
     switch (mapped.kind) {
       case 'session':
-        if (mapped.sessionId) sessionId = mapped.sessionId;
-        if (mapped.cwd) cwd = mapped.cwd;
+        // #4981: first header wins (a forked rollout inherits its parent's header
+        // later in the file); identity is payload.id, the id in the rollout filename.
+        if (!sessionId && mapped.sessionId) sessionId = mapped.sessionId;
+        if (!cwd && mapped.cwd) cwd = mapped.cwd;
         break;
       case 'user':
+        genuineUserTurnIndexes.push(turns.length);
+        turns.push({ role: mapped.message.role, text: mapped.message.text });
+        break;
       case 'assistant':
         turns.push({ role: mapped.message.role, text: mapped.message.text });
         break;
@@ -193,6 +199,7 @@ export function parseCodexHookTranscript(
 
   return {
     turns,
+    genuineUserTurnIndexes,
     injectedContextBlocks: [], // codex's injected context is dropped at mapCodexLine, not surfaced
     bytesRead,
     parsedLines,

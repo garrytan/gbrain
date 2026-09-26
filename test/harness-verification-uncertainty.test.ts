@@ -3,14 +3,14 @@ import { verifyHarnessConnection, type VerificationPeer } from '../src/core/harn
 import type { HarnessCredentials } from '../src/core/harness/credentials.ts';
 
 const credentials: HarnessCredentials = { version: 1, client_id: 'gbrain_cl_verifier_fixture', mcp_url: 'https://brain.example.com/mcp', issuer_url: 'https://brain.example.com', access_token: 'fixture-token', source_id: 'default', profile: 'delegating-agent' };
-function peer(mode: 'lost_submission' | 'stalled_write' | 'cancel_not_terminal') {
+function peer(mode: 'lost_submission' | 'stalled_write' | 'pending_write' | 'cancel_not_terminal') {
   const calls: string[] = [];
   let fact: string | undefined;
   const value: VerificationPeer = { connect: async () => {}, close: async () => {}, call: async (name, params) => {
     calls.push(name);
     if (name === 'whoami') return { transport: 'oauth', client_id: credentials.client_id, scopes: ['read', 'write', 'agent'], source_id: 'default' };
     if (name === 'recall') return { facts: fact ? [{ fact_id: '1', fact }] : [] };
-    if (name === 'remember') { if (mode === 'stalled_write') return new Promise(() => {}); fact = String(params.fact); return { id: '1' }; }
+    if (name === 'remember') { if (mode === 'pending_write') return { state: 'queued', request_id: params.request_id, retry_after_ms: 100 }; if (mode === 'stalled_write') return new Promise(() => {}); fact = String(params.fact); return { id: '1' }; }
     if (name === 'forget') { fact = undefined; return { expired: true }; }
     if (name === 'submit_agent') {
       if (params.dry_run) return { dry_run: true };
@@ -44,6 +44,14 @@ test('an empty read after a stalled write does not certify cleanup', async () =>
   expect(result.status).toBe('failed');
 });
 
+test('a pending receipt and empty read cannot certify a write or cleanup', async () => {
+  const fixture = peer('pending_write');
+  const result = await verifyHarnessConnection({ ...credentials, profile: 'memory-writer' }, { peer: fixture.value });
+  expect(result.stages.find(s => s.name === 'write')?.status).toBe('failed');
+  expect(result.stages.find(s => s.name === 'cleanup')).toMatchObject({ status: 'unverified', reason: 'mutation_outcome_unknown_inspect_fixture' });
+  expect(fixture.calls.filter(name => name === 'remember')).toHaveLength(1);
+});
+
 test('worker cancellation must be visible as a terminal status after acknowledgement', async () => {
   const fixture = peer('cancel_not_terminal');
   const result = await verifyHarnessConnection(credentials, { peer: fixture.value, delegate: true, timeoutMs: 20 });
@@ -60,12 +68,14 @@ for (const mode of ['retained', 'deleted', 'lost_response', 'readback_failed'] a
       calls.push({ name, params });
       if (name === 'whoami') return { transport: 'oauth', client_id: credentials.client_id, scopes: ['read', 'write'], source_id: 'default', direct_write: { prefixes: ['agents/fixture/'] } };
       if (name === 'list_pages') return [];
-      if (name === 'put_page') { page = { ...params, source_id: 'default', deleted_at: null }; return { slug: params.slug }; }
+      if (name === 'put_page') { page = { ...params, source_id: 'default', deleted_at: null, revision: '7' }; return { slug: params.slug }; }
       if (name === 'get_page') {
         if (params.include_deleted && mode === 'readback_failed') throw new Error('read response unavailable');
         return page;
       }
       if (name === 'delete_page') {
+        expect(params.expected_revision).toBe('7');
+        expect(params.request_id).toMatch(/^[0-9a-f-]{36}$/);
         if (mode !== 'retained') page!.deleted_at = '2026-09-10T00:00:00.000Z';
         if (mode === 'lost_response') throw new Error('response lost after deletion');
         return { status: 'soft_deleted' };

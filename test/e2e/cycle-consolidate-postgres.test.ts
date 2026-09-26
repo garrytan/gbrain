@@ -11,13 +11,13 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { setupDB, teardownDB, hasDatabase, getEngine } from './helpers.ts';
+import { setupLegacyEmbeddingDB, teardownDB, hasDatabase, getEngine } from './helpers.ts';
 import { runPhaseConsolidate } from '../../src/core/cycle/phases/consolidate.ts';
 
 const RUN = hasDatabase();
 const d = RUN ? describe : describe.skip;
 
-beforeAll(async () => { if (RUN) await setupDB(); });
+beforeAll(async () => { if (RUN) await setupLegacyEmbeddingDB(); });
 afterAll(async () => { if (RUN) await teardownDB(); });
 
 const oldDate = () => new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();

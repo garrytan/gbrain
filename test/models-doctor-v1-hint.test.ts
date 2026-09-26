@@ -39,7 +39,7 @@ afterEach(() => resetGateway());
  *     `applyOpenAICompatConfig` / `applyResolveAuth` / `authToHeaders` /
  *     `requireConfig`, which every `classify` case drives via `deps.cfg`.
  *
- * Providers that serve NO `/models` list (Voyage = embeddings only; ZeroEntropy,
+ * Providers that serve NO `/models` list (Voyage = embeddings only; Voyage,
  * the default reranker = `/v1/models/rerank` only) are the all-404 cases: the
  * "wrong-endpoint" test (auth -> leads with the key, since the host is reachable)
  * and the model_not_found "silent: all 404" test (a model-name typo -> no
@@ -206,7 +206,7 @@ describe('auth-trigger verdicts', () => {
   });
 
   test('wrong-endpoint: all 404 -> leads with the key, host/path secondary (no overclaim)', async () => {
-    // No-/models-list providers (Voyage embeddings, the default ZeroEntropy
+    // No-/models-list providers (Voyage embeddings, the default Voyage
     // reranker) 404 every /models. Reached via a 401, the host is proven
     // reachable and the real endpoint auth-gated, so lead with the key; never
     // a false "the base URL is wrong".
@@ -255,7 +255,7 @@ describe('model_not_found-trigger verdicts (only a 200 speaks)', () => {
     expect(fix).toContain('switch /v4 to /v1');
   });
   test('silent: all 404 -> no hint (no wrong-endpoint, no key wording)', async () => {
-    // A no-/models provider (Voyage / ZeroEntropy) + a model-name typo: all
+    // A no-/models provider (Voyage / Voyage) + a model-name typo: all
     // /models 404 -> stay silent so the raw model-not-found stands, never a
     // misleading "fix your URL".
     expect(await classify('http://localhost:4000', routes(404, 404, 404), 'model_not_found')).toBeUndefined();

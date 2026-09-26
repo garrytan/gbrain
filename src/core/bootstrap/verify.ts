@@ -27,6 +27,7 @@
  * keeping the last 5 snapshots. `bootstrap status` + doctor read them.
  */
 
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -1099,6 +1100,7 @@ export async function verifyWorkspace(
   ws: string,
   opts: VerifyOpts = {},
 ): Promise<VerifyReport> {
+  await assertUnmanagedCanonicalWriter(engine, 'bootstrap verify');
   let sourceId = opts.sourceId ?? 'workspace';
   const gbrainHomeDir = opts.gbrainHomeDir ?? resolveGbrainHome();
   const caps = opts.capabilities ?? detectCapabilities();

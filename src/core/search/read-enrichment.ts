@@ -1,6 +1,6 @@
 import type { PageReadScope, PageReadPolicy, AdjacencyRow, RelationalFanoutOpts, RelationalFanoutRow } from '../types.ts';
 import { unverifiedExtractionFragment } from '../extraction-review.ts';
-import { requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
+import { currentTextProjectionFilter, requiresSafeChunks, safeChunksFilter } from './safe-chunks.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 
 /** Narrow query dependency shared by both engines. */

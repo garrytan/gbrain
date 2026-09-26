@@ -24,6 +24,8 @@ import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../version.ts';
 import { schemaVersionHealth } from '../core/schema-version-health.ts';
 import { zeroTotalContradictionsCheck } from '../core/eval-contradictions/run-health.ts';
+import { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
+export { checkProjectionReadiness } from './doctor/checks/projection-readiness.ts';
 // Peeled doctor modules (containment sprint): each is a verbatim move out of
 // this file. doctor.ts re-exports every moved public symbol under its
 // original name so existing importers (tests, scripts/live-brain-first-check.ts,
@@ -66,6 +68,7 @@ export {
   whoknowsHealthCheck,
   pgvectorCheck,
   pagesUpsertArbiterCheck,
+  linkSourceCheckConstraintCheck,
   jsonbIntegrityCheck,
   checkVolunteerChannels,
   takesWeightGridCheck,
@@ -95,8 +98,6 @@ export {
 export {
   checkGraphSignalsCoverage,
   checkBrainstormHealth,
-  checkZeEmbeddingHealth,
-  checkProviderSunset,
   checkEmbeddingWidthConsistency,
   checkFactsEmbeddingWidthConsistency,
   checkJunkEntityHubs,
@@ -163,6 +164,7 @@ import {
   whoknowsHealthCheck,
   pgvectorCheck,
   pagesUpsertArbiterCheck,
+  linkSourceCheckConstraintCheck,
   jsonbIntegrityCheck,
   checkVolunteerChannels,
   takesWeightGridCheck,
@@ -186,8 +188,6 @@ import {
 import {
   checkGraphSignalsCoverage,
   checkBrainstormHealth,
-  checkZeEmbeddingHealth,
-  checkProviderSunset,
   checkEmbeddingWidthConsistency,
   checkFactsEmbeddingWidthConsistency,
   checkJunkEntityHubs,
@@ -1277,63 +1277,11 @@ export async function buildChecks(
   // Without this doctor check, users see "sync blocked" and have no
   // surface showing which files to fix.
   try {
-    const { unacknowledgedSyncFailures, loadSyncFailures, summarizeFailuresByCode, decideSyncFailureSeverity } = await import('../core/sync.ts');
-    const all = loadSyncFailures();
-    // issue #1939: "unresolved" = open + auto_skipped. Severity (ok/warn/fail)
-    // comes from the SAME shared decision the remote surface uses, so a stuck
-    // bookmark blocked past the fail cadence (or a large unresolved count)
-    // escalates to FAIL instead of staying a quiet WARN forever.
-    const unresolved = unacknowledgedSyncFailures();
-    if (unresolved.length > 0) {
-      const failHours = _resolveSyncFreshnessHours('GBRAIN_SYNC_FRESHNESS_FAIL_HOURS', 72);
-      const sev = decideSyncFailureSeverity({ entries: all, nowMs: Date.now(), failHours });
-      const codeSummary = summarizeFailuresByCode(unresolved);
-      const codeBreakdown = codeSummary.map(s => `${s.code}=${s.count}`).join(', ');
-      const preview = unresolved.slice(0, 3).map(f => `${f.path} (${f.error.slice(0, 60)})`).join('; ');
-      // v0.40.3.0 T8b (D8 + D12 Bug 3): emit a single sync-retry-failed
-      // step. sync-skip-failed is DELIBERATELY NOT emitted as a remediation
-      // — auto-skipping failed syncs hides data loss. Operators can still
-      // run `gbrain sync --skip-failed` manually.
-      const { makeRemediationStep } = await import('../core/remediation-step.ts');
-      const oldestTs = unresolved.reduce(
-        (acc, f) => (acc === '' || f.ts < acc ? f.ts : acc),
-        '',
-      );
-      const retryStep = makeRemediationStep({
-        id: 'sync-retry-failed',
-        job: 'sync-retry-failed',
-        // Content-stable per codex D12 Bug 2: count + oldest_ts captures
-        // the relevant state without using a real timestamp.
-        params: { failure_count: unresolved.length, oldest_failure: oldestTs },
-        severity: sev.status === 'fail' ? 'high' : 'medium',
-        est_seconds: 30,
-        est_usd_cost: 0,
-        rationale: `Retry ${unresolved.length} unresolved sync failure(s) (codes: ${codeBreakdown})`,
-      });
-      checks.push({
-        name: 'sync_failures',
-        status: sev.status,
-        message:
-          `${unresolved.length} unresolved sync failure(s) [${codeBreakdown}]` +
-          (sev.auto_skipped > 0 ? ` — ${sev.auto_skipped} auto-skipped (pages NOT indexed)` : '') +
-          `. ${preview}` +
-          `${unresolved.length > 3 ? `, and ${unresolved.length - 3} more` : ''}. ` +
-          `Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge.`,
-        remediation: [retryStep],
-        remediation_status: 'remediable',
-      });
-    } else if (all.length > 0) {
-      // Acknowledged-only: show code breakdown for visibility.
-      const ackedSummary = summarizeFailuresByCode(all);
-      const ackedBreakdown = ackedSummary.map(s => `${s.code}=${s.count}`).join(', ');
-      checks.push({
-        name: 'sync_failures',
-        status: 'ok',
-        message: `${all.length} historical sync failure(s), all acknowledged [${ackedBreakdown}].`,
-      });
-    }
+    const { checkSyncFailures } = await import('./doctor/checks/sync-failures.ts');
+    const check = await checkSyncFailures(engine, { remote: false, sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined });
+    if (check) checks.push(check);
   } catch {
-    // Best-effort. A broken JSONL should not stop doctor.
+    checks.push({ name: 'sync_failures', status: 'warn', message: 'Durable sync failure state could not be read; health is unknown.' });
   }
 
   // 3d. Slug-fallback audit (v0.32.7 CJK wave, codex C7). Informational
@@ -1671,6 +1619,18 @@ export async function buildChecks(
     // Best-effort. A broken sources table should not stop doctor.
   }
 
+  // 3a-ter. fts_reindex_incomplete (#4795). An interrupted
+  // `reindex-search-vector` leaves the trigger language flipped with rows
+  // still un-backfilled; the command's marker row stays set until it
+  // completes. Logic lives in doctor/checks/fts-reindex.ts (module-dir rule).
+  if (engine !== null) try {
+    const { ftsReindexIncompleteCheck } = await import('./doctor/checks/fts-reindex.ts');
+    const ftsCheck = await ftsReindexIncompleteCheck(engine!);
+    if (ftsCheck) checks.push(ftsCheck);
+  } catch {
+    // Best-effort. A missing config table should not stop doctor.
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface
@@ -1920,6 +1880,13 @@ export async function buildChecks(
   // page write fails brain-wide and the version counter can't see the drift.
   progress.heartbeat('pages_upsert_arbiter');
   checks.push(await pagesUpsertArbiterCheck(engine));
+  checks.push(await checkProjectionReadiness(engine));
+
+  // 4a-ter. #4613: links_link_source_check shape — a ledger-current brain
+  // whose CHECK reverted to the pre-v114 allowlist rejects every kebab
+  // provenance write; the version counter can't see it.
+  progress.heartbeat('links_link_source_check');
+  checks.push(await linkSourceCheckConstraintCheck(engine));
 
   // 4b. pglite_scale — engine-fit signal: makes the init-time 1000-file
   // Supabase suggestion re-evaluable for the life of the brain.
@@ -2359,7 +2326,7 @@ export async function buildChecks(
       });
     } else {
       const registry = getEmbeddingColumnRegistry(mergedCfg);
-      const declaredColumns = Object.keys(registry);
+      const declaredColumns = Object.keys(registry).filter(name => name !== 'embedding' || !fileCfg?.embedding_disabled || !!mergedCfg.embedding_columns?.embedding);
       const activeCol = resolveEmbeddingColumn(undefined, mergedCfg).name;
 
       // D13 — batch format_type probe via pg_attribute. udt_name only
@@ -2477,7 +2444,7 @@ export async function buildChecks(
         checks.push({
           name: 'embedding_column_registry',
           status: 'ok',
-          message: `Registry healthy: ${okColumns.length} columns (${okColumns.join(', ')})${indexNote}; active='${activeCol}'`,
+          message: `Registry healthy: ${okColumns.length} columns (${okColumns.join(', ')})${indexNote}; ${fileCfg?.embedding_disabled && activeCol === 'embedding' ? 'primary embeddings disabled' : `active='${activeCol}'`}`,
         });
       } else {
         const allMessages = [
@@ -2501,11 +2468,6 @@ export async function buildChecks(
     });
   }
 
-  // 8b. v0.41.2.1 embedding_env_override (D9 #9 — uses Check.details, NOT
-  //     Check.issues). Defense in depth for users who bypass ze-switch
-  //     entirely; surfaces on every hourly doctor run when env disagrees
-  //     with DB config. Mirrored in doctorReportRemote() via the shared
-  //     checkEmbeddingEnvOverride() helper.
   progress.heartbeat('embedding_env_override');
   checks.push(await checkEmbeddingEnvOverride(engine));
 
@@ -2955,7 +2917,7 @@ export async function buildChecks(
       checks.push({
         name: 'markdown_body_completeness',
         status: 'warn',
-        message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import with: gbrain sync --force`,
+        message: `${rows.length} page(s) appear truncated (sample: ${sample}). Re-import: edit each page body, then run gbrain sync (see docs/integrations/reliability-repair.md)`,
       });
     }
   } catch {
@@ -3869,18 +3831,23 @@ export async function buildChecks(
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null }>(
-        `SELECT f.storage_path, s.local_path AS source_local_path FROM files f LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') WHERE f.mime_type LIKE 'image/%' LIMIT 1000`
+      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null; metadata: unknown }>(
+        `SELECT f.storage_path, f.metadata, s.local_path AS source_local_path FROM files f LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') WHERE f.mime_type LIKE 'image/%' LIMIT 1000`
       );
       let vanished = 0;
       let foreign = 0;
+      let remote = 0;
       const vanishedPaths: string[] = [];
       const fs = await import('node:fs');
-      const { resolveImageAssetPath } = await import('./doctor-asset-paths.ts');
+      const { resolveImageAssetPath, imageAssetStorageLane } = await import('./doctor-asset-paths.ts');
       // storage_path is repo-relative for sync-ingested assets. Prefer the
       // owning source's root; sync.repo_path is only a legacy fallback.
       const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
       for (const r of rows) {
+        // #4910: an explicit non-git lane (supabase/s3/local backend) means
+        // storage_path is a bucket key, never a source-relative file. Only
+        // `gbrain files verify` can probe those; unmarked rows keep the stat.
+        if (imageAssetStorageLane(r.metadata) === 'backend') { remote++; continue; }
         // #1835: Windows drive paths (D:/…) translate to the WSL automount
         // (/mnt/d/…) under WSL, and are SKIPPED (not "missing") on hosts
         // where they cannot exist (macOS / plain Linux) — never joined onto
@@ -3897,12 +3864,16 @@ export async function buildChecks(
           if (vanishedPaths.length < 5) vanishedPaths.push(r.storage_path);
         }
       }
-      const checked = rows.length - foreign;
-      const foreignNote = foreign > 0
+      const checked = rows.length - foreign - remote;
+      const foreignNote = (foreign > 0
         ? ` (${foreign} Windows-drive path(s) skipped — not resolvable on this platform)`
-        : '';
+        : '') + (remote > 0
+        ? ` (${remote} storage-backend object(s) not checked locally — run \`gbrain files verify\`)`
+        : '');
       if (rows.length === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: 'No image assets indexed yet' });
+      } else if (checked === 0) {
+        checks.push({ name: 'image_assets', status: 'ok', message: `No local image assets to check${foreignNote}` });
       } else if (vanished === 0) {
         checks.push({ name: 'image_assets', status: 'ok', message: `${checked} image(s) all present on disk${foreignNote}` });
       } else {
@@ -3966,6 +3937,8 @@ export async function buildChecks(
     // default (false) — that's the trust-boundary preservation Codex
     // P0-1 flagged.
     checks.push(await checkSyncFreshness(engine, { localOnly: true }));
+    const contentWrites = await (await import('./doctor/checks/canonical-content.ts')).checkCanonicalContentWrites(engine);
+    if (contentWrites) checks.push(contentWrites);
     // Monthly backup-coverage check (same D4 trust stance as sync_freshness:
     // localOnly:true probes git; the remote path stays a cache-only reader).
     progress.heartbeat('backup_coverage');
@@ -4055,14 +4028,6 @@ export async function buildChecks(
     // budget so a huge brain never wedges doctor on this check.
     progress.heartbeat('link_resolution_opportunity');
     checks.push(await checkLinkResolutionOpportunity(engine, progress));
-    // v0.36.0.0 (A5): ZE embedding key health + schema/config width consistency.
-    progress.heartbeat('ze_embedding_health');
-    checks.push(await checkZeEmbeddingHealth(engine));
-    // provider_sunset — brain pinned to a provider with an announced
-    // hosted-API shutdown; paste-ready migration hint with the actual
-    // column width. Warn before the date, fail after.
-    progress.heartbeat('provider_sunset');
-    checks.push(await checkProviderSunset(engine));
     progress.heartbeat('embedding_width_consistency');
     checks.push(await checkEmbeddingWidthConsistency(engine));
     // v0.41.15.0 (T6, codex #19/#20) — facts.embedding column drift

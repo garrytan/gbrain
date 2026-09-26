@@ -46,6 +46,7 @@ check-key-files-current-state.sh	scanner	todo
 check-exports-count.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
 check-trailing-newline.sh	scanner	todo	was reachable from neither verify nor CI pre-W0 (check:all only)
 check-test-isolation.sh	scanner	todo	allowlist data file: check-test-isolation.allowlist
+check-compile-autoload.sh	scanner	yes	every `bun build --compile` invocation (CLI one-liners + TS spawn arrays) in package.json/.github/scripts/docs/CLAUDE.md/CONTRIBUTING.md must carry --no-compile-autoload-bunfig (a cwd bunfig.toml preload runs before cli-preflight in a compiled binary)
 check-admin-build.sh	buildfresh	exempt	runs the admin build; the build is the test
 check-admin-embedded.sh	buildfresh	exempt	embed freshness diff; not in verify CHECKS: duplicates check:admin-build's build
 check-admin-scope-drift.sh	buildfresh	exempt	regenerates + diffs

@@ -82,7 +82,7 @@ function hasBacklinkHint(page: Page): number {
   // (we stay pure here). If the rubric needs engine-backed signal, a later
   // variant of scorer can inject backlinkCount.
   const body = page.compiled_truth ?? '';
-  const wikiLinks = (body.match(/\[[^\]]+\]\([^)]*\.md\)/g) ?? []).length;
+  const wikiLinks = (body.match(/\[[^\]]+\]\([^)]*\.md(?:#[^)]*)?\)/g) ?? []).length;
   if (wikiLinks === 0) return 0;
   if (wikiLinks >= 3) return 1;
   return wikiLinks / 3;

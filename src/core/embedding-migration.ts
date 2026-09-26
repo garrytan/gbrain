@@ -1,42 +1,4 @@
-/**
- * Provider-agnostic embedding migration (#3390).
- *
- * `gbrain migrate embeddings --to <provider:model>` re-embeds a brain onto
- * any configured provider — the ONE forward path off a sunsetting provider
- * (the retired ze-switch is a refusal/redirect shim that points here).
- *
- * This module is the v0.47 SURVIVOR: the migration primitives live HERE
- * (runSchemaTransition, transitionDimPinnedColumn, detectEnvOverride and the
- * env gates, marker read/write, verifyMigrationComplete, readMigrationStatus,
- * verifySearchRoundTrip, reranker plan/apply, the canonical resume-command
- * renderer); retrieval-upgrade-planner.ts re-imports them for back-compat and
- * is deleted in the ZE removal wave.
- *
- * What it owns:
- *   - schema transition per dim-pinned column (content_chunks / facts /
- *     query_cache repaired independently), HNSW policy via vector-index.ts
- *   - staleness + resume: guarded stale-signature invalidation
- *     (embedding-invalidation.ts — embed_skip pages retained, #4306) widened
- *     with `includeNullSignature: true` (#3391), false-target-stamp clearing
- *     keyed on the chunks' model column (#4305), + the NULL-embedding cursor
- *     (the NULL column IS the checkpoint: a killed run re-runs the same
- *     command)
- *   - migration marker v2 (started_at preserved on same-target resume,
- *     retarget history, force_sunset_target) + transactional completion
- *     bookkeeping; markers stay content-free (privacy)
- *   - DB-reality convergence (verifyMigrationComplete) — never trusts config
- *   - the env gates: refuse on env≠target, notice-and-proceed on env==target,
- *     env-canonical persistence when no file plane exists (the #1421
- *     damage-class, where env silently kept the old model active at embed
- *     time while the schema had already moved)
- *   - reranker companion switch (DB plane, one tx with the cache purge) +
- *     the post-drain self-retrieval smoke check (warn-only)
- *
- * The command layer (src/commands/migrate-embeddings.ts) owns everything
- * process-shaped: confirm prompts, locks + heartbeat, gateway
- * reconfiguration, and the embed drain. This module is engine-pure so both
- * engines, the op handler, doctor, and `--status` share one implementation.
- */
+import { NEW_INSTALL_DEFAULT_RERANKER_MODEL } from './ai/defaults.ts';
 
 import type { BrainEngine } from './engine.ts';
 import { resolveRecipe, embeddingDimsForModel } from './ai/model-resolver.ts';
@@ -48,29 +10,11 @@ import {
   clearFalseStampedSignatures,
 } from './embedding-invalidation.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
+import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
 import { hnswIndexExpected } from './vector-index.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { AUDIT_ROW_SOURCES } from './facts/audit-sources.ts';
 
-// ============================================================================
-// Env-override safety gate (moved from retrieval-upgrade-planner.ts — this
-// module is the v0.47 survivor; the planner re-exports for back-compat and
-// is deleted in the ZE removal wave)
-// ============================================================================
-
-/**
- * v0.41.2.1 — env-override safety gate.
- *
- * `process.env.GBRAIN_EMBEDDING_MODEL` and `GBRAIN_EMBEDDING_DIMENSIONS`
- * win over DB+file config in `loadConfig()`. The 716K-chunk damage
- * incident (PR #1421) shipped because ze-switch wrote DB config but
- * the env override silently kept the old model active at embed time —
- * schema migrated to 2560d while embeds still produced 1536d vectors.
- *
- * detectEnvOverride is a pure read of process.env (or an injected env
- * for tests). triggered:true means refusal is required unless the
- * caller passes ignoreEnvOverride:true (mirrors --ignore-missing-key).
- */
 export interface EnvOverrideWarning {
   triggered: boolean;
   vars: Array<{ name: string; current: string; target: string }>;
@@ -130,10 +74,6 @@ export function formatEnvOverrideWarning(w: EnvOverrideWarning): string {
   return lines.join('\n');
 }
 
-// ============================================================================
-// Schema transition (D18; moved from retrieval-upgrade-planner.ts)
-// ============================================================================
-
 /**
  * The atomic DROP + ALTER + CREATE INDEX sequence for content_chunks.
  * Both engines accept identical SQL (PGLite uses pgvector via WASM, same
@@ -164,18 +104,6 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
   if (!Number.isInteger(targetDim) || targetDim <= 0 || targetDim > 100_000) {
     throw new Error(`runSchemaTransition: targetDim must be a positive integer, got ${String(targetDim)}`);
   }
-  // v0.41 fix: only transition the primary text embedding column.
-  // The embedding_image (v0.27.1) and embedding_multimodal (v0.36 / migration
-  // v78) columns use SEPARATE multimodal models (e.g. voyage-multimodal-3 at
-  // 1024d) whose dimensions are independent of the text embedding model.
-  // Dropping and recreating either at targetDim silently breaks multimodal
-  // search by creating a dimension mismatch between the column and the
-  // multimodal provider's output.
-  //
-  // Before this fix, switching text embeddings from OpenAI (1536d) to
-  // ZeroEntropy (1280d) would also change embedding_image from 1024d to
-  // 1280d, making voyage-multimodal-3 unable to write to it. The same
-  // class of bug applies to embedding_multimodal — leave both untouched.
   await engine.transaction(async (tx) => {
     // #4252: capture every index the DROP COLUMN below will cascade-drop.
     // pg_depend holds the exact column→index dependency edges the cascade
@@ -390,6 +318,7 @@ export const MIGRATION_COMPLETED_KEY = 'embedding_migration.completed';
 export interface MigrationState {
   /** Marker schema version. Absent = v1 (pre-hardening). */
   version?: 2;
+  companion_vectors_invalidated?: boolean;
   to_model: string;
   to_dims: number;
   from_model: string;
@@ -399,8 +328,6 @@ export interface MigrationState {
    * doctor report the TRUE age of the migration, not the latest retry.
    */
   started_at: string;
-  /** Set when the run used --force-sunset-target (resume command must too). */
-  force_sunset_target?: boolean;
   /** Set when this marker replaced a live different-target marker. */
   retargeted_at?: string;
   /** History of abandoned targets (newest last) for --status forensics. */
@@ -413,7 +340,7 @@ export interface MigrationState {
  * home to gain, not four to miss.
  */
 export function renderResumeCommand(state: MigrationState): string {
-  return `gbrain migrate embeddings --to ${state.to_model} --dim ${state.to_dims}${state.force_sunset_target ? ' --force-sunset-target' : ''} --yes`;
+  return `gbrain migrate embeddings --to ${state.to_model} --dim ${state.to_dims} --yes`;
 }
 
 /**
@@ -603,7 +530,6 @@ export { countFalseStampedChunks, clearFalseStampedSignatures } from './embeddin
 export function resolveMigrationTarget(
   to: string,
   dimFlag?: number,
-  opts?: { allowSunsetTarget?: boolean },
 ): { toModel: string; toDims: number } {
   if (!to.includes(':')) {
     throw new Error(
@@ -614,20 +540,6 @@ export function resolveMigrationTarget(
   const { recipe } = resolveRecipe(to);
   if (!recipe.touchpoints.embedding) {
     throw new Error(`Provider ${recipe.id} has no embedding support. Pick an embedding-capable provider:model.`);
-  }
-  // v0.46.3: refuse a PAID full re-embed onto a provider with an announced
-  // shutdown — the live probe passes while the hosted API is still up, so
-  // without this gate an agent replaying an old runbook could strand the
-  // brain days before the shutdown. Same posture as ze-switch's forward
-  // refusal; `--force-sunset-target` (self-hosters with a compatible
-  // endpoint) is the loud escape hatch.
-  if (recipe.sunset && !opts?.allowSunsetTarget) {
-    throw new Error(
-      `Refusing to migrate ONTO ${recipe.name}: its hosted API stops working on ` +
-      `${recipe.sunset.date}, so this paid re-embed would strand the brain. ` +
-      `Recommended target: ${recipe.sunset.replacement?.embedding ?? 'voyage:voyage-4'}. ` +
-      `Self-hosting a compatible endpoint? Re-run with --force-sunset-target.`,
-    );
   }
   const toDims = dimFlag ?? embeddingDimsForModel(recipe, to);
   if (!toDims || toDims <= 0) {
@@ -645,16 +557,17 @@ export function resolveMigrationTarget(
  */
 export async function planEmbeddingMigration(
   engine: BrainEngine,
-  opts: { to: string; dim?: number; fromModel?: string; fromDims?: number; allowSunsetTarget?: boolean },
+  opts: { to: string; dim?: number; fromModel?: string; fromDims?: number },
 ): Promise<EmbeddingMigrationPlan> {
-  const { toModel, toDims } = resolveMigrationTarget(opts.to, opts.dim, {
-    allowSunsetTarget: opts.allowSunsetTarget,
-  });
+  const { toModel, toDims } = resolveMigrationTarget(opts.to, opts.dim);
 
   // From-state: caller (CLI) passes the gateway-resolved values; fall back
   // to the shipped defaults for gateway-less contexts (unit tests, op probe).
-  const fromModel = opts.fromModel ?? DEFAULT_EMBEDDING_MODEL;
-  const fromDims = opts.fromDims ?? DEFAULT_EMBEDDING_DIMENSIONS;
+  const stored = opts.fromModel === undefined || opts.fromDims === undefined
+    ? await readStoredEmbeddingIdentity(engine)
+    : null;
+  const fromModel = opts.fromModel ?? stored?.model ?? (stored ? 'unrecorded' : DEFAULT_EMBEDDING_MODEL);
+  const fromDims = opts.fromDims ?? stored?.dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
 
   const col = await readContentChunksEmbeddingDim(engine);
 
@@ -722,19 +635,13 @@ export async function planEmbeddingMigration(
     // Column may not exist on older brains — informational only.
   }
 
-  // Sunset companion warning: migrating embeddings off a provider whose
-  // reranker is still ACTIVE leaves rerank on the outgoing provider. Resolved
-  // THROUGH the mode bundles (not the bare DB key) — the common ZE case is an
-  // unset key riding the bundle default, which the old key-only read missed.
   let rerankerWarning: string | null = null;
   try {
     const exposure = await resolveRerankerExposure(engine, fromModel, toModel);
     if (exposure) {
       rerankerWarning =
         `the resolved reranker is ${exposure.model}` +
-        (exposure.sunset_date
-          ? ` and its provider shuts down ${exposure.sunset_date}`
-          : ' (the outgoing provider)') +
+        ' (the outgoing or unsupported provider)' +
         ` — pass --reranker to switch or disable it in the same run`;
     }
   } catch {
@@ -1167,12 +1074,6 @@ export async function verifyMigrationComplete(
  * (via callback — the core module never touches ~/.gbrain), stale-signature
  * invalidation (#3391: includeNullSignature), and query-cache purge.
  *
- * Ordering makes every step idempotent under a crash + re-run:
- *   state marker → schema → config → invalidate → cache purge.
- * A crash anywhere leaves the state marker set; the re-run re-executes the
- * remaining steps (schema transition no-ops when the column is already at
- * the target width via the actual-width probe; invalidation matches nothing
- * the second time).
  */
 export async function applyEmbeddingMigration(
   engine: BrainEngine,
@@ -1182,7 +1083,6 @@ export async function applyEmbeddingMigration(
     /** Persist target model+dims to the file plane + reconfigure the gateway. */
     persistConfig?: (toModel: string, toDims: number) => void | Promise<void>;
     /** Stamped into the marker so the printed resume command is complete. */
-    forceSunsetTarget?: boolean;
   } = {},
 ): Promise<MigrationApplyResult> {
   const envWarning = detectEnvOverride(plan.to_model, plan.to_dims);
@@ -1210,12 +1110,12 @@ export async function applyEmbeddingMigration(
       from_dims: plan.from_dims,
       started_at: now,
     };
-    if (opts.forceSunsetTarget) state.force_sunset_target = true;
     if (sameTarget && prior.state) {
       // Resume: keep the original run's identity.
       state.from_model = prior.state.from_model;
       state.from_dims = prior.state.from_dims;
       state.started_at = prior.state.started_at;
+      state.companion_vectors_invalidated = prior.state.companion_vectors_invalidated;
       if (prior.state.retargeted_at) state.retargeted_at = prior.state.retargeted_at;
       if (prior.state.superseded) state.superseded = prior.state.superseded;
     } else if (prior.state) {
@@ -1263,38 +1163,37 @@ export async function applyEmbeddingMigration(
     //    vectors are invisible to every stale selector, so NULLing them
     //    would be permanent loss.
     //
-    //    ORDERING (adversarial review): invalidation MUST precede the config
-    //    writes below. On a SAME-dim provider swap there is no schema
-    //    transition to null the vectors, so a crash between "config says new
-    //    provider" and "old vectors invalidated" would leave NEW-space query
-    //    embeddings scored against OLD-space document vectors — silently
-    //    WRONG results. Invalidating first makes the crash window safe:
-    //    config still says the old provider, and the rows are merely stale
-    //    (empty/degraded results, never wrong ones).
     await clearFalseStampedSignatures(engine, plan.to_model, plan.to_dims);
     const invalidated = await invalidateStaleSignatureEmbeddingsGuarded(engine, {
       signature: migrationSignature(plan.to_model, plan.to_dims),
       includeNullSignature: true,
     });
 
-    // 4. DB-plane config (doctor's embedding_width_consistency reads these).
-    await engine.setConfig('embedding_model', plan.to_model);
-    await engine.setConfig('embedding_dimensions', String(plan.to_dims));
+    let cacheCleared = 0;
+    await engine.transaction(async (tx) => {
+      const stores = await readPrimaryEmbeddingStores(tx);
+      if (!state.companion_vectors_invalidated
+        && (state.from_model !== plan.to_model || state.from_dims !== plan.to_dims
+          || await tx.getConfig('embedding_model') !== plan.to_model)) {
+        for (const table of stores) {
+          if (table === 'content_chunks' || table === 'query_cache') continue;
+          await tx.executeRaw(`UPDATE ${table} SET embedding = NULL${table === 'takes' ? ', embedded_at = NULL' : ''} WHERE embedding IS NOT NULL`);
+        }
+      }
+      if (stores.includes('query_cache')) {
+        const rows = await tx.executeRaw<{ n: number }>(
+          'WITH cleared AS (DELETE FROM query_cache RETURNING id) SELECT count(*)::int AS n FROM cleared',
+        );
+        cacheCleared = Number(rows[0]?.n ?? 0);
+      }
+      state.companion_vectors_invalidated = true;
+      await tx.setConfig(MIGRATION_STATE_KEY, JSON.stringify(state));
+      await tx.setConfig('embedding_model', plan.to_model);
+      await tx.setConfig('embedding_dimensions', String(plan.to_dims));
+    });
 
     // 5. File plane + gateway (the embed pipeline reads file/env, not DB).
     await opts.persistConfig?.(plan.to_model, plan.to_dims);
-
-    // 6. Purge the semantic query cache. The knobs hash folds provider:model
-    //    for callers that thread KnobsHashContext, but legacy callers fall
-    //    back to 'default' — a row they wrote pre-migration must not be
-    //    served post-migration. Best-effort (cache must never block).
-    let cacheCleared = 0;
-    try {
-      const { SemanticQueryCache } = await import('./search/query-cache.ts');
-      cacheCleared = await new SemanticQueryCache(engine).clear({});
-    } catch {
-      // Table may not exist on old brains; a miss here is harmless.
-    }
 
     return {
       status: 'applied',
@@ -1312,36 +1211,23 @@ export async function applyEmbeddingMigration(
 // Reranker companion switch (D8): embeddings + reranker are ONE flow.
 // ============================================================================
 
-/**
- * Is the brain's ACTIVE reranker (resolved through mode bundles, not just the
- * explicit DB key) exposed by this migration? Exposed = reranking is enabled
- * AND the resolved model's provider is sunsetting OR is the outgoing
- * embedding provider while the target is a different one.
- */
 export async function resolveRerankerExposure(
   engine: BrainEngine,
   fromModel: string,
   toModel: string,
-): Promise<{ model: string; sunset_date: string | null; replacement: string | null } | null> {
+): Promise<{ model: string } | null> {
   const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
   if (!knobs.reranker_enabled) return null;
   const current = knobs.reranker_model;
   const currentProvider = current.split(':')[0];
   const outgoingProvider = fromModel.split(':')[0];
   const targetProvider = toModel.split(':')[0];
-  let sunsetDate: string | null = null;
-  let replacement: string | null = null;
-  try {
-    const { recipe } = resolveRecipe(current);
-    sunsetDate = recipe.sunset?.date ?? null;
-    replacement = recipe.sunset?.replacement?.reranker ?? null;
-  } catch {
-    // Unknown reranker recipe: not classifiable as exposed — rerank already
-    // fails open at search time and doctor's provider checks own that case.
-  }
-  const exposed = sunsetDate !== null
-    || (currentProvider === outgoingProvider && currentProvider !== targetProvider);
-  return exposed ? { model: current, sunset_date: sunsetDate, replacement } : null;
+  let unsupported = false;
+  try { resolveRecipe(current); } catch { unsupported = true; }
+  return unsupported || (currentProvider === outgoingProvider && currentProvider !== targetProvider)
+    ? { model: current }
+    : null;
+
 }
 
 export type RerankerAction =
@@ -1350,7 +1236,7 @@ export type RerankerAction =
   | { kind: 'none'; suggestion: string | null };
 
 export interface RerankerPlan {
-  exposed: { model: string; sunset_date: string | null } | null;
+  exposed: { model: string } | null;
   action: RerankerAction;
 }
 
@@ -1375,7 +1261,7 @@ export async function resolveRerankerPlan(
 ): Promise<RerankerPlan> {
   const exposedFull = await resolveRerankerExposure(engine, fromModel, toModel);
   const exposed = exposedFull
-    ? { model: exposedFull.model, sunset_date: exposedFull.sunset_date }
+    ? { model: exposedFull.model }
     : null;
   const mode = flag ?? 'auto';
 
@@ -1411,7 +1297,7 @@ export async function resolveRerankerPlan(
   } catch { /* fall through to suggestion */ }
   // Target provider has no reranker: suggest, never silently enable a THIRD
   // provider's paid service.
-  return { exposed, action: { kind: 'none', suggestion: exposedFull.replacement } };
+  return { exposed, action: { kind: 'none', suggestion: NEW_INSTALL_DEFAULT_RERANKER_MODEL } };
 }
 
 /**

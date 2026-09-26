@@ -47,7 +47,8 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { verbOperations } from '../src/core/verbs.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
-import { hasScope } from '../src/core/scope.ts';
+import { hasScope, operationScopesAllowed } from '../src/core/scope.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 let engine: PGLiteEngine;
 
@@ -55,13 +56,15 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-});
+}, 60_000);
 
 afterAll(async () => {
+  await disposePersistenceConsumer(engine);
   await engine.disconnect();
 });
 
 beforeEach(async () => {
+  await disposePersistenceConsumer(engine);
   await resetPgliteState(engine);
 });
 
@@ -72,7 +75,7 @@ beforeEach(async () => {
 function makeContext(overrides: Partial<OperationContext> = {}): OperationContext {
   return {
     engine: engine as any,
-    config: {} as any,
+    config: { engine: 'pglite', embedding_disabled: true },
     logger: console as any,
     dryRun: false,
     remote: true,
@@ -107,6 +110,14 @@ describe('operations contract — every op has scope + correct mutability shape'
     const REMOTE_READ_ONLY_MUTATING_OPS = new Set(['think', 'request_tools']);
     for (const op of operations) {
       if (op.mutating === true) {
+        if (['join_brain', 'sync_brain_skills', 'leave_brain'].includes(op.name)) {
+          expect(op.scope).toBe('read');
+          expect(op.requiredScopes).toEqual(['skills_member_self']);
+          expect(operationScopesAllowed(['read'], op)).toBe(false);
+          expect(operationScopesAllowed(['admin'], op)).toBe(false);
+          expect(operationScopesAllowed(['read', 'skills_member_self'], op)).toBe(true);
+          continue;
+        }
         if (REMOTE_READ_ONLY_MUTATING_OPS.has(op.name)) {
           expect(op.scope, `remote-gated mutating op "${op.name}" should be read-scoped`).toBe('read');
           continue;
@@ -227,8 +238,13 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'file_upload',
       'file_url',
       'get_recent_transcripts',
+      'get_skill_retention',
+      'import_skill_proposal',
       'migrate_embeddings',
+      'prune_skill_revisions',
       'purge_deleted_pages',
+      'retain_skill_revision',
+      'sources_inspect',
       'sync_brain',
     ];
     const derived = operations.filter(o => o.localOnly).map(o => o.name).sort();
@@ -445,7 +461,8 @@ describe('handler invocation — historically-broken trust-boundary classes', ()
     // still reaches the handler rows — the post-filter must classify it
     // private-only via includeDeleted:true or it slips through.
     const del = operations.find(op => op.name === 'delete_page')!;
-    await del.handler(local, { slug: 'people/tb-priv-example' });
+    const beforeDelete = (await engine.readPageSnapshot('people/tb-priv-example', { sourceId: 'default' }))!;
+    await del.handler(local, { slug: beforeDelete.page.slug, expected_revision: beforeDelete.revision });
     const salienceAfterDelete = JSON.stringify(await salience.handler(remote, {}));
     expect(salienceAfterDelete).not.toContain('people/tb-priv-example');
     expect(salienceAfterDelete).not.toContain('TB_PRIVATE_TITLE_PROOF');

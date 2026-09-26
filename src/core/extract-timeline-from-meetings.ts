@@ -57,10 +57,10 @@ interface MeetingRow {
 }
 
 interface AttendedEdgeRow {
-  from_slug: string;
-  from_source_id: string;
-  to_slug: string;
-  to_source_id: string;
+  meeting_slug: string;
+  meeting_source_id: string;
+  attendee_slug: string;
+  attendee_source_id: string;
 }
 
 const BATCH_SIZE = 200;
@@ -69,7 +69,7 @@ const BATCH_SIZE = 200;
 const MEETING_PAGE_PREDICATE =
   `(type = 'meeting' OR (type = 'note' AND frontmatter ->> 'legacy_type' = 'meeting'))`;
 const MEETING_EDGE_PREDICATE =
-  `(pf.type = 'meeting' OR (pf.type = 'note' AND pf.frontmatter ->> 'legacy_type' = 'meeting'))`;
+  `(meeting.type = 'meeting' OR (meeting.type = 'note' AND meeting.frontmatter ->> 'legacy_type' = 'meeting'))`;
 
 export async function extractTimelineFromMeetings(
   engine: BrainEngine,
@@ -101,19 +101,21 @@ export async function extractTimelineFromMeetings(
   // Build a Map<meetingKey → attendees[]> for O(1) attendee lookup per meeting.
   const meetingKeys = new Set(meetings.map((m) => `${m.source_id}::${m.slug}`));
   const attendedEdges = await engine.executeRaw<AttendedEdgeRow>(
-    `SELECT pf.slug AS from_slug, pf.source_id AS from_source_id,
-            pt.slug AS to_slug, pt.source_id AS to_source_id
+    `SELECT meeting.slug AS meeting_slug, meeting.source_id AS meeting_source_id,
+            attendee.slug AS attendee_slug, attendee.source_id AS attendee_source_id
        FROM links l
-       JOIN pages pf ON pf.id = l.from_page_id
-       JOIN pages pt ON pt.id = l.to_page_id
+       JOIN pages meeting ON meeting.id IN (l.from_page_id, l.to_page_id)
+       JOIN pages attendee ON attendee.id = CASE WHEN meeting.id = l.from_page_id
+         THEN l.to_page_id ELSE l.from_page_id END
       WHERE l.link_type = 'attended'
         AND ${MEETING_EDGE_PREDICATE}
-        AND pf.deleted_at IS NULL
-        AND pt.deleted_at IS NULL`,
+        AND attendee.type = 'person'
+        AND meeting.deleted_at IS NULL
+        AND attendee.deleted_at IS NULL`,
   );
   const attendeesByMeeting = new Map<string, AttendedEdgeRow[]>();
   for (const e of attendedEdges) {
-    const key = `${e.from_source_id}::${e.from_slug}`;
+    const key = `${e.meeting_source_id}::${e.meeting_slug}`;
     if (!meetingKeys.has(key)) continue;
     const list = attendeesByMeeting.get(key);
     if (list) list.push(e);
@@ -201,10 +203,10 @@ export async function extractTimelineFromMeetings(
     const attendees = attendeesByMeeting.get(meetingKey) ?? [];
     const targets = new Map<string, { slug: string; source_id: string }>();
     for (const e of attendees) {
-      if (!allowCrossSource && e.to_source_id !== meeting.source_id) continue;
-      targets.set(`${e.to_source_id}::${e.to_slug}`, {
-        slug: e.to_slug,
-        source_id: e.to_source_id,
+      if (!allowCrossSource && e.attendee_source_id !== meeting.source_id) continue;
+      targets.set(`${e.attendee_source_id}::${e.attendee_slug}`, {
+        slug: e.attendee_slug,
+        source_id: e.attendee_source_id,
       });
     }
 

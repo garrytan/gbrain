@@ -144,6 +144,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     // page's own on a key collision.
     const rawData = await engine.getRawData(page.slug, undefined, {
       sourceId: page.source_id,
+      includeDeleted: true, // the page list decides which rows export; raw follows its page
     });
     if (rawData.length > 0) {
       const slugParts = page.slug.split('/');

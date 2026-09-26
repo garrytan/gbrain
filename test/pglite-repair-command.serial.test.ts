@@ -18,7 +18,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -238,7 +238,9 @@ describe('gbrain pglite-repair — refusals (validate before lock, never mkdir a
     const dir = join(tmp('gbrain-repair-reaped-'), 'brain.pglite');
     makeFakeLayout(dir);
     writeLockFile(dir, {
-      pid: deadPid(), // provably dead — acquireLock reaps it, then refuses
+      pid: deadPid(), // dead in this exact boot/PID namespace — eligible for migration
+      pid_ns: process.platform === 'linux' ? readlinkSync('/proc/self/ns/pid') : null,
+      boot_id: process.platform === 'linux' ? readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() : null,
       acquired_at: Date.now() - 60_000,
       refreshed_at: Date.now() - 60_000,
       command: 'gbrain embed',

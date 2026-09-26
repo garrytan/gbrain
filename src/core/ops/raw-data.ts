@@ -33,7 +33,7 @@ const put_raw_data: Operation = {
 
 const get_raw_data: Operation = {
   name: 'get_raw_data',
-  description: 'Retrieve raw data for a page',
+  description: 'Retrieve raw data for a page. Raw data follows the page\'s soft-delete: a tombstoned (soft-deleted) page returns [] exactly like a missing page; restore_page brings the rows back, and get_page include_deleted: true verifies the tombstone.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose raw data to fetch.' },
     source: { type: 'string', description: 'Filter by source' },

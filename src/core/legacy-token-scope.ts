@@ -42,6 +42,12 @@ export function parseTakesHoldersAllowList(raw: unknown): string[] | undefined {
   return (raw as unknown[]).filter((h): h is string => typeof h === 'string');
 }
 
+export function parseLegacyOperationGrant(raw: unknown): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || raw.some(value => typeof value !== 'string' || !/^[a-z][a-z0-9_]*$/.test(value))) return [];
+  return [...new Set(raw)];
+}
+
 /**
  * Normalize a legacy token's `access_tokens.scopes TEXT[]` column value
  * (#4043 least-privilege: the dormant original-schema column is THE scope

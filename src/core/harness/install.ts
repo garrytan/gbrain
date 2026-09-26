@@ -13,8 +13,12 @@ import { GBRAIN_MCP_INSTRUCTIONS } from '../../mcp/instructions.ts';
 import { harnessAdapter } from './registry.ts';
 import { credentialAccessToken, credentialReceipt, type HarnessCredentials } from './credentials.ts';
 import { assertNoSymlinks, checkedRoot, confinedPath, sha256, privateWrite } from '../agent-install/state.ts';
+import { installSharedSkillsConnection } from './shared-skills.ts';
+import type { SharedSkillsToolCaller } from '../shared-skills/adapter.ts';
+import { harnessSharedSkillsRoot } from './status.ts';
 
-interface InstallOptions { harness: string; name?: string; root?: string; configPath?: string; remove?: boolean }
+export interface InstallOptions { harness: string; name?: string; root?: string; configPath?: string; remove?: boolean;
+  sharedSkills?: HarnessCredentials['shared_skills']; toolCaller?: SharedSkillsToolCaller; nativeSkillsDir?: string }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const readJson = (path: string): Record<string, any> => {
   assertNoSymlinks(path);
@@ -47,8 +51,24 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
   const name = opts.name ?? 'gbrain';
   if (!isValidName(name)) throw new Error('Invalid connection name');
   const common = { ...credentialReceipt(c), harness: adapter.id, native_harness_verified: false, next_action: adapter.reload };
-  if (adapter.connection === 'manual') return { ...common, status: 'pending', reason: 'manual_configuration_required', documentation: adapter.guide };
-  if (adapter.connection === 'thin-cli') return installThinClient(c, opts, common);
+  let deactivated: Awaited<ReturnType<typeof installSharedSkillsConnection>> | undefined;
+  if (opts.remove || (opts.sharedSkills ?? c.shared_skills)?.follow === false) {
+    const root = harnessSharedSkillsRoot(opts);
+    if (root) {
+      const prior = readJson(adapter.connection === 'thin-cli' ? join(root, 'harness-connection.json')
+        : join(dirname(root), `.gbrain-connection-${adapter.id}-${name}.json`));
+      if (prior.client_id && (prior.client_id !== c.client_id || prior.mcp_url !== c.mcp_url)) throw new Error('configuration_conflict: connection name belongs to another client');
+      deactivated = await installSharedSkillsConnection(c, { ...opts, root });
+    }
+  }
+  if (adapter.connection === 'manual') return { ...common, status: 'pending', reason: 'manual_configuration_required', documentation: adapter.guide,
+    shared_skills: { status: 'pending', reason: 'native_installation_authority_unverified', native: 'unverified' } };
+  if (adapter.connection === 'thin-cli') {
+    const installed = await installThinClient(c, opts, common);
+    const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(opts.root!, '.gbrain'), launcher: join(opts.root!, 'bin', 'gbrain') });
+    return { ...installed, native_harness_verified: false, shared_skills,
+      remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true };
+  }
   const configPath = opts.configPath ?? (adapter.connection === 'codex-toml' ? codexConfigPath()
     : adapter.connection === 'claude-json' ? claudeUserMcpConfigPath() : opencodeGlobalConfigPath());
   assertNoSymlinks(configPath);
@@ -90,11 +110,16 @@ export async function installHarnessConnection(c: HarnessCredentials, opts: Inst
     }
     if (opts.remove) {
       if (existsSync(receiptPath)) unlinkSync(receiptPath);
-      return { ...common, status: 'removed', config_path: configPath, next_action: 'The client configuration was removed. Revoke the grant on the brain host if access should end.' };
+      const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(dirname(configPath), `.gbrain-${adapter.id}-${name}`) });
+      const pending = 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true;
+      return { ...common, status: 'removed', config_path: configPath, shared_skills, remote_membership_pending: pending,
+        next_action: pending ? 'Local configuration and unchanged owned skills were removed. Remote membership deactivation remains pending; retry when host authority is available.'
+          : 'The client configuration was removed. Revoke the grant on the brain host if access should end.' };
     }
     const nextReceipt = { ...common, entry_hash: hash(nativeEntry(configPath, adapter.connection, name)), status: 'installed', config_path: configPath };
     atomicWriteTextFile(receiptPath, `${JSON.stringify(nextReceipt, null, 2)}\n`, { forceMode: 0o600 });
-    return nextReceipt;
+    const shared_skills = deactivated ?? await installSharedSkillsConnection(c, { ...opts, root: join(dirname(configPath), `.gbrain-${adapter.id}-${name}`) });
+    return { ...nextReceipt, shared_skills, remote_membership_pending: 'remote_membership_pending' in shared_skills && shared_skills.remote_membership_pending === true };
   } finally { lock.release(); }
 }
 
@@ -123,7 +148,7 @@ async function installThinClient(c: HarnessCredentials, opts: InstallOptions, co
     const launcher = join(root, 'bin', 'gbrain');
     const files = [
       { path: '.gbrain/config.json', text: `${JSON.stringify(config, null, 2)}\n`, mode: 0o600 },
-      { path: 'bin/gbrain', text: renderAgentLauncher({ root, bunPath: process.execPath, cliPath: sourceCli.includes('$bunfs') ? undefined : sourceCli, sourceId: c.source_id,
+      { path: 'bin/gbrain', text: renderAgentLauncher({ root, bunPath: process.execPath, cliPath: sourceCli.includes('$bunfs') ? undefined : sourceCli, mode: 'thin-client',
         repairHint: `Reinstall GBrain in this environment, then repeat: gbrain connect ${shellQuote(c.mcp_url)} --harness ${shellQuote(opts.harness)} --credentials-file <private-handoff-file> --root ${shellQuote(root)} --install` }), mode: 0o700 },
       { path: 'GBRAIN-INSTRUCTIONS.md', text: `${GBRAIN_MCP_INSTRUCTIONS}\n\nRun commands with the absolute launcher: ${launcher}\nThis is a hosted connection. The host grant controls sources and permissions.\n`, mode: 0o600 },
     ];

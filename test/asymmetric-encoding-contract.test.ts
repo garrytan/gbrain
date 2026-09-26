@@ -29,11 +29,11 @@ import {
   __setEmbedTransportForTests,
 } from '../src/core/ai/gateway.ts';
 
-function configureZE() {
+function configureVoyage() {
   configureGateway({
-    embedding_model: 'zeroentropyai:zembed-1',
-    embedding_dimensions: 1280,
-    env: { ZEROENTROPY_API_KEY: 'sk-fake' },
+    embedding_model: 'voyage:voyage-4',
+    embedding_dimensions: 1024,
+    env: { VOYAGE_API_KEY: 'sk-fake' },
   });
 }
 
@@ -51,27 +51,27 @@ afterEach(() => {
 });
 
 describe('Search read path uses embedQuery (D17 behavior contract)', () => {
-  test('embedQuery threads input_type=query through transport for ZE', async () => {
-    configureZE();
+  test('embedQuery threads input_type=query through transport for Voyage', async () => {
+    configureVoyage();
     let capturedOpts: any = null;
     __setEmbedTransportForTests((async (args: any) => {
       capturedOpts = args.providerOptions;
-      return fakeEmbeddings(1, 1280);
+      return fakeEmbeddings(1, 1024);
     }) as any);
 
     await embedQuery('what does foo bar do?');
     expect(capturedOpts?.openaiCompatible?.input_type).toBe('query');
   });
 
-  test('embed (index path) threads input_type=document for ZE', async () => {
-    configureZE();
+  test('embed (index path) threads input_type=document for Voyage', async () => {
+    configureVoyage();
     let capturedOpts: any = null;
     __setEmbedTransportForTests((async (args: any) => {
       capturedOpts = args.providerOptions;
-      return fakeEmbeddings(args.values.length, 1280);
+      return fakeEmbeddings(args.values.length, 1024);
     }) as any);
 
-    await embed(['this is a document being indexed']);
+    await embed(['this is a document being indexed'], { inputType: 'document' });
     expect(capturedOpts?.openaiCompatible?.input_type).toBe('document');
   });
 });

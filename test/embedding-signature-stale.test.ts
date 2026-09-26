@@ -17,6 +17,9 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import type { ChunkInput } from '../src/core/types.ts';
+import { invalidateStaleSignatureEmbeddingsGuarded } from '../src/core/embedding-invalidation.ts';
+import { sealPageTextProjection } from '../src/core/page-state/projections.ts';
+import { stampIfPageProvenanceComplete } from '../src/core/embed-stale.ts';
 
 let engine: PGLiteEngine;
 let colDim: number;
@@ -63,6 +66,74 @@ async function seedEmbedded(slug: string, text: string, signature: string | null
 }
 
 describe('embedding_signature stale semantics', () => {
+  for (const guarded of [false, true]) {
+    for (const includeNullSignature of [false, true]) {
+      test(`preserves only proven current chunks (guarded=${guarded}, null=${includeNullSignature}) (#5051)`, async () => {
+        const model = 'ollama:example-model:latest';
+        const signature = `${model}:${colDim}`;
+        const slug = 'mixed-provenance';
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: '# mixed' });
+        await engine.upsertChunks(slug, Array.from({ length: 5 }, (_, i) => ({
+          chunk_index: i, chunk_text: `chunk ${i}`, chunk_source: 'compiled_truth',
+          embedding: new Float32Array(colDim).fill(0.1), model,
+        })));
+        if (!includeNullSignature) await engine.setPageEmbeddingSignature(slug, { signature: 'old:model:1' });
+        await engine.executeRaw(`UPDATE content_chunks SET
+          model = CASE WHEN chunk_index = 1 THEN 'foreign:model' WHEN chunk_index = 2 THEN 'example-model:latest' ELSE model END,
+          embedded_text_hash = CASE WHEN chunk_index = 3 THEN NULL WHEN chunk_index = 4 THEN 'changed' ELSE embedded_text_hash END
+          WHERE page_id = (SELECT id FROM pages WHERE slug = $1 AND source_id = 'default')`, [slug]);
+        const opts = { signature, sourceId: 'default', includeNullSignature };
+        const invalidated = guarded
+          ? await invalidateStaleSignatureEmbeddingsGuarded(engine, opts)
+          : await engine.invalidateStaleSignatureEmbeddings(opts);
+        expect(invalidated).toBe(4);
+        const rows = await engine.executeRaw<{ chunk_index: number }>(
+          `SELECT chunk_index FROM content_chunks WHERE embedding IS NOT NULL ORDER BY chunk_index`,
+        );
+        expect(rows.map((row) => row.chunk_index)).toEqual([0]);
+      });
+    }
+  }
+
+  test('matching model and text cannot preserve vectors of the wrong width (#5051)', async () => {
+    await seedEmbedded('wrong-width', 'text', 'old:model:1');
+    await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
+    expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, {
+      signature: `target:model:${colDim + 1}`,
+    })).toBe(1);
+  });
+
+  test('interrupted-drain completion stamps require a current text projection', async () => {
+    const slug = 'unsealed-completion';
+    const signature = `target:model:${colDim}`;
+    await seedEmbedded(slug, 'text', 'old:model:1');
+    await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
+    expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature })).toBe(0);
+    const readSignature = async () => (await engine.executeRaw<{ embedding_signature: string }>(
+      'SELECT embedding_signature FROM pages WHERE source_id=$1 AND slug=$2', ['default', slug]))[0].embedding_signature;
+    expect(await readSignature()).toBe('old:model:1');
+    expect(await stampIfPageProvenanceComplete(engine, slug, 'default', { signature, column: 'embedding' })).toBe(false);
+    await sealPageTextProjection(engine, slug, 'default');
+    expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature })).toBe(0);
+    expect(await readSignature()).toBe(signature);
+    expect(await stampIfPageProvenanceComplete(engine, slug, 'default', { signature, column: 'embedding' })).toBe(true);
+  });
+
+  test('completion stamps require matching vector width (#5051)', async () => {
+    await seedEmbedded('wrong-width-stamp', 'text', 'old:model:1');
+    await sealPageTextProjection(engine, 'wrong-width-stamp', 'default');
+    await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
+    expect(await stampIfPageProvenanceComplete(engine, 'wrong-width-stamp', 'default', {
+      signature: `target:model:${colDim + 1}`, column: 'embedding',
+    })).toBe(false);
+  });
+
+  test('unparseable signatures never claim provenance or preserve unknown widths (#5051)', async () => {
+    await seedEmbedded('unknown-width', 'text', 'old:model:1');
+    await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
+    expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature: 'target:model' })).toBe(1);
+  });
+
   test('R-4 GRANDFATHER: NULL signature is never stale', async () => {
     await seedEmbedded('legacy', 'abcde', null); // embedded, NULL signature
     // No NULL embeddings, NULL signature → not stale under any signature.

@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
@@ -22,10 +23,10 @@ function basisEmbedding(idx: number, dim = 1536): Float32Array {
 }
 
 beforeAll(async () => {
-  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1280 (ZE Matryoshka). This test
+  // v0.41.5.0+: DEFAULT_EMBEDDING_DIMENSIONS is 1024 (Voyage Matryoshka). This test
   // inserts 1536-dim unit vectors below. Without pinning, initSchema() sizes
-  // content_chunks.embedding at vector(1280) and the upserts throw
-  // "expected 1280 dimensions, not 1536". The local fast loop hides this when
+  // content_chunks.embedding at vector(1024) and the upserts throw
+  // "expected 1024 dimensions, not 1536". The local fast loop hides this when
   // a prior test in the shard pre-configured the gateway at 1536d; CI shards
   // hit it cold. Pin to 1536d so this file is hermetic.
   resetGateway();
@@ -44,7 +45,7 @@ beforeAll(async () => {
     title: 'Person One',
     compiled_truth: 'Person One has shared-keyword-xyz expertise.',
   });
-  await engine.upsertChunks('wiki/people/p1', [
+  await installFixtureChunks(engine, 'wiki/people/p1', [
     {
       chunk_index: 0,
       chunk_text: 'Person One has shared-keyword-xyz expertise.',
@@ -59,7 +60,7 @@ beforeAll(async () => {
     title: 'Company One',
     compiled_truth: 'Company One leader in shared-keyword-xyz.',
   });
-  await engine.upsertChunks('wiki/companies/c1', [
+  await installFixtureChunks(engine, 'wiki/companies/c1', [
     {
       chunk_index: 0,
       chunk_text: 'Company One leader in shared-keyword-xyz.',
@@ -74,7 +75,7 @@ beforeAll(async () => {
     title: 'Concept One',
     compiled_truth: 'Concept One: shared-keyword-xyz is interesting.',
   });
-  await engine.upsertChunks('concepts/c1', [
+  await installFixtureChunks(engine, 'concepts/c1', [
     {
       chunk_index: 0,
       chunk_text: 'Concept One: shared-keyword-xyz is interesting.',

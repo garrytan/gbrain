@@ -111,6 +111,21 @@ describe('runJobInChild (real children)', () => {
     expect(result.argv).toEqual(['jobs', 'run-child', '--job-id', '77']);
   }, TEST_TIMEOUT_MS);
 
+  // The shell opt-in travels to the isolated child as a FLAG (buildChildArgs):
+  // the child re-runs the cwd-.env quarantine in the worker's cwd, so an
+  // env-only handoff of GBRAIN_ALLOW_SHELL_JOBS would be dropped again there.
+  test('--allow-shell-jobs pass-through: opts.env GBRAIN_ALLOW_SHELL_JOBS=1 appends the flag; any other value does not', async () => {
+    const harness = makeHarness(
+      'argv-echo',
+      `writeOutcome({ outcome: 'success', result: { argv: process.argv.slice(2) } });\n` +
+      `process.exit(0);\n`,
+    );
+    const on = (await runJobInChild({ ...baseOpts(harness), env: { ...process.env, GBRAIN_ALLOW_SHELL_JOBS: '1' } })) as { argv: string[] };
+    expect(on.argv).toEqual(['jobs', 'run-child', '--job-id', '77', '--allow-shell-jobs']);
+    const off = (await runJobInChild({ ...baseOpts(harness), env: { ...process.env, GBRAIN_ALLOW_SHELL_JOBS: 'true' } })) as { argv: string[] };
+    expect(off.argv).toEqual(['jobs', 'run-child', '--job-id', '77']);
+  }, TEST_TIMEOUT_MS);
+
   test('error outcome (exit 0) throws the reconstructed class', async () => {
     const harness = makeHarness(
       'error-unrecoverable',

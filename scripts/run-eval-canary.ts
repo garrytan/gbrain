@@ -1,3 +1,4 @@
+import { installPageProjection, readProjectionSnapshot } from '../src/core/page-state/projections.ts';
 /**
  * scripts/run-eval-canary.ts — hermetic CLI retrieval-quality canary.
  *
@@ -65,7 +66,6 @@ const CHILD_ENV_STRIP = [
   'GBRAIN_EMBEDDING_DIMENSIONS',
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
-  'ZEROENTROPY_API_KEY',
   'VOYAGE_API_KEY',
   'OPENROUTER_API_KEY',
   'DASHSCOPE_API_KEY',
@@ -117,7 +117,8 @@ export async function seedCanaryCorpus(engine: BrainEngine, queries: LegacyQrels
         embedding: basisEmbedding(q.embedding_dim, EMBEDDING_DIMENSIONS),
         token_count: 10,
       };
-      await engine.upsertChunks(slug, [chunk]);
+      const snapshot = (await readProjectionSnapshot(engine, slug, 'default', { allowUnsealed: true }))!;
+      await installPageProjection(engine, snapshot, [chunk], { seal: true });
     }
   }
 }

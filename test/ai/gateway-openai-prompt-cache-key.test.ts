@@ -16,7 +16,7 @@
  *     nothing), and config `provider_chat_options` overrides the derived key
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
   chat,
   configureGateway,
@@ -54,6 +54,11 @@ describe('chat() wiring — prompt_cache_key per provider', () => {
   beforeEach(() => {
     resetGateway();
     __setGenerateTextTransportForTests(null);
+  });
+
+  afterEach(() => {
+    __setGenerateTextTransportForTests(null);
+    resetGateway();
   });
 
   async function captureProviderOptions(

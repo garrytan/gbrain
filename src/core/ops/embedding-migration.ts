@@ -22,7 +22,6 @@ const migrate_embeddings: Operation = {
     dim: { type: 'number', description: "Target dimensions. Defaults to the provider recipe's declared width; required when the recipe declares none." },
     dry_run: { type: 'boolean', description: 'Plan + cost estimate only; change nothing.' },
     yes: { type: 'boolean', description: 'Confirm the re-embed spend + destructive schema change. Required for a live run.' },
-    force_sunset_target: { type: 'boolean', description: 'Allow migrating ONTO a provider with an announced shutdown (self-hosted wire-compatible endpoints).' },
     retarget: { type: 'boolean', description: 'Abandon a DIFFERENT in-flight migration target and start this one (the abandoned target is recorded in the marker history).' },
     reranker: { type: 'string', description: 'Reranker companion action: auto (default), off, keep, or an explicit provider:model (e.g. voyage:rerank-2.5). Reranker config lives on the DB plane.' },
   },
@@ -46,7 +45,6 @@ const migrate_embeddings: Operation = {
     const planCtx = await planMigrationFlow(ctx.engine, {
       to,
       ...(dim !== undefined && { dim }),
-      ...(p.force_sunset_target === true && { forceSunsetTarget: true }),
       ...(typeof p.reranker === 'string' && { reranker: p.reranker }),
     });
     const plan = planCtx.plan;
@@ -68,7 +66,6 @@ const migrate_embeddings: Operation = {
     const result = await executeMigrationFlow(ctx.engine, planCtx, {
       to,
       ...(dim !== undefined && { dim }),
-      ...(p.force_sunset_target === true && { forceSunsetTarget: true }),
       ...(p.retarget === true && { retarget: true }),
       ...(typeof p.reranker === 'string' && { reranker: p.reranker }),
       quiet: true,

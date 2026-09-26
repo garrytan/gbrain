@@ -38,6 +38,7 @@ import {
   type ResolutionResult,
 } from './registry.ts';
 import { isBundledPackName } from './bundled.ts';
+import { isValidPackName } from './mutate.ts';
 import { bundledPackPath } from './bundled-assets.ts';
 
 /**
@@ -111,7 +112,11 @@ function defaultPackLocator(name: string): string | null {
     if (existsSync(repoRootFallback)) return repoRootFallback;
     return null;
   }
-  // User-installed pack at ~/.gbrain/schema-packs/<name>/pack.{yaml,json}
+  // User-installed pack at ~/.gbrain/schema-packs/<name>/pack.{yaml,json}.
+  // SECURITY: `name` can come from the tier-4/5 DB or gbrain.yml string —
+  // gate it (same slug grammar as locateMutablePackFile) BEFORE the join so
+  // a path-shaped value can't reach anything outside schema-packs/.
+  if (!isValidPackName(name)) return null;
   const baseDir = gbrainPath('schema-packs', name);
   const candidates = ['pack.yaml', 'pack.yml', 'pack.json'];
   for (const c of candidates) {

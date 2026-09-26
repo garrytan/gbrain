@@ -77,6 +77,7 @@
  * └────────────────────────────────────────────────────────────────────────┘
  */
 
+import { assertLegacySkillWriter } from '../skillpack/writer-guard.ts';
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
@@ -113,13 +114,19 @@ export interface RunSkillOptResult {
   mutatedSkillFile: boolean;
   /** When mutate was skipped, path where the proposed.md was written. */
   proposedPath?: string;
+  sharedOptimization?: { proposal_id: string; publication?: Record<string, unknown> };
 }
 
 export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult> {
+  if (opts.sharedSkill) {
+    const { optimizeSharedSkill } = await import('../shared-skills/optimizer.ts');
+    return optimizeSharedSkill(opts, runSkillOpt);
+  }
   const { engine, skillName, skillsDir } = opts;
 
   // ── Pre-flight gates (fail-loud BEFORE any LLM spend) ───────────────────
   const skillFile = skillPath(skillsDir, skillName);
+  await assertLegacySkillWriter(engine, skillFile);
   if (!fs.existsSync(skillFile)) {
     throw errorFor({
       class: 'NoSkill',
@@ -411,6 +418,7 @@ async function runOptimizationLoop(
       // We use the FULL validation gate with median-of-3 for a stable baseline.
       const baselineGate = await runValidationGate({
         engine: opts.engine,
+        operationContext: opts.operationContext,
         candidateSkillText: baselineText,
         selSet: split.sel,
         bestScore: -1, // any score > -1 + 0.05 accepts; we just want the score.
@@ -436,6 +444,7 @@ async function runOptimizationLoop(
         const fmBlock = baselineText.slice(0, bodyStart);
         const fwd = await runValidationGate({
           engine: opts.engine,
+          operationContext: opts.operationContext,
           candidateSkillText: baselineText,
           selSet: split.sel,
           bestScore: -1,
@@ -459,6 +468,7 @@ async function runOptimizationLoop(
           if (heldOutTasks.length > 0) {
             const ho = await runHeldOutGate({
               engine: opts.engine,
+              operationContext: opts.operationContext,
               candidateSkillText: candidate,
               baselineSkillText: baselineText,
               heldOutTasks,
@@ -471,6 +481,7 @@ async function runOptimizationLoop(
           if (promote) {
             const score = await scoreSkillOnTasks({
               engine: opts.engine,
+              operationContext: opts.operationContext,
               skillText: candidate,
               tasks: split.sel,
               targetModel: opts.targetModel,
@@ -519,6 +530,7 @@ async function runOptimizationLoop(
           // sel-side gate uses. ScoredRollouts come back via GateResult.
           const forwardGate = await runValidationGate({
             engine: opts.engine,
+            operationContext: opts.operationContext,
             candidateSkillText: checkpoint!.best_skill_text,
             selSet: batch,
             bestScore: -1,
@@ -553,6 +565,35 @@ async function runOptimizationLoop(
           // Apply under LR budget.
           const applied = applyEditBatch(checkpoint!.best_skill_text, fresh, lrBudget);
 
+          if (fresh.length === 0) {
+            // #4741: the optimizer proposed NOTHING (reflect returned/parsed no
+            // edits, or every edit was already in the rejected buffer). This
+            // used to fall into the all-rejected branch below ([].every() is
+            // true) and log the same 'no_edits_applied' as "gated N candidates
+            // and rejected all" — so a whole run of zero candidates read as a
+            // real `no_improvement`. Say so per step; nothing to reject-buffer.
+            const why = reflectResult.errors[0]
+              ? `no_edits_proposed: ${reflectResult.errors[0]}`
+              : 'no_edits_proposed';
+            process.stderr.write(`[skillopt] epoch ${epoch} step ${step}: optimizer proposed no edits (${why})\n`);
+            logEvent({
+              kind: 'step',
+              run_id: runId,
+              skill: skillName,
+              epoch,
+              step,
+              sel_score_median: checkpoint!.best_sel_score,
+              sel_score_runs: [],
+              accepted: false,
+              edits_attempted: 0,
+              edits_applied: 0,
+              delta: 0,
+              reason: why,
+              cumulative_cost_usd: tracker.snapshot().cumulativeCostUsd,
+            } as never);
+            continue;
+          }
+
           if (applied.results.every((r) => r.outcome === 'rejected')) {
             // Nothing applied; record rejected entries + skip gate.
             const newRejections = fresh.map((e) =>
@@ -580,6 +621,7 @@ async function runOptimizationLoop(
           // VALIDATION GATE (D12 median-of-3 + epsilon=0.05, D4 parallel).
           const gate = await runValidationGate({
             engine: opts.engine,
+            operationContext: opts.operationContext,
             candidateSkillText: applied.newText,
             selSet: split.sel,
             bestScore: checkpoint!.best_sel_score,
@@ -603,6 +645,7 @@ async function runOptimizationLoop(
             if (heldOutTasks.length > 0) {
               const ho = await runHeldOutGate({
                 engine: opts.engine,
+                operationContext: opts.operationContext,
                 candidateSkillText: applied.newText,
                 baselineSkillText: baselineText,
                 heldOutTasks,
@@ -725,6 +768,7 @@ async function runOptimizationLoop(
       if (split.test.length > 0) {
         testScore = await scoreSkillOnTasks({
           engine: opts.engine,
+          operationContext: opts.operationContext,
           skillText: checkpoint!.best_skill_text,
           tasks: split.test,
           targetModel: opts.targetModel,
@@ -733,6 +777,7 @@ async function runOptimizationLoop(
         });
         baselineTestScore = await scoreSkillOnTasks({
           engine: opts.engine,
+          operationContext: opts.operationContext,
           skillText: baselineText,
           tasks: split.test,
           targetModel: opts.targetModel,

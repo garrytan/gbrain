@@ -14,7 +14,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
-import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.ts';
+import { hasDatabase, setupLegacyEmbeddingDB, teardownDB, getEngine, getConn } from './helpers.ts';
 
 // Mock embedBatch so embed phase doesn't call OpenAI.
 mock.module('../../src/core/embedding.ts', () => ({
@@ -66,7 +66,7 @@ describeE2E('E2E: gbrain dream CLI against real Postgres', () => {
   let repo: string;
 
   beforeAll(async () => {
-    await setupDB();
+    await setupLegacyEmbeddingDB();
     repo = makeGitRepo();
   }, 30_000);
 

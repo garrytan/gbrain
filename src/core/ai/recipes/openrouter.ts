@@ -2,6 +2,7 @@ import type { Recipe } from '../types.ts';
 import { openrouterModelSupportsSubagentLoop } from '../openrouter-families.ts';
 import { deepseekReasoningContentCompatFetch } from './deepseek.ts';
 import { openaiModelSupportsPromptCache } from './openai.ts';
+import { GLM_THINKING_BY_DEFAULT_RE } from './zhipu.ts';
 
 /**
  * Private in-process marker header. `gateway.chat()` sets it when the caller
@@ -53,10 +54,14 @@ export function openrouterRequiresExplicitPromptCache(modelId: string): boolean 
  * Native DeepSeek v4 thinks by default (recipe `thinking_by_default: true`,
  * #4172) and OpenRouter's DeepSeek hosts serve the same models — reasoning
  * bills as OUTPUT tokens against max_tokens, so output-cap sizing must grant
- * the same headroom on the OR route (#4758).
+ * the same headroom on the OR route (#4758). Z.ai's GLM-4.5+/5.x think by
+ * default too (zhipu recipe, gbrain#4727) and OR bills their reasoning as
+ * completion tokens — same cutoff, same headroom under the `z-ai/` prefix.
  */
 export function openrouterThinkingByDefault(modelId: string): boolean {
-  return modelId.trim().toLowerCase().startsWith('deepseek/');
+  const normalized = modelId.trim().toLowerCase();
+  if (normalized.startsWith('deepseek/')) return true;
+  return normalized.startsWith('z-ai/') && GLM_THINKING_BY_DEFAULT_RE.test(normalized);
 }
 
 /**
@@ -295,8 +300,6 @@ export const openrouter: Recipe = {
       // `cost_per_search_usd` field for exact accounting.
       cost_per_1m_tokens_usd: 0.001,
       price_last_verified: '2026-06-13',
-      // OpenRouter doesn't publish an explicit payload cap; 5MB matches
-      // ZeroEntropy's upstream limit and the gateway's pre-flight ceiling.
       max_payload_bytes: 5_000_000,
       // OR serves /rerank under /api/v1. base_url_default already ends in /v1,
       // so gateway concatenates to …/api/v1/rerank.

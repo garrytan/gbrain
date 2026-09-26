@@ -171,6 +171,18 @@ the exact protocol.
 
 ## Phase 1: Existing Markdown / Obsidian Import
 
+For an existing company Git repository, use the migrate (host-side) company
+workflow instead of the generic import below. On the trusted brain host, start with
+`gbrain sources inspect <path> --profile company-brain`; confirm an initialized
+company brain and a new source, show the connect destination/access preview, and
+obtain approval before `--yes`. Do not flatten its vocabulary by activating or
+normalizing an unrelated personal schema. The offline `gbrain sources demo
+company-brain` needs no keys or private data. Details:
+`docs/guides/company-brain-ingestion.md`.
+For this company path, stop after reporting the durable receipt; skip the generic
+import and post-bootstrap checklist below. Later enrichment or scheduling needs
+separate consent and must respect the source's immutable keyless sync policy.
+
 **The highest-leverage first import.** If the user already has a notes system, this
 is hundreds or thousands of structured pages ready to go.
 
@@ -194,7 +206,7 @@ done
 
 ```bash
 # Obsidian vaults are markdown directories — import directly, then wire wikilinks
-# (full flow: skills/migrate/SKILL.md)
+# (full flow: migrate (host-side))
 gbrain import /path/to/vault --no-embed --workers 4
 gbrain extract links --source db      # parses [[wikilinks]] natively
 

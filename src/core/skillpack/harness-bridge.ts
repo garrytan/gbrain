@@ -30,6 +30,7 @@
  * leading dashes everywhere in this file, including the stub template.
  */
 
+import { assertLegacySkillFilesystemWrite, confinedSkillChildWrite } from './writer-guard.ts';
 import {
   existsSync,
   lstatSync,
@@ -461,6 +462,11 @@ function recordLedger(
  */
 export function applyHarnessBridge(plan: BridgePlan, opts: ApplyHarnessBridgeOptions): BridgeApplyResult {
   const dryRun = opts.dryRun ?? false;
+  if (!dryRun) {
+    assertLegacySkillFilesystemWrite(plan.destDir);
+    for (const item of plan.items) assertLegacySkillFilesystemWrite(item.target);
+    if (opts.statePath) assertLegacySkillFilesystemWrite(opts.statePath);
+  }
   // Create destDir BEFORE the confinement gate so the realpath branch always
   // runs on the apply path (a not-yet-existing dest would otherwise get the
   // lexical check only — a symlinked ancestor could slip past it).
@@ -733,6 +739,10 @@ export function runHarnessReferenceApply(
   // (or parent) later swapped for a symlink must not redirect the write.
   const writeTargets = ref.files.filter(f => f.status === 'differs').map(f => f.target);
   if (writeTargets.length > 0) assertTargetsConfined(opts.destDir, writeTargets);
+  if (!dryRun) {
+    for (const target of writeTargets) assertLegacySkillFilesystemWrite(target);
+    if (opts.statePath) assertLegacySkillFilesystemWrite(opts.statePath);
+  }
 
   for (const f of ref.files) {
     if (f.status === 'identical' || f.status === 'missing') {
@@ -794,6 +804,7 @@ export function runHarnessReferenceApply(
     const parsed = parseUnifiedDiff(diffText);
     const res = applyHunks(actual, parsed);
     if (!dryRun && res.applied > 0) {
+      assertLegacySkillFilesystemWrite(f.target);
       try {
         writeFileSync(f.target, res.text);
       } catch (err) {
@@ -898,6 +909,10 @@ export function removeHarnessBridge(opts: {
   nowIso: string;
 }): BridgeRemoveResult {
   const dryRun = opts.dryRun ?? false;
+  if (!dryRun) {
+    assertLegacySkillFilesystemWrite(opts.destDir);
+    if (opts.statePath) assertLegacySkillFilesystemWrite(opts.statePath);
+  }
   const state = loadBridgeState({ statePath: opts.statePath });
   const entry = findBridgeEntry(state, { harness: opts.harness, dest: opts.destDir });
   // The shared-dep ledger key never enumerates as a removable slug: shared
@@ -907,6 +922,12 @@ export function removeHarnessBridge(opts: {
   const requested = opts.slugs === null ? owned : [...opts.slugs].filter(s => s !== SHARED_DEP_LEDGER_KEY);
   const notOwned = requested.filter(s => !owned.includes(s));
   const toRemove = requested.filter(s => owned.includes(s));
+  if (!dryRun) for (const slug of toRemove) for (const rel of Object.keys(entry!.written[slug].files)) {
+    try { confinedSkillChildWrite(opts.destDir, rel); } catch (error) {
+      if ((error as { code?: string }).code === 'target_escape') throw new BridgeError((error as Error).message, 'target_escape', rel);
+      throw error;
+    }
+  }
 
   const removedFiles: string[] = [];
   const keptEdited: string[] = [];
@@ -942,6 +963,7 @@ export function removeHarnessBridge(opts: {
         continue;
       }
       if (!dryRun) {
+        assertLegacySkillFilesystemWrite(abs);
         try {
           rmSync(abs);
         } catch (err) {
@@ -966,6 +988,7 @@ export function removeHarnessBridge(opts: {
     const candidates = [...prunedDirs].sort((a, b) => b.length - a.length);
     for (let dir of candidates) {
       while (dir !== destReal && dir.startsWith(destReal + sep)) {
+        assertLegacySkillFilesystemWrite(dir);
         try {
           if (!existsSync(dir) || readdirSync(dir).length > 0) break;
           rmdirSync(dir);

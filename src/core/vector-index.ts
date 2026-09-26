@@ -51,18 +51,19 @@ export const HNSW_EF_SEARCH_MAX = 1000;
  * `hnsw.ef_search` value for a vector search that wants `candidateLimit`
  * candidates back.
  *
- * An HNSW index scan returns at most `hnsw.ef_search` rows (default 40)
- * no matter what the query's LIMIT asks for — the GUC sizes the scan's
- * candidate list, so it caps the row count before LIMIT is even applied.
- * Both engines' searchVector ask the inner CTE for
- * `offset + max(limit*5, 100)` candidates; without raising the GUC the
- * pool silently truncates at ~40 and everything downstream (per-page
- * collapse, RRF fusion, rerankers) operates on a fraction of the pool it
- * was designed for. Shared helper keeps postgres + pglite in lockstep.
+ * This sizes the initial candidate list. Supported iterative scans can
+ * continue beyond it, so the GUC ceiling is not a SQL output/offset limit.
+ * Both engines use the same initial-list policy independently of their
+ * bounded iterative work and per-page pooling.
  */
 export function hnswEfSearchFor(candidateLimit: number): number {
   const wanted = Math.ceil(candidateLimit);
   return Math.min(Math.max(wanted, HNSW_EF_SEARCH_DEFAULT), HNSW_EF_SEARCH_MAX);
+}
+
+export function supportsHnswIterativeScan(extensionVersion: string | undefined): boolean {
+  const match = extensionVersion?.match(/^(\d+)\.(\d+)(?:\.|$)/);
+  return !!match && (Number(match[1]) > 0 || Number(match[2]) >= 8);
 }
 
 // ---------------------------------------------------------------------------

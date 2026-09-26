@@ -22,6 +22,7 @@
  *   - engine getTags/getLinks/getBacklinks/getTimeline sourceIds[] precedence
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, OperationError, type OperationContext } from '../src/core/operations.ts';
@@ -132,6 +133,9 @@ beforeEach(async () => {
     type: 'note', title: 'Dup beta', compiled_truth: 'b', frontmatter: {},
   }, { sourceId: 'beta' });
   await engine.addTag('shared/dup', 'beta-only', { sourceId: 'beta' });
+  for (const [sourceId, text] of [['beta', 'beta-only content'], ['default', 'default content']]) {
+    await installFixtureChunks(engine, 'secret/beta-doc', [{ chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth' }], { sourceId });
+  }
 });
 
 function remoteCtx(allowedSources: string[]): OperationContext {

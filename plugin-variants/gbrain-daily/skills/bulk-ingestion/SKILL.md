@@ -283,7 +283,8 @@ gbrain jobs submit shell --params '{"cmd": "<your pipeline command> --offset 0 -
 gbrain agent run "Read skills/<pipeline-name>/SKILL.md and process the next 50 pending manifest items"
 ```
 
-Shell jobs require `GBRAIN_ALLOW_SHELL_JOBS=1` on the WORKER environment — see
+Shell jobs require the WORKER to be started with `gbrain jobs work --allow-shell-jobs`
+(or `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker) — see
 minion-orchestrator Preconditions; do not set it yourself (it is an RCE-class
 operator authorization, and a submit-side env prefix is a no-op in the daemon
 lane). Small sets (<1000 items) can run inline in chunks; anything that must

@@ -9,7 +9,7 @@ const protectedMarkerPattern = new RegExp(
 );
 
 /** Strict protected-body boundary shared by remote reads and chunk creation. */
-export function sanitizeRemoteBody(body: string): string {
+export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean } = {}): string {
   if (typeof body !== 'string') return '';
   // Parse the same free-text bytes storage accepts. Removing NUL after fence
   // detection could turn an unrecognized marker into a protected stored fence.
@@ -34,7 +34,7 @@ export function sanitizeRemoteBody(body: string): string {
     if (open.facts) {
       try {
         const parsed = parseFactsFence(body.slice(open.start, cursor));
-        if (parsed.warnings.length === 0) output.push(renderFactsTable(parsed.facts.filter(row => row.visibility === 'world')));
+        if (parsed.warnings.length === 0) output.push(renderFactsTable(parsed.facts.filter(row => row.visibility === 'world' && (opts.includeWithdrawn || !row.forgotten))));
       } catch {
         // A protected block that cannot be parsed is omitted, never echoed.
       }

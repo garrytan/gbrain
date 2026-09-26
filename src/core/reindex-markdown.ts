@@ -1,10 +1,8 @@
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput } from './types.ts';
-import { chunkText, MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
-import { extractFencedChunks } from './import-file.ts';
+import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
+import { prepareMarkdownChunks } from './markdown-chunks.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
-import { isEmbedSkipped } from './embed-skip.ts';
-import { isQuarantined } from './quarantine.ts';
 
 interface StoredMarkdown {
   id: number;
@@ -29,21 +27,7 @@ export async function reindexStoredMarkdownChunks(
   const page = await engine.getPage(slug, { sourceId });
   if (!page) return false;
 
-  const chunks: ChunkInput[] = [];
-  if (!isEmbedSkipped(page.frontmatter) && !isQuarantined(page.frontmatter)) {
-    const chunkOpts = { maxTokens: resolveMaxChunkTokens() };
-    for (const [body, source] of [
-      [page.compiled_truth, 'compiled_truth'],
-      [page.timeline ?? '', 'timeline'],
-    ] as const) {
-      // The upstream chunker sanitizes the full protected-fence body BEFORE
-      // splitting. Never sanitize fragments or inherit an old chunk/vector.
-      for (const chunk of chunkText(body, chunkOpts)) {
-        chunks.push({ chunk_index: chunks.length, chunk_text: chunk.text, chunk_source: source });
-      }
-    }
-    chunks.push(...await extractFencedChunks(page.compiled_truth, chunks.length));
-  }
+  const chunks: ChunkInput[] = await prepareMarkdownChunks(page, resolveMaxChunkTokens());
 
   await engine.transaction(async tx => {
     const [current] = await tx.executeRaw<StoredMarkdown>(query + ' FOR UPDATE', [sourceId, slug]);

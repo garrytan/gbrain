@@ -172,6 +172,51 @@ describe('resolveEntitySlug — prefix expansion', () => {
   });
 });
 
+describe('source-scoped full basename resolution', () => {
+  it('resolves hyphenated names and concepts without relying on title similarity', async () => {
+    for (const slug of ['companies/acme-example', 'concepts/retrieval-testing']) {
+      await engine.putPage(slug, {
+        type: 'note', title: 'Unrelated display title', compiled_truth: 'Existing page', frontmatter: {},
+      }, { sourceId: 'default' });
+      const basename = slug.split('/')[1];
+      for (const raw of [basename, basename.replaceAll('-', ' ')]) {
+        expect(await resolveEntitySlug(engine, 'default', raw)).toBe(slug);
+        expect(await resolveEntitySlugWithSource(engine, 'default', raw)).toEqual({
+          slug, source: 'fuzzy_match',
+        });
+      }
+    }
+  });
+
+  it('refuses same-basename ambiguity even if one title is a perfect fuzzy match', async () => {
+    for (const slug of ['companies/shared-example', 'projects/shared-example']) {
+      await engine.putPage(slug, {
+        type: 'note', title: slug.startsWith('companies/') ? 'shared-example' : 'Other title',
+        compiled_truth: 'Existing page', frontmatter: {},
+      }, { sourceId: 'default' });
+    }
+    expect(await resolveEntitySlug(engine, 'default', 'shared-example')).toBe('shared-example');
+    expect(await resolveEntitySlugWithSource(engine, 'default', 'shared-example')).toEqual({
+      slug: 'shared-example', source: 'fallback_slugify',
+    });
+  });
+
+  it('ignores same-basename pages in other sources and deleted pages', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('basename-other', 'Other')`);
+    await engine.putPage('companies/scoped-example', {
+      type: 'company', title: 'Unrelated title', compiled_truth: 'Other source', frontmatter: {},
+    }, { sourceId: 'basename-other' });
+    await engine.putPage('companies/scoped-example', {
+      type: 'company', title: 'Unrelated title', compiled_truth: 'Deleted page', frontmatter: {},
+    }, { sourceId: 'default' });
+    await engine.softDeletePage('companies/scoped-example', { sourceId: 'default' });
+    expect((await resolveEntitySlugWithSource(engine, 'default', 'scoped-example'))?.source)
+      .toBe('fallback_slugify');
+    expect(await resolveEntitySlug(engine, 'basename-other', 'scoped-example'))
+      .toBe('companies/scoped-example');
+  });
+});
+
 describe('slugify', () => {
   it('lowercases and hyphenates', () => {
     expect(slugify('Alice Example')).toBe('alice-example');

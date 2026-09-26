@@ -34,16 +34,18 @@
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --outfile bin/gbrain src/cli.ts",
-    "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
+    "build": "bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain src/cli.ts",
+    "build:all": "bun build --compile --no-compile-autoload-bunfig --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --no-compile-autoload-bunfig --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
     "build:admin": "cd admin && bun run build && cd .. && bun run scripts/build-admin-embedded.ts",
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bash scripts/build-schema.sh",
     "build:llms": "bun run scripts/build-llms.ts",
     "wave-security-scan": "bash scripts/wave-security-scan.sh",
     "build:flag-registry": "bun run scripts/generate-flag-registry.ts",
+    "weights:mine": "bun run scripts/mine-shard-weights.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "test": "bash scripts/run-unit-parallel.sh",
+    "test:admin": "playwright test --config admin/playwright.config.ts",
     "eval:autocut": "bun test test/search/autocut-eval.test.ts",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && (if [ -n \"$DATABASE_URL\" ]; then bash scripts/run-e2e.sh; else echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2; fi)",
     "verify": "bash scripts/run-verify-parallel.sh",
@@ -75,7 +77,7 @@
     "ci:local": "bash scripts/ci-local.sh",
     "ci:local:diff": "bash scripts/ci-local.sh --diff",
     "ci:select-e2e": "bun run scripts/select-e2e.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/gbrain-typecheck.tsbuildinfo",
     "check:jsonb": "bash scripts/check-jsonb-pattern.sh",
     "check:search-path": "bash scripts/check-search-path.sh",
     "check:no-double-retry": "bash scripts/check-no-double-retry.sh",
@@ -114,6 +116,7 @@
     "check:guard-self-test": "bash scripts/guard-self-test.sh",
     "check:no-legacy-getconnection": "bash scripts/check-no-legacy-getconnection.sh",
     "check:module-size": "bash scripts/check-module-size.sh",
+    "check:compile-autoload": "bash scripts/check-compile-autoload.sh",
     "check:structural-manifest": "bash scripts/check-structural-manifest.sh",
     "check:orphan-modules": "node scripts/check-orphan-modules.mjs",
     "build:harness-docs": "bun run scripts/build-harness-docs.ts"
@@ -142,6 +145,7 @@
     "chokidar": "^4.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "detect-libc": "2.0.4",
     "eventsource-parser": "^3.0.8",
     "exifr": "^7.1.3",
     "express": "^5.1.0",
@@ -152,12 +156,13 @@
     "marked": "^18.0.2",
     "openai": "^4.0.0",
     "pgvector": "^0.2.0",
-    "postgres": "^3.4.0",
+    "postgres": "3.4.9",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.22.6",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/bun": "latest",
     "@types/cookie-parser": "^1.4.7",
     "@types/cors": "^2.8.19",
@@ -174,7 +179,7 @@
     "bun": ">=1.3.11"
   },
   "license": "MIT",
-  "version": "0.50.0.0",
+  "version": "0.58.1.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.33",
     "@hono/node-server": "^2.0.5",
@@ -187,5 +192,8 @@
     "ip-address": "^10.3.1",
     "qs": "6.16.0",
     "js-yaml": "^3.15.2"
+  },
+  "patchedDependencies": {
+    "postgres@3.4.9": "patches/postgres@3.4.9.patch"
   }
 }

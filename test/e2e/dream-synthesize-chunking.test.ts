@@ -18,7 +18,8 @@
  * Run: bun test test/e2e/dream-synthesize-chunking.test.ts
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect } from 'bun:test';
+import { keylessDreamTest as test } from '../helpers/keyless-dream-test.ts';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';

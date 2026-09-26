@@ -183,6 +183,22 @@ describe('doctorReportRemote — source scope (#4592)', () => {
     expect(message(after, 'brain_score')).toBe(message(before, 'brain_score'));
   });
 
+  test('contextual_retrieval_coverage counts only the granted source (#5004 unsealed pages, #4592 class)', async () => {
+    // putPage caps chunker_version below the safe-chunk fence, so every page
+    // here is "unsealed" and the check reports a count. A caller granted only
+    // SRCA must read SRCA's count: adding an unsealed page to SRCB moves nothing.
+    const ctx = {
+      engine,
+      remote: true,
+      auth: { token: 't', clientId: 'c', scopes: ['admin'], allowedSources: [SRCA] },
+    } as unknown as OperationContext;
+    const before = await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport;
+    expect(message(before, 'contextual_retrieval_coverage')).toContain('below the safe-chunk index version');
+    await put(SRCB, 'notes/epsilon');
+    const after = await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport;
+    expect(message(after, 'contextual_retrieval_coverage')).toBe(message(before, 'contextual_retrieval_coverage'));
+  });
+
   test('extract_atoms_backlog / drift / orphan probes never name or count an excluded source (wave review)', async () => {
     // 12 eligible-but-unextracted pages in the EXCLUDED source: brain-wide the
     // backlog is >= 12 (and the drain hint may name the source); a caller
@@ -200,5 +216,33 @@ describe('doctorReportRemote — source scope (#4592)', () => {
     const scopedBacklog = scoped.checks.find(c => c.name === 'extract_atoms_backlog')!;
     expect(Number((scopedBacklog.details as { backlog: number }).backlog)).toBe(0);
     expect(JSON.stringify(scoped)).not.toContain(SRCB);
+  });
+});
+
+describe('run_doctor canonical projection readiness', () => {
+  test('the real handler excludes private and ungranted pending pages while local callers can diagnose them', async () => {
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES ('readiness-visible','readiness-visible'),('readiness-hidden','readiness-hidden') ON CONFLICT DO NOTHING");
+    await engine.putPage('notes/current-example', { title: 'Example', type: 'note', compiled_truth: 'current' }, { sourceId: 'readiness-visible' });
+    await engine.putPage('notes/private-example', { title: 'Private example', type: 'note', compiled_truth: 'private', frontmatter: { visibility: 'private' } }, { sourceId: 'readiness-hidden' });
+    await engine.executeRaw("UPDATE pages SET text_projection_revision=knowledge_revision WHERE source_id='readiness-visible'");
+    const ctx = {
+      engine, remote: true, sourceId: 'readiness-hidden',
+      auth: { allowedSources: ['readiness-visible', 'readiness-hidden'] },
+    } as unknown as OperationContext;
+    const check = (report: DoctorReport) => report.checks.find(c => c.name === 'text_projection_readiness')!;
+    const remote = check(await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport);
+    expect(remote.status).toBe('ok');
+    expect(remote.details).toEqual({ readiness: 'ready', ready: true });
+    const local = check(await operationsByName.run_doctor.handler({ ...ctx, remote: false }, {}) as DoctorReport);
+    expect(local.status).toBe('warn');
+    expect(local.details).toEqual({ readiness: 'projection_pending', ready: false });
+    const restricted = check(await operationsByName.run_doctor.handler({ ...ctx, auth: { ...ctx.auth!, allowedSources: ['readiness-visible'] } }, {}) as DoctorReport);
+    expect(restricted.status).toBe('ok');
+    expect(JSON.stringify(restricted)).not.toContain('readiness-hidden');
+    expect(JSON.stringify(local)).not.toContain('notes/private-example');
+    await engine.executeRaw("UPDATE pages SET text_projection_revision=NULL WHERE source_id='readiness-visible'");
+    const pending = check(await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport);
+    expect(pending.status).toBe('warn');
+    expect(pending.details).toEqual({ readiness: 'projection_pending', ready: false });
   });
 });

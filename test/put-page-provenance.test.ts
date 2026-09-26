@@ -26,10 +26,18 @@ import { describe, test, expect, beforeAll, beforeEach, afterAll } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { withEnv } from './helpers/with-env.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { OperationError } from '../src/core/operations.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 
-const putPageOp = operations.find((o) => o.name === 'put_page')!;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-provenance-'));
+const put = operations.find((o) => o.name === 'put_page')!;
+const putPageOp = { ...put, handler: (ctx: OperationContext, p: Record<string, unknown>) => withEnv({ GBRAIN_HOME: home }, () => put.handler(ctx, p)) };
 
 let engine: PGLiteEngine;
 
@@ -63,22 +71,22 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await disposePersistenceConsumer(engine);
   await engine.disconnect();
+  rmSync(home, { recursive: true, force: true });
   __setEmbedTransportForTests(null);
   resetGateway();
 });
 
 beforeEach(async () => {
-  // Wipe pages so each test starts from a known empty state. We use
-  // executeRaw rather than a TRUNCATE-by-name sweep because this file
-  // only touches one table.
-  await engine.executeRaw('DELETE FROM pages', []);
+  await disposePersistenceConsumer(engine);
+  await resetPgliteState(engine);
 });
 
 function makeCtx(opts: Partial<OperationContext> = {}): OperationContext {
   return {
     engine,
-    config: { engine: 'pglite' as const },
+    config: { engine: 'pglite' as const, embedding_disabled: true },
     logger: {
       info: () => { /* noop */ },
       warn: () => { /* noop */ },
@@ -181,7 +189,7 @@ describe('put_page provenance — CV6 spoofing guard (ctx.remote !== false)', ()
     // v0.26.9 F7b discipline: anything that isn't strictly `false` is remote.
     const ctx: OperationContext = {
       engine,
-      config: { engine: 'pglite' as const },
+      config: { engine: 'pglite' as const, embedding_disabled: true },
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       dryRun: false,
       // remote: explicitly undefined to exercise the fail-closed path
@@ -218,6 +226,7 @@ describe('put_page provenance — CV12 COALESCE-preserve UPDATE', () => {
     await putPageOp.handler(ctx, {
       slug: 'wiki/p3a-preserve',
       content: '---\ntype: note\ntitle: V2\n---\n\nedited body',
+      expected_revision: (await engine.readPageSnapshot('wiki/p3a-preserve', { sourceId: 'default' }))!.revision,
     });
     const second = await readProvenance('wiki/p3a-preserve');
     // CV12: provenance preserved — first-write wins
@@ -241,6 +250,7 @@ describe('put_page provenance — CV12 COALESCE-preserve UPDATE', () => {
     await putPageOp.handler(ctx, {
       slug: 'wiki/p3a-reingest',
       content: '---\ntype: note\ntitle: V2\n---\n\nbody',
+      expected_revision: (await engine.readPageSnapshot('wiki/p3a-reingest', { sourceId: 'default' }))!.revision,
       source_kind: 'file-watcher', // explicit re-ingest under different kind
       source_uri: 'file:///watched/path.md',
       ingested_via: 'file-watcher',
@@ -267,6 +277,7 @@ describe('put_page provenance — CV12 COALESCE-preserve UPDATE', () => {
     await putPageOp.handler(remoteCtx, {
       slug: 'wiki/p3a-local-then-remote',
       content: '---\ntype: note\ntitle: V2\n---\n\nremote edit',
+      expected_revision: (await engine.readPageSnapshot('wiki/p3a-local-then-remote', { sourceId: 'default' }))!.revision,
     });
 
     // Remote second write is itself a provenance write (server-stamped),
@@ -327,7 +338,7 @@ describe('put_page provenance — T2 subagent namespace regression', () => {
   test('subagent missing subagentId fails-closed regardless of provenance params', async () => {
     const ctx: OperationContext = {
       engine,
-      config: { engine: 'pglite' as const },
+      config: { engine: 'pglite' as const, embedding_disabled: true },
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       dryRun: false,
       remote: true,

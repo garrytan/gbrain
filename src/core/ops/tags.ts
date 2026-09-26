@@ -7,6 +7,8 @@
 
 import type { Operation } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
+import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 // --- Tags ---
 
@@ -14,6 +16,7 @@ const add_tag: Operation = {
   name: 'add_tag',
   description: 'Add tag to page',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: "Slug of the page to tag, e.g. 'people/alice-example'." },
     tag: { type: 'string', required: true, description: "Tag to add — a plain string like 'founder' or 'follow-up', not a slug." },
   },
@@ -23,9 +26,7 @@ const add_tag: Operation = {
     enforceClientSlugFence(ctx, p.slug as string, 'add_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'add_tag', slug: p.slug, tag: p.tag };
     // v0.31.8 (D7): thread ctx.sourceId.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.addTag(p.slug as string, p.tag as string, sourceOpts);
-    return { status: 'ok' };
+    return submitPageMutation(ctx, { operation: 'add_tag', params: p });
   },
   cliHints: { name: 'tag', positional: ['slug', 'tag'] },
 };
@@ -34,6 +35,7 @@ const remove_tag: Operation = {
   name: 'remove_tag',
   description: 'Remove tag from page',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     slug: { type: 'string', required: true, description: 'Slug of the page to untag.' },
     tag: { type: 'string', required: true, description: 'Tag to remove (exact match against the tags get_tags returns).' },
   },
@@ -42,9 +44,7 @@ const remove_tag: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.slug as string, 'remove_tag');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_tag', slug: p.slug, tag: p.tag };
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.removeTag(p.slug as string, p.tag as string, sourceOpts);
-    return { status: 'ok' };
+    return submitPageMutation(ctx, { operation: 'remove_tag', params: p });
   },
   cliHints: { name: 'untag', positional: ['slug', 'tag'] },
 };

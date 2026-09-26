@@ -247,6 +247,24 @@ describe('secret-scan gate', () => {
     expect(git(work, 'diff', '--cached', '--name-only')).toBe('');
     expect(readFileSync(join(work, 'payload.md'), 'utf-8')).toContain('SECRET_PLACEHOLDER');
   }, T);
+
+  test('a connection string with an inline password blocks the push (db_url_credentials)', async () => {
+    // Runtime-joined synthetic URL — no committed line carries the shape.
+    const url = ['postgres://', 'dbuser', ':', 'p4ssw0rd', '@db.internal:5432/app'].join('');
+    writeFileSync(join(work, 'infra.md'), `DATABASE_URL=${url}\n`);
+    const before = commitCount(work);
+    const r = await push();
+    expect(r.status).toBe('blocked_secrets');
+    expect(r.ok).toBe(false);
+    expect(r.findings?.length).toBe(1);
+    expect(r.findings?.[0]?.file).toBe('infra.md');
+    expect(r.findings?.[0]?.pattern).toBe('db_url_credentials');
+    expect(JSON.stringify(r).includes('p4ssw0rd')).toBe(false); // value never surfaces
+    expect(commitCount(work)).toBe(before); // NOTHING committed
+    // The documented escape hatch still works for a declared-safe value.
+    writeFileSync(join(work, SCAN_ALLOW_FILENAME), `${r.findings![0]!.fingerprint}\n`);
+    expect((await push()).status).toBe('pushed');
+  }, T);
 });
 
 describe('secret-scan gate — fails CLOSED on unscannable staged blobs', () => {

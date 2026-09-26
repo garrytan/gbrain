@@ -76,6 +76,9 @@ export async function writeSingleFact(
   sourceId: string,
   input: SingleFactInput,
 ): Promise<SingleFactResult> {
+  const { assertCoordinatedWrite } = await import('../persistence/context.ts');
+  await assertCoordinatedWrite(engine, sourceId);
+
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');

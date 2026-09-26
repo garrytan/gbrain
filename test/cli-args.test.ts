@@ -113,5 +113,13 @@ describe('#4602 — boolean flags consume a literal true/false value token', () 
     const params = parseOpArgs(operationsByName.add_link, ['page-a', 'page-b', '--json=false']);
     expect(params).toEqual({ from: 'page-a', to: 'page-b', json: false });
   });
+
+  test('delete <slug> --purge derives from the contract (boolean param → flag, no cli.ts special case)', () => {
+    expect(findUnknownOpFlag(operationsByName.delete_page, ['people/alice-example', '--purge'])).toBeNull();
+    expect(parseOpArgs(operationsByName.delete_page, ['people/alice-example', '--purge']))
+      .toEqual({ slug: 'people/alice-example', purge: true });
+    expect(parseOpArgs(operationsByName.delete_page, ['people/alice-example', '--purge=false']))
+      .toEqual({ slug: 'people/alice-example', purge: false });
+  });
 });
 

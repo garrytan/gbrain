@@ -19,6 +19,7 @@
  * cycle's purge phase (T6 wiring).
  */
 
+import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWrite } from './apply-edits.ts';
@@ -71,6 +72,7 @@ export function loadCheckpoint(skillsDir: string, skillName: string, runId: stri
 
 export function saveCheckpoint(skillsDir: string, skillName: string, cp: RunCheckpoint): void {
   const p = checkpointPath(skillsDir, skillName, cp.run_id);
+  assertLegacySkillFilesystemWrite(p);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const payload = { ...cp, last_updated_at: new Date().toISOString() };
   atomicWrite(p, JSON.stringify(payload, null, 2) + '\n');
@@ -78,6 +80,7 @@ export function saveCheckpoint(skillsDir: string, skillName: string, cp: RunChec
 
 export function deleteCheckpoint(skillsDir: string, skillName: string, runId: string): void {
   const p = checkpointPath(skillsDir, skillName, runId);
+  assertLegacySkillFilesystemWrite(p);
   try { fs.unlinkSync(p); } catch { /* ignore */ }
 }
 
@@ -95,6 +98,7 @@ export function gcStaleCheckpoints(skillsDir: string, maxAgeDays: number = 7): n
     for (const entry of safeReaddir(dir)) {
       if (!entry.startsWith('checkpoint-') || !entry.endsWith('.json')) continue;
       const p = path.join(dir, entry);
+      assertLegacySkillFilesystemWrite(p);
       try {
         const stat = fs.statSync(p);
         if (stat.mtimeMs < cutoffMs) {

@@ -37,9 +37,10 @@ beforeEach(() => {
   process.env.HOME = tmp;
   // Bun's os.homedir() can retain the process-start home after HOME changes.
   // Pin the application path resolver too, before wrapper/env writes occur.
+  // Fork guard retained over upstream v0.58.1.0, which dropped the assertion.
   process.env.GBRAIN_HOME = tmp;
   expect(gbrainPath()).toBe(join(tmp, '.gbrain'));
-  // Start each test with a clean slate for ephemeral hosting env vars.
+  // Start each test with a clean slate for ephemeral env vars.
   delete process.env.RENDER;
   delete process.env.RAILWAY_ENVIRONMENT;
   delete process.env.FLY_APP_NAME;
@@ -70,6 +71,20 @@ function makeFakeGbrainOnPath(): { binDir: string; restore: () => void } {
     },
   };
 }
+
+test('wrapper and env template stay under the per-test GBRAIN_HOME', () => {
+  const fakeBin = makeFakeGbrainOnPath();
+  try {
+    const repoDir = join(tmp, 'repo-isolated');
+    mkdirSync(repoDir, { recursive: true });
+    const wrapper = writeWrapperScript(repoDir, 'linux-cron');
+    expect(wrapper).toBe(join(tmp, '.gbrain', 'autopilot-run.sh'));
+    expect(existsSync(join(tmp, '.gbrain', 'env'))).toBe(true);
+    expect(readFileSync(wrapper, 'utf8')).toContain(`export GBRAIN_HOME='${tmp}'`);
+  } finally {
+    fakeBin.restore();
+  }
+});
 
 describe('detectInstallTarget', () => {
   test('returns "macos" on darwin regardless of env', () => {

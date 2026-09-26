@@ -136,7 +136,7 @@ describe('v0.45 DX wave — non-TTY no-key defaults to keyless (typo still fail-
     const multiHome = makeTempHome();
     try {
       // v0.46.3: the canonical new-install default is voyage:voyage-4
-      // (NEW_INSTALL_DEFAULT_EMBEDDING_MODEL); a ZE key no longer counts —
+      // (NEW_INSTALL_DEFAULT_EMBEDDING_MODEL); a unrecognized key no longer counts —
       // sunset recipes are excluded from auto-pick entirely.
       const r = await runCli(['init', '--pglite', '--non-interactive'], {
         gbrainHome: multiHome,
@@ -155,25 +155,6 @@ describe('v0.45 DX wave — non-TTY no-key defaults to keyless (typo still fail-
       expect(cfg.embedding_dimensions).toBe(1024);
     } finally {
       rmSync(multiHome, { recursive: true, force: true });
-    }
-  }, 240000);
-
-  test('--non-interactive with ONLY a sunset-provider key continues keyless (ZE excluded)', async () => {
-    const zeHome = makeTempHome();
-    try {
-      const r = await runCli(['init', '--pglite', '--non-interactive'], {
-        gbrainHome: zeHome,
-        env: { ZEROENTROPY_API_KEY: 'ze-test-only-for-init-resolution-NOT-CALLED' },
-      });
-      // Sunset exclusion means zero READY providers → keyless continue, not
-      // an auto-pick onto a provider that dies 2026-09-04.
-      expect(r.exitCode).toBe(0);
-      expect(r.stderr).toContain('keyless');
-      const cfg = JSON.parse(readFileSync(join(zeHome, '.gbrain', 'config.json'), 'utf-8'));
-      expect(cfg.embedding_disabled).toBe(true);
-      expect(cfg.embedding_model).toBeUndefined();
-    } finally {
-      rmSync(zeHome, { recursive: true, force: true });
     }
   }, 240000);
 });

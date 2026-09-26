@@ -418,11 +418,14 @@ gbrain jobs list --status active --limit 10
 gbrain jobs list --status dead --limit 10
 
 # Shell jobs enabled on the worker? There is no supervisor-status JSON field
-# for this — the gate is the GBRAIN_ALLOW_SHELL_JOBS=1 env var on the worker
-# process (the handler is always registered but guarded). Inspect the
-# supervisor's environment directly:
-ps eww -p "$(gbrain jobs supervisor status --json | jq -r '.supervisor_pid')" \
-  | grep -o 'GBRAIN_ALLOW_SHELL_JOBS=[^ ]*' || echo "flag not set"
+# for this — the gate is the worker's opt-in (the handler is always registered
+# but guarded). A supervisor started with --allow-shell-jobs (or with
+# GBRAIN_ALLOW_SHELL_JOBS=1 exported) passes `--allow-shell-jobs` on the
+# worker's command line AND sets the env var on it. Inspect the worker
+# process directly (args + environment):
+for pid in $(pgrep -f 'gbrain jobs work'); do ps eww -p "$pid"; done \
+  | grep -o -e '--allow-shell-jobs' -e 'GBRAIN_ALLOW_SHELL_JOBS=[^ ]*' | sort -u \
+  || echo "shell jobs not enabled"
 # An unflagged worker that claims a shell job dead-letters it instantly:
 gbrain jobs list --status dead --name shell --limit 3
 ```

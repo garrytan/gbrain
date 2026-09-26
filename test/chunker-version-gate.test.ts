@@ -15,7 +15,7 @@ import { describe, test, expect } from 'bun:test';
 import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
 
 describe('Layer 12 — CHUNKER_VERSION constant', () => {
-  test('bumped to 6 for the definition-preserving merge guard (#4511)', () => {
+  test('bumped to 7 for the compatible Bash grammar (#5082)', () => {
     // v3: v0.19.0 Chonkie parity (tokenizer + small-sibling merge).
     // v4: v0.20.0 Cathedral II (qualified names + parent scope + doc_comment
     //     + fence extraction + chunk-grain FTS). Folded into content_hash
@@ -25,14 +25,14 @@ describe('Layer 12 — CHUNKER_VERSION constant', () => {
     // v6: #4511 mergeSmallSiblings stopped erasing symbol_name on short
     //     definitions; the bump re-chunks previously-merged files so the
     //     lost symbols come back.
-    expect(CHUNKER_VERSION).toBe(6);
+    expect(CHUNKER_VERSION).toBe(7);
   });
 
   test('is stable across imports (not recomputed at call time)', async () => {
     const a = (await import('../src/core/chunkers/code.ts')).CHUNKER_VERSION;
     const b = (await import('../src/core/chunkers/code.ts')).CHUNKER_VERSION;
     expect(a).toBe(b);
-    expect(a).toBe(6);
+    expect(a).toBe(7);
   });
 });
 

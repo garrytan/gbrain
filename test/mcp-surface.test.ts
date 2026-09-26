@@ -99,6 +99,15 @@ describe('STARTER_OPS (WP4)', () => {
     expect(allowedOpNames(operations, 'full').has('request_tools')).toBe(true);
   });
 
+  it('receipt helpers are on starter/full while the frozen verb surface stays unchanged', () => {
+    for (const name of ['get_write_request', 'list_write_requests', 'cancel_write_request']) {
+      expect(allowedOpNames(operations, 'starter').has(name)).toBe(true);
+      expect(allowedOpNames(operations, 'full').has(name)).toBe(true);
+      expect(allowedOpNames(operations, 'verbs').has(name)).toBe(false);
+    }
+    expect(filterOpsForSurface(operations, 'verbs').map(op => op.name).sort()).toEqual([...VERB_NAMES].sort());
+  });
+
   it('monotonicity (ENG-1): allowedOpNames(verbs) ⊆ starter ⊆ full', () => {
     const verbs = allowedOpNames(operations, 'verbs');
     const starter = allowedOpNames(operations, 'starter');

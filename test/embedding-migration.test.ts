@@ -122,17 +122,6 @@ describe('resolveMigrationTarget', () => {
     expect(() => resolveMigrationTarget('litellm:my-custom-model')).toThrow(/--dim/);
     expect(resolveMigrationTarget('litellm:my-custom-model', 1024).toDims).toBe(1024);
   });
-  test('v0.46.3: refuses a sunset target (paid re-embed onto a dying provider)', () => {
-    expect(() => resolveMigrationTarget('zeroentropyai:zembed-1')).toThrow(/Refusing to migrate ONTO/);
-    expect(() => resolveMigrationTarget('zeroentropyai:zembed-1')).toThrow(/--force-sunset-target/);
-  });
-  test('v0.46.3: allowSunsetTarget is the loud escape hatch (self-hosted endpoint)', () => {
-    // Self-hosters keep the brain's existing width explicitly (--dim 1280).
-    expect(resolveMigrationTarget('zeroentropyai:zembed-1', 1280, { allowSunsetTarget: true })).toEqual({
-      toModel: 'zeroentropyai:zembed-1',
-      toDims: 1280,
-    });
-  });
 });
 
 describe('#3391 includeNullSignature widening', () => {
@@ -186,12 +175,12 @@ describe('#3391 includeNullSignature widening', () => {
 describe('planEmbeddingMigration', () => {
   test('counts everything not in the target space, splits out NULL-signature chunks, prices it', async () => {
     await seedEmbedded('legacy', 'abcde', null);                                 // 5 chars
-    await seedEmbedded('current', 'fghij', `zeroentropyai:zembed-1:${colDim}`);  // 5 chars
+    await seedEmbedded('current', 'fghij', `fixture-provider:embedding-v1:${colDim}`);  // 5 chars
     await seedUnembedded('pending', 'klmnop');                                   // 6 chars
 
     const plan = await planEmbeddingMigration(engine, {
       to: 'openai:text-embedding-3-small',
-      fromModel: 'zeroentropyai:zembed-1',
+      fromModel: 'fixture-provider:embedding-v1',
       fromDims: colDim,
     });
 
@@ -226,13 +215,13 @@ describe('planEmbeddingMigration', () => {
   });
 
   test('reranker on the outgoing provider triggers the warning', async () => {
-    await engine.setConfig('search.reranker.model', 'zeroentropyai:zerank-2');
+    await engine.setConfig('search.reranker.model', 'fixture-provider:reranker-v1');
     const plan = await planEmbeddingMigration(engine, {
       to: 'openai:text-embedding-3-small',
-      fromModel: 'zeroentropyai:zembed-1',
+      fromModel: 'fixture-provider:embedding-v1',
       fromDims: 1280,
     });
-    expect(plan.reranker_warning).toContain('zeroentropyai:zerank-2');
+    expect(plan.reranker_warning).toContain('fixture-provider:reranker-v1');
   });
 });
 
@@ -620,5 +609,73 @@ describe('migrate_embeddings op contract', () => {
   test('signature helper matches currentEmbeddingSignature shape', () => {
     expect(migrationSignature('openai:text-embedding-3-small', 1536))
       .toBe('openai:text-embedding-3-small:1536');
+  });
+});
+
+describe('runSchemaTransition retained column and index regressions', () => {
+  test('preserves embedding_image and embedding_multimodal dimensions after text migration', async () => {
+    await seedEmbedded('transition-image-width', 'fixture body', null);
+    const target = colDim === 512 ? 256 : 512;
+    const plan = await planEmbeddingMigration(engine, { to: 'openai:text-embedding-3-small', dim: target });
+    expect(await applyEmbeddingMigration(engine, plan)).toMatchObject({ status: 'applied', schema_transitioned: true });
+    const rows = await engine.executeRaw<{ column_name: string; col_type: string }>(
+      `SELECT a.attname AS column_name, format_type(a.atttypid, a.atttypmod) AS col_type
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public' AND c.relname = 'content_chunks'
+          AND a.attname IN ('embedding', 'embedding_image', 'embedding_multimodal')
+          AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attname`,
+    );
+    const byName = new Map(rows.map(r => [r.column_name, r.col_type]));
+    expect(byName.get('embedding')).toBe(`vector(${target})`);
+    expect(byName.get('embedding_image')).toBe('vector(1024)');
+    expect(byName.get('embedding_multimodal')).toBe('vector(1024)');
+  });
+
+  test('restores the partial WHERE predicate on idx_chunks_embedding_image', async () => {
+    await seedEmbedded('transition-image-index', 'fixture body', null);
+    const target = colDim === 512 ? 256 : 512;
+    const plan = await planEmbeddingMigration(engine, { to: 'openai:text-embedding-3-small', dim: target });
+    expect(await applyEmbeddingMigration(engine, plan)).toMatchObject({ status: 'applied', schema_transitioned: true });
+    const rows = await engine.executeRaw<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public'
+        AND tablename = 'content_chunks' AND indexname = 'idx_chunks_embedding_image'`,
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].indexdef).toMatch(/WHERE\s+\(?embedding_image IS NOT NULL\)?/i);
+  });
+
+  test('preserves both partial stale indexes on content_chunks.embedding (#4252)', async () => {
+    await seedEmbedded('transition-stale-index', 'fixture body', null);
+    await engine.executeRaw(`CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
+      ON content_chunks (page_id, chunk_index) WHERE embedding IS NULL`);
+    const target = colDim === 512 ? 256 : 512;
+    const plan = await planEmbeddingMigration(engine, { to: 'openai:text-embedding-3-small', dim: target });
+    expect(await applyEmbeddingMigration(engine, plan)).toMatchObject({ status: 'applied', schema_transitioned: true });
+    const rows = await engine.executeRaw<{ indexname: string; indexdef: string }>(
+      `SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public'
+        AND tablename = 'content_chunks'
+        AND indexname IN ('idx_chunks_embedding_null', 'content_chunks_stale_idx') ORDER BY indexname`,
+    );
+    const byName = new Map(rows.map(r => [r.indexname, r.indexdef]));
+    expect([...byName.keys()]).toEqual(['content_chunks_stale_idx', 'idx_chunks_embedding_null']);
+    expect(byName.get('content_chunks_stale_idx')).toMatch(/WHERE\s+\(?embedding IS NULL\)?/i);
+    expect(byName.get('idx_chunks_embedding_null')).toMatch(/WHERE\s+\(?embedding IS NULL\)?/i);
+  });
+
+  test('skips the image index cleanly when both multimodal columns are absent', async () => {
+    await seedEmbedded('transition-no-image', 'fixture body', null);
+    await engine.executeRaw('ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image');
+    await engine.executeRaw('ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_multimodal');
+    const target = colDim === 512 ? 256 : 512;
+    const plan = await planEmbeddingMigration(engine, { to: 'openai:text-embedding-3-small', dim: target });
+    expect(await applyEmbeddingMigration(engine, plan)).toMatchObject({ status: 'applied', schema_transitioned: true });
+    expect(await embeddingColWidth('content_chunks')).toBe(target);
+    const rows = await engine.executeRaw<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE schemaname = 'public'
+        AND tablename = 'content_chunks' AND indexname = 'idx_chunks_embedding_image'`,
+    );
+    expect(rows.length).toBe(0);
   });
 });

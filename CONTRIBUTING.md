@@ -9,7 +9,7 @@ bun install
 bun test
 ```
 
-Requires Bun 1.0+.
+Requires Bun 1.3.11 or newer, matching `package.json`.
 
 ### Windows
 
@@ -52,6 +52,8 @@ src/
     operations.ts         Operation contract assembly (façade over ops/)
     ops/                  Contract types + security fences + the op domain modules
     engine.ts             BrainEngine interface
+    page-state/           Canonical snapshots, revisions, versions and guarded projections
+    persistence/          Durable requests, owner coordination, recovery and writer enforcement
     engine-factory.ts     Engine factory (dynamic import of the configured engine)
     postgres-engine.ts    Postgres + pgvector implementation (façade)
     postgres-engine/      Narrow-deps engine modules (facts, takes, code-edges, salience)
@@ -106,7 +108,7 @@ bun test test/markdown.test.ts    # specific unit test
 # Pre-push gate (50+ parallel checks + typecheck)
 bun run verify
 
-# Pre-merge sanity (everything CI runs)
+# Pre-merge local suites (platform/persistence matrices run separately)
 bun run test:full                 # verify + parallel unit + slow + smart e2e
 
 # Slow / serial / e2e in isolation
@@ -133,6 +135,12 @@ refusal message walks you through it; details in
 the database name must carry "test" as a word segment (like `gbrain_test`
 above) or destructive tests refuse to run — opt a differently-named database
 in one-shot with `GBRAIN_E2E_ALLOW_DB=<name>`.
+
+Changes to durable persistence also require the native/runtime, process-crash,
+soak, deployment-matrix and read-latency gates in
+[`docs/TESTING.md`](docs/TESTING.md#durable-persistence-schedules-and-process-crashes).
+`test:full` alone does not execute those complete platform and runtime matrices.
+Keep each result tied to its tested revision and disclose skipped cells.
 
 Use `bun run verify` before pushing. It runs 50+ guard checks in parallel
 (`scripts/run-verify-parallel.sh`), including: banned fork-name leaks
@@ -243,7 +251,7 @@ scanning" for details.
 ## Building
 
 ```bash
-bun build --compile --outfile bin/gbrain src/cli.ts
+bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain src/cli.ts
 ```
 
 ## Adding a new operation

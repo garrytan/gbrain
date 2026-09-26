@@ -427,7 +427,11 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
 
       for (let attempt = 1; attempt <= maxAttempts && !passed; attempt++) {
         if (attempt > 1) await new Promise((r) => setTimeout(r, 3_000));
-        const turn = await codexExecTurn({ prompt, cwd: home, home, timeoutMs: perAttemptTimeout });
+        const turn = await codexExecTurn({
+          prompt, cwd: home, home, timeoutMs: perAttemptTimeout,
+          mcpToolApprovals: [{ server: 'gbrain', tools: ['whoami', 'query', 'search', 'recall', 'get_page'] }],
+          waitForMcpStartup: true,
+        });
         const raw = turn.rawLines.join('\n');
         // The harness JSONL parser only captures command_execution/agent_message/
         // reasoning — a Codex MCP tool call is a distinct `mcp_tool_call` item, so
@@ -445,7 +449,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
           `[smoke codex attempt ${attempt}/${maxAttempts}] server=${server.kind} ` +
           `exit=${turn.exitCode} timedOut=${turn.timedOut} usedMcp=${usedMcp} usedShell=${usedShell} gotFact=${gotFact}\n` +
           `toolCalls=${JSON.stringify(turn.toolCalls)}\n` +
-          `finalText=${turn.finalText.slice(0, 800)}`;
+          `finalText=${turn.finalText.slice(0, 800)}\nstderr=${turn.stderrText.slice(-800)}`;
         console.log(lastEvidence);
 
         if (usedGbrain && gotFact) passed = true;
@@ -530,7 +534,11 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
 
       for (let attempt = 1; attempt <= maxAttempts && !passed; attempt++) {
         if (attempt > 1) await new Promise((r) => setTimeout(r, 3_000));
-        const turn = await codexExecTurn({ prompt, cwd: home, home, timeoutMs: perAttemptTimeout });
+        const turn = await codexExecTurn({
+          prompt, cwd: home, home, timeoutMs: perAttemptTimeout,
+          mcpToolApprovals: [{ server: 'gbrain', tools: ['whoami', 'context_pack', 'delta'] }],
+          waitForMcpStartup: true,
+        });
         // A Codex MCP tool call is a distinct `mcp_tool_call` item on the raw
         // stream (the harness parser only captures command_execution/
         // agent_message/reasoning). Field ORDER and the tool-name key inside
@@ -554,7 +562,7 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
           `[boundary codex attempt ${attempt}/${maxAttempts}] server=${server.kind} ` +
           `exit=${turn.exitCode} timedOut=${turn.timedOut} usedMcp=${usedMcp} usedShell=${usedShell}\n` +
           `toolCalls=${JSON.stringify(turn.toolCalls)}\n` +
-          `finalText=${turn.finalText.slice(0, 800)}`;
+          `finalText=${turn.finalText.slice(0, 800)}\nstderr=${turn.stderrText.slice(-800)}`;
         console.log(lastEvidence);
         if (boundaryCall) passed = true;
       }
@@ -626,7 +634,11 @@ describe.skipIf(!CAN_RUN)('real codex — ambient writeback door (non-gating)', 
       let lastEvidence = '';
       for (let attempt = 1; attempt <= maxAttempts && !passed; attempt++) {
         if (attempt > 1) await new Promise((r) => setTimeout(r, 3_000));
-        const turn = await codexExecTurn({ prompt, cwd: home, home, timeoutMs: 230_000 });
+        const turn = await codexExecTurn({
+          prompt, cwd: home, home, timeoutMs: 230_000,
+          mcpToolApprovals: [{ server: 'gbrain', tools: ['whoami', 'remember', 'extract_facts'] }],
+          waitForMcpStartup: true,
+        });
         const raw = turn.rawLines.join('\n');
         const usedWriteTool = /"type"\s*:\s*"mcp_tool_call"[^\n]*"server"\s*:\s*"gbrain"[^\n]*"tool"\s*:\s*"(remember|extract_facts)"/.test(raw)
           || (/"server"\s*:\s*"gbrain"/.test(raw) && /"tool"\s*:\s*"(remember|extract_facts)"/.test(raw));
@@ -649,7 +661,7 @@ describe.skipIf(!CAN_RUN)('real codex — ambient writeback door (non-gating)', 
         lastEvidence =
           `[wb door attempt ${attempt}/${maxAttempts}] exit=${turn.exitCode} timedOut=${turn.timedOut} ` +
           `usedWriteTool=${usedWriteTool} factRow=${factRow}\n` +
-          `finalText=${turn.finalText.slice(0, 400)}`;
+          `finalText=${turn.finalText.slice(0, 400)}\nstderr=${turn.stderrText.slice(-800)}`;
         console.log(lastEvidence);
         if (factRow || usedWriteTool) passed = true;
       }

@@ -31,7 +31,7 @@ import { safeDump } from 'js-yaml';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_BYTES_BLOCK } from '../content-sanity.ts';
-import { redactFindings } from '../secret-scan.ts';
+import { applyRedaction, planRedaction, type EchoDictionary, type RedactionPlan } from '../secret-scan.ts';
 import { loadPatterns } from '../skillpack/harvest-lint.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
 import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
@@ -113,6 +113,30 @@ export function loadImportRedactionPatterns(userPatternsPath?: string): ImportRe
  * persisted (message text, SPEAKER labels, title, raw-meta string fields).
  * Throws on scanner or pattern failure — page writes are FAIL-CLOSED (unlike
  * the hook corpus lane, these pages are searchable and synced).
+ *
+ * Detector classes (all from `secret-scan.ts`, format-based — not just vendor
+ * prefixes): vendor key shapes (anthropic/openai/voyage/github/gitlab/slack/
+ * aws/google/stripe/sendgrid/twilio/supabase/npm/huggingface/gbrain), JWTs,
+ * whole-block PEM private keys, `Bearer <token>` headers, connection strings
+ * carrying inline credentials, and — opted in for THIS lane — the
+ * high-entropy `KEY=`/`TOKEN=`/`PASSWORD=` assignment heuristic (value must
+ * carry a digit and clear the entropy gate). Transcripts are the corpus where
+ * a pasted `.env` line is most likely, so recall wins over the false-positive
+ * cost here; the push gate and compiled-context scan keep the heuristic off.
+ * Every match becomes `<REDACTED:pattern>`; user patterns become
+ * `<REDACTED:user-pattern>`.
+ *
+ * TWO PHASES, ONE SESSION-WIDE ECHO DICTIONARY. Phase 1 PLANS every persisted
+ * field (scan + claimed spans); the eligible bearer / high-entropy values
+ * every field claims accumulate in one `echoValues` map under the scanner's
+ * shared floors and single cap. Phase 2 APPLIES each plan, and the splice
+ * reads the FULL map — so a token claimed in a tool message's
+ * `Authorization: Bearer …` header is also scrubbed where the assistant
+ * echoed it bare in ANOTHER message (or the title, a speaker label, a
+ * metadata value), whichever order the two appear in. Redacting each field
+ * independently left those cross-field echoes in the page. The per-field
+ * `redactions` that feed `redactionCount` (the receipt) are unchanged by the
+ * echo pass: an echo is not a claim and adds no finding.
  */
 export function redactSession(
   session: ParsedSession,
@@ -121,15 +145,19 @@ export function redactSession(
   const patterns = opts.patterns ?? loadImportRedactionPatterns(opts.userPatternsPath);
   let redactionCount = 0;
   let imperativesFlagged = 0;
+  const echoValues: EchoDictionary = new Map();
 
-  const clean = (text: string): string => {
+  const plan = (text: string): RedactionPlan =>
     // sanitizeForJsonb (NUL-strip + well-form): transcripts capture raw tool
     // output that legitimately carries U+0000, which Postgres text/jsonb
     // reject at the write boundary (#4392).
-    let out = sanitizeForJsonb(text);
-    const r = redactFindings(out);
-    redactionCount += r.redactions.length;
-    out = r.text;
+    // highEntropy: transcripts opt into the assignment heuristic (see doc
+    // comment above) — the shared scanner keeps it off by default.
+    planRedaction(sanitizeForJsonb(text), { highEntropy: true, echoValues });
+
+  const apply = (p: RedactionPlan): string => {
+    redactionCount += p.redactions.length;
+    let out = applyRedaction(p);
     for (const { regex } of patterns) {
       out = out.replace(regex, () => {
         redactionCount++;
@@ -139,7 +167,8 @@ export function redactSession(
     return out;
   };
 
-  const messages = session.messages.map((m) => {
+  // Phase 1: plan every field.
+  const planned = session.messages.map((m) => {
     for (const re of IMPERATIVE_RES) {
       if (re.test(m.text)) {
         imperativesFlagged++;
@@ -149,25 +178,34 @@ export function redactSession(
     // Speaker labels are persisted into the anchor line, so they get the
     // same redaction as bodies (a secret or private name in a display name
     // must not bypass the scan).
-    return {
-      ...m,
-      text: clean(m.text),
-      ...(m.speaker ? { speaker: clean(m.speaker) } : {}),
-    };
+    return { m, text: plan(m.text), speaker: m.speaker ? plan(m.speaker) : undefined };
   });
-
-  const meta = { ...session.meta };
-  if (meta.title) meta.title = clean(meta.title);
-  if (meta.raw) {
-    // Flatness is ENFORCED, not assumed: strings are cleaned; primitive
-    // scalars pass; anything nested (arrays/objects an adapter let through
-    // from hostile export data) is DROPPED — it would reach putRawData
-    // unscanned otherwise.
-    const raw: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(meta.raw)) {
-      if (typeof v === 'string') raw[k] = clean(v);
-      else if (v === null || typeof v === 'number' || typeof v === 'boolean') raw[k] = v;
+  const titlePlan = session.meta.title ? plan(session.meta.title) : undefined;
+  // Flatness is ENFORCED, not assumed: strings are planned; primitive
+  // scalars pass; anything nested (arrays/objects an adapter let through
+  // from hostile export data) is DROPPED — it would reach putRawData
+  // unscanned otherwise.
+  const rawEntries: Array<{ key: string; plan: RedactionPlan | null; scalar: unknown }> = [];
+  if (session.meta.raw) {
+    for (const [key, v] of Object.entries(session.meta.raw)) {
+      if (typeof v === 'string') rawEntries.push({ key, plan: plan(v), scalar: undefined });
+      else if (v === null || typeof v === 'number' || typeof v === 'boolean') {
+        rawEntries.push({ key, plan: null, scalar: v });
+      }
     }
+  }
+
+  // Phase 2: apply with the complete dictionary.
+  const messages = planned.map(({ m, text, speaker }) => ({
+    ...m,
+    text: apply(text),
+    ...(speaker ? { speaker: apply(speaker) } : {}),
+  }));
+  const meta = { ...session.meta };
+  if (titlePlan) meta.title = apply(titlePlan);
+  if (meta.raw) {
+    const raw: Record<string, unknown> = {};
+    for (const e of rawEntries) raw[e.key] = e.plan ? apply(e.plan) : e.scalar;
     meta.raw = raw;
   }
 

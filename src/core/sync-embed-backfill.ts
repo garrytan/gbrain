@@ -5,6 +5,7 @@
  * single-source JSON envelope aligned without growing the sync command facade.
  */
 import type { BrainEngine } from './engine.ts';
+import { syncFailureJsonFields, type ManagedSyncFailure } from './persistence/sync-failures.ts';
 import { submitEmbedBackfill } from './embed-backfill-submit.ts';
 import { resolveWorkerBackedSyncEmbedMode } from './embedding.ts';
 import {
@@ -43,12 +44,14 @@ export async function resolveSyncAllEmbedPlan(
   autoDeferEmbeds: boolean;
   effectiveNoEmbed: boolean;
   shouldBackfill: boolean;
+  /** #4684: the gate's --json status object, for the `cost_gate` envelope field. */
+  costGate?: Record<string, unknown>;
 }> {
   const workerSurface = embedBackfillWorkerSurface(engine);
   const deferEligible =
     opts.v2Enabled && !opts.serialFlag && workerSurface.status === 'worker_backed';
   const fanOutEligible = deferEligible && sources.length > 1;
-  const buildPlan = (stop: boolean, autoDeferEmbeds: boolean) => ({
+  const buildPlan = (stop: boolean, autoDeferEmbeds: boolean, costGate?: Record<string, unknown>) => ({
     stop,
     workerSurface,
     deferEligible,
@@ -56,8 +59,8 @@ export async function resolveSyncAllEmbedPlan(
     autoDeferEmbeds,
     effectiveNoEmbed: deferEligible || opts.noEmbed || autoDeferEmbeds,
     shouldBackfill: deferEligible || autoDeferEmbeds || (opts.v2Enabled && opts.noEmbed),
+    costGate,
   });
-  let autoDeferEmbeds = false;
   if (!opts.noEmbed) {
     const gate = await runInlineCostGate(engine, {
       sources: sources.map((source) => ({ ...source, sourceId: source.id })),
@@ -74,9 +77,9 @@ export async function resolveSyncAllEmbedPlan(
     if (gate.action === 'stop') {
       return buildPlan(true, false);
     }
-    autoDeferEmbeds = gate.autoDeferEmbeds;
+    return buildPlan(false, gate.autoDeferEmbeds, gate.notice);
   }
-  return buildPlan(false, autoDeferEmbeds);
+  return buildPlan(false, false);
 }
 
 export async function resolveSingleSyncEmbedPlan(
@@ -87,6 +90,7 @@ export async function resolveSingleSyncEmbedPlan(
   stop: boolean;
   workerSurface: EmbedBackfillWorkerSurface;
   autoDeferEmbeds: boolean;
+  costGate?: Record<string, unknown>;
 }> {
   const workerSurface = embedBackfillWorkerSurface(engine);
   const gate = await runInlineCostGate(engine, {
@@ -103,7 +107,23 @@ export async function resolveSingleSyncEmbedPlan(
   });
   return gate.action === 'stop'
     ? { stop: true, workerSurface, autoDeferEmbeds: false }
-    : { stop: false, workerSurface, autoDeferEmbeds: gate.autoDeferEmbeds };
+    : { stop: false, workerSurface, autoDeferEmbeds: gate.autoDeferEmbeds, costGate: gate.notice };
+}
+
+/**
+ * Did this sync create anything an embed-backfill could embed? A run whose
+ * only effect is the un-syncable sweep (#4786 soft-deletes) or a plain
+ * deletion reports `synced` but wrote no chunks; minting a backfill for it
+ * starts the per-source cooldown / active-job block in
+ * `submitEmbedBackfill`, so a real import inside that window is skipped and
+ * its NULL-embedded chunks strand until the next tick. Every automatic
+ * submit site (sync --all, single-source autodefer, the jobs sync handler)
+ * gates on this, not on status alone.
+ */
+export function syncProducedEmbeddableContent(
+  result: { chunksCreated: number; added: number; modified: number; renamed: number },
+): boolean {
+  return result.chunksCreated > 0 || result.added + result.modified + result.renamed > 0;
 }
 
 export type SyncEmbedBackfillOutcome =
@@ -185,19 +205,30 @@ export function buildSingleSyncJsonEnvelope(
     deleted: number;
     chunksCreated: number;
     embedded: number;
+    failedFiles?: number;
+    failureCodes?: Array<{ code: string; count: number }>;
+    failures?: ManagedSyncFailure[];
+    runId?: string;
+    fromCommit?: string | null;
+    toCommit?: string;
+    bankedFiles?: number;
   },
   embedBackfill?: SyncEmbedBackfillOutcome,
+  costGate?: Record<string, unknown>,
 ): Record<string, unknown> {
   return {
     schema_version: 1,
     source_id: sourceId,
     sync_status: result.status,
+    ...syncFailureJsonFields(result),
     ...(result.reason ? { reason: result.reason } : {}),
     added: result.added,
     modified: result.modified,
     deleted: result.deleted,
     chunks_created: result.chunksCreated,
     embedded: result.embedded,
+    // #4684: the cost-gate status object rides inside the ONE envelope.
+    ...(costGate ? { cost_gate: costGate } : {}),
     ...(embedBackfill ? { embed_backfill: embedBackfill } : {}),
   };
 }

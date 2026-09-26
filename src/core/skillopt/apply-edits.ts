@@ -23,6 +23,7 @@
  * pure: input is text, output is text + outcome.
  */
 
+import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';
 import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
@@ -309,7 +310,9 @@ export function getWorkingTreeStatusForFile(filePath: string): 'clean' | 'dirty'
  * but provided here for ad-hoc callers (orchestrator uses version-store).
  */
 export function atomicWrite(filePath: string, content: string): void {
+  assertLegacySkillFilesystemWrite(filePath);
   const tmp = filePath + '.tmp';
+  assertLegacySkillFilesystemWrite(tmp);
   const fd = fs.openSync(tmp, 'w');
   try {
     fs.writeFileSync(fd, content, { encoding: 'utf8' });
@@ -317,5 +320,6 @@ export function atomicWrite(filePath: string, content: string): void {
   } finally {
     fs.closeSync(fd);
   }
+  assertLegacySkillFilesystemWrite(filePath);
   fs.renameSync(tmp, filePath);
 }

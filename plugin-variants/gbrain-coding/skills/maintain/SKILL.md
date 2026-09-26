@@ -53,6 +53,20 @@ This skill guarantees:
 
 ## Phases
 
+### Ownership failures are an inspection boundary
+
+Routine maintenance, startup checks, `doctor --fix`, and a request to "fix what's
+broken" do not authorize writer topology changes. On `owner_unavailable` or a
+writer coordination refusal, inspect `gbrain sources writer status --brain <id>
+--json` on the selected host first and report the owner, epoch, enabled state and
+blocked recovery to the operator. Do not claim a checkout, activate managed mode,
+transfer an owner, replace identities, or remove ownership markers as a repair.
+Deliberate administration requires a separately approved topology change and the
+action-specific intent plus reviewed state precondition described in
+`docs/architecture/topologies.md`. Neither a TTY nor `--yes` nor
+`--confirm-quiesced` substitutes for that decision. Remote credentials remain
+ineligible for local writer administration.
+
 ### Autonomous path (v0.36.4.0) — when you want to reach a target score
 
 If the user asks "get my brain to 90/100" or "fix what's broken", prefer the
@@ -180,7 +194,11 @@ counted as warnings, not edits. Telemetry lands in
 Reads recent reflections within `dream.patterns.lookback_days` (default 30),
 runs a single Sonnet pass to surface recurring themes, and writes pattern
 pages to `wiki/personal/patterns/<theme>` when ≥`dream.patterns.min_evidence`
-(default 3) reflections support a pattern.
+(default 3) reflections support a pattern. A completed run records the newest
+reflection it consumed (`dream.patterns.last_evidence_ts`); until a reflection
+in the window is newer than that, re-runs skip with `no_new_evidence` instead
+of paying for another model pass — `gbrain dream --phase patterns --once`
+forces one.
 
 **Quality bar (Iron Law for synthesis):**
 1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible

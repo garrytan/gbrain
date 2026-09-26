@@ -23,7 +23,7 @@ import type { TranscriptFormat } from './types.ts';
 import { harnessRoots, type HarnessRoot } from './detect.ts';
 import { isOpenclawCheckpointFile } from './openclaw.ts';
 import { isGrokChatHistoryFile } from './grok.ts';
-import { isClaudeCodeSubagentFile } from './claude-code.ts';
+import { isClaudeCodeSubagentFile, isClaudeCodeWorkflowArtifactFile } from './claude-code.ts';
 import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
 
 export interface DiscoveredFile {
@@ -98,6 +98,10 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
       // session id, so they can never import. Left in, each one is a
       // permanent gap-table phantom + a false DRIFT WARNING every ingest.
       if (format === 'claude-code' && isClaudeCodeSubagentFile(p)) continue;
+      // Workflow run bookkeeping (agent logs + a journal.jsonl that matches no
+      // adapter format). Discoverable, it errored every ingest and froze the
+      // shared --since watermark via cleanScan.
+      if (format === 'claude-code' && isClaudeCodeWorkflowArtifactFile(p)) continue;
       // #4472: skip gbrain's own claude-cli subprocess sessions (see
       // DiscoverOpts.includeSelf) — the scratch-cwd fingerprint survives
       // Claude Code's project-dir slugification.

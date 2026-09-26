@@ -6,22 +6,22 @@ import { PgliteBusyError } from '../pglite-lock.ts';
 export async function runAgentSetupCli(args: string[]): Promise<number> {
   const json = args.includes('--json');
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('setup-in-agent.sh --root ABS --harness grok-bot|muse [--adopt] [--upgrade] [--json]\nRepeat setup to repair the recorded runtime; existing memory is never reset.');
+    console.log('setup-in-agent.sh --root ABS --harness grok-bot|muse [--adopt] [--upgrade] [--skills follow|memory-only] [--json]\nFresh installs follow the shared catalog with manual native loading; existing/adopted roots need explicit approval. Existing memory is never reset.');
     return 0;
   }
   try {
     const values: Record<string, string> = {};
     const flags = new Set(['--adopt', '--upgrade', '--json']);
-    const fields = new Set(['--root', '--harness', '--bundle', '--source-ref']);
+    const fields = new Set(['--root', '--harness', '--bundle', '--source-ref', '--skills']);
     for (let i = 0; i < args.length; i++) {
       if (flags.has(args[i])) continue;
       if (!fields.has(args[i]) || !args[i + 1] || args[i + 1].startsWith('--')) throw new AgentInstallError('usage', `Unknown or missing setup argument: ${args[i]}`);
       values[args[i]] = args[++i];
     }
     if (!values['--root'] || !values['--harness'] || !values['--bundle'] || !values['--source-ref']) throw new AgentInstallError('usage', 'Use the package-shipped setup-in-agent.sh helper with an absolute --root and --harness.');
-    const result = await setupInAgent({ root: values['--root'], harness: values['--harness'] as AgentSetupOptions['harness'], bundle: values['--bundle'], sourceRef: values['--source-ref'], adopt: args.includes('--adopt'), upgrade: args.includes('--upgrade') });
+    const result = await setupInAgent({ root: values['--root'], harness: values['--harness'] as AgentSetupOptions['harness'], bundle: values['--bundle'], sourceRef: values['--source-ref'], adopt: args.includes('--adopt'), upgrade: args.includes('--upgrade'), skills: values['--skills'] as AgentSetupOptions['skills'] });
     if (json) console.log(JSON.stringify({ ok: true, ...result }));
-    else console.log(`${result.status}: ${result.launcher}\nInstructions: ${result.instructions}\nMaintenance: ${result.maintenance}\nNative harness integration is unverified; enable the skill and test a new conversation.${result.search_mode_confirmation_required ? '\nRelay the init search-mode matrix and confirm the user’s choice before optional provider setup.' : ''}`);
+    else console.log(`${result.status}: ${result.launcher}\nInstructions: ${result.instructions}\nMaintenance: ${result.maintenance}\nShared skills: ${result.shared_skills.status} (${result.shared_skills.reason}). ${result.shared_skills.next_action}\nNative harness integration is unverified; enable the skill and test a new conversation.${result.search_mode_confirmation_required ? '\nRelay the init search-mode matrix and confirm the user’s choice before optional provider setup.' : ''}`);
     return 0;
   } catch (error) {
     const setupBusy = error instanceof BootstrapError && error.code === 'BOOTSTRAP_IN_PROGRESS';

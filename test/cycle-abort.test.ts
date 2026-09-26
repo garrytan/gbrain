@@ -233,7 +233,10 @@ describe('#4077 — synthesize/patterns cooperative-abort threading', () => {
     expect(src).toMatch(/runSubagentsInline\([\s\S]{0,240}?opts\.signal/);
     expect(src).toMatch(/waitForCompletionRenewing\(queue, jobId, \{[\s\S]*?signal: opts\.signal,/);
     // Write boundaries downstream of the drain are signal-guarded.
-    expect(src).toContain('stampDreamProvenance(engine, writtenRefs, summaryDate, opts.signal)');
+    const postprocess = src.indexOf('await postprocessManagedSynthesis(');
+    expect(postprocess).toBeGreaterThan(-1);
+    expect(src.slice(postprocess, src.indexOf(');', postprocess))).toContain('signal: opts.signal');
+    expect(src).toContain('if (!maintenance) await stampDreamProvenance(engine, writtenRefs, summaryDate, opts.signal)');
     expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal)');
   });
 

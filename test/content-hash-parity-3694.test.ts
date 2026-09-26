@@ -157,7 +157,7 @@ describe('#3694 putPage → import converges (PGLite e2e)', () => {
     if (engine) await engine.disconnect();
   }, 60_000);
 
-  test('a page written via putPage is SKIPPED on re-import of the same file', async () => {
+  test('an import converges differing canonical metadata, then skips the identical file', async () => {
     const parsed = parseMarkdown(FILE_CONTENT, 'topics/golden-page.md');
     // putPage the same logical page (frontmatter spelling: tags inline, the
     // typical ops-caller shape) with NO explicit content_hash so the engine
@@ -173,7 +173,11 @@ describe('#3694 putPage → import converges (PGLite e2e)', () => {
     const result = await importFromContent(engine, 'topics/golden-page', FILE_CONTENT, {
       noEmbed: true,
     });
-    expect(result.status).toBe('skipped');
+    expect(result.status).toBe('imported');
+    const converged = (await engine.readPageSnapshot('topics/golden-page', { sourceId: 'default' }))!;
+    expect(new Date(String(converged.page.frontmatter.captured_at)).toISOString()).toBe('2026-08-21T00:00:00.000Z');
+    expect((await importFromContent(engine, 'topics/golden-page', FILE_CONTENT, { noEmbed: true })).status).toBe('skipped');
+    expect((await engine.readPageSnapshot('topics/golden-page', { sourceId: 'default' }))!.revision).toBe(converged.revision);
   }, 60_000);
 
   test('a legacy-hashed row is reconciled in place and then fast-skips', async () => {
@@ -206,18 +210,15 @@ describe('#3694 putPage → import converges (PGLite e2e)', () => {
     });
     expect(legacy).not.toBe(canonical);
 
-    // Simulate a pre-fix row: explicit legacy content_hash.
-    await engine.putPage(slug, {
-      type: parsed.type as never,
-      title: parsed.title,
-      compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline,
-      frontmatter: parsed.frontmatter,
-      content_hash: legacy,
-    });
+    // Start with verified canonical content, then simulate only the old hash.
+    // An unverified body-only row must rebuild projections on first import.
+    await importFromContent(engine, slug, content, { noEmbed: true });
+    const before = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+    await engine.executeRaw('UPDATE pages SET content_hash=$2 WHERE source_id=$1 AND slug=$3', ['default', legacy, slug]);
 
     const first = await importFromContent(engine, slug, content, { noEmbed: true });
     expect(first.status).toBe('skipped');
+    expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision).toBe(before.revision);
 
     // The reconcile stamped the canonical hash without a re-import.
     const rows = await engine.executeRaw<{ content_hash: string }>(

@@ -109,6 +109,8 @@ describe('operator-env-preload (#4023)', () => {
     const probed = [
       'GBRAIN_MODEL_DISCOVERY',
       'GBRAIN_PGLITE_SNAPSHOT',
+      'GBRAIN_TEST_DEFAULT_SNAPSHOT',
+      'GBRAIN_NO_SNAPSHOT',
       'GBRAIN_PGBOUNCER_URL',
       'GBRAIN_PGBOUNCER_DIRECT_URL',
       'GBRAIN_CI_REQUIRE_PGBOUNCER',
@@ -123,6 +125,8 @@ describe('operator-env-preload (#4023)', () => {
       // preload's own default of 'off' when the var is absent.
       GBRAIN_MODEL_DISCOVERY: '1',
       GBRAIN_PGLITE_SNAPSHOT: 'probe-snapshot.tar',
+      GBRAIN_TEST_DEFAULT_SNAPSHOT: '/probe/default-snapshot.tar',
+      GBRAIN_NO_SNAPSHOT: '0',
       GBRAIN_PGBOUNCER_URL: 'postgresql://pooler.example/gbrain_test',
       GBRAIN_PGBOUNCER_DIRECT_URL: 'postgresql://direct.example/gbrain_test',
       GBRAIN_CI_REQUIRE_PGBOUNCER: '1',
@@ -135,6 +139,16 @@ describe('operator-env-preload (#4023)', () => {
     const r = runProbe(ambient, probed);
     expect(r.exitCode).toBe(0);
     for (const name of probed) expect({ [name]: r.report[name] }).toEqual({ [name]: ambient[name] });
+  }, 30_000);
+
+  test('cold snapshot opt-out survives preload and clears both inherited snapshot paths', () => {
+    const r = runProbe({
+      GBRAIN_NO_SNAPSHOT: '1',
+      GBRAIN_PGLITE_SNAPSHOT: '/probe/legacy.tar',
+      GBRAIN_TEST_DEFAULT_SNAPSHOT: '/probe/default.tar',
+    }, ['GBRAIN_NO_SNAPSHOT', 'GBRAIN_PGLITE_SNAPSHOT', 'GBRAIN_TEST_DEFAULT_SNAPSHOT']);
+    expect(r.exitCode).toBe(0);
+    expect(r.report).toEqual({ GBRAIN_NO_SNAPSHOT: '1', GBRAIN_PGLITE_SNAPSHOT: null, GBRAIN_TEST_DEFAULT_SNAPSHOT: null });
   }, 30_000);
 
   test('keeps GBRAIN_DATABASE_URL in the opted-in e2e lane', () => {

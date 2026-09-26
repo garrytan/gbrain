@@ -19,28 +19,28 @@ describe('v0.37 Lane A — defaults sweep', () => {
     // CDX2-1: these were file-private const; Lane A consumers (schema
     // helpers, registry) need them exported. Importing here is the test.
     const { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } = await import('../src/core/ai/gateway.ts');
-    expect(DEFAULT_EMBEDDING_MODEL).toBe('zeroentropyai:zembed-1');
-    expect(DEFAULT_EMBEDDING_DIMENSIONS).toBe(1280);
+    expect(DEFAULT_EMBEDDING_MODEL).toBe('voyage:voyage-4');
+    expect(DEFAULT_EMBEDDING_DIMENSIONS).toBe(1024);
   });
 
   test('A.0: ai/defaults.ts is the canonical source (leaf module, no SDK pulls)', async () => {
     const defaults = await import('../src/core/ai/defaults.ts');
-    expect(defaults.DEFAULT_EMBEDDING_MODEL).toBe('zeroentropyai:zembed-1');
-    expect(defaults.DEFAULT_EMBEDDING_DIMENSIONS).toBe(1280);
+    expect(defaults.DEFAULT_EMBEDDING_MODEL).toBe('voyage:voyage-4');
+    expect(defaults.DEFAULT_EMBEDDING_DIMENSIONS).toBe(1024);
   });
 
   // T-11 / T-12: registry + schema defaults track gateway constants.
-  test('A.1: getPGLiteSchema() default-args produce a vector(1280) column', async () => {
+  test('A.1: getPGLiteSchema() default-args produce a vector(1024) column', async () => {
     const { getPGLiteSchema } = await import('../src/core/pglite-schema.ts');
     const sql = getPGLiteSchema(); // no args — uses defaults
-    expect(sql).toContain('vector(1280)');
+    expect(sql).toContain('vector(1024)');
     expect(sql).not.toContain('vector(1536)');
   });
 
-  test('A.2: getPostgresSchema() default-args produce a vector(1280) column', async () => {
+  test('A.2: getPostgresSchema() default-args produce a vector(1024) column', async () => {
     const { getPostgresSchema } = await import('../src/core/postgres-engine.ts');
     const sql = getPostgresSchema();
-    expect(sql).toContain('vector(1280)');
+    expect(sql).toContain('vector(1024)');
     expect(sql).not.toContain('vector(1536)');
   });
 
@@ -48,14 +48,14 @@ describe('v0.37 Lane A — defaults sweep', () => {
     const { getPostgresSchema } = await import('../src/core/postgres-engine.ts');
     const sql = getPostgresSchema(2048, 'voyage:voyage-4-large');
     expect(sql).toContain('vector(2048)');
-    expect(sql).not.toContain('vector(1280)');
+    expect(sql).not.toMatch(/\n\s*embedding vector\(1024\)/);
     expect(sql).toContain('voyage:voyage-4-large');
   });
 
-  test('A.5: embedding-column registry builtin defaults to ZE/1280 on empty config + gateway', async () => {
+  test('A.5: embedding-column registry builtin defaults to Voyage/1024 on empty config + gateway', async () => {
     // The registry's resolution chain is cfg > gateway > DEFAULT. With
     // no cfg AND no gateway, it should fall through to the canonical
-    // default (ZE/1280). Hard-unconfigure first to exercise that path —
+    // default (Voyage/1024). Hard-unconfigure first to exercise that path —
     // resetGateway() would restore the preload's 1536 baseline (#3554).
     const { __unconfigureGatewayForTests, resetGateway } = await import('../src/core/ai/gateway.ts');
     const { getEmbeddingColumnRegistry } = await import('../src/core/search/embedding-column.ts');
@@ -63,8 +63,8 @@ describe('v0.37 Lane A — defaults sweep', () => {
     try {
       const reg = getEmbeddingColumnRegistry({ engine: 'pglite' } as any);
       expect(reg['embedding']).toBeDefined();
-      expect(reg['embedding'].provider).toBe('zeroentropyai:zembed-1');
-      expect(reg['embedding'].dimensions).toBe(1280);
+      expect(reg['embedding'].provider).toBe('voyage:voyage-4');
+      expect(reg['embedding'].dimensions).toBe(1024);
     } finally {
       // Restore the preload's legacy baseline so the rest of the file's
       // tests (and subsequent files in this shard) see a configured gateway.
@@ -99,7 +99,7 @@ describe('v0.37 Lane A — defaults sweep', () => {
     expect(isCacheSafe(resolved1536 as any, { engine: 'pglite' } as any)).toBe(true);
 
     // Wrong dim → unsafe.
-    const wrongDim = { ...resolved1536, dimensions: 1280 };
+    const wrongDim = { ...resolved1536, dimensions: 1024 };
     expect(isCacheSafe(wrongDim as any, { engine: 'pglite' } as any)).toBe(false);
 
     // Wrong model → unsafe.
@@ -195,16 +195,16 @@ describe('v0.37 Lane B — init paths', () => {
   });
 });
 
-// Lane C.3 — ZE key plumbing
-describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
-  test('CDX2-5+6: buildGatewayConfig maps zeroentropy_api_key into env dict', async () => {
+// Lane C.3 — Voyage key plumbing
+describe('v0.37 Lane C.3 — Voyage key reaches buildGatewayConfig', () => {
+  test('CDX2-5+6: buildGatewayConfig maps voyage_api_key into env dict', async () => {
     // process.env wins over config (intentional — operator escape hatch).
     // Unset the env key so the test exercises the config-only path.
-    const savedZe = process.env.ZEROENTROPY_API_KEY;
+    const savedVoyage = process.env.VOYAGE_API_KEY;
     const savedOai = process.env.OPENAI_API_KEY;
     const savedAnth = process.env.ANTHROPIC_API_KEY;
     const savedOr = process.env.OPENROUTER_API_KEY;
-    delete process.env.ZEROENTROPY_API_KEY;
+    delete process.env.VOYAGE_API_KEY;
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
@@ -212,19 +212,19 @@ describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
       const { buildGatewayConfig } = await import('../src/cli.ts');
       const cfg = {
         engine: 'pglite' as const,
-        zeroentropy_api_key: 'test-ze-key',
+        voyage_api_key: 'test-voyage-key',
         openai_api_key: 'test-oai',
         anthropic_api_key: 'test-anth',
         openrouter_api_key: 'test-or',
       };
       const gwCfg = buildGatewayConfig(cfg as any);
-      expect(gwCfg.env?.ZEROENTROPY_API_KEY).toBe('test-ze-key');
+      expect(gwCfg.env?.VOYAGE_API_KEY).toBe('test-voyage-key');
       // Regression on the existing two keys.
       expect(gwCfg.env?.OPENAI_API_KEY).toBe('test-oai');
       expect(gwCfg.env?.ANTHROPIC_API_KEY).toBe('test-anth');
       expect(gwCfg.env?.OPENROUTER_API_KEY).toBe('test-or');
     } finally {
-      if (savedZe !== undefined) process.env.ZEROENTROPY_API_KEY = savedZe;
+      if (savedVoyage !== undefined) process.env.VOYAGE_API_KEY = savedVoyage;
       if (savedOai !== undefined) process.env.OPENAI_API_KEY = savedOai;
       if (savedAnth !== undefined) process.env.ANTHROPIC_API_KEY = savedAnth;
       if (savedOr !== undefined) process.env.OPENROUTER_API_KEY = savedOr;
@@ -232,20 +232,20 @@ describe('v0.37 Lane C.3 — ZE key reaches buildGatewayConfig', () => {
   });
 
   test('CDX2-5+6: process.env wins over config (operator escape hatch contract)', async () => {
-    const saved = process.env.ZEROENTROPY_API_KEY;
-    process.env.ZEROENTROPY_API_KEY = 'env-wins-key';
+    const saved = process.env.VOYAGE_API_KEY;
+    process.env.VOYAGE_API_KEY = 'env-wins-key';
     try {
       const { buildGatewayConfig } = await import('../src/cli.ts');
-      const cfg = { engine: 'pglite' as const, zeroentropy_api_key: 'file-key' };
+      const cfg = { engine: 'pglite' as const, voyage_api_key: 'file-key' };
       const gwCfg = buildGatewayConfig(cfg as any);
-      expect(gwCfg.env?.ZEROENTROPY_API_KEY).toBe('env-wins-key');
+      expect(gwCfg.env?.VOYAGE_API_KEY).toBe('env-wins-key');
     } finally {
-      if (saved === undefined) delete process.env.ZEROENTROPY_API_KEY;
-      else process.env.ZEROENTROPY_API_KEY = saved;
+      if (saved === undefined) delete process.env.VOYAGE_API_KEY;
+      else process.env.VOYAGE_API_KEY = saved;
     }
   });
 
-  test('GBrainConfig type includes zeroentropy_api_key field (TS compile guard)', async () => {
+  test('GBrainConfig type includes voyage_api_key field (TS compile guard)', async () => {
     const { type } = await import('../src/core/config.ts').then(m => ({ type: undefined }));
     // The type-level assertion happens at compile time. If this file
     // compiles, the field exists. Body of the test is a runtime no-op.
@@ -306,14 +306,14 @@ describe('v0.37 deferred TODO shipped — gbrain reinit-pglite', () => {
     const { embeddingMismatchMessage } = await import('../src/core/embedding-dim-check.ts');
     const msg = embeddingMismatchMessage({
       currentDims: 1536,
-      requestedDims: 1280,
-      requestedModel: 'zeroentropyai:zembed-1',
+      requestedDims: 1024,
+      requestedModel: 'voyage:voyage-4',
       source: 'doctor',
       engineKind: 'pglite',
       databasePath: '/tmp/test.pglite',
     });
     // The one-command path appears before the by-hand recipe.
-    expect(msg).toContain('gbrain reinit-pglite --embedding-model zeroentropyai:zembed-1 --embedding-dimensions 1280');
+    expect(msg).toContain('gbrain reinit-pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024');
     // The by-hand path is still present as fallback.
     expect(msg).toContain('mv /tmp/test.pglite /tmp/test.pglite.bak');
     // The recommended-section header precedes the by-hand section.

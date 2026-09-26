@@ -1,3 +1,6 @@
+import { maintenancePreflight, verifyMaintenanceOutputs } from '../persistence/prepared-maintenance.ts';
+import { digest } from '../persistence/digest.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 /**
  * Patterns phase (v0.23) — cross-session theme detection.
  *
@@ -54,8 +57,10 @@ export interface PatternsPhaseOpts {
   yieldDuringPhase?: () => Promise<void>;
   /**
    * issue #2860 — `gbrain dream --phase patterns --once`. Bypasses the
-   * `dream.patterns.enabled` gate for THIS call only; never reads or
-   * writes config.
+   * `dream.patterns.enabled` gate AND the #4879 no-new-evidence gate for
+   * THIS call only; never reads or writes the `.enabled` key. A completed
+   * forced run still stamps `dream.patterns.last_evidence_ts` so the next
+   * autopilot tick doesn't re-pay for evidence the operator just consumed.
    */
   once?: boolean;
   /**
@@ -145,13 +150,36 @@ export async function runPhasePatterns(
       );
     }
 
+    const [source] = await managedPersistenceEnabled(engine)
+      ? await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [opts.sourceId ?? 'default']) : [];
+    const evidenceKey = source ? `${LAST_EVIDENCE_KEY}.${opts.sourceId ?? 'default'}.${source.incarnation}` : LAST_EVIDENCE_KEY;
+
     // Gather reflections within lookback window.
-    const reflections = await gatherReflections(engine, config.lookbackDays, config.sourceSlugPrefix);
+    const reflections = await gatherReflections(engine, config.lookbackDays, config.sourceSlugPrefix, opts.sourceId ?? 'default');
     if (reflections.length < config.minEvidence) {
       return skipped(
         'insufficient_evidence',
         `${reflections.length} reflections in last ${config.lookbackDays}d (need ≥${config.minEvidence})`,
       );
+    }
+
+    // #4879: evidence watermark. Autopilot re-dispatches this phase every
+    // global tick (~60 min); without a consumed-marker it re-paid a Sonnet
+    // run on the same unchanged reflections and minted near-duplicate pattern
+    // pages. Skip when no reflection is newer than the evidence the last
+    // COMPLETED run consumed (rows are ORDER BY updated_at DESC, so [0] is
+    // the high-water mark). Absent/unparseable stamp fails open, same as
+    // synthesize's checkCooldown; `--once` forces past it.
+    const newestEvidenceMs = reflections[0].updatedAt.getTime();
+    if (!opts.once) {
+      const stampMs = Date.parse((await engine.getConfig(evidenceKey)) ?? '');
+      if (Number.isFinite(stampMs) && newestEvidenceMs <= stampMs) {
+        return skipped(
+          'no_new_evidence',
+          `${reflections.length} reflections in window, none newer than last completed run ` +
+          `(${new Date(stampMs).toISOString()}); pass --once to force`,
+        );
+      }
     }
 
     if (opts.dryRun) {
@@ -173,6 +201,7 @@ export async function runPhasePatterns(
     // unknown provider/model or Anthropic-without-key skips cheaply; other
     // providers' auth is checked lazily at dispatch and surfaces in the job
     // outcome. (Takeover of PR #2279's intent by @brettdavies.)
+    const maintenance = await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir);
     const probe = probeChatModel(normalizeModelId(config.model));
     if (!probe.ok) {
       return skipped('no_provider', `pattern detection skipped: ${probe.detail}`);
@@ -236,6 +265,8 @@ export async function runPhasePatterns(
       ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
     };
     const submitOpts: Partial<MinionJobInput> = {
+      ...(maintenance ? { idempotency_key: `dream:patterns:${digest({ source: maintenance.writer.sourceIncarnation,
+        authority: maintenance.writer, reflections, model: config.model, output: config.outputSlugPrefix })}` } : {}),
       max_stalled: 3,
       timeout_ms: budgets.timeoutMs,
       queue: childQueueName,
@@ -314,7 +345,8 @@ export async function runPhasePatterns(
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
+    const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, writtenRefs)
+      : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
     const details = {
       reflections_considered: reflections.length,
@@ -355,6 +387,13 @@ export async function runPhasePatterns(
         details,
       };
     }
+
+    // #4879: stamp the EVIDENCE watermark (not now()) only on a completed
+    // child — fail/warn/timeout above must retry next tick. A reflection
+    // edited between gather and here has updated_at > stamp, so the next run
+    // still fires. Zero writes stamps too: the model saw this evidence and
+    // named nothing; re-running it is exactly the spend bug.
+    await engine.setConfig(evidenceKey, new Date(newestEvidenceMs).toISOString());
 
     return ok(`${writtenRefs.length} pattern page(s) written/updated (${outcome})`, details);
   } catch (e) {
@@ -468,32 +507,45 @@ async function loadPatternsConfig(engine: BrainEngine): Promise<PatternsConfig> 
 
 // ── Reflection gathering ─────────────────────────────────────────────
 
+/** #4879: config-plane STATE row (not a user knob) — ISO of the newest
+ *  reflection `updated_at` the last completed run consumed. Same class as
+ *  `dream.synthesize.last_completion_ts`; `dream.` is already a known prefix. */
+const LAST_EVIDENCE_KEY = 'dream.patterns.last_evidence_ts';
+
 interface ReflectionRef {
   slug: string;
   title: string;
   excerpt: string;
+  updatedAt: Date;
 }
 
 async function gatherReflections(
   engine: BrainEngine,
   lookbackDays: number,
   sourceSlugPrefix = 'wiki/personal/reflections',
+  sourceId = 'default',
 ): Promise<ReflectionRef[]> {
   const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
   // Reflections live under the configured source slug prefix (bound as a
   // parameter; see PatternsConfig.sourceSlugPrefix / dream.patterns.source_slug_prefix).
-  const rows = await engine.executeRaw<{ slug: string; title: string | null; compiled_truth: string | null }>(
-    `SELECT slug, title, compiled_truth
+  const rows = await engine.executeRaw<{
+    slug: string; title: string | null; compiled_truth: string | null; updated_at: string | Date;
+  }>(
+    `SELECT slug, title, compiled_truth, updated_at
        FROM pages
       WHERE slug LIKE $2
+        AND source_id = $3 AND deleted_at IS NULL AND COALESCE(frontmatter->>'visibility','') <> 'private'
         AND updated_at >= $1::timestamptz
       ORDER BY updated_at DESC
       LIMIT 100`,
-    [since, `${sourceSlugPrefix}/%`],
+    [since, `${sourceSlugPrefix}/%`, sourceId],
   );
   return rows.map(r => ({
     slug: r.slug,
     title: r.title ?? r.slug,
+    // Both engines hand timestamptz back as Date; wrap so a string-returning
+    // driver shape still parses (backfill-registry.ts precedent).
+    updatedAt: new Date(r.updated_at),
     // A raw UTF-16 slice can split an astral character at the boundary and
     // leave a lone surrogate. Postgres rejects that when the prompt is bound
     // into the minion job's JSONB payload. Use the shared safe truncator so a

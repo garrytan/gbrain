@@ -250,9 +250,10 @@ describe('context-engine assemble() — Retrieval Reflex integration', () => {
     });
   });
 
-  test('`prompt` is ignored when `messages` is non-empty (no double-count, back-compat)', async () => {
-    await withEnv(REFLEX_ON, async () => {
+  test('the separate current prompt wins over a historical user message without changing caller messages', async () => {
+    await withEnv({ ...REFLEX_ON, GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS: '1', GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER: 'false' }, async () => {
       await seed('people/alice-example', 'Alice Example', 'Alice is a founder.');
+      await seed('people/bob-example', 'Bob Example', 'Bob is a founder.');
       const seen: string[] = [];
       const ce = createGBrainContextEngine({
         workspaceDir: '/tmp/rr-test-ws-prompt-ignored',
@@ -261,15 +262,44 @@ describe('context-engine assemble() — Retrieval Reflex integration', () => {
           return resolveEntitiesToPointers(engine, 'default', candidates, opts);
         },
       });
-      // `messages` carries the real turn; `prompt` names a DIFFERENT entity that
-      // must never reach the resolver whenever `messages` is non-empty.
+      const messages = [{ role: 'user', content: 'what do you think about Alice Example?' }];
       const res = await ce.assemble({
         sessionId: 's-prompt-ignored',
-        messages: [{ role: 'user', content: 'what do you think about Alice Example?' }],
-        prompt: 'tell me about Bob Nonexistent',
+        messages,
+        prompt: 'tell me about Bob Example',
       });
-      expect(res.systemPromptAddition).toContain('people/alice-example');
-      expect(seen.join(' ')).not.toContain('Bob Nonexistent');
+      expect(res.systemPromptAddition).toContain('people/bob-example');
+      expect(seen.join(' ')).not.toContain('Alice Example');
+      expect(seen.join(' ')).toContain('Bob Example');
+      expect(res.messages).toBe(messages);
+      expect(messages).toHaveLength(1);
+    });
+  });
+
+  test('fenced repeated text remains historical while a legacy included current turn is not duplicated', async () => {
+    await withEnv({ ...REFLEX_ON, GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS: '1', GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER: 'false' }, async () => {
+      const prompt = 'tell me about Alice Example';
+      const messages = [{ role: 'user', content: prompt }];
+      const seen: Array<{ priorContextText?: string; candidates: string[] }> = [];
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-repeat',
+        resolveEntities: async (candidates, opts) => {
+          seen.push({ priorContextText: opts.priorContextText, candidates: candidates.map((candidate) => candidate.query) });
+          return null;
+        },
+      });
+      const fenced = await ce.assemble({ sessionId: '', messages, prompt, runtimeContext: { transcriptStorage: { kind: 'sqlite' } } });
+      expect(seen[0].priorContextText).toBe(prompt);
+      expect(seen[0].candidates.filter((candidate) => candidate === 'Alice Example')).toHaveLength(1);
+      expect(fenced.messages).toBe(messages);
+      const legacy = await ce.assemble({ sessionId: '', messages, prompt });
+      expect(seen[1].priorContextText).toBe('');
+      expect(seen[1].candidates.filter((candidate) => candidate === 'Alice Example')).toHaveLength(1);
+      expect(legacy.messages).toBe(messages);
+      const absent = await ce.assemble({ sessionId: '', messages });
+      expect(seen[2]).toEqual(seen[1]);
+      expect(absent.messages).toBe(messages);
+      expect(messages).toEqual([{ role: 'user', content: prompt }]);
     });
   });
 

@@ -221,9 +221,17 @@ export async function decodeChildOutcomeFileAsync(
   return parseChildOutcome(await readFile(path, 'utf8'), size, maxBytes);
 }
 
-/** argv for the child invocation (appended after the resolved CLI). */
-export function buildChildArgs(jobId: number): string[] {
-  return ['jobs', 'run-child', '--job-id', String(jobId)];
+/**
+ * argv for the child invocation (appended after the resolved CLI). The shell
+ * opt-in travels as a FLAG as well as env: the child is a fresh gbrain process
+ * that re-runs the startup cwd-.env quarantine (core/env-trust.ts) in the
+ * worker's cwd and would drop GBRAIN_ALLOW_SHELL_JOBS again whenever a .env
+ * there assigns it; `jobs run-child` re-asserts the env var from the flag.
+ */
+export function buildChildArgs(jobId: number, env: Record<string, string | undefined> = process.env): string[] {
+  const args = ['jobs', 'run-child', '--job-id', String(jobId)];
+  if (env.GBRAIN_ALLOW_SHELL_JOBS === '1') args.push('--allow-shell-jobs');
+  return args;
 }
 
 export interface ChildCliInvocation {

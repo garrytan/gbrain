@@ -13,6 +13,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { OperationContext } from '../ops/contract.ts';
 import type { ToolLoopStopReason } from '../ai/gateway.ts';
 
 // ─── Benchmarks + judges ──────────────────────────────────────────────────
@@ -123,6 +124,14 @@ export interface ScoredRollout {
 // ─── Run state + receipts ─────────────────────────────────────────────────
 
 export interface SkillOptOpts {
+  operationContext?: OperationContext;
+  sharedSkill?: {
+    source_id: string;
+    source_incarnation: string;
+    pack_id: string;
+    expected_revision: string;
+    request_id: string;
+  };
   /** Kebab-case skill name. Resolves to `skills/<name>/SKILL.md`. */
   skillName: string;
   /** Absolute path to the benchmark JSONL file. */

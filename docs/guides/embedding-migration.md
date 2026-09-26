@@ -1,14 +1,13 @@
 # Embedding migration — moving a brain to another embedding provider
 
-`gbrain migrate embeddings` re-embeds an entire brain onto a different
-embedding provider/model, safely and resumably. It is the forward path off a
-sunsetting provider (for example ZeroEntropy's hosted API, which shuts down
-2026-09-04 and remains the configless runtime fallback for existing brains
-that never picked a model — new installs default to `voyage:voyage-4`) — but
-it is provider-agnostic: any configured `provider:model` works as a target.
+`gbrain migrate embeddings` re-embeds an entire brain onto a supported
+embedding provider/model, safely and resumably. It requires an explicit target
+and approval; upgrading or changing a default does not convert stored vectors.
+Inspect the intended brain with `--status`, keep a verified full backup, and
+coordinate quiescing embedding writers before approving a live run.
 
-Also reachable as `gbrain retrieval-upgrade` — the alias that `gbrain doctor`
-repair hints and the README point at.
+`gbrain retrieval-upgrade` is an alias for the same provider-agnostic migration
+command. It uses the same flags, preview, consent and verification workflow.
 
 ## Quick start
 
@@ -16,21 +15,16 @@ repair hints and the README point at.
 # Preview the work + cost. Changes nothing.
 gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run
 
-# Run it (interactive confirm shows chunk count + $ estimate first).
+# After reviewing the plan, run with interactive confirmation.
 gbrain migrate embeddings --to voyage:voyage-4 --dim 1024
 
-# Non-interactive (cron / scripts): --yes is required, else exit 2.
+# Only after explicit approval: --yes is required non-interactively, else exit 2.
 gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --yes
 ```
 
 `--dim <N>` overrides the target width; it defaults to the provider recipe's
 declared width and is required for recipes that don't declare one (litellm,
 llama-server, and other bring-your-own-model providers).
-
-Targets on a provider with an announced shutdown are refused (a paid re-embed
-onto a dying API would strand the brain). Self-hosting a wire-compatible
-endpoint behind a `provider_base_urls` override? `--force-sunset-target` is
-the explicit escape hatch.
 
 ## Recommended targets
 
@@ -55,44 +49,17 @@ plane, which the provider pipeline reads), or by editing
 **Pick `--dim` = your brain's current column width when the target supports
 it.** A different width triggers the destructive schema transition (column +
 index rebuild across all three dim-pinned tables); the same width skips it
-entirely. `gbrain doctor` (check `provider_sunset`, for providers with an
-announced shutdown) prints target-aware paste-ready commands — the Voyage
-command at its valid 1024 width, plus an OpenAI keep-width alternative with
-your actual width filled in when that width is valid there — reading the real
-`vector(N)` column, not the config value, which can drift.
+entirely, but still requires re-embedding into the target model's space.
 
-## How affected brains find out (provider sunsets)
-
-Three surfaces flag a brain whose embedding model, reranker, or custom
-embedding columns are on a provider with an announced hosted-API shutdown,
-such as ZeroEntropy (2026-09-04):
-
-- **`gbrain doctor`** — the `provider_sunset` check warns on every run until
-  the brain is off the provider. After the shutdown date it escalates to
-  `fail` only when embedded vectors actually exist on the dead provider
-  (retrieval is genuinely down); a zero-vector brain whose config merely
-  resolves to the dead default stays `warn`, so doctor-as-CI-gate setups
-  don't start exiting 1 on the date. The reranker side resolves through the
-  same plane search actually reranks with (the mode bundle +
-  `search.reranker.*` overrides), and ZE-backed custom `embedding_columns`
-  entries are flagged too. The message carries target-aware paste-ready
-  migration commands (Voyage at 1024; OpenAI keep-width when your width is
-  valid there). Accepted the risk?
-  `gbrain config set doctor.suppress_provider_sunset true` silences it.
-- **`gbrain upgrade`** — a one-shot banner (gated by
-  `ze_sunset_notice_shown`) with the same two fixes, plus a stage-2 banner
-  per brain.
-- **The `v0_46_3` version migration** (runs via `gbrain upgrade` /
-  `gbrain apply-migrations`) — detect-and-notify only: it checks the host
-  brain's exposure (embedding, reranker, custom columns), prints the ACTION
-  REQUIRED block, and files an agent action item pointing at
-  `skills/migrations/v0.46.3.0.md` in
-  `~/.gbrain/migrations/pending-host-work.jsonl`. It never changes config or
-  spends money on your behalf.
-
-All of them state the full consequence: after the shutdown, **existing
-vectors become unqueryable** — query embedding uses the same endpoint as
-ingestion — not just new content.
+Keeping the width does not make different models' vectors compatible. A model
+change still invalidates old fact and take vectors and clears the semantic
+query cache before publishing the new identity. The underlying memory text
+remains. Invalidation and its checkpoint commit with the database identity,
+so a same-target retry does not erase companion vectors already regenerated
+for the new model. Use `--status` to inspect remaining fact embeddings.
+Inspect the real column widths with `--status`; a configured dimension can
+drift from the database. An unsupported provider is not a migration target,
+even if a custom base URL still serves its old model.
 
 ## What it does, in order
 
@@ -145,12 +112,13 @@ ingestion — not just new content.
 
 ## What the rebuild deletes
 
-The dimension change **deletes every stored embedding vector** in the brain —
+The dimension change **deletes the stored vectors in the dim-pinned text columns** —
 they are in the old model's space and unusable. They are not recoverable:
 going back to the previous provider means paying for a second full re-embed.
-`content_chunks` vectors are rebuilt by the re-embed pass, the query cache
-refills on the next query, and fact embeddings are rewritten on their next
-write (or a `gbrain extract` pass).
+`content_chunks` vectors are rebuilt by the re-embed pass. Semantic result
+caching remains disabled. Fact-vector repair is separate and explicitly
+consented; see [fact-vector repair](../embedding-migrations.md). Image and
+multimodal columns are not part of this text-space rebuild.
 
 ## Resume after a kill
 
@@ -208,8 +176,8 @@ vector spaces in one index, degrading retrieval with nothing in the logs.
 
 The migration handles the reranker in the same run (`--reranker auto` is the
 default): when the ACTIVE reranker — resolved through the mode bundles, so
-the common no-explicit-config case counts — is on the outgoing provider or a
-sunsetting one, and the target provider ships a reranker, the run probes it
+the common no-explicit-config case counts — is unsupported or is on the
+outgoing provider, and the target provider ships a reranker, the run probes it
 live and switches `search.reranker.model` under the same consent gate (config
 write + query-cache purge in one transaction). Overrides: `--reranker off`
 disables reranking, `--reranker keep` leaves it, `--reranker
@@ -235,23 +203,24 @@ run.
 ## Custom embedding columns
 
 There is **no automated off-ramp for custom `embedding_columns` entries**:
-`migrate embeddings` covers the primary column only. Re-declare each custom
-column's config on the new provider and re-embed its content, or drop the
-column config.
+`migrate embeddings` covers the primary column only. Changing a custom
+column's model label does not convert its vectors. Plan a separate replacement
+and re-embed, or remove it, only with the owner's explicit approval.
 
-## Self-hosting instead of migrating
+## Local targets and unsupported provider IDs
 
-If the outgoing model's weights are available (zembed-1's are Apache-2.0),
-self-hosting preserves your existing vectors — no re-embed at all — but only
-when the embedding signature doesn't change: keep the SAME model id
-(`zeroentropyai:zembed-1`) and point its base URL at your endpoint with
-`gbrain config set provider_base_urls.zeroentropyai <url>`. The endpoint
-must speak ZeroEntropy's wire dialect (`/models/embed`,
-`{results: [...]}` responses) — the model id routes through a ZE-specific
-compat fetch, so a generic OpenAI-compatible `llama-server` or Ollama
-endpoint will NOT work without a compat proxy in front. Switching the
-provider id instead (e.g. `llama-server:zembed-1`) changes
-`pages.embedding_signature`, and the next stale-embed pass re-embeds
-everything — a full re-embed, not a zero-cost move. This path lasts only
-until the `zeroentropyai` recipe is deleted (scheduled for a September 2026 release). The
-migration command is for when you'd rather move to a hosted provider.
+Fresh installs use `voyage:voyage-4` at 1024 dimensions. An existing brain
+without an explicit embedding model does not inherit that default: semantic
+embedding is unavailable, while keyword search, page reads and migration
+status remain usable. Schema initialization preserves a recorded model and
+column width; if the stored model is missing, it refuses rather than guessing.
+Re-running `init` cannot assign a different model to populated vectors, even
+when the widths match. Inspect `--status`, keep a verified backup and preview
+an explicit migration instead of editing labels to make the warning disappear.
+
+Local providers such as Ollama, llama-server and LM Studio can be explicit
+migration targets. Select the model actually served and its output width;
+changing a provider ID changes the embedding signature and is not proof that
+old vectors are compatible. Do not rewrite stored signatures to bypass the
+re-embed. Removed provider IDs and their former base-URL compatibility paths
+are no longer supported; use a supported recipe and an approved migration.

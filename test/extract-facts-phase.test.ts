@@ -533,6 +533,61 @@ describe('runExtractFacts — happy path', () => {
     expect(rows.rows[0].fact).toBe('A');
   });
 
+  // #4870 — visibility / notability are fence cells (parsed + validated as
+  // mandatory enums, transported by the wipe+reinsert), but the reconcile
+  // never read them back from the DB, so editing one on an existing row was
+  // a silent no-op: identical content key + row_num + struck-state -> the
+  // short-circuit `continue`. The DB must follow the fence; a third run
+  // after the re-heal must NOT churn.
+  test('visibility edit on an existing fence row re-heals the DB row (#4870)', async () => {
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | Alice likes tea | preference | 0.9 | world | medium |  |  | fence |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let rows = await (engine as any).db.query(
+      `SELECT visibility, notability FROM facts WHERE source_markdown_slug = 'people/alice'`,
+    );
+    expect(rows.rows).toEqual([{ visibility: 'world', notability: 'medium' }]);
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | Alice likes tea | preference | 0.9 | private | medium |  |  | fence |  |`,
+    ));
+    const second = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(second.factsInserted).toBe(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rows = await (engine as any).db.query(
+      `SELECT visibility, notability FROM facts WHERE source_markdown_slug = 'people/alice'`,
+    );
+    expect(rows.rows).toEqual([{ visibility: 'private', notability: 'medium' }]);
+
+    const third = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(third.factsInserted).toBe(0);
+    expect(third.factsDeleted).toBe(0);
+  });
+
+  test('notability edit on an existing fence row re-heals the DB row (#4870)', async () => {
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | Alice likes tea | preference | 0.9 | world | medium |  |  | fence |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/alice'] });
+
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | Alice likes tea | preference | 0.9 | world | high |  |  | fence |  |`,
+    ));
+    const second = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(second.factsInserted).toBe(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT visibility, notability FROM facts WHERE source_markdown_slug = 'people/alice'`,
+    );
+    expect(rows.rows).toEqual([{ visibility: 'world', notability: 'high' }]);
+
+    const third = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(third.factsInserted).toBe(0);
+    expect(third.factsDeleted).toBe(0);
+  });
+
   test('malformed fence rows make the page non-authoritative and preserve its indexed facts', async () => {
     await putPage('people/alice', FACT_FENCE(
       `| 1 | A | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |
@@ -1621,7 +1676,7 @@ describe('runExtractFacts — v0.46 (#3014) supersession transport + heal', () =
     // Make the insert throw. Pre-fix, the separate-commit delete had already
     // emptied the page by the time this threw; now no delete runs outside
     // insertFacts, so the rows survive.
-    const original = engine.insertFacts.bind(engine);
+    const original = engine.insertFacts;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (engine as any).insertFacts = async () => { throw new Error('simulated insert failure'); };
     try {

@@ -558,9 +558,9 @@ export interface SubagentHandlerData {
    */
   source_id?: string;
   /**
-   * #4217 — when true, a job whose put_page writes were ALL attempted-and-
-   * failed FAILS (UnrecoverableError → dead, idempotency key released)
-   * instead of reporting `completed` with zero pages. Set by the dream
+   * When true, a job must complete at least one put_page write or FAIL
+   * (UnrecoverableError → dead, idempotency key released) instead of
+   * reporting `completed` with zero pages. Set by the dream
    * synthesize + patterns fan-outs (jobs whose entire purpose is writing
    * pages). Left unset for open-ended `gbrain agent run` jobs, where one
    * rejected write plus a useful read-only answer is a legitimate

@@ -1,3 +1,4 @@
+import { installFixtureChunks } from '../../../helpers/page-projection.ts';
 /**
  * NamedThingBench seed corpus (T6) — the canonical in-memory brain that the
  * committed fixture (test/fixtures/retrieval-quality/namedthing.jsonl) is
@@ -117,7 +118,7 @@ export async function seedNamedThingCorpus(engine: BrainEngine, opts: SeedNamedT
     });
     cursor += page.chunks.length;
     chunks += ci.length;
-    await engine.upsertChunks(page.slug, ci, { sourceId });
+    await installFixtureChunks(engine, page.slug, ci, { sourceId });
     if (page.aliases && page.aliases.length) {
       await engine.setPageAliases(page.slug, sourceId, page.aliases.map(a => a.toLowerCase()));
     }

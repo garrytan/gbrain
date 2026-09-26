@@ -50,7 +50,8 @@ describe('verified chunk safety versions', () => {
     await engine.putPage(slug, { ...page, compiled_truth: 'All markers removed.', chunker_version: MARKDOWN_CHUNKER_VERSION });
     expect(await version(slug)).toBeLessThan(0);
     expect(await engine.getChunks(slug, { requireSafeChunks: true })).toEqual([]);
-    expect((await engine.getChunks(slug)).length).toBeGreaterThan(0);
+    expect(await engine.getChunks(slug)).toEqual([]);
+    expect((await engine.getChunks(slug, { includeUnsealed: true })).length).toBeGreaterThan(0);
   });
 
   test('embedding-only refresh preserves a seal; text, metadata, and chunk-set changes invalidate', async () => {

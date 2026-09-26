@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
@@ -20,6 +21,10 @@ import { buildBrainTools } from '../../src/core/minions/tools/brain-allowlist.ts
 import { guardDelegatedTools } from '../../src/core/minions/delegated-tools.ts';
 import { LINK_CANDIDATES_HEADER } from '../../src/core/cycle/link-manifest.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
+import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
+import { acquireWorktree, claimWorktree } from '../../src/core/persistence/ownership.ts';
+import { getWriteRequest } from '../../src/core/persistence/journal.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
 const MODEL = 'anthropic:claude-sonnet-4-6';
 const CALL = { operation: 'fixture', kind: 'chat' as const, model: MODEL, maxInputTokens: 1000, maxOutputTokens: 100 };
@@ -79,6 +84,67 @@ async function seedPage(slug: string, body: string, sourceId = 'default', privat
 }
 
 describe('remote-owned production tool visibility', () => {
+  it('durable writes and same-ID replay belong to the OAuth owner without a local writer registration', async () => {
+    const ctx = await ownedJob();
+    const write = productionTools(ctx).find(tool => tool.name === 'brain_put_page')!;
+    const params = { request_id: randomUUID(), slug: 'wiki/agents/identity', content: 'Owned durable content' };
+    const first = await write.execute(params, { engine, jobId: ctx.id, remote: true }) as any;
+    const row = (await getWriteRequest(engine, { kind: 'oauth_client', id: 'owner' }, params.request_id))!;
+    expect(first.state).toBe('committed');
+    expect(row.principal_kind).toBe('oauth_client');
+    expect(row.authority.principal).toEqual({ kind: 'oauth_client', id: 'owner' });
+    expect(row.authority.delegated).toBe(true);
+    expect(row.authority.scopes).toEqual(['agent']);
+    expect(row.authority.operations).toEqual(['get_page', 'put_page']);
+    expect(row.authority.delegatedPrefixes).toEqual(['wiki/agents/*']);
+    const replay = await write.execute(params, { engine, jobId: ctx.id, remote: true }) as any;
+    expect(replay.request_id).toBe(first.request_id);
+    expect(replay.revision).toBe(first.revision);
+    expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE request_id=$1::uuid', [params.request_id])).toHaveLength(1);
+    await engine.executeRaw("UPDATE oauth_clients SET deleted_at=now() WHERE client_id='owner'");
+    await expect(write.execute(params, { engine, jobId: ctx.id, remote: true })).rejects.toThrow('client_revoked');
+    expect((await getWriteRequest(engine, { kind: 'oauth_client', id: 'owner' }, params.request_id))!.state).toBe('committed');
+  });
+
+  for (const change of ['revoked', 'operation', 'prefix'] as const) it(`queued delegated publication rechecks OAuth ${change} after its canonical owner returns`, async () => {
+    const ctx = await ownedJob();
+    // A real stdio registration must never become the owner of a delegated write.
+    await registerLocalWriter(engine, 'stdio');
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-delegated-owner-'));
+    await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+    const binding = await claimWorktree(engine, 'default', root);
+    let held = await acquireWorktree(binding);
+    expect(held).not.toBeNull();
+    const params = { request_id: randomUUID(), slug: 'wiki/agents/queued-owner', content: 'Must retain OAuth authority while queued' };
+    const write = productionTools(ctx).find(tool => tool.name === 'brain_put_page')!;
+    try {
+      await expect(write.execute(params, { engine, jobId: ctx.id, remote: true })).rejects.toMatchObject({ code: 'write_pending' });
+      const principal = { kind: 'oauth_client' as const, id: 'owner' };
+      const queued = (await getWriteRequest(engine, principal, params.request_id))!;
+      expect(['queued', 'running']).toContain(queued.state);
+      expect(queued.authority.principal).toEqual(principal);
+      if (change === 'revoked') await engine.executeRaw("UPDATE oauth_clients SET deleted_at=now() WHERE client_id='owner'");
+      else if (change === 'operation') await engine.executeRaw("UPDATE oauth_clients SET bound_tools=ARRAY['get_page'] WHERE client_id='owner'");
+      else await engine.executeRaw("UPDATE oauth_clients SET delegated_slug_prefixes=ARRAY['wiki/agents/other/*'] WHERE client_id='owner'");
+      await held!.release(); held = null;
+      const deadline = Date.now() + 10_000;
+      let final = await getWriteRequest(engine, principal, params.request_id);
+      while (final && ['queued', 'running', 'recovering'].includes(final.state) && Date.now() < deadline) {
+        await Bun.sleep(25); final = await getWriteRequest(engine, principal, params.request_id);
+      }
+      expect(final?.state).toBe('failed');
+      expect(final?.error_code).toBe('permission_denied');
+      expect(await engine.getPage(params.slug)).toBeNull();
+      expect(existsSync(join(root, `${params.slug}.md`))).toBe(false);
+      await expect(write.execute(params, { engine, jobId: ctx.id, remote: true })).rejects.toThrow();
+      expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE request_id=$1::uuid', [params.request_id])).toHaveLength(1);
+    } finally {
+      await held?.release();
+      await disposePersistenceConsumer(engine);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('every source-selecting read enforces the current grant including explicit overrides', async () => {
     const ctx = await ownedJob(null, {}, ['get_page', 'search', 'query', 'list_pages', 'resolve_slugs']);
     await engine.executeRaw("INSERT INTO sources(id,name) VALUES ('other','Other fixture')");
@@ -104,15 +170,15 @@ describe('remote-owned production tool visibility', () => {
     const invoke = (name: string, input: unknown) => tools.find(t => t.name === `brain_${name}`)!.execute(input, { engine, jobId: ctx.id, remote: true });
     await expect(invoke('get_page', { slug: 'wiki/agents/hidden' })).rejects.toThrow('Page not found');
     for (const content of ['Replacement', '', '---\nvisibility: public\n---\nReplacement']) {
-      await expect(invoke('put_page', { slug: 'wiki/agents/hidden', content, allow_empty: true })).rejects.toThrow('outside your write visibility');
+      await expect(invoke('put_page', { slug: 'wiki/agents/hidden', content, allow_empty: true })).rejects.toThrow('Page not found');
     }
     await expect(invoke('put_page', { slug: 'wiki/agents/HIDDEN', content: 'Replacement' })).rejects.toThrow();
     await expect(invoke('add_timeline_entry', { slug: 'wiki/agents/hidden', date: '2026-08-01', summary: 'Unwanted entry' })).rejects.toThrow('outside your write visibility');
-    await expect(invoke('put_page', { slug: 'wiki/agents/alias', content: '---\nid: private-fixture-id\n---\nReplacement' })).rejects.toThrow('outside your write visibility');
+    await expect(invoke('put_page', { slug: 'wiki/agents/alias', content: '---\nid: private-fixture-id\n---\nReplacement' })).rejects.toMatchObject({ code: 'permission_denied' });
     expect((await engine.getPage('wiki/agents/hidden', { sourceId: 'default' }))?.compiled_truth).toContain('private-body-marker');
     expect(await engine.getTimeline('wiki/agents/hidden', { sourceId: 'default' })).toHaveLength(0);
     await engine.softDeletePage('wiki/agents/hidden', { sourceId: 'default' });
-    await expect(invoke('put_page', { slug: 'wiki/agents/hidden', content: 'Unwanted restore' })).rejects.toThrow('outside your write visibility');
+    await expect(invoke('put_page', { slug: 'wiki/agents/hidden', content: 'Unwanted restore' })).rejects.toThrow('Page not found');
     const written = await invoke('put_page', { slug: 'wiki/agents/visible', content: 'Visible delegated memory' });
     expect((written as { status: string }).status).toBe('created_or_updated');
     expect((await currentDelegationGrant(engine, 'owner')).scopes).toEqual(['agent']);
@@ -126,7 +192,8 @@ describe('remote-owned production tool visibility', () => {
       const value = await write.execute({ slug: `wiki/agents/ref-${target}`, content: `See [[wiki/agents/${target}]].` }, { engine, jobId: ctx.id, remote: true }) as any;
       expect(value.auto_links.skipped).toBe('remote');
       expect(value.auto_links.created).toBeUndefined();
-      expect(value.auto_timeline.skipped).toBe('remote');
+      expect(value.auto_timeline).toBeUndefined();
+      expect(await engine.getTimeline(`wiki/agents/ref-${target}`, { sourceId: 'default' })).toHaveLength(0);
     }
     expect(await engine.executeRaw('SELECT * FROM links')).toHaveLength(0);
     const local = buildBrainTools({ engine, config: { engine: 'pglite' } as GBrainConfig, subagentId: ctx.id,

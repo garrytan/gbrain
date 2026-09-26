@@ -20,6 +20,8 @@ let backlinksCalls: Array<{ action: string; dir: string; dryRun: boolean | undef
 let syncCalls: Array<{ dryRun: boolean | undefined; noPull: boolean | undefined; noExtract: boolean | undefined; sourceId: string | undefined }> = [];
 let extractCalls: Array<{ mode: string; dir: string; slugs: string[] | undefined }> = [];
 let embedCalls: Array<{ stale: boolean | undefined; dryRun: boolean | undefined }> = [];
+// #4599: per-test overrides spread onto the mock's EmbedResult (e.g. reason: 'stall_timeout').
+let embedResultOverride: Record<string, unknown> = {};
 let orphansCalls: number = 0;
 let orphansOpts: Array<{ sourceId?: string } | undefined> = [];
 let schemaSuggestOpts: Array<{ sourceId?: string; dryRun?: boolean } | undefined> = [];
@@ -93,6 +95,7 @@ mock.module('../../src/commands/embed.ts', () => ({
       total_chunks: 10,
       pages_processed: 3,
       dryRun: !!opts.dryRun,
+      ...embedResultOverride,
     };
   },
   runEmbed: async () => {},
@@ -158,6 +161,7 @@ beforeEach(() => {
   syncCalls = [];
   extractCalls = [];
   embedCalls = [];
+  embedResultOverride = {};
   orphansCalls = 0;
   orphansOpts = [];
   schemaSuggestOpts = [];
@@ -200,6 +204,15 @@ describe('runCycle — dryRun propagates to every phase', () => {
     const extractPhase = report.phases.find(p => p.phase === 'extract');
     expect(extractPhase?.status).toBe('skipped');
     expect(extractPhase?.details.reason).toBe('no_dry_run_support');
+  });
+
+  test('dryRun skips the calibration trio — no LLM calls, no take_proposals/grade/profile writes (#4823)', async () => {
+    const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain', dryRun: true });
+    for (const name of ['propose_takes', 'grade_takes', 'calibration_profile'] as const) {
+      const phase = report.phases.find(p => p.phase === name);
+      expect(phase?.status).toBe('skipped');
+      expect(phase?.details.reason).toBe('no_dry_run_support');
+    }
   });
 });
 
@@ -686,5 +699,30 @@ describe('runCycle — onceForPhase bypasses only the named phase (issue #2860)'
       onceForPhase: 'patterns',
     });
     expect(await sharedEngine.getConfig('dream.patterns.enabled')).toBe('false');
+  });
+});
+
+// ─── #4599: embed phase honours the stall watchdog's X6 contract ────
+// runEmbedCore never throws on a stall; it returns reason:'stall_timeout'
+// (embed-stall.ts). Every non-CLI consumer must convert that to a failure,
+// otherwise a nightly drain the watchdog aborted is reported as a healthy
+// embed phase and the dream/autopilot verdict never notices.
+
+describe('runCycle — embed phase fails on stall_timeout (#4599)', () => {
+  beforeEach(async () => {
+    await truncateCycleLocks(sharedEngine);
+  });
+
+  test("reason:'stall_timeout' from runEmbedCore yields a failed embed phase", async () => {
+    embedResultOverride = { reason: 'stall_timeout', failures: 1 };
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain' });
+    const embedPhase = report.phases.find(p => p.phase === 'embed');
+    expect(embedPhase?.status).toBe('fail');
+    expect(String(embedPhase?.error?.message)).toMatch(/stall_timeout/);
+  });
+
+  test('a normal result is still an ok embed phase', async () => {
+    const report = await runCycle(sharedEngine, { brainDir: '/tmp/brain' });
+    expect(report.phases.find(p => p.phase === 'embed')?.status).toBe('ok');
   });
 });

@@ -1,36 +1,5 @@
 import type { Recipe } from '../types.ts';
 
-/**
- * llama.cpp's `llama-server --reranking` exposes a cross-encoder reranker
- * over an OpenAI-style HTTP surface. Distinct from the sibling `llama-server`
- * recipe (which serves embeddings) because `--reranking` and `--embeddings`
- * are mutually exclusive at server-launch time — one process can't do both,
- * so two recipes with independent base URLs is the cleanest topology.
- *
- * Wire shape matches ZeroEntropy: request is `{model, query, documents,
- * top_n?}`, response is `{results: [{index, relevance_score}]}`. Path is
- * the only delta — llama-server serves `/rerank` under its `/v1` prefix.
- * Because the recipe's `base_url_default` already ends in `/v1` (matching
- * the convention every other openai-compat recipe uses), the touchpoint
- * `path` here is the LEAF only (`/rerank`); the gateway concatenates
- * `${base_url}${path}` to produce the actual `…/v1/rerank` URL.
- *
- * Like the embedding recipe, this ships with `models: []` because the model
- * identity is whatever the user launched llama-server with. Users MUST set
- * `search.reranker.model llama-server-reranker:<id>` where `<id>` matches
- * the `--alias` they passed at launch — without `--alias`, `/v1/models`
- * defaults the id to the gguf file path, which makes provider:model strings
- * ugly. The setup_hint guides them.
- *
- * Reference:
- *   https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
- *
- * Covers two user-facing cases:
- *   - Qwen3-Reranker (0.6B / 4B / 8B) GGUF via llama.cpp
- *   - ZeroEntropy zerank-2 / zerank-1-small self-hosted via llama.cpp
- *     (FEASIBLE — wire shapes match — but quality parity with ZE-hosted is
- *     NOT guaranteed; users self-hosting ZE should pin their own eval)
- */
 export const llamaServerReranker: Recipe = {
   id: 'llama-server-reranker',
   name: 'llama.cpp llama-server (reranker, local)',
@@ -58,8 +27,6 @@ export const llamaServerReranker: Recipe = {
       // costs electricity, not tokens.
       cost_per_1m_tokens_usd: 0,
       price_last_verified: '2026-05-23',
-      // Match ZE's per-request cap; llama.cpp has no upstream cap of its
-      // own but the pre-flight guard is a defensive ceiling.
       max_payload_bytes: 5_000_000,
       // Leaf-only path. `base_url_default` already provides the `/v1`
       // prefix; the gateway concatenates the two to call `…/v1/rerank`.

@@ -24,6 +24,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { readOps } from './helpers/ops-registry.ts';
@@ -111,6 +112,10 @@ const MATRIX: Row[] = [
   { name: 'find_trajectory', mode: 'skip', reason: 'typed-claim/event rows come from the extraction pipeline; eval-trajectory + facts suites own it (probe: hand-seeded claim rows do not surface)' },
   { name: 'ontology_conflicts', mode: 'skip', reason: 'conflict rows need the ontology merge pipeline cross-observation shape; D7 ontology-merge parity suite owns conflicts' },
   { name: 'get_skill', mode: 'skip', reason: 'skills catalog + brain-resident packs; skill-catalog confinement suites own it' },
+  { name: 'get_skill_asset', mode: 'skip', reason: 'Exact-revision approved asset isolation is exercised over real authenticated HTTP in test/shared-skills-transports.test.ts and test/e2e/shared-skills-transports.test.ts.' },
+  { name: 'join_brain', mode: 'skip', reason: 'Own-principal source/policy-bound enrollment requires an explicit member grant; test/shared-skills-membership.test.ts and real shared-skills transport suites prove isolation.' },
+  { name: 'sync_brain_skills', mode: 'skip', reason: 'Issued delivery batches and narrowed grants are tested against real PGLite/Postgres in test/shared-skills-membership.test.ts and the authenticated shared-skills transport suites.' },
+  { name: 'leave_brain', mode: 'skip', reason: 'Principal-bound leave/epoch races and foreign installation denial are tested in test/shared-skills-membership.test.ts.' },
   { name: 'list_brain_skillpack', mode: 'skip', reason: 'brain-resident skillpack surface; skillpack suites own it' },
   { name: 'advisor', mode: 'skip', reason: 'aggregate advisory over full stack; advisor suites own it' },
   { name: 'open_loops', mode: 'skip', reason: 'loop rows need the Gmail detector pipeline; test/ops-loops.test.ts owns its remote posture (no-scope denial, grant confinement, redacted evidence)' },
@@ -245,9 +250,6 @@ beforeAll(async () => {
     await engine.addTag(`notes/${name}-note`, `${name}-topic`, { sourceId: src });
     await engine.addTag(`people/${name}-person`, `${name}-topic`, { sourceId: src });
     await engine.addLink(`notes/${name}-note`, `people/${name}-person`, `${MARK} ctx`, 'mentions', 'markdown', undefined, undefined, { fromSourceId: src, toSourceId: src });
-    await engine.upsertChunks(`notes/${name}-note`, [{
-      chunk_index: 0, chunk_text: `${MARK} chunk text ${name}-secret-content`, chunk_source: 'compiled_truth', token_count: 5,
-    }], { sourceId: src });
     await engine.createVersion(`notes/${name}-note`, { sourceId: src });
     await engine.putRawData(`notes/${name}-note`, 'crm', { owner: MARK }, { sourceId: src });
     await engine.logIngest({
@@ -280,6 +282,15 @@ beforeAll(async () => {
         page_id: (page as any).id, row_num: 1, claim: `${MARK} take claim`,
         kind: 'view', holder: `${name}-holder`, weight: 0.8,
       }] as any);
+    }
+    // Publish the final synthetic page state after every fixture mutation so
+    // positive controls exercise eligible retrieval in both sources.
+    for (const slug of [`people/${name}-person`, `notes/${name}-note`, `misc/${name}-orphan`, `stubs/${name}-stub`]) {
+      const fixturePage = await engine.getPage(slug, { sourceId: src });
+      await installFixtureChunks(engine, slug, [{
+        chunk_index: 0, chunk_text: fixturePage!.compiled_truth,
+        chunk_source: 'compiled_truth', token_count: 5,
+      }], { sourceId: src });
     }
   }
   // Contradictions probe report (both-endpoints-beta finding).

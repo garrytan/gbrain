@@ -77,6 +77,17 @@ describe('test-shard.sh — exclusion contract', () => {
     }
   });
 
+  it('leaves the dedicated entity-card performance gate out of the unit matrix', () => {
+    const allFiles = [1, 2, 3, 4].flatMap(s => dryRunList(s, 4));
+    expect(allFiles).not.toContain('test/entity-card-perf.slow.test.ts');
+    const fs = require('fs');
+    const yaml = require('js-yaml');
+    const workflow = yaml.load(fs.readFileSync(resolve(REPO_ROOT, '.github/workflows/test.yml'), 'utf8'));
+    expect(workflow.jobs['slow-entity-resolve-perf'].steps.some((step: { run?: string }) =>
+      step.run?.includes('bun test test/entity-card-perf.slow.test.ts'))).toBe(true);
+    expect(workflow.jobs['test-status'].needs).toContain('slow-entity-resolve-perf');
+  });
+
   it('INCLUDES *.slow.test.ts files (CI matrix is where slow files run)', () => {
     const allFiles = [1, 2, 3, 4].flatMap(s => dryRunList(s, 4));
     const slowFiles = allFiles.filter(f => /\.slow\.test\.ts$/.test(f));

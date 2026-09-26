@@ -60,7 +60,6 @@ test/e2e/extract-atoms-discovery-sql.test.ts
 test/e2e/extraction-review-postgres.test.ts
 test/e2e/facts-context-injection-postgres.test.ts
 test/e2e/facts-cross-source-isolation.test.ts
-test/e2e/facts-fence-reconcile-postgres.test.ts
 test/e2e/facts-forget.test.ts
 test/e2e/facts-notability-roundtrip.test.ts
 test/e2e/facts-recall-event-time-postgres.test.ts
@@ -99,7 +98,6 @@ test/e2e/onboard-full-flow.test.ts
 test/e2e/openclaw-reference-compat.test.ts
 test/e2e/openrouter-anthropic-subagent-replay.live.test.ts
 test/e2e/orphan-reduction.test.ts
-test/e2e/pgbouncer-teardown.test.ts
 test/e2e/pglite-cli-exit.serial.test.ts
 test/e2e/phantom-redirect.test.ts
 test/e2e/postgres-engine-disconnect-idempotency.test.ts

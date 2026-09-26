@@ -6,22 +6,28 @@ import { spawnSync } from 'node:child_process';
 import { safeLoad } from 'js-yaml';
 
 const root = join(import.meta.dir, '..', '..');
-type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string }> };
+type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string; env?: Record<string, string> }> };
 type Workflow = { on: Record<string, { paths?: string[] }>; jobs: Record<string, Job> };
 const loadWorkflow = (name: string) => safeLoad(readFileSync(join(root, '.github/workflows', name), 'utf8')) as Workflow;
 const unit = loadWorkflow('test.yml');
 const e2e = loadWorkflow('e2e.yml');
 
-function aggregate(workflow: Workflow, name: string, event: string, results: Record<string, string>) {
-  const script = workflow.jobs[name].steps.find(step => step.name === 'Aggregate result')!.run!
+const fullProfile = "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)";
+function aggregate(workflow: Workflow, name: string, event: string, results: Record<string, string>, fullCorpus = false) {
+  const step = workflow.jobs[name].steps.find(step => step.name === 'Aggregate result')!;
+  const render = (value: string) => value
     .replace(/\$\{\{ needs\.([\w-]+)\.result \}\}/g, (_, job) => results[job] ?? 'success')
+    .replaceAll('${{ ' + fullProfile + ' }}', String(event === 'schedule' || (event === 'workflow_dispatch' && fullCorpus)))
     .replace(/\$\{\{ github.event_name \}\}/g, event);
+  const script = render(step.run!);
+  const env = Object.fromEntries(Object.entries(step.env ?? {}).map(([key, value]) => [key, render(value)]));
   expect(script).not.toContain('${{');
-  return spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8' }).status;
+  expect(Object.values(env).join('\n')).not.toContain('${{');
+  return spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8', env: { ...process.env, ...env } }).status;
 }
 
 describe('CI execution evidence', () => {
-  test('gitleaks and verify run independently for every change, with no pass-marker cache', () => {
+  test('default gitleaks and verify run independently for every change, with no pass-marker cache', () => {
     for (const [name, workflow] of [['test.yml', unit], ['e2e.yml', e2e]] as const) {
       const source = readFileSync(join(root, '.github/workflows', name), 'utf8');
       expect(source).not.toMatch(/(?:ci|e2e)-pass-|cache-check|cache-write/);
@@ -31,17 +37,18 @@ describe('CI execution evidence', () => {
     }
     for (const name of ['gitleaks', 'verify']) {
       expect(unit.jobs[name].needs).toBeUndefined();
-      expect(unit.jobs[name].if).toBeUndefined();
+      expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}");
     }
     expect(e2e.jobs.tier2.needs).toBe('jsonb-parity');
     expect(e2e.jobs.tier2.if).toBeUndefined();
   });
 
   test('unit aggregate rejects failed, cancelled or skipped required jobs', () => {
-    expect(unit.jobs['test-status'].if).toBe('always()');
+    expect(unit.jobs['test-status'].if).toBe("${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}");
     expect(unit.jobs['test-status'].needs).toEqual([
       'gitleaks', 'security-regressions', 'dependency-audit', 'verify', 'serial-tests', 'slow-eval-longmemeval',
-      'slow-entity-resolve-perf', 'slow-brainbench-e2e', 'brainbench', 'test',
+      'slow-entity-resolve-perf', 'slow-brainbench-e2e', 'brainbench', 'test', 'native-locks', 'persistence-validation',
+      'admin-browser', 'shared-skills-compatibility',
     ]);
     expect(aggregate(unit, 'test-status', 'pull_request', {})).toBe(0);
     for (const job of unit.jobs['test-status'].needs as string[]) {
@@ -55,7 +62,7 @@ describe('CI execution evidence', () => {
     expect(e2e.jobs['e2e-status'].if).toBe('always()');
     const needs = e2e.jobs['e2e-status'].needs as string[];
     const nightly = ['coverage-full-unit', 'coverage-full-serial', 'coverage-full-slow', 'coverage-full-e2e'];
-    expect(needs).toEqual(['jsonb-parity', 'tier1', 'tier2', 'selected-e2e', ...nightly]);
+    expect(needs).toEqual(['jsonb-parity', 'tier1', 'tier2', 'prepare-e2e', 'selected-e2e', ...nightly]);
     for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
       expect(aggregate(e2e, 'e2e-status', event, Object.fromEntries(nightly.map(job => [job, 'skipped'])))).toBe(0);
     }
@@ -63,8 +70,10 @@ describe('CI execution evidence', () => {
     for (const job of needs) {
       for (const result of ['failure', 'cancelled', 'skipped']) {
         expect(aggregate(e2e, 'e2e-status', 'schedule', { [job]: result }), `${job}: ${result}`).toBe(1);
+        expect(aggregate(e2e, 'e2e-status', 'workflow_dispatch', { [job]: result }, true), `manual full ${job}: ${result}`).toBe(1);
       }
     }
+    expect(aggregate(e2e, 'e2e-status', 'workflow_dispatch', {}, true)).toBe(0);
   });
 
   test('admin manifest changes trigger the security scan and CI installs are frozen', () => {

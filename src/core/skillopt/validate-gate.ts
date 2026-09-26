@@ -26,8 +26,10 @@ import { scoreTrajectory } from './score.ts';
 import type { BenchmarkTask, GateInput, GateResult, ScoredRollout } from './types.ts';
 import { VALIDATION_EPSILON, VALIDATION_RUNS_PER_TASK } from './types.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { OperationContext } from '../ops/contract.ts';
 
 export interface ValidateGateOpts extends Omit<GateInput, 'selSet'> {
+  operationContext?: OperationContext;
   selSet: BenchmarkTask[];
   engine: BrainEngine;
   targetModel: string;
@@ -61,6 +63,15 @@ export const SKILLOPT_RUNTIME_EXCEEDED = 'skillopt_runtime_exceeded';
 function isRuntimeExceeded(e: unknown): boolean {
   return e instanceof Error && e.message === SKILLOPT_RUNTIME_EXCEEDED;
 }
+/**
+ * #4741 — every task in a gate failed (dead target provider, e.g. a logged-out
+ * claude-cli child) / every rollout's judge errored (dead judge provider).
+ * Thrown instead of scoring the gate 0.000, so the orchestrator's catch-all
+ * ends the run `errored` with the first provider error as abort_detail.
+ */
+export const SKILLOPT_ALL_ROLLOUTS_FAILED = 'skillopt_all_rollouts_failed';
+export const SKILLOPT_ALL_JUDGE_ERRORS = 'skillopt_all_judge_errors';
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
  * Run the validation gate against a candidate skill. Returns GateResult
@@ -94,6 +105,7 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
           throw new Error(SKILLOPT_RUNTIME_EXCEEDED);
         }
         const rolloutOpts: RolloutOpts = {
+          operationContext: opts.operationContext,
           engine: opts.engine,
           skillText: opts.candidateSkillText,
           task,
@@ -124,6 +136,20 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
   );
   if (aborter && !aborter.ok) throw aborter.error;
 
+  // #4741: a 100%-failed gate is not a measurement. Any plain (non-tagged)
+  // provider error — a logged-out claude-cli child, a dead endpoint — lands
+  // here as an ordinary !ok item; scoring all of them 0 let a dead provider
+  // finish the whole run as a plausible `no_improvement` / 0.000. Partial
+  // failure below keeps the pessimistic per-task 0 (scoring noise).
+  const failed = settled.filter((s) => s && !s.ok);
+  if (settled.length > 0 && failed.length === settled.length) {
+    const first = failed[0]!.ok ? undefined : failed[0]!.error;
+    throw new Error(
+      `${SKILLOPT_ALL_ROLLOUTS_FAILED}: every task in this gate failed (${failed.length}/${settled.length}); first error: ${errMsg(first)}`,
+      { cause: first },
+    );
+  }
+
   // SettledItem<TOut>[] — extract successful results; treat (non-abort) errors as
   // score=0 (pessimistic fallback consistent with the judge fail-open posture).
   // Errored tasks contribute no scoredRollouts (caller's reflect sees fewer
@@ -133,6 +159,15 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
     return { task_id: opts.selSet[idx]!.task_id, median: 0, runs: [] };
   });
   const scoredRollouts: ScoredRollout[] = settled.flatMap((s) => (s && s.ok) ? s.value.rollouts : []);
+  // #4741: same rule for the judge side. scoreLlm fails open per rollout
+  // (score 0 + judge_error) so one flaky judge call is noise; EVERY rollout
+  // carrying a judge_error is a dead judge provider, not a 0.000 skill.
+  // Rule/qrels judges never set judge_error, so only the LLM judge trips it.
+  if (scoredRollouts.length > 0 && scoredRollouts.every((r) => r.judge_error)) {
+    throw new Error(
+      `${SKILLOPT_ALL_JUDGE_ERRORS}: every rollout's judge failed (${scoredRollouts.length}/${scoredRollouts.length}); first error: ${scoredRollouts[0]!.judge_error}`,
+    );
+  }
   const selScore = perTaskMedians.length === 0
     ? 0
     : perTaskMedians.reduce((acc, r) => acc + r.median, 0) / perTaskMedians.length;
@@ -151,6 +186,7 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
 }
 
 export interface ScoreOnTasksOpts {
+  operationContext?: OperationContext;
   engine: BrainEngine;
   skillText: string;
   tasks: BenchmarkTask[];
@@ -175,6 +211,7 @@ export interface ScoreOnTasksOpts {
  */
 export async function scoreSkillOnTasks(opts: ScoreOnTasksOpts): Promise<number> {
   const gate = await runValidationGate({
+    operationContext: opts.operationContext,
     engine: opts.engine,
     candidateSkillText: opts.skillText,
     selSet: opts.tasks,

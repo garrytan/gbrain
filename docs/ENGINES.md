@@ -104,6 +104,17 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 
 **Hosting:** Supabase Pro ($25/mo, zero-ops, pgvector built in) is the managed path; self-hosted Postgres + pgvector (Docker or Homebrew — see the "Local Postgres" section below) works the same.
 
+Current-projection filters use `(text_projection_revision = knowledge_revision)
+IS TRUE` with matching expression statistics, rather than relying on the
+planner's fixed column-equality estimate. Migration 160 creates and collects
+those statistics; bulk import, sync, reindex and completed projection recovery
+refresh them outside page locks. This also matters on PGLite, where an empty
+initial schema sample cannot describe later imports. Maintenance needs an
+authorized database role; an RLS-hidden statistics view is not evidence that
+the object is absent. Highly selective queries may correctly choose an exact
+plan. The [retrieval guide](architecture/RETRIEVAL.md#named-thing-retrieval-per-page-pool--title--alias--evidence)
+describes bounded candidate recovery and incomplete-result metadata.
+
 ### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
 
 Defense-in-depth layer for Postgres deployments that want the database itself
@@ -304,7 +315,10 @@ cwd-.env guard (gbrain never adopts a `DATABASE_URL` that Bun auto-loaded
 from the working directory's `.env` family: `.env`, `.env.local`, and the
 `.env.<NODE_ENV>` / `.env.<NODE_ENV>.local` variants for `development`,
 `production` and `test`; with the precedence note when both `GBRAIN_DATABASE_URL` and
-`DATABASE_URL` are set), redacted URLs only, and — on Postgres — a
+`DATABASE_URL` are set — this `DATABASE_URL` guard matches the file's VALUE; the
+security-relevant `GBRAIN_*` variables get the stricter key-presence quarantine
+described under "Environment variables and cwd `.env` files" in `SECURITY.md`),
+redacted URLs only, and — on Postgres — a
 zero-round-trip pooler block (Supabase pooler detection, prepared-statement
 resolution, pool sizes, direct/session-pooler derivability). `--brain <id>`
 resolves a mounted brain and reports the MOUNT's engine and URL source, never
@@ -490,7 +504,7 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 |-----------|---------------|-------------|-------|
 | CRUD | Full | Full | Same SQL |
 | Keyword search | tsvector + ts_rank | tsvector + ts_rank | Identical (real Postgres) |
-| Vector search | pgvector HNSW | pgvector HNSW | Identical (real Postgres) |
+| Vector search | pgvector HNSW | pgvector HNSW | Same operators; bounded fallback/cancellation differs |
 | Fuzzy slug | pg_trgm | pg_trgm | Identical (real Postgres) |
 | Graph traversal | Recursive CTE | Recursive CTE | Same SQL |
 | Transactions | Full ACID | Full ACID | Both support this |

@@ -59,6 +59,7 @@ export const google: Recipe = {
       // staying efficient. chars_per_token ~4 matches Gemini's SentencePiece
       // density on English. Tunable; recursion stays the backstop.
       max_batch_tokens: 20_000,
+      max_batch_items: 100,
       chars_per_token: 4,
       safety_factor: 0.8,
     },

@@ -42,10 +42,18 @@ export type UserId = string;
 const result = await chunkCodeText(src, 'smoketest.ts');
 const hasSymbolNames = result.some(c => c.metadata.symbolName !== null);
 const hasTypeScriptHeader = result.some(c => c.text.startsWith('[TypeScript]'));
+const bash = await chunkCodeText(`dispatch() {
+  case "$1" in
+    start|stop) printf '%s\\n' "$1" ;;
+    *) printf '%s\\n' 'unknown command' ;;
+  esac
+}
+`, 'smoketest.sh');
 console.log(JSON.stringify({
   count: result.length,
   has_symbol_names: hasSymbolNames,
   has_typescript_header: hasTypeScriptHeader,
   first_header: result[0]?.text.split('\n')[0],
   symbol_names: result.map(c => c.metadata.symbolName),
+  has_bash_case_symbol: bash.some(c => c.metadata.symbolName === 'dispatch' && c.text.includes('case "$1" in')),
 }, null, 2));
