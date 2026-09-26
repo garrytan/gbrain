@@ -21,15 +21,16 @@ import type { Page, PageFilters, PageType } from '../core/types.ts';
 const COLLISION_LIST_LIMIT = 20;
 
 /**
- * Slugs held by more than one source in `pages`, grouped case-insensitively
- * (case-insensitive filesystems write `Notes/Foo` and `notes/foo` to one
- * file). Each group carries its sorted spellings and source ids; groups
- * inside a single source are left alone.
+ * Slugs held by more than one source in `pages`, grouped on the NFC,
+ * lowercased spelling: APFS is case- and normalization-insensitive, so
+ * `Notes/Foo` and `notes/foo`, or NFC and NFD `café`, land on one file.
+ * Each group carries its sorted spellings and source ids; groups inside a
+ * single source are left alone.
  */
 function findCrossSourceSlugs(pages: Page[]): Array<{ slugs: string[]; sources: string[] }> {
   const groups = new Map<string, { slugs: Set<string>; sources: Set<string> }>();
   for (const p of pages) {
-    const key = p.slug.toLowerCase();
+    const key = p.slug.normalize('NFC').toLowerCase();
     const group = groups.get(key) ?? { slugs: new Set<string>(), sources: new Set<string>() };
     group.slugs.add(p.slug);
     group.sources.add(p.source_id);

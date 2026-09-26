@@ -213,31 +213,35 @@ describe('export --source scopes the page set', () => {
 });
 
 describe('export refuses slugs that differ only in case across sources', () => {
-  // Case-insensitive filesystems (APFS, NTFS defaults) put both on one file.
-  // putPage lowercases new slugs, so the legacy mixed-case one is keyed in SQL.
-  async function seedCaseVariants(sourceForUpper: string): Promise<void> {
-    await put('default', 'notes/foo', 'lower body');
-    await put(sourceForUpper, 'notes/foo-legacy', 'upper body');
+  // Case- and normalization-insensitive filesystems (APFS; NTFS for case)
+  // put both spellings on one file. putPage normalizes new slugs, so the
+  // variant is keyed in SQL.
+  const variants = [
+    { name: 'case', stored: 'notes/foo', variant: 'Notes/Foo' },
+    { name: 'NFC vs NFD', stored: 'notes/caf\u00e9', variant: 'notes/cafe\u0301' },
+  ];
+
+  async function seedVariant(stored: string, variant: string, sourceForVariant: string): Promise<void> {
+    await put('default', stored, 'stored body');
+    await put(sourceForVariant, 'notes/variant-tmp', 'variant body');
     await engine.executeRaw(
-      `UPDATE pages SET slug = 'Notes/Foo' WHERE slug = 'notes/foo-legacy' AND source_id = $1`,
-      [sourceForUpper],
+      `UPDATE pages SET slug = $1 WHERE slug = 'notes/variant-tmp' AND source_id = $2`,
+      [variant, sourceForVariant],
     );
   }
 
-  test('two sources refuse and both spellings are named', async () => {
-    await seedCaseVariants('connector-a');
+  test.each(variants)('$name: two sources refuse and both spellings are named', async ({ stored, variant }) => {
+    await seedVariant(stored, variant, 'connector-a');
     await tryRunExport(['--dir', outDir]);
 
     expect(exitCode).toBe(1);
     const err = stderr.join('\n');
-    expect(err).toContain('Notes/Foo');
-    expect(err).toContain('notes/foo');
-    expect(err).toContain('connector-a');
+    expect(err).toContain(`${[stored, variant].sort().join(', ')} (sources: connector-a, default)`);
     expect(existsSync(outDir)).toBe(false);
   });
 
-  test('one source holding both spellings is out of scope and exports', async () => {
-    await seedCaseVariants('default');
+  test('one source holding both case spellings is out of scope and exports', async () => {
+    await seedVariant('notes/foo', 'Notes/Foo', 'default');
     await tryRunExport(['--dir', outDir]);
 
     expect(exitCode).toBeNull();
