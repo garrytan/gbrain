@@ -345,11 +345,11 @@ export function parseMarkdown(
 /** Apply explicit, stored, then pack-inferred subtype precedence. */
 export function resolveParsedSubtype(
   parsed: ParsedMarkdown,
-  existing?: { type: string; frontmatter: Record<string, unknown> } | null,
+  existing?: { type: string; frontmatter?: Record<string, unknown> | null } | null,
 ): void {
   if (Object.prototype.hasOwnProperty.call(parsed.frontmatter, 'subtype')) return;
   if (existing && parsed.type === existing.type) {
-    if (Object.prototype.hasOwnProperty.call(existing.frontmatter, 'subtype')) {
+    if (existing.frontmatter && Object.prototype.hasOwnProperty.call(existing.frontmatter, 'subtype')) {
       parsed.frontmatter.subtype = existing.frontmatter.subtype;
       return;
     }
