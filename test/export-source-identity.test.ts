@@ -211,6 +211,39 @@ describe('export --source scopes the page set', () => {
   });
 });
 
+describe('export refuses slugs that differ only in case across sources', () => {
+  // Case-insensitive filesystems (APFS, NTFS defaults) put both on one file.
+  // putPage lowercases new slugs, so the legacy mixed-case one is keyed in SQL.
+  async function seedCaseVariants(sourceForUpper: string): Promise<void> {
+    await put('default', 'notes/foo', 'lower body');
+    await put(sourceForUpper, 'notes/foo-legacy', 'upper body');
+    await engine.executeRaw(
+      `UPDATE pages SET slug = 'Notes/Foo' WHERE slug = 'notes/foo-legacy' AND source_id = $1`,
+      [sourceForUpper],
+    );
+  }
+
+  test('two sources refuse and both spellings are named', async () => {
+    await seedCaseVariants('connector-a');
+    await tryRunExport(['--dir', outDir]);
+
+    expect(exitCode).toBe(1);
+    const err = stderr.join('\n');
+    expect(err).toContain('Notes/Foo');
+    expect(err).toContain('notes/foo');
+    expect(err).toContain('connector-a');
+    expect(existsSync(outDir)).toBe(false);
+  });
+
+  test('one source holding both spellings is out of scope and exports', async () => {
+    await seedCaseVariants('default');
+    await tryRunExport(['--dir', outDir]);
+
+    expect(exitCode).toBeNull();
+    expect(stdout).toContain(`Exported 2 pages to ${outDir}/`);
+  });
+});
+
 describe('export refusal names archived sources', () => {
   test('a colliding archived source gets a sources restore hint', async () => {
     await seedCollision();

@@ -19,18 +19,25 @@ import type { Page, PageFilters, PageType } from '../core/types.ts';
 /** How many colliding slugs the refusal lists before summarising the rest. */
 const COLLISION_LIST_LIMIT = 20;
 
-/** Slugs held by more than one source in `pages`, sorted, each with its sorted source ids. */
-function findCrossSourceSlugs(pages: Page[]): Array<{ slug: string; sources: string[] }> {
-  const sourcesBySlug = new Map<string, Set<string>>();
+/**
+ * Slugs held by more than one source in `pages`, grouped case-insensitively
+ * (case-insensitive filesystems write `Notes/Foo` and `notes/foo` to one
+ * file). Each group carries its sorted spellings and source ids; groups
+ * inside a single source are left alone.
+ */
+function findCrossSourceSlugs(pages: Page[]): Array<{ slugs: string[]; sources: string[] }> {
+  const groups = new Map<string, { slugs: Set<string>; sources: Set<string> }>();
   for (const p of pages) {
-    const sources = sourcesBySlug.get(p.slug) ?? new Set<string>();
-    sources.add(p.source_id);
-    sourcesBySlug.set(p.slug, sources);
+    const key = p.slug.toLowerCase();
+    const group = groups.get(key) ?? { slugs: new Set<string>(), sources: new Set<string>() };
+    group.slugs.add(p.slug);
+    group.sources.add(p.source_id);
+    groups.set(key, group);
   }
-  return [...sourcesBySlug]
-    .filter(([, sources]) => sources.size > 1)
-    .map(([slug, sources]) => ({ slug, sources: [...sources].sort() }))
-    .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+  return [...groups]
+    .filter(([, g]) => g.sources.size > 1)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, g]) => ({ slugs: [...g.slugs].sort(), sources: [...g.sources].sort() }));
 }
 
 export async function runExport(engine: BrainEngine, args: string[]) {
@@ -184,7 +191,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   if (collisions.length > 0) {
     const listed = collisions
       .slice(0, COLLISION_LIST_LIMIT)
-      .map((c) => `  ${c.slug} (sources: ${c.sources.join(', ')})`);
+      .map((c) => `  ${c.slugs.join(', ')} (sources: ${c.sources.join(', ')})`);
     if (collisions.length > COLLISION_LIST_LIMIT) {
       listed.push(`  ... and ${collisions.length - COLLISION_LIST_LIMIT} more`);
     }
