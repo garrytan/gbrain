@@ -74,6 +74,8 @@ import {
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { assertUnmanagedCanonicalWriter } from '../core/persistence/maintenance.ts';
+import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { replaceManagedConversationFacts } from '../core/persistence/conversation-facts.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -267,6 +269,8 @@ export interface ConversationSegment {
 export interface ExtractConversationFactsCoreOpts {
   /** REQUIRED. Strict per-source contract. */
   sourceId: string;
+  /** Internal CLI-only journal opt-in; cycle/backfill callers remain refused. */
+  managedJournalWrites?: boolean;
   /**
    * Page types to walk. Reads cycle config when omitted.
    * Allowlist enforced via ALLOWED_TYPES.
@@ -405,6 +409,7 @@ import {
   type ParseConversationOpts as OrchestratorParseOpts,
 } from '../core/conversation-parser/parse.ts';
 import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
+import { conversationSnapshotVersionToken, hasRawTranscriptSidecar, regularPageVersionToken } from '../core/conversation-parser/snapshot.ts';
 import { runLlmFallback } from '../core/conversation-parser/llm-fallback.ts';
 import { resolveModel, resolveTierDefault } from '../core/model-config.ts';
 
@@ -746,6 +751,7 @@ interface ExtractCoreState {
    * parser path.
    */
   llmFallbackModel: string | null;
+  managedJournalWrites: boolean;
 }
 
 function cpMapKey(sourceId: string, slug: string): string {
@@ -786,54 +792,12 @@ interface ConversationPageSnapshot {
   versionToken: string;
 }
 
-function hasRawTranscriptSidecar(page: Page): boolean {
-  const raw = page.frontmatter?.raw_transcript;
-  return typeof raw === 'string' && raw.trim().length > 0;
-}
-
-function regularPageVersionToken(page: Page): string {
-  // content_hash covers title, type, compiled_truth, timeline, and frontmatter.
-  // Unlike JavaScript Date, it cannot collapse distinct PostgreSQL updates that
-  // happen within the same millisecond. effective_date is parser input too.
-  const hash = page.content_hash ?? createHash('sha256')
-    .update(JSON.stringify({
-      title: page.title,
-      type: page.type,
-      compiled_truth: page.compiled_truth,
-      timeline: page.timeline || '',
-      frontmatter: page.frontmatter || {},
-    }))
-    .digest('hex');
-  const effectiveDate = page.effective_date
-    ? new Date(page.effective_date).toISOString().slice(0, 10)
-    : 'none';
-  return `page-${hash}-${effectiveDate}`;
-}
-
-function snapshotVersionToken(page: Page, body: string): string {
-  if (!hasRawTranscriptSidecar(page)) return regularPageVersionToken(page);
-  // Sidecar contents can change without touching pages.updated_at. Hash the
-  // exact parser input plus parser-relevant page metadata so those edits reopen
-  // the page without a schema migration.
-  return `sidecar-${createHash('sha256')
-    .update(
-      JSON.stringify({
-        body,
-        title: page.title,
-        type: page.type,
-        frontmatter: page.frontmatter,
-        effective_date: page.effective_date ?? null,
-      }),
-    )
-    .digest('hex')}`;
-}
-
 async function preparePageSnapshot(
   engine: BrainEngine,
   page: Page,
 ): Promise<ConversationPageSnapshot> {
   const body = await readConversationBodyForParsing(engine, page);
-  return { page, body, versionToken: snapshotVersionToken(page, body) };
+  return { page, body, versionToken: conversationSnapshotVersionToken(page, body) };
 }
 
 function outcomeSession(source: string, slug: string, versionToken: string): string {
@@ -1021,27 +985,19 @@ async function processPage(
       !declinedUnrecognizedSpeaker
     ) {
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
-        const cleaned = await deleteOrphanFactsForPage(
-          state.engine,
-          state.sourceId,
-          page.slug,
-        );
-        state.result.orphan_facts_cleaned += cleaned;
-        const rowNum = await peekRowNumStart(
-          state.engine,
-          state.sourceId,
-          page.slug,
-        );
-        await writeNonExtractableAuditRow(
-          state.engine,
-          state.sourceId,
-          page.slug,
-          rowNum,
-          snapshot.versionToken,
-          messages.length === 0
-            ? 'no conversation messages found'
-            : 'fewer than two eligible messages',
-        );
+        if (state.managedJournalWrites) {
+          const reason = messages.length === 0 ? 'no conversation messages found' : 'fewer than two eligible messages';
+          const written = await replaceManagedConversationFacts(state.engine, { sourceId: state.sourceId, slug: page.slug,
+            pageId: page.id, revision: page.knowledge_revision!, token: snapshot.versionToken, facts: [], outcome: 'non_extractable',
+            auditContext: `scanned, not extractable: ${reason}` });
+          state.result.orphan_facts_cleaned += written.deleted;
+        } else {
+          const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+          state.result.orphan_facts_cleaned += cleaned;
+          const rowNum = await peekRowNumStart(state.engine, state.sourceId, page.slug);
+          await writeNonExtractableAuditRow(state.engine, state.sourceId, page.slug, rowNum, snapshot.versionToken,
+            messages.length === 0 ? 'no conversation messages found' : 'fewer than two eligible messages');
+        }
         state.result.pages_marked_non_extractable++;
       }
     }
@@ -1056,12 +1012,9 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  // D11: delete-orphans-first replay safety. Wipes any facts written by
-  // a prior crashed / killed / partial run for this (sourceId, slug)
-  // pair before we re-extract. The lock we hold (D2 + D12 refreshing
-  // lock above the caller) guarantees no other worker is writing to
-  // this page right now, so the DELETE+INSERT pair is safe.
-  const cleaned = await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
+  // Managed replacement deletes and installs rows atomically at publication;
+  // unmanaged replay retains the legacy delete-first path.
+  const cleaned = state.managedJournalWrites ? 0 : await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
   if (cleaned > 0) {
     state.result.orphan_facts_cleaned += cleaned;
     process.stderr.write(
@@ -1069,12 +1022,12 @@ async function processPage(
     );
   }
 
-  // Page-global row_num: after delete-orphans-first the table has no
-  // rows for this (sourceId, slug), so we always start from 0.
+  // Legacy replay starts page-global row_num at zero after orphan cleanup.
   let rowNum = 0;
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
+  const managedPageFacts: NewFact[] = [];
   const pageResolution = emptySaveTimeResolutionCounts();
 
   for (const seg of segments) {
@@ -1162,9 +1115,12 @@ async function processPage(
         context:
           fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
       }));
-      const ins = await state.engine.insertFacts(rows, { source_id: state.sourceId }); // gbrain-allow-direct-insert: canonical bulk extraction path for conversation pages — fences-as-system-of-record doesn't apply because conversations don't carry `## Facts` fences (the chat-log shape is the source-of-truth)
-      pageInsertedTotal += ins.inserted;
-      state.result.facts_inserted += ins.inserted;
+      if (state.managedJournalWrites) managedPageFacts.push(...rows);
+      else {
+        const ins = await state.engine.insertFacts(rows, { source_id: state.sourceId }); // gbrain-allow-direct-insert: canonical unmanaged bulk extraction path; managed brains use the journal mutation
+        pageInsertedTotal += ins.inserted;
+        state.result.facts_inserted += ins.inserted;
+      }
     }
     rowNum += extracted.length;
     mergeSaveTimeResolutionCounts(pageResolution, segmentResolution);
@@ -1175,9 +1131,7 @@ async function processPage(
     if (state.sleepMs > 0) await sleep(state.sleepMs);
   }
 
-  // Eng-v2 C7 / E16: write terminal audit row after all segments commit
-  // successfully. Only run when we got through every
-  // segment (no break on segmentLimit; that's an explicit partial run).
+  // Only a full run receives a terminal audit row.
   const fullyProcessed =
     state.segmentLimit === 0 || segmentsThisPage < state.segmentLimit;
   if (
@@ -1185,17 +1139,9 @@ async function processPage(
     newestEnd !== null &&
     await snapshotIsCurrent(state.engine, state.sourceId, snapshot)
   ) {
-    // A terminal insert is part of the page transaction contract. Propagate
-    // failure so bulk accounting, CLI exit status, cycle status, and rollups all
-    // report the page as unfinished.
-    await writeTerminalAuditRow(
-      state.engine,
-      state.sourceId,
-      page.slug,
-      rowNum,
-      snapshot.versionToken,
-    );
-    rowNum++;
+    if (!state.managedJournalWrites) {
+      await writeTerminalAuditRow(state.engine, state.sourceId, page.slug, rowNum, snapshot.versionToken);
+    }
   } else if (fullyProcessed && newestEnd !== null) {
     process.stderr.write(
       `[extract-conversation-facts] ${page.slug} changed during extraction; leaving it unfinished for replay\n`,
@@ -1206,12 +1152,18 @@ async function processPage(
     return { newEndIso: null };
   }
 
+  if (state.managedJournalWrites && newestEnd !== null) {
+    const completed = state.segmentLimit === 0 || segmentsThisPage < state.segmentLimit;
+    const written = await replaceManagedConversationFacts(state.engine, { sourceId: state.sourceId, slug: page.slug,
+      pageId: page.id, revision: page.knowledge_revision!, token: snapshot.versionToken, facts: managedPageFacts, outcome: 'complete', terminal: completed });
+    pageInsertedTotal = written.inserted;
+    state.result.facts_inserted += written.inserted;
+    state.result.orphan_facts_cleaned += written.deleted;
+  }
+
   if (newestEnd !== null) {
-    // v0.41.15.0 (codex #5/#6): per-page atomic checkpoint write. Mutate
-    // the shared Map in place — JS single-threaded event loop makes
-    // Map.set atomic across parallel workers; we don't need a load-mutate-
-    // flush race. Map serializes back to op-checkpoint string[] at batch
-    // boundaries via the caller's periodic recordCompleted call.
+    // Map.set is atomic across parallel workers; recordCompleted serializes
+    // the shared checkpoint Map at each batch boundary.
     state.cpMap.set(cpMapKey(state.sourceId, page.slug), newestEnd);
   }
 
@@ -1291,7 +1243,7 @@ export async function runExtractConversationFactsCore(
   if (!sourceId) {
     throw new Error('runExtractConversationFactsCore: opts.sourceId is required');
   }
-  await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
+  if (!opts.managedJournalWrites) await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
 
   const result: ExtractConversationFactsResult = {
     pages_considered: 0,
@@ -1381,6 +1333,7 @@ export async function runExtractConversationFactsCore(
     extractor: opts.extractor,
     cpMap: new Map(),
     llmFallbackModel,
+    managedJournalWrites: opts.managedJournalWrites === true,
   };
 
   // Run body. Either inside the externally-provided tracker scope (no
@@ -1614,7 +1567,7 @@ export async function runExtractConversationFactsCore(
       // Fall through to receipt+rollup write so the partial run is
       // still observable in extract_health doctor + extracts/ pages.
       // ...but not under --dry-run: a preview must not persist cache state.
-      if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true);
+      if (!dryRun) await writeRunReceiptAndRollup(engine, sourceId, result, /* halted */ true, state.managedJournalWrites);
       // Return partial result — caller (CLI / Minion) decides how to
       // surface. NOT a thrown failure.
       return result;
@@ -1648,6 +1601,7 @@ export async function runExtractConversationFactsCore(
       sourceId,
       result,
       /* halted */ result.budget_exhausted === true,
+      state.managedJournalWrites,
     );
   }
 
@@ -1669,6 +1623,7 @@ async function writeRunReceiptAndRollup(
   sourceId: string,
   result: ExtractConversationFactsResult,
   halted: boolean,
+  managedJournalWrites = false,
 ): Promise<void> {
   const now = new Date().toISOString();
   // run_id: stable-ish identifier for this run. Includes day so multiple
@@ -1679,7 +1634,9 @@ async function writeRunReceiptAndRollup(
   // Receipt write: only when the run actually inserted facts.
   if (result.facts_inserted > 0) {
     try {
-      await writeReceipt(engine, {
+      if (managedJournalWrites) {
+        console.error('[extract-conversation-facts] skipped receipt page on managed brain; per-page fact and terminal writes use the persistence journal');
+      } else await writeReceipt(engine, {
         kind: 'facts.conversation',
         source_id: sourceId,
         run_id: runId,
@@ -1915,7 +1872,8 @@ export async function runExtractConversationFacts(
     console.log(HELP);
     return;
   }
-  await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
+  const managedJournalWrites = await managedPersistenceEnabled(engine);
+  if (!managedJournalWrites) await assertUnmanagedCanonicalWriter(engine, 'bulk conversation fact extraction');
 
   // --background path.
   const backgrounded = await maybeBackground({
@@ -1999,6 +1957,7 @@ export async function runExtractConversationFacts(
         maxCostUsd: parsed.maxCostUsd,
         overrideDisabled: parsed.overrideDisabled,
         workers: parsed.workers,
+        managedJournalWrites,
       });
 
       aggregate.pages_considered += perSource.pages_considered;

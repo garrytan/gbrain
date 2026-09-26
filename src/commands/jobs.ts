@@ -2336,7 +2336,7 @@ export async function registerBuiltinHandlers(
         )
       : undefined;
     const result = await runExtractConversationFactsCore(engine, {
-      sourceId,
+      sourceId, managedJournalWrites: await (await import('../core/persistence/ownership.ts')).managedPersistenceEnabled(engine),
       types,
       slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
       dryRun: !!job.data.dryRun,

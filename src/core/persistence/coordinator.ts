@@ -183,6 +183,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       recovery = record;
       await hooks.boundary?.('prepared', row);
     }
+    if (!recovery && !prepared.file) await hooks.boundary?.('prepared', row);
     const done = await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");

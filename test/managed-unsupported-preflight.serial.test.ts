@@ -74,7 +74,7 @@ test('writer status and activation preview name unsupported bulk capabilities wi
   const before = await engine.executeRaw('SELECT * FROM persistence_brain');
   const status = await runPersistenceAdministration(engine, 'writer_status', {}) as any;
   const activation = await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, dry_run: true });
-  expect(status.onboarding.unsupported_maintenance).toEqual(['cycle.extract_facts', 'extract-conversation-facts', 'conversation_facts_backfill', 'loops_extract']);
+  expect(status.onboarding.unsupported_maintenance).toEqual(['cycle.extract_facts', 'conversation_facts_backfill', 'loops_extract']);
   expect(activation.unsupported_maintenance).toEqual(status.onboarding.unsupported_maintenance);
   expect(await engine.executeRaw('SELECT * FROM persistence_brain')).toEqual(before);
 }));

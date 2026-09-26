@@ -5,7 +5,7 @@ import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
 
-export const UNSUPPORTED_MANAGED_BULK_WRITERS = ['cycle.extract_facts', 'extract-conversation-facts', 'conversation_facts_backfill', 'loops_extract'] as const;
+export const UNSUPPORTED_MANAGED_BULK_WRITERS = ['cycle.extract_facts', 'conversation_facts_backfill', 'loops_extract'] as const;
 
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
 export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string): Promise<void> {

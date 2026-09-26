@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { claimNextWrite, compactWriteReceipts, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim } from './journal.ts';
-import { finishUnpublishedFailure, publishMutation, recoverPublication, type PreparedMutation } from './coordinator.ts';
+import { finishUnpublishedFailure, publishMutation, recoverPublication, type PreparedMutation, type PublicationHooks } from './coordinator.ts';
 import { localHostId } from './identity.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
@@ -36,7 +36,8 @@ export class PersistenceConsumer {
   private preparing = new Map<string, { request_id: string; started_at: string; deadline_exceeded: boolean; attempt: number }>();
   readonly hostId: string;
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
-    private opts: { hostId?: string; concurrency?: number; pollMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void } = {}) {
+    private opts: { hostId?: string; concurrency?: number; pollMs?: number; phaseMs?: number; preparationMs?: number;
+      onError?: (error: unknown) => void; publicationHooks?: PublicationHooks } = {}) {
     this.hostId = opts.hostId ?? localHostId();
   }
   start(): void { this.stopping = false; this.abort = new AbortController(); this.schedule(0); }
@@ -215,7 +216,7 @@ export class PersistenceConsumer {
       }
       this.preparing.delete(row.id);
       preparationActive = false;
-      const done = await publishMutation(this.engine, row, prepared, this.hostId);
+      const done = await publishMutation(this.engine, row, prepared, this.hostId, this.opts.publicationHooks);
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }

@@ -10,6 +10,7 @@ import { isWriteErrorCode, type WriteReceipt } from './types.ts';
 import { registerPgliteReopen } from '../pglite-lifecycle.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { pendingWriteHint } from './health.ts';
+import type { PublicationHooks } from './coordinator.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -30,6 +31,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
     throw new OperationError('unsupported_mutation_protocol', 'No compatible skill mutation preparer is registered.');
   }
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_atom_')) return (await import('./atom-maintenance.ts')).prepareManagedAtomMutation(e, row, cfg);
+  if (row.operation === 'extract_facts' && row.intent?.kind === 'managed_conversation_facts_page') return (await import('./conversation-facts-prepare.ts')).prepareManagedConversationFactsMutation(e, row, cfg);
   if (row.operation === 'extract_facts' && String(row.intent?.kind).startsWith('managed_facts_')) return (await import('./facts-prepare.ts')).prepareManagedFactsMutation(e, row, cfg);
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_connector_')) return (await import('./connector-sync.ts')).prepareConnectorMutation(e, row);
   if (row.operation === 'put_page' && row.intent?.kind === 'canonical_reconcile') return (await import('./reconcile-prepare.ts')).prepareReconcileMutation(e, row, cfg);
@@ -44,13 +46,14 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (['put_page','capture','delete_page','restore_page','revert_version'].includes(row.operation)) return preparePageMutation(e, row, cfg, undefined, signal);
   throw new OperationError('unsupported_mutation_protocol', 'No compatible mutation preparer is registered for this operation.');
 }
-export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig): PersistenceConsumer {
+export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConfig,
+  options: { publicationHooks?: PublicationHooks } = {}): PersistenceConsumer {
   const prior = services.get(engine);
   if (prior) {
     if (prior.stopping) throw new OperationError('unavailable', 'The persistence owner is closing.');
     return prior.consumer;
   }
-  const consumer = new PersistenceConsumer(engine, config, preparePersistedMutation);
+  const consumer = new PersistenceConsumer(engine, config, preparePersistedMutation, options);
   const service: Service = { consumer, stopping: false };
   services.set(engine, service);
   const lifecycle = engine as BrainEngine & { registerBeforeDisconnect?: (run: () => Promise<void>) => unknown };
