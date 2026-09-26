@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import { renderAttachmentInspection, threadAttachmentReceipts } from './attachment-receipts.ts';
 
+import { slugifyText } from '../cjk.ts';
 import { emailCitation } from '../output/scaffold.ts';
 import type { CalendarEventData, ContactData, GmailThreadData } from './types.ts';
 
@@ -182,14 +183,7 @@ export function sha8(input: string): string {
 }
 
 export function subjectSlug(subject: string): string {
-  const s = subject
-    .replace(/^((re|fwd?|aw):\s*)+/i, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-    .replace(/-+$/g, '');
-  return s || 'no-subject';
+  return slugifyText(subject.replace(/^((re|fwd?|aw):\s*)+/i, ''), 48) || 'no-subject';
 }
 
 function yamlStr(v: string): string {
@@ -339,11 +333,7 @@ export function renderCalendarEventPage(ev: CalendarEventData): RenderedPage | n
 export function personSlugFromContact(c: ContactData, disambiguate = false): string | null {
   const base = c.displayName ?? c.emails[0]?.split('@')[0] ?? null;
   if (!base) return null;
-  const slug = base
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
+  const slug = slugifyText(base, 64);
   if (!slug) return null;
   // Two different contacts named "John Smith" must not fight over one page —
   // the caller requests disambiguation when the base slug is already owned

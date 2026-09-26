@@ -9,7 +9,9 @@ import {
   CJK_CLAUSE_DELIMITERS,
   escapeLikePattern,
   splitCJKQueryTerms,
+  slugifyText,
 } from '../src/core/cjk.ts';
+import { slugifySegment } from '../src/core/sync.ts';
 
 describe('hasCJK', () => {
   test('true on Han', () => {
@@ -169,3 +171,25 @@ describe('splitCJKQueryTerms', () => {
   });
 });
 
+
+describe('slugifyText (#12)', () => {
+  test('keeps letters of every script and is a fixed point of slugifySegment', () => {
+    const cases: Array<[string, string]> = [
+      ['Алёна Йорк-Пример', 'алёна-йорк-пример'],
+      ['İlkay Example', 'ilkay-example'],
+      ['Zoë Exámple', 'zoe-example'],
+      ['会议 纪要', '会议-纪要'],
+      ['  --!!  ', ''],
+    ];
+    for (const [input, want] of cases) {
+      const got = slugifyText(input, 64);
+      expect(got).toBe(want);
+      if (got) expect(slugifySegment(got)).toBe(got);
+    }
+  });
+
+  test('the cap counts code points and never leaves a trailing hyphen', () => {
+    expect(slugifyText('\u{20000}'.repeat(5), 3)).toBe('\u{20000}'.repeat(3));
+    expect(slugifyText('abc def', 4)).toBe('abc');
+  });
+});
