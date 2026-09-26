@@ -2142,6 +2142,8 @@ describeBoth('Engine parity — resolveSlugWithAliasDetailed', () => {
   }, 90_000);
 
   afterAll(async () => {
+    await pgEngine.executeRaw(`DELETE FROM slug_aliases WHERE alias_slug LIKE 'par/%'`);
+    await pgliteEngine.executeRaw(`DELETE FROM slug_aliases WHERE alias_slug LIKE 'par/%'`);
     await pgliteEngine.disconnect();
     await teardownDB();
   }, 30_000);

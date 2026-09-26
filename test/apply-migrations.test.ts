@@ -10,7 +10,14 @@ import { describe, test, expect } from 'bun:test';
 import { __testing } from '../src/commands/apply-migrations.ts';
 import type { CompletedMigrationEntry } from '../src/core/preferences.ts';
 
-const { parseArgs, indexCompleted, buildPlan, statusForVersion, resolveSchemaBehind } = __testing;
+const {
+  parseArgs,
+  forceActionsEnabled,
+  indexCompleted,
+  buildPlan,
+  statusForVersion,
+  resolveSchemaBehind,
+} = __testing;
 
 describe('parseArgs', () => {
   test('default flags', () => {
@@ -217,6 +224,29 @@ describe('runApplyMigrations exit codes (v0.36.1.x #1062)', () => {
     expect(src).toMatch(/cli\.dryRun\s*\)\s*\{[\s\S]*printDryRun\(plan,\s*installed,\s*dbProbe\)/);
     expect(src).toContain('process.exit(listExit || (previews.some(preview => preview.error) ? 1 : 0));');
     expect(src).toMatch(/All migrations up to date[\s\S]{0,80}process\.exit\(0\)/);
+  });
+});
+
+describe('--force-schema dry-run safety (#5164)', () => {
+  test('disables every force mutation when dry-run is present', () => {
+    for (const args of [
+      ['--force-retry', '0.11.0', '--dry-run'],
+      ['--force-orchestrator', '--dry-run'],
+      ['--force-schema', '--dry-run'],
+      ['--force-all', '--dry-run'],
+      ['--force', '--dry-run'],
+    ]) {
+      expect(forceActionsEnabled(parseArgs(args))).toBe(false);
+    }
+    expect(forceActionsEnabled(parseArgs(['--force-schema']))).toBe(true);
+  });
+
+  test('gates the forced schema branch before runMigrations', async () => {
+    const { readFileSync } = await import('fs');
+    const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
+    expect(src).toMatch(
+      /if \(forceActionsEnabled\(cli\) && \(cli\.forceSchema \|\| cli\.forceAll\)\)[\s\S]{0,200}runMigrations/,
+    );
   });
 });
 
