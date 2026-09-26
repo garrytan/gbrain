@@ -1300,6 +1300,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.image_query.daily_budget_usd_per_client',
   'search.image_query.remote_max_bytes',
   'search.mcp_keyword_only',
+  'search.statement_timeout_ms',
   REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
   // #4415: per-brain query-intent pattern extensions (JSON bank→regex[]),

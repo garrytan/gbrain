@@ -1577,9 +1577,10 @@ export class PostgresEngine implements BrainEngine {
     // the GUC can never leak onto a pooled connection). Flag off → the
     // wrap is identical to master's; flag on → set_config('app.scopes')
     // shares the same transaction as the timeout.
-    const runKeyword = (queryText: string, relaxed = false) =>
-      this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SET LOCAL statement_timeout = '8s'`;
+    const runKeyword = async (queryText: string, relaxed = false) => {
+      const timeout = await this.searchStatementTimeout();
+      return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
+        await tx`SELECT set_config('statement_timeout', ${timeout}, true)`;
         const previous = relaxed ? await tx`SHOW enable_seqscan` : [];
         if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
@@ -1588,6 +1589,7 @@ export class PostgresEngine implements BrainEngine {
         if (relaxed) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
         return rows;
       }, { alwaysTransaction: true });
+    };
     let rows = await runKeyword(query);
     // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
     // grain mean one non-co-occurring token zeroes keyword recall. When the
@@ -1735,9 +1737,10 @@ export class PostgresEngine implements BrainEngine {
     // the SET LOCAL statement_timeout needs a transaction regardless of the
     // GBRAIN_RLS_SCOPE_BINDING flag). The OR retry re-executes through the
     // same scoped wrapper.
-    const runTitles = (queryText: string, relaxed = false) =>
-      this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SET LOCAL statement_timeout = '8s'`;
+    const runTitles = async (queryText: string, relaxed = false) => {
+      const timeout = await this.searchStatementTimeout();
+      return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
+        await tx`SELECT set_config('statement_timeout', ${timeout}, true)`;
         const preferIndex = relaxed && !requiresSafeChunks(opts);
         const previous = preferIndex ? await tx`SHOW enable_seqscan` : [];
         if (preferIndex) await tx`SET LOCAL enable_seqscan = off`;
@@ -1747,6 +1750,7 @@ export class PostgresEngine implements BrainEngine {
         if (preferIndex) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
         return rows;
       }, { alwaysTransaction: true });
+    };
     let rows = await runTitles(params[0] as string);
     if (rows.length === 0) {
       const orQuery = buildOrFallbackWebsearchQuery(params[0] as string);
@@ -1899,8 +1903,9 @@ export class PostgresEngine implements BrainEngine {
     // RLS scope binding + search-only timeout. alwaysTransaction: master
     // already wrapped this in sql.begin() for the SET LOCAL; flag off is
     // identical to that wrap, flag on adds set_config in the same tx.
+    const timeout = await this.searchStatementTimeout();
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-      await tx`SET LOCAL statement_timeout = '8s'`;
+      await tx`SELECT set_config('statement_timeout', ${timeout}, true)`;
       return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
     }, { alwaysTransaction: true });
     return rows.map(rowToSearchResult);
@@ -1909,16 +1914,18 @@ export class PostgresEngine implements BrainEngine {
   /**
    * #3986: CJK keyword fallback (parity port of PGLite's v0.32.7 branch).
    * SQL builds in the shared cjk-keyword-sql.ts; execution goes through the
-   * same scoped read transaction (RLS scope binding + 8s statement timeout)
+   * same scoped read transaction (RLS scope binding + search statement timeout)
    * as the FTS keyword paths. See src/core/postgres-engine/cjk-search.ts.
    */
   private async _searchKeywordCJK(query: string, ctx: CjkKeywordCtx): Promise<SearchResult[]> {
     return searchKeywordCJKImpl(
-      async (sqlText, params) =>
-        await this.withScopedReadTransaction(ctx.opts?.sourceIds, ctx.opts?.sourceId, async (tx) => {
-          await tx`SET LOCAL statement_timeout = '8s'`;
+      async (sqlText, params) => {
+        const timeout = await this.searchStatementTimeout();
+        return this.withScopedReadTransaction(ctx.opts?.sourceIds, ctx.opts?.sourceId, async (tx) => {
+          await tx`SELECT set_config('statement_timeout', ${timeout}, true)`;
           return await tx.unsafe(sqlText, params as Parameters<typeof tx.unsafe>[1]) as unknown as Record<string, unknown>[];
-        }, { alwaysTransaction: true }),
+        }, { alwaysTransaction: true });
+      },
       query,
       ctx,
     );
@@ -5110,6 +5117,34 @@ export class PostgresEngine implements BrainEngine {
       // guard; fail-loud — a reconnect throw propagates as the real cause.
       reconnect: (ctx) => this.reconnect(ctx),
     });
+  }
+
+  // Lexical arms only; vector search has its own deadline. Bind the value with
+  // set_config (SET cannot bind parameters); true scopes it like SET LOCAL.
+  // Order: env, DB config, 8s; memoise 60s to avoid hot-path DB reads.
+  private _searchTimeoutCache: { value: string; at: number } | null = null;
+
+  private async searchStatementTimeout(): Promise<string> {
+    // Positive whole milliseconds within Postgres's int range only: 0 would
+    // disable the bound entirely, and anything else must never reach SQL.
+    const parse = (v: string | null | undefined): string | null => {
+      const t = v?.trim();
+      return t && /^\d+$/.test(t) && Number(t) > 0 && Number(t) <= 2_147_483_647 ? `${Number(t)}ms` : null;
+    };
+    const fromEnv = parse(process.env.GBRAIN_SEARCH_STATEMENT_TIMEOUT_MS);
+    if (fromEnv) return fromEnv;
+    const now = Date.now();
+    if (this._searchTimeoutCache && now - this._searchTimeoutCache.at < 60_000) {
+      return this._searchTimeoutCache.value;
+    }
+    let value = '8s';
+    try {
+      value = parse(await this.getConfig('search.statement_timeout_ms')) ?? value;
+    } catch {
+      // A config read failure must never take search down; keep the old default.
+    }
+    this._searchTimeoutCache = { value, at: now };
+    return value;
   }
 
   async getConfig(key: string): Promise<string | null> {

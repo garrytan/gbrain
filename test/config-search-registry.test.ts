@@ -23,6 +23,7 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.image_query.daily_budget_usd_per_client', // ops/image.ts
   'search.image_query.remote_max_bytes',     // ops/image.ts
   'search.mcp_keyword_only',                 // ops/search.ts
+  'search.statement_timeout_ms',             // postgres-engine.ts
   REMOTE_PRIVATE_PAGES_KEY,                  // search/private-visibility.ts
   'search.track_retrieval',                  // last-retrieved.ts
   'search.intent_patterns',                  // search/query-intent.ts
