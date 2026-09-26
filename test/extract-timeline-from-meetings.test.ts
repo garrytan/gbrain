@@ -81,6 +81,16 @@ describe('extractTimelineFromMeetings', () => {
     });
   });
 
+  it('does not project quarantined meeting content into entity timelines', async () => {
+    await seedEntity('people/alice-example', 'Alice Example');
+    await seedNote('meetings/retired', { title: 'Retired', legacyType: 'meeting' });
+    await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"quarantine":{"reason":"operator_retired_source"}}'::jsonb WHERE slug='meetings/retired'`);
+    await addAttended('meetings/retired', 'people/alice-example');
+    const result = await extractTimelineFromMeetings(engine, { gazetteer: new Map() });
+    expect(result.meetings_scanned).toBe(0);
+    expect(await engine.getTimeline('people/alice-example', { sourceId: 'default' })).toHaveLength(0);
+  });
+
   it('does not scan ordinary note pages as meetings', async () => {
     await seedEntity('people/alice-example', 'Alice Example');
     await seedNote('notes/team-sync', { title: 'Team Sync' });

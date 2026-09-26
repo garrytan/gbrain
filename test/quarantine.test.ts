@@ -21,12 +21,12 @@ describe('quarantine marker (hides)', () => {
     expect(m.assessed_at).toBe('2026-06-01T00:00:00.000Z');
   });
 
-  test('isQuarantined: true only when key present + non-null', () => {
+  test('isQuarantined: key presence matches the SQL hide predicate', () => {
     expect(isQuarantined({ [QUARANTINE_KEY]: { reason: 'junk_pattern' } })).toBe(true);
     expect(isQuarantined({})).toBe(false);
     expect(isQuarantined(null)).toBe(false);
     expect(isQuarantined(undefined)).toBe(false);
-    expect(isQuarantined({ [QUARANTINE_KEY]: null })).toBe(false);
+    expect(isQuarantined({ [QUARANTINE_KEY]: null })).toBe(true); // match SQL JSONB key-existence filter
   });
 
   test('filterOutQuarantined drops quarantined pages', () => {

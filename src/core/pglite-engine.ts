@@ -3680,7 +3680,7 @@ export class PGLiteEngine implements BrainEngine {
 
   /** Shared stale-for-extraction predicate (mirrors PostgresEngine). */
   private buildStalePagesWhere(opts?: { sourceId?: string; versionTs?: string }): { where: string; params: unknown[] } {
-    const conds: string[] = ['deleted_at IS NULL'];
+    const conds: string[] = ['deleted_at IS NULL', quarantineFilterFragment('pages')];
     const params: unknown[] = [];
     if (opts?.versionTs) {
       params.push(opts.versionTs);

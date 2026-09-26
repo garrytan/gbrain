@@ -130,6 +130,19 @@ describe('fs-walk extract on a non-default source (#1747)', () => {
     expect(await timelineCount()).toBeGreaterThanOrEqual(1);
   });
 
+  test('manual fs walk and incremental sync hooks skip quarantined source pages', async () => {
+    await engine.executeRaw(`UPDATE pages SET frontmatter = '{"quarantine":{"reason":"operator_retired_source"}}'::jsonb WHERE slug='people/alice' AND source_id='wiki'`);
+    await runExtract(engine, ['all', '--dir', brainDir, '--source-id', 'wiki', '--json']);
+    const outgoing = await engine.getLinks('people/alice', { sourceId: 'wiki' });
+    expect(outgoing).toHaveLength(0);
+    expect(await timelineCount()).toBe(0);
+    await engine.executeRaw('DELETE FROM links');
+    const result = await runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['people/alice', 'people/bob'], jsonMode: true, sourceId: 'wiki' });
+    expect(result.links_created).toBe(1);
+    expect(result.timeline_entries_created).toBe(0);
+    expect(await engine.getLinks('people/alice', { sourceId: 'wiki' })).toHaveLength(0);
+  });
+
   test('regression shape: without a sourceId the batch JOIN drops every row (created 0)', async () => {
     // Pre-#1747 behavior, kept as the negative control: unstamped rows map to
     // 'default' where these pages don't exist, so nothing is inserted.

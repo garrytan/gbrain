@@ -102,8 +102,8 @@ export async function checkLinksExtractionLag(
   try {
     const totalRows = await engine.executeRaw<{ count: number }>(
       sourceId
-        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
-        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(frontmatter, '{}'::jsonb) ? 'quarantine') AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(frontmatter, '{}'::jsonb) ? 'quarantine')`,
       sourceId ? [sourceId] : [],
     );
     const total = Number(totalRows[0]?.count ?? 0);
@@ -832,6 +832,8 @@ export async function computeAtomProvenanceDriftCheck(
            FROM pages a
           WHERE a.type = 'atom'
             AND a.deleted_at IS NULL
+            -- Hidden atoms are retained for review, not actionable search drift.
+            AND NOT (COALESCE(a.frontmatter, '{}'::jsonb) ? 'quarantine')
             AND a.frontmatter->>'source_hash' IS NOT NULL
             -- in-flight marker written before the extraction commits
             AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
@@ -906,7 +908,8 @@ export async function computeAtomProvenanceDriftCheck(
       const fix =
         "review before acting — most drift is an edited source, not a dead one. " +
         "List them with: SELECT slug, frontmatter->>'source_slug' FROM pages a WHERE a.type='atom' " +
-        "AND a.deleted_at IS NULL AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL " +
+        "AND a.deleted_at IS NULL AND NOT (COALESCE(a.frontmatter, '{}'::jsonb) ? 'quarantine') " +
+        "AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL " +
         "AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id " +
         "AND p.deleted_at IS NULL AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')";
       return {

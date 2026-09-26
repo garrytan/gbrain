@@ -21,6 +21,7 @@ import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-ment
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { inferLinkTypeFromPack } from './schema-pack/link-inference.ts';
 import { loadActivePackForLocalEngine, packSupportsNerInference } from './schema-pack/best-effort.ts';
+import { isQuarantined } from './quarantine.ts';
 
 export interface ExtractNerOpts {
   /** When true: enumerate but don't write. */
@@ -158,6 +159,7 @@ export async function extractNerLinks(
   for (const { slug, source_id } of allRefs) {
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
+    if (isQuarantined(page.frontmatter)) continue;
     if (opts.typeFilter && page.type !== opts.typeFilter) continue;
     if (sinceMs !== null) {
       const updatedMs = new Date(page.updated_at).getTime();

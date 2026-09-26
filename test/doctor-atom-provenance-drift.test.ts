@@ -105,6 +105,19 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(d.source_gone).toBe(1);
   });
 
+  it('excludes intentionally quarantined atoms from actionable drift totals', async () => {
+    await seedAtom('atoms/2026-01-01/hidden-000000', 'retired-source', 'deadbeefdeadbeef');
+    await engine.executeRaw(
+      `UPDATE pages SET frontmatter = frontmatter || $1::text::jsonb WHERE slug = $2`,
+      [JSON.stringify({ quarantine: { reason: 'operator_retired_source' } }), 'atoms/2026-01-01/hidden-000000'],
+    );
+    await seedAtom('atoms/2026-01-01/visible-000000', 'missing-source', 'deadbeefdeadbeef');
+    const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d.total_atoms).toBe(1);
+    expect(d.drifted).toBe(1);
+    expect(d.source_gone).toBe(1);
+  });
+
   it('excludes in-flight pending: markers', async () => {
     await seedSource('src-d', 'original body');
     await seedAtom('atoms/2026-01-01/d-000000', 'src-d', `pending:${await hashOf('src-d')}`);
