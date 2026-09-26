@@ -5,6 +5,7 @@ import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, resolveCandidateSources } from '../link-reconciliation.ts';
 import { excludesPrivateWrites } from './page-visibility.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
 
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>, sourceId: string,
@@ -18,6 +19,10 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   if (!opts.pack) return { pageKeys: [{ sourceId, slug }],
     apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };
   const content = `${page.compiled_truth}\n${page.timeline}`;
+  // A remote writer cannot see protected takes and private facts. Their edges
+  // have no provenance marker, so neither extraction nor deletion is safe.
+  if (remote && sanitizeRemoteBody(content) !== content) return { pageKeys: [{ sourceId, slug }],
+    apply: async () => ({ created: 0, removed: 0, errors: 0, unresolved_count: 0, skipped: 'protected_body' }) };
   const referenced = new Set([slug]);
   const initial = await extractPageLinks(slug, content, page.frontmatter, page.type, resolver,
     { ...opts, onResolvedFrontmatterTarget: target => referenced.add(target) });

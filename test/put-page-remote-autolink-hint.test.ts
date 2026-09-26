@@ -20,6 +20,7 @@ import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 
 let engine: PGLiteEngine;
 
@@ -175,6 +176,21 @@ describe('put_page remote auto-link disclosure (#4525)', () => {
       expect(result.auto_links?.removed).toBe(0);
       expect((await engine.getLinks('notes/existing-private-link', { sourceId: 'default' })).map(link => link.to_slug))
         .toEqual(['people/private-example']);
+    });
+  }, 120000);
+
+  test('remote replacement does not derive or remove links from protected takes', async () => {
+    await withEnv({ GBRAIN_REMOTE_AUTO_LINK: '1' }, async () => {
+      await putPage.handler(makeCtx(), { slug: 'companies/protected-example',
+        content: '---\ntype: company\ntitle: Protected Example\n---\n\nA company.' });
+      const original = await putPage.handler(makeCtx(), { slug: 'notes/protected-link',
+        content: `---\ntype: note\ntitle: Protected Link\n---\n\n${TAKES_FENCE_BEGIN}\nAlice works at [Acme](companies/protected-example).\n${TAKES_FENCE_END}` }) as { revision: string };
+      const before = await engine.getLinks('notes/protected-link', { sourceId: 'default' });
+      const result = await putPage.handler(makeCtx({ remote: true }), { slug: 'notes/protected-link',
+        expected_revision: original.revision,
+        content: '---\ntype: note\ntitle: Protected Link\n---\n\nPublic replacement.' }) as { auto_links?: { skipped?: string; created?: number; removed?: number } };
+      expect(result.auto_links?.skipped).toBe('protected_body');
+      expect(await engine.getLinks('notes/protected-link', { sourceId: 'default' })).toEqual(before);
     });
   }, 120000);
 
