@@ -246,6 +246,7 @@ describe('db-repair diagnose + auto/manual tiers', () => {
     expect(applied.length).toBe(1);
     expect(applied[0].action).toBe('bounded_reconnect');
     expect(applied[0].reason).toBe('conn_dropped');
+    expect(logs.join('\n')).toContain(d.remediation);
   });
 
   test('manual tier: auth_failed + --yes → exit 1, no applied receipts, config unchanged', async () => {

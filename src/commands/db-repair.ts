@@ -557,7 +557,15 @@ async function applyLadder(
   deps: DbRepairDeps,
   report: JsonReport,
 ): Promise<LadderOutcome> {
-  const human: string[] = [formatDbAccessMarker(d), `reason: ${d.reason} (${tier} tier)`];
+  // Keep the applied path aligned with diagnose-only, doctor, and MCP: the
+  // classifier's remediation is the canonical explanation for this reason.
+  // Branches below may add more specific repair progress, but must not make
+  // the shared remediation disappear from human output.
+  const human: string[] = [
+    formatDbAccessMarker(d),
+    `reason: ${d.reason} (${tier} tier)`,
+    d.remediation,
+  ];
   const now = deps.now();
 
   const applied = (action: string): void => {
