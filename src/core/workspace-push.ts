@@ -52,7 +52,7 @@ import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts'
  */
 
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
+  existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'fs';
 import { dirname, join } from 'path';
 import { createHash, randomBytes } from 'crypto';
@@ -153,7 +153,16 @@ export type PushLockResult =
   | { acquired: false; holderPid: number | null };
 
 export function pushLockDir(repoRoot: string): string {
-  const hash = createHash('sha256').update(repoRoot).digest('hex').slice(0, 16);
+  // Key the lock on the CANONICAL path. workspacePush() derives its root from
+  // `git rev-parse --show-toplevel` (physical path), while a caller may hold
+  // the same repo through a symlink (macOS: mkdtemp gives /var/..., git gives
+  // /private/var/...). Hashing the raw string handed out two different locks
+  // for one repo, so the second pusher never saw the first — the exact race
+  // the lock exists to prevent. realpath fails only if the dir is gone; fall
+  // back to the raw string so we still return SOME lock path.
+  let canonical = repoRoot;
+  try { canonical = realpathSync(repoRoot); } catch { /* keep raw */ }
+  const hash = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
   return join(ensureGbrainHome(), 'locks', `push-${hash}.lock`);
 }
 

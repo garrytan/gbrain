@@ -139,7 +139,11 @@ async function withEnv2<T>(fn: () => Promise<T>): Promise<T> {
 describe('addSource — Q4 pre-flight collision', () => {
   test('rejects existing id BEFORE any clone work', async () => {
     await withEnv2(async () => {
-      await addSource(engine, { id: 'taken', localPath: '/tmp/a' });
+      // A path that must NOT exist: the git pre-flight only runs on existing
+      // paths, and a stray /tmp/a on the host (seen on macOS dev boxes) turned
+      // this into a not_a_git_repo throw before the collision check.
+      const absent = join(tmpdir(), `gbrain-q4-absent-${process.pid}-${Date.now()}`);
+      await addSource(engine, { id: 'taken', localPath: absent });
       try {
         await addSource(engine, {
           id: 'taken',
