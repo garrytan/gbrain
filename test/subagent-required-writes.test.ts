@@ -10,14 +10,61 @@ const result: SubagentResult = {
   tokens: { in: 10, out: 5, cache_read: 0, cache_create: 0 },
 };
 
-function ledger(rows: Array<{ status: string; error: string | null; output?: unknown }>): BrainEngine {
-  return { executeRaw: async () => rows } as unknown as BrainEngine;
+function ledger(
+  rows: Array<{ status: string; error: string | null; output?: unknown }>,
+  completedTools: Array<{ id: number; tool_name: string; status: string; tool_use_id: string }> = [],
+): BrainEngine {
+  return {
+    executeRaw: async (query: string) => query.includes("tool_name = 'brain_put_page'") ? rows : completedTools,
+  } as unknown as BrainEngine;
 }
 
 describe('required-write postcondition (#5098)', () => {
+  test('allowCleanZeroWrites permits a clean finish after a completed non-write tool', async () => {
+    const actual = await finalizeWriteAccounting(ledger([], [{
+      id: 1, tool_name: 'brain_search', status: 'complete', tool_use_id: 'search-1',
+    }]), 1, result, {
+      requireWrites: true,
+      allowCleanZeroWrites: true,
+    });
+    expect(actual.stop_reason).toBe('end_turn');
+    expect(actual.pages_attempted).toBe(0);
+    expect(actual.pages_written).toBe(0);
+  });
+
+  test('allowCleanZeroWrites rejects a clean finish with no tool executions', async () => {
+    await expect(finalizeWriteAccounting(ledger([]), 1, result, {
+      requireWrites: true,
+      allowCleanZeroWrites: true,
+    })).rejects.toThrow('clean model finish does not satisfy require_writes');
+  });
+
+  test('allowCleanZeroWrites still fails when all attempted writes fail', async () => {
+    await expect(finalizeWriteAccounting(
+      ledger([{ status: 'failed', error: 'database unavailable' }]), 1, result,
+      { requireWrites: true, allowCleanZeroWrites: true },
+    )).rejects.toThrow('all 1 put_page write(s) failed');
+  });
+
+  test('allowCleanZeroWrites fails on a non-clean finish with zero attempts', async () => {
+    await expect(finalizeWriteAccounting(
+      ledger([]), 1, { ...result, stop_reason: 'max_tokens' },
+      { requireWrites: true, allowCleanZeroWrites: true },
+    )).rejects.toThrow('did not finish cleanly');
+  });
+
   test('a clean prose-only finish cannot satisfy required writes', async () => {
     await expect(finalizeWriteAccounting(ledger([]), 1, result, { requireWrites: true }))
       .rejects.toThrow('required put_page write');
+  });
+
+  test('allowCleanZeroWrites has no effect without requireWrites', async () => {
+    const actual = await finalizeWriteAccounting(ledger([]), 1, result, {
+      requireWrites: false,
+      allowCleanZeroWrites: true,
+    });
+    expect(actual.pages_attempted).toBe(0);
+    expect(actual.pages_written).toBe(0);
   });
 
   test('an unsettled write cannot satisfy required writes', async () => {

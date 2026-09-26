@@ -230,12 +230,12 @@ export async function persistToolExecComplete(
  * counts settled rows only — complete + failed; pending rows (crash-orphaned
  * dispatches that never settled) count toward NEITHER side.
  *
- * When the submitter set `require_writes` (dream synthesize / patterns
- * fan-out — jobs whose entire purpose is writing pages), zero successes
- * throws UnrecoverableError: retrying is provably futile (the
- * replay path short-circuits to the persisted terminal turn and can never
- * re-run the failed tools), so the job routes straight to dead and the
- * idempotency key releases for the next cycle.
+ * When the submitter sets `require_writes: true` (dream synthesize / patterns),
+ * zero successes throws UnrecoverableError unless the separate
+ * `allowCleanZeroWrites` opt-in permits a clean zero-attempt finish. Retrying
+ * an all-failed result is futile (replay short-circuits to the persisted
+ * terminal turn and cannot re-run failed tools), so the job routes straight
+ * to dead and the idempotency key releases for the next cycle.
  *
  * `scopeToolUseIdPrefix` narrows the ledger scan (the oneshot runner scopes to
  * its own invocation's rows so a prior invocation's outcome can't distort the
@@ -245,7 +245,7 @@ export async function finalizeWriteAccounting(
   engine: BrainEngine,
   jobId: number,
   result: SubagentResult,
-  opts: { requireWrites: boolean; scopeToolUseIdPrefix?: string },
+  opts: { requireWrites: boolean; allowCleanZeroWrites?: boolean; scopeToolUseIdPrefix?: string },
 ): Promise<SubagentResult> {
   let rows: Array<{ status: string; error: string | null; output: unknown }>;
   try {
@@ -291,7 +291,22 @@ export async function finalizeWriteAccounting(
       `all ${failed} put_page write(s) failed — job produced zero pages (first error: ${firstError})`,
     );
   }
-  if (opts.requireWrites && attempted === 0) {
+  let sawCompletedTool = false;
+  if (opts.requireWrites && attempted === 0 && opts.allowCleanZeroWrites && result.stop_reason === 'end_turn') {
+    // A read failure throws: the job fails closed rather than skipping the check.
+    const completed = await engine.executeRaw<{ id: number }>(
+      opts.scopeToolUseIdPrefix
+        ? `SELECT id FROM subagent_tool_executions
+            WHERE job_id = $1 AND status = 'complete' AND tool_use_id LIKE $2 LIMIT 1`
+        : `SELECT id FROM subagent_tool_executions
+            WHERE job_id = $1 AND status = 'complete' LIMIT 1`,
+      opts.scopeToolUseIdPrefix ? [jobId, `${opts.scopeToolUseIdPrefix}%`] : [jobId],
+    );
+    sawCompletedTool = completed.length > 0;
+  }
+  // The opt-in permits only a clean zero-attempt finish after at least one
+  // completed tool execution confirms the child examined evidence.
+  if (opts.requireWrites && attempted === 0 && !sawCompletedTool) {
     throw new UnrecoverableError(
       result.stop_reason === 'end_turn'
         ? 'job produced zero required put_page writes — a clean model finish does not satisfy require_writes'
