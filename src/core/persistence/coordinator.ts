@@ -29,6 +29,8 @@ interface PreparedMutationBase {
   additionalPageKeys?: readonly {sourceId:string;slug:string}[];
   noop?: boolean;
   deferEmbedding?: boolean;
+  /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
+  databaseOnlyReason?: 'db_only';
   /** Must perform only transaction-composable database work. */
   apply(tx: BrainEngine): Promise<Record<string, unknown>>;
   validate?(tx: BrainEngine): Promise<void>;
@@ -231,7 +233,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       const final = skill ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
       if (final) outcome.revision = final.revision;
       outcome.persistence = { mode: files.length ? 'filesystem' : 'database', ...(files.length ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
-      outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: row.authority.databaseOnlyReason ?? 'no_repo_configured' };
+      outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
       if (row.operation === 'put_page' && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id);
       await queuePublicationEffects(tx, row, final?.revision, outcome, prepared);
       await hooks.boundary?.('before_commit', row);

@@ -11,7 +11,7 @@ import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { phaseCGrandfather } from '../src/commands/migrations/v0_13_1.ts';
+import { phaseCGrandfather, phaseDVerify } from '../src/commands/migrations/v0_13_1.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import type { OrchestratorOpts } from '../src/commands/migrations/types.ts';
 
@@ -173,5 +173,31 @@ describe('#1581 phaseCGrandfather (chunked, source-safe)', () => {
     expect((await fmOf('bulk/0'))?.validate).toBe(false);
     expect((await fmOf('bulk/1199'))?.validate).toBe(false);
     expect(Date.now() - t0).toBeLessThan(30_000);
+  });
+
+  test('verify fails only for grandfathered pages still missing validate at the revision this run wrote', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gf-verify-'));
+    try {
+      await seed('kept', {});
+      await seed('reimported', {});
+      const { detail } = await gf(home);
+      expect(detail.grandfathered.map(page => page.id).sort()).toEqual(
+        [(await engine.getPage('kept'))!.id, (await engine.getPage('reimported'))!.id].sort());
+      // A connector re-import during the run replaces the page and drops the flag.
+      await seed('reimported', { connector: 'sync' });
+      expect(await phaseDVerify(engine, detail.grandfathered)).toMatchObject({ status: 'complete', detail: 'verified=1 rewritten_concurrently=1' });
+      // A claimed write that never landed: the recorded revision is current and the flag is absent.
+      await seed('unwritten', {});
+      const unwritten = (await engine.getPage('unwritten'))!;
+      const failed = await phaseDVerify(engine, [...detail.grandfathered, { id: unwritten.id, revision: unwritten.knowledge_revision! }]);
+      expect(failed.status).toBe('failed');
+      expect(failed.detail).toBe(`verified=1 rewritten_concurrently=1 missing_validate=1 (page#${unwritten.id})`);
+      // A receipt without a revision cannot prove a rewrite, so the flag must be present.
+      const kept = (await engine.getPage('kept'))!;
+      expect(await phaseDVerify(engine, [{ id: kept.id, revision: null }, { id: unwritten.id, revision: null }])).toMatchObject({
+        status: 'failed', detail: `verified=1 rewritten_concurrently=0 missing_validate=1 (page#${unwritten.id})` });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

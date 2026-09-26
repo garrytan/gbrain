@@ -107,11 +107,15 @@ const GRANDFATHER_WHERE =
 // (same rationale as engine-constants.ts DELETE_BATCH_SIZE).
 const CHUNK_SIZE = 1000;
 
+/** A page this run grandfathered and the revision its write produced. */
+export interface GrandfatheredPage { id: number; revision: string | null; }
+
 interface GrandfatherResult {
   touched: number;
   skipped: number;
   failed: number;
   failures: string[];
+  grandfathered: GrandfatheredPage[];
 }
 
 // Exported for direct hermetic testing against a PGLite engine (the config /
@@ -120,7 +124,7 @@ export async function phaseCGrandfather(
   engine: BrainEngine,
   opts: OrchestratorOpts,
 ): Promise<{ result: OrchestratorPhaseResult; detail: GrandfatherResult }> {
-  const gf: GrandfatherResult = { touched: 0, skipped: 0, failed: 0, failures: [] };
+  const gf: GrandfatherResult = { touched: 0, skipped: 0, failed: 0, failures: [], grandfathered: [] };
 
   try {
     if (opts.dryRun) {
@@ -155,8 +159,11 @@ export async function phaseCGrandfather(
           gf.skipped += chunk.length - selected.length;
           for (const page of selected) {
             try {
-              if (await grandfatherCanonicalPage(engine, page, snapshot => appendRollbackBatch([snapshot])) === 'touched') gf.touched++;
-              else gf.skipped++;
+              const outcome = await grandfatherCanonicalPage(engine, page, snapshot => appendRollbackBatch([snapshot]));
+              if (outcome.status === 'touched') {
+                gf.touched++;
+                gf.grandfathered.push({ id: page.id, revision: outcome.revision });
+              } else gf.skipped++;
             } catch (error) {
               gf.failed++;
               const reason = error instanceof OperationError
@@ -184,17 +191,20 @@ export async function phaseCGrandfather(
             throw new Error('Page identity changed during grandfathering; retry the migration.');
           }
           appendRollbackBatch(snap);
-          await tx.executeRaw(
+          // The revision trigger advances knowledge_revision on this update;
+          // verification keys on it to tell a later rewrite from a lost write.
+          const written = await tx.executeRaw<{ id: number; knowledge_revision: string }>(
             `UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{validate}', 'false'::jsonb) ` +
-            'WHERE id = ANY($1::int[])', [snap.map(row => row.id)]);
+            'WHERE id = ANY($1::int[]) RETURNING id, knowledge_revision::text AS knowledge_revision', [snap.map(row => row.id)]);
           const sealed = snap.filter(row => row.text_projection_revision === row.knowledge_revision).map(row => row.id);
           if (sealed.length) {
             await tx.executeRaw('UPDATE pages SET text_projection_revision=knowledge_revision WHERE id = ANY($1::int[])', [sealed]);
           }
-          return snap.length;
+          return written.map(row => ({ id: Number(row.id), revision: row.knowledge_revision }));
         });
-        gf.touched += touched;
-        gf.skipped += chunk.length - touched;
+        gf.touched += touched.length;
+        gf.skipped += chunk.length - touched.length;
+        gf.grandfathered.push(...touched);
       } catch (e) {
         gf.failed += chunk.length;
         const msg = e instanceof Error ? e.message : String(e);
@@ -216,24 +226,47 @@ export async function phaseCGrandfather(
 
 // ---------------------------------------------------------------------------
 // Phase D — verify
+//
+// Checks only the pages this run grandfathered. A page whose knowledge_revision
+// moved past the one our write produced (or that was deleted) was rewritten by
+// a concurrent writer, such as a connector re-import; it is reported as
+// `rewritten_concurrently`, not failed. A page still at our revision without
+// `validate: false` means the write did not land, and fails the phase. A null
+// revision (a replayed receipt that recorded none) cannot prove a rewrite, so
+// the flag must be present.
 // ---------------------------------------------------------------------------
 
-async function phaseDVerify(engine: BrainEngine, expectedTouched: number): Promise<OrchestratorPhaseResult> {
-  if (expectedTouched === 0) {
+// Exported for direct hermetic testing, like phaseCGrandfather.
+export async function phaseDVerify(engine: BrainEngine, grandfathered: GrandfatheredPage[]): Promise<OrchestratorPhaseResult> {
+  if (grandfathered.length === 0) {
     return { name: 'verify', status: 'complete', detail: 'nothing to verify' };
   }
   try {
-    // Count pages whose frontmatter has `validate` = false via raw SQL.
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      "SELECT COUNT(*) AS count FROM pages WHERE (frontmatter->>'validate')::text = 'false'",
-    );
-    const count = rows[0]?.count ?? 0;
-    const n = typeof count === 'string' ? parseInt(count, 10) : Number(count);
-    return {
-      name: 'verify',
-      status: n >= expectedTouched ? 'complete' : 'failed',
-      detail: `pages with validate=false: ${n} (expected >= ${expectedTouched})`,
-    };
+    let verified = 0;
+    let rewritten = 0;
+    const missing: number[] = [];
+    for (let i = 0; i < grandfathered.length; i += CHUNK_SIZE) {
+      const chunk = grandfathered.slice(i, i + CHUNK_SIZE);
+      const rows = await engine.executeRaw<{ id: number; state: 'verified' | 'rewritten' | 'missing' }>(
+        `SELECT t.id,
+           CASE WHEN p.id IS NULL OR (t.revision IS NOT NULL AND p.knowledge_revision::text <> t.revision) THEN 'rewritten'
+                WHEN p.frontmatter->>'validate' = 'false' THEN 'verified'
+                ELSE 'missing' END AS state
+         FROM unnest($1::int[], $2::text[]) AS t(id, revision)
+         LEFT JOIN pages p ON p.id = t.id`,
+        [chunk.map(page => page.id), chunk.map(page => page.revision)],
+      );
+      for (const row of rows) {
+        if (row.state === 'verified') verified++;
+        else if (row.state === 'rewritten') rewritten++;
+        else missing.push(Number(row.id));
+      }
+    }
+    const detail = `verified=${verified} rewritten_concurrently=${rewritten}`;
+    return missing.length === 0
+      ? { name: 'verify', status: 'complete', detail }
+      : { name: 'verify', status: 'failed',
+          detail: `${detail} missing_validate=${missing.length} (${missing.slice(0, 5).map(id => `page#${id}`).join(', ')})` };
   } catch (e) {
     return {
       name: 'verify',
@@ -270,7 +303,7 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     filesRewritten = gfDetail.touched;
 
     if (!opts.dryRun) {
-      const verifyRes = await phaseDVerify(engine, gfDetail.touched);
+      const verifyRes = await phaseDVerify(engine, gfDetail.grandfathered);
       phases.push(verifyRes);
     }
 

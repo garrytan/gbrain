@@ -357,6 +357,36 @@ export function isDbOnly(slug: string, config: StorageConfig): boolean {
 }
 
 /**
+ * Declared db_only match for a page slug. Slugs are always lowercase, so the
+ * declared directory is lowercased before matching (same reasoning as
+ * `effectiveDbOnlyDirs`, issue #3766). Only declared dirs count: the
+ * derive-phase defaults may be file-backed on some brains.
+ */
+export function isDeclaredDbOnlySlug(slug: string, config: StorageConfig | null): boolean {
+  return config?.db_only.some((dir) => matchesTierDir(slug, dir.toLowerCase())) ?? false;
+}
+
+/**
+ * True when gbrain.yml has a `db_only` (or deprecated `supabase_only`) key
+ * line but no db_only directory resolved from it. `loadStorageConfig` warns
+ * and resolves nothing for syntax the narrow parser does not handle (e.g.
+ * flow-style `db_only: [dir/]`), so a caller that must not guess a tier
+ * refuses instead. Only YAML key lines count, not comments or prose that
+ * mention the word. Known false positive: an intentionally empty
+ * `db_only: []` also counts, since it resolves to the same empty config.
+ */
+export function hasUnresolvedDbOnlyDeclaration(repoPath: string, config: StorageConfig | null): boolean {
+  if (config && config.db_only.length > 0) return false;
+  const yamlPath = join(repoPath, 'gbrain.yml');
+  const yamlContent = existsSync(yamlPath) ? readFileSync(yamlPath, 'utf-8') : '';
+  return yamlContent.split('\n').some((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#')) return false;
+    return /^(db_only|supabase_only)\s*:/.test(trimmed);
+  });
+}
+
+/**
  * Derive-phase output prefixes the engine itself writes as DB-only machine
  * output (issue #2784, reported by @alexputici). These are re-derivable by
  * design and rarely file-backed, so the `undeclared_db_only_pages` doctor

@@ -44,6 +44,7 @@ Path requirements:
 When storage configuration is present, `gbrain sync` automatically manages `.gitignore` entries on every successful sync:
 
 - Adds missing `db_only` directory patterns to `.gitignore`.
+- A file under a `db_only` directory that git already tracked before the declaration stays tracked and shows as modified once the database updates it; untrack it with `git rm --cached <path>`.
 - Idempotent — re-running adds no duplicate entries.
 - Stable comment header so the managed block is grep-able.
 - Skipped on `--dry-run` (don't mutate disk in preview mode).
