@@ -313,6 +313,17 @@ export class GmailClient extends GoogleApiClient {
     return this.fetchJSON(`${GMAIL_BASE}/users/me/profile`, 'gmail', opts);
   }
 
+  /** Account labels ({id, name}) — used to resolve label NAMES in
+   *  `loops.extraction_exclude_labels` to the ids threads carry (#5445). */
+  async getLabels(opts: { signal?: AbortSignal } = {}): Promise<Array<{ id: string; name: string }>> {
+    const body = await this.fetchJSON<{ labels?: Array<{ id?: string; name?: string }> }>(
+      `${GMAIL_BASE}/users/me/labels`,
+      'gmail',
+      opts,
+    );
+    return (body.labels ?? []).flatMap((l) => (l.id && l.name ? [{ id: l.id, name: l.name }] : []));
+  }
+
   /** Message ids matching a Gmail search query (includes SENT; excludes SPAM/TRASH). */
   async listMessageIds(
     q: string,

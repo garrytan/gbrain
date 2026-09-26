@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.58.1.37] - 2026-09-25
+
+**Exclude owner-sent automation from loop extraction by Gmail label.**
+
+Mailbox warm-up and similar tools send dozens of owner-sent threads a day;
+each one qualified for LLM loop extraction through the owner-participated
+rule, and no existing control could stop it without muting the owner's real
+commitments too. The new `loops.extraction_exclude_labels` config (comma-
+separated Gmail label names or ids) excludes any thread carrying one of
+those labels before the owner override runs — reported as `excluded_label`.
+
 ## [0.58.1.0] - 2026-09-24
 
 **Spend less time rebuilding test fixtures without dropping database coverage.**

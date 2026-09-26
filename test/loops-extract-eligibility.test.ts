@@ -264,3 +264,83 @@ describe('loopExtractionEligibility', () => {
     expect(v.reason).toBe('owner_participated');
   });
 });
+
+describe('loopExtractionEligibility — loops.extraction_exclude_labels (#5445)', () => {
+  // excludedLabelIds is the lowercased set resolveExcludedLabelIds returns.
+  const EXCLUDED = new Set(['label_42', 'sent']);
+
+  test('an excluded label beats owner_participated (mailbox warm-up)', () => {
+    // Every warm-up email is owner-sent, single-message, custom-labelled —
+    // exactly the thread the exclusion exists for.
+    const v = loopExtractionEligibility(
+      thread([msg({ from: 'me@example.com', labels: ['SENT', 'Label_42'], to: ['lead@example.com'] })]),
+      MY,
+      { excludedLabelIds: EXCLUDED },
+    );
+    expect(v.eligible).toBe(false);
+    expect(v.reason).toBe('excluded_label');
+  });
+
+  test('exclusion matches case-insensitively on system label names', () => {
+    const v = loopExtractionEligibility(
+      thread([msg({ from: 'bob@example.com', labels: ['SENT'] })]),
+      MY,
+      { excludedLabelIds: EXCLUDED },
+    );
+    expect(v.eligible).toBe(false);
+    expect(v.reason).toBe('excluded_label');
+  });
+
+  test('SPAM still wins over the exclusion', () => {
+    const v = loopExtractionEligibility(
+      thread([msg({ from: 'me@example.com', labels: ['SENT', 'SPAM', 'Label_42'] })]),
+      MY,
+      { excludedLabelIds: EXCLUDED },
+    );
+    expect(v.eligible).toBe(false);
+    expect(v.reason).toBe('spam_or_trash');
+  });
+
+  test('threads without the excluded label are unaffected', () => {
+    const v = loopExtractionEligibility(
+      thread([msg({ from: 'me@example.com', labels: ['SENT', 'Label_99'], to: ['lead@example.com'] })]),
+      MY,
+      { excludedLabelIds: new Set(['label_42']) },
+    );
+    expect(v.eligible).toBe(true);
+    expect(v.reason).toBe('owner_participated');
+  });
+
+  test('absent/empty exclusion set preserves prior behaviour', () => {
+    const t = thread([msg({ from: 'me@example.com', labels: ['SENT', 'Label_42'], to: ['lead@example.com'] })]);
+    expect(loopExtractionEligibility(t, MY).reason).toBe('owner_participated');
+    expect(loopExtractionEligibility(t, MY, { excludedLabelIds: new Set() }).reason).toBe('owner_participated');
+  });
+});
+
+describe('resolveExcludedLabelIds (#5445)', () => {
+  const LABELS = [
+    { id: 'Label_42', name: 'Apollo Mailwarming' },
+    { id: 'INBOX', name: 'INBOX' },
+    { id: 'Label_9', name: 'Receipts' },
+  ];
+
+  test('a name token resolves to its label id', async () => {
+    const { resolveExcludedLabelIds } = await import('../src/core/google/loops-extract.ts');
+    const ids = resolveExcludedLabelIds(['apollo mailwarming'], LABELS);
+    expect(ids.has('label_42')).toBe(true);
+  });
+
+  test('an id token and system-label names are kept verbatim', async () => {
+    const { resolveExcludedLabelIds } = await import('../src/core/google/loops-extract.ts');
+    const ids = resolveExcludedLabelIds(['label_9', 'sent'], LABELS);
+    expect(ids.has('label_9')).toBe(true);
+    expect(ids.has('sent')).toBe(true);
+  });
+
+  test('an unknown name stays a verbatim token (harmless, id-shaped match only)', async () => {
+    const { resolveExcludedLabelIds } = await import('../src/core/google/loops-extract.ts');
+    const ids = resolveExcludedLabelIds(['no such label'], LABELS);
+    expect([...ids]).toEqual(['no such label']);
+  });
+});

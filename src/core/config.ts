@@ -1379,6 +1379,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // google-source email pages (default ON for google sources; deterministic
   // thread detection is unaffected). `gbrain config set loops.extraction_enabled false`.
   'loops.extraction_enabled',
+  // gbrain#5445: comma-separated Gmail label ids or names excluded from loop
+  // extraction before the owner_participated override — e.g. mailbox warm-up
+  // labels whose threads are all owner-sent automation.
+  // `gbrain config set loops.extraction_exclude_labels "Apollo Mailwarming"`.
+  'loops.extraction_exclude_labels',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
   // #3852: operator-set system-prompt appendix for the facts extractor (e.g.

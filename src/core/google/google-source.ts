@@ -203,6 +203,9 @@ interface GoogleSyncDeps {
   /** Threads whose newest message falls in the recent window — LLM
    *  extraction candidates, enqueued (capped) after the sweep. */
   extractCandidates: Array<{ slug: string; threadId: string; newestMs: number }>;
+  /** gbrain#5445 — `loops.extraction_exclude_labels` resolved to label ids;
+   *  threads carrying one are never extraction candidates. Undefined = none. */
+  excludedLabelIds?: Set<string>;
 }
 
 type ActivePack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined;
@@ -520,7 +523,7 @@ async function processThread(
     // Structural eligibility, not "everything recent": bulk mail the owner
     // never joined would otherwise both pay for model calls AND crowd real
     // threads out of the sweep.
-    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry));
+    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry), { excludedLabelIds: deps.excludedLabelIds });
     summary.extractEligibility[verdict.reason] =
       (summary.extractEligibility[verdict.reason] ?? 0) + 1;
     if (verdict.eligible) {
@@ -1052,6 +1055,20 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const calendar = new CalendarClient(...clientArgs);
   const people = new PeopleClient(...clientArgs);
   const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, extractCandidates: [], managed };
+
+  // gbrain#5445 — resolve `loops.extraction_exclude_labels` once per sync:
+  // config tokens may be label ids OR names; names resolve through the
+  // account's label list (best-effort — id tokens still match if it fails).
+  try {
+    const { loopsExtractionExcludeTokens, resolveExcludedLabelIds } = await import('./loops-extract.ts');
+    const tokens = await loopsExtractionExcludeTokens(engine);
+    if (tokens.length > 0) {
+      let labels: Array<{ id: string; name: string }> = [];
+      try { labels = await gmail.getLabels({ ...(opts.signal ? { signal: opts.signal } : {}) }); }
+      catch (e) { log(`[gbrain] loops exclusion: label list unavailable (${e instanceof Error ? e.message : e}); id tokens still apply`); }
+      deps.excludedLabelIds = resolveExcludedLabelIds(tokens, labels);
+    }
+  } catch { /* exclusion is opt-in; never block a sync on it */ }
 
   const summary: GoogleSyncSummary = {
     status: 'synced',

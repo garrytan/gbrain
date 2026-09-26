@@ -62,6 +62,7 @@ export interface ExtractEligibility {
     | 'human_correspondence'
     | 'spam_or_trash'
     | 'no_substantive_messages'
+    | 'excluded_label'
     | 'bulk_category'
     | 'list_mail';
 }
@@ -91,6 +92,7 @@ export interface ExtractEligibility {
 export function loopExtractionEligibility(
   thread: GmailThreadData,
   myAddresses: Set<string> = new Set(),
+  opts: { excludedLabelIds?: ReadonlySet<string> } = {},
 ): ExtractEligibility {
   const messages = thread.messages;
   if (messages.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
@@ -101,6 +103,15 @@ export function loopExtractionEligibility(
   // Deleted or spam mail is never an obligation, whoever wrote it.
   if (labels.has('SPAM') || labels.has('TRASH')) {
     return { eligible: false, reason: 'spam_or_trash' };
+  }
+
+  // gbrain#5445 — opt-in structural exclusion (`loops.extraction_exclude_labels`):
+  // a thread carrying an operator-named label is never an extraction
+  // candidate, even when the owner wrote in it. Mailbox warm-up and similar
+  // owner-sent automation need this — muting the owner's own address would
+  // also suppress real commitments. Checked before owner_participated.
+  if (opts.excludedLabelIds && [...labels].some((l) => opts.excludedLabelIds!.has(l.toLowerCase()))) {
+    return { eligible: false, reason: 'excluded_label' };
   }
 
   // Machine mail carries no commitments: pure noise senders, and Calendar's
@@ -140,6 +151,44 @@ export async function isLoopsExtractionEnabled(engine: BrainEngine): Promise<boo
   } catch {
     return true;
   }
+}
+
+/**
+ * gbrain#5445 — parse `loops.extraction_exclude_labels`: a comma-separated
+ * list of Gmail label ids or names the operator wants out of loop extraction
+ * (e.g. a mailbox warm-up label). Returns the lowercased token list; unset or
+ * unreadable config yields [].
+ */
+export async function loopsExtractionExcludeTokens(engine: BrainEngine): Promise<string[]> {
+  try {
+    const v = await engine.getConfig('loops.extraction_exclude_labels');
+    return (v ?? '')
+      .split(',')
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => t.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolve exclusion tokens to the label-id set `loopExtractionEligibility`
+ * matches against. A token is kept verbatim (covers system labels like
+ * 'SENT' whose id IS the name, and any label id); when the account's label
+ * map is available, a token equal to a label NAME (case-insensitive) adds
+ * that label's id too. The returned set is lowercase — callers matching
+ * labelIds must compare lowercased.
+ */
+export function resolveExcludedLabelIds(
+  tokens: readonly string[],
+  labels: ReadonlyArray<{ id: string; name: string }>,
+): Set<string> {
+  // All members are lowercase — the gate lowercases thread labelIds to match.
+  const ids = new Set<string>(tokens.map((t) => t.toLowerCase()));
+  for (const label of labels) {
+    if (tokens.includes(label.name.toLowerCase())) ids.add(label.id.toLowerCase());
+  }
+  return ids;
 }
 
 // ── Judge ────────────────────────────────────────────────────────────────────
