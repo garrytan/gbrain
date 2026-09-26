@@ -13,7 +13,7 @@
  */
 
 import { getBackupStatus } from '../backup/coverage.ts';
-import { backupCheckDisabled, backupNagGate, loadBackupStatus } from '../backup/status-file.ts';
+import { backupCheckDisabled, backupNagGate, blockingAssetReasons, loadBackupStatus } from '../backup/status-file.ts';
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
 
 export const collectBackupCoverage: AdvisorCollector = {
@@ -31,10 +31,18 @@ export const collectBackupCoverage: AdvisorCollector = {
       // git subprocesses on a remote surface, ever).
       const s = loadBackupStatus();
       if (!s || s.overall !== 'warn') return [];
+      // #5505: count the reasons that hold the warn, not only no_remote.
+      const byReason = new Map<string, number>();
+      for (const { reason } of blockingAssetReasons(s, 'aggregate')) byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+      const blocked = [...byReason.values()].reduce((a, b) => a + b, 0);
+      const reasons = [...byReason].map(([reason, n]) => `${n} ${reason}`).join(', ');
       findings.push({
         id: 'backup_coverage_aggregate',
         severity: 'warn',
-        title: `${s.totals.no_remote} of ${s.totals.assets} knowledge assets have no git remote (local-only) — run \`gbrain backup status\` on the brain host for fix commands.`,
+        title: (blocked > 0
+          ? `${blocked} of ${s.totals.assets} knowledge assets lack verified recovery (${reasons})`
+          : 'The cached backup verdict is not current') +
+          '. Run `gbrain backup status` on the brain host for fix commands.',
         fix: { command_argv: null },
         collector: 'backup-coverage',
         ask_user: true,
@@ -92,6 +100,20 @@ export const collectBackupCoverage: AdvisorCollector = {
           ask_user: true,
         });
       }
+    }
+    // #5505: dirty trees, non-Git paths and unverified remotes hold the warn
+    // too; name them instead of leaving the warn with no finding.
+    const otherBlocked = blockingAssetReasons(s, 'local').filter((a) => a.state !== 'no_remote' && a.state !== 'unpushed');
+    if (otherBlocked.length > 0) {
+      findings.push({
+        id: 'backup_recovery_unverified',
+        severity: 'warn',
+        title: `${otherBlocked.length} knowledge asset(s) lack verified recovery: ${otherBlocked.map((a) => `${a.id} (${a.reason})`).join(', ')}.`,
+        detail: 'run gbrain backup status for the per-asset detail and fix commands',
+        fix: { command_argv: null },
+        collector: 'backup-coverage',
+        ask_user: true,
+      });
     }
     const unpushed = s.assets.filter((a) => a.state === 'unpushed');
     if (unpushed.length > 0) {

@@ -377,6 +377,30 @@ describe('runBackupCli — disabled', () => {
   });
 });
 
+// #5505: rows coverage leaves without fix_argv still get a command.
+describe('runBackupCli status: fix commands for dirty and unverified rows', () => {
+  test('dirty repo, deduped dirty root, dirty workspace and unverified repo each name a fix', async () => {
+    process.env.GBRAIN_BACKUP_CHECK = '0'; // cache-only render, no compute
+    saveBackupStatus({
+      ...mkStatus('warn', new Date(Date.now() - 60_000).toISOString()),
+      assets: [
+        { kind: 'source_repo', id: 'dirty-src', state: 'dirty', detail: 'uncommitted changes', fix_argv: null },
+        { kind: 'source_repo', id: 'root-a, root-b', state: 'dirty', detail: 'uncommitted changes', fix_argv: null },
+        { kind: 'bootstrap_workspace', id: '/ws/example', state: 'dirty', detail: 'uncommitted changes', fix_argv: null },
+        { kind: 'source_repo', id: 'unverified-src', state: 'ok', configured_remote: true, fix_argv: null },
+      ],
+    });
+
+    const r = await run(['status'], thunkFor(stubEngine({})).connect);
+
+    expect(r.stdout).toContain('fix: gbrain sources push dirty-src');
+    expect(r.stdout).toContain('fix: gbrain sources push root-a\n');
+    expect(r.stdout).toContain('fix: gbrain sources push --path /ws/example');
+    expect(r.stdout).toContain('fix: gbrain backup check');
+    expect(r.stdout).toContain('Fix the ✗ and ⚠ rows above, then run: gbrain backup check');
+  });
+});
+
 // ── --json payload ───────────────────────────────────────────────────────────
 
 describe('runBackupCli --json', () => {

@@ -62,7 +62,12 @@ backing file that sit outside every declared `db_only` path. The engine's own
 derive-phase output prefixes (`life/events/`, `atoms/`, `extracts/`,
 `dream-cycle-summaries/`) count as implicitly declared for that check, so healthy
 brains stay quiet without adding them to `gbrain.yml`. They are NOT auto-added to
-`.gitignore` — only explicitly declared `db_only` dirs are.
+`.gitignore` — only explicitly declared `db_only` dirs are. Google and GitHub
+connector sources running under managed persistence without a worktree binding
+(`connector_database`) are skipped by that check: their pages live only in the
+database by design, so no `gbrain.yml` is needed in the connector's directory.
+Recover them with a full re-sync from the provider
+(`gbrain sync --source <id> --full`).
 
 Example `.gitignore` addition:
 
