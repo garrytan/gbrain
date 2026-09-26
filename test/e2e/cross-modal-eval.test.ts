@@ -17,7 +17,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 
 let tempDir: string;
 
@@ -41,6 +41,7 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
   mock.restore();
+  resetGateway();
 });
 
 function makeChatStub(scoresBySlot: Record<string, number[]>) {

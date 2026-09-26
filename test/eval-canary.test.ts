@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { basisEmbedding, buildQrelsQueryEmbedFn, fnv1a } from '../src/eval/deterministic-embed.ts';
 import { parseLegacyQrels, seedCanaryCorpus } from '../scripts/run-eval-canary.ts';
@@ -103,6 +104,12 @@ describe('correctness gate through the queryEmbedFn seam', () => {
   let engine: PGLiteEngine;
 
   beforeAll(async () => {
+    // Victim-side guard: initSchema sizes the vector column from the AMBIENT
+    // process-global gateway, and this beforeAll runs before the preload's
+    // per-test restore. A preceding shard file that leaked a non-1536 embed
+    // model (models-doctor-v1-hint, #6) made every 1536-d seed insert fail
+    // with "expected 1280 dimensions, not 1536". Pin the baseline first.
+    resetGateway();
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();

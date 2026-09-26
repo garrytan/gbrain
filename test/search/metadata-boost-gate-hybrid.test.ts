@@ -26,7 +26,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
-import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import { basisEmbedding } from '../../src/eval/deterministic-embed.ts';
 import type { HybridSearchMeta, SearchResult } from '../../src/core/types.ts';
@@ -109,6 +109,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  // configureGateway above mutates the PROCESS-GLOBAL gateway; restore the
+  // preload baseline so later files in this bun shard don't inherit it.
+  resetGateway();
 }, 60_000);
 
 describe('metadata_boost_gate — hermetic hybridSearch (Cat 13 E3)', () => {
