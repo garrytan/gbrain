@@ -25,10 +25,13 @@
 import type { BrainEngine } from '../engine.ts';
 import { BudgetMeter } from './budget-meter.ts';
 import { resolveModel } from '../model-config.ts';
+import { serializeMarkdown } from '../markdown.ts';
+import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
 import type { DreamPhaseResult } from './auto-think.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
+  sourceId?: string;
   dryRun: boolean;
   /** Override the audit ledger path (tests). */
   auditPath?: string;
@@ -178,6 +181,7 @@ export async function defaultDriftJudge(input: {
 async function findDriftCandidates(
   engine: BrainEngine,
   lookbackDays: number,
+  sourceId?: string,
 ): Promise<DriftCandidate[]> {
   const cutoffIso = lookbackCutoffIso(lookbackDays);
   // Only consider takes with weight in the "soft" middle band (0.3..0.85)
@@ -195,11 +199,12 @@ async function findDriftCandidates(
     FROM takes t
     JOIN pages p ON p.id = t.page_id
     WHERE t.active
+      AND ($2::text IS NULL OR p.source_id = $2)
       AND t.weight >= 0.3 AND t.weight <= 0.85
       AND t.resolved_at IS NULL
     ORDER BY recent_evidence DESC, t.weight DESC
     LIMIT 200
-  `, [cutoffIso]);
+  `, [cutoffIso, sourceId ?? null]);
   return rows
     .filter(r => Number(r.recent_evidence) >= 1)
     .map(r => ({
@@ -279,7 +284,7 @@ export async function runPhaseDrift(
     return skipped('not_configured', 'dream.drift.enabled is false');
   }
 
-  const candidates = await findDriftCandidates(engine, config.lookbackDays);
+  const candidates = await findDriftCandidates(engine, config.lookbackDays, opts.sourceId);
   if (candidates.length === 0) {
     return {
       name: 'drift',
@@ -299,6 +304,10 @@ export async function runPhaseDrift(
       duration_ms: Date.now() - start,
     };
   }
+
+  // Fail before judge spend if the managed source has no canonical writer.
+  const sourceId = opts.sourceId ?? 'default';
+  const maintenance = await maintenancePreflight(engine, sourceId, opts.brainDir);
 
   const modelId = await resolveModel(engine, {
     configKey: 'models.drift',
@@ -344,13 +353,18 @@ export async function runPhaseDrift(
     const date = new Date().toISOString().slice(0, 10);
     reportSlug = `reports/drift-${date}`;
     // Report-only v1: the report page is the ONLY write this phase makes.
-    // Lands in the default source (brain-global artifact, same-day re-runs
-    // upsert the same slug).
-    await engine.putPage(reportSlug, {
-      type: 'report',
-      title: `Drift report ${date}`,
-      compiled_truth: buildReportBody(judged, config, modelId),
-    });
+    // Lands in the selected source, or default for direct unscoped calls;
+    // same-day re-runs replace the report under that source's revision.
+    const title = `Drift report ${date}`;
+    const body = buildReportBody(judged, config, modelId);
+    if (maintenance) {
+      const snapshot = await engine.readPageSnapshot(reportSlug, { sourceId, includeDeleted: true });
+      const content = serializeMarkdown({}, body, '', { type: 'report', title, tags: [] });
+      await publishMaintenancePage(engine, maintenance, reportSlug, content,
+        { expectedRevision: snapshot?.revision ?? null });
+    } else {
+      await engine.putPage(reportSlug, { type: 'report', title, compiled_truth: body }, { sourceId });
+    }
   }
 
   const detail =

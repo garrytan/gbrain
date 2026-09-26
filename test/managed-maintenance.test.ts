@@ -8,6 +8,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 import { runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
 import { runPhasePatterns } from '../src/core/cycle/patterns.ts';
+import { runPhaseDrift } from '../src/core/cycle/drift.ts';
 import { runCycle } from '../src/core/cycle.ts';
 import { maintenancePreflight, publishMaintenancePage, prepareMaintenanceMutation } from '../src/core/persistence/prepared-maintenance.ts';
 import { claimWorktree, getWorktreeBinding, acquireWorktree } from '../src/core/persistence/ownership.ts';
@@ -88,6 +89,27 @@ async function seedFacts(engine: BrainEngine, sourceId: string, slug: string, vi
     [sourceId, slug, `Example claim ${i}`, visibility, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
   }
 }
+
+test('drift publishes its report through the managed source writer', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    await seed(engine, sourceId);
+    const page = (await engine.getPage('people/example', { sourceId }))!;
+    await engine.addTakesBatch([{ page_id: page.id, row_num: 1, claim: 'Example claim',
+      kind: 'take', holder: 'self', weight: 0.6 }]);
+    await engine.addTimelineEntriesBatch([{ slug: 'people/example',
+      date: new Date().toISOString().slice(0, 10), source: 'test', summary: 'New example evidence', source_id: sourceId }]);
+    await engine.setConfig('dream.drift.enabled', 'true');
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+
+    const result = await runPhaseDrift(engine, { sourceId, brainDir: root, dryRun: false,
+      judge: async () => ({ drifted: true, confidence: 0.9, reasoning: 'New evidence' }) });
+    expect(result.status).toBe('complete');
+    const slug = `reports/drift-${new Date().toISOString().slice(0, 10)}`;
+    expect((await engine.getPage(slug, { sourceId }))?.compiled_truth).toContain('Example claim');
+    expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain('Example claim');
+    expect(await engine.getPage(slug, { sourceId: 'default' })).toBeNull();
+  });
+}, 30_000);
 
 test('runCycle consolidates only its explicitly selected source across two eligible source clusters', async () => {
   await fixture(async (engine, sourceId, root) => {
