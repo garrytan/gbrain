@@ -6,7 +6,7 @@ import { hasDatabase } from './helpers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { withEnv } from '../helpers/with-env.ts';
-import { phaseCGrandfather } from '../../src/commands/migrations/v0_13_1.ts';
+import { phaseCGrandfather, phaseDVerify } from '../../src/commands/migrations/v0_13_1.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 
 function afterTransactionQuery(engine: BrainEngine, after: (tx: BrainEngine, query: string) => Promise<void>): BrainEngine {
@@ -79,6 +79,32 @@ describe.skipIf(!hasDatabase())('Postgres grandfather migration projection publi
         expect((await engine.getPage('concepts/unsealed-example', { sourceId: 'default' }))?.text_projection_revision).toBeNull();
         expect(await engine.executeRaw('SELECT slug FROM page_projection_jobs')).toEqual([{ slug: 'concepts/unsealed-example' }]);
         expect((await phaseCGrandfather(engine, { yes: true, dryRun: false, noAutopilotInstall: true })).detail.touched).toBe(0);
+      });
+    } finally {
+      await pg.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  test('verify keys on the revision each write produced, including a batch of unrecorded revisions', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-grandfather-verify-pg-'));
+    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+    const engine = pg.engine;
+    try {
+      await sealedPage(engine, 'concepts/kept', 'Kept fixture.');
+      await sealedPage(engine, 'concepts/reimported', 'Reimported fixture.');
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const { detail } = await phaseCGrandfather(engine, { yes: true, dryRun: false, noAutopilotInstall: true });
+        expect(await phaseDVerify(engine, detail.grandfathered)).toMatchObject({ status: 'complete', detail: 'verified=2 rewritten_concurrently=0' });
+        // A connector re-import replaces the page and drops the flag.
+        await sealedPage(engine, 'concepts/reimported', 'Reimported again.');
+        expect(await phaseDVerify(engine, detail.grandfathered)).toMatchObject({ status: 'complete', detail: 'verified=1 rewritten_concurrently=1' });
+        await sealedPage(engine, 'concepts/unwritten', 'Never grandfathered.');
+        const kept = (await engine.getPage('concepts/kept', { sourceId: 'default' }))!;
+        const unwritten = (await engine.getPage('concepts/unwritten', { sourceId: 'default' }))!;
+        // A receipt without a revision cannot prove a rewrite, so the flag must be present.
+        expect(await phaseDVerify(engine, [{ id: kept.id, revision: null }, { id: unwritten.id, revision: null }])).toMatchObject({
+          status: 'failed', detail: `verified=1 rewritten_concurrently=0 missing_validate=1 (page#${unwritten.id})` });
       });
     } finally {
       await pg.close();

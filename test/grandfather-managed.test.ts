@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
-import { phaseCGrandfather } from '../src/commands/migrations/v0_13_1.ts';
+import { phaseCGrandfather, phaseDVerify } from '../src/commands/migrations/v0_13_1.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -118,7 +118,8 @@ test('pending grandfathering reuses its admitted request and its original rollba
     await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
     await tx.executeRaw('UPDATE persistence_worktrees SET owner_host_id=$1::uuid', [host]);
   });
-  expect(await grandfatherCanonicalPage(engine, selected, () => { backups++; })).toBe('touched');
+  expect(await grandfatherCanonicalPage(engine, selected, () => { backups++; }))
+    .toEqual({ status: 'touched', revision: (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision });
   expect(backups).toBe(1);
   expect(await engine.executeRaw("SELECT request_id,state FROM persistence_requests WHERE intent->>'kind'='managed_grandfather'"))
     .toEqual([{ request_id: requestId, state: 'committed' }]);
@@ -263,3 +264,11 @@ for (const cache of [false, true]) {
       .toEqual([{ state: 'committed', error_code: null }]);
   }, { setup: dbOnlySource(declaring('conversations/'), { cache }) }), 120_000);
 }
+
+test('verify reports a managed page rewritten after grandfathering without failing the phase', () => fixture(async ({ engine, slug }) => {
+  const { detail } = await phaseCGrandfather(engine, { yes: true, dryRun: false, noAutopilotInstall: true });
+  expect(await phaseDVerify(engine, detail.grandfathered)).toMatchObject({ status: 'complete', detail: 'verified=1 rewritten_concurrently=0' });
+  await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () =>
+    tx.executeRaw("UPDATE pages SET frontmatter=frontmatter-'validate' WHERE source_id='default' AND slug=$1", [slug])));
+  expect(await phaseDVerify(engine, detail.grandfathered)).toMatchObject({ status: 'complete', detail: 'verified=0 rewritten_concurrently=1' });
+}), 120_000);

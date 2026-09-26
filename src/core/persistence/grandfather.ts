@@ -18,12 +18,13 @@ import type { PreparedMutation } from './coordinator.ts';
 
 export async function grandfatherCanonicalPage(engine: BrainEngine,
   selected: { id: number; slug: string; source_id: string; source_incarnation: string },
-  before: (page: typeof selected & { frontmatter: Record<string, unknown>; knowledge_revision: string; request_id: string }) => void | Promise<void>): Promise<'touched' | 'skipped'> {
+  before: (page: typeof selected & { frontmatter: Record<string, unknown>; knowledge_revision: string; request_id: string }) => void | Promise<void>,
+): Promise<{ status: 'touched'; revision: string | null } | { status: 'skipped' }> {
   const snapshot = await engine.readPageSnapshot(selected.slug, { sourceId: selected.source_id });
   if (!snapshot || snapshot.page.id !== selected.id || snapshot.sourceIncarnation !== selected.source_incarnation ||
-    Object.hasOwn(snapshot.page.frontmatter ?? {}, 'validate')) return 'skipped';
+    Object.hasOwn(snapshot.page.frontmatter ?? {}, 'validate')) return { status: 'skipped' };
   const extension = snapshot.page.source_path ? extname(snapshot.page.source_path).toLowerCase() : '';
-  if (['code', 'image'].includes(snapshot.page.type) || extension && !['.md', '.mdx'].includes(extension)) return 'skipped';
+  if (['code', 'image'].includes(snapshot.page.type) || extension && !['.md', '.mdx'].includes(extension)) return { status: 'skipped' };
   const ctx: OperationContext = { engine, config: loadConfig() ?? { engine: engine.kind }, sourceId: selected.source_id,
     remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } };
   await initializeLocalPersistence(ctx);
@@ -47,9 +48,10 @@ export async function grandfatherCanonicalPage(engine: BrainEngine,
       sourceIncarnation: selected.source_incarnation, pageId: selected.id, slug: selected.slug, requestId, authority, callerIntent,
       intent: { kind: 'managed_grandfather', expected_revision: snapshot.revision },
       worktreeId: binding?.worktree_id, topologyGeneration: binding?.topology_generation });
-    writeResponse(await waitForWrite(engine, request, ctx.config));
+    const committed = writeResponse(await waitForWrite(engine, request, ctx.config));
     await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [op, fingerprint, JSON.stringify([requestId])]);
-    return 'touched';
+    // The publication revision lets verification tell a later rewrite from a lost grandfather.
+    return { status: 'touched', revision: typeof committed.revision === 'string' ? committed.revision : null };
   } catch (error) {
     if (error instanceof OperationError && error.writeRequest && ['failed', 'conflict', 'cancelled'].includes(error.writeRequest.state)) {
       await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [op, fingerprint, JSON.stringify([requestId])]);
