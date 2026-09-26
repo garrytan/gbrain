@@ -3052,7 +3052,10 @@ export function rrfFusionWeighted(
   const entries = Array.from(scores.values());
   if (entries.length === 0) return [];
 
-  const maxScore = Math.max(...entries.map(e => e.score));
+  // Linear-time max: identical to Math.max(...entries.map(e => e.score)) for
+  // all inputs, without the temp array or the spread's stack limit.
+  let maxScore = -Infinity;
+  for (const e of entries) maxScore = Math.max(maxScore, e.score);
   if (maxScore > 0) {
     for (const e of entries) {
       e.score = e.score / maxScore;
@@ -3111,8 +3114,10 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
   const entries = Array.from(scores.values());
   if (entries.length === 0) return [];
 
-  // Normalize to 0-1 by dividing by observed max
-  const maxScore = Math.max(...entries.map(e => e.score));
+  // Normalize to 0-1 by dividing by observed max. Linear-time max: identical
+  // to the spread form for all inputs, minus the temp array and stack limit.
+  let maxScore = -Infinity;
+  for (const e of entries) maxScore = Math.max(maxScore, e.score);
   if (maxScore > 0) {
     for (const e of entries) {
       const rawScore = e.score;
@@ -3172,8 +3177,10 @@ export async function cosineReScore(
 
   if (embeddingMap.size === 0) return results;
 
-  // Normalize RRF scores to 0-1 for blending
-  const maxRrf = Math.max(...results.map(r => r.score));
+  // Normalize RRF scores to 0-1 for blending. Linear-time max: identical to
+  // the spread form for all inputs, minus the temp array and stack limit.
+  let maxRrf = -Infinity;
+  for (const r of results) maxRrf = Math.max(maxRrf, r.score);
 
   return results.map(r => {
     // v0.46.28.0 (#3695): a row with no hydratable chunk embedding (the
