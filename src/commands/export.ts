@@ -247,10 +247,10 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     const seen = new Set<string>();
     pages = [];
     for (const dir of storageConfig.db_only) {
-      const tierPrefix = filters.slugPrefix
-        ? // If user passed --slug-prefix, only include tier dirs that start with it.
-          (dir.startsWith(filters.slugPrefix) ? dir : undefined)
-        : dir;
+      // With --slug-prefix, query the narrower of the prefix and the tier
+      // dir; skip the tier when neither contains the other.
+      const prefix = filters.slugPrefix;
+      const tierPrefix = !prefix || dir.startsWith(prefix) ? dir : prefix.startsWith(dir) ? prefix : undefined;
       if (!tierPrefix) continue;
       const tierPages = await listAllPages(engine, { ...filters, slugPrefix: tierPrefix });
       for (const p of tierPages) {

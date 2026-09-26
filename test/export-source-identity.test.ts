@@ -489,3 +489,22 @@ describe('export --restore-only picks the owning source by registered local_path
     expect(stdout).toContain(`Restored 1 pages to ${outDir}/`);
   });
 });
+
+describe('export --restore-only intersects --slug-prefix with the db_only tiers', () => {
+  test.each([
+    { name: 'prefix narrower than the tier', tier: 'media/', prefix: 'media/x/' },
+    { name: 'prefix wider than the tier', tier: 'media/x/', prefix: 'media/' },
+  ])('$name restores only pages under both', async ({ tier, prefix }) => {
+    const repo = join(tmp, 'repo');
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, 'gbrain.yml'), `storage:\n  db_tracked: []\n  db_only:\n    - ${tier}\n`);
+    await put('default', 'media/x/clip', 'clip under both');
+    await put('default', 'media/y/other', 'outside the narrower of the two');
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repo, '--source', 'default', '--slug-prefix', prefix]);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/x/clip')).toContain('clip under both');
+    expect(existsSync(join(outDir, 'media/y/other.md'))).toBe(false);
+    expect(stdout).toContain(`Restored 1 pages to ${outDir}/`);
+  });
+});
