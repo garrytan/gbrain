@@ -10,6 +10,7 @@ import {
   loadStorageConfig,
   normalizeAndValidateStorageConfig,
   StorageConfigError,
+  hasUnresolvedDbOnlyDeclaration,
   __resetMissingStorageWarning,
 } from '../src/core/storage-config.ts';
 import type { StorageConfig } from '../src/core/storage-config.ts';
@@ -148,6 +149,23 @@ describe('loadStorageConfig — real-disk loader', () => {
     console.warn = originalWarn;
     rmSync(tmp, { recursive: true, force: true });
   }
+
+  test.each([
+    ['flow-style db_only', 'storage:\n  db_only: [conversations/]\n', true],
+    ['flow-style deprecated supabase_only', 'storage:\n  supabase_only: [conversations/]\n', true],
+    ['db_only outside the storage section', 'db_only:\n  - conversations/\n', true],
+    ['literal empty db_only (accepted false positive)', 'storage:\n  db_only: []\n', true],
+    ['block-style db_only', 'storage:\n  db_only:\n    - conversations/\n', false],
+    ['a comment that mentions db_only', '# db_only handling later\nstorage:\n  db_tracked:\n    - people/\n', false],
+    ['no gbrain.yml', null, false],
+  ] as const)('hasUnresolvedDbOnlyDeclaration: %s is %p', (_name, yml, expected) => {
+    try {
+      if (yml !== null) writeFileSync(join(tmp, 'gbrain.yml'), yml);
+      expect(hasUnresolvedDbOnlyDeclaration(tmp, loadStorageConfig(tmp))).toBe(expected);
+    } finally {
+      cleanup();
+    }
+  });
 
   test('returns null when repoPath is missing', () => {
     try {
