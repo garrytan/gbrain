@@ -29,6 +29,8 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { importFromContent } from '../import-file.ts';
+import type { OperationContext } from '../ops/contract.ts';
+import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { canonicalJson } from '../remediation-step.ts';
 import type { TranscriptAdapter, TranscriptFormat } from './types.ts';
 import { detectAdapter } from './detect.ts';
@@ -65,6 +67,14 @@ export interface TranscriptsIngestOpts {
    */
   maxBytes?: number;
   activePack?: IngestActivePack;
+  /**
+   * Trusted local operation context. REQUIRED on a writer-claimed (managed)
+   * brain: there the page write must ride the persistence coordinator
+   * (`put_page` submits a write request), because the legacy direct writer is
+   * refused with `writer_coordinator_required`. Unmanaged brains — and
+   * callers that omit the context (tests, dry runs) — keep the legacy path.
+   */
+  context?: OperationContext;
   /** Test seam for the redaction user-pattern file. */
   userPatternsPath?: string;
   /** Adapter registry override (tests). */
@@ -149,6 +159,83 @@ function isPerSessionImportError(err: unknown): boolean {
   // 'invalid byte sequence' is Postgres rejecting the DATA (e.g. a U+0000 a
   // sanitizer missed, #4392) — one bad session, never a DB-down signal.
   return err instanceof Error && /too large|invalid byte sequence/i.test(err.message);
+}
+
+/**
+ * A writer-claimed brain refuses every legacy-writer content import
+ * (`assertUnmanagedCanonicalWriter` → `writer_coordinator_required`), so a
+ * rendered part must be SUBMITTED as a write request instead. `put_page` runs
+ * the same importer code through the coordinator seam
+ * (`preparePageMutation` → `importFromContent({ prepare })`), so duplicate
+ * detection, status codes and canonical projections are unchanged — only the
+ * writer differs. Cached per engine: one lookup per run, not per part.
+ */
+const writerClaimedCache = new WeakMap<BrainEngine, boolean>();
+async function isWriterClaimedBrain(engine: BrainEngine): Promise<boolean> {
+  const cached = writerClaimedCache.get(engine);
+  if (cached !== undefined) return cached;
+  let claimed = false;
+  try {
+    const rows = await engine.executeRaw<{ enabled: boolean }>(
+      'SELECT enabled FROM persistence_brain WHERE singleton=1',
+    );
+    claimed = rows?.[0]?.enabled === true;
+  } catch {
+    // Pre-claim brains have no persistence table at all — legacy path applies.
+    claimed = false;
+  }
+  writerClaimedCache.set(engine, claimed);
+  return claimed;
+}
+
+interface PartImportOutcome {
+  slug: string;
+  status: 'imported' | 'skipped' | 'error';
+}
+
+async function importRenderedPart(
+  engine: BrainEngine,
+  opts: TranscriptsIngestOpts,
+  part: { slug: string; content: string },
+  provenance: { harness: TranscriptFormat; sourcePath: string },
+): Promise<PartImportOutcome> {
+  const legacyImport = async (): Promise<PartImportOutcome> => {
+    const r = await importFromContent(engine, part.slug, part.content, {
+      noEmbed: !opts.embed,
+      sourceId: opts.sourceId,
+      activePack: opts.activePack,
+      source_kind: `transcript:${provenance.harness}`,
+      source_uri: provenance.sourcePath,
+      ingested_via: 'cli:transcripts-ingest',
+    });
+    return { slug: r.slug || part.slug, status: r.status };
+  };
+  if (!opts.context || !(await isWriterClaimedBrain(engine))) return legacyImport();
+
+  // A replacement must name the revision the coordinator compares against;
+  // omitting it (no page yet) is create-only, per the put_page contract.
+  const snapshot = await engine.readPageSnapshot(part.slug, {
+    sourceId: opts.sourceId,
+    includeDeleted: true,
+  });
+  const receipt = await submitPageMutation(opts.context, {
+    operation: 'put_page',
+    params: {
+      slug: part.slug,
+      content: part.content,
+      source_id: opts.sourceId,
+      source_kind: `transcript:${provenance.harness}`,
+      source_uri: provenance.sourcePath,
+      ingested_via: 'cli:transcripts-ingest',
+      ...(snapshot?.revision ? { expected_revision: snapshot.revision } : {}),
+    },
+  });
+  const slug = typeof receipt.slug === 'string' && receipt.slug ? receipt.slug : part.slug;
+  if (receipt.state !== 'committed') return { slug, status: 'error' };
+  return {
+    slug,
+    status: receipt.noop === true || receipt.status === 'skipped' ? 'skipped' : 'imported',
+  };
 }
 
 export async function runTranscriptsIngest(
@@ -286,13 +373,9 @@ export async function runTranscriptsIngest(
             let resolvedBaseSlug = rendered.baseSlug;
             for (const part of rendered.parts) {
               try {
-                const r = await importFromContent(engine, part.slug, part.content, {
-                  noEmbed: !opts.embed,
-                  sourceId: opts.sourceId,
-                  activePack: opts.activePack,
-                  source_kind: `transcript:${session.meta.harness}`,
-                  source_uri: path,
-                  ingested_via: 'cli:transcripts-ingest',
+                const r = await importRenderedPart(engine, opts, part, {
+                  harness: session.meta.harness,
+                  sourcePath: path,
                 });
                 outcome.statuses.push(r.status);
                 if (r.status === 'imported') result.pages.imported++;

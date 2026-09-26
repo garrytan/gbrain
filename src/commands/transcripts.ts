@@ -476,6 +476,19 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
   reporter.start('transcripts.ingest', paths.length);
 
   let result: TranscriptsIngestResult;
+  // A writer-claimed (managed) brain refuses legacy-writer content imports, so
+  // the ingest submits each rendered page through the persistence coordinator
+  // (`put_page`) instead — the checked-in operation context is what carries the
+  // trusted-local principal into `submitPageMutation`.
+  const { loadConfig: loadIngestConfig } = await import('../core/config.ts');
+  const context = {
+    engine,
+    config: loadIngestConfig() ?? ({} as never),
+    logger: { info: console.log, warn: console.warn, error: console.error },
+    dryRun: parsed.dryRun === true,
+    remote: false,
+    sourceId,
+  };
   try {
     result = await runTranscriptsIngest(engine, {
       paths,
@@ -487,6 +500,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
       maxBytes: parsed.maxBytes,
       embed: parsed.embed,
       activePack,
+      context,
       onFileDone: () => reporter.tick(),
       // Multi-session stores (one hermes state.db = thousands of sessions)
       // need liveness BETWEEN file ticks.
