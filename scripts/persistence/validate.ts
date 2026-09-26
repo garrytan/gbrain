@@ -143,7 +143,8 @@ export async function runValidation(options: ValidationOptions) {
         admission: distribution(results.flatMap(row => row.result.admission_ms)),
         caller_completion: distribution(results.flatMap(row => row.result.completion_ms)),
         concurrent_canonical_read: distribution(ownerResults.flatMap(owner => owner.concurrent_read_ms)),
-        peak_owner_rss_bytes: Math.max(...ownerResults.map(owner => owner.peak_rss_bytes)) };
+        peak_owner_rss_bytes: ownerResults.reduce((peak: number | null, owner) =>
+          owner.peak_rss_bytes === null ? peak : Math.max(peak ?? 0, owner.peak_rss_bytes), null) };
     }
     manifest.status = 'passed';
     const executedBoundaries = manifest.crash_cases.map((entry: { boundary: string }) => entry.boundary);

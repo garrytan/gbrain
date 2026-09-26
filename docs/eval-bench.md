@@ -17,6 +17,35 @@ result sets; BrainBench gates the memory behaviors above them, with its own
 committed baseline (`evals/brainbench/baselines/main.json`) compared against
 MAIN's copy in CI so a PR can't self-approve a regression.
 
+## Recorded experiments, including negative results
+
+Before repeating an approach, read its measured outcome and limitations:
+
+- [Answer-evidence packets: did not help](eval/ANSWER_PACKET_RESULTS.md).
+  Query-selected conversational excerpts over fixed retrieved sessions produced
+  zero answer improvements and five judged regressions on a 60-question holdout
+  (48/60 correct versus 53/60 for full sessions). A wider-context variant only
+  tied in development, mostly with unchanged prompts. The notes cover both
+  attempts, every regression, grading caveats, the $8.01 total usage-priced cost,
+  and why full sessions remain the default. This tested presentation, not
+  retrieval quality. The [experiment guide](eval/ANSWER_PACKET.md) records the
+  reproducible setup and spending safeguards.
+
+- [What actually helps an AI use its memory?](research/answer-evidence/compendium.md)
+  explains the relevant research in plain English, separates published findings
+  from GBrain's measured failures, and ranks narrowly testable next experiments.
+  Its [source index](research/answer-evidence/index.md) records primary citations,
+  per-paper summaries and limits on what the results establish.
+
+- [Intact-evidence reading replication](eval/READING_NOTES_REPLICATION.md)
+  records a frozen follow-up: 361 fresh GBrain comparisons and the full
+  500-question, four-condition published reading comparison. The completed
+  [GBrain results](eval/READING_NOTES_RESULTS.md) improved from 308/361 to
+  324/361 under automated judging, with source-verified wins, grading caveats
+  and nine truncated notes responses. The completed paper replication improved
+  from 424/500 to 463/500; notes helped in both formats, while JSON alone did
+  not demonstrate a benefit.
+
 ## The eval gate loop
 
 `gbrain bench publish` + `gbrain eval gate` stitch captured eval rows into
@@ -567,8 +596,23 @@ distinct session among the top-5 retrieved chunk rows, wrapped in
 `<chat_session>` blocks (the sanitizer's 4000-char cap is an extractor-era
 default and does not apply to the reader; each row records
 `reader_context_chars`, `reader_context_sessions`, `reader_sessions_truncated`).
-Reader `max_tokens` 512 with an abstention instruction (disclosed deviation
-from the official reading prompt). Judge `openai:gpt-4o`, official
+The original reader used `max_tokens` 512 with an abstention instruction
+(disclosed deviation from the official reading prompt). New runs default to
+brief evidence notes before a concise answer, with `max_tokens` 1024.
+`--reader-mode direct` retains the original system text and 512-token budget;
+`--reader-mode notes --reader-max-tokens 512` reproduces the measured treatment's
+original output cap. The notes mode changes only the final system instruction:
+the sanitizer, sessions, dates, evidence order and abstention boundary are
+unchanged. A `max_tokens` finish is recorded as `reader_max_tokens`, with no
+completed hypothesis or judge verdict; its question still counts as an error in
+the judged headline denominator, and the run exits nonzero. A larger cap avoids
+known cutoffs but does not establish a new measured accuracy figure. A bounded
+[completion smoke](eval/reading-notes-completion-smoke.json) replayed the nine
+original cutoff inputs through the packaged reader request and gateway at 1024:
+all nine finished naturally with nonempty outputs (445–603 tokens), at $0.562143
+for nine calls and no retries. This selected-case completion check was not a
+fresh accuracy comparison; the original 512-token labels remain unchanged.
+Judge `openai:gpt-4o`, official
 `evaluate_qa.py` prompt per question type, temperature 0, `max_tokens` 16 —
 the OpenAI API's minimum; the official 10 is rejected, and a one-token yes/no
 verdict is unaffected. Gold and hypothesis sit inside a data-boundary wrapper
@@ -665,8 +709,12 @@ reader pins and the judge pins all land on one receipt.
   (pre-registered — without it the 30 `_abs` questions are answered and
   judged wrong by construction). The retrieved sessions are wrapped in the
   same `<chat_session>` UNTRUSTED framing as the rest of the harness; max
-  output tokens 512 (official 500). `reader_prompt_sha` pins the system text
-  on every row.
+  output tokens 1024 in the default notes mode (512 in the original direct
+  mode; official 500). `reader_mode`, `reader_prompt_version`,
+  `reader_prompt_sha`, `reader_max_tokens`, `reader_config_hash` and
+  `reader_finish_reason` pin the configuration and completion. A historical
+  direct receipt can resume only with explicit `--reader-mode direct`;
+  `--allow-mixed-run-config` cannot mix reader modes or budgets.
 - **Confidence intervals are question-sampling only.** `ci95_bootstrap` is a
   seeded percentile bootstrap over the headline 0/1 vector (10,000 resamples,
   seed 42), labelled `question-sampling only`: it says how much the number
@@ -731,9 +779,9 @@ the per-miss rows, `--all` diagnoses every scored question. It is not a
 - Retrieved chat content is wrapped in `<chat_session id="..." date="...">`
   framing; the answer-gen system prompt declares the content UNTRUSTED.
   Same posture as `<take>` framing.
-- The reader prompt is a module constant in `src/eval/longmemeval/reader.ts`
-  (`READER_SYSTEM_TEXT`; its sha is the row's `reader_prompt_sha`, so two
-  rows with equal shas saw the identical instruction). The judge lives in
+- The reader config and request builder in `src/eval/longmemeval/reader.ts`
+  select the notes default or byte-identical direct baseline; the selected
+  system text's sha is the row's `reader_prompt_sha`. The judge lives in
   `src/eval/longmemeval/judge.ts` (official prompt port) over the
   dataset-agnostic `src/eval/shared/judge-runner.ts` (retries, `judge_error`
   classes, canonical-price cost, budget ledger); `qa-accuracy.ts` builds the
@@ -759,13 +807,15 @@ Unknown flags exit 1 before any work starts.
 | `--expansion-replay FILE` | off | Serve the `expansion_variants` recorded in FILE (a prior `--expansion` run) instead of calling the LLM, so cells differ only in their knobs; implies `--expansion`. A question missing from FILE is an `expansion_replay_miss` error row and the run exits 1 |
 | `--expansion-variant-budget B` | not pinned | Pin `search.expansion_variant_budget`: `legacy` (every RRF list weight 1) or a number in (0, 4] — the total RRF weight shared by the expansion variant lists (the original list always keeps weight 1) |
 | `--top-k K` | 8 | Retrieve K chunk rows per question; `recall_*@k` is scored over the distinct sessions among those K rows (the published rows use `--top-k 5`) |
+| `--reader-mode direct\|notes` | notes | Notes-first evidence extraction and reasoning followed by a concise answer; `direct` preserves the original v3 reader prompt and 512-token output cap. This is an eval-reader default, not a `gbrain think` change |
+| `--reader-max-tokens N` | 1024 for notes; 512 for direct | Positive integer reader output cap; notes with 512 reproduces the measured treatment's original budget, including cutoff risk. `max_tokens` completions fail rather than scoring partial text |
 | `--mode M` | `balanced` (or an injected config snapshot) | Search mode `conservative` / `balanced` / `tokenmax`, resolved through `src/core/search/mode.ts` so retrieval matches production under that mode. No mode implies `--expansion` |
 | `--reranker on\|off` | not pinned (bundle decides) | Pin `search.reranker.enabled` for the run (beats any injected snapshot and any `--search-pin` on the key). The reranker gate keys on the RESOLVED pin — flag, `--search-pin`, snapshot or bundle: whenever the run resolves to reranker on, readiness is preflighted (exit 2 with the fix if it cannot run) and the run exits non-zero if any row fell through un-reranked (`reranker_skipped_rows`). A `balanced`/`tokenmax` run with no `VOYAGE_API_KEY` therefore refuses to start (exit 2 with the fix text; a resume holding un-reranked rows exits 1) — pass `--reranker off` or set the key. A run in which every question errored also exits 1 |
 | `--autocut on\|off` | not pinned (bundle decides) | Pin `search.autocut` for the run (beats any injected snapshot) |
 | `--search-pin KEY=VALUE` | none | Pin any `search.*` config key for the run (repeatable, e.g. `--search-pin search.metadata_boost_gate=always`). The raw pin map folds into `retrieval_config_hash` (so a resumed file cannot mix pin sets); the knobs hash covers only the mode knobs the pins resolve into. Explicit flags (`--mode`, `--reranker`, `--autocut`, `--expansion-variant-budget`) win over a `--search-pin` on the same key. Unknown keys are set verbatim — check `gbrain search modes` to confirm a key exists |
 | `--output FILE` | stdout | Write JSONL to FILE |
-| `--resume-from FILE` | off | Skip `question_id`s already present in FILE (usually the `--output` path, which then appends). Prior rows are re-scored from their `retrieved[]` + the dataset gold; a file written under different retrieval pins is refused |
-| `--allow-mixed-run-config` | off | Resume even when FILE rows carry a different `retrieval_config_hash` |
+| `--resume-from FILE` | off | Skip `question_id`s already present in FILE (usually the `--output` path, which then appends). Prior rows are re-scored from their `retrieved[]` + the dataset gold; different reader mode, model, prompt or token budget is always refused. Use `--reader-mode direct` for historical direct receipts |
+| `--allow-mixed-run-config` | off | Resume even when FILE rows carry a different `retrieval_config_hash`; never overrides the reader configuration guard |
 | `--question-ids FILE` | all | Run only the listed `question_id`s (one per line, `#` comments); unknown ids or an empty file exit 1. Dev-slice / held-out discipline (`evals/longmemeval/`) |
 | `--no-trajectory` | off | Skip the Haiku claim extractor AND the per-question intent routing (like-for-like retrieval receipts) |
 | `--by-type` | off | Append the `schema_version: 2` `by_type_summary` line: per type `{total, all_hit, all_rate, any_hit, any_rate}` + aggregate, `excluded_abstention`, `mean_distinct_sessions`, `run_config` |
@@ -787,8 +837,9 @@ Row fields: `recall_all_hit`, `recall_any_hit`, `recall_hit` (a DEPRECATED alias
 of `recall_any_hit`, kept for v1 readers), `abstention`,
 `distinct_sessions_in_top_k`, `retrieved[]`, `retrieved_session_ids`,
 `search_meta`, `retrieval_config_hash`; on answered rows the reader pins
-`reader_model`, `reader_model_snapshot`, `reader_prompt_sha`,
-`reader_max_tokens` (`--retrieval-only` rows carry `retrieval_only: true`
+`reader_model`, `reader_model_snapshot`, `reader_mode`,
+`reader_prompt_version`, `reader_prompt_sha`, `reader_max_tokens`,
+`reader_config_hash`, `reader_finish_reason` (`--retrieval-only` rows carry `retrieval_only: true`
 instead); with `--judge`, the `judge_*` fields listed under "Judged answer
 accuracy".
 

@@ -6,7 +6,7 @@ import { admitWrite, claimNextWrite, getWriteRequest, getWriteRequestById, recei
 import { publishMutation, recoverPublication } from '../../src/core/persistence/coordinator.ts';
 import { PersistenceConsumer } from '../../src/core/persistence/consumer.ts';
 import { admission, assertCommittedSnapshot, assertConservation, distribution, fixtures, initializeFixtures,
-  openEngine, prepared, type HarnessConfig } from './harness.ts';
+  openEngine, prepared, samplePeakRss, type HarnessConfig } from './harness.ts';
 import { runSchedules } from './schedules.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import { boundedDiagnostic, diagnosticError, ownerDatabaseDiagnostic, soakFailureDiagnostic, type ActiveSoakRequest } from './failure-diagnostics.ts';
@@ -105,7 +105,7 @@ if (mode === 'initialize') {
   } finally { await engine.disconnect(); }
 } else if (mode === 'owner') {
   const engine = await openEngine(config); const sources = await fixtures(engine, config);
-  const errors: string[] = []; const errorCodes: string[] = []; let peakRss = process.memoryUsage().rss;
+  const errors: string[] = []; const errorCodes: string[] = []; let peakRss = samplePeakRss(null);
   const readMs: number[] = []; let reading: Promise<void> | undefined;
   const readTimer = setInterval(() => {
     if (reading) return;
@@ -114,7 +114,7 @@ if (mode === 'initialize') {
       if (row) { const at = performance.now(); await assertCommittedSnapshot(engine, row); readMs.push(performance.now() - at); }
     })().catch(error => { errors.push(`concurrent canonical read: ${error}`); errorCodes.push(diagnosticError(error)); }).finally(() => { reading = undefined; });
   }, 1000);
-  const sample = setInterval(() => { peakRss = Math.max(peakRss, process.memoryUsage().rss); }, 100);
+  const sample = setInterval(() => { peakRss = samplePeakRss(peakRss); }, 100);
   const consumer = new PersistenceConsumer(engine, { engine: config.kind }, async (_engine, row) => prepared(row, sources, null, true),
     { hostId: config.hostId, concurrency: config.kind === 'postgres' ? 2 : 1, pollMs: 250,
       onError: error => { errors.push(String(error)); errorCodes.push(diagnosticError(error)); process.stderr.write(`[persistence owner] ${error}\n`); } });
