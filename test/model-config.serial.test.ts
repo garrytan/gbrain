@@ -373,6 +373,21 @@ describe('resolveTierDefault — key-aware matrix (injected env used exclusively
     expect(resolveTierDefault('reasoning', env)).toBe(TIER_DEFAULTS.reasoning);
   });
 
+  test('google-only → Google tier defaults use the recipe models', () => {
+    const env = { GOOGLE_GENERATIVE_AI_API_KEY: 'google-test' };
+    expect(resolveTierDefault('utility', env)).toBe('google:gemini-2.5-flash-lite');
+    expect(resolveTierDefault('reasoning', env)).toBe('google:gemini-2.5-flash');
+    expect(resolveTierDefault('deep', env)).toBe('google:gemini-2.5-flash');
+    expect(resolveTierDefault('subagent', env)).toBe('google:gemini-2.5-flash');
+  });
+
+  test('Anthropic still wins when Google is also configured', () => {
+    expect(resolveTierDefault('reasoning', {
+      ANTHROPIC_API_KEY: 'anthropic-test',
+      GOOGLE_GENERATIVE_AI_API_KEY: 'google-test',
+    })).toBe(TIER_DEFAULTS.reasoning);
+  });
+
   test('no keys → TIER_DEFAULTS unchanged (keyless shape preserved)', () => {
     expect(resolveTierDefault('reasoning', {})).toBe(TIER_DEFAULTS.reasoning);
   });
@@ -384,9 +399,10 @@ describe('resolveTierDefault — key-aware matrix (injected env used exclusively
     expect(resolveTierDefault('reasoning', openaiOnly)).toBe(openaiStaticTierFallback().reasoning);
   });
 
-  test('table order is the precedence contract: anthropic first, openai second', () => {
+  test('table order is the precedence contract: anthropic, openai, then google', () => {
     expect(PROVIDER_TIER_DEFAULTS[0].provider).toBe('anthropic');
     expect(PROVIDER_TIER_DEFAULTS[1].provider).toBe('openai');
+    expect(PROVIDER_TIER_DEFAULTS[2].provider).toBe('google');
   });
 });
 
