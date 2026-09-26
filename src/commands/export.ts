@@ -6,8 +6,27 @@ import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
 import { slugifyPath } from '../core/sync.ts';
-import { getDefaultSourcePath } from '../core/source-resolver.ts';
-import type { PageType } from '../core/types.ts';
+import { getDefaultSourcePath, resolveSourceId, isResolverUserError } from '../core/source-resolver.ts';
+import { ALL_SOURCES } from '../core/source-id.ts';
+import { listAllPages } from '../core/list-all-pages.ts';
+import type { Page, PageFilters, PageType } from '../core/types.ts';
+
+/** How many colliding slugs the refusal lists before summarising the rest. */
+const COLLISION_LIST_LIMIT = 20;
+
+/** Slugs held by more than one source in `pages`, sorted, each with its sorted source ids. */
+function findCrossSourceSlugs(pages: Page[]): Array<{ slug: string; sources: string[] }> {
+  const sourcesBySlug = new Map<string, Set<string>>();
+  for (const p of pages) {
+    const sources = sourcesBySlug.get(p.slug) ?? new Set<string>();
+    sources.add(p.source_id);
+    sourcesBySlug.set(p.slug, sources);
+  }
+  return [...sourcesBySlug]
+    .filter(([, sources]) => sources.size > 1)
+    .map(([slug, sources]) => ({ slug, sources: [...sources].sort() }))
+    .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+}
 
 export async function runExport(engine: BrainEngine, args: string[]) {
   const dirIdx = args.indexOf('--dir');
@@ -23,6 +42,27 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   const slugPrefix = slugPrefixIdx !== -1 ? args[slugPrefixIdx + 1] : undefined;
 
   const restoreOnly = args.includes('--restore-only');
+
+  // --source honors the explicit flag only: with no flag, export keeps
+  // spanning every source (the GBRAIN_SOURCE / dotfile / default tiers do
+  // not narrow it). `__all__` is the resolver's span-everything sentinel.
+  const sourceIdx = args.indexOf('--source');
+  let sourceId: string | undefined;
+  if (sourceIdx !== -1) {
+    const requested = args[sourceIdx + 1];
+    if (!requested || requested.startsWith('--')) {
+      console.error('Error: --source requires a source id. Run `gbrain sources list` to see registered sources.');
+      process.exit(1);
+    }
+    try {
+      const resolved = await resolveSourceId(engine, requested);
+      sourceId = resolved === ALL_SOURCES ? undefined : resolved;
+    } catch (e) {
+      if (!isResolverUserError(e)) throw e;
+      console.error(`Error: ${(e as Error).message}`);
+      process.exit(1);
+    }
+  }
 
   // Resolution chain (D5): explicit --repo → typed sources.getDefault() →
   // hard-error for restore-only paths (never fall through to cwd).
@@ -59,34 +99,36 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
   
-  // Build filters. slugPrefix is engine-side (Issue #13) — no in-memory
-  // post-filter, no full-table load.
-  const filters: import('../core/types.ts').PageFilters = { limit: 100000 };
-  if (typeFilter) filters.type = typeFilter;
+  // Build filters. slugPrefix is engine-side (Issue #13) -- no in-memory
+  // post-filter. listAllPages reads the full set in batches: a single
+  // listPages call is capped by the engine's LIMIT.
+  const filters: Omit<PageFilters, 'limit' | 'offset' | 'sort'> = {};
+  if (typeFilter) filters.type = typeFilter as PageType;
   if (slugPrefix) filters.slugPrefix = slugPrefix;
+  if (sourceId) filters.sourceId = sourceId;
 
-  let pages: import('../core/types.ts').Page[];
+  let pages: Page[];
 
   // Restore-only path: query each db_only directory with slugPrefix instead
   // of loading every page in the brain. On a 200K-page brain where 95% is
   // db_only, this is roughly the same load — but on brains where only 5K
   // out of 200K are db_only, this is a ~40x reduction.
   if (restoreOnly && repoPath && storageConfig) {
+    // Overlapping tier dirs return a page more than once. Slugs are unique
+    // per source, not brain-wide, so dedup on the (source_id, slug) identity.
     const seen = new Set<string>();
     pages = [];
     for (const dir of storageConfig.db_only) {
-      const tierFilters: import('../core/types.ts').PageFilters = {
-        ...filters,
-        slugPrefix: filters.slugPrefix
-          ? // If user passed --slug-prefix, only include tier dirs that start with it.
-            (dir.startsWith(filters.slugPrefix) ? dir : undefined)
-          : dir,
-      };
-      if (!tierFilters.slugPrefix) continue;
-      const tierPages = await engine.listPages(tierFilters);
+      const tierPrefix = filters.slugPrefix
+        ? // If user passed --slug-prefix, only include tier dirs that start with it.
+          (dir.startsWith(filters.slugPrefix) ? dir : undefined)
+        : dir;
+      if (!tierPrefix) continue;
+      const tierPages = await listAllPages(engine, { ...filters, slugPrefix: tierPrefix });
       for (const p of tierPages) {
-        if (seen.has(p.slug)) continue;
-        seen.add(p.slug);
+        const key = `${p.source_id}::${p.slug}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         if (!isDbOnly(p.slug, storageConfig)) continue; // belt-and-suspenders
         const filePath = join(repoPath, p.slug + '.md');
         if (existsSync(filePath)) continue;
@@ -94,8 +136,34 @@ export async function runExport(engine: BrainEngine, args: string[]) {
       }
     }
   } else {
-    pages = await engine.listPages(filters);
+    pages = await listAllPages(engine, filters);
   }
+
+  // Every page lands at <outDir>/<slug>.md, so two sources holding one slug
+  // would write the same file and the last write would win. Refuse before
+  // writing anything; a `<source>/` path prefix is no way out, since import
+  // would re-key those pages under new slugs.
+  const collisions = findCrossSourceSlugs(pages);
+  if (collisions.length > 0) {
+    const listed = collisions
+      .slice(0, COLLISION_LIST_LIMIT)
+      .map((c) => `  ${c.slug} (sources: ${c.sources.join(', ')})`);
+    if (collisions.length > COLLISION_LIST_LIMIT) {
+      listed.push(`  ... and ${collisions.length - COLLISION_LIST_LIMIT} more`);
+    }
+    const perSource = restoreOnly
+      ? 'gbrain export --restore-only --source <id> --repo <that source\'s repo>'
+      : 'gbrain export --source <id> --dir <a separate directory per source>';
+    console.error(
+      `Error: ${collisions.length} slug(s) exist in more than one source. Export writes each\n` +
+        `page to <dir>/<slug>.md, so these pages would overwrite each other:\n` +
+        `${listed.join('\n')}\n` +
+        `Nothing was written. Export one source at a time into separate directories:\n` +
+        `  ${perSource}`,
+    );
+    process.exit(1);
+  }
+
   if (restoreOnly) {
     console.log(`Restoring ${pages.length} db_only pages to ${outDir}/`);
   } else {
@@ -134,6 +202,9 @@ export async function runExport(engine: BrainEngine, args: string[]) {
       { type: page.type, title: page.title, tags },
     );
 
+    // A page's identity is (source_id, slug); the path carries only the
+    // slug. That is safe because the collision check above refused any
+    // slug held by two sources in this page set.
     const filePath = join(outDir, page.slug + '.md');
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, md);

@@ -87,6 +87,9 @@ gbrain export --restore-only --slug-prefix media/x/ --repo /path/to/brain
 
 # Combine filters.
 gbrain export --restore-only --type media --slug-prefix media/x/ --repo /path/to/brain
+
+# Restore one source's pages into that source's repo.
+gbrain export --restore-only --source <source-id> --repo /path/to/that/source
 ```
 
 The `--restore-only` flag:
@@ -95,6 +98,10 @@ The `--restore-only` flag:
   Never falls through to the current directory.
 - Only exports pages that match `db_only` patterns AND are missing from disk.
 - Ideal for container restart recovery and fresh clones.
+- Refuses, writing nothing, when a slug to restore exists in more than one
+  source (both would land on the same `<slug>.md`). Restore one source at a
+  time with `--source <id>`. Without `--source`, every source's pages are
+  candidates.
 
 ### 3. `gbrain storage status` — storage-tier health dashboard
 

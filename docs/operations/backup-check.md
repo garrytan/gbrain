@@ -167,6 +167,8 @@ source id. Full per-asset detail (which repo, which fix) is local-only:
 - Unpushed workspace work: `gbrain sources push --path <workspace>`.
 - db_only pages: `gbrain export --dir <backup-dir>` (store the dump outside
   the gitignored dirs — another disk, another repo, anywhere durable).
+  When two sources share a slug, export refuses; dump each source into its
+  own directory with `gbrain export --source <id> --dir <backup-dir>/<id>`.
 
 ## Recovery drill (prove the answer is real)
 

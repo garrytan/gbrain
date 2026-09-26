@@ -168,31 +168,24 @@ describe('export sidecar reads are scoped to the page owning source', () => {
       await engine.addTag(SLUG, `tag-${sourceId}`, { sourceId });
       await engine.putRawData(SLUG, `feed-${sourceId}`, { owner: sourceId }, { sourceId });
     }
-
-    // One slug means one output path, so the two pages overwrite each other
-    // and only the last one written survives on disk. Pin the export order
-    // (listPages defaults to updated_desc) so `other` is the survivor and the
-    // assertions below read a NON-default page — the only page whose sidecars
-    // an unscoped, `'default'`-defaulting read would get wrong.
-    await engine.executeRaw(
-      `UPDATE pages SET updated_at = updated_at + interval '1 hour' WHERE source_id = 'default'`,
-    );
   });
 
+  // One slug in two sources is one output path, so an unscoped export
+  // refuses it (test/export-source-identity.test.ts). Export `other` alone:
+  // a NON-default page is the only one whose sidecars an unscoped,
+  // `'default'`-defaulting read would get wrong.
   test("a non-default page exports its own tags, not the default source's", async () => {
-    await tryRunExport(['--dir', outDir]);
+    await tryRunExport(['--dir', outDir, '--source', 'other']);
     expect(exitCode).toBeNull();
 
     const md = readFileSync(join(outDir, SLUG + '.md'), 'utf-8');
-    // Guards the ordering assumption itself: if `default` ever wins the race
-    // the tag assertions stop discriminating, so fail loudly here instead.
     expect(md).toContain('other title');
     expect(md).toContain('tag-other');
     expect(md).not.toContain('tag-default');
   });
 
   test('raw-data sidecars carry only the owning source rows', async () => {
-    await tryRunExport(['--dir', outDir]);
+    await tryRunExport(['--dir', outDir, '--source', 'other']);
     expect(exitCode).toBeNull();
 
     // Unscoped, getRawData applies no source predicate at all: both sources'
