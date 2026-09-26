@@ -51,15 +51,17 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   }
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
   const validFrom = new Date(String(p.valid_from));
+  const confidence = typeof p.confidence === 'number' && Number.isFinite(p.confidence)
+    && p.confidence >= 0 && p.confidence <= 1 ? p.confidence : 1;
   const fact: NewFact = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
-    confidence: 1, embedding };
+    confidence, embedding };
   let page: PreparedMutation | undefined;
   let rowNum: number | undefined;
   if (p.fence === true && snapshot) {
     const parsed = parseFactsFence(snapshot.page.compiled_truth);
     if (parsed.warnings.length) throw new OperationError('storage_error', 'The entity facts fence is malformed; repair it before appending memory.');
     const appended = upsertFactRow(snapshot.page.compiled_truth, { claim: input.fact, kind: input.kind, visibility: input.visibility,
-      confidence: 1, notability: 'medium', validFrom: validFrom.toISOString().slice(0, 10),
+      confidence, notability: 'medium', validFrom: validFrom.toISOString().slice(0, 10),
       validUntil: validUntil?.toISOString().slice(0, 10), source: fact.source });
     rowNum = appended.rowNum;
     let body = appended.body;
