@@ -23,8 +23,10 @@ import {
   backupCheckDisabled,
   backupNagGate,
   isBackupStatusStale,
+  isVerifiedRecoverable,
   loadBackupStatus,
   currentBackupEvidence,
+  type BackupAssetVerdict,
   type BackupStatus,
 } from '../core/backup/status-file.ts';
 
@@ -68,20 +70,36 @@ function recoveryStatement(s: BackupStatus): string {
   return `${repoPart}; ${riskPart}. ${s.recovery_scope ?? 'Git is not a full database backup.'}`;
 }
 
+/**
+ * #5505: coverage leaves dirty trees and unverified remotes without fix_argv
+ * (no single mechanical fix at compute time); the CLI still names the command
+ * that clears each one. A deduped root lists several source ids; any of them
+ * pushes the shared repository.
+ */
+function suggestedFix(a: BackupAssetVerdict): string[] | null {
+  if (a.fix_argv && a.fix_argv.length > 0) return a.fix_argv;
+  if (a.state === 'dirty') {
+    return a.kind === 'bootstrap_workspace' ? ['gbrain', 'sources', 'push', '--path', a.id] : ['gbrain', 'sources', 'push', a.id.split(', ')[0]];
+  }
+  if (a.state === 'ok' && !isVerifiedRecoverable(a)) return ['gbrain', 'backup', 'check'];
+  return null;
+}
+
 function renderHuman(s: BackupStatus, out: (line: string) => void): void {
   const age = backupCacheAge(s);
   out(`backup coverage — ${s.overall === 'warn' ? 'WARN' : 'ok'} (checked ${age}, by ${s.computed_by})`);
   for (const a of s.assets) {
-    const mark = a.state === 'ok' && a.verification?.state === 'verified' ? '✓' : a.state === 'no_remote' ? '✗' : a.state === 'info' ? '·' : '⚠';
+    const mark = isVerifiedRecoverable(a) ? '✓' : a.state === 'no_remote' ? '✗' : a.state === 'info' ? '·' : '⚠';
     out(`  ${mark} [${a.kind}] ${a.id} — ${a.state}${a.verification ? `; remote evidence: ${a.verification.state}` : ''}${a.detail ? `: ${a.detail}` : ''}`);
-    if (a.fix_argv && a.fix_argv.length > 0) out(`      fix: ${a.fix_argv.join(' ')}`);
+    const fix = suggestedFix(a);
+    if (fix) out(`      fix: ${fix.join(' ')}`);
   }
   out(recoveryStatement(s));
   if (s.degraded) {
     out('note: the brain database was unreadable during this check — verdict is partial (not cached)');
   }
   if (s.overall === 'warn') {
-    out('Fix the ✗ rows above, then run: gbrain backup check');
+    out('Fix the ✗ and ⚠ rows above, then run: gbrain backup check');
   }
 }
 

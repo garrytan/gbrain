@@ -10,6 +10,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { getBackupStatus } from '../../../core/backup/coverage.ts';
 import {
+  blockingAssetReasons,
   backupCacheAge,
   backupCheckDisabled,
   isBackupStatusStale,
@@ -18,32 +19,18 @@ import {
   type BackupStatus,
 } from '../../../core/backup/status-file.ts';
 
-/**
- * #5505: one entry per asset that keeps recovery unverified (the same
- * conditions currentBackupEvidence warns on), so the message names the real
- * cause instead of assuming "no git remote".
- */
-function unverifiedAssets(s: BackupStatus): Array<{ id: string; reason: string }> {
-  const out: Array<{ id: string; reason: string }> = [];
-  for (const a of s.assets) {
-    const repo = a.kind === 'source_repo' || a.kind === 'bootstrap_workspace';
-    if (repo ? a.state === 'ok' && a.verification?.state === 'verified' : !['no_remote', 'unpushed', 'failing'].includes(a.state)) continue;
-    const reason = a.state === 'no_remote' ? 'no git remote'
-      : a.state === 'unknown' ? a.detail ?? 'unknown'
-      : a.state === 'ok' ? `remote not verified: ${a.verification?.state ?? 'not_checked'}`
-      : a.state;
-    out.push({ id: a.id, reason });
-  }
-  return out;
-}
-
-/** Stale or degraded verdicts warn even when every asset looks recoverable. */
-function verdictCaveats(s: BackupStatus, now?: number): string {
-  const caveats = [
+/** Why a verdict warns beyond its assets: a degraded compute or a stale cache. */
+function verdictCaveats(s: BackupStatus, now?: number): string[] {
+  return [
     ...(s.degraded ? ['the database was unreadable during the check'] : []),
     ...(isBackupStatusStale(s, now) ? ['the verdict is older than the check interval'] : []),
   ];
-  return caveats.length > 0 ? ` Also: ${caveats.join('; ')}.` : '';
+}
+
+/** Lead with the assets when any block recovery; otherwise the caveats are the cause. */
+function warnLead(assetClause: string | null, caveats: string[]): string {
+  if (assetClause) return `${assetClause}${caveats.length > 0 ? ` Also: ${caveats.join('; ')}.` : ''}`;
+  return `Backup verdict is not current: ${caveats.length > 0 ? caveats.join('; ') : 'its check time could not be verified'}.`;
 }
 
 const LISTED_ASSET_CAP = 5;
@@ -58,15 +45,15 @@ function toCheck(s: BackupStatus, now?: number): Check {
     degraded: s.degraded === true,
   };
   if (s.overall === 'warn') {
-    const unverified = unverifiedAssets(s);
+    const unverified = blockingAssetReasons(s, 'local');
     const listed = unverified.slice(0, LISTED_ASSET_CAP).map((a) => `${a.id} (${a.reason})`).join(', ');
     const more = unverified.length > LISTED_ASSET_CAP ? `, and ${unverified.length - LISTED_ASSET_CAP} more` : '';
+    const assetClause = unverified.length > 0 ? `${unverified.length} knowledge asset(s) lack verified recovery: ${listed}${more}.` : null;
     return {
       name: 'backup_coverage',
       status: 'warn',
       message:
-        (unverified.length > 0 ? `${unverified.length} knowledge asset(s) lack verified recovery: ${listed}${more}.` : 'Backup verdict is not current.') +
-        `${verdictCaveats(s, now)} Current recovery is not verified for all repositories. ` +
+        `${warnLead(assetClause, verdictCaveats(s, now))} Current recovery is not verified for all repositories. ` +
         'Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).',
       details,
     };
@@ -114,16 +101,18 @@ export async function checkBackupCoverage(
     };
     // Aggregate-only: reason counts, never asset ids.
     const byReason = new Map<string, number>();
-    for (const { reason } of unverifiedAssets(cached)) byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
+    for (const { reason } of blockingAssetReasons(cached, 'aggregate')) byReason.set(reason, (byReason.get(reason) ?? 0) + 1);
     const unverifiedCount = [...byReason.values()].reduce((a, b) => a + b, 0);
     const reasons = [...byReason].map(([reason, n]) => `${n} ${reason}`).join(', ');
+    const assetClause = unverifiedCount > 0
+      ? `${unverifiedCount} of ${cached.totals.assets} knowledge asset(s) lack verified recovery (${reasons}).`
+      : null;
     return cached.overall === 'warn'
       ? {
           name: 'backup_coverage',
           status: 'warn',
           message:
-            `${unverifiedCount} of ${cached.totals.assets} knowledge asset(s) lack verified recovery${reasons ? ` (${reasons})` : ''}.` +
-            `${verdictCaveats(cached, opts.now?.getTime())} Current recovery is not verified for all repositories — ` +
+            `${warnLead(assetClause, verdictCaveats(cached, opts.now?.getTime()))} Current recovery is not verified for all repositories — ` +
             'run `gbrain backup status` on the brain host for the per-asset detail and fix commands.',
           details,
         }

@@ -180,6 +180,18 @@ function warnCache(over: Partial<BackupStatus> = {}): BackupStatus {
 // ── 1. Local ctx (remote:false) — per-asset findings ─────────────────────────
 
 describe('collectBackupCoverage local (remote:false)', () => {
+  test('#5505: a non-Git source path holds the warn → one backup_recovery_unverified finding naming it', async () => {
+    const plain = join(tmp, 'plain-dir');
+    mkdirSync(plain, { recursive: true });
+    const { engine } = makeEngine({ sources: [{ id: 'plain-src', local_path: plain }], pageCount: 0 });
+
+    const findings = await collectBackupCoverage.collect(ctx(engine));
+
+    const f = findings.find((x) => x.id === 'backup_recovery_unverified');
+    expect(f?.severity).toBe('warn');
+    expect(f?.title).toBe('1 knowledge asset(s) lack verified recovery: plain-src (not_a_git_repo).');
+  });
+
   test('no-remote source repo → backup_source_no_remote:<id> warn with the recipe; unpushed repo → backup_unpushed_work info', async () => {
     const noRemote = makeNoRemoteRepo('zebra-repo');
     const unpushed = makeUnpushedRepo('yak-repo');
@@ -266,6 +278,22 @@ describe('collectBackupCoverage remote (remote:true)', () => {
 
     // No nag writes on remote — the state file must not exist.
     expect(existsSync(nagPath)).toBe(false);
+  });
+
+  test('#5505: warn cache held only by a dirty repo → reason counts, never "0 of N ... no git remote"', async () => {
+    saveBackupStatus(
+      warnCache({
+        totals: { assets: 2, no_remote: 0, unpushed: 0, failing: 0, recoverable_repos: 0, pages_at_risk: 0 },
+        assets: [{ kind: 'source_repo', id: 'xylophone-secret-source-991', state: 'dirty', detail: 'uncommitted changes', fix_argv: null }],
+      }),
+    );
+    const engine = { executeRaw: async () => { throw new Error('remote collect must not query the engine'); } } as unknown as AdvisorContext['engine'];
+
+    const [f] = await collectBackupCoverage.collect(ctx(engine, { remote: true }));
+
+    expect(f?.title).toStartWith('1 of 2 knowledge assets lack verified recovery (1 dirty)');
+    expect(f?.title).not.toContain('no git remote');
+    expect(JSON.stringify(f)).not.toContain('xylophone-secret-source-991');
   });
 
   test('ok cache → zero findings and still no nag write', async () => {

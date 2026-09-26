@@ -196,6 +196,35 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
     expect(check.message).not.toContain('no git remote');
     expect(check.message).toContain('gbrain backup status');
   });
+
+  test('more than five blocking assets → the first five are named, the rest counted', async () => {
+    const sources = Array.from({ length: 6 }, (_, i) => {
+      const dir = join(tmp, `plain-${i}`);
+      mkdirSync(dir, { recursive: true });
+      return { id: `plain-${i}`, local_path: dir };
+    });
+
+    const check = await checkBackupCoverage(makeEngine(sources), { localOnly: true });
+
+    expect(check.message).toContain('6 knowledge asset(s) lack verified recovery:');
+    expect(check.message).toContain('plain-4 (not_a_git_repo), and 1 more.');
+    expect(check.message).not.toContain('plain-5');
+  });
+
+  test('degraded compute with no assets leads with the unreadable database', async () => {
+    const engine = {
+      kind: 'pglite',
+      executeRaw: async (sql: string) => {
+        if (/FROM sources/i.test(sql)) return [];
+        throw new Error('pages unreadable');
+      },
+    } as unknown as BrainEngine;
+
+    const check = await checkBackupCoverage(engine, { localOnly: true });
+
+    expect(check.status).toBe('warn');
+    expect(check.message).toStartWith('Backup verdict is not current: the database was unreadable during the check.');
+  });
 });
 
 // ── Remote (untrusted) path: cache-only reader, zero git, zero engine ────────
@@ -232,23 +261,46 @@ describe('checkBackupCoverage — remote surface (no localOnly)', () => {
     expect(typeof details.cache_age).toBe('string');
   });
 
-  test('warn cache with zero no_remote → aggregate counts by reason, never a "0 ... no git remote" claim', async () => {
+  test.each([
+    { label: 'dirty repo', asset: { state: 'dirty', detail: 'uncommitted changes', configured_remote: true }, reason: '1 dirty' },
+    { label: 'remote set, nothing pushed', asset: { state: 'no_remote', configured_remote: true }, reason: '1 remote configured, nothing pushed' },
+    { label: 'no remote at all', asset: { state: 'no_remote' }, reason: '1 no git remote' },
+    { label: 'ok without remote evidence', asset: { state: 'ok', configured_remote: true }, reason: '1 remote not verified: not_checked' },
+    { label: 'known unknown code', asset: { state: 'unknown', detail: 'not_a_git_repo' }, reason: '1 not_a_git_repo' },
+    { label: 'free-text unknown detail', asset: { state: 'unknown', detail: 'ahead of origin/private-branch-name' }, reason: '1 unknown' },
+  ] as const)('remote warn names reason counts only: $label', async ({ asset, reason }) => {
     saveBackupStatus({
       ...makeWarnCache('private-src-id'),
       totals: { assets: 2, no_remote: 0, unpushed: 0, failing: 0, recoverable_repos: 0, pages_at_risk: 0 },
       assets: [
         { kind: 'db_only', id: 'private-src-id', state: 'info', fix_argv: null },
-        { kind: 'source_repo', id: 'private-src-id', state: 'dirty', detail: 'uncommitted changes', configured_remote: true },
+        { kind: 'source_repo', id: 'private-src-id', fix_argv: null, ...asset },
       ],
     });
 
     const check = await checkBackupCoverage(makeThrowingEngine(), {});
 
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('1 of 2');
-    expect(check.message).toContain('1 dirty');
-    expect(check.message).not.toContain('no git remote');
+    expect(check.message).toContain(`1 of 2 knowledge asset(s) lack verified recovery (${reason})`);
     expect(check.message).not.toContain('private-src-id');
+    expect(check.message).not.toContain('private-branch-name');
+  });
+
+  test('stale cache with no blocking asset leads with the staleness, never "0 of N"', async () => {
+    __setBackupIntervalForTests(60_000);
+    saveBackupStatus({
+      ...makeWarnCache('private-src-id'),
+      checked_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      overall: 'ok',
+      totals: { assets: 1, no_remote: 0, unpushed: 0, failing: 0, recoverable_repos: 0, pages_at_risk: 0 },
+      assets: [{ kind: 'db_only', id: 'private-src-id', state: 'info', fix_argv: null }],
+    });
+
+    const check = await checkBackupCoverage(makeThrowingEngine(), {});
+
+    expect(check.status).toBe('warn');
+    expect(check.message).toStartWith('Backup verdict is not current: the verdict is older than the check interval.');
+    expect(check.message).not.toContain('0 of');
   });
 
   test('ok cache → ok from cache with the cache-only note', async () => {
@@ -260,7 +312,7 @@ describe('checkBackupCoverage — remote surface (no localOnly)', () => {
     });
     const check = await checkBackupCoverage(makeThrowingEngine(), {});
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('not verified');
+    expect(check.message).toContain('(1 remote not verified: not_checked)');
     expect((check.details as { totals: BackupStatus['totals'] }).totals.recoverable_repos).toBe(0);
     expect((check.details as { note?: string }).note).toBe(
       'cache-only (remote surface never probes git; aggregate counts only)',
