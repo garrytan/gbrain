@@ -12,7 +12,7 @@ import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from '.
 import { getWorktreeBinding } from './ownership.ts';
 import { digest, requireUuid } from './digest.ts';
 import { waitForWrite, writeResponse } from './service.ts';
-import { prepareFileTarget } from './page-prepare.ts';
+import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
 import type { WriteRequest } from './model.ts';
 import type { PreparedMutation } from './coordinator.ts';
 
@@ -76,7 +76,7 @@ export async function prepareGrandfatherMutation(engine: BrainEngine, row: Write
   if (file && !['.md', '.mdx'].includes(extname(file.path).toLowerCase())) {
     throw new OperationError('invalid_params', 'Non-Markdown artifacts cannot be grandfathered by rewriting their bytes.');
   }
-  return { observedRevision: snapshot.revision, file, deferEmbedding: true, apply: async tx => {
+  return { observedRevision: snapshot.revision, file, ...databaseOnlyPublication(row, file), deferEmbedding: true, apply: async tx => {
     await tx.createVersion(row.slug, { sourceId: row.source_id });
     const updated = await tx.executeRaw(`UPDATE pages SET frontmatter=jsonb_set(COALESCE(frontmatter,'{}'::jsonb),'{validate}','false'::jsonb),content_hash=$4
       WHERE id=$1 AND source_id=$2 AND knowledge_revision=$3::uuid AND NOT(COALESCE(frontmatter,'{}'::jsonb)?'validate') RETURNING id`,

@@ -357,6 +357,16 @@ export function isDbOnly(slug: string, config: StorageConfig): boolean {
 }
 
 /**
+ * Declared db_only match for a page slug. Slugs are always lowercase, so the
+ * declared directory is lowercased before matching (same reasoning as
+ * `effectiveDbOnlyDirs`, issue #3766). Only declared dirs count: the
+ * derive-phase defaults may be file-backed on some brains.
+ */
+export function isDeclaredDbOnlySlug(slug: string, config: StorageConfig | null): boolean {
+  return config?.db_only.some((dir) => matchesTierDir(slug, dir.toLowerCase())) ?? false;
+}
+
+/**
  * True when gbrain.yml has a `db_only` (or deprecated `supabase_only`) key
  * line but no db_only directory resolved from it. `loadStorageConfig` warns
  * and resolves nothing for syntax the narrow parser does not handle (e.g.
