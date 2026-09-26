@@ -167,6 +167,14 @@ source id. Full per-asset detail (which repo, which fix) is local-only:
 - Unpushed workspace work: `gbrain sources push --path <workspace>`.
 - db_only pages: `gbrain export --dir <backup-dir>` (store the dump outside
   the gitignored dirs — another disk, another repo, anywhere durable).
+- A dirty source repo (uncommitted changes): commit and push the changes
+  (`git -C <repo> add -A && git -C <repo> commit -m "<message>" && git -C <repo> push`),
+  or discard them, then run `gbrain backup check`. Remote evidence is only
+  read for a clean tree.
+- Google or GitHub connector sources: they appear as `db_only` info rows, not
+  repositories. Their pages come from the provider API, so recovery is a
+  re-sync from the provider plus `gbrain export --dir <backup-dir>` for what
+  the database holds. They never keep the check in warn on their own.
 
 ## Recovery drill (prove the answer is real)
 

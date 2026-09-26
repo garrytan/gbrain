@@ -18,7 +18,8 @@ import { existsSync } from 'node:fs';
 
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
-import { loadAllSources } from '../sources-load.ts';
+import { loadAllSources, parseSourceConfig, type SourceRow } from '../sources-load.ts';
+import { connectorAuthorities, type ConnectorAuthority } from '../persistence/connector-authority.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { realpathOrResolve } from '../path-confine.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
@@ -62,6 +63,33 @@ export interface BackupCoverageOpts {
 
 function pushAsset(assets: BackupAssetVerdict[], a: BackupAssetVerdict): void {
   assets.push(a);
+}
+
+/**
+ * #5505: an API connector's pages come from the provider, not from Git. A
+ * connector_database source (managed, unbound) has no canonical files at all;
+ * an unmanaged connector's non-Git directory is a Markdown cache. Both are
+ * recovered by re-sync or a DB dump, like db_only pages, and never counted as an
+ * unrecoverable repository that keeps the check in warn forever.
+ */
+function connectorAsset(id: string, connectorDatabase: boolean): BackupAssetVerdict {
+  return {
+    kind: 'db_only',
+    id,
+    state: 'info',
+    detail: (connectorDatabase
+      ? 'API connector source (connector_database): pages are imported from the provider API straight into the database. '
+      : 'API connector source: its directory is a Markdown cache of the provider API, not a git repository. ') +
+      'Re-sync from the provider, or dump the pages somewhere durable.',
+    fix_argv: ['gbrain', 'export', '--dir', '<backup-dir>'],
+  };
+}
+
+/** A bound connector's root must be a canonical checkout, so it stays a repo verdict. */
+function notARepoAsset(row: SourceRow, authority: ConnectorAuthority | undefined): BackupAssetVerdict {
+  return authority === 'unmanaged'
+    ? connectorAsset(row.id, false)
+    : { kind: 'source_repo', id: row.id, state: 'unknown', detail: 'not_a_git_repo', fix_argv: null };
 }
 
 function yieldLoop(): Promise<void> {
@@ -142,6 +170,10 @@ export async function computeBackupCoverage(
   let degraded = false;
   try {
     const rows = await loadAllSources(engine);
+    const authorities = await connectorAuthorities(
+      engine,
+      rows.filter((r) => !r.archived).map((r) => ({ id: r.id, kind: parseSourceConfig(r.config).kind })),
+    );
     const byRoot = new Map<string, { ids: string[]; dbOnly: boolean }>();
     let skippedOverCap = 0;
     // Root discovery is itself a git subprocess — memoize per local_path, count
@@ -151,6 +183,10 @@ export async function computeBackupCoverage(
     let discoveries = 0;
     for (const row of rows) {
       if (row.archived) continue;
+      if (authorities.get(row.id) === 'connector_database') {
+        pushAsset(assets, connectorAsset(row.id, true)); // local_path, if any, is not canonical
+        continue;
+      }
       if (!row.local_path) continue;
       if (!existsSync(row.local_path)) {
         // The most disk-loss-adjacent state of all: a registered path that is
@@ -172,7 +208,7 @@ export async function computeBackupCoverage(
         const memo = rootByPath.get(row.local_path)!;
         if (memo === null) {
           // Every source at a known non-repo path gets its own asset row.
-          pushAsset(assets, { kind: 'source_repo', id: row.id, state: 'unknown', detail: 'not_a_git_repo', fix_argv: null });
+          pushAsset(assets, notARepoAsset(row, authorities.get(row.id)));
           continue;
         }
         root = memo;
@@ -188,13 +224,7 @@ export async function computeBackupCoverage(
           rootByPath.set(row.local_path, root);
         } catch {
           rootByPath.set(row.local_path, null);
-          pushAsset(assets, {
-            kind: 'source_repo',
-            id: row.id,
-            state: 'unknown',
-            detail: 'not_a_git_repo',
-            fix_argv: null,
-          });
+          pushAsset(assets, notARepoAsset(row, authorities.get(row.id)));
           continue;
         }
       }

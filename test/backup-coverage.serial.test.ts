@@ -122,11 +122,19 @@ function stubEngine(opts: {
   sources?: unknown[];
   pages?: number;
   onCall?: () => void;
+  /** persistence_brain.enabled (managed persistence activated). */
+  managed?: boolean;
+  /** Source ids that have a persistence_source_bindings row. */
+  bound?: string[];
 } = {}): BrainEngine {
   return {
     kind: opts.kind ?? 'pglite',
-    executeRaw: async (sql: string) => {
+    executeRaw: async (sql: string, params: unknown[] = []) => {
       opts.onCall?.();
+      if (sql.includes('FROM persistence_brain')) return [{ enabled: opts.managed === true }];
+      if (sql.includes('FROM persistence_source_bindings')) {
+        return (opts.bound ?? []).includes(String(params[0])) ? [{ source_id: params[0], worktree_id: 'wt-example' }] : [];
+      }
       if (sql.includes('FROM pages')) return [{ n: opts.pages ?? 0 }];
       if (sql.includes('FROM sources')) return opts.sources ?? [];
       return [];
@@ -677,6 +685,66 @@ describe('computeBackupCoverage — dirty tree, shared git roots, non-repo paths
     }
     expect(s.overall).toBe('warn');
     expect(s.totals.no_remote).toBe(0);
+  });
+});
+
+// API connector sources (Google / GitHub)
+
+describe('computeBackupCoverage: API connector sources', () => {
+  const connectorDbOnly = (id: string) => ({
+    kind: 'db_only',
+    id,
+    state: 'info',
+    fix_argv: ['gbrain', 'export', '--dir', '<backup-dir>'],
+  });
+
+  function plainCache(name: string): string {
+    const dir = join(tmp, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'thread.md'), 'cached connector page');
+    return dir;
+  }
+
+  test.each([
+    { label: 'managed + unbound Google source (connector_database)', kind: 'google', managed: true, path: 'cache' },
+    { label: 'managed + unbound GitHub source whose cache dir is gone', kind: 'github', managed: true, path: 'missing' },
+    { label: 'unmanaged Google source with a plain cache dir', kind: 'google', managed: false, path: 'cache' },
+  ] as const)('$label → db_only info asset, not an unrecoverable repo', async ({ kind, managed, path }) => {
+    const localPath = path === 'cache' ? plainCache('conn-cache') : join(tmp, 'gone-cache');
+    const engine = stubEngine({ managed, sources: [srcRow('conn-src', localPath, { config: { kind } })] });
+
+    const s = await computeBackupCoverage(engine, { localGitProbes: true });
+
+    expect(s.assets.filter((a) => a.kind === 'source_repo')).toEqual([]);
+    const asset = s.assets.find((a) => a.id === 'conn-src');
+    expect(asset).toMatchObject(connectorDbOnly('conn-src'));
+    expect(asset?.detail).toContain('provider API');
+    expect(s.overall).toBe('ok');
+  });
+
+  test('managed + BOUND connector keeps the canonical-root Git contract (plain dir → not_a_git_repo)', async () => {
+    const localPath = plainCache('bound-cache');
+    const engine = stubEngine({
+      managed: true,
+      bound: ['conn-bound'],
+      sources: [srcRow('conn-bound', localPath, { config: { kind: 'google' } })],
+    });
+
+    const s = await computeBackupCoverage(engine, { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.id === 'conn-bound')).toMatchObject({ kind: 'source_repo', state: 'unknown', detail: 'not_a_git_repo' });
+    expect(s.overall).toBe('warn');
+  });
+
+  test('unmanaged connector whose local_path IS a git repo is probed like any repo', async () => {
+    const repo = join(tmp, 'gh-repo');
+    initRepo(repo);
+    commitFile(repo, 'a.md', 'x', 'init');
+    const engine = stubEngine({ sources: [srcRow('gh-src', repo, { config: { kind: 'github' } })] });
+
+    const s = await computeBackupCoverage(engine, { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.id === 'gh-src')).toMatchObject({ kind: 'source_repo', state: 'no_remote' });
   });
 });
 
