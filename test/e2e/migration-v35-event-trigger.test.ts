@@ -36,7 +36,7 @@ const v35Sql =
 describeE2E('migration v35 — event trigger converges idempotently (#3603)', () => {
   // Fresh DBs apply the full migration chain in setupDB — allow for it.
   beforeAll(async () => {
-    await setupDB();
+    await setupDB({ replayMigrations: true });
   }, 120_000);
 
   afterAll(async () => {

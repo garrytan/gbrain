@@ -9,7 +9,7 @@ describePg('migrate-engine source copy PGLite to Postgres', () => {
   let source: PGLiteEngine;
 
   beforeAll(async () => {
-    await setupDB();
+    await setupDB({ replayMigrations: true });
     source = new PGLiteEngine();
     await source.connect({});
     await source.initSchema();

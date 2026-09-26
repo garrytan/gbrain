@@ -84,7 +84,7 @@ d('embedding migration (live Postgres + pgvector)', () => {
       savedEnv[k] = process.env[k];
       delete process.env[k];
     }
-    engine = await setupDB();
+    engine = await setupDB({ replayMigrations: true });
     originalDims = await columnDims();
 
     resetGateway();

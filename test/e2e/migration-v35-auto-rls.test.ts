@@ -31,7 +31,7 @@ const v35Sql = (v35?.sqlFor as any)?.postgres ?? '';
 
 describeE2E('migration v35: auto_rls_event_trigger', () => {
   beforeAll(async () => {
-    await setupDB();
+    await setupDB({ replayMigrations: true });
     // setupDB() runs db.initSchema() (SCHEMA_SQL only, no migrations).
     // Advance through every migration so v35 is actually installed.
     await runMigrationsUpTo(getEngine(), LATEST_VERSION);

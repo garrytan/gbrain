@@ -123,8 +123,10 @@ process.exitCode = 7;
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     it(`forwards ${signal} to its owned child and grandchild`, async () => {
       const f = fixture(`
+import { renameSync } from 'node:fs';
 const child = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'], { stdout: 'ignore', stderr: 'ignore' });
-await Bun.write(process.argv[2], JSON.stringify([process.pid, child.pid]));
+await Bun.write(process.argv[2] + '.tmp', JSON.stringify([process.pid, child.pid]));
+renameSync(process.argv[2] + '.tmp', process.argv[2]);
 setInterval(() => {}, 1000);
 `);
       const pidsFile = join(f.root, 'pids.json');
@@ -143,6 +145,7 @@ setInterval(() => {}, 1000);
         for (let i = 0; i < 100 && !existsSync(pidsFile); i++) await Bun.sleep(20);
         expect(existsSync(pidsFile)).toBe(true);
         pids = JSON.parse(readFileSync(pidsFile, 'utf8'));
+        expect(pids).toHaveLength(2);
         expect(pids.every(alive)).toBe(true);
         proc.kill(signal);
         expect(await proc.exited).toBe(signal === 'SIGINT' ? 130 : 143);
