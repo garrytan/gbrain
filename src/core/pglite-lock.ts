@@ -92,22 +92,63 @@ export function isProcessAlive(pid: number): boolean {
   catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
 }
 
-/** Compatibility process diagnostics; never an ownership or takeover authority. */
-function readProcessArgs(pid: number, deps?: ProcessCommandProbeDeps): string | null {
-  if ((deps?.platform ?? process.platform) === 'win32') return readProcessCommand(pid, deps);
+/** Decode CIM's Windows command line without splitting quoted paths. */
+function parseWindowsArgs(command: string): string[] | null {
+  const argv: string[] = [];
+  let arg = '', quoted = false, started = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (!quoted && (ch === ' ' || ch === '\t')) {
+      if (started) argv.push(arg);
+      arg = ''; started = false;
+      continue;
+    }
+    started = true;
+    if (ch === '\\') {
+      let count = 1;
+      while (command[i + 1] === '\\') { count++; i++; }
+      // Only backslashes immediately before a quote are escapes on Windows.
+      if (command[i + 1] === '"') {
+        arg += '\\'.repeat(Math.floor(count / 2));
+        if (count % 2) { arg += '"'; i++; }
+      } else arg += '\\'.repeat(count);
+    } else if (ch === '"') {
+      if (quoted && command[i + 1] === '"') { arg += '"'; i++; }
+      else quoted = !quoted;
+    } else arg += ch;
+  }
+  if (quoted) return null; // malformed/truncated evidence cannot authorize a reap
+  if (started) argv.push(arg);
+  return argv.length > 0 && argv[0].length > 0 ? argv : null;
+}
+
+/**
+ * Prefer /proc's NUL-delimited argv: flattening it loses argument boundaries.
+ * Windows CIM carries quoting; ps on macOS/minimal containers does not, so
+ * mark that fallback as lossy. Null means unknowable, never proof of death.
+ */
+function readProcessArgs(pid: number, deps?: ProcessCommandProbeDeps): { argv: string[]; exact: boolean } | null {
+  if ((deps?.platform ?? process.platform) === 'win32') {
+    const command = readProcessCommand(pid, deps);
+    const argv = command === null ? null : parseWindowsArgs(command);
+    return argv === null ? null : { argv, exact: true };
+  }
+  try {
+    const raw = (deps?.readCmdlineFile ?? readFileSync)(`/proc/${pid}/cmdline`).toString();
+    if (raw.length > 0) {
+      if (!raw.endsWith('\0')) return null; // incomplete argv
+      const argv = raw.slice(0, -1).split('\0');
+      return argv[0].length > 0 ? { argv, exact: true } : null;
+    }
+  } catch { /* no /proc or unreadable — fall through to ps */ }
   const exec = deps?.execFile ?? execFileSync;
   try {
-    const out = exec('ps', ['-p', String(pid), '-o', 'args='], {
+    const out = exec('ps', ['-ww', '-p', String(pid), '-o', 'args='], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 1000,
     }).trim();
-    if (out.length > 0) return out;
-  } catch { /* fall through to /proc */ }
-  try {
-    const raw = (deps?.readCmdlineFile ?? readFileSync)(`/proc/${pid}/cmdline`);
-    const args = raw.toString().replace(/\0/g, ' ').trim();
-    if (args.length > 0) return args;
+    if (out.length > 0) return { argv: out.split(/\s+/), exact: false };
   } catch { /* unreadable — unknowable */ }
   return null;
 }
@@ -147,16 +188,23 @@ export function isPidReusedByOtherProgram(
     if (recordedPidNs !== ourNs) return false;
     if (recordedBootId !== ourBoot) return false;
   }
-  const cmdline = readProcessArgs(pid, deps);
-  if (cmdline === null) return false; // unknowable — cannot prove reuse
+  const live = readProcessArgs(pid, deps);
+  if (live === null) return false; // unknowable — cannot prove reuse
   const isWin32 = (deps?.platform ?? process.platform) === 'win32';
   const normalize = (s: string) => isWin32 ? s.toLowerCase().replace(/\\/g, '/') : s;
-  const normalizedCommand = normalize(cmdline);
-  if (normalizedCommand.includes('gbrain')) return false;
-  const scriptPath = recordedArgv[0];
-  if (normalizedCommand.includes(normalize(scriptPath))) return false;
-  const scriptName = scriptPath.split(/[\\/]/).pop();
-  return !!scriptName && !normalizedCommand.includes(normalize(scriptName));
+  const basename = (s: string) => normalize(s).split(/[\\/]/).pop()!;
+  const scriptName = basename(recordedArgv[0]);
+  if (!scriptName) return false;
+  // ps does not quote/escape argv. A basename containing whitespace cannot
+  // be recovered from its rendering, so a mismatch would not prove reuse.
+  if (!live.exact && /\s/.test(scriptName)) return false;
+  // Keep the absolute/relative invocation fallback, but compare WHOLE names:
+  // cli.ts.bak, not-gbrain and /tmp/gbrain/other.ts are not holder identities.
+  return !live.argv.some(arg => {
+    if (arg.startsWith('-')) return false; // e.g. --log=/tmp/gbrain is not a program
+    const name = basename(arg);
+    return name === scriptName || name === 'gbrain' || (isWin32 && name === 'gbrain.exe');
+  });
 }
 
 export interface LockHolderInfo {
