@@ -40,6 +40,74 @@ function findCrossSourceSlugs(pages: Page[]): Array<{ slugs: string[]; sources: 
     .map(([, g]) => ({ slugs: [...g.slugs].sort(), sources: [...g.sources].sort() }));
 }
 
+/**
+ * Every page lands at <dir>/<slug>.md, so pages from two sources sharing a
+ * slug would overwrite each other. Refuse (exit 1) before anything is
+ * written; a `<source>/` path prefix is no way out, since import would
+ * re-key those pages under new slugs.
+ */
+async function refuseCrossSourceCollisions(engine: BrainEngine, pages: Page[], restoreOnly: boolean): Promise<void> {
+  const collisions = findCrossSourceSlugs(pages);
+  if (collisions.length === 0) return;
+  const listed = collisions
+    .slice(0, COLLISION_LIST_LIMIT)
+    .map((c) => `  ${c.slugs.join(', ')} (sources: ${c.sources.join(', ')})`);
+  if (collisions.length > COLLISION_LIST_LIMIT) {
+    listed.push(`  ... and ${collisions.length - COLLISION_LIST_LIMIT} more`);
+  }
+  // Restore writes to --dir (default ./export), so restoring in place
+  // names the source's repo for both --repo and --dir.
+  const perSource = restoreOnly
+    ? 'gbrain export --restore-only --source <id> --repo <that source\'s repo> --dir <that source\'s repo>'
+    : 'gbrain export --source <id> --dir <a separate directory per source>';
+  // --source refuses an archived source, so name the restore step first.
+  const archived = await engine.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE archived = true AND id = ANY($1::text[]) ORDER BY id`,
+    [[...new Set(collisions.flatMap((c) => c.sources))]],
+  );
+  const restoreHints = archived.map(
+    (r) => `Source "${r.id}" is archived; run \`gbrain sources restore ${r.id}\` before exporting it.`,
+  );
+  console.error(
+    `Error: ${collisions.length} slug(s) exist in more than one source. Export writes each\n` +
+      `page to <dir>/<slug>.md, so these pages would overwrite each other:\n` +
+      `${listed.join('\n')}\n` +
+      `Nothing was written. Export one source at a time into separate directories:\n` +
+      `  ${perSource}` +
+      (restoreHints.length > 0 ? `\n${restoreHints.join('\n')}` : ''),
+  );
+  process.exit(1);
+}
+
+/**
+ * Resolve `--source <id>` / `--source=<id>`. Only the explicit flag counts:
+ * with none, export spans every source (the GBRAIN_SOURCE, dotfile and
+ * default tiers do not narrow it), and `__all__` spans every source too.
+ * Exits 1 on a missing, invalid, unknown or archived id.
+ */
+async function resolveExportSource(
+  engine: BrainEngine,
+  args: string[],
+): Promise<{ sourceId: string | undefined; allSources: boolean }> {
+  const idx = args.findIndex((arg) => arg === '--source' || arg.startsWith('--source='));
+  if (idx === -1) return { sourceId: undefined, allSources: false };
+  const requested = args[idx].startsWith('--source=') ? args[idx].slice('--source='.length) : args[idx + 1];
+  if (!requested || requested.startsWith('--')) {
+    console.error('Error: --source requires a source id. Run `gbrain sources list` to see registered sources.');
+    process.exit(1);
+  }
+  try {
+    const resolved = await resolveSourceId(engine, requested);
+    return resolved === ALL_SOURCES
+      ? { sourceId: undefined, allSources: true }
+      : { sourceId: resolved, allSources: false };
+  } catch (e) {
+    if (!isResolverUserError(e)) throw e;
+    console.error(`Error: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
 export async function runExport(engine: BrainEngine, args: string[]) {
   const dirIdx = args.indexOf('--dir');
   const outDir = dirIdx !== -1 ? args[dirIdx + 1] : './export';
@@ -55,30 +123,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
 
   const restoreOnly = args.includes('--restore-only');
 
-  // --source honors the explicit flag only: with no flag, export keeps
-  // spanning every source (the GBRAIN_SOURCE / dotfile / default tiers do
-  // not narrow it). `__all__` is the resolver's span-everything sentinel.
-  const sourceIdx = args.findIndex((arg) => arg === '--source' || arg.startsWith('--source='));
-  let sourceId: string | undefined;
-  let allSourcesRequested = false;
-  if (sourceIdx !== -1) {
-    const requested = args[sourceIdx].startsWith('--source=')
-      ? args[sourceIdx].slice('--source='.length)
-      : args[sourceIdx + 1];
-    if (!requested || requested.startsWith('--')) {
-      console.error('Error: --source requires a source id. Run `gbrain sources list` to see registered sources.');
-      process.exit(1);
-    }
-    try {
-      const resolved = await resolveSourceId(engine, requested);
-      allSourcesRequested = resolved === ALL_SOURCES;
-      sourceId = allSourcesRequested ? undefined : resolved;
-    } catch (e) {
-      if (!isResolverUserError(e)) throw e;
-      console.error(`Error: ${(e as Error).message}`);
-      process.exit(1);
-    }
-  }
+  const { sourceId, allSources: allSourcesRequested } = await resolveExportSource(engine, args);
 
   // Resolution chain (D5): explicit --repo → the --source's own local_path →
   // typed sources.getDefault() → hard-error for restore-only paths (never
@@ -129,9 +174,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     process.exit(1);
   }
   
-  // Build filters. slugPrefix is engine-side (Issue #13) -- no in-memory
-  // post-filter. listAllPages reads the full set in batches: a single
-  // listPages call is capped by the engine's LIMIT.
+  // Engine-side filters; listAllPages reads the full matching set in batches.
   const filters: Omit<PageFilters, 'limit' | 'offset' | 'sort'> = {};
   if (typeFilter) filters.type = typeFilter as PageType;
   if (slugPrefix) filters.slugPrefix = slugPrefix;
@@ -183,41 +226,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     pages = await listAllPages(engine, filters);
   }
 
-  // Every page lands at <outDir>/<slug>.md, so two sources holding one slug
-  // would write the same file and the last write would win. Refuse before
-  // writing anything; a `<source>/` path prefix is no way out, since import
-  // would re-key those pages under new slugs.
-  const collisions = findCrossSourceSlugs(pages);
-  if (collisions.length > 0) {
-    const listed = collisions
-      .slice(0, COLLISION_LIST_LIMIT)
-      .map((c) => `  ${c.slugs.join(', ')} (sources: ${c.sources.join(', ')})`);
-    if (collisions.length > COLLISION_LIST_LIMIT) {
-      listed.push(`  ... and ${collisions.length - COLLISION_LIST_LIMIT} more`);
-    }
-    // Restore writes to --dir (default ./export), so restoring in place
-    // names the source's repo for both --repo and --dir.
-    const perSource = restoreOnly
-      ? 'gbrain export --restore-only --source <id> --repo <that source\'s repo> --dir <that source\'s repo>'
-      : 'gbrain export --source <id> --dir <a separate directory per source>';
-    // --source refuses an archived source, so name the restore step first.
-    const archived = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE archived = true AND id = ANY($1::text[]) ORDER BY id`,
-      [[...new Set(collisions.flatMap((c) => c.sources))]],
-    );
-    const restoreHints = archived.map(
-      (r) => `Source "${r.id}" is archived; run \`gbrain sources restore ${r.id}\` before exporting it.`,
-    );
-    console.error(
-      `Error: ${collisions.length} slug(s) exist in more than one source. Export writes each\n` +
-        `page to <dir>/<slug>.md, so these pages would overwrite each other:\n` +
-        `${listed.join('\n')}\n` +
-        `Nothing was written. Export one source at a time into separate directories:\n` +
-        `  ${perSource}` +
-        (restoreHints.length > 0 ? `\n${restoreHints.join('\n')}` : ''),
-    );
-    process.exit(1);
-  }
+  await refuseCrossSourceCollisions(engine, pages, restoreOnly);
 
   if (restoreOnly) {
     console.log(`Restoring ${pages.length} db_only pages to ${outDir}/`);

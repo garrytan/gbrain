@@ -961,9 +961,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   try {
     sourcesCopied = await copyMigrationSources(sourceEngine, targetEngine);
 
-    // Get all source pages. listAllPages reads in batches: one listPages
-    // call is capped by the engine's LIMIT, which silently left every page
-    // past it behind.
+    // Get all source pages (listAllPages reads the full set in batches).
     sourceStats = await sourceEngine.getStats();
     const allPages = await listAllPages(sourceEngine);
     pagesToMigrate = allPages.filter(p => !completedSet.has(makeManifestKey(p.source_id, p.slug)));
