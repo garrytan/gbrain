@@ -22,6 +22,42 @@ FIXES=0
 TOTAL=0
 SKIPPED=0
 
+# GNU coreutils calls this `timeout`; Homebrew exposes it as `gtimeout` on
+# macOS.  Keep the smoke test usable on a stock Darwin install by falling
+# back to a small background-process watchdog when neither binary exists.
+TIMEOUT_BIN=""
+if [ "${GBRAIN_SMOKE_TIMEOUT_BIN:-}" != "none" ]; then
+  if command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN="gtimeout"
+  elif command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout"
+  fi
+fi
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" "$seconds" "$@"
+    return $?
+  fi
+
+  "$@" &
+  local command_pid=$!
+  (
+    sleep "$seconds"
+    if kill -0 "$command_pid" 2>/dev/null; then
+      kill -TERM "$command_pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$command_pid" 2>/dev/null || true
+    fi
+  ) >/dev/null 2>&1 &
+  local watchdog_pid=$!
+  wait "$command_pid"
+  local result=$?
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  return "$result"
+}
+
 timestamp() { date -u '+%Y-%m-%d %H:%M:%S'; }
 pass()    { TOTAL=$((TOTAL + 1)); echo "✅ $1"; echo "$(timestamp) PASS: $1" >> "$LOG"; }
 fail()    { TOTAL=$((TOTAL + 1)); FAILURES=$((FAILURES + 1)); echo "❌ $1"; echo "$(timestamp) FAIL: $1" >> "$LOG"; }
@@ -75,12 +111,12 @@ fi
 
 # ── 2. GBrain CLI loads ────────────────────────────────────
 if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
-  if timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" --help >/dev/null 2>&1; then
+  if run_with_timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" --help >/dev/null 2>&1; then
     pass "GBrain CLI ($GBRAIN_DIR)"
   else
     # Auto-fix: reinstall deps
     cd "$GBRAIN_DIR" && "$BUN_PATH" install --frozen-lockfile 2>/dev/null
-    if timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" --help >/dev/null 2>&1; then
+    if run_with_timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" --help >/dev/null 2>&1; then
       fixed "GBrain deps reinstalled"
       pass "GBrain CLI (after dep fix)"
     else
@@ -99,7 +135,7 @@ fi
 # works with the DB down), then branch on doctor --json's connection check,
 # with `gbrain db-repair --yes` as the auto-fix arm.
 if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
-  ENGINE_JSON=$(DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" engine status --json 2>/dev/null)
+  ENGINE_JSON=$(DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" run_with_timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" engine status --json 2>/dev/null)
   # #4182: BSD grep (macOS) has no -P; keep this shipped smoke test POSIX-portable.
   ENGINE_KIND=$(printf '%s\n' "$ENGINE_JSON" | sed -n 's/.*"effective_engine": *"\([a-z]*\)".*/\1/p' | head -1)
   ENGINE_SRC=$(printf '%s\n' "$ENGINE_JSON" | sed -n 's/.*"db_url_source": *"\([^"]*\)".*/\1/p' | head -1)
@@ -107,7 +143,7 @@ if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
   if [ -z "$DB_URL" ] && [ "$ENGINE_KIND" != "pglite" ]; then
     fail "GBrain database — no DATABASE_URL or GBRAIN_DATABASE_URL (and the engine is not pglite)"
   else
-    run_doctor_json() { DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 30 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" doctor --json 2>/dev/null; }
+    run_doctor_json() { DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" run_with_timeout 30 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" doctor --json 2>/dev/null; }
     DOCTOR_JSON=$(run_doctor_json)
     CONN_STATUS=$(printf '%s\n' "$DOCTOR_JSON" | sed -n 's/.*"name": *"connection", *"status": *"\([a-z]*\)".*/\1/p' | head -1)
     if [ "$CONN_STATUS" = "ok" ]; then
@@ -119,7 +155,7 @@ if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
       # 240s: the docker conn_refused arm's readiness poll alone can run
       # ~165s worst-case; a 60s cap would SIGTERM the repair mid-poll and
       # report failure while the container it just started is still warming.
-      DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 240 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" db-repair --yes >> "$LOG" 2>&1
+      DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" run_with_timeout 240 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" db-repair --yes >> "$LOG" 2>&1
       DOCTOR_JSON=$(run_doctor_json)
       CONN_STATUS=$(printf '%s\n' "$DOCTOR_JSON" | sed -n 's/.*"name": *"connection", *"status": *"\([a-z]*\)".*/\1/p' | head -1)
       if [ "$CONN_STATUS" = "ok" ]; then
@@ -139,7 +175,7 @@ if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ] && [ -n "$DB_URL" ]; then
   SUPERVISOR_RUNNING=0
   LEGACY_WORKER_RUNNING=0
   if DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" \
-      timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" jobs supervisor status --json >/dev/null 2>&1; then
+      run_with_timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" jobs supervisor status --json >/dev/null 2>&1; then
     SUPERVISOR_RUNNING=1
   fi
   if [ -f "$WORKER_PID_FILE" ] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
