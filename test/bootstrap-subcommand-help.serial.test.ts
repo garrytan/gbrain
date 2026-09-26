@@ -156,6 +156,33 @@ describe('bootstrap <subcommand> --help/-h/help never runs the real operation', 
     expect(calls.length).toBe(0);
   });
 
+  // Detection pinned to "nothing installed" keeps an unguarded apply on the
+  // harmless early-exit path (no serve probe, no token mint, no config write),
+  // so this test can't touch the real user config even when the guard is missing.
+  const noHarnesses = { claude: () => false, codex: () => false, opencode: () => false };
+
+  test('harness --help: usage text, exit 0, zero exec calls', async () => {
+    const { runner, calls } = makeRunner();
+
+    const r = await capture(() =>
+      runBootstrap(['harness', '--harness', 'claude-code', '--help'], { runner, harnessDetect: noHarnesses }),
+    );
+
+    expect(r.result).toBe(0);
+    expect(r.out).toContain('Wire framework-spawned');
+    expect(calls.length).toBe(0);
+  });
+
+  test('harness help (bare word, no dashes): usage text, exit 0, zero exec calls', async () => {
+    const { runner, calls } = makeRunner();
+
+    const r = await capture(() => runBootstrap(['harness', 'help'], { runner, harnessDetect: noHarnesses }));
+
+    expect(r.result).toBe(0);
+    expect(r.out).toContain('Wire framework-spawned');
+    expect(calls.length).toBe(0);
+  });
+
   test('hooks --help: usage text, exit 0, zero exec calls, receipt untouched', async () => {
     const receiptBefore = readFileSync(receiptPath(home), 'utf8');
     const mtimeBefore = statSync(receiptPath(home)).mtimeMs;
