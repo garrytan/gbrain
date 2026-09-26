@@ -23,7 +23,7 @@ import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority
 import type { PreparedContentImport } from './prepared-import.ts';
 import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
-import { prepareFileTarget } from './page-prepare.ts';
+import { databaseOnlyPublication, prepareFileTarget } from './page-prepare.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
@@ -439,8 +439,9 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       snapshot?.page.source_path != null && snapshot.page.source_path !== p.sourcePath) {
     throw new OperationError('revision_conflict', 'The connector page changed after admission.');
   }
+  const deleteFile = p.kind === 'managed_connector_delete' ? await prepareFileTarget(engine, row, snapshot, null) : undefined;
   if (p.kind === 'managed_connector_delete') return { observedRevision: snapshot?.revision ?? null, sourceExclusive: true, validate,
-    file: await prepareFileTarget(engine, row, snapshot, null),
+    file: deleteFile, ...databaseOnlyPublication(row, deleteFile),
     noop: !snapshot || snapshot.page.deleted_at != null, apply: async tx => {
       if (snapshot && snapshot.page.deleted_at == null) {
         await tx.createVersion(row.slug, { sourceId: row.source_id });
@@ -477,7 +478,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw new OperationError('source_changed', 'The connector canonical file changed during preparation.');
   return { observedRevision: ready.observedRevision, sourceExclusive: true,
     validate: async tx => { await validate(tx); await ready.validate(tx); },
-    file, noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
+    file, ...databaseOnlyPublication(row, file), noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
     await ready.apply(tx);
     if (!ready.noop) { await project(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
     return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,

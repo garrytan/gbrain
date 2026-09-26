@@ -10,6 +10,7 @@ import {
   loadStorageConfig,
   normalizeAndValidateStorageConfig,
   StorageConfigError,
+  isDeclaredDbOnlySlug,
   hasUnresolvedDbOnlyDeclaration,
   __resetMissingStorageWarning,
 } from '../src/core/storage-config.ts';
@@ -126,6 +127,17 @@ describe('Storage Configuration', () => {
       };
       expect(isSupabaseOnly('media/xerox/foo', noSlashConfig)).toBe(false);
       expect(isSupabaseOnly('media/x/tweet-1', noSlashConfig)).toBe(false);
+    });
+
+    test.each([
+      ['conversations/sessions/a', ['conversations/'], true],
+      ['conversations/sessions/a', ['Conversations/'], true],
+      ['conversationsx/a', ['Conversations/'], false],
+      ['atoms/a', ['conversations/'], false], // derive-phase defaults are not declared
+      ['conversations/a', null, false],
+    ] as const)('isDeclaredDbOnlySlug(%p, %p) is %p', (slug, dbOnly, expected) => {
+      const config: StorageConfig | null = dbOnly ? { db_tracked: [], db_only: [...dbOnly] } : null;
+      expect(isDeclaredDbOnlySlug(slug, config)).toBe(expected);
     });
   });
 });
