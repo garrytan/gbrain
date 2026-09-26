@@ -3,7 +3,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadStorageConfig, validateStorageConfig, getStorageTier } from '../core/storage-config.ts';
 import type { StorageConfig, StorageTier } from '../core/storage-config.ts';
 import { walkBrainRepo, type DiskFileEntry } from '../core/disk-walk.ts';
-import { ALL_SOURCES, getDefaultSourcePath, resolveRestoreTarget } from '../core/source-resolver.ts';
+import { ALL_SOURCES, getDefaultSourcePath } from '../core/source-resolver.ts';
+import { resolveRestoreTarget } from '../core/restore-target.ts';
 
 /**
  * Distinct nominal types for the two tier-keyed numeric maps. Both shapes

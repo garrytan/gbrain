@@ -308,6 +308,9 @@ export function buildFlagRegistry(): Record<string, string[]> {
     reindex: ['--type'],
     upgrade: ['--type', '--aliases'],
     'post-upgrade': ['--type', '--aliases'],
+    // storage status prints a `gbrain export … --dir "<repo>"` restore hint;
+    // --dir is export's flag, storage never parses it.
+    storage: ['--dir'],
   };
   const consumes = (text: string, flag: string): boolean =>
     new RegExp(`['"\`]${flag}['"\`]`).test(text);
