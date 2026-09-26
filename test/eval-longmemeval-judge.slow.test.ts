@@ -155,9 +155,11 @@ describe('--judge live run + --judge --resume-from backfill', () => {
   const out = () => join(tmp, 'live-then-backfill.jsonl');
 
   test('live: rows carry judge fields + reader pins; one injected judge_error → headline incorrect, exit 1', async () => {
+    const actualCostFile = join(tmp, 'non-noop-cost.json');
     const reader = readerClient();
     const judge = judgeClient({ 'mc-1': 'Yes', 'mc-2': 'No', 'mc-3_abs': new Error('injected provider outage') });
-    const { code, stderr } = await runCapturing([FIXTURE, ...BASE, ...JUDGE, '--output', out()], { engine, client: reader.client, judgeClient: judge.fn });
+    const { code, stderr } = await runCapturing([FIXTURE, ...BASE, ...JUDGE, '--output', out()], { engine, client: reader.client, judgeClient: judge.fn, actualCostFile });
+    expect(existsSync(actualCostFile)).toBe(false); // paid-path accounting is out of scope
     expect(code).toBe(1);
     expect(stderr).toContain('FAIL --judge: judgments incomplete');
     expect(stderr).toContain('NOT publishable');
@@ -297,19 +299,25 @@ describe('--judge live run + --judge --resume-from backfill', () => {
 
   test('backfill to a DIFFERENT --output copies the prior rows forward (nothing to judge → no calls)', async () => {
     const out2 = join(tmp, 'copy-forward.jsonl');
+    const actualCostFile = join(tmp, 'noop-cost.json');
     const reader = readerClient({ forbid: true });
     const judge = judgeClient({});
     const { code, stderr } = await runCapturing(
       [FIXTURE, ...BASE, ...JUDGE, '--output', out2, '--resume-from', out()],
-      { engine, client: reader.client, judgeClient: judge.fn },
+      { engine, client: reader.client, judgeClient: judge.fn, actualCostFile },
     );
     expect(code).toBeNull();
     expect(stderr).toContain('nothing to do (all questions already answered and judged)');
     expect(judge.calls).toHaveLength(0);
+    expect(reader.calls).toHaveLength(0);
+    expect(JSON.parse(readFileSync(actualCostFile, 'utf-8'))).toEqual({
+      schema_version: 1, scope: 'invocation', complete: true, reason: 'resume_noop', cost_usd: 0,
+    });
     // The no-op branch copies the prior rows into the new output and rebuilds qa_accuracy from them.
     const copied = splitRows(out2);
     expect(copied.rows.map(r => r.question_id).sort()).toEqual(['mc-1', 'mc-2', 'mc-3_abs']);
     expect(byId(copied.rows)['mc-3_abs'].judge_correct).toBe(true);
+    expect(copied.summary.qa_accuracy.actual_cost_usd).toBeGreaterThan(0);
     expect(copied.summary.qa_accuracy).toMatchObject({ judged: 3, correct: 2, complete: true });
     expect(readRows(out2)[readRows(out2).length - 1].kind).toBe('by_type_summary');
     expect(stderr).toContain('qa_accuracy: headline 66.7% (2/3');

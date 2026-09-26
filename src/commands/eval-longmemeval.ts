@@ -1,3 +1,5 @@
+import { writeFileSync, renameSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 /**
  * `gbrain eval longmemeval <dataset.jsonl>` — public LongMemEval benchmark
  * adapter and the repo's receipt producer for the strict retrieval metric.
@@ -517,6 +519,8 @@ export interface RunOpts {
   rerankerReadiness?: (engine: PGLiteEngine, model: string) => Promise<EngineReadiness>;
   /** Test seam: directory for the `--record` ledger (default <repo>/.gbrain-evals/). */
   recordDir?: string;
+  /** Test seam: invocation cost receipt path (default: guard-provided environment path). */
+  actualCostFile?: string;
   /** Test seam: the judge chat client behind `--judge` (default: the gateway `chat`). */
   judgeClient?: JudgeChatFn;
   /** Test seam: base retry backoff for judge timeouts / 429s (default 500ms). */
@@ -964,6 +968,24 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
       const buckets: Record<string, RecallBucket> = {};
       const seed = seedBucketsFromRows(priorRows, buckets, seedCtx(opts.topK, opts.includeAbstention));
       const deg = countDegradation(priorRows, degradeOpts);
+      // This branch has performed no provider work. Publish before finishRun:
+      // its quality gates may exit nonzero, independently of this invocation's spend.
+      const costFile = runOpts.actualCostFile ?? process.env.GBRAIN_EVAL_ACTUAL_COST_FILE;
+      if (costFile) {
+        const temporary = `${costFile}.${process.pid}.${randomUUID()}.tmp`;
+        try {
+          writeFileSync(temporary, JSON.stringify({
+            schema_version: 1, scope: 'invocation', complete: true,
+            reason: 'resume_noop', cost_usd: 0,
+          }) + '\n', { flag: 'wx', mode: 0o600 });
+          renameSync(temporary, costFile);
+        } catch {
+          // Missing receipt leaves the guard's reservation in place; never fake success.
+          process.stderr.write('[longmemeval] zero-cost receipt unavailable; guard retains estimate\n');
+        } finally {
+          try { rmSync(temporary, { force: true }); } catch { /* best-effort cleanup */ }
+        }
+      }
       finishRun({
         buckets,
         distinct: seed.distinct,

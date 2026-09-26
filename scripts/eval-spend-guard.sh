@@ -36,7 +36,8 @@
 # before it could reconcile). Rows without run_id/status (older ledgers) are
 # final rows. C comes from $GBRAIN_EVAL_ACTUAL_COST_FILE when the command wrote
 # one (a bare unsigned number, or a JSON object carrying `cost_usd`) AND it is
-# positive; a malformed, signed, or non-positive cost falls back to the
+# positive, or the canonical v1 complete invocation resume_noop receipt is zero.
+# Other malformed, signed, or non-positive costs fall back to the
 # estimate (over-stating spend is the safe direction). When
 # GBRAIN_EVAL_ACTUAL_COST_FILE is unset, a temp path is exported to the child
 # so harnesses can report usage-derived cost without operator setup.
@@ -233,6 +234,12 @@ if [ -z "${GBRAIN_EVAL_ACTUAL_COST_FILE:-}" ]; then
   CLEANUP_COST_FILE=1
 fi
 export GBRAIN_EVAL_ACTUAL_COST_FILE
+# A pre-existing receipt is not evidence about THIS launch. Keep legacy positive
+# handling unchanged, but require a fresh path for the new zero-cost exception.
+ZERO_RECEIPT_FRESH=0
+if [ ! -e "$GBRAIN_EVAL_ACTUAL_COST_FILE" ] && [ ! -L "$GBRAIN_EVAL_ACTUAL_COST_FILE" ]; then
+  ZERO_RECEIPT_FRESH=1
+fi
 
 # Reconcile exactly once (normal exit, signal, or EXIT-trap backstop), and
 # only once there is a reservation to reconcile (RESERVED).
@@ -314,28 +321,37 @@ CODE=$?
 trap - INT TERM HUP
 
 # Actual cost: bare unsigned number or JSON with unsigned cost_usd, and it
-# must be POSITIVE; anything else (malformed, signed, zero) → the estimate.
+# must be POSITIVE, except for the exact canonical complete/noop v1 receipt.
+# Match the whole JSON shape without stripping whitespace inside strings. Fixed
+# key order avoids adding a JSON-parser runtime dependency; other zero forms fail closed.
 COST="$EST"
 if [ -f "$GBRAIN_EVAL_ACTUAL_COST_FILE" ]; then
-  RAW="$(tr -d '[:space:]' < "$GBRAIN_EVAL_ACTUAL_COST_FILE")"
-  CANDIDATE=""
-  if is_number "$RAW"; then
-    CANDIDATE="$RAW"
+  ZERO_PATTERN=$'^[ \t\r\n]*\{[ \t\r\n]*"schema_version"[ \t\r\n]*:[ \t\r\n]*1[ \t\r\n]*,[ \t\r\n]*"scope"[ \t\r\n]*:[ \t\r\n]*"invocation"[ \t\r\n]*,[ \t\r\n]*"complete"[ \t\r\n]*:[ \t\r\n]*true[ \t\r\n]*,[ \t\r\n]*"reason"[ \t\r\n]*:[ \t\r\n]*"resume_noop"[ \t\r\n]*,[ \t\r\n]*"cost_usd"[ \t\r\n]*:[ \t\r\n]*0[ \t\r\n]*\}[ \t\r\n]*$'
+  RECEIPT="$(cat "$GBRAIN_EVAL_ACTUAL_COST_FILE")"
+  if [ "$ZERO_RECEIPT_FRESH" = "1" ] && [[ "$RECEIPT" =~ $ZERO_PATTERN ]] \
+    && LC_ALL=C tr -d '\000' < "$GBRAIN_EVAL_ACTUAL_COST_FILE" | cmp -s "$GBRAIN_EVAL_ACTUAL_COST_FILE" -; then
+    COST=0
   else
-    FROM_JSON="$(grep -oE '"cost_usd"[[:space:]]*:[[:space:]]*([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?[[:space:]]*[,}]' "$GBRAIN_EVAL_ACTUAL_COST_FILE" 2>/dev/null \
-      | head -1 | sed -E 's/^"cost_usd"[[:space:]]*:[[:space:]]*//; s/[[:space:]]*[,}]$//')"
-    if [ -n "$FROM_JSON" ] && is_number "$FROM_JSON"; then CANDIDATE="$FROM_JSON"; fi
-  fi
-  if [ -n "$CANDIDATE" ]; then
-    CANDIDATE="$(norm6 "$CANDIDATE")"
-    POSITIVE="$(awk -v c="$CANDIDATE" 'BEGIN { print (c > 0) ? 1 : 0 }')"
-    if [ "$POSITIVE" = "1" ]; then
-      COST="$CANDIDATE"
+    RAW="$(tr -d '[:space:]' < "$GBRAIN_EVAL_ACTUAL_COST_FILE")"
+    CANDIDATE=""
+    if is_number "$RAW"; then
+      CANDIDATE="$RAW"
     else
-      echo "eval-spend-guard: cost file $GBRAIN_EVAL_ACTUAL_COST_FILE reports non-positive cost \$${CANDIDATE}; recording the estimate instead" >&2
+      FROM_JSON="$(grep -oE '"cost_usd"[[:space:]]*:[[:space:]]*([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?[[:space:]]*[,}]' "$GBRAIN_EVAL_ACTUAL_COST_FILE" 2>/dev/null \
+        | head -1 | sed -E 's/^"cost_usd"[[:space:]]*:[[:space:]]*//; s/[[:space:]]*[,}]$//')"
+      if [ -n "$FROM_JSON" ] && is_number "$FROM_JSON"; then CANDIDATE="$FROM_JSON"; fi
     fi
-  else
-    echo "eval-spend-guard: cost file $GBRAIN_EVAL_ACTUAL_COST_FILE unreadable (need an unsigned number or {\"cost_usd\":<number>}); recording the estimate" >&2
+    if [ -n "$CANDIDATE" ]; then
+      CANDIDATE="$(norm6 "$CANDIDATE")"
+      POSITIVE="$(awk -v c="$CANDIDATE" 'BEGIN { print (c > 0) ? 1 : 0 }')"
+      if [ "$POSITIVE" = "1" ]; then
+        COST="$CANDIDATE"
+      else
+        echo "eval-spend-guard: cost file $GBRAIN_EVAL_ACTUAL_COST_FILE reports non-positive cost \$${CANDIDATE}; recording the estimate instead" >&2
+      fi
+    else
+      echo "eval-spend-guard: cost file $GBRAIN_EVAL_ACTUAL_COST_FILE unreadable (need an unsigned number or {\"cost_usd\":<number>}); recording the estimate" >&2
+    fi
   fi
 fi
 
