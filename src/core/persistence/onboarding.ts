@@ -6,6 +6,7 @@ import { containsPath, getWorktreeBinding } from './ownership.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import { inspectLegacyWriterLocks } from './legacy-locks.ts';
 import { UNSUPPORTED_MANAGED_BULK_WRITERS } from './maintenance.ts';
+import { isConnectorKind } from './connector-authority.ts';
 
 export function containerPathPreflight(paths: Record<string, string>, mountinfo?: string, container?: boolean) {
   if (container === undefined) container = existsSync('/.dockerenv') || existsSync('/run/.containerenv');
@@ -33,7 +34,7 @@ export async function writerOnboardingPreflight(engine: BrainEngine, sourceId?: 
   const sources = [];
   for (const row of rows) {
     const binding = await getWorktreeBinding(engine, row.id, host), configured = row.local_path || (row.id === 'default' ? fallback : null);
-    const connector = row.kind === 'google' || row.kind === 'github';
+    const connector = isConnectorKind(row.kind);
     let state = !binding ? connector ? 'connector_database' : configured && writeThrough ? 'claim_required' : 'database_only' : !brain.enabled ? 'activation_required' : 'ready';
     let physicalError: string | undefined;
     if (binding && (binding.source_incarnation !== row.incarnation || binding.state !== 'active')) state = 'recovery_required';

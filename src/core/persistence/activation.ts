@@ -9,6 +9,7 @@ import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from '.
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { inspectLegacyWriterLocks } from './legacy-locks.ts';
 import { deleteLockRowExact } from '../db-lock.ts';
+import { isConnectorKind } from './connector-authority.ts';
 
 export interface ActivationReport {
   enabled: boolean;
@@ -26,7 +27,7 @@ async function configuredSources(engine: BrainEngine, lock = false): Promise<Sou
   const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; kind: string | null }>(
     `SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id${lock ? ' FOR UPDATE' : ''}`);
   const fallback = await engine.getConfig('sync.repo_path');
-  return sources.map(source => ({ id: source.id, incarnation: source.incarnation, connector: source.kind === 'google' || source.kind === 'github',
+  return sources.map(source => ({ id: source.id, incarnation: source.incarnation, connector: isConnectorKind(source.kind),
     root: source.local_path || (source.id === 'default' ? fallback : null) }));
 }
 async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hostId: string | null, lock = false): Promise<WorktreeBinding[]> {
