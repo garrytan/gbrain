@@ -112,6 +112,125 @@ describe('put_page write-through — happy path', () => {
     expect(onDisk).toContain('WT body');
   });
 
+  test("remote writes infer a custom type from the active pack through no-op and file checks", async () => {
+    const packDir = path.join(
+      tmpRoot,
+      "home",
+      ".gbrain",
+      "schema-packs",
+      "route-test",
+    );
+    fs.mkdirSync(packDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(packDir, "pack.yaml"),
+      `api_version: gbrain-schema-pack-v1
+name: route-test
+version: 1.0.0
+extends: gbrain-base-v2
+page_types:
+  - name: goal
+    primitive: concept
+    path_prefixes: [goals/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+`,
+    );
+    await withEnv({ GBRAIN_SCHEMA_PACK: "route-test" }, async () => {
+      const ctx = makeCtx({ remote: true });
+      const slug = "goals/learn-guitar";
+      const content = "---\ntitle: Learn guitar\n---\n\nPractice regularly.";
+      const first = (await putPage.handler(ctx, { slug, content })) as {
+        revision: string;
+      };
+      const file = path.join(brainDir, `${slug}.md`);
+      expect(
+        (await engine.readPageSnapshot(slug, { sourceId: "default" }))?.page
+          .type,
+      ).toBe("goal");
+      expect(fs.readFileSync(file, "utf8")).toContain("type: goal");
+
+      const unchanged = await putPage.handler(ctx, {
+        slug,
+        content,
+        expected_revision: first.revision,
+      });
+      expect(unchanged).toMatchObject({
+        state: "committed",
+        noop: true,
+        revision: first.revision,
+      });
+
+      // A canonical file imported under the pack can omit type frontmatter.
+      fs.writeFileSync(
+        file,
+        fs.readFileSync(file, "utf8").replace(/^type: goal\n/m, ""),
+      );
+      const edited = await putPage.handler(ctx, {
+        slug,
+        content: content.replace("regularly", "daily"),
+        expected_revision: first.revision,
+      });
+      expect(edited).toMatchObject({ state: "committed" });
+      expect(
+        (await engine.readPageSnapshot(slug, { sourceId: "default" }))?.page
+          .type,
+      ).toBe("goal");
+    });
+  });
+
+  test('remote writes infer path subtypes and preserve explicit or stored subtypes', async () => {
+    const packDir = path.join(tmpRoot, 'home', '.gbrain', 'schema-packs', 'meeting-test');
+    fs.mkdirSync(packDir, { recursive: true });
+    fs.writeFileSync(path.join(packDir, 'pack.yaml'), `api_version: gbrain-schema-pack-v1
+name: meeting-test
+version: 1.0.0
+extends: gbrain-base-v2
+page_types:
+  - name: meeting
+    primitive: temporal
+    path_prefixes: [therapy-meetings/, meetings/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+    subtypes:
+      - name: therapy
+        when:
+          path_pattern: '^therapy-meetings/'
+      - name: relationship
+        when:
+          path_pattern: '^relationship-meetings/'
+`);
+    await withEnv({ GBRAIN_SCHEMA_PACK: 'meeting-test' }, async () => {
+      const ctx = makeCtx({ remote: true });
+      const slug = 'therapy-meetings/session';
+      const content = '---\ntitle: Session\n---\n\nFirst discussion.';
+      const first = await putPage.handler(ctx, { slug, content }) as { revision: string };
+      const file = path.join(brainDir, `${slug}.md`);
+      expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page).toMatchObject({ type: 'meeting', frontmatter: { subtype: 'therapy' } });
+      expect(fs.readFileSync(file, 'utf8')).toContain('subtype: therapy');
+
+      const unchanged = await putPage.handler(ctx, { slug, content, expected_revision: first.revision });
+      expect(unchanged).toMatchObject({ state: 'committed', noop: true, revision: first.revision });
+
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^subtype: therapy\n/m, ''));
+      const edited = await putPage.handler(ctx, { slug, content: content.replace('First', 'Second'), expected_revision: first.revision }) as { revision: string };
+      expect(edited).toMatchObject({ state: 'committed' });
+      expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.frontmatter.subtype).toBe('therapy');
+
+      const explicit = await putPage.handler(ctx, { slug, content: '---\ntitle: Session\nsubtype: relationship\n---\n\nThird discussion.', expected_revision: edited.revision }) as { revision: string };
+      expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.frontmatter.subtype).toBe('relationship');
+      await putPage.handler(ctx, { slug, content: content.replace('First', 'Fourth'), expected_revision: explicit.revision });
+      expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.frontmatter.subtype).toBe('relationship');
+
+      const legacySlug = 'therapy-meetings/legacy';
+      const legacy = await putPage.handler(ctx, { slug: legacySlug, content: '---\ntitle: Legacy\ntype: concept\n---\n\nExisting page.' }) as { revision: string };
+      await putPage.handler(ctx, { slug: legacySlug, content: '---\ntitle: Legacy\n---\n\nUpdated page.', expected_revision: legacy.revision });
+      expect((await engine.readPageSnapshot(legacySlug, { sourceId: 'default' }))?.page).toMatchObject({ type: 'concept' });
+      expect((await engine.readPageSnapshot(legacySlug, { sourceId: 'default' }))?.page.frontmatter.subtype).toBeUndefined();
+    });
+  });
+
   test('stamps provenance frontmatter (ingested_via=put_page for local CLI)', async () => {
     const ctx = makeCtx({ remote: false });
     const result = (await putPage.handler(ctx, {

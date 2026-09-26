@@ -47,6 +47,19 @@ describe('inferTypeAndSubtypeFromPack', () => {
     }, { bundle: true })).toEqual({ type: 'tweet', subtype: 'bundle' });
   });
 
+  it('prefers a frontmatter rule over an earlier path rule', () => {
+    expect(inferTypeAndSubtypeFromPack('tweets/a.md', {
+      page_types: [{
+        name: 'tweet',
+        path_prefixes: ['/tweets/'],
+        subtypes: [
+          { name: 'bundle', when: { path_pattern: '^tweets/' } },
+          { name: 'single', when: { frontmatter_field: 'thread_length', frontmatter_value: 1 } },
+        ],
+      }],
+    }, { thread_length: 1 })).toEqual({ type: 'tweet', subtype: 'single' });
+  });
+
   it('returns canonical-only when no subtype rule matches', () => {
     expect(inferTypeAndSubtypeFromPack('tweets/a.md', {
       page_types: [{
