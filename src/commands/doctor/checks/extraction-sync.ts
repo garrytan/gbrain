@@ -108,19 +108,6 @@ export async function checkLinksExtractionLag(
       sourceId ? [sourceId] : [],
     );
     const total = Number(totalRows[0]?.count ?? 0);
-    if (enabled) {
-      const matched = num(r.reviewed_drift);
-      const newDrift = drifted - matched;
-      const staleReviews = items.length - matched;
-      const reviewedDetails = { ...details, reviewed_drift: matched, new_drift: newDrift, stale_reviews: staleReviews };
-      if (newDrift > 0 || staleReviews > 0) {
-        return { name, status: 'warn', details: reviewedDetails,
-          message: `${newDrift} newly unreviewed drifted atom(s); ${staleReviews} stale provenance review(s). ` +
-            `${matched} historical atom(s) remain searchable with unverified provenance. Review changes, not old source hashes.${su}` };
-      }
-      return { name, status: 'ok', details: reviewedDetails,
-        message: `${matched} historical atom(s) acknowledged as unverified provenance; no new drift${su}` };
-    }
     if (total === 0) {
       return { name, status: 'ok', message: 'Extraction lag not applicable (no pages)' };
     }
@@ -437,19 +424,6 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
         perSource[src.id] = (perSource[src.id] ?? 0) + 1;
         if (samples.length < 5) samples.push(`${slug} (src=${src.id})`);
       }
-    }
-    if (enabled) {
-      const matched = num(r.reviewed_drift);
-      const newDrift = drifted - matched;
-      const staleReviews = items.length - matched;
-      const reviewedDetails = { ...details, reviewed_drift: matched, new_drift: newDrift, stale_reviews: staleReviews };
-      if (newDrift > 0 || staleReviews > 0) {
-        return { name, status: 'warn', details: reviewedDetails,
-          message: `${newDrift} newly unreviewed drifted atom(s); ${staleReviews} stale provenance review(s). ` +
-            `${matched} historical atom(s) remain searchable with unverified provenance. Review changes, not old source hashes.${su}` };
-      }
-      return { name, status: 'ok', details: reviewedDetails,
-        message: `${matched} historical atom(s) acknowledged as unverified provenance; no new drift${su}` };
     }
     if (total === 0) {
       return {
@@ -925,7 +899,7 @@ export async function computeAtomProvenanceDriftCheck(
               -- drifted implies a slug binding, so "gone" is always a binding
               -- that failed to resolve — never a slug-unbound atom (#4799)
               count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
-              count(*) FILTER (WHERE drifted AND reviewed) AS reviewed_drift,
+              count(*) FILTER (WHERE drifted AND reviewed AND NOT src_alive) AS reviewed_drift,
               -- lexicographic min of ISO-shaped strings ≈ chronological min
               -- (oldest); informational only, never verdict-bearing
               min(ext) FILTER (WHERE drifted) AS oldest_ext
@@ -985,7 +959,8 @@ export async function computeAtomProvenanceDriftCheck(
         "AND a.deleted_at IS NULL AND NOT (COALESCE(a.frontmatter, '{}'::jsonb) ? 'quarantine') " +
         "AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL " +
         "AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id " +
-        "AND p.deleted_at IS NULL AND p.slug=a.frontmatter->>'source_slug' "AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')"";
+        "AND p.deleted_at IS NULL AND p.slug=a.frontmatter->>'source_slug' " +
+        "AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')";
       return {
         name, status: 'warn',
         message:

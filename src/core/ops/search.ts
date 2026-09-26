@@ -756,7 +756,6 @@ const query: Operation = {
         }
       }
     }
-    await stampAtomSourceDrift(ctx.engine, results);
     const latency_ms = Date.now() - startedAt;
 
     results = results.map(r => ({ ...r }));

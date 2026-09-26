@@ -1631,7 +1631,6 @@ export async function extractLinksForSlugs(
   // back for it and the edges were lost for good.
   const slugToPath = buildSlugPathIndex(allFiles);
   const allSlugs = new Set(slugToPath.keys());
-  const quarantined = await quarantinedSlugsForSource(engine, sourceId);
   // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
   // Markdown→markdown links within one repo always live in the caller's
   // sourceId. Cross-source extraction (rare) would need a per-repo source
@@ -1699,7 +1698,6 @@ export async function extractTimelineForSlugs(
   // across every source containing the slug (the addTimelineEntry's
   // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
   const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
-  const quarantined = await quarantinedSlugsForSource(engine, opts?.sourceId);
   const quarantined = await quarantinedSlugsForSource(engine, opts?.sourceId);
   let created = 0;
   const processed: string[] = [];

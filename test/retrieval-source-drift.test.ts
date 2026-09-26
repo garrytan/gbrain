@@ -42,6 +42,8 @@ beforeAll(async () => {
     type: 'atom', title: 'Missing origin locator', compiled_truth: 'uniquedriftneedle missing origin locator',
     frontmatter: { source_hash: 'abcdabcdabcdabcd' },
   });
+  // Upstream revision seal requires the chunk projection to match canonical content.
+  await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE type = $1', ['atom']);
 });
 afterAll(async () => { await engine.disconnect(); });
 
@@ -96,7 +98,7 @@ describe('source-drift provenance on retrieval', () => {
     const recalled = await run('recall', { query: 'uniquedriftneedle', source_id: 'default', limit: 30 });
     const row = recalled.results?.find((r: any) => r.slug === 'atoms/driftcase');
     expect(row?.unverified_source_drift).toBe(true);
-    const gathered = await runGather(engine, { question: 'uniquedriftneedle', sourceId: 'default' });
+    const gathered = await runGather(engine, { question: 'uniquedriftneedle', sourceId: 'default', anchor: 'atoms/driftcase' });
     expect(gathered.pages.some(r => r.slug === 'atoms/driftcase')).toBe(false);
     expect(gathered.warnings).toContain('GATHER_UNVERIFIED_SOURCE_DRIFT_EXCLUDED');
   });
