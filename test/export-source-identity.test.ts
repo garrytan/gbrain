@@ -133,7 +133,7 @@ describe('export refuses slugs shared by two sources', () => {
     expect(err).toContain('people/alice-example');
     expect(err).toContain('connector-a');
     expect(err).toContain('default');
-    expect(err).toContain('--source');
+    expect(err).toContain('gbrain export --source <id> --dir');
     expect(err).not.toContain('notes/only-connector');
     expect(existsSync(outDir)).toBe(false);
     expect(stdout.some((l) => l.startsWith('Exported'))).toBe(false);
@@ -211,6 +211,20 @@ describe('export --source scopes the page set', () => {
   });
 });
 
+describe('export refusal names archived sources', () => {
+  test('a colliding archived source gets a sources restore hint', async () => {
+    await seedCollision();
+    await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'connector-a'`);
+    await tryRunExport(['--dir', outDir]);
+
+    expect(exitCode).toBe(1);
+    const err = stderr.join('\n');
+    expect(err).toContain('gbrain sources restore connector-a');
+    expect(err).not.toContain('gbrain sources restore default');
+    expect(existsSync(outDir)).toBe(false);
+  });
+});
+
 describe('export --source __all__ spans every source', () => {
   test('still refuses a cross-source collision', async () => {
     await seedCollision();
@@ -281,7 +295,8 @@ describe('export --restore-only keys pages on (source_id, slug)', () => {
     const err = stderr.join('\n');
     expect(err).toContain('media/x/clip');
     expect(err).toContain('connector-a');
-    expect(err).toContain('--source');
+    // Restore writes to --dir, not --repo: the per-source hint names both.
+    expect(err).toMatch(/gbrain export --restore-only --source <id> --repo \S.* --dir \S/);
     expect(existsSync(outDir)).toBe(false);
   });
 

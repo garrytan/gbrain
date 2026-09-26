@@ -243,7 +243,7 @@ export function formatStorageStatusHuman(result: StorageStatusResult): string {
       lines.push(`  ... and ${result.missingFiles.length - 10} more`);
     }
     lines.push('');
-    lines.push(`Use: gbrain export --restore-only --repo "${result.repoPath}"`);
+    lines.push(`Use: gbrain export --restore-only --repo "${result.repoPath}" --dir "${result.repoPath}"`);
   }
 
   if (result.warnings.length > 0) {

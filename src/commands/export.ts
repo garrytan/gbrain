@@ -188,15 +188,26 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     if (collisions.length > COLLISION_LIST_LIMIT) {
       listed.push(`  ... and ${collisions.length - COLLISION_LIST_LIMIT} more`);
     }
+    // Restore writes to --dir (default ./export), so restoring in place
+    // names the source's repo for both --repo and --dir.
     const perSource = restoreOnly
-      ? 'gbrain export --restore-only --source <id> --repo <that source\'s repo>'
+      ? 'gbrain export --restore-only --source <id> --repo <that source\'s repo> --dir <that source\'s repo>'
       : 'gbrain export --source <id> --dir <a separate directory per source>';
+    // --source refuses an archived source, so name the restore step first.
+    const archived = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM sources WHERE archived = true AND id = ANY($1::text[]) ORDER BY id`,
+      [[...new Set(collisions.flatMap((c) => c.sources))]],
+    );
+    const restoreHints = archived.map(
+      (r) => `Source "${r.id}" is archived; run \`gbrain sources restore ${r.id}\` before exporting it.`,
+    );
     console.error(
       `Error: ${collisions.length} slug(s) exist in more than one source. Export writes each\n` +
         `page to <dir>/<slug>.md, so these pages would overwrite each other:\n` +
         `${listed.join('\n')}\n` +
         `Nothing was written. Export one source at a time into separate directories:\n` +
-        `  ${perSource}`,
+        `  ${perSource}` +
+        (restoreHints.length > 0 ? `\n${restoreHints.join('\n')}` : ''),
     );
     process.exit(1);
   }

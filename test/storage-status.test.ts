@@ -79,7 +79,8 @@ describe('formatStorageStatusHuman', () => {
     expect(out).toContain('media/x/tweet-9'); // 10th
     expect(out).not.toContain('media/x/tweet-10'); // 11th truncated
     expect(out).toContain('and 15 more');
-    expect(out).toContain('gbrain export --restore-only --repo "/data/brain"');
+    // Restore writes to --dir (default ./export), so the hint names the repo twice.
+    expect(out).toContain('gbrain export --restore-only --repo "/data/brain" --dir "/data/brain"');
   });
 
   test('shows configuration listing for both tiers', () => {
