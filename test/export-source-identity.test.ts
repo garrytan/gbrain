@@ -263,3 +263,64 @@ describe('export --restore-only keys pages on (source_id, slug)', () => {
     expect(stdout).toContain(`Restored 1 pages to ${outDir}/`);
   });
 });
+
+describe('export --restore-only restores into the source that owns the repo', () => {
+  let repoDefault: string;
+  let repoConnector: string;
+
+  beforeEach(async () => {
+    repoDefault = join(tmp, 'repo-default');
+    repoConnector = join(tmp, 'repo-connector');
+    for (const repo of [repoDefault, repoConnector]) {
+      mkdirSync(repo, { recursive: true });
+      writeFileSync(join(repo, 'gbrain.yml'), 'storage:\n  db_tracked: []\n  db_only:\n    - media/\n');
+    }
+  });
+
+  async function registerRepos(opts: { connector: boolean }): Promise<void> {
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [repoDefault]);
+    if (opts.connector) {
+      await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'connector-a'`, [repoConnector]);
+    }
+  }
+
+  test('--repo on a registered source restores only that source pages', async () => {
+    await registerRepos({ connector: true });
+    await put('default', 'media/default-clip', 'default clip');
+    await put('connector-a', 'media/connector-clip', 'connector-a clip');
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', repoDefault]);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/default-clip')).toContain('default clip');
+    expect(existsSync(join(outDir, 'media/connector-clip.md'))).toBe(false);
+    expect(stdout).toContain(`Restoring 1 db_only pages to ${outDir}/`);
+  });
+
+  test('--source without --repo reads that source own repo, not the default one', async () => {
+    await registerRepos({ connector: true });
+    // Only connector-a's repo tiers this page as db_only: read against the
+    // default repo it would restore nothing.
+    writeFileSync(join(repoDefault, 'gbrain.yml'), 'storage:\n  db_tracked: []\n  db_only: []\n');
+    // A non-empty default source keeps the resolver's sole-non-default
+    // convenience tier from routing the default repo lookup to connector-a.
+    await put('default', 'notes/default-note', 'default note');
+    await put('connector-a', 'media/connector-clip', 'connector-a clip');
+    await tryRunExport(['--dir', outDir, '--restore-only', '--source', 'connector-a']);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/connector-clip')).toContain('connector-a clip');
+    expect(stdout).toContain(`Restoring 1 db_only pages to ${outDir}/`);
+  });
+
+  test('--source without --repo refuses when that source has no local_path', async () => {
+    await registerRepos({ connector: false });
+    await put('connector-a', 'media/connector-clip', 'connector-a clip');
+    await tryRunExport(['--dir', outDir, '--restore-only', '--source', 'connector-a']);
+
+    expect(exitCode).toBe(1);
+    const err = stderr.join('\n');
+    expect(err).toContain('connector-a');
+    expect(err).toContain('--repo');
+    expect(existsSync(outDir)).toBe(false);
+  });
+});

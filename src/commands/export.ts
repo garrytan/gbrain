@@ -6,7 +6,12 @@ import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
 import { slugifyPath } from '../core/sync.ts';
-import { getDefaultSourcePath, resolveSourceId, isResolverUserError } from '../core/source-resolver.ts';
+import {
+  getDefaultSourcePath,
+  resolveSourceId,
+  resolveSourceForRepoPath,
+  isResolverUserError,
+} from '../core/source-resolver.ts';
 import { ALL_SOURCES } from '../core/source-id.ts';
 import { listAllPages } from '../core/list-all-pages.ts';
 import type { Page, PageFilters, PageType } from '../core/types.ts';
@@ -48,6 +53,7 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   // not narrow it). `__all__` is the resolver's span-everything sentinel.
   const sourceIdx = args.indexOf('--source');
   let sourceId: string | undefined;
+  let allSourcesRequested = false;
   if (sourceIdx !== -1) {
     const requested = args[sourceIdx + 1];
     if (!requested || requested.startsWith('--')) {
@@ -56,7 +62,8 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     }
     try {
       const resolved = await resolveSourceId(engine, requested);
-      sourceId = resolved === ALL_SOURCES ? undefined : resolved;
+      allSourcesRequested = resolved === ALL_SOURCES;
+      sourceId = allSourcesRequested ? undefined : resolved;
     } catch (e) {
       if (!isResolverUserError(e)) throw e;
       console.error(`Error: ${(e as Error).message}`);
@@ -64,11 +71,25 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     }
   }
 
-  // Resolution chain (D5): explicit --repo → typed sources.getDefault() →
-  // hard-error for restore-only paths (never fall through to cwd).
-  // For non-restore exports, repoPath stays null because regular export
-  // doesn't need a brain repo to run (D26 — exports include everything).
+  // Resolution chain (D5): explicit --repo → the --source's own local_path →
+  // typed sources.getDefault() → hard-error for restore-only paths (never
+  // fall through to cwd). For non-restore exports, repoPath stays null
+  // because regular export doesn't need a brain repo to run.
   let repoPath: string | null = explicitRepoPath;
+  if (restoreOnly && !repoPath && sourceId) {
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    repoPath = rows[0]?.local_path ?? null;
+    if (!repoPath) {
+      console.error(
+        `Error: source "${sourceId}" has no local_path, so --restore-only has no repo\n` +
+          `to check for missing files. Pass --repo <path> for that source's repo.`,
+      );
+      process.exit(1);
+    }
+  }
   if (restoreOnly && !repoPath) {
     repoPath = await getDefaultSourcePath(engine);
     if (!repoPath) {
@@ -106,6 +127,20 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   if (typeFilter) filters.type = typeFilter as PageType;
   if (slugPrefix) filters.slugPrefix = slugPrefix;
   if (sourceId) filters.sourceId = sourceId;
+
+  // A restore without --source fills in the repo it checks, so it restores
+  // only the pages of the source that owns that repo. An unregistered repo
+  // keeps every source as a candidate (collisions still refuse below).
+  if (restoreOnly && repoPath && !sourceId && !allSourcesRequested) {
+    try {
+      const owner = await resolveSourceForRepoPath(engine, repoPath);
+      if (owner) filters.sourceId = owner.source_id;
+    } catch (e) {
+      if (!isResolverUserError(e)) throw e;
+      console.error(`Error: ${(e as Error).message}`);
+      process.exit(1);
+    }
+  }
 
   let pages: Page[];
 
