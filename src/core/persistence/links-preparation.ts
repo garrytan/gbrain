@@ -27,11 +27,16 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   const initial = await extractPageLinks(slug, content, page.frontmatter, page.type, resolver,
     { ...opts, onResolvedFrontmatterTarget: target => referenced.add(target) });
   const keys = [...new Set([...referenced, ...initial.candidates.flatMap(c => [c.targetSlug, c.fromSlug ?? slug])])].sort();
-  const endpointRows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
-    `SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL
-      AND ($2::text IS NULL OR source_id=$2)
-      AND (NOT $3::boolean OR frontmatter->>'visibility' IS DISTINCT FROM 'private')`,
-    [keys, remote ? sourceId : null, excludePrivate]);
+  const endpointRows = remote
+    ? await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
+        `SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL
+        AND source_id=$2 AND (NOT $3::boolean OR frontmatter->>'visibility' IS DISTINCT FROM 'private')`,
+        [keys, sourceId, excludePrivate],
+      )
+    : await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
+        'SELECT slug, source_id, type, knowledge_revision FROM pages WHERE slug=ANY($1::text[]) AND deleted_at IS NULL',
+        [keys],
+      );
   const endpoints = indexLinkSources(endpointRows);
   const policy = await loadLinkSourcePolicy(engine, sourceId);
   const metadata = new Map(endpointRows.map(row => [`${row.source_id}\0${row.slug}`, row]));
