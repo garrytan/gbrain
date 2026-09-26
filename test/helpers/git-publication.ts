@@ -8,6 +8,17 @@ export function git(root: string, ...args: string[]): string {
   return result.stdout.toString();
 }
 
+/** A durability-hardened repo with no remote: Git effects publish for real and the hook is inert. */
+export function durableGitRepo(root: string, committed: string[]): void {
+  git(root, 'init', '-q');
+  git(root, 'config', 'user.name', 'Example Writer');
+  git(root, 'config', 'user.email', 'writer@example.invalid');
+  git(root, 'add', ...committed); git(root, 'commit', '-q', '-m', 'Initial');
+  const hook = join(root, '.git', 'hooks', 'post-commit');
+  writeFileSync(hook, '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n');
+  chmodSync(hook, 0o755);
+}
+
 export function gitFixture() {
   const requestedHome = mkdtempSync(join(tmpdir(), 'gbrain-git-publication-'));
   const home = realpathSync.native(requestedHome);
