@@ -1616,6 +1616,20 @@ async function runPhaseResolveSymbolEdges(
 
 async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: AbortSignal): Promise<PhaseResult> {
   try {
+    // The scheduled cycle calls runEmbedCore directly, bypassing the CLI's
+    // keyless `embed --stale` guard. Explicitly disabled embeddings are
+    // deferred work, not a failed provider call on every maintenance run.
+    if (!dryRun) {
+      const { loadConfig } = await import('./config.ts');
+      if (loadConfig()?.embedding_disabled === true
+          || await engine.getConfig('embedding_disabled') === 'true') {
+        return {
+          phase: 'embed', status: 'skipped', duration_ms: 0,
+          summary: 'embeddings disabled; no provider call made',
+          details: { reason: 'embedding_disabled' },
+        };
+      }
+    }
     const { runEmbedCore } = await import('../commands/embed.ts');
     // #1737: thread the cycle's abort signal so the embed phase (the long,
     // 10-15 min one) bails within a batch instead of running to completion
