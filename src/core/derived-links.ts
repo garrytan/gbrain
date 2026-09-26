@@ -15,6 +15,8 @@ export interface DerivedLinkReplacementOptions {
   preserveExisting?: boolean;
   includeLegacyNullProducer?: boolean;
   expectedEndpoints?: Array<{ slug: string; sourceId: string; revision: string }>;
+  /** Limit remote reconciliation to visible edges owned by its source. */
+  remoteSource?: { sourceId: string; excludePrivate: boolean };
 }
 
 export class DerivedLinkRepairRequiredError extends Error {
@@ -77,6 +79,11 @@ export async function replaceDerivedLinks(
     if (!unique.has(key)) unique.set(key, row);
   }
   const rows = [...unique.values()];
+  if (opts.remoteSource && (origin.sourceId !== opts.remoteSource.sourceId || rows.some(row =>
+    row.from_slug !== origin.slug || row.from_source_id !== origin.sourceId
+      || row.to_source_id !== origin.sourceId || row.link_source === 'frontmatter'))) {
+    throw new TypeError('Remote derived links must be visible outgoing links in the writer source');
+  }
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId: origin.sourceId, slug: origin.slug }, ...rows.flatMap(row => [
       { sourceId: row.from_source_id!, slug: row.from_slug }, { sourceId: row.to_source_id!, slug: row.to_slug },
@@ -98,6 +105,14 @@ export async function replaceDerivedLinks(
       LEFT JOIN pages t ON t.slug=v.to_slug AND t.source_id=v.to_source_id AND t.deleted_at IS NULL
       WHERE f.id IS NULL OR t.id IS NULL LIMIT 1`, [], [{ rows }]);
     if (missing.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint changed or was deleted');
+    if (opts.remoteSource && rows.length) {
+      const visible = await executeRawJsonb(tx, `SELECT p.slug FROM jsonb_to_recordset(($2::jsonb)->'rows')
+        AS v(to_slug text, to_source_id text)
+        JOIN pages p ON p.slug=v.to_slug AND p.source_id=v.to_source_id AND p.deleted_at IS NULL
+        WHERE (NOT $1::boolean OR p.frontmatter->>'visibility' IS DISTINCT FROM 'private')
+        FOR SHARE OF p`, [opts.remoteSource.excludePrivate], [{ rows }]);
+      if (visible.length !== rows.length) throw new DerivedLinkEndpointChangedError('A derived link endpoint is unavailable');
+    }
     if (opts.expectedEndpoints?.length) {
       const changed = await executeRawJsonb(tx, `SELECT 1 FROM jsonb_to_recordset(($1::jsonb)->'rows')
         AS v(slug text, "sourceId" text, revision text)
@@ -129,7 +144,12 @@ export async function replaceDerivedLinks(
         LEFT JOIN pages o ON o.id=l.origin_page_id
         WHERE (l.link_source=ANY($2::text[]) OR ($3::boolean AND l.link_source IS NULL))
           AND (l.origin_page_id=$1 OR (l.origin_page_id IS NULL AND l.from_page_id=$1
-            AND (l.link_source IN ('markdown','wikilink-resolved') OR l.link_source IS NULL)))`, [id, producers, opts.includeLegacyNullProducer !== false]);
+            AND (l.link_source IN ('markdown','wikilink-resolved') OR l.link_source IS NULL)))
+          AND ($4::text IS NULL OR (f.source_id=$4 AND f.id=$1 AND t.source_id=$4
+            AND (NOT $5::boolean OR t.frontmatter->>'visibility' IS DISTINCT FROM 'private')))
+        ${opts.remoteSource ? 'FOR SHARE OF t' : ''}`,
+        [id, producers, opts.includeLegacyNullProducer !== false,
+          opts.remoteSource?.sourceId ?? null, opts.remoteSource?.excludePrivate ?? false]);
       const identity = (row: Pick<LinkBatchInput, 'from_source_id' | 'from_slug' | 'to_source_id' | 'to_slug' | 'link_type'>
         & { link_source?: string | null; origin_slug?: string | null }) => JSON.stringify([row.from_source_id, row.from_slug,
         row.to_source_id, row.to_slug, row.link_type ?? '', row.link_source ?? 'markdown', row.origin_slug ?? null]);
