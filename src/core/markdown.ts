@@ -35,7 +35,14 @@ export interface ParseOpts {
    * Callers thread this from `loadActivePack(ctx)` once per command —
    * NEVER per file inside sync, per codex perf finding #7.
    */
-  activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
+  activePack?: { page_types: ReadonlyArray<{
+    name: string;
+    path_prefixes: ReadonlyArray<string>;
+    subtypes?: ReadonlyArray<{
+      name: string;
+      when: { path_pattern?: string; frontmatter_field?: string; frontmatter_value?: unknown };
+    }>;
+  }> };
 }
 
 export interface ParsedMarkdown {
@@ -51,6 +58,8 @@ export interface ParsedMarkdown {
    * explicit frontmatter type is an override; absence means "don't change it".
    */
   typeExplicit?: boolean;
+  /** Pack rule matched for this path and effective type; not yet stored in frontmatter. */
+  inferredSubtype?: string;
   title: string;
   tags: string[];
   /** Present iff opts.validate. Empty array means no errors. */
@@ -293,9 +302,8 @@ export function parseMarkdown(
   // `2024-06-01` is legitimate); the NON_STRING_FIELD lint finding below still
   // surfaces the un-quoted field so it can be cleaned up.
   const explicitType = coerceFrontmatterString(frontmatter.type);
-  const type = explicitType || (
-    opts?.activePack ? inferTypeFromPack(filePath, opts.activePack) : inferType(filePath)
-  );
+  const inferred = opts?.activePack ? inferTypeAndSubtypeFromPack(filePath, opts.activePack, frontmatter) : undefined;
+  const type = explicitType || inferred?.type || inferType(filePath);
   // #2446: title precedence is frontmatter `title:` > the body's first H1 >
   // the slug/filename-humanized fallback. Slug-based imports (contacts,
   // calendar) write a correct `# Heading` but no frontmatter title; without
@@ -326,11 +334,27 @@ export function parseMarkdown(
     slug,
     type,
     typeExplicit: explicitType !== '',
+    ...(inferred?.subtype && type === inferred.type ? { inferredSubtype: inferred.subtype } : {}),
     title,
     tags,
   };
   if (opts?.validate) result.errors = errors;
   return result;
+}
+
+/** Apply explicit, stored, then pack-inferred subtype precedence. */
+export function resolveParsedSubtype(
+  parsed: ParsedMarkdown,
+  existing?: { type: string; frontmatter: Record<string, unknown> } | null,
+): void {
+  if (Object.prototype.hasOwnProperty.call(parsed.frontmatter, 'subtype')) return;
+  if (existing && parsed.type === existing.type) {
+    if (Object.prototype.hasOwnProperty.call(existing.frontmatter, 'subtype')) {
+      parsed.frontmatter.subtype = existing.frontmatter.subtype;
+      return;
+    }
+  }
+  if (parsed.inferredSubtype !== undefined) parsed.frontmatter.subtype = parsed.inferredSubtype;
 }
 
 /**
@@ -845,14 +869,14 @@ export function inferTypeAndSubtypeFromPack(
   const subtypes = matchedType.subtypes ?? [];
   if (subtypes.length === 0) return { type: typeName };
   for (const st of subtypes) {
-    // Frontmatter rule first
     if (st.when.frontmatter_field !== undefined && frontmatter !== undefined) {
       const value = frontmatter[st.when.frontmatter_field];
       if (st.when.frontmatter_value !== undefined && value === st.when.frontmatter_value) {
         return { type: typeName, subtype: st.name };
       }
     }
-    // Path pattern rule
+  }
+  for (const st of subtypes) {
     if (st.when.path_pattern !== undefined) {
       try {
         const re = new RegExp(st.when.path_pattern);
