@@ -104,7 +104,7 @@ test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#500
 test/docs-mcp-deploy.test.ts	DEPLOY.md documents the tailnet/LAN-only serve --http shape (#4500)	3	readFileSync
 test/docs-navigation.test.ts	primary documentation navigation	3	readFileSync
 test/docs-timeline-extraction-guide.test.ts	#4987 timeline extraction docs describe the real trigger	2	readFileSync
-test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	18	doctor-source-helper
+test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	doctor-source-helper
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
 test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — load-bearing render strings	5	doctor-source-helper
