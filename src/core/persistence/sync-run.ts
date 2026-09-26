@@ -35,7 +35,33 @@ export interface ManagedSyncWriteDiagnostic {
 }
 
 interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; }
-interface Cursor extends SyncDiscovery { runId: string; index: number; authority: SyncAuthority; pending?: Pending; done?: boolean; companyReceiptId?: string;
+type SyncKeyOptions = NonNullable<ManagedSyncFailure['keyOptions']>;
+interface ManagedSyncIdentity {
+  context: Awaited<ReturnType<typeof resolveManagedSyncContext>>;
+  authority: SyncAuthority;
+  company: ReturnType<typeof currentCompanyBrainSync>;
+  keyOptions: SyncKeyOptions;
+  key: string;
+}
+async function resolveManagedSyncIdentity(engine: BrainEngine, opts: SyncOpts): Promise<ManagedSyncIdentity> {
+  const context = await resolveManagedSyncContext(engine, opts);
+  const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
+  const company = currentCompanyBrainSync(context.sourceId);
+  // Keep the cursor identity aligned with performManagedSync's normalized
+  // SyncOpts fields; discovery-only config defaults do not change this key.
+  const keyOptions: SyncKeyOptions = { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
+    exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null };
+  const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
+    options: keyOptions });
+  return { context, authority, company, keyOptions, key };
+}
+
+/** Returns the exact durable cursor key performManagedSync will use for these options. */
+export async function managedSyncCursorKey(engine: BrainEngine, opts: SyncOpts): Promise<string> {
+  return (await resolveManagedSyncIdentity(engine, opts)).key;
+}
+
+interface Cursor extends SyncDiscovery { runId: string; index: number; authority: SyncAuthority; keyOptions?: SyncKeyOptions; pending?: Pending; done?: boolean; companyReceiptId?: string;
   processingOptions?: SyncProcessingOptions;
   counts: { added: number; modified: number; deleted: number; chunks: number }; }
 const OP = 'managed-sync';
@@ -182,13 +208,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
   }
   assertPersistenceAccepting(engine);
   validateManagedSyncOptions(opts);
-  const context = await resolveManagedSyncContext(engine, opts);
-  const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
-  const company = currentCompanyBrainSync(context.sourceId);
+  const { context, authority, company, keyOptions, key } = await resolveManagedSyncIdentity(engine, opts);
   const processingOptions = syncProcessingOptions(opts);
-  const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
-    options: { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
-      exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null } });
   let cursor: Cursor | null = null;
   let missingManifestCursor: CursorHeader | null = null;
   let phase: ManagedSyncFailure['phase'] = 'resume';
@@ -212,7 +233,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       discoveryTarget = syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
       const discovery = await discoverManagedSync(engine, opts, context);
       assertActive();
-      cursor = await replaceCursor(engine, key, error.cursor, { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
+      cursor = await replaceCursor(engine, key, error.cursor, { ...discovery, authority, keyOptions, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
     }
     assertActive();
     if (company && opts.retryFailed && cursor && !cursor.done && !opts.dryRun) {
@@ -241,7 +262,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
           discoveryTarget = syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
           const discovery = await discoverManagedSync(engine, opts, context);
           assertActive();
-          cursor = await replaceCursor(engine, key, header(cursor), { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
+          cursor = await replaceCursor(engine, key, header(cursor), { ...discovery, authority, keyOptions, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
         }
       }
     }
@@ -269,7 +290,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       discoveryTarget = company?.plan.revision?.commit ?? syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
       const discovery = await discoverManagedSync(engine, opts, context);
       assertActive();
-      const fresh: Cursor = { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 }, ...(company ? { companyReceiptId: company.receiptId } : {}) };
+      const fresh: Cursor = { ...discovery, authority, keyOptions, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 }, ...(company ? { companyReceiptId: company.receiptId } : {}) };
       if (opts.dryRun) return result(fresh, 'dry_run');
       if (!fresh.entries.length && fresh.from === fresh.target) {
         await clearManagedSyncFailureAfterSuccess(engine, key);
@@ -350,6 +371,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         const { failure, ledgerRecorded } = await recordManagedSyncFailure(engine, { source_id: cursor.sourceId, source_incarnation: cursor.incarnation, path: pending.intent.path ?? '<checkpoint>',
           code: done.error_code ?? (done.state === 'cancelled' ? 'cancelled' : 'storage_error'), message: done.error_message ?? 'The accepted sync request did not commit.',
         request_id: pending.requestId, run_id: cursor.runId, target: cursor.target, cursor_key: key,
+        keyOptions: cursor.keyOptions,
         phase: pending.intent.kind === 'managed_sync_checkpoint' ? 'checkpoint' : 'receipt', state: done.state, observation_id: pending.requestId,
         first_seen: new Date(done.completed_at ?? done.updated_at).toISOString() });
         return { ...result(cursor, 'blocked_by_failures'), failedFiles: 1,
@@ -401,6 +423,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,
           message: error instanceof Error ? error.message : String(error), request_id: failedCursor?.pending?.requestId ?? null,
           run_id: failedCursor?.runId ?? discoveryRun, target: failedCursor?.target ?? discoveryTarget, cursor_key: key, phase, state: 'failed',
+          keyOptions: failedCursor ? failedCursor.keyOptions : keyOptions,
           observation_id: failedCursor ? `${failedCursor.runId}:${failedCursor.index}:${phase}:${code}` : `${key}:discovery:${discoveryTarget}:${code}` });
         if (error instanceof Error) error.message = authority.writer.remote ? 'Managed sync is blocked; ask the host operator to inspect doctor.' : formatManagedSyncFailure(failure) + ' Fix the cause, then run gbrain sync --no-pull --retry-failed with the same source and options.';
       }

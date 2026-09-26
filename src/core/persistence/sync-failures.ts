@@ -17,6 +17,7 @@ export interface ManagedSyncFailure {
   observation_id: string;
   first_seen: string;
   attempts: number;
+  keyOptions?: { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null };
 }
 
 export async function recordManagedSyncFailure(engine: BrainEngine, value: Omit<ManagedSyncFailure, 'first_seen' | 'attempts'> & { first_seen?: string }): Promise<{ failure: ManagedSyncFailure; ledgerRecorded: boolean }> {
@@ -48,10 +49,11 @@ export async function clearManagedSyncFailureAfterSuccess(engine: BrainEngine, k
 }
 
 export async function readManagedSyncFailures(engine: BrainEngine, sourceIds?: string[]): Promise<ManagedSyncFailure[]> {
-  const rows = await engine.executeRaw<{ cursor_key: string; value: { sourceId: string; incarnation: string; runId: string; index: number; target: string; pending?: { requestId: string } };
+  const rows = await engine.executeRaw<{ cursor_key: string; value: { sourceId: string; incarnation: string; runId: string; index: number; target: string; keyOptions?: ManagedSyncFailure['keyOptions']; pending?: { requestId: string } };
     receipt: Pick<WriteRequest, 'state' | 'request_id' | 'error_code' | 'error_message'> | null; failure: ManagedSyncFailure | null; path: string | null; updated_at: string }>(`
     SELECT c.fingerprint AS cursor_key,jsonb_build_object('sourceId',s.id,'incarnation',s.incarnation,'runId',c.completed_keys->0->>'runId',
       'index',c.completed_keys->0->'index','target',c.completed_keys->0->>'target',
+      'keyOptions',c.completed_keys->0->'keyOptions',
       'pending',jsonb_build_object('requestId',c.completed_keys->0->'pending'->>'requestId')) AS value,
       CASE WHEN r.id IS NULL THEN NULL ELSE jsonb_build_object('state',r.state,'request_id',r.request_id,'error_code',r.error_code,'error_message',r.error_message) END AS receipt,
       f.completed_keys->0 AS failure,m.completed_keys->((c.completed_keys->0->>'index')::int)->>'path' AS path,c.updated_at
@@ -66,11 +68,11 @@ export async function readManagedSyncFailures(engine: BrainEngine, sourceIds?: s
       AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))`, [sourceIds ?? null]);
   const failures: ManagedSyncFailure[] = rows.map(row => {
     const c = row.value, r = row.receipt;
-    if (row.failure && (!r || !['failed', 'conflict', 'cancelled'].includes(r.state) || row.failure.request_id === r.request_id)) return row.failure;
+    if (row.failure && (!r || !['failed', 'conflict', 'cancelled'].includes(r.state) || row.failure.request_id === r.request_id)) return { ...row.failure, ...(c.keyOptions ? { keyOptions: c.keyOptions } : {}) };
     return { source_id: c.sourceId, source_incarnation: c.incarnation, path: row.path ?? '<checkpoint>', code: r?.error_code ?? 'sync_incomplete',
       message: r?.error_message ?? 'The durable sync cursor is unfinished; resume the accepted run.', request_id: c.pending?.requestId ?? null,
       run_id: c.runId, target: c.target, cursor_key: row.cursor_key, phase: r ? 'receipt' : 'resume', state: r?.state ?? 'unfinished',
-      observation_id: c.pending?.requestId ?? `${c.runId}:${c.index}`, first_seen: new Date(row.updated_at).toISOString(), attempts: 1 };
+      observation_id: c.pending?.requestId ?? `${c.runId}:${c.index}`, first_seen: new Date(row.updated_at).toISOString(), attempts: 1, ...(c.keyOptions ? { keyOptions: c.keyOptions } : {}) };
   });
   const orphaned = await engine.executeRaw<{ failure: ManagedSyncFailure }>(`
     SELECT f.completed_keys->0 AS failure FROM op_checkpoints f
@@ -80,9 +82,36 @@ export async function readManagedSyncFailures(engine: BrainEngine, sourceIds?: s
   return [...failures, ...orphaned.map(row => row.failure)];
 }
 
+export function partitionManagedSyncFailures(failures: ManagedSyncFailure[], cursorKey: string): { current: ManagedSyncFailure[]; other: ManagedSyncFailure[] } {
+  return { current: failures.filter(failure => failure.cursor_key === cursorKey), other: failures.filter(failure => failure.cursor_key !== cursorKey) };
+}
+
+export function managedSyncRetryReport(failures: ManagedSyncFailure[], cursorKey: string): { retrying: number; other: number; otherLines: string[] } {
+  const { current, other } = partitionManagedSyncFailures(failures, cursorKey);
+  return { retrying: current.length, other: other.length, otherLines: other.length ? [
+    `${other.length} previously-failed file(s) will NOT be retried by this invocation because they were started with different options.`,
+    ...other.map(failure => failure.keyOptions
+      ? `  ${formatManagedSyncFailure(failure)}`
+      : `  ${failure.path}: its original options are unknown, so no retry command can be shown.`),
+  ] : [] };
+}
+
 export function formatManagedSyncFailure(failure: ManagedSyncFailure): string {
   const clean = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').slice(0, 1000);
-  return `source=${clean(failure.source_id)} path=${clean(failure.path)} code=${clean(failure.code)}: ${clean(failure.message)} request=${failure.request_id ?? '<not-admitted>'} run=${failure.run_id} target=${failure.target ?? '<undiscovered>'}`;
+  const options = failure.keyOptions;
+  const quote = (value: string) => {
+    const safe = clean(value);
+    return /^[a-zA-Z0-9_./-]+$/.test(safe) ? safe : `'${safe.replace(/'/g, `'\\''`)}'`;
+  };
+  const flags = options ? [
+    ...(options.full ? ['--full'] : []), ...(options.workingTree ? ['--working-tree'] : []),
+    ...(options.srcSubpath ? ['--src-subpath', quote(options.srcSubpath)] : []),
+    ...options.exclude.flatMap(value => ['--exclude', quote(value)]),
+    ...options.includeHidden.flatMap(value => ['--include-hidden', quote(value)]),
+    ...(options.strategy ? ['--strategy', quote(options.strategy)] : []),
+  ] : [];
+  const retry = options ? ` retry=gbrain sync --source ${quote(failure.source_id)} ${[...flags, '--retry-failed', '--no-pull'].join(' ')}` : '';
+  return `source=${clean(failure.source_id)} path=${clean(failure.path)} code=${clean(failure.code)}: ${clean(failure.message)} request=${failure.request_id ?? '<not-admitted>'} run=${failure.run_id} target=${failure.target ?? '<undiscovered>'}${retry}`;
 }
 
 export function syncFailureJsonFields(result: { failedFiles?: number; failureCodes?: Array<{ code: string; count: number }>; failures?: ManagedSyncFailure[]; runId?: string; fromCommit?: string | null; toCommit?: string; bankedFiles?: number }): Record<string, unknown> {

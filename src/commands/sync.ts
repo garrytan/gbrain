@@ -1,6 +1,6 @@
 import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-guard.ts';
 import { assertSyncDispatchActive, resolveSyncPersistenceMode } from '../core/persistence/sync-authority.ts';
-import { formatManagedSyncFailure, readManagedSyncFailures, syncFailureJsonFields, type ManagedSyncFailure } from '../core/persistence/sync-failures.ts';
+import { formatManagedSyncFailure, managedSyncRetryReport, readManagedSyncFailures, syncFailureJsonFields, type ManagedSyncFailure } from '../core/persistence/sync-failures.ts';
 import { readSourceFileSync, hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal, assertSourceFilesystemActive } from '../core/minions/source-filesystem.ts';
 import { currentJobSignal } from '../core/minions/submission-authority.ts';
 import { existsSync, readFileSync, writeFileSync, statSync, lstatSync, realpathSync } from 'fs';
@@ -5399,15 +5399,15 @@ See also:
   }
 
   if (retryFailed) {
-    // v0.42.42.0 (#2139, D13C): scope the retry count to THIS source — rows
-    // carry source_id (#1939), so a single-source retry shouldn't report
-    // another source's failures.
+    // Scope the retry count and option mismatch notice to this source.
     const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-    const failures = brain?.enabled ? await readManagedSyncFailures(engine, [sourceId]) : unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
-    if (failures.length === 0) {
+    const managedFailures = brain?.enabled ? await readManagedSyncFailures(engine, [sourceId]) : null, failures = managedFailures ?? unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
+    const report = managedFailures ? await (await import('../core/persistence/sync-run.ts')).managedSyncCursorKey(engine, opts).then(key => managedSyncRetryReport(managedFailures, key), () => null) : null; // advisory: refused sources (connectors) keep performSync's routing
+    report?.otherLines.forEach(slog); const retryingCount = report?.retrying ?? failures.length;
+    if (retryingCount === 0 && failures.length === 0) {
       slog('No local ledger entries; checking the durable sync cursor for unfinished or failed writes.');
     } else {
-      slog(`Retrying ${failures.length} previously-failed file(s)...`);
+      slog(`Retrying ${retryingCount} previously-failed file(s)...`);
     }
   }
 
