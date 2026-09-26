@@ -222,7 +222,9 @@ export async function computeBackupCoverage(
             'db_only dirs configured: those pages are not in git and the DB file is deliberately not backed up. ' +
             'Dump them somewhere OUTSIDE the gitignored dirs (--restore-only is the wrong direction for a backup); ' +
             'run gbrain doctor (undeclared_db_only_pages) for the page-level audit.',
-          fix_argv: ['gbrain', 'export', '--dir', '<backup-dir>'],
+          // Per source, into its own directory: an unscoped export refuses when
+          // two sources share a slug, and one shared directory would mix them.
+          fix_argv: ['gbrain', 'export', '--source', row.id, '--dir', `<backup-dir>/${row.id}`],
         });
       }
     }

@@ -133,6 +133,7 @@ describe('Storage tiering on PGLite — full lifecycle (D8 + D4)', () => {
       }, { sourceId: 'media-corpus' });
 
       const result = await getStorageStatus(engine, tmp);
+      expect(result.sourceId).toBe('default');
       expect(result.totalPages).toBe(1);
       expect(result.pagesByTier.db_only).toBe(1);
       expect(result.missingFiles).toEqual([]);

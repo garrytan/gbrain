@@ -76,8 +76,8 @@ meetings/transcripts/
 ### 2. `gbrain export --restore-only` — repopulate missing db_only files
 
 ```bash
-# Restore only missing db_only files from the database.
-gbrain export --restore-only --repo /path/to/brain
+# Restore only missing db_only files from the database, in place.
+gbrain export --restore-only --repo /path/to/brain --dir /path/to/brain
 
 # Filter by page type.
 gbrain export --restore-only --type media --repo /path/to/brain
@@ -87,14 +87,47 @@ gbrain export --restore-only --slug-prefix media/x/ --repo /path/to/brain
 
 # Combine filters.
 gbrain export --restore-only --type media --slug-prefix media/x/ --repo /path/to/brain
+
+# Restore one source's pages into that source's repo.
+gbrain export --restore-only --source <source-id> --dir /path/to/that/source
 ```
 
 The `--restore-only` flag:
 
-- Resolves repoPath via the chain `--repo` → typed `sources.getDefault()` → hard error.
-  Never falls through to the current directory.
+- Picks the repo it checks and the source whose pages it restores by the
+  restore-target rule below.
+- Checks that repo for missing files but writes them to `--dir` (default
+  `./export`). Pass `--dir` with the repo path to restore in place.
 - Only exports pages that match `db_only` patterns AND are missing from disk.
+- Refuses, writing nothing, when a slug to restore exists in more than one
+  source (both would land on the same `<slug>.md`). Restore one source at a
+  time with `--source <id>`.
 - Ideal for container restart recovery and fresh clones.
+- Run it while no sync is writing: the page set is read in batches, not as
+  one snapshot, so a page deleted mid-read can be skipped. The batched read
+  also gets slower faster than the brain grows (OFFSET paging).
+
+#### The restore-target rule
+
+`gbrain export --restore-only` and the restore command `gbrain storage status`
+suggests use one rule to pick the repo and the source whose pages belong in
+it, so following the suggestion restores exactly the files it listed:
+
+- `--source <id>`: that source's pages; the repo is `--repo`, else that
+  source's own `local_path` (refused when it has none). `--source __all__`
+  restores every source's pages.
+- Neither `--source` nor `--repo`: the source `gbrain` resolves for the
+  current directory when no `--source` is given, with that source's
+  `local_path`. A legacy `sync.repo_path` counts only as the `default`
+  source's repo; any other source without a `local_path` is refused.
+- `--repo` alone: the source registered with that `local_path` (an active
+  source wins over an archived one; `.gbrain-source` files are ignored).
+  When no source is registered there, a brain with exactly one active source
+  uses it (an empty `default` source does not count); any other brain is
+  refused with a request for `--source <id>` or `--source __all__`.
+
+A refused restore exits 1 and writes nothing; `gbrain storage status` prints
+the reason in place of the `Use:` line.
 
 ### 3. `gbrain storage status` — storage-tier health dashboard
 
@@ -140,7 +173,7 @@ Missing Files (need restore):
   media/x/tweet-0987654321
   ... and 47 more
 
-Use: gbrain export --restore-only --repo "/data/brain"
+Use: gbrain export --restore-only --source default --repo "/data/brain" --dir "/data/brain"
 
 Configuration:
 --------------
