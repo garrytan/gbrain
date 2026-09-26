@@ -17,11 +17,12 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExport } from '../src/commands/export.ts';
+import { getStorageStatus, formatStorageStatusHuman } from '../src/commands/storage.ts';
 import { __resetMissingStorageWarning } from '../src/core/storage-config.ts';
 import { getDefaultSourcePath } from '../src/core/source-resolver.ts';
 import type { PageFilters } from '../src/core/types.ts';
@@ -546,5 +547,62 @@ describe('export --restore-only: legacy repo path and the sole-source fallback',
 
     expect(exitCode).toBeNull();
     expect(readOut('media/connector-clip')).toContain('connector-a clip');
+  });
+});
+
+describe('the storage status restore hint round-trips through export', () => {
+  const yml = 'storage:\n  db_tracked: []\n  db_only:\n    - media/\n';
+
+  function listMd(dir: string): string[] {
+    return (readdirSync(dir, { recursive: true }) as string[])
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => f.slice(0, -'.md'.length))
+      .sort();
+  }
+
+  /** The hint's argv after `gbrain export`, quotes stripped. */
+  function hintArgs(status: string): string[] {
+    const line = status.split('\n').find((l) => l.startsWith('Use: gbrain export '));
+    expect(line).toBeDefined();
+    const tokens = [...line!.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
+    return tokens.slice(3);
+  }
+
+  test.each([
+    {
+      name: 'ancestor .gbrain-source naming another source',
+      explicitRepo: true,
+      owned: 'media/connector-clip',
+      setup: async (repo: string) => {
+        writeFileSync(join(tmp, '.gbrain-source'), 'default\n');
+        await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'connector-a'`, [repo]);
+      },
+    },
+    {
+      name: 'legacy sync.repo_path brain with two sources',
+      explicitRepo: false,
+      owned: 'media/default-clip',
+      setup: async (repo: string) => {
+        await engine.setConfig('sync.repo_path', repo);
+      },
+    },
+  ])('$name: following the hint restores exactly the listed files', async ({ explicitRepo, owned, setup }) => {
+    const repo = join(tmp, 'repo');
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(join(repo, 'gbrain.yml'), yml);
+    await setup(repo);
+    await put('default', 'media/default-clip', 'default clip');
+    await put('connector-a', 'media/connector-clip', 'connector-a clip');
+
+    const status = await getStorageStatus(engine, explicitRepo ? repo : null);
+    const listed = status.missingFiles.map((m) => m.slug).sort();
+    // Only the page of the source that owns the repo is missing from it.
+    expect(listed).toEqual([owned]);
+    const before = listMd(repo);
+
+    await tryRunExport(hintArgs(formatStorageStatusHuman(status)));
+
+    expect(exitCode).toBeNull();
+    expect(listMd(repo).filter((f) => !before.includes(f))).toEqual(listed);
   });
 });

@@ -20,6 +20,7 @@ const baseResult: StorageStatusResult = {
   },
   repoPath: '/data/brain',
   sourceId: null,
+  restoreRefusal: null,
   totalPages: 12500,
   pagesByTier: { db_tracked: 2156, db_only: 10100, unspecified: 244 },
   missingFiles: [],
@@ -82,6 +83,16 @@ describe('formatStorageStatusHuman', () => {
     expect(out).toContain('and 15 more');
     // Restore writes to --dir (default ./export), so the hint names the repo twice.
     expect(out).toContain('gbrain export --restore-only --repo "/data/brain" --dir "/data/brain"');
+  });
+
+  test('prints the restore refusal instead of a Use: line', () => {
+    const out = formatStorageStatusHuman({
+      ...baseResult,
+      restoreRefusal: 'Error: pass --source <id> for that repo.',
+      missingFiles: [{ slug: 'media/x/clip', expectedPath: '/data/brain/media/x/clip.md' }],
+    });
+    expect(out).toContain('Error: pass --source <id> for that repo.');
+    expect(out).not.toContain('Use: gbrain export');
   });
 
   test('names the source it counted in the restore hint', () => {
