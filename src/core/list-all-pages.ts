@@ -13,6 +13,10 @@ export const LIST_ALL_PAGES_BATCH = 1000;
  * even when one slug spans several sources across a batch boundary. The
  * loop stops on an EMPTY batch rather than a short one, so an engine that
  * returns fewer rows than asked for still yields the full set.
+ *
+ * Offset paging is not snapshot-consistent: a concurrent insert can push a
+ * row into the next batch, so rows are deduped on (source_id, slug). A
+ * concurrent delete can still shift a row back past the cursor and skip it.
  */
 export async function listAllPages(
   engine: Pick<BrainEngine, 'listPages'>,
@@ -20,9 +24,16 @@ export async function listAllPages(
   batchSize: number = LIST_ALL_PAGES_BATCH,
 ): Promise<Page[]> {
   const pages: Page[] = [];
-  for (;;) {
-    const batch = await engine.listPages({ ...filters, sort: 'slug', limit: batchSize, offset: pages.length });
+  const seen = new Set<string>();
+  for (let offset = 0; ; ) {
+    const batch = await engine.listPages({ ...filters, sort: 'slug', limit: batchSize, offset });
     if (batch.length === 0) return pages;
-    pages.push(...batch);
+    offset += batch.length;
+    for (const page of batch) {
+      const key = `${page.source_id}::${page.slug}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pages.push(page);
+    }
   }
 }

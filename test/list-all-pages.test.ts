@@ -58,6 +58,25 @@ describe('listAllPages', () => {
     expect(identity(await listAllPages(engine, filters, 1))).toEqual([...expected]);
   });
 
+  test('a row shifted into the next batch is returned once', async () => {
+    // A concurrent insert ahead of the cursor pushes the last row of one
+    // batch into the next; the wrapper replays that overlap.
+    const shifted = {
+      listPages: (filters?: PageFilters) => {
+        const offset = filters?.offset ?? 0;
+        return engine.listPages({ ...filters, offset: offset > 0 ? offset - 1 : 0 });
+      },
+    };
+    const pages = await listAllPages(shifted, {}, 2);
+    expect(identity(pages)).toEqual([
+      'connector-a:notes/a',
+      'default:notes/a',
+      'connector-a:notes/b',
+      'default:notes/b',
+      'default:people/alice-example',
+    ]);
+  });
+
   test('keeps reading past a batch the engine clamped below the request', async () => {
     const calls: PageFilters[] = [];
     const clamped = {

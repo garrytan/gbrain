@@ -106,6 +106,8 @@ The `--restore-only` flag:
   source (both would land on the same `<slug>.md`). Restore one source at a
   time with `--source <id>`.
 - Ideal for container restart recovery and fresh clones.
+- Run it while no sync is writing: the page set is read in batches, not as
+  one snapshot, so a page deleted mid-read can be skipped.
 
 ### 3. `gbrain storage status` — storage-tier health dashboard
 
