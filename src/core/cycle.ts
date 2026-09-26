@@ -2717,6 +2717,7 @@ export async function runCycle(
           const r = await runPhaseDrift(engine, {
             dryRun,
             brainDir: brainDir ?? undefined,
+            sourceId: cycleSourceId,
             forceEnabled: opts.onceForPhase === 'drift',
           });
           const status: PhaseStatus =
