@@ -66,7 +66,8 @@ brains stay quiet without adding them to `gbrain.yml`. They are NOT auto-added t
 connector sources running under managed persistence without a worktree binding
 (`connector_database`) are skipped by that check: their pages live only in the
 database by design, so no `gbrain.yml` is needed in the connector's directory.
-Back them up with `gbrain export --dir <backup-dir>`.
+Recover them with a full re-sync from the provider
+(`gbrain sync --source <id> --full`).
 
 Example `.gitignore` addition:
 

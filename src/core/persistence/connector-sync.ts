@@ -27,8 +27,8 @@ import { prepareFileTarget } from './page-prepare.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
+import type { ConnectorKind } from './connector-authority.ts';
 
-type ConnectorKind = 'google' | 'github';
 interface ConnectorLease { handle: DbLockHandle; signal: AbortSignal; }
 interface ConnectorSource { incarnation: string; archived: boolean; local_path: string | null; config: Record<string, unknown>; }
 interface ConnectorRetry {

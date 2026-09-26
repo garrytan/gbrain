@@ -11,6 +11,7 @@ proof that a whole brain could be restored.
 |---|---|---|
 | Source repos (every non-archived source with a `local_path`) | Local Git discovery, deduped by root and capped at 500 roots/run; trusted local read-only `git ls-remote` verifies clean HEAD against the remote | No configured origin, dirty/unpushed work, missing/mismatched remote HEAD, stale/unknown evidence, or failed push without newer matching readback cannot count as verified recovery. |
 | Bootstrap workspace (skills/, memory/, brain/, identity) | file plane: the install receipt's `repo_url` + the per-root push-status files | receipt without `repo_url` → warn; a failing background push → flagged row only (the push-failure banner owns that alarm) |
+| Google / GitHub connector sources | persistence mode and worktree binding | none on its own: a managed unbound source (`connector_database`) and an unmanaged source whose directory is missing or not a Git repo are `connector` info rows. A bound connector, or one whose directory is a Git repo, is checked as a source repo. |
 | DB-only brain (pages exist, nothing git-backed) | page count + absence of any git-backed asset | warn on PGLite (local disk loss risks these pages); info on Postgres (database placement and external backup are unverified) |
 | `db_only` storage-tier pages | `gbrain.yml` per source | info row — dump with `gbrain export --dir <backup-dir>` to somewhere OUTSIDE the gitignored dirs (`--restore-only` is the wrong direction for a backup) |
 | Harness-native skill dirs (e.g. the agent's installed skills) | skillpack bridge state | info only — these are installed COPIES; the originals live in repos |
@@ -167,14 +168,15 @@ source id. Full per-asset detail (which repo, which fix) is local-only:
 - Unpushed workspace work: `gbrain sources push --path <workspace>`.
 - db_only pages: `gbrain export --dir <backup-dir>` (store the dump outside
   the gitignored dirs — another disk, another repo, anywhere durable).
-- A dirty source repo (uncommitted changes): commit and push the changes
-  (`git -C <repo> add -A && git -C <repo> commit -m "<message>" && git -C <repo> push`),
-  or discard them, then run `gbrain backup check`. Remote evidence is only
-  read for a clean tree.
-- Google or GitHub connector sources: they appear as `db_only` info rows, not
-  repositories. Their pages come from the provider API, so recovery is a
-  re-sync from the provider plus `gbrain export --dir <backup-dir>` for what
-  the database holds. They never keep the check in warn on their own.
+- A dirty source repo (uncommitted changes): `gbrain sources push <source-id>`
+  (secret-scanned commit and push), or discard the changes, then run
+  `gbrain backup check`. Remote evidence is only read for a clean tree.
+- Google or GitHub connector sources without a Git-backed directory (managed
+  and unbound, or unmanaged with a missing or non-Git directory): they appear
+  as `connector` info rows and do not keep the check in warn. Their pages come
+  from the provider API, so recovery is `gbrain sync --source <id> --full`,
+  within the source's configured history window. A bound connector, or one
+  whose directory is a Git repo, follows the source-repo recipes above.
 
 ## Recovery drill (prove the answer is real)
 

@@ -48,10 +48,11 @@ import {
 
 // ── Verdict types ───────────────────────────────────────────────────────────
 
-export const BACKUP_STATUS_SCHEMA_VERSION = 'gbrain-backup-status-v1' as const;
+/** v2: API connector sources became their own `connector` asset kind; a v1 cache reads as absent and is recomputed. */
+export const BACKUP_STATUS_SCHEMA_VERSION = 'gbrain-backup-status-v2' as const;
 export const BACKUP_NAG_SCHEMA_VERSION = 'gbrain-backup-nag-v1' as const;
 
-export type BackupAssetKind = 'source_repo' | 'bootstrap_workspace' | 'harness_skills' | 'db_only' | 'db_content';
+export type BackupAssetKind = 'source_repo' | 'bootstrap_workspace' | 'harness_skills' | 'db_only' | 'db_content' | 'connector';
 export type BackupAssetState = 'ok' | 'no_remote' | 'unpushed' | 'dirty' | 'failing' | 'info' | 'unknown';
 export type BackupComputedBy = 'cli' | 'advisor' | 'doctor' | 'serve' | 'spawn' | 'sync';
 

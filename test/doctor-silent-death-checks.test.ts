@@ -416,6 +416,22 @@ describe('undeclared_db_only_pages (#2784)', () => {
     else expect(c.message).toContain('emails/thread-example');
   });
 
+  test('a failing persistence read reports the check as unreadable, never exempts the connector', async () => {
+    const cache = makeRepo();
+    const stub = {
+      executeRaw: async (sql: string) => {
+        if (sql.includes('FROM persistence_brain')) throw new Error('persistence table unreadable');
+        if (sql.includes('FROM sources')) return [{ id: 'conn-src', local_path: cache, config: { kind: 'google' } }];
+        return [];
+      },
+    } as unknown as Parameters<typeof checkUndeclaredDbOnlyPages>[0];
+
+    const c = await checkUndeclaredDbOnlyPages(stub);
+
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('Could not check undeclared db-only pages');
+  });
+
   test('effectiveDbOnlyDirs unions declared + defaults, deduped', () => {
     const dirs = effectiveDbOnlyDirs(['notes/', 'atoms/']);
     expect(dirs.filter(d => d === 'atoms/').length).toBe(1);

@@ -36,6 +36,7 @@ import {
   loadBackupStatus,
   saveBackupStatus,
   currentBackupEvidence,
+  isVerifiedRecoverable,
   BACKUP_VERIFICATION_MAX_AGE_MS,
   BACKUP_RECOVERY_SCOPE,
   type BackupAssetVerdict,
@@ -68,20 +69,21 @@ function pushAsset(assets: BackupAssetVerdict[], a: BackupAssetVerdict): void {
 /**
  * #5505: an API connector's pages come from the provider, not from Git. A
  * connector_database source (managed, unbound) has no canonical files at all;
- * an unmanaged connector's non-Git directory is a Markdown cache. Both are
- * recovered by re-sync or a DB dump, like db_only pages, and never counted as an
- * unrecoverable repository that keeps the check in warn forever.
+ * an unmanaged connector's non-Git (or missing) directory is a Markdown cache.
+ * Both are recovered by a full re-sync from the provider, so they are an info
+ * row and never an unrecoverable repository that keeps the check in warn.
+ * `gbrain export` is not offered: it writes every source into one slug tree.
  */
 function connectorAsset(id: string, connectorDatabase: boolean): BackupAssetVerdict {
   return {
-    kind: 'db_only',
+    kind: 'connector',
     id,
     state: 'info',
     detail: (connectorDatabase
       ? 'API connector source (connector_database): pages are imported from the provider API straight into the database. '
-      : 'API connector source: its directory is a Markdown cache of the provider API, not a git repository. ') +
-      'Re-sync from the provider, or dump the pages somewhere durable.',
-    fix_argv: ['gbrain', 'export', '--dir', '<backup-dir>'],
+      : 'API connector source: its local directory only caches the provider API as Markdown and is not a git repository. ') +
+      "Recover by re-syncing from the provider (within the source's configured history window).",
+    fix_argv: ['gbrain', 'sync', '--source', id, '--full'],
   };
 }
 
@@ -191,8 +193,9 @@ export async function computeBackupCoverage(
       if (!existsSync(row.local_path)) {
         // The most disk-loss-adjacent state of all: a registered path that is
         // GONE. Surface it (unknown — it may live on another machine or have
-        // moved) instead of silently skipping.
-        pushAsset(assets, {
+        // moved) instead of silently skipping. An unmanaged connector's cache
+        // is rebuilt by its next sweep, so it takes the connector verdict.
+        pushAsset(assets, authorities.get(row.id) === 'unmanaged' ? connectorAsset(row.id, false) : {
           kind: 'source_repo',
           id: row.id,
           state: 'unknown',
@@ -359,7 +362,7 @@ export async function computeBackupCoverage(
     unpushed: assets.filter((a) => a.state === 'unpushed').length,
     failing: assets.filter((a) => a.state === 'failing').length,
     configured_repos: assets.filter(a => a.configured_remote === true).length,
-    recoverable_repos: assets.filter(a => a.state === 'ok' && a.verification?.state === 'verified').length,
+    recoverable_repos: assets.filter(isVerifiedRecoverable).length,
     pages_at_risk: pagesAtRisk,
   };
 
