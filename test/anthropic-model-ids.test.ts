@@ -52,6 +52,12 @@ describe('Anthropic recipe model IDs', () => {
     expect(anthropic.touchpoints?.expansion?.models ?? []).not.toContain('claude-fable-5-1');
   });
 
+  it('Opus 5.5 is chat-only and carries its 1M context window', () => {
+    expect(anthropic.touchpoints?.chat?.models ?? []).toContain('claude-opus-5-5');
+    expect(anthropic.touchpoints?.chat?.model_context_tokens?.['claude-opus-5-5']).toBe(1_000_000);
+    expect(anthropic.touchpoints?.expansion?.models ?? []).not.toContain('claude-opus-5-5');
+  });
+
   it('Sonnet 5 is listed for expansion', () => {
     expect(anthropic.touchpoints?.expansion?.models ?? []).toContain('claude-sonnet-5');
   });

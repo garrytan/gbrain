@@ -44,7 +44,7 @@ export interface ModelPricing {
   /**
    * #4218 — USD per 1M prompt-cache-READ tokens. Optional: present only for
    * providers whose published cache pricing we've verified (Anthropic:
-   * 0.1x input by default; Fable 5.1: 0.025x). Consumers that
+   * 0.1x input by default; Fable 5.1: 0.025x; Opus 5.5: 0.05x). Consumers that
    * price cache tokens fall back to the input rate when absent (conservative
    * over-estimate for reads).
    */
@@ -80,6 +80,8 @@ function anthro(input: number, output: number, cacheReadMult = ANTHROPIC_CACHE_R
 export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
   // Fable 5.1 bills cache hits at 0.025x base input ($0.25/MTok on $10).
   'anthropic:claude-fable-5-1': 0.025,
+  // Opus 5.5 bills cache hits at 0.05x base input ($0.20/MTok on $4).
+  'anthropic:claude-opus-5-5': 0.05,
 };
 
 /**
@@ -98,6 +100,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // Fable 5.1: same $10/$50 sticker as Fable 5, but cache hits bill 0.025x
   // ($0.25/MTok) instead of 0.1x — the only rate that changed.
   'anthropic:claude-fable-5-1':           anthro(10.00, 50.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-fable-5-1']),
+  // Opus 5.5: $4 in / $20 out, below Opus 5; cache hits bill 0.05x ($0.20/MTok)
+  // (verified 2026-09-25, platform.claude.com pricing).
+  'anthropic:claude-opus-5-5':            anthro( 4.00, 20.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-opus-5-5']),
   // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
   // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
   'anthropic:claude-opus-5':              anthro( 5.00, 25.00),
