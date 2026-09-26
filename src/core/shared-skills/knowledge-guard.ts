@@ -63,7 +63,13 @@ export async function assertKnowledgePublicationAllowed(
         if (recorded) paths.push(recorded);
       }
       if (alias.source_uri?.startsWith('file:')) {
-        try { paths.push(fileURLToPath(alias.source_uri)); } catch { reject(); }
+        try { paths.push(fileURLToPath(alias.source_uri)); } catch {
+          // An unresolved alias must still fail closed, but it does not prove
+          // that this ordinary page is part of a shared skillpack.
+          throw new OperationError('invalid_source_uri',
+            'The page has a stored file source_uri that cannot be resolved to a local filesystem path.',
+            'Have the source owner inspect and repair the stored source_uri before retrying the knowledge write. Shared skillpack protection remains enabled.');
+        }
       }
     }
   }

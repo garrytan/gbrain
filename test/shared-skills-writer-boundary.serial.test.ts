@@ -66,6 +66,7 @@ async function fixture(run: (f: Fixture) => Promise<void>) {
           ['notes/path-alias', 'skills/alpha/SKILL.md', null],
           ['notes/manifest-alias', 'skillpack.json', null],
           ['notes/uri-alias', null, pathToFileURL(join(root, 'skills/alpha/references/guide.md')).href],
+          ['notes/invalid-uri-alias', 'notes/invalid-uri-alias.md', 'file:///notes/%2F.md'],
         ]) {
           await engine.putPage(slug!, { title: 'Synthetic alias', type: 'note', compiled_truth: '', timeline: '', frontmatter: {} }, { sourceId: 'default' });
           await engine.executeRaw('UPDATE pages SET source_path=$1,source_uri=$2 WHERE source_id=$3 AND slug=$4', [sourcePath, sourceUri, 'default', slug]);
@@ -116,6 +117,29 @@ test('registered source roots, aliases and symlinks deny page publication withou
   }
   await expect(assertKnowledgePublicationAllowed(f.engine, row, { root: f.root, path: join(f.root, 'notes/example.md') })).resolves.toBeUndefined();
   await expect(assertKnowledgePublicationAllowed(f.engine, { ...row, target_kind: 'skill_bundle' }, { root: f.root, path: join(f.root, protectedFiles[1]) })).resolves.toBeUndefined();
+  expect(await canonicalState(f)).toEqual(before);
+}), 120_000);
+
+test('unresolvable stored file aliases fail closed with a metadata diagnostic instead of skill publication advice', () => fixture(async f => {
+  const before = await canonicalState(f);
+  const row = { source_id: 'default', source_incarnation: f.incarnation, slug: 'notes/invalid-uri-alias' };
+  for (const preparedFile of [undefined, { root: f.root, path: join(f.root, 'notes/invalid-uri-alias.md') }]) {
+    await expect(assertKnowledgePublicationAllowed(f.engine, row, preparedFile)).rejects.toMatchObject({
+      code: 'invalid_source_uri',
+      message: 'The page has a stored file source_uri that cannot be resolved to a local filesystem path.',
+      suggestion: 'Have the source owner inspect and repair the stored source_uri before retrying the knowledge write. Shared skillpack protection remains enabled.',
+    });
+  }
+  expect(await canonicalState(f)).toEqual(before);
+  const [page] = await f.engine.executeRaw<{ source_uri: string }>(
+    'SELECT source_uri FROM pages WHERE source_id=$1 AND slug=$2', ['default', row.slug]);
+  expect(page.source_uri).toBe('file:///notes/%2F.md');
+  const snapshot = await f.engine.readPageSnapshot(row.slug, { sourceId: 'default' });
+  await expect(submitPageMutation(f.ctx, { operation: 'put_page', params: {
+    slug: row.slug, content: note, request_id: randomUUID(), expected_revision: snapshot!.revision,
+  } })).rejects.toMatchObject({ code: 'invalid_source_uri' });
+  expect(await f.engine.readPageSnapshot(row.slug, { sourceId: 'default' })).toEqual(snapshot);
+  expect(existsSync(join(f.root, 'notes/invalid-uri-alias.md'))).toBe(false);
   expect(await canonicalState(f)).toEqual(before);
 }), 120_000);
 
