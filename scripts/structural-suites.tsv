@@ -255,7 +255,7 @@ test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run de
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
 test/scripts/ci-gates.test.ts	CI execution evidence	5	readFileSync
 test/scripts/ci-gates.test.ts	test:full exit status	0	readFileSync
-test/scripts/ci-local-rendering.test.ts	ci-local command rendering	1	readFileSync
+test/scripts/ci-local-rendering.test.ts	ci-local command rendering	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	3	readFileSync
 test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync

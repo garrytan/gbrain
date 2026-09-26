@@ -210,7 +210,7 @@ else
   GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
   GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
   GBRAIN_TEST_DB=1 \
-  xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh
+  xargs bash scripts/run-e2e.sh < /tmp/e2e-selected.txt
 fi'
   else
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
@@ -286,7 +286,7 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
     GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
     GBRAIN_TEST_DB=1 \\
-    xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh >> \$log 2>&1
+    xargs bash scripts/run-e2e.sh < /tmp/e2e-selected.txt >> \$log 2>&1
   else
     SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\

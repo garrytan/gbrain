@@ -21,6 +21,11 @@ test('the CI admin build keeps container dependencies and Vite cache off the hos
 });
 
 describe('ci-local command rendering', () => {
+  test('feeds selected E2E paths through stdin for BSD xargs', () => {
+    expect(source).not.toContain('xargs -a ');
+    expect(source).toContain('xargs bash scripts/run-e2e.sh < /tmp/e2e-selected.txt');
+    expect(source).toContain('xargs bash scripts/run-e2e.sh < /tmp/e2e-selected.txt >> \\$log 2>&1');
+  });
   const cases = [
     { phaseExit: 0, missingTool: '' },
     { phaseExit: 7, missingTool: '' },
