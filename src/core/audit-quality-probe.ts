@@ -21,7 +21,8 @@ export type QualityProbeOutcome =
   | 'error'
   | 'budget_exceeded'
   | 'rate_limited'
-  | 'no_embedding_key';
+  | 'no_embedding_key'
+  | 'skipped_no_fixture';
 
 export interface QualityProbeAuditEvent {
   ts: string;

@@ -1021,7 +1021,7 @@ bun test test/nightly-quality-probe.test.ts
 Observability:
 - `~/.gbrain/audit/quality-probe-YYYY-Www.jsonl` — one event per run with
   outcome (pass / fail / inconclusive / error / budget_exceeded /
-  rate_limited / no_embedding_key), pass/fail/inconclusive/error counts,
+  rate_limited / no_embedding_key / skipped_no_fixture), pass/fail/inconclusive/error counts,
   est_cost_usd, fixture_sha8. ISO-week rotation (mirrors slug-fallback
   audit).
 - `gbrain doctor` surfaces `nightly_quality_probe_health`:

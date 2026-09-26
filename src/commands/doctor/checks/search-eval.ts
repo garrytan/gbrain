@@ -489,7 +489,8 @@ export function computeNightlyQualityProbeHealthCheck(
       `inconclusive=${events.filter(e => e.outcome === 'inconclusive').length} ` +
       `budget=${events.filter(e => e.outcome === 'budget_exceeded').length} ` +
       `no_embed_key=${events.filter(e => e.outcome === 'no_embedding_key').length} ` +
-      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}`;
+      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length} ` +
+      `skipped_no_fixture=${events.filter(e => e.outcome === 'skipped_no_fixture').length}`;
     return {
       name,
       status: 'warn',
