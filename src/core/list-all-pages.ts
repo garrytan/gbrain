@@ -17,6 +17,8 @@ export const LIST_ALL_PAGES_BATCH = 1000;
  * Offset paging is not snapshot-consistent: a concurrent insert can push a
  * row into the next batch, so rows are deduped on (source_id, slug). A
  * concurrent delete can still shift a row back past the cursor and skip it.
+ * Cost grows faster than the page count: each OFFSET batch rescans the rows
+ * before it, and the whole set is held in memory.
  */
 export async function listAllPages(
   engine: Pick<BrainEngine, 'listPages'>,

@@ -113,7 +113,8 @@ The `--restore-only` flag:
   time with `--source <id>`.
 - Ideal for container restart recovery and fresh clones.
 - Run it while no sync is writing: the page set is read in batches, not as
-  one snapshot, so a page deleted mid-read can be skipped.
+  one snapshot, so a page deleted mid-read can be skipped. The batched read
+  also gets slower faster than the brain grows (OFFSET paging).
 
 ### 3. `gbrain storage status` — storage-tier health dashboard
 
