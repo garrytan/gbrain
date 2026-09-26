@@ -15,6 +15,7 @@ import type { EngineConfig, Page } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, statSync, mkdirSync, renameSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve, dirname } from 'path';
+import { listAllPages } from '../core/list-all-pages.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
@@ -960,9 +961,11 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   try {
     sourcesCopied = await copyMigrationSources(sourceEngine, targetEngine);
 
-    // Get all source pages
+    // Get all source pages. listAllPages reads in batches: one listPages
+    // call is capped by the engine's LIMIT, which silently left every page
+    // past it behind.
     sourceStats = await sourceEngine.getStats();
-    const allPages = await sourceEngine.listPages({ limit: 100000 });
+    const allPages = await listAllPages(sourceEngine);
     pagesToMigrate = allPages.filter(p => !completedSet.has(makeManifestKey(p.source_id, p.slug)));
 
     console.log(`Migrating ${pagesToMigrate.length} pages (${allPages.length} total, ${completedSet.size} already done)...`);
