@@ -12,7 +12,7 @@ proof that a whole brain could be restored.
 | Source repos (every non-archived source with a `local_path`) | Local Git discovery, deduped by root and capped at 500 roots/run; trusted local read-only `git ls-remote` verifies clean HEAD against the remote | No configured origin, dirty/unpushed work, missing/mismatched remote HEAD, stale/unknown evidence, or failed push without newer matching readback cannot count as verified recovery. |
 | Bootstrap workspace (skills/, memory/, brain/, identity) | file plane: the install receipt's `repo_url` + the per-root push-status files | receipt without `repo_url` → warn; a failing background push → flagged row only (the push-failure banner owns that alarm) |
 | DB-only brain (pages exist, nothing git-backed) | page count + absence of any git-backed asset | warn on PGLite (local disk loss risks these pages); info on Postgres (database placement and external backup are unverified) |
-| `db_only` storage-tier pages | `gbrain.yml` per source | info row: dump with `gbrain export --source <id> --dir <backup-dir>` to somewhere OUTSIDE the gitignored dirs (`--restore-only` is the wrong direction for a backup) |
+| `db_only` storage-tier pages | `gbrain.yml` per source | info row: dump with `gbrain export --source <id> --dir <backup-dir>/<id>` to somewhere OUTSIDE the gitignored dirs (`--restore-only` is the wrong direction for a backup) |
 | Harness-native skill dirs (e.g. the agent's installed skills) | skillpack bridge state | info only — these are installed COPIES; the originals live in repos |
 
 `configured_repos` records configuration; the legacy `recoverable_repos` field
@@ -165,10 +165,10 @@ source id. Full per-asset detail (which repo, which fix) is local-only:
   `git remote add origin git@github.com:you/your-brain-repo.git && git push -u origin main`,
   then `gbrain sources harden <source-id>` for auto-push durability.
 - Unpushed workspace work: `gbrain sources push --path <workspace>`.
-- db_only pages: `gbrain export --source <id> --dir <backup-dir>` for each
-  source the row names (store the dump outside the gitignored dirs: another
-  disk, another repo, anywhere durable). Give each source its own directory;
-  an unscoped export refuses when two sources share a slug.
+- db_only pages: `gbrain export --source <id> --dir <backup-dir>/<id>` for
+  each source the row names (store the dump outside the gitignored dirs:
+  another disk, another repo, anywhere durable). Each source gets its own
+  directory; an unscoped export refuses when two sources share a slug.
 
 ## Recovery drill (prove the answer is real)
 

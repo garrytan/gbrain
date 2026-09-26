@@ -319,9 +319,10 @@ describe('computeBackupCoverage — source repos', () => {
     expect(asset).toBeDefined();
     expect(asset?.id).toBe('tiered-src');
     expect(asset?.state).toBe('info');
-    // Scoped to the asset's source: an unscoped export refuses when two
-    // sources share a slug.
-    expect(asset?.fix_argv).toEqual(['gbrain', 'export', '--source', 'tiered-src', '--dir', '<backup-dir>']);
+    // Scoped to the asset's source, into its own directory: an unscoped
+    // export refuses when two sources share a slug, and two sources dumped
+    // into one directory would overwrite each other.
+    expect(asset?.fix_argv).toEqual(['gbrain', 'export', '--source', 'tiered-src', '--dir', '<backup-dir>/tiered-src']);
   });
 });
 
