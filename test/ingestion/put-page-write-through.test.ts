@@ -222,6 +222,12 @@ page_types:
       expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.frontmatter.subtype).toBe('relationship');
       await putPage.handler(ctx, { slug, content: content.replace('First', 'Fourth'), expected_revision: explicit.revision });
       expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page.frontmatter.subtype).toBe('relationship');
+
+      const legacySlug = 'therapy-meetings/legacy';
+      const legacy = await putPage.handler(ctx, { slug: legacySlug, content: '---\ntitle: Legacy\ntype: concept\n---\n\nExisting page.' }) as { revision: string };
+      await putPage.handler(ctx, { slug: legacySlug, content: '---\ntitle: Legacy\n---\n\nUpdated page.', expected_revision: legacy.revision });
+      expect((await engine.readPageSnapshot(legacySlug, { sourceId: 'default' }))?.page).toMatchObject({ type: 'concept' });
+      expect((await engine.readPageSnapshot(legacySlug, { sourceId: 'default' }))?.page.frontmatter.subtype).toBeUndefined();
     });
   });
 

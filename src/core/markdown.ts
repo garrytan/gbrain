@@ -58,8 +58,8 @@ export interface ParsedMarkdown {
    * explicit frontmatter type is an override; absence means "don't change it".
    */
   typeExplicit?: boolean;
-  /** Pack rule matched for this path and effective type; not yet stored in frontmatter. */
-  inferredSubtype?: string;
+  /** Pack rule matched for this path and type; not yet stored in frontmatter. */
+  inferredSubtype?: { type: string; name: string };
   title: string;
   tags: string[];
   /** Present iff opts.validate. Empty array means no errors. */
@@ -334,7 +334,7 @@ export function parseMarkdown(
     slug,
     type,
     typeExplicit: explicitType !== '',
-    ...(inferred?.subtype && type === inferred.type ? { inferredSubtype: inferred.subtype } : {}),
+    ...(inferred?.subtype && type === inferred.type ? { inferredSubtype: { type, name: inferred.subtype } } : {}),
     title,
     tags,
   };
@@ -354,7 +354,7 @@ export function resolveParsedSubtype(
       return;
     }
   }
-  if (parsed.inferredSubtype !== undefined) parsed.frontmatter.subtype = parsed.inferredSubtype;
+  if (parsed.inferredSubtype?.type === parsed.type) parsed.frontmatter.subtype = parsed.inferredSubtype.name;
 }
 
 /**
