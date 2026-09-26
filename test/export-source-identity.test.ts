@@ -536,4 +536,15 @@ describe('export --restore-only: legacy repo path and the sole-source fallback',
     // getDefaultSourcePath's other callers (sync, extract) keep the unbound fallback.
     expect(await getDefaultSourcePath(engine)).toBe(legacy);
   });
+
+  test('an empty default does not count against the only other active source', async () => {
+    const registered = makeRepo('a');
+    const freshClone = makeRepo('b');
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'connector-a'`, [registered]);
+    await put('connector-a', 'media/connector-clip', 'connector-a clip');
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', freshClone]);
+
+    expect(exitCode).toBeNull();
+    expect(readOut('media/connector-clip')).toContain('connector-a clip');
+  });
 });

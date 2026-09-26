@@ -782,8 +782,9 @@ export type RestoreTarget =
  *  2. Neither: the source the flagless resolver chain picks for `cwd`,
  *     with its path (`resolveDefaultSourceWithPath`).
  *  3. `repo` alone: the source registered at that path (active over
- *     archived; dotfiles ignored), else the brain's only active source,
- *     else refused: pages of some other source must never land in the repo.
+ *     archived; dotfiles ignored), else the brain's only active source (an
+ *     empty `default` does not count), else refused: pages of some other
+ *     source must never land in the repo.
  * This module's user-facing errors (unknown or archived source) come back
  * as refusals, never throws.
  */
@@ -827,8 +828,16 @@ export async function resolveRestoreTarget(
     } else if (!sourceId && repoPath) {
       sourceId = await resolveRegisteredRepoOwner(engine, repoPath);
       if (!sourceId) {
+        // The seeded 'default' counts only when it holds live pages, the same
+        // emptiness rule as pickSoleNonDefaultSource (#3070): an untouched
+        // default must not block a brain whose content lives in one source.
         const active = await engine.executeRaw<{ id: string }>(
-          `SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id`,
+          `SELECT s.id FROM sources s
+            WHERE s.archived IS NOT TRUE
+              AND (s.id != 'default'
+                   OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = 'default' AND p.deleted_at IS NULL)
+                   OR NOT EXISTS (SELECT 1 FROM sources o WHERE o.id != 'default' AND o.archived IS NOT TRUE))
+            ORDER BY s.id`,
         );
         if (active.length !== 1) {
           return {
