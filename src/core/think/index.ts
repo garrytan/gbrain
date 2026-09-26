@@ -30,7 +30,7 @@ import { chat as gatewayChat, probeChatModel, isThinkingModel, type ChatResult }
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
-import { parseTemporalWindow } from './temporal-window.ts';
+import { resolveTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
@@ -482,7 +482,9 @@ export async function runThink(
 ): Promise<ThinkResult> {
   const rounds = Math.max(1, opts.rounds ?? 1);
   const warnings: string[] = [];
-  const window = parseTemporalWindow(opts.since, opts.until);
+  // Explicit caller since/until stay authoritative; only when BOTH are absent do we
+  // derive a temporal window from an explicit date token in the question.
+  const window = resolveTemporalWindow(opts.question, opts.since, opts.until);
 
   // Resolve the model through the 6-tier chain.
   const modelUsed = await resolveModel(engine, {
