@@ -161,6 +161,17 @@ describe('addTypeToPack', () => {
     });
   });
 
+  // #24: `schema detect` suggests type names in every script (`люди/` → `люди`).
+  it('accepts a non-Latin type name', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_AUDIT_DIR: auditDir }, async () => {
+      const path = seedPack('mine', 'json');
+      await addTypeToPack('mine', {
+        name: 'люди', primitive: 'entity', prefix: 'люди/',
+      } as never, { lockDir });
+      expect(loadPackFromFile(path).page_types.find((t) => t.name === 'люди')).toBeDefined();
+    });
+  });
+
   it('rejects invalid slug type name', async () => {
     await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_AUDIT_DIR: auditDir }, async () => {
       seedPack('mine', 'json');
