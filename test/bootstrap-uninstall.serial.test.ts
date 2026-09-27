@@ -418,6 +418,61 @@ describe('probeLivePgliteHolder', () => {
     writeFileSync(join(dataDir, '.gbrain-lock', 'lock'), 'not json', 'utf8');
     expect(probeLivePgliteHolder(dataDir)).toBeNull();
   });
+
+  // #5481 review F2: on Linux, when THIS process's own /proc markers are
+  // unreadable (a hardened environment masking pid-namespace/boot-id), the
+  // doctor's own self-lock (which it wrote under the same restriction, so it
+  // stored the same unreadable evidence) must still read as self — namespace
+  // evidence can't verify anyone in that state, so pid equality alone must
+  // decide, exactly like the non-Linux fallback.
+  describe('Linux namespace-evidence edge cases (#5481 review F2)', () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
+    function withLinuxPlatform<T>(fn: () => T): T {
+      Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'linux' });
+      try {
+        return fn();
+      } finally {
+        Object.defineProperty(process, 'platform', platformDescriptor);
+      }
+    }
+
+    test('our own namespace markers unreadable + matching (null) stored markers → still self', () => {
+      withLinuxPlatform(() => {
+        const dataDir = join(home, 'brain.pglite');
+        mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+        writeFileSync(
+          join(dataDir, '.gbrain-lock', 'lock'),
+          JSON.stringify({ pid: process.pid, subcommand: 'embed', pid_ns: null, boot_id: null }),
+          'utf8',
+        );
+        const holder = probeLivePgliteHolder(dataDir, { readPidNs: () => null, readBootId: () => null });
+        expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: true });
+      });
+    });
+
+    test('our own namespace markers ARE readable + stored markers foreign → still warns (no silent regression)', () => {
+      withLinuxPlatform(() => {
+        const dataDir = join(home, 'brain.pglite');
+        mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+        writeFileSync(
+          join(dataDir, '.gbrain-lock', 'lock'),
+          JSON.stringify({
+            pid: process.pid,
+            subcommand: 'embed',
+            pid_ns: 'pid:[99999999]',
+            boot_id: '00000000-0000-0000-0000-000000000000',
+          }),
+          'utf8',
+        );
+        const holder = probeLivePgliteHolder(dataDir, {
+          readPidNs: () => 'pid:[11111111]',
+          readBootId: () => '11111111-1111-1111-1111-111111111111',
+        });
+        expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: false });
+      });
+    });
+  });
 });
 
 describe('resolveBrainDataDir', () => {

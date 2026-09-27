@@ -57,11 +57,20 @@ export interface LiveHolder {
    * holder masquerade as self. Mirrors the cross-namespace-incomparable
    * guard `pglite-lock.ts` already applies at lock-acquisition time. Every
    * lock this codebase writes stamps both fields (`pglite-lock.ts`), so a
-   * genuine self-lock always has matching evidence; missing/mismatched
-   * evidence is treated as NOT self (fail toward warning, not toward
-   * silently suppressing a real foreign collision). Non-Linux platforms
-   * have no PID namespaces, so a pid match alone is trusted there, matching
-   * the acquisition path's own platform short-circuit.
+   * genuine self-lock always has matching evidence when THIS process can
+   * itself read `/proc`; a stored value that disagrees with a READABLE
+   * current value is treated as NOT self (fail toward warning, not toward
+   * silently suppressing a real foreign collision). When THIS process's own
+   * markers are unreadable (a hardened Linux environment masking
+   * `/proc/self/ns/pid` / boot-id), namespace evidence cannot verify anyone
+   * either way, so pid equality alone decides — same trust model as non-Linux
+   * platforms, which have no PID namespaces and always trust pid alone,
+   * matching the acquisition path's own platform short-circuit. This is a
+   * narrower guarantee than a fully verified cross-host identity check (a
+   * foreign holder reusing this process's pid under an equally restricted
+   * `/proc` would still read as self); closing that residual gap would need
+   * new cross-platform identity infrastructure this codebase does not have,
+   * out of scope for the doctor false-positive this field fixes.
    */
   isSelf: boolean;
 }
@@ -72,8 +81,15 @@ export interface LiveHolder {
  * fallback; only an affirmatively-dead PID reads as dead) without acquiring,
  * reaping, or opening anything. Unreadable/absent lock → null (no live holder
  * provable — uninstall proceeds; a dead holder's stale lock dir is inert).
+ *
+ * `deps` is test-only injection for the namespace-evidence readers (default:
+ * the real `/proc` readers from pglite-lock.ts); production callers never
+ * pass it.
  */
-export function probeLivePgliteHolder(dataDir: string): LiveHolder | null {
+export function probeLivePgliteHolder(
+  dataDir: string,
+  deps: { readPidNs: () => string | null; readBootId: () => string | null } = { readPidNs, readBootId },
+): LiveHolder | null {
   const lockPath = join(dataDir, '.gbrain-lock', 'lock');
   let raw: { pid?: unknown; subcommand?: unknown; command?: unknown; pid_ns?: unknown; boot_id?: unknown };
   try {
@@ -92,8 +108,21 @@ export function probeLivePgliteHolder(dataDir: string): LiveHolder | null {
   }
   const lockPidNs = typeof raw.pid_ns === 'string' ? raw.pid_ns : null;
   const lockBootId = typeof raw.boot_id === 'string' ? raw.boot_id : null;
+  const ourPidNs = deps.readPidNs();
+  const ourBootId = deps.readBootId();
+  // (#5481 review F2) When THIS process's own /proc markers are unreadable
+  // (a hardened/restricted Linux environment masking pid-namespace or
+  // boot-id evidence), we cannot verify namespace identity for ANYONE,
+  // including ourselves — a doctor process that wrote its own lock under the
+  // same restriction would have stored the same unreadable (null) markers,
+  // so requiring a non-null match here would wrongly warn on a genuine
+  // self-lock. Fall back to trusting pid equality alone in that case,
+  // matching the non-Linux platform's existing trust model exactly (both are
+  // "no usable namespace evidence" situations, not "evidence disagrees").
+  const weCanVerifyNamespace = ourPidNs != null && ourBootId != null;
   const namespaceMatches = process.platform !== 'linux'
-    || (lockPidNs != null && lockBootId != null && lockPidNs === readPidNs() && lockBootId === readBootId());
+    || !weCanVerifyNamespace
+    || (lockPidNs != null && lockBootId != null && lockPidNs === ourPidNs && lockBootId === ourBootId);
   const isSelf = pid === process.pid && namespaceMatches;
   return { pid, serve, isSelf };
 }
