@@ -132,6 +132,15 @@ jobs:
           bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts
           bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts
           bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts
+      - name: Require managed image sync through direct and pooled PostgreSQL
+        timeout-minutes: 5
+        env:
+          GBRAIN_TEST_SYNC_IMAGES_POSTGRES_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          GBRAIN_TEST_SYNC_IMAGES_PGBOUNCER_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:55433/gbrain_test
+          GBRAIN_TEST_REQUIRE_SYNC_IMAGES_POSTGRES: '1'
+          GBRAIN_TEST_REQUIRE_SYNC_IMAGES_PGBOUNCER: '1'
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+        run: bun --no-env-file test --timeout=180000 test/persistence-sync-images.serial.test.ts
       - name: Require canonical reconciliation through direct and pooled PostgreSQL
         timeout-minutes: 5
         env:

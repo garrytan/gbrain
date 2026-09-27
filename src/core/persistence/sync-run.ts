@@ -9,10 +9,11 @@ import { digest, sha256 } from './digest.ts';
 import { getWriteRequest, admitWriteInTransaction, receiptFor } from './journal.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, foregroundWriteCompletions, startPersistenceConsumer, waitForWrite } from './service.ts';
-import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
+import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncBytes, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
 import { assertSyncPageOrigin, syncOriginPath } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import type { SyncIntent } from './sync-prepare.ts';
+import { freezeSyncContent, syncText } from './sync-content.ts';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
@@ -84,7 +85,7 @@ async function saveCursor(engine: BrainEngine, key: string, before: Cursor | nul
     return current;
   });
 }
-async function replaceCursor(engine: BrainEngine, key: string, before: CursorHeader, next: Cursor, assertActive: () => void): Promise<Cursor> {
+async function replaceCursor(engine: BrainEngine, key: string, before: CursorHeader, next: Cursor, assertActive: () => void, nextKey = key): Promise<{ cursor: Cursor; key: string }> {
   return engine.transaction(async tx => {
     assertActive();
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
@@ -93,14 +94,17 @@ async function replaceCursor(engine: BrainEngine, key: string, before: CursorHea
     if (active.length) {
       const current = (await readCursor(tx, key))!;
       assertActive();
-      return current;
+      return { cursor: current, key };
     }
+    if (nextKey !== key) await tx.executeRaw(
+      "DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'done'='true'", [OP, nextKey]);
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
-    await tx.executeRaw('UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now() WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb',
-      [OP, key, JSON.stringify([before]), JSON.stringify([header(next)])]);
-    const current = (await readCursor(tx, key, next))!;
+    await tx.executeRaw('UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,fingerprint=$5,updated_at=now() WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb',
+      [OP, key, JSON.stringify([before]), JSON.stringify([header(next)]), nextKey]);
+    const current = (await readCursor(tx, nextKey, next))!;
     assertActive();
-    return current;
+    if (!current) throw new OperationError('revision_conflict', 'The sync cursor changed during rediscovery.');
+    return { cursor: current, key: nextKey };
   });
 }
 function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], reason?: SyncResult['reason']): SyncResult {
@@ -121,7 +125,7 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   const diagnostic: ManagedSyncWriteDiagnostic = { source_id: cursor.sourceId, slug: pending.slug,
     path: pending.intent.path, write_error: code, ...detail, write_request: publicWriteReceipt(receiptFor(row)) };
   if (terminal) diagnostic.suggestion += ' After repair, run gbrain sync with the same source/options and --retry-failed to start a new request. Without --retry-failed, the frozen terminal request returns the same outcome. Skipping failures cannot bypass a managed write.';
-  if (diagnostic.reason === 'pinned_git_worktree_conflict' && pending.intent.path && pending.intent.content !== null) {
+  if (pending.intent.contentEncoding !== 'base64' && diagnostic.reason === 'pinned_git_worktree_conflict' && pending.intent.path && pending.intent.content !== null) {
     try {
       const bytes = readSyncFile(cursor.root, pending.intent.path);
       if (bytes && sha256(bytes) === pending.intent.rawHash && sha256(bytes) !== sha256(pending.intent.content)
@@ -140,6 +144,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   let slug = '__managed_sync_checkpoint__', pageId: number | null = null, revision: string | null = null;
   let content: string | null = null, rawHash: string | null = null;
   let lineEndingOnly = false;
+  let frozen: ReturnType<typeof freezeSyncContent> | undefined;
   if (entry) {
     assertSyncEntryOrigin(cursor, entry);
     await assertSyncPageOrigin(engine, cursor.sourceId, entry.sourcePath, entry.pageId ?? null, entry.action === 'delete');
@@ -150,10 +155,13 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
       const company = currentCompanyBrainSync(cursor.sourceId);
       const blob = company?.entries.get(entry.path);
       if (company?.receiptId !== cursor.companyReceiptId || !blob || blob.disposition !== 'included') throw new OperationError('plan_stale', 'The durable cursor does not match its approved content manifest.');
-      content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
+      content = syncText(await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits));
       assertActive();
-    } else content = entry.action === 'import' ? readSyncContent(cursor, entry) : null;
-    lineEndingOnly = bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
+    } else if (entry.action === 'import') {
+      frozen = freezeSyncContent(entry.sourcePath, readSyncBytes(cursor, entry));
+      content = frozen.contentEncoding === 'base64' ? null : frozen.content;
+    }
+    lineEndingOnly = frozen?.contentEncoding !== 'base64' && bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
       bytes.toString('utf8').replace(/\r\n/g, '\n') === content.replace(/\r\n/g, '\n');
     slug = entry.slug!; pageId = entry.pageId ?? null; revision = entry.revision ?? null;
     const snapshot = await engine.readPageSnapshot(slug, { sourceId: cursor.sourceId, includeDeleted: true });
@@ -166,7 +174,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   await validateSyncAuthority(engine, cursor.authority, slug);
   assertActive();
   return { requestId: randomUUID(), slug, pageId, intent: { kind: !entry ? 'managed_sync_checkpoint' : entry.action === 'import' ? 'managed_sync_import' : 'managed_sync_delete',
-    expected_revision: revision, sourcePath: entry?.sourcePath ?? null, path: entry?.path ?? null, rawHash, content, lineEndingOnly,
+    expected_revision: revision, sourcePath: entry?.sourcePath ?? null, path: entry?.path ?? null, rawHash, content, lineEndingOnly, ...(frozen ? { contentEncoding: frozen.contentEncoding, contentHash: frozen.contentHash, ...(frozen.contentEncoding === 'base64' ? { binaryContent: frozen.content } : {}) } : {}),
     processingOptions: cursor.processingOptions,
     ownerEpoch: String(cursor.binding.owner_epoch), syncAuthority: cursor.authority, cursorKey: key, runId: cursor.runId,
     slugMode: cursor.slugMode, index: cursor.index, total: cursor.entries.length, from: cursor.from, target: cursor.target, working: entry?.working ?? false,
@@ -186,9 +194,26 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
   const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
   const company = currentCompanyBrainSync(context.sourceId);
   const processingOptions = syncProcessingOptions(opts);
-  const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
+  const legacyKey = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
     options: { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
       exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null } });
+  // Old runners can understand legacy text cursors, but must never discover
+  // an unfinished binary manifest under their own key and freeze it as UTF-8.
+  // Keep the op/manifest format and pending IDs intact; namespace fresh scans.
+  const versionedKey = digest({ legacyKey, contentProtocol: 'binary-v1' });
+  const candidates = await engine.executeRaw<{ fingerprint: string; done: boolean }>(
+    "SELECT fingerprint,COALESCE(completed_keys->0->>'done','false')='true' AS done FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])",
+    [OP, [versionedKey, legacyKey]]);
+  const unfinished = candidates.filter(candidate => candidate.done !== true);
+  if (unfinished.length > 1) throw new OperationError('recovery_required', 'Both legacy and binary-capable sync cursors are unfinished. Drain mixed-version writers and reconcile the original requests before resuming.');
+  const existing = unfinished[0] ?? candidates.find(candidate => candidate.fingerprint === versionedKey) ?? candidates[0];
+  let key = existing?.fingerprint ?? versionedKey;
+  const clearSuccessfulSync = async () => {
+    await clearManagedSyncFailureAfterSuccess(engine, key);
+    // A successful upgraded scan resolves the matching pre-feature discovery
+    // diagnostic, but the helper retains any still-unfinished legacy cursor.
+    if (key !== legacyKey) await clearManagedSyncFailureAfterSuccess(engine, legacyKey);
+  };
   let cursor: Cursor | null = null;
   let missingManifestCursor: CursorHeader | null = null;
   let phase: ManagedSyncFailure['phase'] = 'resume';
@@ -212,7 +237,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       discoveryTarget = syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
       const discovery = await discoverManagedSync(engine, opts, context);
       assertActive();
-      cursor = await replaceCursor(engine, key, error.cursor, { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
+      ({ cursor, key } = await replaceCursor(engine, key, error.cursor, { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive, versionedKey));
     }
     assertActive();
     if (company && opts.retryFailed && cursor && !cursor.done && !opts.dryRun) {
@@ -241,14 +266,14 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
           discoveryTarget = syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
           const discovery = await discoverManagedSync(engine, opts, context);
           assertActive();
-          cursor = await replaceCursor(engine, key, header(cursor), { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive);
+          ({ cursor, key } = await replaceCursor(engine, key, header(cursor), { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, assertActive, versionedKey));
         }
       }
     }
     assertActive();
     if (cursor?.done && opts.dryRun) return result(cursor, 'dry_run');
     if (cursor?.done && company) {
-      await clearManagedSyncFailureAfterSuccess(engine, key);
+      await clearSuccessfulSync();
       assertActive();
       return result(cursor, cursor.from === null ? 'first_sync' : 'synced');
     }
@@ -260,10 +285,11 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         assertActive();
       });
       assertActive();
-      await clearManagedSyncFailureAfterSuccess(engine, key);
+      await clearSuccessfulSync();
       cursor = await readCursor(engine, key);
     }
     if (!cursor) {
+      key = versionedKey;
       assertActive();
       phase = 'discovery';
       discoveryTarget = company?.plan.revision?.commit ?? syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
@@ -272,7 +298,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       const fresh: Cursor = { ...discovery, authority, processingOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 }, ...(company ? { companyReceiptId: company.receiptId } : {}) };
       if (opts.dryRun) return result(fresh, 'dry_run');
       if (!fresh.entries.length && fresh.from === fresh.target) {
-        await clearManagedSyncFailureAfterSuccess(engine, key);
+        await clearSuccessfulSync();
         assertActive();
         return result(fresh, 'up_to_date');
       }
@@ -359,7 +385,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       if (pending.intent.kind === 'managed_sync_checkpoint') {
         cursor = (await readCursor(engine, key))!;
         if (!cursor?.done) throw new OperationError('storage_error', 'Committed sync checkpoint lost its cursor.');
-        await clearManagedSyncFailureAfterSuccess(engine, key);
+        await clearSuccessfulSync();
         if (cursor.counts.added + cursor.counts.modified + cursor.counts.deleted > 0) await refreshProjectionStatistics(engine);
         assertActive();
         return result(cursor, cursor.from === null ? 'first_sync' : 'synced');

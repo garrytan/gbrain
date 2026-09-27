@@ -4,6 +4,8 @@ import { join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts } from '../../commands/sync.ts';
 import { parseMarkdown } from '../markdown.ts';
+import { isImageFilePath } from '../import-file.ts';
+import { syncText, MAX_SYNC_BYTES } from './sync-content.ts';
 import { OperationError } from '../ops/contract.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
 import { isSyncable, isCodeFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
@@ -39,7 +41,7 @@ export function readSyncFile(root: string, path: string): Buffer | null {
       if (lstatSync(current).isSymbolicLink()) throw new OperationError('source_changed', 'Sync cannot publish through a symlink.');
     }
     if (!lstatSync(absolute).isFile()) throw new OperationError('source_changed', 'Sync target is not a regular file.');
-    if (lstatSync(absolute).size > 10 * 1024 ** 2) throw new OperationError('request_too_large', 'Sync file exceeds the bounded import size.');
+    if (lstatSync(absolute).size > MAX_SYNC_BYTES) throw new OperationError('request_too_large', 'Sync file exceeds the bounded import size.');
     return readFileSync(absolute);
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
@@ -165,7 +167,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     }
   }
   const selected = [...entries.values()].sort((a, b) => a.action.localeCompare(b.action) || a.path.localeCompare(b.path));
-  if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path))) throw new OperationError('writer_coordinator_required', 'Managed image sync requires a prepared importer; this sync was refused before any page write.');
+  if (selected.some(e => !/\.mdx?$/i.test(e.path) && !isCodeFilePath(e.path) && !isImageFilePath(e.path))) throw new OperationError('invalid_params', 'Managed sync supports only Markdown, code and supported image files.');
   if (selected.length > 100_000 || Buffer.byteLength(JSON.stringify(selected)) > 16 * 1024 ** 2) throw new OperationError('request_too_large', 'Sync discovery exceeds the bounded cursor size.');
   const discovered: SyncDiscovery = { binding: { ...binding, owner_epoch: String(binding.owner_epoch), topology_generation: String(binding.topology_generation) }, root, gitRoot, sourceId, incarnation, from: source.last_commit, target, entries: selected, slugMode, ...(company ? { companyPlan: company.plan } : {}) };
   // Freeze all logical identities in one database statement, before yielding
@@ -182,7 +184,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   for (const entry of selected) {
     const origins = byPath.get(syncOriginPath(entry.sourcePath)) ?? [];
     if (origins.length > 1) throw new OperationError('page_identity_changed', 'Several pages claim the same imported origin.');
-    let slug = entry.slug ?? origins[0]?.slug ?? resolveSlugForPath(entry.sourcePath);
+    let slug = entry.slug ?? origins[0]?.slug ?? (isImageFilePath(entry.sourcePath) ? entry.sourcePath.replaceAll('\\', '/').toLowerCase() : resolveSlugForPath(entry.sourcePath));
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw new OperationError('invalid_params', 'The imported file has no usable page slug.');
     const page = origins[0] ?? bySlug.get(slug);
@@ -197,11 +199,26 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   }
   return discovered;
 }
-export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): string {
+/** Read the accepted Git blob, never its UTF-8 rendering or the current worktree. */
+export function readSyncBytes(discovery: SyncDiscovery, entry: SyncEntry): Buffer {
   if (entry.working) {
     const bytes = readSyncFile(discovery.root, entry.path);
     if (bytes === null) throw new OperationError('source_changed', 'The discovered working-tree file disappeared.');
-    return bytes.toString('utf8');
+    return bytes;
   }
-  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
+  const path = syncGitPath(discovery, entry.path);
+  const rows = syncGit(discovery.gitRoot, ['ls-tree', '-z', discovery.target, '--', `:(literal)${path}`]).split('\0').filter(Boolean);
+  const row = rows.find(value => value.slice(value.indexOf('\t') + 1) === path);
+  const [mode, kind, object] = (row?.slice(0, row.indexOf('\t')) ?? '').split(' ');
+  if (!['100644', '100755'].includes(mode) || kind !== 'blob' || !/^[0-9a-f]{40,64}$/.test(object ?? '')) {
+    throw new OperationError('source_changed', 'The pinned sync target is not a regular Git blob.');
+  }
+  const size = Number(syncGit(discovery.gitRoot, ['cat-file', '-s', object]).trim());
+  if (!Number.isSafeInteger(size) || size < 0 || size > MAX_SYNC_BYTES) throw new OperationError('request_too_large', 'Sync file exceeds the bounded import size.');
+  return execFileSync('git', ['-C', discovery.gitRoot, 'cat-file', 'blob', object],
+    { timeout: 30_000, maxBuffer: MAX_SYNC_BYTES + 1, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): string {
+  if (isImageFilePath(entry.sourcePath)) throw new OperationError('invalid_params', 'Image sync requires binary content.');
+  return syncText(readSyncBytes(discovery, entry));
 }

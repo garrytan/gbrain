@@ -45,8 +45,9 @@ import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
-import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
+import { loadAllSources, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -1113,7 +1114,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                   {
                     sourceId: src.id,
                     repoPath: src.local_path,
-                    pull: sourceConfigHasRemoteUrl(src.config),
+                    pull: await automaticSyncPull(engine, src),
                     auto_embed_backfill: true,
                     embed_reason: 'autopilot_freshness',
                   },

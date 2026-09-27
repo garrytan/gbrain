@@ -112,11 +112,11 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(AUTOPILOT_SRC).toMatch(/event: 'dispatch_coalesced',[\s\S]{0,80}mode: 'targeted'/);
   });
 
-  test('freshness sync dispatch uses the parsed source config for pull policy', () => {
+  test('freshness sync dispatch uses authoritative automatic pull policy', () => {
     const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(freshnessIdx).toBeGreaterThan(-1);
     const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 700), freshnessIdx + 200);
-    expect(freshnessBlock).toContain('pull: sourceConfigHasRemoteUrl(src.config)');
+    expect(freshnessBlock).toContain('pull: await automaticSyncPull(engine, src)');
   });
 
   test('freshness sync dispatch skips unavailable source paths before enqueueing', () => {

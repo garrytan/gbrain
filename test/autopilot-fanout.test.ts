@@ -224,11 +224,18 @@ describe('resolveFanoutMax', () => {
 describe('dispatchPerSource — integration with stubbed engine + queue', () => {
   type AddedJob = { name: string; data: unknown; opts: Record<string, unknown> };
 
-  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean }) {
+  function makeStubs(sources: SourceRow[], opts?: { listThrows?: boolean; enabled?: boolean; claimed?: string[]; singleton?: readonly unknown[]; metadataThrows?: boolean }) {
     const added: AddedJob[] = [];
     let nextId = 100;
     const engine = {
       kind: 'postgres' as const,
+      executeRaw: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FROM persistence_brain')) {
+          if (opts?.metadataThrows) throw new Error('synthetic metadata unavailable');
+          return opts?.singleton ?? [{ enabled: opts?.enabled === true }];
+        }
+        return sql.includes('FROM persistence_source_bindings') && opts?.claimed?.includes(String(params?.[0])) ? [{ source_id: params?.[0] }] : [];
+      },
       listAllSources: async () => {
         if (opts?.listThrows) throw new Error('sources table missing');
         return sources;
@@ -254,6 +261,32 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     };
     return { engine, queue, added, events, logs, fanoutOpts };
   }
+
+  test('automatic managed fanout disables pull without skipping sync or treating immutable as archived', async () => {
+    for (const enabled of [false, true]) {
+      const config = { remote_url: 'https://example.invalid/repository.git', immutable: true, managed_clone: true, federated: false };
+      const { engine, queue, added, fanoutOpts } = makeStubs([src('managed', undefined, config)], { enabled, claimed: ['managed'] });
+      expect((await dispatchPerSource(engine, queue, fanoutOpts)).dispatched).toEqual(['managed']);
+      expect(added[0].data).toMatchObject({ source_id: 'managed', pull: false, phases: SOURCE_FRESHNESS_PHASES });
+    }
+  });
+
+  for (const [label, singleton] of [
+    ['missing', []], ['malformed', [{ enabled: 'false' }]],
+    ['ambiguous', [{ enabled: false }, { enabled: true }]], ['query failure', null],
+  ] as const) test(`automatic fanout refuses ${label} singleton and never enqueues`, async () => {
+    const { engine, queue, added, events, fanoutOpts } = makeStubs([
+      src('example', undefined, { remote_url: 'https://example.invalid/repository.git' }),
+    ], singleton === null ? { metadataThrows: true } : { singleton });
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+    expect(added).toEqual([]);
+    expect(result.dispatched).toEqual([]);
+    expect(result.coalesced).toEqual([]);
+    expect(events.map(line => JSON.parse(line))).toContainEqual(expect.objectContaining({
+      event: 'fanout_submit_failed', source_id: 'example',
+      error: singleton === null ? 'synthetic metadata unavailable' : 'Automatic sync requires exactly one known boolean persistence state.',
+    }));
+  });
 
   test('empty sources list falls back to legacy single-job dispatch', async () => {
     const { engine, queue, added, fanoutOpts } = makeStubs([]);

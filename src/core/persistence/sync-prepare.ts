@@ -4,7 +4,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page } from '../types.ts';
 import { OperationError } from '../ops/contract.ts';
-import { importFromContent, importCodeFile } from '../import-file.ts';
+import { importFromContent, importCodeFile, importImageFile, isImageFilePath } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { resolveSlugForPath, slugifyPath, isCodeFilePath } from '../sync.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
@@ -18,6 +18,7 @@ import { getWorktreeBinding } from './ownership.ts';
 import { assertConfiguredSyncRoot, assertSyncEntryOrigin, syncGit, syncRawHash } from './sync-discovery.ts';
 import { assertSyncPageOrigin, syncOriginPath } from './sync-origin.ts';
 import { assertManagedSyncActive, validateSyncAuthority, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
+import { thawSyncContent, type SyncContentEncoding } from './sync-content.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
@@ -33,6 +34,10 @@ export interface SyncIntent extends Record<string, unknown> {
   expected_revision: string | null; sourcePath: string | null; path: string | null;
   rawHash: string | null; content: string | null; ownerEpoch: string;
   lineEndingOnly?: boolean;
+  // Keep binary payloads out of content: older readers must refuse, not parse base64 as Markdown.
+  binaryContent?: string;
+  contentEncoding?: SyncContentEncoding;
+  contentHash?: string;
   working?: boolean;
   processingOptions?: SyncProcessingOptions;
   syncAuthority: SyncAuthority; cursorKey: string; runId: string; index: number;
@@ -137,7 +142,37 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       if (snapshot && snapshot.page.deleted_at == null) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
     } };
-  if (typeof p.content !== 'string' || typeof p.sourcePath !== 'string' || typeof p.path !== 'string') throw new OperationError('storage_error', 'The frozen import content is missing.');
+  if (typeof p.sourcePath !== 'string' || typeof p.path !== 'string') throw new OperationError('storage_error', 'The frozen import content is missing.');
+  const image = isImageFilePath(p.sourcePath);
+  if (image ? p.content !== null : p.binaryContent !== undefined) throw new OperationError('invalid_params', 'The frozen sync payload does not match its file type.');
+  const frozenBytes = thawSyncContent(p.sourcePath, image ? p.binaryContent : p.content, p.contentEncoding, p.contentHash);
+  if (image) {
+    if (p.companyApproval) throw new OperationError('profile_incompatible', 'Company source approval permits only committed Markdown content.');
+    // Like text sync, a pinned import must not roll back a newer canonical edit.
+    // It never writes image bytes back over dirty, missing or newer worktree files.
+    const hash = sha256(frozenBytes);
+    if (snapshot && p.rawHash !== hash && snapshot.page.content_hash !== hash) {
+      throw new OperationError('source_changed', 'Newer working-tree bytes and the current image disagree with this pinned Git import.');
+    }
+    await validate(engine);
+    let prepared: Omit<PreparedContentImport, 'parsedPage'> | undefined;
+    const result = await importImageFile(engine, join(root, p.path), p.sourcePath, {
+      ...source, noEmbed: p.processingOptions!.noEmbed, bytes: frozenBytes,
+      prepare: async value => { prepared = value; return value.result; },
+    });
+    if (!prepared) throw new OperationError('invalid_params', result.error ?? 'The image could not be prepared.');
+    const ready = prepared;
+    if (ready.slug !== row.slug || ready.observedRevision !== (snapshot?.revision ?? null)) {
+      throw new OperationError('revision_conflict', 'The image identity changed during sync preparation.');
+    }
+    return { observedRevision: ready.observedRevision, validate, noop: ready.noop, deferEmbedding: true, apply: async tx => {
+      await ready.apply(tx);
+      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
+        chunks: result.chunks, noop: ready.noop, imported_file: true };
+    } };
+  }
+  if (typeof p.content !== 'string') throw new OperationError('storage_error', 'The frozen text import content is missing.');
   if (isCodeFilePath(p.sourcePath)) {
     if (p.companyApproval) throw new OperationError('profile_incompatible', 'Company source approval permits only committed Markdown content.');
     if (snapshot && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && snapshot.page.compiled_truth !== p.content) {

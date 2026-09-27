@@ -150,7 +150,7 @@ jobs:
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
           key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run verify
       # Guard: no bare `bun test` in workflows/scripts — bun ignores
       # bunfig.toml's timeout, and hooks (beforeAll/afterAll) get the 5s
@@ -200,7 +200,7 @@ jobs:
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
           key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run test:serial
         env:
           SHARD: ${{ matrix.shard }}/4
@@ -262,7 +262,7 @@ jobs:
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
           key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-eval && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
       - run: bun test test/eval-longmemeval-e2e.slow.test.ts --timeout=60000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/sloweval
@@ -313,7 +313,7 @@ jobs:
             test/fixtures/pglite-snapshot-default.tar
             test/fixtures/pglite-snapshot-default.version
           key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         # Absolutized: this file's batch jobs spawn CLI children with varying
         # cwd (the outside-cwd case) where a relative path would silently miss.
@@ -377,7 +377,7 @@ jobs:
             test/fixtures/pglite-snapshot-default.tar
             test/fixtures/pglite-snapshot-default.version
           key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - run: bash scripts/ci-brainbench-gate.sh
         env:
           BRAINBENCH_OUT: ${{ runner.temp }}/brainbench-result.json
@@ -414,7 +414,7 @@ jobs:
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
           key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-perf && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
       # Two bun processes: each needs its own coverage dir (a reused dir is
@@ -497,7 +497,7 @@ jobs:
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
           key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - name: Run test shard ${{ matrix.shard }}/10
         shell: bash
         run: bun scripts/capture-test-log.ts --job 'test (${{ matrix.shard }})' --out "$RUNNER_TEMP/unit.log" -- bash scripts/test-shard.sh ${{ matrix.shard }} 10
@@ -548,7 +548,7 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --ignore-scripts
       - name: Download per-lane coverage artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:

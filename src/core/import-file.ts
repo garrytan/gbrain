@@ -2016,19 +2016,24 @@ export async function importImageFile(
   opts: ImportImageOptions = {},
 ): Promise<ImportResult> {
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import');
-  // Defense-in-depth: reject symlinks before reading bytes.
-  const lstat = lstatSync(filePath);
-  if (lstat.isSymbolicLink()) {
-    return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: `Skipping symlink: ${filePath}` };
-  }
-  const stat = statSync(filePath);
-  if (stat.size > MAX_IMAGE_BYTES) {
-    return {
-      slug: slugifyPath(relativePath),
-      status: 'skipped',
-      chunks: 0,
-      error: `Image too large (${stat.size} bytes, max ${MAX_IMAGE_BYTES}). Voyage multimodal caps at 20MB per input.`,
-    };
+  // Prepared callers validate their accepted source separately; a pinned Git
+  // image may no longer exist in the working tree. Never stat/read it instead.
+  const frozenBuffer = opts.prepare && opts.bytes ? Buffer.from(opts.bytes) : undefined;
+  if (!frozenBuffer) {
+    // Defense-in-depth: reject symlinks before reading bytes.
+    const lstat = lstatSync(filePath);
+    if (lstat.isSymbolicLink()) {
+      return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: `Skipping symlink: ${filePath}` };
+    }
+    const stat = statSync(filePath);
+    if (stat.size > MAX_IMAGE_BYTES) {
+      return {
+        slug: slugifyPath(relativePath),
+        status: 'skipped',
+        chunks: 0,
+        error: `Image too large (${stat.size} bytes, max ${MAX_IMAGE_BYTES}). Voyage multimodal caps at 20MB per input.`,
+      };
+    }
   }
 
   const ext = extname(relativePath).toLowerCase();
@@ -2045,7 +2050,7 @@ export async function importImageFile(
   const linkOpts = opts.sourceId
     ? { fromSourceId: opts.sourceId, toSourceId: opts.sourceId, originSourceId: opts.sourceId }
     : undefined;
-  const buf = opts.prepare && opts.bytes ? opts.bytes : readSourceFileSync(filePath);
+  const buf = frozenBuffer ?? readSourceFileSync(filePath);
   if (buf.byteLength > MAX_IMAGE_BYTES) return { slug: imageSlug, status: 'error', chunks: 0, error: `Image too large (max ${MAX_IMAGE_BYTES} bytes).` };
   const hash = createHash('sha256').update(buf).digest('hex');
 
