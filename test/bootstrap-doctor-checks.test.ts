@@ -496,23 +496,52 @@ describe('bootstrap_serve_lock', () => {
     writeFileSync(join(lockDir, 'lock'), JSON.stringify(lock));
   }
 
-  test('live serve holder → ok (hook IPC available), names the pid', async () => {
-    const { parent, home } = makeHome();
-    writeHeartbeat(home, [{ outcome: 'ok' }]); // open the gate
-    writeLock(home, { pid: process.pid, subcommand: 'serve' });
-    const c = byName(await run(parent), 'bootstrap_serve_lock');
-    expect(c?.status).toBe('ok');
-    expect(c?.message).toContain(String(process.pid));
-    expect(c?.message).toContain('live serve');
+  // #5481: a lock holder must be a GENUINELY FOREIGN live process to exercise
+  // the ok/warn paths meaningfully — `probeLivePgliteHolder` only requires
+  // liveness, and the fix under test distinguishes "this process's own pid"
+  // from every other case, so a foreign/self test pair needs two distinct
+  // real pids. Cross-platform: a JS timer via a spawned bun/node process,
+  // not a shelled-out POSIX command.
+  async function withLiveForeignProcess<T>(fn: (pid: number) => Promise<T>): Promise<T> {
+    const proc = Bun.spawn([process.execPath, '-e', 'setInterval(() => {}, 1000)'], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    try {
+      return await fn(proc.pid);
+    } finally {
+      proc.kill();
+    }
+  }
+
+  test('live serve holder (foreign pid) → ok, names the pid', async () => {
+    await withLiveForeignProcess(async (foreignPid) => {
+      const { parent, home } = makeHome();
+      writeHeartbeat(home, [{ outcome: 'ok' }]); // open the gate
+      writeLock(home, { pid: foreignPid, subcommand: 'serve' });
+      const c = byName(await run(parent), 'bootstrap_serve_lock');
+      expect(c?.status).toBe('ok');
+      expect(c?.message).toContain(String(foreignPid));
+      expect(c?.message).toContain('live serve');
+    });
   }, T);
 
-  test('live NON-serve holder → warn (hook IPC blocked)', async () => {
+  test('live NON-serve holder (foreign pid) → warn (hook IPC blocked)', async () => {
+    await withLiveForeignProcess(async (foreignPid) => {
+      const { parent, home } = makeHome();
+      writeHeartbeat(home, [{ outcome: 'ok' }]);
+      writeLock(home, { pid: foreignPid, subcommand: 'sync' });
+      const c = byName(await run(parent), 'bootstrap_serve_lock');
+      expect(c?.status).toBe('warn');
+      expect(c?.message).toContain('non-serve');
+      expect(c?.message).toContain(String(foreignPid));
+    });
+  }, T);
+
+  test('#5481: live NON-serve holder whose pid IS this doctor process → no check (self lock is not a foreign collision)', async () => {
     const { parent, home } = makeHome();
     writeHeartbeat(home, [{ outcome: 'ok' }]);
     writeLock(home, { pid: process.pid, subcommand: 'sync' });
-    const c = byName(await run(parent), 'bootstrap_serve_lock');
-    expect(c?.status).toBe('warn');
-    expect(c?.message).toContain('non-serve');
+    expect(byName(await run(parent), 'bootstrap_serve_lock')).toBeUndefined();
   }, T);
 
   test('dead holder / no lock → no check (stale lock dir is inert)', async () => {

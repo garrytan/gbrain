@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.59.0.1] - 2026-09-26
+
+**`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
+
+Now the check only warns about a genuinely different process holding the lock. Doctor reading its own lock back is no more interesting than any other bookkeeping doctor does about itself, so it's silent.
+
+**Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
+
+## To take advantage of v0.59.0.1
+
+Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
+
+```bash
+gbrain --version
+gbrain doctor
+```
+
+### Itemized changes
+
+- `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder whose pid is the running doctor process itself, instead of treating it as a foreign, non-serve collision.
+- Closes #5481.
+
 ## [0.59.0.0] - 2026-09-25
 
 **The LongMemEval reader now checks the evidence before giving its short answer.**
