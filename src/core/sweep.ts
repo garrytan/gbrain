@@ -16,6 +16,10 @@ import { lookupRefsForSlugs } from './link-reconciliation.ts';
  *      opts.slugs). Fence rows carry explicit per-row visibility; the
  *      corpus pass below resolves unset visibility through
  *      resolveDefaultVisibility inside the shared pipeline (backstop.ts).
+ *      On a managed brain (persistence_brain.enabled) the legacy reconcile
+ *      refuses before writing; the pass reports that as a skip with reason
+ *      `writer_coordinator_required:facts_fence` (#5499) — the persistence
+ *      coordinator indexes fence rows on every write it accepts.
  *
  *   2. LINK/TIMELINE EXTRACTION [CX-P0.3] — zero-LLM, deterministic. The
  *      same per-page cores `gbrain extract links|timeline --source db`
@@ -145,6 +149,11 @@ export async function runMaintenanceSweep(
     if (existing) existing.count += count;
     else report.skipped.push({ reason, count });
   };
+  // #5499: a legacy writer the managed-brain guard refuses is a skip with a
+  // reason, not a pass failure — the coordinator owns those rows.
+  const coordinatorRefusal = (e: unknown): boolean =>
+    (e as { code?: unknown } | null)?.code === 'writer_coordinator_required' ||
+    /writer_coordinator_required/.test(e instanceof Error ? e.message : String(e));
   const overBudget = () => Date.now() >= deadline;
 
   // Budget abort signal: threads into the fence pass's per-page loop and
@@ -199,8 +208,18 @@ export async function runMaintenanceSweep(
         }
       }
     } catch (e) {
-      skip('facts_fence_error');
-      log(`[sweep] facts-fence pass failed: ${e instanceof Error ? e.message : String(e)}`);
+      if (coordinatorRefusal(e)) {
+        // #5499: runExtractFacts opens with assertUnmanagedCanonicalWriter, so on a
+        // managed brain this pass can only ever refuse — before any write. That is
+        // a skip with a reason, not an error: the persistence coordinator indexes
+        // fence rows on every write it accepts, so there is nothing to reconcile
+        // through the legacy path. Unmanaged brains are unchanged.
+        skip('writer_coordinator_required:facts_fence');
+        log('[sweep] facts-fence pass skipped: a managed brain indexes fence rows through the persistence coordinator on each write (writer_coordinator_required)');
+      } else {
+        skip('facts_fence_error');
+        log(`[sweep] facts-fence pass failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     // ── Pass 2: link/timeline extraction [CX-P0.3] — zero-LLM ─────────
@@ -218,8 +237,15 @@ export async function runMaintenanceSweep(
         });
       }
     } catch (e) {
-      skip('links_timeline_error');
-      log(`[sweep] links/timeline pass failed: ${e instanceof Error ? e.message : String(e)}`);
+      if (coordinatorRefusal(e)) {
+        // #5499: the same guard, surfaced from the batch writers on builds whose
+        // link/timeline inserts still go through the legacy path.
+        skip('writer_coordinator_required:links_timeline');
+        log('[sweep] links/timeline pass skipped: a managed brain accepts link and timeline rows only through the persistence coordinator (writer_coordinator_required)');
+      } else {
+        skip('links_timeline_error');
+        log(`[sweep] links/timeline pass failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     // ── Pass 3: corpus ingest [CX-P0.1] — spend-gated [CX-P0.5] ───────
