@@ -472,6 +472,36 @@ describe('probeLivePgliteHolder', () => {
         expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: false });
       });
     });
+
+    // #5481 review F1 (round 3): an unreadable marker on ONE side must never
+    // hide a definite mismatch on the OTHER, readable marker.
+    test('pid_ns unreadable on our side, boot_id readable and foreign → still warns', () => {
+      withLinuxPlatform(() => {
+        const dataDir = join(home, 'brain.pglite');
+        mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+        writeFileSync(
+          join(dataDir, '.gbrain-lock', 'lock'),
+          JSON.stringify({ pid: process.pid, subcommand: 'embed', pid_ns: 'pid:[99999999]', boot_id: 'foreign-boot' }),
+          'utf8',
+        );
+        const holder = probeLivePgliteHolder(dataDir, { readPidNs: () => null, readBootId: () => 'local-boot' });
+        expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: false });
+      });
+    });
+
+    test('boot_id unreadable on our side, pid_ns readable and foreign → still warns', () => {
+      withLinuxPlatform(() => {
+        const dataDir = join(home, 'brain.pglite');
+        mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+        writeFileSync(
+          join(dataDir, '.gbrain-lock', 'lock'),
+          JSON.stringify({ pid: process.pid, subcommand: 'embed', pid_ns: 'foreign-ns', boot_id: '00000000-0000-0000-0000-000000000000' }),
+          'utf8',
+        );
+        const holder = probeLivePgliteHolder(dataDir, { readPidNs: () => 'local-ns', readBootId: () => null });
+        expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: false });
+      });
+    });
   });
 });
 

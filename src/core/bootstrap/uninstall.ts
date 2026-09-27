@@ -58,19 +58,21 @@ export interface LiveHolder {
    * guard `pglite-lock.ts` already applies at lock-acquisition time. Every
    * lock this codebase writes stamps both fields (`pglite-lock.ts`), so a
    * genuine self-lock always has matching evidence when THIS process can
-   * itself read `/proc`; a stored value that disagrees with a READABLE
-   * current value is treated as NOT self (fail toward warning, not toward
-   * silently suppressing a real foreign collision). When THIS process's own
-   * markers are unreadable (a hardened Linux environment masking
-   * `/proc/self/ns/pid` / boot-id), namespace evidence cannot verify anyone
-   * either way, so pid equality alone decides — same trust model as non-Linux
-   * platforms, which have no PID namespaces and always trust pid alone,
-   * matching the acquisition path's own platform short-circuit. This is a
-   * narrower guarantee than a fully verified cross-host identity check (a
-   * foreign holder reusing this process's pid under an equally restricted
-   * `/proc` would still read as self); closing that residual gap would need
-   * new cross-platform identity infrastructure this codebase does not have,
-   * out of scope for the doctor false-positive this field fixes.
+   * itself read `/proc`. Each marker (`pid_ns`, `boot_id`) is checked
+   * INDEPENDENTLY: a comparable marker (both the stored and our own current
+   * value are readable) that disagrees is an unconditional mismatch — NOT
+   * self — regardless of whether the other marker happens to be unreadable
+   * on either side, so an unreadable `pid_ns` can never hide a disagreeing
+   * `boot_id` (or vice versa). Only when NEITHER marker is comparable does
+   * pid equality alone decide, matching non-Linux platforms (which have no
+   * PID namespaces and always trust pid alone), and the acquisition path's
+   * own platform short-circuit. This is a narrower guarantee than a fully
+   * verified cross-host identity check on non-Linux platforms specifically
+   * (a foreign holder reusing this process's pid on a non-Linux host — where
+   * no namespace evidence exists at all — would still read as self); closing
+   * that residual gap would need new cross-platform identity infrastructure
+   * this codebase does not have, out of scope for the doctor false-positive
+   * this field fixes.
    */
   isSelf: boolean;
 }
@@ -110,19 +112,24 @@ export function probeLivePgliteHolder(
   const lockBootId = typeof raw.boot_id === 'string' ? raw.boot_id : null;
   const ourPidNs = deps.readPidNs();
   const ourBootId = deps.readBootId();
-  // (#5481 review F2) When THIS process's own /proc markers are unreadable
-  // (a hardened/restricted Linux environment masking pid-namespace or
-  // boot-id evidence), we cannot verify namespace identity for ANYONE,
-  // including ourselves — a doctor process that wrote its own lock under the
-  // same restriction would have stored the same unreadable (null) markers,
-  // so requiring a non-null match here would wrongly warn on a genuine
-  // self-lock. Fall back to trusting pid equality alone in that case,
-  // matching the non-Linux platform's existing trust model exactly (both are
-  // "no usable namespace evidence" situations, not "evidence disagrees").
-  const weCanVerifyNamespace = ourPidNs != null && ourBootId != null;
-  const namespaceMatches = process.platform !== 'linux'
-    || !weCanVerifyNamespace
-    || (lockPidNs != null && lockBootId != null && lockPidNs === ourPidNs && lockBootId === ourBootId);
+  // (#5481 review F2/F3) Each marker is checked INDEPENDENTLY: a marker is
+  // "comparable" only when BOTH the stored and our own current value are
+  // readable, and a comparable marker that disagrees is a definite,
+  // unconditional mismatch regardless of whether the OTHER marker happens to
+  // be unreadable on either side — an unreadable pid_ns must never hide a
+  // disagreeing boot_id (or vice versa). Only when NEITHER marker is
+  // comparable (both sides' evidence is entirely unavailable for a marker,
+  // on both markers) do we fall back to trusting pid equality alone, which
+  // matches the non-Linux platform's existing trust model exactly (a doctor
+  // process that wrote its own lock under a restricted `/proc` would have
+  // stored the same unreadable markers, so requiring a match there would
+  // wrongly warn on a genuine self-lock — but a definite disagreement on
+  // whichever marker IS readable is never excused by the other being blind).
+  const pidNsComparable = ourPidNs != null && lockPidNs != null;
+  const bootIdComparable = ourBootId != null && lockBootId != null;
+  const pidNsMismatch = pidNsComparable && lockPidNs !== ourPidNs;
+  const bootIdMismatch = bootIdComparable && lockBootId !== ourBootId;
+  const namespaceMatches = process.platform !== 'linux' || !(pidNsMismatch || bootIdMismatch);
   const isSelf = pid === process.pid && namespaceMatches;
   return { pid, serve, isSelf };
 }
