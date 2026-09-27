@@ -38,6 +38,7 @@ import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHA
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
 import { classifyIntent } from './intent.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { slugifyText } from '../cjk.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -1045,6 +1046,16 @@ export function stripGapsSection(answer: string): string {
 }
 
 /**
+ * `synthesis/<stem>-<date>` for a question: slugifyText's shared letter fold,
+ * every non-letter run → one hyphen (`e-mail` stays `e-mail`, #24), capped at
+ * 60 code points. Letters of every script survive, so two non-Latin
+ * questions on one day no longer share `synthesis/untitled-<date>` (#21).
+ */
+export function synthesisSlug(question: string, date: string): string {
+  return `synthesis/${slugifyText(question, 60) || 'untitled'}-${date}`;
+}
+
+/**
  * Persist a synthesis page + its evidence. Returns the saved slug.
  * Synthesis pages are written under `synthesis/<slugified-question>-<date>.md`.
  */
@@ -1062,13 +1073,7 @@ export async function persistSynthesis(
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const slugSafe = result.question
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .slice(0, 60) || 'untitled';
-  const slug = `synthesis/${slugSafe}-${today}`;
+  const slug = synthesisSlug(result.question, today);
 
   // Build the markdown body. A claim whose quote is not in the evidence is not saved as prose;
   // it goes to frontmatter unverified_claims (reviewable with get_page, out of search and recall).

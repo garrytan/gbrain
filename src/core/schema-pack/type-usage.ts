@@ -16,6 +16,8 @@
  * satisfies it too.
  */
 
+import { CASED_WORD_CHARS } from '../cjk.ts';
+
 export interface TypeUsagePack {
   page_types: ReadonlyArray<{
     name: string;
@@ -72,15 +74,18 @@ export function sanitizeTypeForDisplay(type: string): string {
   return cleaned.length > 64 ? `${cleaned.slice(0, 61)}...` : cleaned;
 }
 
+const SAFE_CLI_TOKEN_RE = new RegExp(`^[${CASED_WORD_CHARS}][${CASED_WORD_CHARS}._:-]{0,127}$`, 'u');
+
 /**
  * Stricter gate for embedding a type into a COPY-PASTEABLE command hint
  * (`gbrain schema add-type '<t>'`): display sanitization keeps quotes and
  * shell metacharacters, so a type like `x'; touch pwn; #` would escape the
  * quoting when an operator pastes the hint. Returns the value only when it
  * is a plain slug-safe token; callers render a placeholder otherwise.
+ * Letters of every script pass (#24): type names may be non-Latin.
  */
 export function safeCliToken(v: string): string | null {
-  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(v) ? v : null;
+  return SAFE_CLI_TOKEN_RE.test(v) ? v : null;
 }
 
 /** One aggregated warning bucket per distinct non-canonical type. */

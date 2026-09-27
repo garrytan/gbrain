@@ -139,14 +139,30 @@ export function slugifyText(s: string, maxCodePoints: number): string {
 
 /**
  * Page-slug segment grammar (no anchors): word-char lead, then word-char or
- * hyphen continuation. Shared by SlugRegistry's SLUG_RE, the Scaffolder's
- * entityLink slug check, the link validator's normalizeToSlug, the subagent
- * wikilink SLUG_RE and the dream-cycle SUMMARY_SLUG_RE, so they accept one
- * grammar (#738, #11). validatePageSlug (ops/context.ts) builds on the same
- * letters but widens the segment with `.` and `_` (#4665). Compose with the
- * `u` flag — see SLUG_WORD_CHARS.
+ * hyphen continuation. Shared by SlugRegistry (DIR_NAME_SLUG_RE), the link
+ * validator's normalizeToSlug for non-.md hrefs, the subagent wikilink SLUG_RE
+ * and the dream-cycle SUMMARY_SLUG_RE, so they accept one grammar (#738, #11).
+ * Sites that name an existing page (validatePageSlug, entityLink, .md hrefs)
+ * use STORED_PAGE_SLUG_SEG below. Compose with the `u` flag — see
+ * SLUG_WORD_CHARS.
  */
 export const PAGE_SLUG_SEG = `[${SLUG_WORD_CHARS}][${SLUG_WORD_CHARS}\\-]*`;
+
+/**
+ * Segment of any slug a stored page may have (#4665): PAGE_SLUG_SEG widened
+ * with `.` and `_`, which the sync slugifier keeps (`notes/v1.0.0`,
+ * `people/my_file_name`, Hugo's `_index`). `_` may lead a segment; `.` may
+ * not, so `..` traversal stays impossible. validatePageSlug's op-boundary
+ * grammar; use it only where the value names an existing page — sites that
+ * mint slugs keep PAGE_SLUG_SEG. Compose with the `u` flag.
+ */
+export const STORED_PAGE_SLUG_SEG = `[${SLUG_WORD_CHARS}_][${SLUG_WORD_CHARS}._\\-]*`;
+
+/** A minted `dir/name` slug (>= 2 PAGE_SLUG_SEG segments), e.g. SlugRegistry's. */
+export const DIR_NAME_SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`, 'u');
+
+/** A `dir/name` slug of an existing page (>= 2 STORED_PAGE_SLUG_SEG segments). */
+export const STORED_DIR_NAME_SLUG_RE = new RegExp(`^${STORED_PAGE_SLUG_SEG}(\\/${STORED_PAGE_SLUG_SEG})+$`, 'u');
 
 /**
  * Shape of a value that may already be a stored slug: SLUG_WORD_CHARS (every

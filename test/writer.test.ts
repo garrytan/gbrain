@@ -157,6 +157,15 @@ describe('Scaffolder', () => {
     expect(entityLink({ slug: 'люди/алёна-йорк', displayText: 'Алёна' })).toBe('[Алёна](люди/алёна-йорк.md)');
   });
 
+  // #24: sync keeps `.` and `_` in path slugs; validatePageSlug accepts them.
+  test('entityLink accepts dotted and underscored page slugs', () => {
+    expect(entityLink({ slug: 'notes/v1.0.0', displayText: 'v1' })).toBe('[v1](notes/v1.0.0.md)');
+    expect(entityLink({ slug: 'люди/а.с.-пример', displayText: 'А.С.' })).toBe('[А.С.](люди/а.с.-пример.md)');
+    expect(entityLink({ slug: 'docs/_index', displayText: 'Index' })).toBe('[Index](docs/_index.md)');
+    expect(() => entityLink({ slug: 'people/../secrets', displayText: 'x' })).toThrow(ScaffoldError);
+    expect(() => entityLink({ slug: 'notes/.hidden', displayText: 'x' })).toThrow(ScaffoldError);
+  });
+
   test('entityLink rejects invalid slug', () => {
     expect(() => entityLink({ slug: 'invalid', displayText: 'x' })).toThrow(ScaffoldError);
     expect(() => entityLink({ slug: 'Bad/Slug', displayText: 'x' })).toThrow(ScaffoldError);
@@ -542,6 +551,44 @@ describe('link validator', () => {
   test('normalizeToSlug composes NFD hrefs (macOS й/ё) to the NFC slug the engine stores', () => {
     expect(normalizeToSlug('люди/йорк-пример.md')).toBe('люди/йорк-пример');
     expect(normalizeToSlug('люди/ёж.md')).toBe('люди/ёж');
+  });
+
+  // #24: a `.md` href names a page, so its dotted slug is checked; any other
+  // dotted href (an image, a versioned path) stays unresolvable.
+  test('normalizeToSlug accepts dots and underscores only in .md hrefs', () => {
+    expect(normalizeToSlug('notes/v1.0.0.md')).toBe('notes/v1.0.0');
+    expect(normalizeToSlug('../люди/А.С.-Пример.md')).toBe('люди/а.с.-пример');
+    expect(normalizeToSlug('docs/_index.md')).toBe('docs/_index');
+    expect(normalizeToSlug('images/photo.png')).toBeNull();
+    expect(normalizeToSlug('notes/v1.0.0')).toBeNull();
+    expect(normalizeToSlug('notes/.hidden.md')).toBeNull();
+  });
+
+  test('normalizeToSlug decodes percent-encoded hrefs; malformed or spaced stays null', () => {
+    expect(normalizeToSlug('people/%D0%B0%D0%BB%D0%B8%D1%81%D0%B0.md')).toBe('people/алиса');
+    expect(normalizeToSlug('people/%D0%B0%D0%BB%D0%B8%D1%81%D0%B0')).toBe('people/алиса');
+    expect(normalizeToSlug('people/%E0%A4%A.md')).toBeNull();
+    expect(normalizeToSlug('people/alice%20smith.md')).toBeNull();
+  });
+
+  test('checks dotted and percent-encoded page links; an image link stays a warning', async () => {
+    await engine.putPage('notes/v1.0.0', { type: 'note', title: 'v1', compiled_truth: 'x', frontmatter: {} });
+    const findings = await linkValidator.validate({
+      slug: 'people/bob',
+      type: 'person',
+      compiledTruth: 'See [v1](../notes/v1.0.0.md), [v2](../notes/v2.0.0.md), '
+        + '[Алиса](../people/%D0%B0%D0%BB%D0%B8%D1%81%D0%B0.md) and ![photo](images/photo.png).',
+      timeline: '',
+      frontmatter: {},
+      engine,
+    });
+    const errors = findings.filter(f => f.severity === 'error').map(f => f.message);
+    expect(errors).toEqual([
+      'Dangling wikilink to notes/v2.0.0 (no such page)',
+      'Dangling wikilink to people/алиса (no such page)',
+    ]);
+    expect(findings.filter(f => f.severity === 'warning').map(f => f.message))
+      .toEqual(['Unresolvable link path: images/photo.png']);
   });
 
   test('isExternalUrl detects http(s)', () => {
