@@ -58,15 +58,20 @@ export interface LiveHolder {
    * guard `pglite-lock.ts` already applies at lock-acquisition time. Every
    * lock this codebase writes stamps both fields (`pglite-lock.ts`), so a
    * genuine self-lock always has matching evidence when THIS process can
-   * itself read `/proc`. Each marker (`pid_ns`, `boot_id`) is checked
-   * INDEPENDENTLY: a comparable marker (both the stored and our own current
-   * value are readable) that disagrees is an unconditional mismatch — NOT
-   * self — regardless of whether the other marker happens to be unreadable
-   * on either side, so an unreadable `pid_ns` can never hide a disagreeing
-   * `boot_id` (or vice versa). Only when NEITHER marker is comparable does
-   * pid equality alone decide, matching non-Linux platforms (which have no
-   * PID namespaces and always trust pid alone), and the acquisition path's
-   * own platform short-circuit. This is a narrower guarantee than a fully
+   * itself read `/proc`. Each marker (`pid_ns`, `boot_id`) must AGREE
+   * exactly (`===`) between the stored value and our own current reading —
+   * which means only two shapes count as agreement: both sides null (no
+   * evidence for that marker on either side, since a self-lock written under
+   * the SAME currently-restricted `/proc` would also have stored null), or
+   * both sides the same non-null string. Any ASYMMETRIC availability (one
+   * side null, the other not) is a disagreement, never a free pass: a live
+   * self-lock written by THIS process, whose readers currently succeed,
+   * would always have stored a matching non-null value, so a stored null
+   * next to our readable value means a DIFFERENT (foreign) environment wrote
+   * it — and a stored value next to our unreadable current value can never
+   * be verified as ours either. Both markers must independently agree; a
+   * single disagreeing marker is never excused by the other's state. This is
+   * a narrower guarantee than a fully
    * verified cross-host identity check on non-Linux platforms specifically
    * (a foreign holder reusing this process's pid on a non-Linux host — where
    * no namespace evidence exists at all — would still read as self); closing
@@ -112,24 +117,20 @@ export function probeLivePgliteHolder(
   const lockBootId = typeof raw.boot_id === 'string' ? raw.boot_id : null;
   const ourPidNs = deps.readPidNs();
   const ourBootId = deps.readBootId();
-  // (#5481 review F2/F3) Each marker is checked INDEPENDENTLY: a marker is
-  // "comparable" only when BOTH the stored and our own current value are
-  // readable, and a comparable marker that disagrees is a definite,
-  // unconditional mismatch regardless of whether the OTHER marker happens to
-  // be unreadable on either side — an unreadable pid_ns must never hide a
-  // disagreeing boot_id (or vice versa). Only when NEITHER marker is
-  // comparable (both sides' evidence is entirely unavailable for a marker,
-  // on both markers) do we fall back to trusting pid equality alone, which
-  // matches the non-Linux platform's existing trust model exactly (a doctor
-  // process that wrote its own lock under a restricted `/proc` would have
-  // stored the same unreadable markers, so requiring a match there would
-  // wrongly warn on a genuine self-lock — but a definite disagreement on
-  // whichever marker IS readable is never excused by the other being blind).
-  const pidNsComparable = ourPidNs != null && lockPidNs != null;
-  const bootIdComparable = ourBootId != null && lockBootId != null;
-  const pidNsMismatch = pidNsComparable && lockPidNs !== ourPidNs;
-  const bootIdMismatch = bootIdComparable && lockBootId !== ourBootId;
-  const namespaceMatches = process.platform !== 'linux' || !(pidNsMismatch || bootIdMismatch);
+  // (#5481 review F2/F3/F4) A marker "agrees" only in exactly two cases:
+  // BOTH sides unavailable (no evidence to compare at all — permitted, since
+  // a genuine self-lock written under the SAME currently-restricted `/proc`
+  // would have stored the same unreadable value), or BOTH sides available
+  // AND equal. Any ASYMMETRIC availability (one side null, the other not) is
+  // treated as disagreement, never a free pass: a live self-lock written by
+  // THIS process, whose readers currently succeed, would always have stored
+  // a matching non-null value — a stored null next to our readable value
+  // means the lock was written by a DIFFERENT environment (foreign), and
+  // conversely a stored value next to our unreadable current value can never
+  // be verified as ours. Both markers must independently agree; either
+  // disagreeing forces isSelf to false regardless of the other.
+  const namespaceMatches = process.platform !== 'linux'
+    || (ourPidNs === lockPidNs && ourBootId === lockBootId);
   const isSelf = pid === process.pid && namespaceMatches;
   return { pid, serve, isSelf };
 }

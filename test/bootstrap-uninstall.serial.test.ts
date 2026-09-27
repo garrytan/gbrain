@@ -502,6 +502,30 @@ describe('probeLivePgliteHolder', () => {
         expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: false });
       });
     });
+
+    // #5481 review F1 (round 4): a FOREIGN lock with null/missing namespace
+    // markers (an older binary, or a foreign container's own restricted
+    // /proc) must never be trusted as self just because OUR OWN readers
+    // happen to work — a genuine self-lock written by this same live process
+    // would have stored matching non-null values whenever our readers
+    // succeed, so a stored null next to our readable value is a foreign
+    // environment, not "no evidence to compare".
+    test('lock markers null/missing but OUR readers succeed → still warns (asymmetric availability is never self)', () => {
+      withLinuxPlatform(() => {
+        const dataDir = join(home, 'brain.pglite');
+        mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+        writeFileSync(
+          join(dataDir, '.gbrain-lock', 'lock'),
+          JSON.stringify({ pid: process.pid, subcommand: 'embed', pid_ns: null, boot_id: null }),
+          'utf8',
+        );
+        const holder = probeLivePgliteHolder(dataDir, {
+          readPidNs: () => 'pid:[12345678]',
+          readBootId: () => '22222222-2222-2222-2222-222222222222',
+        });
+        expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: false });
+      });
+    });
   });
 });
 
