@@ -211,7 +211,7 @@ async function processChunkBatch(
   for (const e of edges) {
     const pageId = pageByChunkId.get(e.from_chunk_id);
     if (pageId === undefined) continue;
-    lookups.add(`${pageId} ${e.to_symbol_qualified}`);
+    lookups.add(`${pageId}\0${e.to_symbol_qualified}`);
   }
 
   // One-shot per-page candidate map. We pre-load all qualified symbol names
@@ -226,7 +226,7 @@ async function processChunkBatch(
       [pagesToProbe],
     );
     for (const r of rows) {
-      const key = `${r.page_id} ${r.symbol_name_qualified}`;
+      const key = `${r.page_id}\0${r.symbol_name_qualified}`;
       const list = candidatesByKey.get(key) ?? [];
       list.push({ id: r.id, page_id: r.page_id });
       candidatesByKey.set(key, list);
@@ -243,7 +243,7 @@ async function processChunkBatch(
       stats.edges_unmatched += 1;
       continue;
     }
-    const key = `${pageId} ${e.to_symbol_qualified}`;
+    const key = `${pageId}\0${e.to_symbol_qualified}`;
     const candidates = candidatesByKey.get(key) ?? [];
     if (candidates.length === 1) {
       toResolve.push({ edgeId: e.id, chunkId: candidates[0]!.id });
