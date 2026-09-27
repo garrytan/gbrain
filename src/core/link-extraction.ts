@@ -18,7 +18,7 @@ import { stripCodeBlocks } from './markdown-code.ts';
 import { isValidSourceId } from './source-id.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { slugifyPath, slugifySegment } from './sync.ts';
-import { SLUG_WORD_CHARS, foldSlugText } from './cjk.ts';
+import { SLUG_PATH_SHAPE_RE, SLUG_WORD_CHARS, foldSlugText } from './cjk.ts';
 import { foldNonDecomposingLatin } from './latin-fold.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
@@ -1520,17 +1520,14 @@ export function makeResolver(
 
       const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
 
-      // Step 1: already a slug? Try an exact page lookup for any slug-shaped
-      // value (contains '/', slug charset). Broadened beyond the original
-      // single-segment lowercase-leading form (`^[a-z][a-z0-9-]*\/[a-z0-9]...`)
-      // to also accept digit-leading folders (`90-people/nicolai`,
-      // `01-trading/...`) and nested paths (`a/b/c`) — common in PARA-numbered
-      // vaults. This is an EXACT getPage match only — no fuzzy — so it never
-      // produces a false positive; a non-existent slug just falls through to
-      // the steps below. Fixes frontmatter `related: [[dir/slug]]` values
-      // (unwrapped by unwrapWikilink) that name a real page the strict regex
-      // could not reach and whose full-path fuzzy score is below threshold.
-      if (/\//.test(trimmed) && /^[a-z0-9][a-z0-9/_-]*$/.test(trimmed)) {
+      // Step 1 (the exact-slug step): try an exact page lookup for any slug-shaped
+      // value (contains '/', shared slug shape: every script, digit-leading
+      // folders like `90-people/nicolai`, nested and dotted paths). This is an
+      // EXACT getPage match only — no fuzzy — so it never produces a false
+      // positive; a non-existent slug just falls through to the steps below.
+      // A real slug this step rejects falls to fuzzy matching, which can pick
+      // a sibling page (#11), so the shape must accept everything sync mints.
+      if (/\//.test(trimmed) && SLUG_PATH_SHAPE_RE.test(trimmed)) {
         // Same source scope as the basename index above (#972): a wikilink in
         // source A must not resolve to a same-slug page in source B.
         const page = await engine.getPage(trimmed, opts.sourceId ? { sourceId: opts.sourceId } : undefined); // gbrain-allow-unscoped-getpage: read-only wikilink resolution; unscoped-when-no-source is the documented single-source behavior
