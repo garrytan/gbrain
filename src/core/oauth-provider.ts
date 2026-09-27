@@ -37,7 +37,7 @@ import {
   dcrScopeViolation,
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes } from './legacy-token-scope.ts';
+import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes, parseLegacyOperationGrant } from './legacy-token-scope.ts';
 import { grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
@@ -958,6 +958,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
         clientName: name,
         scopes: grantedScopes ?? ['read', 'write', 'admin'],
+        ...(permissions?.allowed_operations === undefined ? {} : { allowedOperations: parseLegacyOperationGrant(permissions.allowed_operations) }),
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // Legacy tokens without an explicit permissions.source_id grant keep
         // the historical 'default' source floor. Array grants become

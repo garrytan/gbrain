@@ -33,6 +33,7 @@ import { resolve } from 'path';
 // v0.41.15.0 (T10, D9): per-batch parallel workers.
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
+import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 
 interface ReindexOpts {
   /** Cap total pages reindexed. Useful for triage runs on huge brains. */
@@ -456,6 +457,7 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
 
   reporter.finish();
 
+  if (reindexed > 0) await refreshProjectionStatistics(engine);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
   if (failed > 0) setCliExitVerdict(1);
 

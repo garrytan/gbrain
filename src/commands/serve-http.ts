@@ -29,30 +29,30 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { createAdminLimiters } from './serve-http-admin-limits.ts';
 import { mountConfidentialOAuth, mountOAuthConsent, withBearerScopeHint } from './serve-http-oauth.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
 import { resolveMcpInstructions } from '../mcp/instructions.ts';
-import { installCapabilitiesResource } from '../mcp/capabilities.ts';
+import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
+import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import { publicHarnessMetadata } from '../core/harness/registry.ts';
 import { GRANT_PROFILES } from '../core/grants/model.ts';
-import { provisionHarnessGrant } from './mcp-provision.ts';
-import { retainCredentialDelivery } from '../core/harness/delivery.ts';
-import { readClientGrant, rescopeClientGrant } from '../core/grants/service.ts';
-import { parseAdminGrantRequest, previewNewAdminGrant, grantHttpStatus, GRANT_TOKEN_IMPLICATIONS, mountAdminGrantDiscovery } from './serve-http-grants.ts';
+import { mountAdminClients } from './serve-http-clients.ts';
+import { mountAdminRegistration } from './serve-http-registration.ts';
+import { rescopeClientGrant } from '../core/grants/service.ts';
+import { parseAdminGrantRequest, grantHttpStatus, GRANT_TOKEN_IMPLICATIONS, mountAdminGrantDiscovery, mountAdminGrantEdits } from './serve-http-grants.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import {
   GBrainOAuthProvider,
-  validateTokenEndpointAuthMethod,
   dcrRegistrationContext,
   DEFAULT_DCR_TTL_MIN_SECONDS,
 } from '../core/oauth-provider.ts';
-import { hasScope, scopesSupportedForDiscovery, normalizeScopesInput } from '../core/scope.ts';
+import { hasScope, operationScopesAllowed, scopesSupportedForDiscovery } from '../core/scope.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
-import { normalizeSourceInput, normalizeFederatedReadInput } from '../core/source-id.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult } from '../mcp/dispatch.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
@@ -64,7 +64,6 @@ import {
   resolveDefaultClientSurface,
   type McpSurface,
 } from '../mcp/surface.ts';
-import { writeSurfaceChangeAudit } from '../core/surface-audit.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
 import { createPersistenceIpcProvider } from '../core/persistence/provider.ts';
@@ -158,14 +157,6 @@ export function selectGitHubItemSources<Row extends { local_path: string | null;
   }
   return { verified, legacyMatched };
 }
-import {
-  registerScopedClient,
-  preflightOauthClientColumns,
-  TOKEN_TTL_MIN_SECONDS,
-  TOKEN_TTL_MAX_SECONDS,
-  type RegisteredClient,
-} from './auth.ts';
-import { registerClientNameLockKey } from './agent-register.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
 import {
   computeContentHash,
@@ -1066,6 +1057,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
   // ---------------------------------------------------------------------------
   app.use(cookieParser());
+  // Installed before every admin login, nonce and API handler.
+  app.use((req, res, next) => {
+    if (req.path === '/admin' || req.path.startsWith('/admin/')) {
+      res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY' });
+    }
+    next();
+  });
 
   // #3893 (reimplemented from @y2688): request metrics. Mounted here, BEFORE
   // every route — Express only applies `app.use` middleware to routes
@@ -1140,21 +1138,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again later.' },
   });
 
-  // Magic-link rate limiter: 10 requests/min/IP. The bootstrap token is
-  // 64-char hex (unguessable) so brute-forcing is computationally
-  // infeasible — but a misconfigured client looping on /admin/auth/:bad
-  // could DoS the server's CPU on sha256 + the inline HTML response.
-  // Defense-in-depth on the highest-privileged URL the server exposes.
-  const adminAuthRateLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    // Object message → express-rate-limit serializes it as JSON, matching the
-    // other /admin routes. Neutral wording: the bucket is shared across
-    // /admin/login, /admin/api/issue-magic-link, AND /admin/auth/:token.
-    message: { error: 'rate_limited', message: 'Too many admin auth attempts. Try again shortly.' },
-  });
+  const adminLimits = createAdminLimiters();
 
   mountConfidentialOAuth(app, oauthProvider, ccRateLimiter);
 
@@ -1270,7 +1254,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.use(authRouter);
   app.get('/.well-known/gbrain', (_req, res) => {
     res.json({ version: VERSION, protocol: 'mcp', endpoint: mcpResourceUrl.toString(), profiles: GRANT_PROFILES,
-      adapters: publicHarnessMetadata(), documentation: 'https://github.com/garrytan/gbrain/blob/master/docs/mcp/README.md' });
+      adapters: publicHarnessMetadata(), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()), documentation: 'https://github.com/garrytan/gbrain/blob/master/docs/mcp/README.md' });
   });
 
   // ---------------------------------------------------------------------------
@@ -1288,10 +1272,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // v0.40 D15.5: safeHexEqual extracted to src/core/timing-safe.ts so the new
   // /webhooks/github HMAC verifier reuses the same constant-time compare.
   // POST /admin/login — JSON body with token (for programmatic/UI login).
-  // Rate-limited (shared adminAuthRateLimiter bucket, 10/min/IP) so the
-  // bootstrap-token credential surface can't be hammered — same
-  // defense-in-depth posture as /admin/auth/:token below.
-  app.post('/admin/login', adminAuthRateLimiter, express.json(), (req, res) => {
+  // Independent limits: 60 total requests and 10 failed authentications/min/IP.
+  app.post('/admin/login', adminLimits.total, adminLimits.failures, express.json(), (req, res) => {
     const token = req.body?.token;
     if (!token || typeof token !== 'string') {
       res.status(400).json({ error: 'Token required' });
@@ -1300,10 +1282,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
     const tokenHash = createHash('sha256').update(token).digest('hex');
     if (!safeHexEqual(tokenHash, bootstrapHash)) {
-      res.status(401).json({ error: 'Invalid token. Check your terminal output.' });
+      res.status(401).json({ error: 'Owner credential rejected. Use the protected bootstrap credential configured for this running server; an OAuth token cannot administer it.' });
       return;
     }
 
+    res.locals.ownerAuthenticated = true;
     const sessionId = randomBytes(32).toString('hex');
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
     adminSessions.set(sessionId, expiresAt);
@@ -1361,10 +1344,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // POST /admin/api/issue-magic-link — agent-callable mint endpoint.
   // Auth: Authorization: Bearer <bootstrapToken>. Returns one-time nonce.
-  // Rate-limited (shared adminAuthRateLimiter bucket, 10/min/IP): this route
-  // verifies the bootstrap token too, so it gets the same brute-force/DoS
-  // metering as /admin/login and /admin/auth/:token.
-  app.post('/admin/api/issue-magic-link', adminAuthRateLimiter, express.json(), (req: Request, res: Response) => {
+  // Credential verification shares the authentication limits, never the consent bucket.
+  app.post('/admin/api/issue-magic-link', adminLimits.total, adminLimits.failures, express.json(), (req: Request, res: Response) => {
     const auth = (req.headers.authorization || '') as string;
     const m = auth.match(/^Bearer\s+(\S+)$/i);
     if (!m) {
@@ -1376,20 +1357,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       res.status(401).json({ error: 'Invalid bootstrap token' });
       return;
     }
+    res.locals.ownerAuthenticated = true;
+    const pendingId = req.body?.oauth_request;
+    if (pendingId !== undefined && !oauthProvider.grants.hasPending(pendingId)) {
+      res.status(410).json({ error: 'authorization_unavailable', stage: 'consent', outcome: 'failed',
+        message: 'This OAuth request expired, completed, or the server restarted.',
+        next_action: 'Restart authorization in the native client, then request an owner login link with the new pending-request ID.' });
+      return;
+    }
     pruneExpiredNonces();
     const nonce = randomBytes(32).toString('hex');
     magicLinkNonces.set(nonce, Date.now() + NONCE_TTL_MS);
-    const baseUrl = publicUrl || `http://localhost:${port}`;
-    const pendingId = req.body?.oauth_request;
-    const pendingQuery = oauthProvider.grants.hasPending(pendingId) ? `?oauth_request=${pendingId}` : '';
-    res.json({ url: `${baseUrl}/admin/auth/${nonce}${pendingQuery}`, expires_in: NONCE_TTL_MS / 1000 });
+    const link = new URL(`/admin/auth/${nonce}`, issuerUrl);
+    if (pendingId !== undefined) link.searchParams.set('oauth_request', pendingId);
+    res.json({ url: link.toString(), expires_in: NONCE_TTL_MS / 1000 });
   });
 
   // GET /admin/auth/:nonce — single-use magic link redemption.
   // Browser hits it, server validates the nonce (exists + unconsumed +
   // unexpired), marks consumed, sets cookie, redirects to dashboard.
-  // Rate-limited at 10/min/IP to harden against DoS via bad-token loops.
-  app.get('/admin/auth/:token', adminAuthRateLimiter, (req: Request, res: Response) => {
+  // Successful nonce verification does not consume the failed-auth allowance.
+  app.get('/admin/auth/:token', adminLimits.total, adminLimits.failures, (req: Request, res: Response) => {
     const nonce = String(req.params.token ?? '');
     pruneExpiredNonces();
 
@@ -1410,22 +1398,28 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 </style></head><body><div class="box">
 <div class="logo">GBrain</div>
 <div class="msg">⚠️ This admin link has expired, was already used, or the server has restarted.</div>
-<div class="hint"><b>Get a fresh link from your AI agent:</b>
-<div class="prompt">&ldquo;Give me the GBrain admin login link&rdquo;</div>
+<div class="hint"><b>Ask the server administrator or the harness hosting this server for a fresh link:</b>
+<div class="prompt">Run gbrain mcp admin login-link --url ${mcpResourceUrl.toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))} using the protected owner credential. If connecting OAuth, restart authorization in the native client and include its new --oauth-request ID.</div>
 </div></div></body></html>`);
       return;
     }
 
+    res.locals.ownerAuthenticated = true;
     // Consume the nonce — it's single-use, second click will fail.
     magicLinkNonces.delete(nonce);
     consumedNonces.add(nonce);
 
+    res.locals.ownerAuthenticated = true;
     const sessionId = randomBytes(32).toString('hex');
     const sessionExpiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
     adminSessions.set(sessionId, sessionExpiresAt);
 
     res.cookie('gbrain_admin', sessionId, adminCookie(req, 7 * 24 * 60 * 60 * 1000));
     const pendingId = req.query.oauth_request;
+    if (pendingId !== undefined && !oauthProvider.grants.hasPending(pendingId)) {
+      res.status(410).send('This OAuth request expired, completed, or the server restarted. Restart authorization in the native client and ask the server administrator for a new login link with the new pending-request ID.');
+      return;
+    }
     res.redirect(oauthProvider.grants.hasPending(pendingId)
       ? `/admin/?oauth_request=${pendingId}#oauth-consent` : '/admin/');
   });
@@ -1446,18 +1440,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     next();
   }
 
-  mountOAuthConsent(app, oauthProvider, requireAdmin, adminAuthRateLimiter);
-
-  app.post('/admin/api/grants', requireAdmin, express.json(), async (req, res) => {
-    res.set('Cache-Control', 'no-store');
-    try {
-      const result = await provisionHarnessGrant(engine, req.body, 'admin-api');
-      res.json(result);
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      res.status(code === 'grant_conflict' ? 409 : 400).json({ error: code ?? 'invalid_grant', message: error instanceof Error ? error.message : 'Grant failed' });
-    }
-  });
+  mountOAuthConsent(app, oauthProvider, requireAdmin, adminLimits.consent);
 
   // #3893 (reimplemented from @y2688): Prometheus exposition. Admin-gated —
   // request/error/latency series profile a personal brain's usage, so this
@@ -1856,218 +1839,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   });
 
   mountAdminGrantDiscovery(app, requireAdmin, engine, mcpResourceUrl.toString());
+  mountAdminClients(app, requireAdmin, engine, mcpResourceUrl.toString());
 
-  // Register client from admin dashboard
-  app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
-    res.set('Cache-Control', 'no-store');
-    // Set only once the client row has COMMITTED — the catch below folds it
-    // into the 500 payload so a post-commit failure never reads as
-    // "nothing was created".
-    let createdClientId: string | undefined;
-    try {
-      // v0.39.3.0 WARN-9 + CV12: accept BOTH `scopes` (admin SPA convention)
-      // AND `scope` (OAuth wire-format convention, singular). The pre-fix
-      // code destructured only `scopes` and used `scopes || 'read'` which:
-      //   - Silently ignored `scope` requests (always defaulted to 'read')
-      //   - Threw on array input because registerClientManual's parseScopeString
-      //     calls .split(' ') which arrays don't have
-      //   - Accepted `['read write']` (space-in-element bug shape codex flagged)
-      //     and other malformed inputs
-      // normalizeScopesInput handles all four valid shapes (string, string[],
-      // missing, empty) and rejects the rest with a structured 400.
-      const { name, source, federatedRead, tokenTtl, grantTypes, redirectUris, tokenEndpointAuthMethod } = req.body;
-      const rawScopes = (req.body as Record<string, unknown>).scopes ?? (req.body as Record<string, unknown>).scope;
-      if (typeof name !== 'string' || !name.trim()) { res.status(400).json({ error: 'Name required' }); return; }
-      let scopeString: string;
-      try {
-        scopeString = normalizeScopesInput(rawScopes);
-      } catch (e) {
-        res.status(400).json({
-          error: 'invalid_scopes',
-          message: e instanceof Error ? e.message : String(e),
-        });
-        return;
-      }
-      const grants = Array.isArray(grantTypes) && grantTypes.length > 0 ? grantTypes : ['client_credentials'];
-      const uris = Array.isArray(redirectUris) ? redirectUris : [];
-      // v0.41.3 (T1+T4): validate token_endpoint_auth_method via shared
-      // ALLOWED_TOKEN_ENDPOINT_AUTH_METHODS before reaching the provider.
-      // Pre-v0.41.3 this endpoint did INSERT (confidential) → UPDATE (NULL
-      // out secret_hash) for the 'none' case, which left a confidential
-      // row stranded if the UPDATE failed (codex F4). Atomic now: pass the
-      // method to registerClientManual and let it INSERT the correct row
-      // in a single statement.
-      let validatedAuthMethod: string | undefined;
-      try {
-        validatedAuthMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
-      } catch (e) {
-        res.status(400).json({
-          error: 'invalid_token_endpoint_auth_method',
-          message: e instanceof Error ? e.message : String(e),
-        });
-        return;
-      }
-      // v0.41.x: honor optional `source` (write source_id) and `federatedRead`
-      // (read source set) from the request body, mirroring the CLI's
-      // `--source` / `--federated-read` flags. Omitting both preserves the
-      // historical behavior (source_id='default', federated_read=[source_id]).
-      // Pre-fix this endpoint hardcoded 'default'/undefined, so an admin SPA or
-      // a proxy could never mint a client bound to a non-default brain source
-      // over HTTP — only the CLI could. Validated here for a structured 400.
-      let sourceId: string;
-      let federatedReadIds: string[] | undefined;
-      try {
-        sourceId = normalizeSourceInput(source);
-        federatedReadIds = normalizeFederatedReadInput(federatedRead);
-      } catch (e) {
-        res.status(400).json({
-          error: 'invalid_source',
-          message: e instanceof Error ? e.message : String(e),
-        });
-        return;
-      }
-      // cathedral-6: a WELL-FORMED but nonexistent source used to surface as
-      // a 500 (the source_id FK fires inside the INSERT). Check existence +
-      // archived up front for a structured 400 — same contract as the
-      // malformed case, mirroring the CLI lane. ONE batched query on the
-      // engine lane (SqlQuery forbids arrays; engine is in scope).
-      {
-        const idsToCheck = [...new Set([sourceId, ...(federatedReadIds ?? [])])];
-        const found = await engine.executeRaw<{ id: string; archived: boolean | null }>(
-          `SELECT id, archived FROM sources WHERE id = ANY($1::text[])`,
-          [idsToCheck],
-        );
-        const byId = new Map(found.map(r => [r.id, r]));
-        for (const id of idsToCheck) {
-          const row = byId.get(id);
-          if (!row) {
-            res.status(400).json({
-              error: 'unknown_source',
-              message: `source "${id}" does not exist — create it first (gbrain sources add ${id})`,
-            });
-            return;
-          }
-          if (row.archived) {
-            res.status(400).json({
-              error: 'archived_source',
-              message: `source "${id}" is archived — unarchive it or drop it from the grant`,
-            });
-            return;
-          }
-        }
-      }
-      // cathedral-6: validate tokenTtl BEFORE the transaction. The old
-      // `Number(tokenTtl) > 0` passed Infinity/floats through to fail the
-      // integer UPDATE inside the tx (rollback → opaque 500). Falsy values
-      // (omitted / null / 0 / '') keep the historical "no TTL requested"
-      // meaning; anything else must be an integer inside the shared bounds.
-      let ttlNum: number | undefined;
-      if (tokenTtl) {
-        const v = Number(tokenTtl);
-        if (!Number.isInteger(v) || v < TOKEN_TTL_MIN_SECONDS || v > TOKEN_TTL_MAX_SECONDS) {
-          res.status(400).json({
-            error: 'invalid_token_ttl',
-            message: `tokenTtl must be an integer number of seconds between ${TOKEN_TTL_MIN_SECONDS} and ${TOKEN_TTL_MAX_SECONDS} (90 days); got ${JSON.stringify(tokenTtl)}. Omit the field (or pass 0/null) to keep the server default.`,
-          });
-          return;
-        }
-        ttlNum = v;
-      }
-      // Profile resolution and all advanced bindings use the same canonical
-      // validation as CLI registration. Preview performs no credential writes.
-      const grantRequest = parseAdminGrantRequest(req.body);
-      const preview = await previewNewAdminGrant(engine, name, grantRequest.patch, { sourceId, federatedRead: federatedReadIds, scopes: scopeString });
-      if (grantRequest.dryRun) {
-        const existing = await sql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`;
-        if (existing.length) { res.status(409).json({ error: 'duplicate_name', client_id: existing[0].client_id }); return; }
-        res.json({ before: null, after: preview, revision: 0, dryRun: true, tokenImplications: GRANT_TOKEN_IMPLICATIONS });
-        return;
-      }
-      // Column pre-flight OUTSIDE the tx (25P02 — nothing inside may degrade):
-      // pre-v61 brains lack the scoped-client columns and registerClientManual's
-      // internal 42703 retry ladder would abort the transaction, so refuse up
-      // front with the CLI lane's brain_too_old contract. Passing {columns}
-      // through also makes the ttl write SKIP (rather than throw) on brains
-      // without token_ttl.
-      const columns = await preflightOauthClientColumns(sql);
-      if (!columns.has('source_id') || !columns.has('federated_read')) {
-        res.status(400).json({
-          error: 'brain_too_old',
-          message: 'this brain predates scoped OAuth clients (source_id/federated_read columns) — run `gbrain apply-migrations --yes` first.',
-        });
-        return;
-      }
-      // Duplicate-name parity with the CLI lane: a second client under the
-      // same name is a 409, never a silent second row. The dup-check and the
-      // INSERT run in ONE transaction under the SAME name-scoped advisory
-      // lock the CLI takes — two concurrent same-name requests serialize, and
-      // the loser sees the winner's committed row (as two separate autocommit
-      // statements, both used to pass the pre-check). deleted_at tolerance is
-      // preflight-decided (no in-tx 42703 retry).
-      let dupClientId: string | null = null;
-      let registered: RegisteredClient | undefined;
-      await engine.transaction(async (tx) => {
-        await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
-        const txSql = sqlQueryForEngine(tx);
-        const dupRows = columns.has('deleted_at')
-          ? await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`
-          : await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`;
-        if (dupRows.length > 0) {
-          dupClientId = String(dupRows[0].client_id);
-          return;
-        }
-        // Compose the SAME core the CLI uses (registerScopedClient) instead of
-        // open-coding registerClientManual + a raw TTL UPDATE — the two paths
-        // had already drifted once (this route hardcoded 'default' pre-v0.41).
-        registered = await registerScopedClient(txSql, name, {
-          grantTypes: grants,
-          scopes: preview.scopes.join(' '),
-          sourceId: preview.sourceId!,
-          federatedRead: preview.federatedRead,
-          redirectUris: uris,
-          tokenEndpointAuthMethod: validatedAuthMethod,
-          boundTools: undefined,
-          boundSourceId: undefined,
-          boundBrainId: undefined,
-          boundSlugPrefixes: undefined,
-          boundMaxConcurrent: undefined,
-          budgetUsdPerDay: undefined,
-          tokenTtlSeconds: undefined,
-        }, { tokenTtlSeconds: preview.tokenTtlSeconds ?? ttlNum, columns, grant: grantRequest.patch });
-        if (registered.clientSecret) {
-          // Preserve delivery before COMMIT so a lost browser response is
-          // recoverable without rotating or duplicating the registered client.
-          retainCredentialDelivery({ version: 1, mcp_url: mcpResourceUrl.toString(), issuer_url: issuerUrl.origin,
-            client_id: registered.clientId, client_secret: registered.clientSecret,
-            profile: preview.profile ?? undefined, source_id: preview.sourceId ?? undefined });
-        }
-      });
-      if (dupClientId !== null) {
-        res.status(409).json({
-          error: 'duplicate_name',
-          client_id: dupClientId,
-        });
-        return;
-      }
-      // Post-commit: the row exists from here on — any later failure must
-      // name the created client (no false "nothing was created").
-      const reg = registered!;
-      createdClientId = reg.clientId;
-      res.json({
-        clientId: reg.clientId,
-        ...(reg.clientSecret !== undefined ? { clientSecret: reg.clientSecret } : {}),
-        tokenTtl: reg.tokenTtl ?? null,
-      });
-    } catch (e) {
-      // A throw INSIDE the tx rolls the row back (no client persists); the
-      // only window where a client exists at failure time is post-commit,
-      // marked by createdClientId — include it so the operator can revoke.
-      res.status(grantHttpStatus(e)).json({
-        error: e instanceof Error ? e.message : 'Registration failed',
-        ...(createdClientId !== undefined ? { client_id: createdClientId } : {}),
-      });
-    }
-  });
+  mountAdminRegistration(app, requireAdmin, engine, mcpResourceUrl, issuerUrl);
 
   // Update client TTL
   app.post('/admin/api/update-client-ttl', requireAdmin, express.json(), async (req: Request, res: Response) => {
@@ -2083,74 +1857,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
-  // v0.42.x (#1914): rescope an OAuth client's write source / federated read
-  // scope. Admin-gated on purpose — DCR clients must never self-widen their
-  // scope (fail-closed trust); only the operator rescopes, here or via
-  // `gbrain auth rescope-client`. Source ids are validated by the canonical
-  // validator inside rescopeClient.
-  app.post('/admin/api/rescope-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
-    try {
-      const { clientId, sourceId, federatedRead, boundSlugPrefixes, surface } = req.body ?? {};
-      if (!clientId || typeof clientId !== 'string') {
-        res.status(400).json({ error: 'clientId required' });
-        return;
-      }
-      const extended = Object.keys(req.body).some(key => !['clientId', 'sourceId', 'federatedRead', 'boundSlugPrefixes', 'surface'].includes(key));
-      if (extended) {
-        const before = await readClientGrant(engine, clientId);
-        const request = parseAdminGrantRequest(req.body, before);
-        const result = await rescopeClientGrant(engine, clientId, request.patch, {
-          actor: 'admin-api', expectedRevision: request.expectedRevision ?? before.revision, dryRun: request.dryRun, repair: request.repair,
-        });
-        res.json({ ...result, tokenImplications: GRANT_TOKEN_IMPLICATIONS });
-        return;
-      }
-      if (federatedRead !== undefined &&
-          !(Array.isArray(federatedRead) && federatedRead.every((s: unknown) => typeof s === 'string'))) {
-        res.status(400).json({ error: 'federatedRead must be an array of source id strings' });
-        return;
-      }
-      if (sourceId !== undefined && typeof sourceId !== 'string') {
-        res.status(400).json({ error: 'sourceId must be a string' });
-        return;
-      }
-      // v0.42.72.0: tri-state write-fence rescope — omitted = untouched,
-      // null = clear, array of strings = replace (mirrors the CLI's
-      // --bound-slug-prefixes p1,p2|none).
-      if (boundSlugPrefixes !== undefined && boundSlugPrefixes !== null &&
-          !(Array.isArray(boundSlugPrefixes) && boundSlugPrefixes.every((s: unknown) => typeof s === 'string'))) {
-        res.status(400).json({ error: 'boundSlugPrefixes must be null or an array of slug-prefix strings' });
-        return;
-      }
-      // WP4: tri-state surface rescope — omitted = untouched, null = clear
-      // (surface + surface_set_by both NULL), value = set + operator lock
-      // (mirrors the CLI's --surface verbs|starter|full|clear).
-      if (surface !== undefined && surface !== null &&
-          surface !== 'verbs' && surface !== 'starter' && surface !== 'full') {
-        res.status(400).json({ error: 'surface must be null or one of: verbs, starter, full' });
-        return;
-      }
-      const result = await oauthProvider.rescopeClient(clientId, { sourceId, federatedRead, boundSlugPrefixes, surface });
-      // WP4 (amendment 32 / ENG-8): every surface mutation writes an audit
-      // row — this endpoint, the rescope CLI, and the request_tools persist.
-      if (surface !== undefined) {
-        await writeSurfaceChangeAudit(engine, {
-          actor: 'admin-api',
-          client_id: clientId,
-          old: result.surfaceOld ?? null,
-          new: result.surface ?? null,
-          via: 'admin_api',
-        });
-      }
-      res.json(result);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Rescope failed';
-      const status = grantHttpStatus(e) !== 500 ? grantHttpStatus(e) : /No OAuth client found/.test(message) ? 404
-        : /Invalid source_id|requires --source|cannot be empty|does not exist|cannot be an empty list|bound_slug_prefixes entr|--surface must be/.test(message) ? 400
-        : 500;
-      res.status(status).json({ error: message });
-    }
-  });
+  mountAdminGrantEdits(app, requireAdmin, engine, oauthProvider);
 
   // Revoke OAuth client
   app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
@@ -2227,6 +1934,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return next();
       }
       const pendingId = req.query.oauth_request;
+    if (pendingId !== undefined && !oauthProvider.grants.hasPending(pendingId)) {
+      res.status(410).send('This OAuth request expired, completed, or the server restarted. Restart authorization in the native client and ask the server administrator for a new login link with the new pending-request ID.');
+      return;
+    }
     res.redirect(oauthProvider.grants.hasPending(pendingId)
       ? `/admin/?oauth_request=${pendingId}#oauth-consent` : '/admin/');
     });
@@ -2370,8 +2081,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     );
     installCapabilitiesResource(server, async () => {
       return { transport: authInfo.clientId.startsWith('gbrain_cl_') ? 'oauth' : 'legacy', client_id: authInfo.clientId,
-        ...await resolveAuthCapabilities(authInfo, engine, config) };
-    });
+        ...await resolveAuthCapabilities(authInfo, engine, config), administration: mcpAdministrationGuidance(mcpResourceUrl.toString()) };
+    }, createSkillResources(engine, async () => {
+      const sourceId = authInfo.sourceId ?? 'default';
+      const { noGrantFederatedScope } = await import('../core/source-resolver.ts');
+      return { remote: true, transport: 'http', sourceId, auth: authInfo, config,
+        localFederatedSourceIds: await noGrantFederatedScope(engine, authInfo.hasSourceGrant, sourceId),
+        allowedOps: surfaceAllowedOps, surface, surfaceCeiling };
+    }));
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       // WP1 honest catalog: the advertised list is exactly what THIS token
       // can call. Three per-request filters, cheapest first:
@@ -2395,8 +2112,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // (request_tools) are visible to (and callable by, below) agent scope
       // in addition to their declared scope.
       const visibleOps = mcpOperations.filter(op =>
-        (hasScope(authInfo.scopes, op.scope ?? 'read')
-          || (op.agentCallable === true && hasScope(authInfo.scopes, 'agent')))
+        operationScopesAllowed(authInfo.scopes, op)
         && opAllowedForBoundClient(authInfo, op)
         && !gateDisabled.has(op.name),
       );
@@ -2473,8 +2189,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const requiredScope = op.scope || 'read';
       // FOV-4: agentCallable carve-out mirrors the tools/list filter above —
       // an op listed for an agent-only token must not scope-deny at call time.
-      const scopeSatisfied = hasScope(authInfo.scopes, requiredScope)
-        || (op.agentCallable === true && hasScope(authInfo.scopes, 'agent'));
+      const scopeSatisfied = operationScopesAllowed(authInfo.scopes, op);
       if (!scopeSatisfied) {
         // v0.28.10: persist scope-rejected attempts. Same operator-visibility
         // motivation as the unknown-op path — and it makes the v0.26.3

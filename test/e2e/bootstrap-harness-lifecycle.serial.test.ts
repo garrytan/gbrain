@@ -23,7 +23,7 @@ import { join } from 'path';
 
 import { runBootstrap } from '../../src/commands/bootstrap.ts';
 import type { ExecRunner } from '../../src/core/bootstrap/repo.ts';
-import { readHarnessReceiptState } from '../../src/core/bootstrap/format.ts';
+import { readHarnessReceiptState, writeHarnessReceipt } from '../../src/core/bootstrap/format.ts';
 import { CODEX_TOML_BLOCK_BEGIN } from '../../src/core/bootstrap/host-specs.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -41,12 +41,25 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
 
   const userSettings = () => join(sandboxHome, '.claude', 'settings.json');
   const codexConfig = () => join(codexHome, 'config.toml');
+  const claudeRegistrations = new Map<string, { url: string; token: string }>();
 
   function makeClaudeRunner(): { runner: ExecRunner; calls: string[][] } {
     const calls: string[][] = [];
     const runner: ExecRunner = async (argv: string[]) => {
       calls.push(argv);
-      if (argv[0] === 'claude' && argv[2] === 'get') return { code: 1, stdout: '', stderr: 'No MCP server found' };
+      if (argv[0] === 'claude' && argv[2] === 'get') {
+        const registration = claudeRegistrations.get(argv[3]);
+        return registration
+          ? { code: 0, stdout: `Scope: User\nType: http\nURL: ${registration.url}\nAuthorization: Bearer ${registration.token}`, stderr: '' }
+          : { code: 1, stdout: '', stderr: 'No MCP server found' };
+      }
+      if (argv[0] === 'claude' && argv[2] === 'add') {
+        const url = argv.find(value => /^https?:\/\//.test(value));
+        const header = argv.find(value => value.startsWith('Authorization: Bearer '));
+        if (!url || !header) throw new Error('Incomplete fixture registration');
+        claudeRegistrations.set(argv[3], { url, token: header.slice('Authorization: Bearer '.length) });
+      }
+      if (argv[0] === 'claude' && argv[2] === 'remove') claudeRegistrations.delete(argv[3]);
       return { code: 0, stdout: '', stderr: '' };
     };
     return { runner, calls };
@@ -231,12 +244,23 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
 
   test('--status: live probes, token recovered from the codex block, exit 0', async () => {
     const { runner } = makeClaudeRunner();
+    const all = await withEnv(envFor(), () => capture(() => runBootstrap(['harness', '--status', '--json'], { runner, harnessDetect: HARNESS_DETECT })));
+    expect(all.result).toBe(0);
+    expect(JSON.parse(all.out).harness_tokens).toEqual([{ host: 'claude-code', verified: true }, { host: 'codex', verified: true }]);
+    const home = join(parent, '.gbrain');
+    const state = readHarnessReceiptState(home);
+    expect(state.state).toBe('ok');
+    if (state.state !== 'ok') throw new Error('expected the installed receipt');
+    writeHarnessReceipt(home, { ...state.receipt, targets: state.receipt.targets.filter(target => target.host === 'codex'),
+      harness_tokens: { codex: state.receipt.harness_tokens!.codex } });
+    try {
     const { result, out } = await withEnv(envFor(), () =>
       capture(() => runBootstrap(['harness', '--status'], { runner, harnessDetect: HARNESS_DETECT })),
     );
     expect(result).toBe(0);
     expect(out).toMatch(/serve: OK/);
     expect(out).toMatch(/token: OK .*codex config block/);
+    } finally { writeHarnessReceipt(home, state.receipt); }
   }, 60_000);
 
   test('--remove: host wiring cleared, codex config byte-identical to pre-apply, receipt consumed', async () => {

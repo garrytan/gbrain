@@ -2,7 +2,7 @@
  * W0 ship-review coverage (GAP-2) — the snapshot loader's shape + hash guards.
  *
  * The fixture is default-on for every `bun run test`, so a wrong snapshot
- * poisons the whole suite (the 1280-vs-1536 incident: 115 failures from one
+ * poisons the whole suite (the 1024-vs-1536 incident: 115 failures from one
  * root cause). These tests pin the three refusal paths and the
  * handler-aware hash (D5.13).
  */
@@ -84,7 +84,7 @@ test('memo: shape refusal is per-call, never cached as terminal — and costs ze
   // Hash matches but dims mismatch: the version entry is memoized yet every
   // call re-runs the shape gate against the CURRENT gateway config — an
   // engine with a matching config later in the same process could still
-  // load this snapshot (the zembed/1280 poisoning guard staying hot behind
+  // load this snapshot (the voyage-4/1024 poisoning guard staying hot behind
   // the memo). The 42MB tar read is deferred until a shape-MATCHING caller,
   // so a process that only ever refuses never reads it at all.
   const tar = writeFixture(`${currentHash()}\ndims=99999\nmodel=${getEmbeddingModel()}\n`);
@@ -105,6 +105,10 @@ test('memo: stale hash is terminal — tar never read, repeat calls short-circui
 
 const schemaInputs = [
   'migrate.ts', 'pglite-schema.ts', 'fts-language.ts', 'vector-index.ts', 'ai/defaults.ts',
+  'search/projection-statistics.ts',
+  'company-brain/receipt-schema.ts',
+  'shared-skills/schema-all.ts', 'shared-skills/schema.ts', 'shared-skills/membership-schema.ts', 'shared-skills/persistence-schema.ts',
+  'shared-skills/access-schema.ts',
   'timeline-dedup-repair.ts', 'pages-upsert-arbiter.ts', 'link-extraction.ts',
   'grants/schema.ts', 'grants/migration.ts', 'grants/model.ts', 'grants/service.ts', 'grants/profiles.ts',
   'page-state/schema.ts', 'lease-schema.ts', 'page-state/projection-schema.ts', 'persistence/schema.ts', 'persistence/effect-schema.ts', 'persistence/writer-guard-schema.ts', 'persistence/topology-schema.ts', 'scope.ts', 'sql-query.ts', 'minions/tools/brain-allowlist.ts', 'facts/withdrawal-schema.ts',

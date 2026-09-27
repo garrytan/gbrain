@@ -8,7 +8,7 @@ export interface WriteAuthority {
   remote: boolean;
   /** Original page-visibility ceiling; current policy can only narrow it. */
   excludePrivate?: boolean;
-  databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured';
+  databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;
   sourceId: string;
@@ -22,7 +22,7 @@ export interface WriteAuthority {
   /** Actual holders touched by a published take mutation; retained after intent compaction. */
   takeHoldersUsed?: string[];
 }
-export interface RecoveryRecord {
+export interface FileRecoveryRecord {
   version: 1;
   path: string;
   root: string;
@@ -30,11 +30,29 @@ export interface RecoveryRecord {
   beforeHash: string | null;
   afterHash: string | null;
   mode: number | null;
+  afterMode?: number;
   ownerEpoch: string;
   attempt: string;
   after?: string | null;
   /** Absent on recovery records created by older binaries. */
   staging?: import('./staging.ts').RecoveryStaging;
+}
+export interface BundleRecoveryRecord {
+  version: 2;
+  target: 'skill_bundle';
+  root: string;
+  ownerEpoch: string;
+  attempt: string;
+  files: FileRecoveryRecord[];
+  staging?: never;
+  beforeHash?: never;
+}
+export type RecoveryRecord = FileRecoveryRecord | BundleRecoveryRecord;
+export function recoveryFiles(record: RecoveryRecord): FileRecoveryRecord[] {
+  if (record.version === 1) return [record];
+  if (record.version === 2 && record.target === 'skill_bundle' && Array.isArray(record.files)
+    && record.files.length > 0 && record.files.length <= 128 && record.files.every(file => file.version === 1)) return record.files;
+  throw new Error('unsupported_mutation_protocol');
 }
 export interface WriteRequest {
   id: string;
@@ -42,6 +60,8 @@ export interface WriteRequest {
   principal_id: string;
   request_id: string;
   operation: string;
+  target_kind?: 'page' | 'skill_bundle';
+  protocol_version?: 1 | 2;
   source_id: string;
   source_incarnation: string;
   page_id: number | null;

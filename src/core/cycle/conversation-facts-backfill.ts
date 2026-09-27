@@ -49,6 +49,7 @@ import {
   loadPricingOverrides,
 } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 import { listSources } from '../sources-ops.ts';
 import {
   runExtractConversationFactsCore,
@@ -190,6 +191,7 @@ export async function runPhaseConversationFactsBackfill(
     );
   }
 
+  await assertUnmanagedCanonicalWriter(engine, 'conversation fact backfill');
   const startedAt = Date.now();
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
   const maxWalltimeMs = cfg.maxWalltimeMin * 60_000;
@@ -220,6 +222,10 @@ export async function runPhaseConversationFactsBackfill(
     pages_considered: 0,
     pages_processed: 0,
     pages_skipped: 0,
+    pages_skipped_unparsed: 0,
+    pages_skipped_type_mismatch: 0,
+    pages_skipped_insufficient_turns: 0,
+    pages_skipped_since: 0,
     pages_skipped_too_large: 0,
     pages_skipped_disappeared: 0,
     pages_skipped_completed: 0,
@@ -370,6 +376,10 @@ export async function runPhaseConversationFactsBackfill(
   const totals = {
     pages_processed: 0,
     pages_skipped: 0,
+    pages_skipped_unparsed: 0,
+    pages_skipped_type_mismatch: 0,
+    pages_skipped_insufficient_turns: 0,
+    pages_skipped_since: 0,
     pages_skipped_completed: 0,
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
@@ -384,6 +394,10 @@ export async function runPhaseConversationFactsBackfill(
     if (!r.error) totals.sources_processed++;
     totals.pages_processed += r.pages_processed;
     totals.pages_skipped += r.pages_skipped;
+    totals.pages_skipped_unparsed += r.pages_skipped_unparsed;
+    totals.pages_skipped_type_mismatch += r.pages_skipped_type_mismatch;
+    totals.pages_skipped_insufficient_turns += r.pages_skipped_insufficient_turns;
+    totals.pages_skipped_since += r.pages_skipped_since;
     totals.pages_skipped_completed += r.pages_skipped_completed;
     totals.pages_skipped_non_extractable += r.pages_skipped_non_extractable;
     totals.pages_marked_non_extractable += r.pages_marked_non_extractable;
@@ -410,6 +424,10 @@ export async function runPhaseConversationFactsBackfill(
       sources_processed: totals.sources_processed,
       pages_processed: totals.pages_processed,
       pages_skipped: totals.pages_skipped,
+      pages_skipped_unparsed: totals.pages_skipped_unparsed,
+      pages_skipped_type_mismatch: totals.pages_skipped_type_mismatch,
+      pages_skipped_insufficient_turns: totals.pages_skipped_insufficient_turns,
+      pages_skipped_since: totals.pages_skipped_since,
       pages_skipped_completed: totals.pages_skipped_completed,
       pages_skipped_non_extractable: totals.pages_skipped_non_extractable,
       pages_marked_non_extractable: totals.pages_marked_non_extractable,

@@ -125,13 +125,6 @@ export function mountConfidentialOAuth(app: Express, provider: GBrainOAuthProvid
 }
 
 export function mountOAuthConsent(app: Express, provider: GBrainOAuthProvider, requireAdmin: RequestHandler, rateLimiter: RequestHandler): void {
-  app.use((req, res, next) => {
-    if (req.path.startsWith('/admin')) {
-      res.setHeader('Referrer-Policy', 'no-referrer');
-      res.setHeader('X-Frame-Options', 'DENY');
-    }
-    next();
-  });
   const csrfKey = randomBytes(32);
   const csrfFor = (req: Request, id: string): string => createHmac('sha256', csrfKey)
     .update(String(req.cookies?.gbrain_admin ?? '')).update('\0').update(id).digest('hex');

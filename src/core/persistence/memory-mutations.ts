@@ -9,6 +9,7 @@ import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
 import { admitWrite, admitWriteInTransaction, assertPageRequestIdentity, assertReplayIntent, completeWrite, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
+import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
@@ -79,7 +80,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   const root = source.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
   if (fence && writeThrough && root && !binding) {
-    if (ctx.engine.kind !== 'pglite') throw new OperationError('owner_unavailable', 'This source has no designated canonical owner.');
+    if (ctx.engine.kind !== 'pglite') throw new OperationError('owner_unavailable', 'This source has no designated canonical owner.', WRITER_INSPECTION_HINT);
     binding = await claimWorktree(ctx.engine, sourceId, root);
   }
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,

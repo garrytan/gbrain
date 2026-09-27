@@ -16,7 +16,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { auth, extractWWWAuthenticateParams, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { hasDatabase } from './helpers.ts';
+import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const skip = !hasDatabase();
@@ -45,6 +45,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   const dcrClientIds: string[] = [];
 
   beforeAll(async () => {
+    await setupDB();
     const { execSync, spawn } = await import('child_process');
 
     // Register a test OAuth client via CLI.
@@ -125,6 +126,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
         console.error(`[afterAll] revoke-client cleanup failed for ${id}: ${e.message}`);
       }
     }
+    await teardownDB();
   }, 30_000);
 
   // Helper: mint a token with given scopes
@@ -1640,15 +1642,15 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // C6: adminAuthRateLimiter covers /admin/login + /admin/api/issue-magic-link
   // =========================================================================
   //
-  // The limiter (serve-http.ts adminAuthRateLimiter: windowMs 60s, max 10,
-  // shared bucket per IP across /admin/login, /admin/api/issue-magic-link,
-  // and /admin/auth/:token) previously guarded only the magic-link redeem
-  // route, leaving the two POST credential surfaces unmetered.
+  // Authentication has independent per-IP limits of 10 failed attempts and
+  // 60 total requests per minute across /admin/login,
+  // /admin/api/issue-magic-link, and /admin/auth/:token. Verified owner
+  // requests do not consume the failed-authentication allowance.
   //
-  // BUDGET NOTE: the bucket is shared across the whole suite run. Existing
-  // tests consume up to 6 limited requests; the non-exhaustion C6 test below
-  // consumes 4 more (worst case exactly at max=10 if everything lands in one
-  // 60s window — max requests are still allowed, max+1 is the first 429).
+  // BUDGET NOTE: each bucket is shared across this suite. The non-exhaustion
+  // C6 test adds two failed and two successful authentication requests;
+  // earlier invalid nonces also consume the failure allowance. Controls
+  // remain below both limits before the deliberate exhaustion below.
   // The exhaustion test MUST stay the last test in this file: it deliberately
   // drains the bucket, so any admin-route request after it would 429.
 
@@ -1661,7 +1663,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     });
     expect(badLogin.status).toBe(401);
     expect(badLogin.headers.get('set-cookie') || '').not.toContain('gbrain_admin=');
-    expect(((await badLogin.json()) as any).error).toBe('Invalid token. Check your terminal output.');
+    expect(((await badLogin.json()) as any).error).toBe('Owner credential rejected. Use the protected bootstrap credential configured for this running server; an OAuth token cannot administer it.');
 
     // (a) Wrong bearer on /admin/api/issue-magic-link → 401, no URL minted.
     const badLink = await fetch(`${BASE}/admin/api/issue-magic-link`, {
@@ -1691,7 +1693,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // MUST REMAIN THE LAST TEST IN THIS FILE — drains the shared admin-auth
   // rate-limit bucket (see budget note above).
   test('C6: exceeding the admin-auth rate limit returns 429 with Retry-After', async () => {
-    // adminAuthRateLimiter: max 10 per 60s window. Drive wrong-token logins
+    // Failed-authentication limiter: max 10 per 60s window. Drive wrong-token logins
     // until the limiter trips. Prior tests may have consumed part of the
     // bucket (shared per-IP), so the 429 can arrive early; 23 attempts
     // guarantees crossing max+1 even if a fixed-window reset lands mid-loop.
@@ -1728,6 +1730,6 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // express-rate-limit serializes it as JSON, matching the /admin routes).
     const limitedBody = JSON.parse(await limited!.text()) as { error: string; message: string };
     expect(limitedBody.error).toBe('rate_limited');
-    expect(limitedBody.message).toContain('Too many admin auth attempts');
+    expect(limitedBody.message).toContain('Wait for Retry-After before trying again.');
   }, 60_000);
 });

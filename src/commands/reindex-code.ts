@@ -5,18 +5,16 @@
  * `sources.chunker_version` gate forces a re-walk next sync on any source
  * whose working tree hasn't drifted, but users who want the benefits NOW
  * (before the next sync) get this: walk every page where type='code', read
- * compiled_truth + frontmatter.file, re-import via importCodeFile. Pages
- * flow through the same code path as normal sync (chunker + embeddings +
- * content_hash folding), so a reindex is bit-identical to a fresh sync.
+ * compiled_truth + frontmatter.file, and rebuild guarded derived projections.
+ * Managed brains publish through their resident coordinator; canonical bytes,
+ * revisions, identities, and files remain unchanged.
  *
  * Flags:
  *   --source <id>   Scope to one sources row. Omit = all code pages.
  *   --dry-run       Preview cost + page count, exit 0.
  *   --yes           Skip interactive [y/N]. Required for non-TTY + non-JSON.
  *   --json          Machine-readable ConfirmationRequired / result envelope.
- *   --force         Bypass importCodeFile's content_hash early-return. Use
- *                   this for paranoid full reindex when content_hash equals
- *                   but you still want a re-chunk + re-embed pass.
+ *   --force         Rebuild even when the canonical text projection is current.
  *
  * Batched in chunks of 100 pages to avoid OOM on 47K-page brains (codex
  * review Finding 4.4). Idempotent: re-running on already-reindexed pages
@@ -24,7 +22,8 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
-import { importCodeFile } from '../core/import-file.ts';
+import { reindexCodeProjection } from '../core/persistence/projection-reindex.ts';
+import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { estimateTokens } from '../core/chunkers/code.ts';
 import { getEmbeddingModelName, estimateEmbeddingCostUsd } from '../core/embedding.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
@@ -141,9 +140,9 @@ async function fetchCodePages(
   // non-default-source code page into 'default' and re-embed it.
   const rows = await engine.executeRaw<CodePageRow>(
     `SELECT p.slug, p.source_id, p.compiled_truth, p.frontmatter
-     FROM pages p
-     WHERE p.type = 'code' ${sourceClause}
-     ORDER BY p.slug
+     FROM pages p JOIN sources s ON s.id=p.source_id
+     WHERE p.page_kind = 'code' AND p.deleted_at IS NULL AND NOT s.archived ${sourceClause}
+     ORDER BY p.source_id,p.slug
      LIMIT ${batchSize} OFFSET ${offset}`,
   );
   return rows;
@@ -152,7 +151,7 @@ async function fetchCodePages(
 async function countCodePages(engine: BrainEngine, sourceId: string | undefined): Promise<number> {
   const sourceClause = sourceId ? `AND p.source_id = '${sourceId.replace(/'/g, "''")}'` : '';
   const rows = await engine.executeRaw<{ n: string | number }>(
-    `SELECT COUNT(*)::text AS n FROM pages p WHERE p.type = 'code' ${sourceClause}`,
+    `SELECT COUNT(*)::text AS n FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.page_kind = 'code' AND p.deleted_at IS NULL AND NOT s.archived ${sourceClause}`,
   );
   if (rows.length === 0) return 0;
   const raw = rows[0]!.n;
@@ -191,6 +190,9 @@ export async function runReindexCode(
   opts: ReindexCodeOpts = {},
 ): Promise<ReindexCodeResult> {
   const batchSize = opts.batchSize ?? 100;
+  let model: string;
+  try { model = getEmbeddingModelName(); }
+  catch (error) { if (!opts.noEmbed) throw error; model = 'unconfigured'; }
 
   const { totalTokens, totalPages } = await estimateReindexCost(engine, opts.sourceId, batchSize);
   const costUsd = estimateEmbeddingCostUsd(totalTokens);
@@ -205,7 +207,7 @@ export async function runReindexCode(
     !opts.noEmbed &&
     process.env.GBRAIN_NO_CODE_MODEL_NUDGE !== '1'
   ) {
-    const decision = shouldNudgeCodeModel(getEmbeddingModelName());
+    const decision = shouldNudgeCodeModel(model);
     if (decision.shouldNudge) printCodeModelNudge(decision);
   }
 
@@ -218,7 +220,7 @@ export async function runReindexCode(
       failed: 0,
       totalTokens,
       costUsd,
-      model: getEmbeddingModelName(),
+      model,
     };
   }
 
@@ -231,13 +233,11 @@ export async function runReindexCode(
       failed: 0,
       totalTokens: 0,
       costUsd: 0,
-      model: getEmbeddingModelName(),
+      model,
     };
   }
 
-  // Walk every code page, re-run importCodeFile with compiled_truth as
-  // the content source. relativePath comes from frontmatter.file (set by
-  // the original importCodeFile call). Progress via stderr reporter.
+  // Walk stored code projections without replacing canonical page state.
   const reporter = createProgress(cliOptsToProgressOptions(getCliOptions()));
   reporter.start('reindex_code.pages', totalPages);
 
@@ -249,7 +249,7 @@ export async function runReindexCode(
   let budgetExhausted: BudgetExhausted | null = null;
 
   // F3: when --max-cost is set, run the body inside withBudgetTracker so
-  // every gateway.embed() call inside importCodeFile composes with the cap.
+  // every explicit embedding call composes with the cap.
   // On BudgetExhausted, we catch + persist what's been imported so far,
   // then surface the throw as a partial-progress result the caller can
   // re-run. importCodeFile is idempotent (content_hash short-circuit), so
@@ -293,19 +293,18 @@ export async function runReindexCode(
               return;
             }
             try {
-              const result = await importCodeFile(engine, relPath, row.compiled_truth, {
+              const result = await reindexCodeProjection(engine, row.slug, row.source_id, {
                 noEmbed: opts.noEmbed,
                 force: opts.force,
                 // Each page re-imports into its OWN source (row-level), not
                 // the CLI-level default — reindex must be an in-place
                 // rebuild, never a cross-source copy.
-                sourceId: row.source_id,
               });
               if (result.status === 'imported') reindexed++;
               else if (result.status === 'skipped') skipped++;
               else {
                 failed++;
-                failures.push({ slug: row.slug, error: result.error ?? result.status });
+                failures.push({ slug: row.slug, error: result.status });
               }
             } catch (e: unknown) {
               // BudgetExhausted bypasses the helper's onError and hard-
@@ -342,6 +341,7 @@ export async function runReindexCode(
     }
   }
 
+  if (reindexed > 0) await refreshProjectionStatistics(engine);
   if (budgetExhausted) {
     // Partial-progress result: surfaces what got reindexed before the cap
     // fired. The CLI wrapper translates this into a clear user-facing
@@ -355,7 +355,7 @@ export async function runReindexCode(
       failed,
       totalTokens,
       costUsd: budgetExhausted.spent,
-      model: getEmbeddingModelName(),
+      model,
       failures: [
         { slug: '(budget)', error: budgetExhausted.message },
         ...(failures.length > 0 ? failures : []),
@@ -371,7 +371,7 @@ export async function runReindexCode(
     failed,
     totalTokens,
     costUsd,
-    model: getEmbeddingModelName(),
+    model,
     failures: failures.length > 0 ? failures : undefined,
   };
 }
@@ -429,9 +429,9 @@ export function reindexForceHint(
 ): string | null {
   if (force || result.reindexed > 0 || result.skipped === 0) return null;
   return (
-    `All ${result.skipped} page(s) were skipped by the content_hash short-circuit ` +
-    `(content unchanged since last index). To force a full re-chunk + re-embed pass ` +
-    `(e.g. to backfill symbol metadata), re-run with --force.`
+    `All ${result.skipped} page(s) already have current text projections ` +
+    `(no content_hash-changing canonical rewrite is needed). To rebuild symbol metadata ` +
+    `without provider costs, re-run with --force --no-embed.`
   );
 }
 

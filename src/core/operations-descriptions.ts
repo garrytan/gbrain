@@ -193,9 +193,11 @@ export const LIST_SKILLS_DESCRIPTION =
   "CAN vs CANNOT call given this server + your access). To actually use a skill, " +
   "call get_skill with its name, read the returned prose, and follow it — calling " +
   "the correspondingly-named tools on THIS server. The response also carries an " +
-  "`instructions` envelope explaining this protocol. Reflects the serving repo's " +
-  "skills even when the call targets a mounted brain. Read-scope; published only " +
-  "when the brain owner enabled mcp.publish_skills.";
+  "`instructions` envelope explaining this protocol. On a shared brain, use " +
+  "schema_version:2 for source-qualified identities, immutable revisions, " +
+  "pagination and complete declared requirements. Only authorized sources and " +
+  "owner-approved file classes are visible; pre-migration servers retain their " +
+  "legacy prose catalog. Read-scope; published only when the brain owner enabled mcp.publish_skills.";
 
 export const GET_SKILL_DESCRIPTION =
   "Fetch one skill's full instructions by name. Returns `{name, frontmatter " +
@@ -206,7 +208,10 @@ export const GET_SKILL_DESCRIPTION =
   "instructions plus your tool calls back to this server. Tools listed in " +
   "`unavailable_tools` won't work for you (not exposed here, or beyond your " +
   "access) — adapt accordingly. Size-capped; read-scope; requires the owner to " +
-  "have enabled mcp.publish_skills.";
+  "have enabled mcp.publish_skills. On a shared brain, pass schema_version:2 " +
+  "with qualified_id and revision from discovery to fetch exact instructions " +
+  "and their approved dependency manifest. get_skill_asset retrieves declared " +
+  "files from that revision as data; downloading never grants execution or tool permissions.";
 
 /**
  * The load-bearing `instructions` envelope for list_skills. Pinned so the

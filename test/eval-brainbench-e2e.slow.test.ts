@@ -37,7 +37,7 @@ function brainBenchEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     GBRAIN_QUIET: '1',
-    // Bare CLI defaults are zembed/1280; its parent bun test uses legacy/1536.
+    // Bare CLI defaults are voyage-4/1024; its parent bun test uses legacy/1536.
     // An absent default fixture falls back to cold init without a wrong-shape tar.
     GBRAIN_PGLITE_SNAPSHOT: snapshot ? resolve(REPO, snapshot) : '',
   };

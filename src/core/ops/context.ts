@@ -16,6 +16,7 @@ import { OperationError } from './contract.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
 import { CJK_SLUG_CHARS, SLUG_WORD_CHARS } from '../cjk.ts';
 import { ALL_SOURCES, isValidSourceId } from '../source-id.ts';
+import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
@@ -320,6 +321,7 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
   // authority. They are not meta-op exemptions: degraded fences still deny.
   'get_write_request', 'list_write_requests', 'cancel_write_request',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
+  'put_skill', 'delete_skill',
 ]);
 
 /**
@@ -333,7 +335,7 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
  * tools/list filter and the dispatch fence consume the identical carve-out
  * (ENG-3 drift-proofing).
  */
-export const BOUND_CLIENT_META_OPS: ReadonlySet<string> = new Set(['request_tools']);
+export const BOUND_CLIENT_META_OPS: ReadonlySet<string> = new Set(['request_tools', 'join_brain', 'sync_brain_skills', 'leave_brain']);
 
 /**
  * Single source of truth for "may a slug-bound client use this op" (ENG-3).
@@ -363,7 +365,7 @@ export function opAllowedForBoundClient(
   if (!degraded && !auth?.boundSlugPrefixes) return true;
   const isRead = op.scope === 'read' && op.mutating !== true;
   if (isRead) return true;
-  if (BOUND_CLIENT_META_OPS.has(op.name)) return true;
+  if (BOUND_CLIENT_META_OPS.has(op.name)) return op.name === 'request_tools' || !degraded;
   if (degraded) return false;
   return CLIENT_FENCED_WRITE_OPS.has(op.name);
 }
@@ -938,14 +940,8 @@ export function stampEvidenceSafe(results: SearchResult[]): void {
   try { stampEvidence(results); } catch { /* non-fatal */ }
 }
 
-/**
- * #4039 — OpenAI deep-research contract: search results must carry an `id`
- * that the paired `fetch` tool round-trips. id = slug (what `fetch` — the
- * thin get_page adapter in ops/pages.ts — resolves). Additive stamp; every
- * other consumer of SearchResult ignores it.
- */
 export function stampDeepResearchIds(results: SearchResult[]): void {
-  for (const r of results) (r as SearchResult & { id?: string }).id = r.slug;
+  for (const r of results) (r as SearchResult & { id?: string }).id = encodeDeepResearchId(r.source_id, r.slug);
 }
 
 /** T4 — shared eval-capture for the `search` op (keyword-only + cheap-hybrid paths). */

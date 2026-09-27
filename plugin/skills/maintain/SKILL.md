@@ -53,6 +53,20 @@ This skill guarantees:
 
 ## Phases
 
+### Ownership failures are an inspection boundary
+
+Routine maintenance, startup checks, `doctor --fix`, and a request to "fix what's
+broken" do not authorize writer topology changes. On `owner_unavailable` or a
+writer coordination refusal, inspect `gbrain sources writer status --brain <id>
+--json` on the selected host first and report the owner, epoch, enabled state and
+blocked recovery to the operator. Do not claim a checkout, activate managed mode,
+transfer an owner, replace identities, or remove ownership markers as a repair.
+Deliberate administration requires a separately approved topology change and the
+action-specific intent plus reviewed state precondition described in
+`docs/architecture/topologies.md`. Neither a TTY nor `--yes` nor
+`--confirm-quiesced` substitutes for that decision. Remote credentials remain
+ineligible for local writer administration.
+
 ### Autonomous path (v0.36.4.0) — when you want to reach a target score
 
 If the user asks "get my brain to 90/100" or "fix what's broken", prefer the

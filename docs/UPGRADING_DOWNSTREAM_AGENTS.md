@@ -5,10 +5,10 @@
 > migration files that `gbrain upgrade` / `gbrain post-upgrade` route through),
 > plus `CHANGELOG.md` for release history. Use this file to catch a
 > long-diverged fork up through the versions it covers; for anything after
-> v0.36.5.0, walk the migration files and CHANGELOG. Time-critical: the
-> ZeroEntropy hosted-API shutdown (2026-09-04) — every fork still embedding or
-> reranking through `zeroentropyai:*` must run `skills/migrations/v0.46.3.0.md`
-> before that date.
+> v0.36.5.0, walk the migration files and CHANGELOG. For an unsupported
+> embedding provider, follow `skills/migrations/v0.46.3.0.md`: inspect the
+> brain, preview a supported target and obtain explicit approval before any
+> schema change or paid re-embed. Upgrading alone does not migrate vectors.
 
 GBrain ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
 agent forks of any kind) often **copy** these skill files into their own workspace and
@@ -642,4 +642,3 @@ job + `inherit:` for `localOnly` admin ops (`sync`, `embed`, `dream`,
 | `shell: inherit entries must be non-empty strings` | Element was empty, non-string, or null. | Use snake_case config-key names. |
 | `shell: inherit name "<X>" must match [a-z][a-z0-9_]*` | Name failed snake_case regex (uppercase, leading underscore, etc.). | Use the config-key verbatim — `database_url`, not `DATABASE_URL`. |
 | `shell: inherit requested "<X>" but worker has no <X> configured` | Worker can't resolve the name from its `loadConfig()`. | Run `gbrain config set <X> <value>` on the worker host. |
-

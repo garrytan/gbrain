@@ -7,6 +7,11 @@
 > historical context; see [`ENGINES.md`](ENGINES.md) for the current engine architecture and
 > the [`CHANGELOG.md`](../CHANGELOG.md) for the actual implementation history.
 
+> **Do not use the installation commands in this historical spec.** The bare
+> npm package named `gbrain` is unrelated to this project. Current installation
+> uses `bun install -g github:garrytan/gbrain` or a source clone; follow
+> [the current install guide](INSTALL.md). The original design below is retained.
+
 ## What this is
 
 GBrain is a compiled intelligence system. Not a note-taking app. Not "chat with your notes."

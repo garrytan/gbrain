@@ -34,7 +34,7 @@ export function requiresSafeChunks(scope?: PageReadScope): boolean {
 
 /** Every user sees projections only from the current canonical revision. */
 export function currentTextProjectionFilter(alias: string): string {
-  return `${alias}.text_projection_revision = ${alias}.knowledge_revision`;
+  return `(${alias}.text_projection_revision = ${alias}.knowledge_revision) IS TRUE`;
 }
 
 /** Older fragments lack trustworthy provenance, even if markers were removed later. */

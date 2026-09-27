@@ -58,41 +58,75 @@ describe('frozen E2E matrix', () => {
     writeFileSync(join(root, 'scripts/run-e2e.sh'), 'exit 17\n');
     expect(worker(root, { shard: 1, files: [paths[0]], empty: false }).status).toBe(17);
   }));
-  test.each(['SIGTERM', 'SIGINT'] as const)('forwards %s cancellation to its owned runner and preserves its exit status', async (signal) => {
-    const root = mkdtempSync(join(tmpdir(), 'gbrain-e2e-matrix-cancel-'));
-    let child: ReturnType<typeof Bun.spawn> | undefined;
-    let runnerPid = 0;
-    try {
-      mkdirSync(join(root, 'scripts'));
-      mkdirSync(join(root, 'test/e2e'), { recursive: true });
-      writeFileSync(join(root, paths[0]), '// frozen fixture');
-      // Trap the actual signal in a portable shell child. Its completion marker
-      // proves the wrapper forwarded cancellation instead of merely dying.
-      writeFileSync(join(root, 'scripts/run-e2e.sh'), `trap 'printf "SIGTERM\\n" > received.txt; exit 143' TERM
+  test.each(['SIGTERM', 'SIGINT'] as const)('preserves %s cancellation when its runner has already finished', signal => fixture(root => {
+    const result = spawnSync(process.execPath, ['-e', `
+      const { runRow } = await import(${JSON.stringify(join(repo, 'scripts/e2e-matrix.ts'))});
+      Bun.spawn = () => {
+        process.emit(${JSON.stringify(signal)});
+        return { exited: Promise.resolve(0), kill(signal) { console.log('FORWARDED:' + signal); } };
+      };
+      process.exitCode = await runRow(JSON.parse(process.env.E2E_MATRIX_ROW));
+    `], {
+      cwd: root, encoding: 'utf8',
+      env: { ...process.env, E2E_MATRIX_ROW: JSON.stringify({ shard: 1, files: [paths[0]], empty: false }) },
+    });
+    expect(result.status, result.stderr).toBe(signal === 'SIGINT' ? 130 : 143);
+    expect(result.stdout).toContain(`FORWARDED:${signal}`);
+  }));
+  for (const delaySpawnReturn of [false, true]) {
+    test.each(['SIGTERM', 'SIGINT'] as const)(delaySpawnReturn
+      ? 'forwards %s cancellation received before spawn returns'
+      : 'forwards %s cancellation to its owned runner and preserves its exit status', async (signal) => {
+      const root = mkdtempSync(join(tmpdir(), 'gbrain-e2e-matrix-cancel-'));
+      let child: ReturnType<typeof Bun.spawn> | undefined;
+      let runnerPid = 0;
+      try {
+        mkdirSync(join(root, 'scripts'));
+        mkdirSync(join(root, 'test/e2e'), { recursive: true });
+        writeFileSync(join(root, paths[0]), '// frozen fixture');
+        // Trap the actual signal in a portable shell child. Its completion marker
+        // proves the wrapper forwarded cancellation instead of merely dying.
+        writeFileSync(join(root, 'scripts/run-e2e.sh'), `trap 'printf "SIGTERM\\n" > received.txt; exit 143' TERM
 trap 'printf "SIGINT\\n" > received.txt; exit 130' INT
-printf '%s\\n' "$$" > runner.pid
+printf '%s\\n' "$$" > runner.pid.tmp
+mv runner.pid.tmp runner.pid
 while :; do sleep 0.05; done
 `);
-      child = Bun.spawn([process.execPath, join(repo, 'scripts/e2e-matrix.ts'), 'run'], {
-        cwd: root,
-        env: { ...process.env, SHARD: '4/4', E2E_MATRIX_ROW: JSON.stringify({ shard: 1, files: [paths[0]], empty: false }) },
-        stdout: 'ignore', stderr: 'ignore',
-      });
-      const readyDeadline = Date.now() + 5000;
-      while (!existsSync(join(root, 'runner.pid')) && Date.now() < readyDeadline) await Bun.sleep(20);
-      expect(existsSync(join(root, 'runner.pid'))).toBe(true);
-      runnerPid = Number(readFileSync(join(root, 'runner.pid'), 'utf8'));
-      child.kill(signal);
-      const exitDeadline = Date.now() + 5000;
-      while (child.exitCode === null && Date.now() < exitDeadline) await Bun.sleep(20);
-      expect(child.exitCode).toBe(signal === 'SIGINT' ? 130 : 143);
-      expect(readFileSync(join(root, 'received.txt'), 'utf8').trim()).toBe(signal);
-      expect(() => process.kill(runnerPid, 0)).toThrow();
-    } finally {
-      child?.kill('SIGKILL');
-      if (runnerPid) { try { process.kill(runnerPid, 'SIGKILL'); } catch { /* already reaped */ } }
-      if (child) await child.exited;
-      rmSync(root, { recursive: true, force: true });
-    }
-  }, 15000);
+        const command = delaySpawnReturn ? [process.execPath, '-e', `
+          const { existsSync } = await import('node:fs');
+          const spawn = Bun.spawn;
+          Bun.spawn = (...args) => {
+            const child = spawn(...args);
+            const deadline = Date.now() + 5000;
+            while (!existsSync('cancellation-sent') && Date.now() < deadline) Bun.sleepSync(5);
+            return child;
+          };
+          const { runRow } = await import(${JSON.stringify(join(repo, 'scripts/e2e-matrix.ts'))});
+          process.exitCode = await runRow(JSON.parse(process.env.E2E_MATRIX_ROW));
+        `] : [process.execPath, join(repo, 'scripts/e2e-matrix.ts'), 'run'];
+        child = Bun.spawn(command, {
+          cwd: root,
+          env: { ...process.env, SHARD: '4/4', E2E_MATRIX_ROW: JSON.stringify({ shard: 1, files: [paths[0]], empty: false }) },
+          stdout: 'ignore', stderr: 'ignore',
+        });
+        const readyDeadline = Date.now() + 5000;
+        while (!existsSync(join(root, 'runner.pid')) && Date.now() < readyDeadline) await Bun.sleep(20);
+        expect(existsSync(join(root, 'runner.pid'))).toBe(true);
+        runnerPid = Number(readFileSync(join(root, 'runner.pid'), 'utf8'));
+        expect(runnerPid).toBeGreaterThan(0);
+        child.kill(signal);
+        if (delaySpawnReturn) writeFileSync(join(root, 'cancellation-sent'), 'sent');
+        const exitDeadline = Date.now() + 5000;
+        while (child.exitCode === null && Date.now() < exitDeadline) await Bun.sleep(20);
+        expect(child.exitCode).toBe(signal === 'SIGINT' ? 130 : 143);
+        expect(readFileSync(join(root, 'received.txt'), 'utf8').trim()).toBe(signal);
+        expect(() => process.kill(runnerPid, 0)).toThrow();
+      } finally {
+        child?.kill('SIGKILL');
+        if (runnerPid) { try { process.kill(runnerPid, 'SIGKILL'); } catch { /* already reaped */ } }
+        if (child) await child.exited;
+        rmSync(root, { recursive: true, force: true });
+      }
+    }, 15000);
+  }
 });

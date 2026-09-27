@@ -24,6 +24,7 @@
 import { execSync } from 'child_process';
 
 import { loadConfig, toEngineConfig } from '../../core/config.ts';
+import { buildGatewayConfig } from '../../core/ai/build-gateway-config.ts';
 import { createEngine } from '../../core/engine-factory.ts';
 
 /** Default wall-clock guard for in-process initSchema. Matches the 600s cap
@@ -68,13 +69,7 @@ export async function runMigrateOnlyCore(opts?: { timeoutMs?: number }): Promise
   // whose file config is missing embedding fields must not fall through to
   // stale hardcoded fallbacks. loadConfig already merged env; propagate it.
   const { configureGateway } = await import('../../core/ai/gateway.ts');
-  configureGateway({
-    embedding_model: config.embedding_model,
-    embedding_dimensions: config.embedding_dimensions,
-    expansion_model: config.expansion_model,
-    chat_model: config.chat_model,
-    env: { ...process.env },
-  });
+  configureGateway(buildGatewayConfig(config));
 
   const timeoutMs = opts?.timeoutMs ?? MIGRATE_ONLY_TIMEOUT_MS;
   const engine = await createEngine(toEngineConfig(config));

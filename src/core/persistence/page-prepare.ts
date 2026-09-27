@@ -26,6 +26,8 @@ import { preserveProtectedTakes } from './protected-takes.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { preparePageAdvisories, remoteLinkHint, pageNoopAdvisories } from './page-advisories.ts';
+import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
+import { nativeFileTarget } from './native-file-target.ts';
 
 const PURGE_RESIDUALS = 'Brain-repo git history, synced working-tree copies, exports, compiled context files and slug-keyed derived rows (takes, open loops, file records) may still hold the content — rotate the credential and rewrite or regenerate those copies.';
 
@@ -66,8 +68,8 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   if (!binding?.local_path) throw new OperationError('owner_unavailable', 'The canonical worktree is unavailable on this host.');
   const root = join(binding.local_path, binding.relative_path);
   const capturedPath = recordedPathFromFileUri(snapshot?.page.source_uri, root);
-  const path = resolveSourceLocalFilePath(root, snapshot?.page.source_path, row.slug)
-    ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`));
+  const path = nativeFileTarget(root, resolveSourceLocalFilePath(root, snapshot?.page.source_path, row.slug)
+    ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`)));
   if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
   const before = existsSync(path) ? readFileSync(path) : null;
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
@@ -94,11 +96,14 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
 
 /** Providers and parsing run before the OS lock and before any publication transaction. */
 export async function preparePageMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig,
-  preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }): Promise<PreparedMutation> {
+  preparedIntent?: { content: string; expectedRevision: string; tags?: string[] }, signal?: AbortSignal): Promise<PreparedMutation> {
+  signal?.throwIfAborted();
   if (!row.intent) throw new OperationError('storage_error', 'A pending write lost its normalized intent.');
+  await assertKnowledgePublicationAllowed(engine, row);
   const p = row.intent;
   const source = { sourceId: row.source_id };
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+  signal?.throwIfAborted();
   assertPageRevision(snapshot, preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(p)));
   if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
@@ -181,6 +186,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     prepareFrontmatter: page => { provenance = putProvenance(row, snapshot, page); },
     prepare: async value => { prepared = value; return value.result; },
   });
+  signal?.throwIfAborted();
   if (!prepared) {
     const oversized = result.error?.startsWith('Content too large') === true;
     throw new OperationError(oversized ? 'request_too_large' : 'invalid_params', oversized ? result.error!
@@ -205,7 +211,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const rendered = serializePageToMarkdown(renderedPage, tags);
   const logicalNoop = snapshot !== null && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(ready.parsedPage, tags));
   const noop = logicalNoop && (snapshot?.page.deleted_at != null) === targetDeleted;
-  const project = row.operation === 'remember' || row.operation.startsWith('takes_') ? undefined
+  const project = row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity') ? undefined
     : prepareCanonicalProjections(ready.parsedPage,row.slug,row.source_id);
   const ordinaryPage = ['put_page','capture','restore_page','revert_version'].includes(row.operation);
   const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage);

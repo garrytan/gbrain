@@ -31,7 +31,7 @@ import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const REGISTRY_JSON = JSON.stringify({
   embedding_test8: { provider: 'voyage:voyage-3-large', dimensions: 8, type: 'vector' },
-  embedding_hv8: { provider: 'zeroentropyai:zembed-1', dimensions: 8, type: 'halfvec' },
+  embedding_hv8: { provider: 'fixture-provider:embedding-v1', dimensions: 8, type: 'halfvec' },
 });
 
 const VEC8 = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
@@ -160,7 +160,7 @@ function registryWriteScenario(name: string, getEngine: () => BrainEngine) {
         chunk_text: 'halfvec chunk',
         chunk_source: 'compiled_truth',
         embedding: VEC8,
-        model: 'zeroentropyai:zembed-1',
+        model: 'fixture-provider:embedding-v1',
       },
     ]);
     const rows = await engine.executeRaw<{ hv_null: boolean }>(
@@ -487,7 +487,7 @@ describe('#1262 resolveWriteColumnFromConfigRows / vectorCastSuffix', () => {
   test('registry override of the embedding builtin wins', () => {
     const r = resolveWriteColumnFromConfigRows({
       embeddingColumnsJson: JSON.stringify({
-        embedding: { provider: 'zeroentropyai:zembed-1', dimensions: 2560, type: 'halfvec' },
+        embedding: { provider: 'fixture-provider:embedding-v1', dimensions: 2560, type: 'halfvec' },
       }),
     });
     expect(r.name).toBe('embedding');

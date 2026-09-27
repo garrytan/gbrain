@@ -1,5 +1,5 @@
 /**
- * Pricing table contract — Voyage + ZeroEntropy coverage gate.
+ * Pricing table contract — supported-provider coverage gate.
  *
  * The post-upgrade reembed cost prompt in `gbrain upgrade` falls back to
  * "estimate unavailable" on unknown providers, which is fine for safety
@@ -43,12 +43,6 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     expect(lookupEmbeddingPrice('voyage:voyage-4-nano').kind).toBe('unknown');
   });
 
-  test('ZeroEntropy zembed-1 at $0.05/MTok (v0.35.1.0+)', () => {
-    const r = lookupEmbeddingPrice('zeroentropyai:zembed-1');
-    expect(r.kind).toBe('known');
-    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.05);
-  });
-
   test('Google gemini-embedding-001 at $0.15/MTok', () => {
     const r = lookupEmbeddingPrice('google:gemini-embedding-001');
     expect(r.kind).toBe('known');
@@ -79,9 +73,9 @@ describe('lookupEmbeddingPrice — fall-through behavior', () => {
   });
 
   test('provider name is case-insensitive', () => {
-    const r = lookupEmbeddingPrice('ZeroEntropyAI:zembed-1');
+    const r = lookupEmbeddingPrice('VoYaGe:voyage-4');
     expect(r.kind).toBe('known');
-    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.05);
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.06);
   });
 });
 

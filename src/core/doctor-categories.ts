@@ -126,6 +126,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'sync_freshness',
   'takes_count',
   'takes_weight_grid',
+  'text_projection_readiness',
   'timeline_coverage',
   'undeclared_db_only_pages',
   'unified_multimodal_coverage',
@@ -174,6 +175,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_runbook_skew',
   'bootstrap_serve_lock',
   'batch_retry_health',
+  'canonical_content_writes',
   'brainstorm_health',
   'connectors',
   'chat_fallback_chain_inert',
@@ -197,7 +199,6 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'plugin_lane_collision',
   'pool_budget',
   'progressive_batch_audit_health',
-  'provider_sunset',
   'queue_health',
   'reranker_health',
   'rls',
@@ -215,7 +216,6 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'wedged_queue',
   'orphaned_private_queue',
   'worker_oom_loop',
-  'ze_embedding_health',
 ]);
 
 /**

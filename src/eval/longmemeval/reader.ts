@@ -4,7 +4,7 @@
  * answer call. Peeled from src/commands/eval-longmemeval.ts so the prompt is
  * a module constant the receipt can pin (plan D30: `reader_prompt_sha`).
  *
- * INVARIANT: `READER_SYSTEM_TEXT` is constant across questions — every
+ * INVARIANT: the selected system text is constant across questions — every
  * per-question input (question, question_date, trajectory block, retrieved
  * sessions) lives in the USER message, so `READER_PROMPT_SHA` is a run-level
  * pin and two rows with equal shas saw the identical instruction.
@@ -20,14 +20,15 @@
  *     (sanitize.ts) rather than pasted raw;
  *   - `Current Date: {question_date}` matches the official prompt and is
  *     emitted only when the dataset row carries `question_date`;
- *   - max output tokens 512 (official: 500).
+ *   - max output tokens 1024 for notes (512 for the prior direct protocol;
+ *     official: 500). The budget and mode are explicit receipt pins.
  */
 
 import type { ThinkLLMClient } from '../../core/think/index.ts';
 import type { SearchResult } from '../../core/types.ts';
 import { renderChatBlock, type ChatSessionForPrompt } from './sanitize.ts';
 import { rawSessionId, type SlugToRawMap } from './metrics.ts';
-import { sha256Hex } from './run-config.ts';
+import { sha256Hex, stableStringify } from './run-config.ts';
 
 /** Re-exported for existing importers; the definition lives in metrics.ts (the SlugToRawMap owner). */
 export { rawSessionId } from './metrics.ts';
@@ -58,6 +59,38 @@ export const READER_SYSTEM_TEXT =
 /** sha256 of the system text — the receipt's reader-prompt pin. */
 export const READER_PROMPT_SHA = sha256Hex(READER_SYSTEM_TEXT);
 
+export const READER_NOTES_SYSTEM_TEXT = READER_SYSTEM_TEXT.replace(
+  'Answer concisely with only the information needed to answer the question.',
+  'First extract all the relevant information, then reason over the information to get the answer. Keep the notes brief and end with a concise final answer.',
+);
+export const READER_NOTES_PROMPT_VERSION = 'gbrain-lme-reader-v4-notes-fullsessions';
+export type ReaderMode = 'direct' | 'notes';
+
+export interface ReaderConfig {
+  mode: ReaderMode;
+  maxTokens: number;
+  promptVersion: string;
+  promptSha: string;
+  system: string;
+}
+
+export function resolveReaderConfig(input: { mode?: string; maxTokens?: number } = {}): ReaderConfig {
+  const mode = input.mode ?? 'notes';
+  if (mode !== 'direct' && mode !== 'notes') throw new Error(`--reader-mode must be direct|notes (got: ${mode})`);
+  const maxTokens = input.maxTokens ?? (mode === 'notes' ? 1024 : READER_MAX_TOKENS);
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) throw new Error(`--reader-max-tokens must be a positive integer (got: ${maxTokens})`);
+  const system = mode === 'notes' ? READER_NOTES_SYSTEM_TEXT : READER_SYSTEM_TEXT;
+  return {
+    mode, maxTokens, system,
+    promptVersion: mode === 'notes' ? READER_NOTES_PROMPT_VERSION : READER_PROMPT_VERSION,
+    promptSha: sha256Hex(system),
+  };
+}
+
+export function readerConfigHash(config: ReaderConfig, model: string): string {
+  return sha256Hex(stableStringify({ mode: config.mode, max_tokens: config.maxTokens, prompt_version: config.promptVersion, prompt_sha: config.promptSha, model }));
+}
+
 /** --retrieval-only: a text block of retrieved sessions for downstream graders. */
 export function renderRetrievedAsHypothesis(results: readonly SearchResult[], slugToRaw: SlugToRawMap): string {
   const lines: string[] = [];
@@ -87,8 +120,18 @@ export function buildReaderUserText(input: ReaderUserTextInput): string {
   return `Question:\n${input.question}\n\n${dateLine}${trajectorySection}Retrieved sessions:\n${input.rendered}`;
 }
 
+export function buildReaderRequest(input: ReaderUserTextInput, model: string, config: ReaderConfig = resolveReaderConfig()) {
+  return {
+    model,
+    max_tokens: config.maxTokens,
+    system: config.system,
+    messages: [{ role: 'user' as const, content: buildReaderUserText(input) }],
+  };
+}
+
 export interface ReaderAnswer {
   text: string;
+  finish_reason: string | null;
   /**
    * The model id the provider REPORTED for the answer when it differs from
    * the requested id (an API snapshot such as `gpt-4o-2024-08-06`); null when
@@ -109,6 +152,7 @@ export async function generateAnswer(
   slugToRaw: SlugToRawMap,
   model: string,
   trajectoryBlock: string = '',
+  config: ReaderConfig = resolveReaderConfig(),
 ): Promise<ReaderAnswer> {
   const byId = new Map<string, { body: string; date?: string }>();
   for (const p of pages) byId.set(p.slug, { body: p.content, date: p.date });
@@ -125,25 +169,17 @@ export async function generateAnswer(
     });
   }
   const { rendered, truncatedCount } = renderChatBlock(sessions, { maxSessionChars: READER_MAX_SESSION_CHARS });
-  const userText = buildReaderUserText({
+  const request = buildReaderRequest({
     question: question.question,
     questionDate: typeof question.question_date === 'string' ? question.question_date : undefined,
     trajectoryBlock,
     rendered,
-  });
+  }, model, config);
 
-  const response = await client.create({
-    model,
-    max_tokens: READER_MAX_TOKENS,
-    system: READER_SYSTEM_TEXT,
-    messages: [{ role: 'user', content: userText }],
-  });
+  const response = await client.create(request);
   const reported = typeof response.model === 'string' && response.model.length > 0 && response.model !== model
     ? response.model
     : null;
-  const receipt = { context_chars: rendered.length, context_sessions: sessions.length, sessions_truncated: truncatedCount };
-  for (const block of response.content) {
-    if (block.type === 'text') return { text: block.text.trim(), response_model: reported, ...receipt };
-  }
-  return { text: '', response_model: reported, ...receipt };
+  const receipt = { finish_reason: response.stop_reason ?? null, context_chars: rendered.length, context_sessions: sessions.length, sessions_truncated: truncatedCount };
+  return { text: response.content.filter(block => block.type === 'text').map(block => block.text).join('').trim(), response_model: reported, ...receipt };
 }

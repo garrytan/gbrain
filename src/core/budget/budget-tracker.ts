@@ -277,29 +277,6 @@ const FREE_LOCAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
   'llama-server',
 ]);
 
-/**
- * Look up `modelId` in the chat or embedding pricing maps. Returns a
- * per-1M-token price tuple, or null when unknown.
- *
- * Strategy:
- *   - Chat: try the bare model id in ANTHROPIC_PRICING first (legacy keys
- *     are bare claude-* ids), then the canonical paid-cloud chat table
- *     for provider-prefixed OpenAI/Google/DeepSeek/Together ids, then the
- *     explicit zero-cost local provider set. Recipe aliases are normalized
- *     first (`claude-cli:haiku` → `claude-cli:claude-haiku-4-5-20251001`),
- *     so an alias prices exactly like the id it resolves to.
- *   - Embed: lookupEmbeddingPrice handles the provider:model form; on a miss,
- *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
- *     `--max-cost` callers don't hard-fail.
- *   - Rerank: try ANTHROPIC_PRICING (legacy path for any Claude-priced
- *     rerank); else try lookupEmbeddingPrice — paid rerank providers (e.g.
- *     ZeroEntropy's zerank-2) share the same provider:model-keyed,
- *     $/1M-token table as their embedding siblings, so it's reused here
- *     rather than duplicated into a third table; else if the provider half
- *     is in FREE_LOCAL_RERANK_PROVIDERS, return zero pricing so `--max-cost`
- *     callers don't TX2 hard-fail on local inference recipes (electricity,
- *     not tokens); else unknown.
- */
 function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   if (kind === 'embed') {
     const hit = lookupEmbeddingPrice(modelId);
@@ -333,10 +310,6 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
   }
-  // Paid rerank providers (e.g. ZeroEntropy's zerank-2) aren't Claude-priced,
-  // so they miss the ANTHROPIC_PRICING checks above. Reuse the embedding
-  // pricing table (issue #3223) — same provider:model key shape, same
-  // $/1M-token unit — instead of hand-copying a third pricing surface.
   if (kind === 'rerank') {
     const hit = lookupEmbeddingPrice(key);
     if (hit.kind === 'known') return { input: hit.pricePerMTok, output: 0 };

@@ -25,6 +25,8 @@ import type {
   DegradedReason,
 } from '../types.ts';
 import { affectsRecall } from '../types.ts';
+import { resolveSearchDateBounds } from './date-bounds.ts';
+export { resolveDateBoundary, resolveSearchDateBounds } from './date-bounds.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 import { requiresSafeChunks } from './safe-chunks.ts';
 import { embed, embedQuery } from '../embedding.ts';
@@ -306,36 +308,6 @@ export function applyBacklinkBoost(
   }
 }
 
-/**
- * v0.35.6.0 — floor-ratio threshold computation.
- *
- * Returns the absolute score floor below which boost stages skip a result.
- * Returns `Number.NEGATIVE_INFINITY` (no gate) when:
- *   - `floorRatio` is undefined (default — preserves prior behavior bit-for-bit)
- *   - `floorRatio` is NaN, infinite, negative, or > 1 (out-of-range silently
- *     disables the gate; range validation lives at the config-parse layer)
- *   - No result has a positive, finite score (all-NaN, all-negative, or empty
- *     input arrays produce no positive signal — gate stays off)
- *
- * Otherwise returns `topScore * floorRatio`, where `topScore` is the largest
- * finite score in `results`. Callers compute this ONCE before any boost stage
- * runs, then pass the resulting threshold to every stage. Single-baseline
- * semantic — order-independent across the three metadata-axis boosts.
- *
- * Why this exists: gbrain's bounded boosts (`[1.0, ~1.6]` log-compressed
- * salience clip, log-scaled backlinks, half-life recency) keep any single
- * boost from catastrophically flipping rankings on curated small corpora.
- * On larger corpora indexed with dense embedders (text-embedding-3-large,
- * Voyage 3+, ZeroEntropy zembed-1), weak-overlap candidates can land in
- * top-K via baseline vector overlap and accumulate metadata boost until
- * they leapfrog the legitimate primary hit. The gate restricts each
- * metadata boost to the head of the candidate pool so the long tail keeps
- * its unboosted relevance ranking.
- *
- * 0.85 is a reasonable starting value for dense-embedder corpora. Default
- * stays undefined (no gate) until per-corpus ablation evidence supports a
- * default flip (see `TODOS.md` floor-ratio ablation entry).
- */
 export function computeFloorThreshold(
   results: SearchResult[],
   floorRatio: number | undefined,
@@ -1120,11 +1092,6 @@ export interface HybridSearchOpts extends SearchOpts {
   _searchModeInput?: ResolveSearchModeInput;
 }
 
-/**
- * v0.42.20.0 (Fix 3, #1775) — bound the query-time embed so a stalled provider
- * (the user's zeroentropy case) fails over to keyword instead of hanging past
- * the CLI's 10s force-exit. Default 6s leaves headroom under that deadline.
- */
 const QUERY_EMBED_TIMEOUT_MS = (() => {
   const n = Number(process.env.GBRAIN_QUERY_EMBED_TIMEOUT_MS);
   return Number.isFinite(n) && n > 0 ? n : 6_000;
@@ -1187,41 +1154,6 @@ export async function embedQueryBounded(
 }
 
 /**
- * #3442 — resolve the public `since`/`until` contract (SearchOpts v0.29.1):
- * ISO-8601 passes through, relative durations ('7d', '2w', '1y') resolve to a
- * concrete timestamp, and a plain YYYY-MM-DD `until` lands at end-of-day.
- * The relative form was documented since v0.29.1 but never implemented — the
- * raw string ('60d') flowed into the engines' `::timestamptz` casts, every
- * arm failed fail-open, and the date filter was SILENTLY ignored.
- * Unparseable input now throws loudly instead of degrading.
- */
-export function resolveDateBoundary(
-  raw: string | undefined,
-  boundary: 'since' | 'until',
-): string | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  const s = String(raw).trim();
-  if (!s) return undefined;
-  const rel = /^(\d+)\s*([dwmy])$/i.exec(s);
-  if (rel) {
-    const n = parseInt(rel[1], 10);
-    const unit = rel[2].toLowerCase();
-    // m = months (30d). Minutes make no sense for an effective_date filter.
-    const days = unit === 'd' ? n : unit === 'w' ? n * 7 : unit === 'm' ? n * 30 : n * 365;
-    return new Date(Date.now() - days * 86400000).toISOString();
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    // Plain date: `until` lands at end-of-day (documented SearchOpts
-    // semantics); `since` keeps UTC start-of-day.
-    return boundary === 'until' ? `${s}T23:59:59.999Z` : s;
-  }
-  if (Number.isFinite(Date.parse(s))) return s;
-  throw new Error(
-    `Invalid ${boundary} value "${s}" — expected ISO-8601 (YYYY-MM-DD or timestamp) or a relative duration like '7d', '2w', '1y'.`,
-  );
-}
-
-/**
  * WP2/T3 — classify an embed/vector failure as a timeout vs a provider
  * error for the enumerated degraded[] reason codes (D6). Matches both the
  * embedQueryBounded deadline rejection and AbortSignal.timeout's
@@ -1261,6 +1193,13 @@ export async function hybridSearch(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  if (opts?.types?.length === 0) return [];
+  if (opts?.type || opts?.types?.length) {
+    const { expandEngineTypeFilters } = await import('../schema-pack/query-types.ts');
+    const filters = await expandEngineTypeFilters(engine, opts);
+    if (filters.types?.length === 0) return [];
+    opts = { ...opts, ...filters };
+  }
   // v0.32.3 search-lite mode: resolve the active mode + per-key overrides
   // once at entry. Mode supplies DEFAULTS for intentWeighting, tokenBudget,
   // expansion, and searchLimit when the caller leaves those undefined.
@@ -1372,8 +1311,7 @@ export async function hybridSearch(
     // PR #618 callers compiling while the new names are the public surface.
     // #3442: resolveDateBoundary implements the documented contract (relative
     // durations + end-of-day for plain-date `until`) at this single seam.
-    afterDate: resolveDateBoundary(opts?.since ?? opts?.afterDate, 'since'),
-    beforeDate: resolveDateBoundary(opts?.until ?? opts?.beforeDate, 'until'),
+    ...resolveSearchDateBounds(opts),
     // v0.34.1 (#861, D9 — P0 leak seal): thread source-scoping through so the
     // inner engine.searchKeyword / engine.searchVector calls apply the
     // WHERE source_id filter at SQL level. Pre-fix, this explicit pick
@@ -1405,12 +1343,15 @@ export async function hybridSearch(
     // sub-queries through this one opts object — last-write-wins would
     // under-report multi-query exhaustion. Keep the max-escalations event.
     onVectorPoolMeta: (m) => {
+      if (!m.underfilled) return;
+      pushDegraded(degraded, 'vector_candidates_incomplete', m.reason === 'deadline' ? 'timeout' : m.reason ?? 'candidate_budget');
       if (!vectorPoolUnderfill || m.escalations >= vectorPoolUnderfill.escalations) {
-        vectorPoolUnderfill = { escalations: m.escalations, innerLimit: m.innerLimit };
+        const { underfilled, ...detail } = m;
+        vectorPoolUnderfill = { ...detail, incomplete: true };
       }
     },
   };
-  let vectorPoolUnderfill: { escalations: number; innerLimit: number } | undefined;
+  let vectorPoolUnderfill: HybridSearchMeta['vector_pool_underfilled'];
   // Track what actually ran for the optional onMeta callback (v0.25.0).
   // Caller leaves onMeta undefined → these flags are computed but never
   // surfaced. Capture wrapper passes a closure to receive the meta and
@@ -1583,11 +1524,6 @@ export async function hybridSearch(
     });
   }
 
-  // Skip vector search entirely if the gateway has no embedding provider configured (Codex C3).
-  // v0.36 (D10): ask "is the RESOLVED column's provider reachable?" rather
-  // than "is the global default reachable?" — otherwise an unreachable
-  // global default disables vector search even when the active column's
-  // provider (Voyage, ZE) works fine.
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
   // Image/both/unified routing embeds via the MULTIMODAL provider, not the
@@ -1719,27 +1655,6 @@ export async function hybridSearch(
     return noEmbedBudgeted;
   }
 
-  // v0.36 cross-modal wave: determine the effective modality once.
-  //
-  // Precedence (D22-1 normalization): literal 'auto' is normalized to
-  // undefined so it doesn't reach the modality branch directly. Resolution:
-  //   explicit opts.crossModal ('text'|'image'|'both') wins
-  //   else suggestions.suggestedModality (regex-driven)
-  //   else (Commit 4) opt-in LLM tie-break for genuinely ambiguous queries
-  //   else 'text' (default)
-  //
-  // D9 mode-bundle override matrix: when effectiveModality === 'image',
-  // cross-modal path overrides bundle knobs (expansion=false, no keyword
-  // search). Voyage handles synonyms in-space; zerank-2 can't rerank image
-  // embeddings.
-  //
-  // Phase 3 (D8): when search.unified_multimodal is true, ALL queries
-  // route through the multimodal model + embedding_multimodal column,
-  // regardless of detected modality.
-  //
-  // Commit 4 (LLM intent escalation): when search.cross_modal.llm_intent
-  // is true AND regex returned 'text' AND isAmbiguousModalityQuery fires,
-  // await a Haiku tie-break. Fail-open to regex result on any error.
   const explicitModality =
     opts?.crossModal && opts.crossModal !== 'auto' ? opts.crossModal : undefined;
   let regexModality = explicitModality ?? suggestions.suggestedModality ?? 'text';
@@ -2317,7 +2232,7 @@ export async function hybridSearch(
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
-  // v0.48.2: a SKIPPED reranker (no provider key / provider past its sunset)
+
   // is stamped `reranker_skipped` (ranking-only — never shortens the cache TTL
   // or turns an empty result into a degraded miss), and a success-shaped
   // pass-through (#4648: provider answered 200 with an empty/malformed result
@@ -2574,6 +2489,7 @@ export async function hybridSearchCached(
   query: string,
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
+  if (opts?.types?.length === 0) return [];
   // v0.32.3 search-lite mode: resolve mode + per-key overrides once. The
   // resolved knob set drives cache enable/threshold/TTL AND the knobs_hash
   // that scopes the cache row so a tokenmax write can't be served to a
@@ -2626,15 +2542,6 @@ export async function hybridSearchCached(
       metadata_boost_gate: normalizeMetadataBoostGate(opts?.metadataBoostGate),
     },
   });
-  // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
-  // decision. The query_cache.embedding column has one fixed pgvector dim
-  // sized at brain init; storing a 1024d Voyage or 2560d ZE cache
-  // embedding fails or corrupts results. Name-based check ("is it the
-  // default `embedding` column?") is insufficient — the registry
-  // explicitly allows overriding builtin `embedding` to a different
-  // provider/dim. isCacheSafe compares the resolved column's full
-  // embedding space (name + dim + model) against cfg and returns true
-  // only when ALL match. Otherwise skip.
   const mergedCfgCached = await loadConfigWithEngine(engine).catch(() => null);
   const cfgCached = mergedCfgCached ?? ((await import('../config.ts')).loadConfig()) ?? { engine: 'pglite' as const };
   const resolvedColCached = resolveEmbeddingColumn(opts, cfgCached);
@@ -2740,7 +2647,7 @@ export async function hybridSearchCached(
   // #3985: type-filtered requests skip the cache — `types` is not part of
   // knobsHash, so a filtered result set could be served to an unfiltered
   // lookup (and vice versa). Mirrors the #3442 date-filter bypass.
-  const typeFiltered = (opts?.types?.length ?? 0) > 0;
+  const typeFiltered = Boolean(opts?.type) || (opts?.types?.length ?? 0) > 0;
   // Offset pages are cache-hostile until the pre-slice POOL itself is what's
   // stored: the cache holds the already offset/limit-sliced page (bare
   // hybridSearch slices before returning), so a hit for any other offset

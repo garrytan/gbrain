@@ -39,18 +39,6 @@ export async function embed(text: string): Promise<Float32Array> {
   return gatewayEmbedOne(text);
 }
 
-/**
- * v0.35.0.0+: embed a single text on the QUERY side. For asymmetric providers
- * (ZE zembed-1, Voyage v3+) this routes `input_type: 'query'` through the
- * embed seam so the provider returns query-side vectors. For symmetric
- * providers (OpenAI text-3, DashScope, Zhipu) the field is dropped — no
- * behavior change. Used by hybrid.ts on the search hot path.
- *
- * v0.36 (D10): optional `embeddingModel` + `dimensions` overrides so the
- * dynamic-embedding-column path can embed via the column's provider rather
- * than the globally-configured default. Bare `embedQuery(text)` preserves
- * pre-v0.36 behavior.
- */
 export async function embedQuery(
   text: string,
   opts?: { embeddingModel?: string; dimensions?: number; abortSignal?: AbortSignal },
@@ -140,7 +128,7 @@ export const EMBEDDING_COST_PER_1K_TOKENS = 0.00013;
 export function currentEmbeddingPricePerMTok(): number {
   let modelString: string;
   try {
-    modelString = gatewayGetModel(); // e.g. 'zeroentropyai:zembed-1'
+    modelString = gatewayGetModel();
   } catch {
     // Gateway not configured (e.g. unit tests, cost preview before connect).
     // Fall back to the OpenAI text-embedding-3-large default rate.

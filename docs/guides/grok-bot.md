@@ -7,6 +7,10 @@ installs the thin GBrain CLI inside the Bot; the Bot then saves the generated
 memory instructions as a native skill. If you have no always-on machine,
 install GBrain locally in `/workspace/gbrain` on the Bot computer instead.
 
+Durable preferences can be shared; local harness configuration cannot. Read
+[memory boundaries](memory-boundaries.md) for provider text disclosure, remote
+graph maintenance, and full-backup limits before enabling capabilities.
+
 **Say to your agent:** *"connect grok bot to my brain"* — *"use my brain over
 mcp"*. On your computer, the `remote-mcp` skill publishes and grants; inside
 the Bot, the paste-in prompt below installs the connection.

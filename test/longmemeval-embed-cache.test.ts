@@ -321,23 +321,23 @@ describe('installEmbedCache — gateway seam', () => {
 
   test('query-side embeds are cached under the query key, not the document key', async () => {
     const cache = new EmbeddingCache(join(dir, 'side.sqlite'));
-    // Use an asymmetric provider so the gateway emits input_type (zembed-1's
-    // smallest supported Matryoshka dims is 40).
-    const ZE_DIMS = 40;
-    const real = fakeTransport(ZE_DIMS);
+    // Use an asymmetric provider so the gateway emits input_type (Voyage's
+    // smallest supported Matryoshka dims is 256).
+    const VOYAGE_DIMS = 256;
+    const real = fakeTransport(VOYAGE_DIMS);
     configureGateway({
-      embedding_model: 'zeroentropyai:zembed-1',
-      embedding_dimensions: ZE_DIMS,
-      env: { ZEROENTROPY_API_KEY: 'sk-fake' },
+      embedding_model: 'voyage:voyage-4',
+      embedding_dimensions: VOYAGE_DIMS,
+      env: { VOYAGE_API_KEY: 'sk-fake' },
     });
     const inst = installEmbedCache(cache, { realTransport: real.fn });
-    expect(inst.model).toBe('zeroentropyai:zembed-1');
-    expect(inst.dims).toBe(ZE_DIMS);
+    expect(inst.model).toBe('voyage:voyage-4');
+    expect(inst.dims).toBe(VOYAGE_DIMS);
     await embedQuery('aa');
     await embed(['aa']);
     expect(real.calls.length).toBe(2); // the two sides never alias
-    expect(cache.get('zeroentropyai:zembed-1', ZE_DIMS, 'aa', 'query')).toEqual(vec(2, ZE_DIMS));
-    expect(cache.get('zeroentropyai:zembed-1', ZE_DIMS, 'aa', 'document')).toEqual(vec(2, ZE_DIMS));
+    expect(cache.get('voyage:voyage-4', VOYAGE_DIMS, 'aa', 'query')).toEqual(vec(2, VOYAGE_DIMS));
+    expect(cache.get('voyage:voyage-4', VOYAGE_DIMS, 'aa', 'document')).toEqual(vec(2, VOYAGE_DIMS));
     await embedQuery('aa');
     expect(real.calls.length).toBe(2); // query-side hit
     inst.uninstall();

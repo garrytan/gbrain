@@ -1,38 +1,3 @@
-/**
- * `gbrain migrate embeddings --to <provider:model>` (#3390) — the
- * provider-agnostic forward migration off any embedding provider, built for
- * the ZeroEntropy 2026-09-04 sunset but not keyed to it.
- *
- * Also reachable as `gbrain retrieval-upgrade` — the command README.md and
- * doctor.ts have promised since v0.36 but which never had a dispatch branch.
- *
- * This file is the orchestrator (planMigrationFlow + executeMigrationFlow);
- * every heavy primitive lives in src/core/embedding-migration.ts and is
- * shared with the `migrate_embeddings` op, doctor, and `--status`.
- *
- * Execute flow:
- *   1. global migration lock (GLOBAL_MIGRATION_LOCK_ID) — serializes whole
- *      migrations, including empty-brain runs that lock zero sources
- *   2. retarget gate — a live marker for a DIFFERENT target refuses without
- *      --retarget; same-target resumes (started_at preserved)
- *   3. per-source embed-backfill locks, all sources sorted (includeArchived),
- *      held across the drain via heldLocks + a heartbeat that aborts on loss
- *   4. probe — one live embed against the TARGET provider BEFORE any mutation
- *   5. apply — schema transition (per-column width repair), config (DB +
- *      file plane; env-canonical when no file exists), NULL-signature-
- *      inclusive invalidation, query-cache purge, marker v2 write
- *   6. reranker companion — probe + one-tx config write + cache purge
- *   7. re-embed drain — runEmbedCore --stale --catch-up under the held locks
- *   8. reconcile signatures, then verifyMigrationComplete (DB reality, not
- *      config), verifySearchRoundTrip smoke check, transactional completion
- *      bookkeeping (live-marker delete + completed-marker write, one tx)
- *
- * Resumable: a killed run re-runs the SAME command; the NULL-embedding cursor
- * is the checkpoint and already-converged steps no-op on the second pass.
- * `--status` is a separate read-only branch (readMigrationStatus) that never
- * embeds and never refuses on env.
- */
-
 import type { BrainEngine } from '../core/engine.ts';
 import { serr, slog } from '../core/console-prefix.ts';
 import {
@@ -82,7 +47,6 @@ export interface MigrateEmbeddingsFlags {
   json: boolean;
   noEmbed: boolean;
   ignoreEnvOverride: boolean;
-  forceSunsetTarget: boolean;
   retarget: boolean;
   /** auto (default) | off | keep | <provider:model> */
   reranker?: string;
@@ -107,7 +71,6 @@ export function parseMigrateEmbeddingsFlags(args: string[]): MigrateEmbeddingsFl
     json: args.includes('--json'),
     noEmbed: args.includes('--no-embed'),
     ignoreEnvOverride: args.includes('--ignore-env-override'),
-    forceSunsetTarget: args.includes('--force-sunset-target'),
     retarget: args.includes('--retarget'),
     ...(reranker !== undefined && { reranker }),
     ...(batchSize !== undefined && { batchSize }),
@@ -120,8 +83,7 @@ function printHelp(): void {
 
 Re-embed the whole brain onto a different embedding provider/model. Handles
 dimension changes (schema transition), pages without a recorded embedding
-signature (#3391), the query cache, and resume-after-kill. The forward path
-off a sunsetting provider.
+signature (#3391), the query cache, and resume-after-kill.
 
 Flags:
   --to <provider:model>   Target embedding model (e.g. openai:text-embedding-3-small).
@@ -137,9 +99,6 @@ Flags:
   --pace[=mode]           DB-contention pacing for the re-embed (off|gentle|balanced|aggressive).
   --ignore-env-override   Proceed even when GBRAIN_EMBEDDING_* env vars would
                           override the target at runtime (you know why).
-  --force-sunset-target   Allow migrating ONTO a provider with an announced
-                          shutdown (e.g. a self-hosted wire-compatible endpoint
-                          behind a provider_base_urls override).
   --retarget              Abandon a DIFFERENT in-flight migration target and
                           start this one (the refusal message names both the
                           resume and retarget commands).
@@ -448,7 +407,6 @@ export interface MigrationFlowOpts {
   to: string;
   dim?: number;
   ignoreEnvOverride?: boolean;
-  forceSunsetTarget?: boolean;
   retarget?: boolean;
   /** auto (default) | off | keep | <provider:model> — see resolveRerankerPlan. */
   reranker?: string;
@@ -521,7 +479,7 @@ export type MigrationFlowResult =
  */
 export async function planMigrationFlow(
   engine: BrainEngine,
-  opts: Pick<MigrationFlowOpts, 'to' | 'dim' | 'forceSunsetTarget' | 'reranker'>,
+  opts: Pick<MigrationFlowOpts, 'to' | 'dim' | 'reranker'>,
 ): Promise<MigrationPlanContext> {
   // From-state as the gateway resolved it (file/env config + defaults) —
   // display only; nothing load-bearing trusts it (D2).
@@ -538,7 +496,6 @@ export async function planMigrationFlow(
     ...(opts.dim !== undefined && { dim: opts.dim }),
     ...(fromModel !== undefined && { fromModel }),
     ...(fromDims !== undefined && { fromDims }),
-    ...(opts.forceSunsetTarget && { allowSunsetTarget: true }),
   });
 
   const envPresence = detectEnvPresence();
@@ -682,7 +639,6 @@ export async function executeMigrationFlow(
 
     const applied = await applyEmbeddingMigration(engine, plan, {
       ignoreEnvOverride: opts.ignoreEnvOverride,
-      forceSunsetTarget: opts.forceSunsetTarget,
       persistConfig: (m, d) => persistEmbeddingFileConfig(m, d),
     });
     if (applied.status === 'refused') return { status: 'refused_env', warning: applied.warning };
@@ -804,7 +760,7 @@ export async function runMigrateEmbeddings(
     const envPresence = detectEnvPresence();
     // API-key PRESENCE only — never values (Section 3).
     const keyPresence: Record<string, boolean> = {};
-    for (const k of ['VOYAGE_API_KEY', 'OPENAI_API_KEY', 'ZEROENTROPY_API_KEY', 'OPENROUTER_API_KEY']) {
+    for (const k of ['VOYAGE_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY']) {
       keyPresence[k] = Boolean(process.env[k]);
     }
     let filePlane: { model?: string | null; dims?: number | null } | null = null;
@@ -893,7 +849,6 @@ export async function runMigrateEmbeddings(
     ctx = await planMigrationFlow(engine, {
       to: flags.to!,
       ...(flags.dim !== undefined && { dim: flags.dim }),
-      ...(flags.forceSunsetTarget && { forceSunsetTarget: true }),
       ...(flags.reranker !== undefined && { reranker: flags.reranker }),
     });
   } catch (e) {
@@ -974,7 +929,6 @@ export async function runMigrateEmbeddings(
     to: flags.to!,
     ...(flags.dim !== undefined && { dim: flags.dim }),
     ignoreEnvOverride: flags.ignoreEnvOverride,
-    forceSunsetTarget: flags.forceSunsetTarget,
     retarget: flags.retarget,
     ...(flags.reranker !== undefined && { reranker: flags.reranker }),
     noEmbed: flags.noEmbed,

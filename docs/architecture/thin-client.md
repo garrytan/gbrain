@@ -58,6 +58,14 @@ carries the routing-seam picture):
   `RemoteMcpErrorReason` union the dispatcher's `never` switch keys off.
   Full symbol-level detail: the `src/core/mcp-client.ts` entry in
   [`KEY_FILES.md`](./KEY_FILES.md).
+- `src/commands/recall.ts` — explicit `--budget-policy` calls bypass the local
+  engine in the CLI dispatcher and use the remote recall operation. The dispatcher
+  reuses the command's parser, so a query value that resembles a policy flag does
+  not activate this route. An explicit `--brain` is rejected as on the shared
+  thin route. `--source`/`--source-id`, environment and dotfile scope use the
+  engine-free resolver; an explicit `default` is forwarded, not dropped.
+  The host's declared `recall.source_id` narrows both arms through the existing
+  authorization resolver. Omitted-policy CLI behavior is unchanged.
 - `src/core/cli-options.ts` — `parseGlobalFlags` supports `--timeout=Ns`
   (accepts `30s`, `2m`, `500ms`, plain ms). Default `null` = per-command
   default (30s for most ops, 180s for `think`). `parseTimeout(s)` exported

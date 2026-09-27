@@ -233,8 +233,8 @@ describe('r1Verdict (pure)', () => {
 describe('pairing + ON-arm integrity (pure)', () => {
   const ready: RerankerReadiness = {
     model: R1_ON_RERANKER_MODEL, provider: 'voyage', modelId: 'rerank-2.5', recipeKnown: true, hasTouchpoint: true,
-    modelListed: true, requiredKey: 'VOYAGE_API_KEY', keyPresent: true, sunset: null, sunsetPassed: false,
-    selfHosted: false, sunsetBlocks: false, ready: true,
+    modelListed: true, requiredKey: 'VOYAGE_API_KEY', keyPresent: true,
+    selfHosted: false, ready: true,
   };
 
   test('pairArms zips by position and refuses mismatched question sets', () => {

@@ -1,4 +1,5 @@
-import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { withConnectorSync, rethrowConnectorWriteError, type ManagedConnectorSync } from './persistence/connector-sync.ts';
+import { slugifyPath } from './sync.ts';
 /**
  * github-source — GitHub issues/PR sync for the `github` source kind.
  *
@@ -834,8 +835,7 @@ function assertContained(dir: string, path: string, repo: string): void {
   }
 }
 
-export function renderRepoCard(repo: string, data: RawRepo): string {
-  const now = new Date().toISOString();
+export function renderRepoCard(repo: string, data: RawRepo, syncedAt: string | null = new Date().toISOString()): string {
   return [
     '---',
     `kind: repo`,
@@ -845,7 +845,7 @@ export function renderRepoCard(repo: string, data: RawRepo): string {
     `default_branch: ${yamlStr(data.default_branch)}`,
     `archived: ${data.archived}`,
     `private: ${data.private}`,
-    `synced_at: ${yamlStr(now)}`,
+    ...(syncedAt === null ? [] : [`synced_at: ${yamlStr(syncedAt)}`]),
     '---',
     '',
     `# ${repo}`,
@@ -864,9 +864,8 @@ function checksSummaryLines(checks: GitHubItemData['checks']): string[] {
   return ['', line + failing, ''];
 }
 
-export function renderItemPage(data: GitHubItemData, detailFetched = true): string {
+export function renderItemPage(data: GitHubItemData, detailFetched = true, syncedAt: string | null = new Date().toISOString()): string {
   const d = data.detail;
-  const now = new Date().toISOString();
   const isPr = data.kind === 'pr';
   const pr = d as RawPullDetail;
   const status = isPr
@@ -886,7 +885,7 @@ export function renderItemPage(data: GitHubItemData, detailFetched = true): stri
     `created_at: ${yamlStr(d.created_at)}`,
     `updated_at: ${yamlStr(d.updated_at)}`,
     `closed_at: ${yamlStr(d.closed_at ?? '')}`,
-    `synced_at: ${yamlStr(now)}`,
+    ...(syncedAt === null ? [] : [`synced_at: ${yamlStr(syncedAt)}`]),
     `detail_fetched: ${detailFetched}`,
     `labels: ${yamlList(d.labels.map((l) => l.name))}`,
     `assignees: ${yamlList(d.assignees.map((a) => a.login))}`,
@@ -978,6 +977,7 @@ export function renderListItemPage(
   repo: string,
   kind: 'issue' | 'pr',
   item: RawIssueListItem | RawPullListItem,
+  syncedAt?: string | null,
 ): string {
   const isPr = kind === 'pr';
   const pr = item as RawPullListItem;
@@ -1019,7 +1019,7 @@ export function renderListItemPage(
     checks: null,
     linked: extractLinkedNumbers(detail.body ?? ''),
   };
-  return renderItemPage(data, false);
+  return renderItemPage(data, false, syncedAt);
 }
 
 // ── Page freshness helpers ───────────────────────────────────────────────────
@@ -1069,11 +1069,34 @@ export function pageHasDetail(filePath: string): boolean {
 // ── Sync runner ──────────────────────────────────────────────────────────────
 
 interface GitHubSyncDeps {
+  managed: ManagedConnectorSync | null;
   engine: BrainEngine;
   sourceId: string;
   cfg: GitHubSourceConfig;
   opts: SyncOpts;
   client: GitHubClient;
+}
+
+async function materializePage(deps: GitHubSyncDeps, filePath: string, content: string,
+  activePack: Parameters<typeof importPage>[2]) {
+  const rel = relative(deps.cfg.dir, filePath).replace(/\\/g, '/');
+  if (deps.managed) return deps.managed.importMarkdown(rel, content);
+  const created = !existsSync(filePath);
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp`;
+  writeFileSync(tmpPath, content, 'utf-8');
+  try {
+    const result = await importPage(deps, tmpPath, activePack, rel);
+    renameSync(tmpPath, filePath);
+    return { ...result, created };
+  } finally { rmSync(tmpPath, { force: true }); }
+}
+
+async function storedPage(deps: GitHubSyncDeps, filePath: string, apiUpdatedAt: string) {
+  if (!deps.managed) return { fresh: isPageFresh(filePath, apiUpdatedAt), hasDetail: pageHasDetail(filePath), exists: existsSync(filePath) };
+  const page = await deps.managed.page(relative(deps.cfg.dir, filePath).replace(/\\/g, '/').replace(/\.md$/, ''));
+  return { exists: !!page, fresh: typeof page?.frontmatter.updated_at === 'string' && page.frontmatter.updated_at >= apiUpdatedAt,
+    hasDetail: !!page && page.frontmatter.detail_fetched !== false };
 }
 
 async function importPage(
@@ -1129,6 +1152,10 @@ async function deleteStalePages(
     return;
   }
   const bySlug = new Map(rows.map((r) => [r.slug, r.source_path]));
+  if (deps.managed) {
+    for (const slug of plan.staleSlugs) if (await deps.managed.delete(slug, bySlug.get(slug) ?? null)) summary.deleted++;
+    return;
+  }
   const batchSize = 500;
   for (let i = 0; i < plan.staleSlugs.length; i += batchSize) {
     const batch = plan.staleSlugs.slice(i, i + batchSize);
@@ -1161,7 +1188,12 @@ export async function runGitHubSync(
   opts: SyncOpts,
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
-  await assertUnmanagedCanonicalWriter(engine, 'GitHub source sync');
+  return withConnectorSync(engine, sourceId, 'github', cfg, opts,
+    (managed, options) => runGitHubSyncInner(engine, sourceId, cfg, options, managed, fetchImpl));
+}
+
+async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: GitHubSourceConfig, opts: SyncOpts,
+  managed: ManagedConnectorSync | null, fetchImpl?: FetchImpl): Promise<import('../commands/sync.ts').SyncResult> {
   // Credential source: a GitHub App (auto-minted hourly installation tokens)
   // wins when configured; otherwise cfg.tokenEnv is the single source of
   // truth (the default is GH_TOKEN; a custom --token-env that is unset fails
@@ -1174,7 +1206,7 @@ export async function runGitHubSync(
   const client = cfg.app
     ? new GitHubClient(new AppTokenProvider(cfg.app, fetchImpl ?? fetch), fetchImpl)
     : new GitHubClient(process.env[cfg.tokenEnv] ?? '', fetchImpl);
-  const deps: GitHubSyncDeps = { engine, sourceId, cfg, opts, client };
+  const deps: GitHubSyncDeps = { engine, sourceId, cfg, opts, client, managed };
   const summary: GitHubSyncSummary = {
     status: 'synced',
     added: 0,
@@ -1203,7 +1235,7 @@ export async function runGitHubSync(
   // Keep previous scope before this run resolves its refreshed repo list.
   // A repo added to an existing source needs a history bootstrap even when
   // the source-wide cursor is already ahead of its old items.
-  const state = readState(cfg.dir);
+  const state: GitHubState = managed ? managed.state({ last_sweep_at: null, repos: [] }) : readState(cfg.dir);
   const previousRepos = new Set(state.repos);
 
   // Shared bulk-progress reporter (docs/progress-events.md, phase
@@ -1237,7 +1269,8 @@ export async function runGitHubSync(
       } finally {
         stopItemHb();
       }
-      await touchSourceRow(deps, new Date().toISOString());
+      if (managed) await managed.saveState(state);
+      else await touchSourceRow(deps, new Date().toISOString());
       return syncResult(summary, opts);
     }
 
@@ -1286,8 +1319,7 @@ export async function runGitHubSync(
           // so they are re-fetched every sweep. Cost is bounded by the number
           // of open PRs, which is small in practice.
           const isOpenPr = item.kind === 'pr' && item.state === 'open';
-          const fresh = isPageFresh(filePath, item.updated_at);
-          const hasDetail = pageHasDetail(filePath);
+          const { fresh, hasDetail } = await storedPage(deps, filePath, item.updated_at);
           if (!opts.full && !isOpenPr && fresh && hasDetail) {
             // Cursor accounting: a fresh skip is a success too. Without this,
             // a repo whose newest item is always fresh stays re-listed on
@@ -1302,27 +1334,17 @@ export async function runGitHubSync(
           // vanish mid-sweep.
           if (!hasDetail) {
             try {
-              mkdirSync(dirname(filePath), { recursive: true });
-              const before = existsSync(filePath);
-              // Temp-write then import then rename: a failed refresh must never
-              // destroy the previously-good page (codex HIGH, round 3). The
-              // import declares the canonical relative path, so the page slug
-              // and source_path stay correct despite the temp filename.
-              const tmpPath = `${filePath}.tmp`;
-              writeFileSync(tmpPath, renderListItemPage(repo, item.kind, item.list), 'utf-8');
-              try {
-                const imported = await importPage(deps, tmpPath, activePack, relative(cfg.dir, filePath).replace(/\\/g, '/'));
-                renameSync(tmpPath, filePath);
+              const imported = await materializePage(deps, filePath, renderListItemPage(repo, item.kind, item.list, managed ? null : undefined), activePack);
+              if (imported.status === 'imported') {
                 summary.pagesAffected.push(imported.slug);
                 summary.chunksCreated += imported.chunks;
                 if (!countedSlugs.has(imported.slug)) {
-                  if (before) summary.modified++; else summary.added++;
+                  if (imported.created) summary.added++; else summary.modified++;
                   countedSlugs.add(imported.slug);
                 }
-              } finally {
-                rmSync(tmpPath, { force: true });
               }
             } catch (err) {
+              if (managed) rethrowConnectorWriteError(err);
               deps.client.log?.(`[github] item ${repo}#${item.number} list render failed: ${err instanceof Error ? err.message : String(err)}`);
               summary.failedFiles++;
               summary.status = 'partial';
@@ -1347,23 +1369,17 @@ export async function runGitHubSync(
             summary.itemDetailFetches++;
             try {
               const data = await fetchItemData(repo, item.number, item.kind, client, { signal: opts.signal });
-              mkdirSync(dirname(filePath), { recursive: true });
-              const before = existsSync(filePath);
-              const tmpPath = `${filePath}.tmp`;
-              writeFileSync(tmpPath, renderItemPage(data), 'utf-8');
-              try {
-                const imported = await importPage(deps, tmpPath, activePack, relative(cfg.dir, filePath).replace(/\\/g, '/'));
-                renameSync(tmpPath, filePath);
+              const imported = await materializePage(deps, filePath, renderItemPage(data, true, managed ? null : undefined), activePack);
+              if (imported.status === 'imported') {
                 summary.pagesAffected.push(imported.slug);
                 summary.chunksCreated += imported.chunks;
                 if (!countedSlugs.has(imported.slug)) {
-                  if (before) summary.modified++; else summary.added++;
+                  if (imported.created) summary.added++; else summary.modified++;
                   countedSlugs.add(imported.slug);
                 }
-              } finally {
-                rmSync(tmpPath, { force: true });
               }
             } catch (err) {
+              if (managed) rethrowConnectorWriteError(err);
               deps.client.log?.(`[github] item ${repo}#${item.number} failed: ${err instanceof Error ? err.message : String(err)}`);
               summary.failedFiles++;
               summary.status = 'partial';
@@ -1380,22 +1396,24 @@ export async function runGitHubSync(
         // Repo card, refreshed once per repo.
         const cardPath = repoCardPath(cfg.dir, repo);
         keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
-        if (opts.full || !existsSync(cardPath)) {
+        if (opts.full || !(await storedPage(deps, cardPath, '')).exists) {
           try {
             const meta = await client.fetchJSON<RawRepo>(`/repos/${repo}`, { signal: opts.signal });
             repoMeta.set(repo, meta);
-            mkdirSync(dirname(cardPath), { recursive: true });
-            const cardExisted = existsSync(cardPath);
-            writeFileSync(cardPath, renderRepoCard(repo, meta), 'utf-8');
-            const imported = await importPage(deps, cardPath, activePack);
+            const imported = await materializePage(deps, cardPath, renderRepoCard(repo, meta, managed ? null : undefined), activePack);
             if (!summary.pagesAffected.includes(imported.slug)) summary.pagesAffected.push(imported.slug);
-            if (cardExisted) summary.modified++; else summary.added++;
-          } catch { /* card is best-effort */ }
+            if (imported.status === 'imported') {
+              if (imported.created) summary.added++; else summary.modified++;
+            }
+          } catch (error) {
+            if (managed) { rethrowConnectorWriteError(error); summary.failedFiles++; summary.status = 'partial'; }
+          }
         } else {
           keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
         }
         succeededRepos.add(`gh/${repo}`);
       } catch (err) {
+        if (managed) rethrowConnectorWriteError(err);
         deps.client.log?.(`[github] repo ${repo} failed: ${err instanceof Error ? err.message : String(err)}`);
         summary.failedFiles++;
         summary.status = 'partial';
@@ -1424,10 +1442,10 @@ export async function runGitHubSync(
     // history bootstrap on the next run (previousRepos gates the since filter).
     state.repos = repos.filter((r) => succeededRepos.has(`gh/${r}`) || previousRepos.has(r));
     if (summary.status === 'synced') {
-      state.last_sweep_at = maxUpdatedAt || new Date().toISOString();
-      writeState(cfg.dir, state);
-      await touchSourceRow(deps, maxUpdatedAt || new Date().toISOString());
-    } else {
+      state.last_sweep_at = maxUpdatedAt || (managed ? null : new Date().toISOString());
+      if (managed) await managed.saveState(state, true, state.last_sweep_at ?? undefined);
+      else { writeState(cfg.dir, state); await touchSourceRow(deps, state.last_sweep_at!); }
+    } else if (!managed) {
       writeState(cfg.dir, state);
       await touchSourceRow(deps, state.last_sweep_at ?? new Date().toISOString());
     }
@@ -1446,12 +1464,16 @@ async function refreshSingleItem(
 ): Promise<void> {
   const repo = item.repo.toLowerCase();
   const filePath = itemPagePath(deps.cfg.dir, repo, item.number);
-  const slug = `gh/${repo}/${item.number}`;
+  const slug = slugifyPath(`gh/${repo}/${item.number}`);
   if (item.deleted) {
     const rows = await deps.engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`,
       [deps.sourceId, slug],
     );
+    if (deps.managed) {
+      for (const row of rows) if (await deps.managed.delete(row.slug, relative(deps.cfg.dir, filePath).replace(/\\/g, '/'))) summary.deleted++;
+      return;
+    }
     if (rows.length > 0) {
       await deps.engine.deletePages([slug], { sourceId: deps.sourceId });
       summary.deleted += rows.length;
@@ -1460,17 +1482,11 @@ async function refreshSingleItem(
     return;
   }
   const data = await fetchItemData(repo, item.number, item.kind, deps.client, { signal: deps.opts.signal });
-  mkdirSync(dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.tmp`;
-  writeFileSync(tmpPath, renderItemPage(data), 'utf-8');
-  try {
-    const imported = await importPage(deps, tmpPath, activePack, relative(deps.cfg.dir, filePath).replace(/\\/g, '/'));
+  const imported = await materializePage(deps, filePath, renderItemPage(data, true, deps.managed ? null : undefined), activePack);
+  if (imported.status === 'imported') {
     summary.pagesAffected.push(imported.slug);
     summary.chunksCreated += imported.chunks;
-    summary.modified++;
-    renameSync(tmpPath, filePath);
-  } finally {
-    rmSync(tmpPath, { force: true });
+    if (deps.managed && imported.created) summary.added++; else summary.modified++;
   }
   await runExtractAndEmbed(deps, summary, activePack);
 }
@@ -1480,6 +1496,7 @@ async function runExtractAndEmbed(
   summary: GitHubSyncSummary,
   activePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> } | undefined,
 ): Promise<void> {
+  if (deps.managed) return;
   const totalChanges = summary.added + summary.modified;
   const pagesAffected = summary.pagesAffected;
   if (totalChanges === 0 || pagesAffected.length === 0) return;

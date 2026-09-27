@@ -383,6 +383,203 @@ The agent's MCP client picks the alias and thus the destination per tool
 call. There's no global gbrain orchestrator that knows about all of them
 simultaneously — that's by design.
 
+## Writer administration is not routine repair
+
+An `owner_unavailable` write error means that the selected source cannot currently
+publish through its designated owner. It is not permission to claim a checkout,
+activate managed persistence, or transfer ownership. Start with read-only inspection
+on the selected brain host:
+
+```bash
+gbrain sources writer status --brain host --json
+```
+
+Keep the brain and source selection explicit. Inspect the existing owners, source
+bindings, epochs, enabled state and outstanding recovery before asking the operator
+what should change. `doctor`, `doctor --fix`, startup checks, scheduled maintenance
+and retries must leave these identities and epochs alone. Never remove ownership
+markers, recreate identities, or edit database rows to bypass a refusal.
+
+`writer_status.onboarding` reports each source's binding, legacy-lock state and
+the next deliberate step. A configured but unbound Postgres source refuses writes;
+claiming it alone does not restore legacy sync. Claim the intended canonical path,
+inspect a **fresh** status and fingerprint, then activate only after quiescing
+older writers. Neither repair nor startup auto-claims or activates sources.
+
+### Deliberate topology changes
+
+Only the trusted local CLI administration lane can perform these operations.
+Ordinary remote tokens and stdio agent credentials cannot administer ownership,
+even when they supply the flags below. Local shell access is already trusted:
+these flags record deliberate, state-bound intent, not proof that a human is
+typing. A TTY or a generic `--yes` is neither required nor sufficient.
+
+For a planned change, the operator must review `status` and retain its `admin_state`
+fingerprint. Each non-dry-run action requires both an exact `--admin-intent` and
+`--expected-state` containing that reviewed fingerprint:
+
+| Action | Required intent |
+|---|---|
+| `claim` | `writer_claim` |
+| `activate` | `writer_activate` |
+| `transfer prepare` | `writer_transfer_prepare` |
+| `transfer accept` | `writer_transfer_accept` |
+
+For example, after reviewing the target host and canonical directory:
+
+```bash
+gbrain sources writer claim default --brain host --path /absolute/canonical/source --dry-run --json
+gbrain sources writer claim default --brain host --path /absolute/canonical/source \
+  --admin-intent writer_claim --expected-state <reviewed-admin-state> --json
+```
+
+Inspect status again after each change. The fingerprint covers the brain identity,
+managed mode, source incarnations and paths, owner identities and epochs, worktree
+membership and transfer manifests. It excludes heartbeats and ordinary queue
+traffic. A changed fingerprint refuses with `writer_admin_state_changed`, including
+a change racing the final transaction. Re-inspect and re-review; do not blindly
+substitute the new value and retry. Dry runs do not grant permission to apply.
+
+Activation additionally requires every older writer and maintenance process on
+every host to be upgraded and stopped, filesystem sources to have their intended
+owners, and outstanding locks and recovery to be resolved. Preview activation
+with `--confirm-quiesced --dry-run`, then, only when approved:
+
+```bash
+gbrain sources writer activate --brain host --confirm-quiesced \
+  --admin-intent writer_activate --expected-state <reviewed-admin-state> --json
+```
+
+`--confirm-quiesced` remains an attestation about all hosts, not a way to bypass the
+intent and state checks. Explicit noninteractive provisioning uses the same
+procedure and preconditions. A transfer still requires the prepared epoch and an
+exact successor manifest; stale heartbeats never authorize takeover.
+
+Live, young or foreign legacy locks block activation regardless of expiry. For
+exact dead same-host holders only, preview with
+`--cleanup-dead-local-locks --dry-run` and explicitly opt in on the reviewed
+activation; preview never deletes locks. Do not use TTL alone as liveness proof.
+
+For same-owner physical-root drift, `transfer prepare --self-transfer` records
+the exact before-state and intended repair in a durable manifest; inspect a
+fresh status and use `transfer accept --self-transfer` with the new reviewed
+state and exact manifest. Both phases still require their corresponding
+`writer_transfer_prepare` or `writer_transfer_accept` intent and expected state.
+This is not an automatic takeover or a way to rewrite the original reservation
+owner. Wrong identity, changed tokens, malformed physical records or uncertain
+liveness refuse. The native lock derives from the database binding.
+
+```bash
+gbrain sources writer transfer prepare default --brain host --self-transfer \
+  --admin-intent writer_transfer_prepare --expected-state <reviewed-admin-state> --dry-run --json
+# After separate approval, rerun prepare without --dry-run; then inspect fresh status.
+gbrain sources writer transfer accept default --brain host --self-transfer \
+  --path /absolute/canonical/source --expected-epoch <prepared-epoch> \
+  --manifest <prepared-sha256> --admin-intent writer_transfer_accept \
+  --expected-state <fresh-reviewed-admin-state> --dry-run --json
+# After separate approval, rerun accept without --dry-run.
+```
+
+For containers, persist the canonical source root, its sibling-reservation
+parent, persistence home and stable lock/coordination directory together across
+recreation. Storage preflight reports each location and can identify Linux
+overlay/tmpfs backing, but a mount shown as present is **not** attested durable.
+
+### Supported managed work and explicit repair
+
+Once active, ordinary authorized local atom extraction, fact fences/backstop,
+synthesis, patterns and consolidation use journaled resident publication. Atom
+admission retains output for provider-free publication replay; a malformed
+extraction needs a separately approved retry identity. After inspecting the
+failed receipt, a trusted local operator can submit:
+
+```bash
+gbrain jobs submit extract-atoms-drain --params '{"sourceId":"default","retryRequestId":"<receipt-request-id>"}' --follow --max-attempts 1 --idempotency-key <unique-approval-key>
+```
+
+Replace the source and receipt with the inspected values and choose a unique
+approval key for that action. Inspect a submitted retry with `gbrain jobs get
+<job-id>` rather than resubmitting it. Completed submissions replay their result;
+a newly submitted job after failure is a new approval to attempt extraction.
+An approved malformed-output retry permits one new extraction attempt;
+publication retry reuses admitted output without another model call. Neither
+overrides source identity, changed content or grants. For a failed embedding
+effect, preview the exact original request first, then separately approve the
+same command without `--dry-run`:
+
+```bash
+gbrain sources writer retry-effects default --request-id <original-request-uuid> --dry-run --json
+```
+
+Only an unclaimed failed nonrecovering embedding effect is eligible. Current
+valid vectors reconcile without provider work; otherwise the additional
+allowance is one-shot and covers worker attempts, which may contain provider
+sub-batches. It remains bounded by selected-brain policy, original/current
+authority, source/page revision and effect CAS. This changes no canonical
+receipt, content or ownership. Healthy embedding work renews its token-guarded
+claim every ten seconds without holding a worktree lock or database transaction
+over provider work. Losing the claim cancels that invocation; the final
+installation still verifies its token. Caller cancellation, per-provider
+timeouts and budget admission remain effective without a whole-page deadline.
+
+Direct `--brain <mount>` retry uses only the selected database's validated active
+column and recorded model provenance for inspection and explicit queue approval.
+Unknown or inconsistent provenance refuses the action; the host brain's model
+and policy are never borrowed. The receipt identifies this as
+`approval: selected_database_provenance` and `execution: owner_file_and_database`.
+Queue approval is not permission to bypass the eventual owner's selected file
+configuration: both that configuration and the database `embedding_disabled`
+setting must permit each provider attempt and final installation. A disable in
+either effective policy stops further provider work. Existing valid vectors can
+still reconcile without a provider while embeddings are disabled.
+
+Fact NULL-vector backfill is a separate
+source-scoped preview/approved-cost operation in
+[embedding migrations](../embedding-migrations.md).
+
+Local enabled synthesis and patterns publish through the admitted page path;
+consolidation uses a single source-scoped take/fact transaction. A retired or
+resolved matching take is skipped, not silently reopened. Only world-visible
+facts backed by live non-private evidence are eligible for public consolidation;
+this is no guarantee that private facts will be consolidated. Remote maintenance
+authority is not added. Legacy fence reconciliation (`dream --phase
+extract_facts`), bulk `extract-conversation-facts`,
+`conversation_facts_backfill`, and `loops_extract` remain unsupported under
+managed persistence, including preview paths that could spend. Their preflight
+refuses with `writer_coordinator_required`; writer status and activation preview
+list them in `unsupported_maintenance`. The restored `extract_facts` operation
+and page backstop are separate from the legacy cycle fence reconciler. Do not
+infer that every dream or job writer is restored from the named lanes above.
+
+Google and GitHub API sources route through managed connector checkpoints,
+not a Git cursor. A deliberately unbound API source uses reviewed
+`connector_database` DB-only authority; an existing bound source retains
+canonical file publication and physical-root fences. Activation/status expose
+that distinction, and neither mode invents a binding. Managed connector
+`--dry-run`, `--skip-failed`, and Git filtering/working-tree/code options refuse
+before credentials or network access rather than pretending to preview.
+After repairing a terminal connector storage failure, explicitly run
+`gbrain sync --source <connector-source-id> --retry-failed` with the same options.
+Ordinary replay does not reopen a failed receipt. Explicit retry authorizes a
+new, linked attempt after current and originally accepted grants, source,
+canonical owner and idle state are checked. The old receipt stays immutable,
+including after receipt compaction. A durable retry pointer is committed with
+the new admission; repeated or restarted calls reuse its pending attempt rather
+than granting another one. Retry does not reset the API bookmark or bypass
+canonical-file drift checks, and both connector cursors and retry pointers
+survive generic checkpoint TTL cleanup. A newly failed replacement requires
+another explicit retry after inspecting and repairing its cause; cancelled
+receipts are not retry-approved. No connector API data is fetched before the
+source/owner and active-work preflight, although deriving exact matching input
+can require a normal API fetch before retry approval.
+For PGLite, `dream` and `jobs --follow` still need exclusive engine access:
+stop the resident owner and any supervisor using their normal shutdown path,
+wait for writes to drain, run the inline command, then restart the owner. The
+disk-brain CLI regression verifies refusal with a live owner, malformed-output
+recovery, idempotent replay and fresh readback after a clean restart. Do not
+disable persistence to bypass this, and do not confuse live fact-backfill IPC
+with live-owner dream delegation.
+
 ## When NOT to use these topologies
 
 - **Don't use Topology 2 if your agent only ever runs on the same machine

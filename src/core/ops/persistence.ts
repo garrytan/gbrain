@@ -7,6 +7,7 @@ import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { publicWriteReceipt, isWriteErrorCode } from '../persistence/types.ts';
 import type { Principal, WriteRequest } from '../persistence/model.ts';
 import type { LocalGrant } from '../persistence/identity.ts';
+import type { WriteHealthFacts } from '../persistence/health.ts';
 
 const RECEIPT_NAMES = ['get_write_request', 'list_write_requests', 'cancel_write_request'] as const;
 type ReceiptOperation = typeof RECEIPT_NAMES[number];
@@ -88,11 +89,11 @@ async function visible(ctx: OperationContext, row: WriteRequest): Promise<boolea
   }
 }
 
-async function publicReceipt(ctx: OperationContext, row: WriteRequest): Promise<Record<string, unknown>> {
+async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: WriteHealthFacts): Promise<Record<string, unknown>> {
   const { receiptFor } = await import('../persistence/journal.ts');
   const { publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
   return {
-    ...publicWriteReceipt(receiptFor(row)),
+    ...publicWriteReceipt(receiptFor(row, facts)),
     operation: row.operation, source_id: row.source_id, slug: row.slug,
     ...(isWriteErrorCode(row.error_code) ? { write_error: row.error_code } : {}),
     effects: await publicEffectsForRequest(ctx.engine, row.id),
@@ -117,10 +118,10 @@ export const persistenceOperations: Operation[] = [
     handler: async (ctx, params) => {
       const id = requiredRequestId(params.request_id);
       const { principal } = await receiptAccess(ctx, 'get_write_request');
-      const { getWriteRequest } = await import('../persistence/journal.ts');
+      const { getWriteRequest, writeHealthFacts } = await import('../persistence/journal.ts');
       const row = await getWriteRequest(ctx.engine, principal, id);
       if (!row || !await visible(ctx, row)) throw missing();
-      return publicReceipt(ctx, row);
+      return publicReceipt(ctx, row, (await writeHealthFacts(ctx.engine, [row])).get(row.id));
     },
   },
   {
@@ -149,7 +150,9 @@ export const persistenceOperations: Operation[] = [
         slugPrefixes: access.slugPrefixes, operations: access.operations, slugAllowList,
         authorize: row => visible(ctx, row),
       });
-      return { requests: await Promise.all(result.requests.map(row => publicReceipt(ctx, row))), next: result.next };
+      const { writeHealthFacts } = await import('../persistence/journal.ts');
+      const facts = await writeHealthFacts(ctx.engine, result.requests);
+      return { requests: await Promise.all(result.requests.map(row => publicReceipt(ctx, row, facts.get(row.id)))), next: result.next };
     },
   },
   {
@@ -161,7 +164,7 @@ export const persistenceOperations: Operation[] = [
     handler: async (ctx, params) => {
       const id = requiredRequestId(params.request_id);
       const { principal } = await receiptAccess(ctx, 'cancel_write_request');
-      const { getWriteRequest } = await import('../persistence/journal.ts');
+      const { getWriteRequest, writeHealthFacts } = await import('../persistence/journal.ts');
       const row = await getWriteRequest(ctx.engine, principal, id);
       if (!row || !await visible(ctx, row)) throw missing();
       if (ctx.dryRun) return { dry_run: true, action: 'cancel_write_request', request_id: id, state: row.state };
@@ -174,7 +177,7 @@ export const persistenceOperations: Operation[] = [
         },
       });
       if (!cancelled) throw missing();
-      return publicReceipt(ctx, cancelled);
+      return publicReceipt(ctx, cancelled, (await writeHealthFacts(ctx.engine, [cancelled])).get(cancelled.id));
     },
   },
 ];

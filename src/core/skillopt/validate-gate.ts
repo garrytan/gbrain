@@ -26,8 +26,10 @@ import { scoreTrajectory } from './score.ts';
 import type { BenchmarkTask, GateInput, GateResult, ScoredRollout } from './types.ts';
 import { VALIDATION_EPSILON, VALIDATION_RUNS_PER_TASK } from './types.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { OperationContext } from '../ops/contract.ts';
 
 export interface ValidateGateOpts extends Omit<GateInput, 'selSet'> {
+  operationContext?: OperationContext;
   selSet: BenchmarkTask[];
   engine: BrainEngine;
   targetModel: string;
@@ -103,6 +105,7 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
           throw new Error(SKILLOPT_RUNTIME_EXCEEDED);
         }
         const rolloutOpts: RolloutOpts = {
+          operationContext: opts.operationContext,
           engine: opts.engine,
           skillText: opts.candidateSkillText,
           task,
@@ -183,6 +186,7 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
 }
 
 export interface ScoreOnTasksOpts {
+  operationContext?: OperationContext;
   engine: BrainEngine;
   skillText: string;
   tasks: BenchmarkTask[];
@@ -207,6 +211,7 @@ export interface ScoreOnTasksOpts {
  */
 export async function scoreSkillOnTasks(opts: ScoreOnTasksOpts): Promise<number> {
   const gate = await runValidationGate({
+    operationContext: opts.operationContext,
     engine: opts.engine,
     candidateSkillText: opts.skillText,
     selSet: opts.tasks,

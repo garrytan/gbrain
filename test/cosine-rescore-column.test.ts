@@ -29,10 +29,10 @@ let chunkId2: number;
 
 beforeAll(async () => {
   // Pin the embedding dim to 1536 BEFORE initSchema. initSchema sizes the
-  // `embedding` column from getEmbeddingDimensions() (default 1280 =
-  // zeroentropyai). This test hardcodes 1536-dim vectors + asserts 1536, so
+  // `embedding` column from getEmbeddingDimensions() (default 1024 =
+  // Voyage). This test hardcodes 1536-dim vectors + asserts 1536, so
   // it must NOT inherit ambient/leaked gateway state (which is 1536 from a
-  // local ~/.gbrain config but 1280 in CI → vector(1280) → insert fails).
+  // local ~/.gbrain config but 1024 in CI → vector(1024) → insert fails).
   // Pinning here makes the column deterministically 1536 regardless of order.
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',

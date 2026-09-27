@@ -11,7 +11,8 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
     } catch (error) {
       // Connection/commit uncertainty is deliberately excluded: the caller must
       // inspect/replay its retained ID, never infer rollback from a lost socket.
-      if (!['40001', '40P01', '55P03', '57014'].includes(getCode(error) ?? '')) throw error;
+      const code = getCode(error);
+      if (!['40001', '40P01', '55P03', '57014'].includes(code ?? '')) throw error;
       const remaining = deadline - performance.now();
       if (remaining <= 25) {
         const unavailable = new OperationError('storage_error', 'Write admission is temporarily blocked by database contention.',
@@ -21,7 +22,7 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
       }
       // The transaction has rolled back and released its connection before any
       // backoff. Jitter keeps independent ingress processes from retrying in step.
-      await delay(Math.min(remaining - 1, 25 + Math.random() * 75));
+      await delay(Math.min(remaining - 1, code === '55P03' ? 5 + Math.random() * 20 : 25 + Math.random() * 75));
     }
   }
 }

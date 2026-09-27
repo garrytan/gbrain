@@ -28,6 +28,7 @@ import { v0_31_0 } from './v0_31_0.ts';
 import { v0_32_2 } from './v0_32_2.ts';
 import { v0_43_0 } from './v0_43_0.ts';
 import { v0_46_3 } from './v0_46_3.ts';
+import { sharedContentMigration } from './shared-content.ts';
 
 export const migrations: Migration[] = [
   v0_11_0,
@@ -47,6 +48,7 @@ export const migrations: Migration[] = [
   v0_32_2,
   v0_43_0,
   v0_46_3,
+  sharedContentMigration,
 ];
 
 /** Look up a migration by exact version string. */

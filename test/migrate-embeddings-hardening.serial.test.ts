@@ -13,7 +13,6 @@
  *      returns false ABORTS with lock_lost (no silent mutual-exclusion loss).
  *   6. 2048d transition: DDL succeeds with NO HNSW index (pgvector caps
  *      `vector` HNSW at 2000 dims); exact-scan search still works.
- *   7. Same-width ze-switch resume does NOT drop stored vectors (width guard).
  *
  * Added hardening pins (second wave):
  *   8. Locked branches refuse pre-mutation: global migration lock ⇒
@@ -24,12 +23,10 @@
  *      a no-file-plane run refuses at apply instead of going env-canonical.
  *  11. Wrong-width dim-pinned companion columns (facts/query_cache) are
  *      repaired independently — pinned_repaired[], no content_chunks rebuild.
- *  12. Same-width resume/undo width guard keeps stored vectors (both the
- *      ze-switch resume path and the snapshot undo path).
  *  13. Corrupt AND wrong-shape markers report corrupt on readMigrationState +
  *      --status without throwing; a fresh run rewrites the marker clean (v2).
  *  14. Retarget history: superseded[] chain + retargeted_at + the
- *      --force-sunset-target resume-command rendering.
+ *      current resume-command rendering.
  *  15. verifySearchRoundTrip miss branch: warn/self_retrieval_miss with
  *      content-free samples (page ids + codes, never query text).
  *  16. Heartbeat transient-error policy: 3 consecutive refresh() throws abort
@@ -45,7 +42,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
-import { LEGACY_DEFAULT_RERANKER_MODEL as ZE_RERANKER } from '../src/core/ai/defaults.ts';
+const OUTGOING_RERANKER = 'fixture-provider:reranker-v1';
 import {
   configureGateway,
   resetGateway,
@@ -75,15 +72,9 @@ import {
 } from '../src/core/embedding-migration.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../src/core/db-lock.ts';
 import { embedBackfillLockId } from '../src/core/embed-backfill-lock.ts';
-import {
-  resumeRetrievalUpgrade,
-  undoRetrievalUpgrade,
-  KEY_REQUESTED,
-  KEY_PREVIOUS_SNAPSHOT,
-  ZE_TARGET_EMBEDDING_DIM,
-} from '../src/core/retrieval-upgrade-planner.ts';
 
-const FROM_DIMS = 1280;
+
+const FROM_DIMS = 1024;
 const TO_DIMS = 1536;
 
 let engine: PGLiteEngine;
@@ -145,26 +136,26 @@ function writeFileConfig(model: string, dims: number): void {
     engine: 'pglite',
     embedding_model: model,
     embedding_dimensions: dims,
-    zeroentropy_api_key: 'ze-test-fake',
+    voyage_api_key: 'voyage-test-fake',
     openai_api_key: 'sk-test-fake',
   }, null, 2));
 }
 
 beforeAll(async () => {
-  for (const k of ['GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS', 'GBRAIN_EMBED_LOCK_HEARTBEAT_MS', 'OPENAI_API_KEY', 'ZEROENTROPY_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL']) {
+  for (const k of ['GBRAIN_HOME', 'GBRAIN_EMBEDDING_MODEL', 'GBRAIN_EMBEDDING_DIMENSIONS', 'GBRAIN_EMBED_LOCK_HEARTBEAT_MS', 'OPENAI_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL']) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
   }
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-migrate-hardening-'));
   process.env.GBRAIN_HOME = tmpHome;
   mkdirSync(join(tmpHome, '.gbrain'), { recursive: true });
-  writeFileConfig('zeroentropyai:zembed-1', FROM_DIMS);
+  writeFileConfig('voyage:voyage-4', FROM_DIMS);
 
   resetGateway();
   configureGateway({
-    embedding_model: 'zeroentropyai:zembed-1',
+    embedding_model: 'voyage:voyage-4',
     embedding_dimensions: FROM_DIMS,
-    env: { ZEROENTROPY_API_KEY: 'ze-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
+    env: { VOYAGE_API_KEY: 'voyage-test-fake', OPENAI_API_KEY: 'sk-test-fake' },
   });
   installTransport();
 
@@ -239,7 +230,7 @@ describe('poisonable skip is dead', () => {
       expect(dryCode).toBe(0); // dry-run renders the plan — not refused
 
       // env != target: the #1421 refusal, unchanged.
-      process.env.GBRAIN_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
+      process.env.GBRAIN_EMBEDDING_MODEL = 'voyage:voyage-4';
       process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(FROM_DIMS);
       const code = await runMigrate(['--to', 'openai:text-embedding-3-small', '--dim', String(TO_DIMS), '--yes']);
       expect(code).toBe(1); // refused_env
@@ -255,7 +246,7 @@ describe('poisonable skip is dead', () => {
       version: 2,
       to_model: 'voyage:voyage-4',
       to_dims: 1024,
-      from_model: 'zeroentropyai:zembed-1',
+      from_model: 'voyage:voyage-4',
       from_dims: FROM_DIMS,
       started_at: '2026-08-01T00:00:00.000Z',
     } satisfies MigrationState));
@@ -387,16 +378,15 @@ describe('locks + schema honesty', () => {
 });
 
 describe('reranker companion (D8)', () => {
-  test('explicitly configured ZE reranker is exposed; auto switches to the target provider reranker', async () => {
+  test('explicitly configured outgoing reranker is exposed; auto switches to the target provider reranker', async () => {
     // v0.48.2: the mode-bundle default is live voyage, so exposure now comes
-    // from an EXPLICIT `search.reranker.model` zeroentropyai:* row — the
+    // from an EXPLICIT `search.reranker.model` fixture-provider:* row — the
     // exposure must still resolve THROUGH the mode plane (config override).
-    await engine.setConfig('search.reranker.model', ZE_RERANKER);
+    await engine.setConfig('search.reranker.model', OUTGOING_RERANKER);
     try {
-      const plan = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', undefined);
+      const plan = await resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'voyage:voyage-4', undefined);
       expect(plan.exposed).not.toBeNull();
-      expect(plan.exposed!.model).toBe(ZE_RERANKER);
-      expect(plan.exposed!.sunset_date).toBeTruthy();
+      expect(plan.exposed!.model).toBe(OUTGOING_RERANKER);
       expect(plan.action).toEqual({ kind: 'switch', to: 'voyage:rerank-2.5' });
     } finally {
       await engine.unsetConfig('search.reranker.model');
@@ -404,14 +394,14 @@ describe('reranker companion (D8)', () => {
   });
 
   test('bundle default (no reranker row) is live voyage → nothing exposed', async () => {
-    const plan = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', undefined);
+    const plan = await resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'voyage:voyage-4', undefined);
     expect(plan.exposed).toBeNull();
   });
 
   test('auto with a reranker-less target suggests, never silently enables a third provider', async () => {
-    await engine.setConfig('search.reranker.model', ZE_RERANKER);
+    await engine.setConfig('search.reranker.model', OUTGOING_RERANKER);
     try {
-      const plan = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'openai:text-embedding-3-small', undefined);
+      const plan = await resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'openai:text-embedding-3-small', undefined);
       expect(plan.exposed).not.toBeNull();
       expect(plan.action.kind).toBe('none');
       expect((plan.action as { suggestion: string | null }).suggestion).toBe('voyage:rerank-2.5');
@@ -421,20 +411,20 @@ describe('reranker companion (D8)', () => {
   });
 
   test('off disables, keep leaves alone, invalid explicit values refuse with paste-ready messages', async () => {
-    const off = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', 'off');
+    const off = await resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'voyage:voyage-4', 'off');
     expect(off.action).toEqual({ kind: 'disable' });
 
-    const keep = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', 'keep');
+    const keep = await resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'voyage:voyage-4', 'keep');
     expect(keep.action).toEqual({ kind: 'none', suggestion: null });
 
     // Provider exists but declares no reranker touchpoint.
     await expect(
-      resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', 'openai:text-embedding-3-small'),
+      resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'voyage:voyage-4', 'openai:text-embedding-3-small'),
     ).rejects.toThrow(/declares no reranker/);
 
     // Not provider:model shaped at all.
     await expect(
-      resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', 'garbage'),
+      resolveRerankerPlan(engine, 'fixture-provider:embedding-v1', 'voyage:voyage-4', 'garbage'),
     ).rejects.toThrow(/--reranker must be/);
   });
 
@@ -690,10 +680,10 @@ describe('locked branches refuse before any mutation', () => {
 describe('config-plane hygiene (env leak + env-canonical gates)', () => {
   test('persistEmbeddingFileConfig writes the target to the file plane, never env-sourced secrets', async () => {
     const cfgPath = join(tmpHome, '.gbrain', 'config.json');
-    const prevVoyage = process.env.VOYAGE_API_KEY;
-    process.env.GBRAIN_EMBEDDING_MODEL = 'zeroentropyai:zembed-1';
-    process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(FROM_DIMS);
-    process.env.VOYAGE_API_KEY = 'pa-env-secret-canary';
+    const prevOpenRouter = process.env.OPENROUTER_API_KEY;
+    process.env.GBRAIN_EMBEDDING_MODEL = 'openai:text-embedding-3-large';
+    process.env.GBRAIN_EMBEDDING_DIMENSIONS = String(TO_DIMS);
+    process.env.OPENROUTER_API_KEY = 'pa-env-secret-canary';
     // Password-less on purpose: the assertion is that the database_url KEY
     // never lands in the file at all, and a userinfo-bearing URL literal
     // would (rightly) trip the pre-push credential scanner.
@@ -709,17 +699,17 @@ describe('config-plane hygiene (env leak + env-canonical gates)', () => {
       // env-sourced secret material as a side effect of a migration.
       expect(raw).not.toContain('pa-env-secret-canary');
       expect(raw).not.toContain('env-host-canary');
-      expect(parsed.voyage_api_key).toBeUndefined();
+      expect(parsed.openrouter_api_key).toBeUndefined();
       expect(parsed.database_url).toBeUndefined();
       // File-sourced keys stay exactly as the file had them.
       expect(parsed.openai_api_key).toBe('sk-test-fake');
-      expect(parsed.zeroentropy_api_key).toBe('ze-test-fake');
+      expect(parsed.voyage_api_key).toBe('voyage-test-fake');
     } finally {
       delete process.env.GBRAIN_EMBEDDING_MODEL;
       delete process.env.GBRAIN_EMBEDDING_DIMENSIONS;
       delete process.env.DATABASE_URL;
-      if (prevVoyage === undefined) delete process.env.VOYAGE_API_KEY;
-      else process.env.VOYAGE_API_KEY = prevVoyage;
+      if (prevOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = prevOpenRouter;
       // persistEmbeddingFileConfig reconfigured the in-process gateway from
       // the env-merged view — restore the baseline file plane + gateway.
       writeFileConfig('openai:text-embedding-3-small', TO_DIMS);
@@ -807,58 +797,7 @@ describe('independent dim-pinned repair + same-width guards', () => {
     }
   }, 60000);
 
-  test('same-width resume + undo keep stored vectors (width guard, no silent drop+re-add)', async () => {
-    // resume path: throwaway brain already AT the ZE target width with one
-    // live vector — resume must not run the DROP+ADD transition.
-    const e3 = new PGLiteEngine();
-    await e3.connect({ embedding_dimensions: ZE_TARGET_EMBEDDING_DIM } as never);
-    await e3.initSchema();
-    try {
-      // initSchema resolves the column width from the gateway/file plane (both
-      // at 1536 here) — pin the throwaway brain AT the ZE resume target width
-      // explicitly so the same-width guard is what's under test.
-      await runSchemaTransition(e3, ZE_TARGET_EMBEDDING_DIM);
-      await e3.putPage('rw-1', { type: 'note', title: 'rw-1', compiled_truth: '# rw\n\nbody' });
-      await installFixtureChunks(e3, 'rw-1', [
-        { chunk_index: 0, chunk_text: 'resume width guard chunk', chunk_source: 'compiled_truth', token_count: 4 },
-      ]);
-      const vec = '[' + new Array(ZE_TARGET_EMBEDDING_DIM).fill(0.002).join(',') + ']';
-      await e3.executeRaw(`UPDATE content_chunks SET embedding = $1::vector`, [vec]);
-      await e3.setConfig(KEY_REQUESTED, 'true');
-      const resumed = await resumeRetrievalUpgrade(e3);
-      expect(resumed.status).toBe('applied');
-      const n = await e3.executeRaw<{ n: number }>(
-        `SELECT count(*)::int AS n FROM content_chunks WHERE embedding IS NOT NULL`,
-      );
-      expect(Number(n[0]?.n)).toBe(1); // vector survived: column was not rebuilt
-    } finally {
-      await e3.disconnect();
-    }
 
-    // undo path: snapshot at the CURRENT width on the main brain — the guard
-    // must skip the transition and keep every stored vector.
-    const before = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM content_chunks WHERE embedding IS NOT NULL`,
-    );
-    expect(Number(before[0]?.n)).toBeGreaterThan(0);
-    const snapshot = {
-      embedding_model: 'openai:text-embedding-3-small',
-      embedding_dimensions: TO_DIMS,
-      search_reranker_enabled: (await engine.getConfig('search.reranker.enabled')) === 'true',
-      search_reranker_model: await engine.getConfig('search.reranker.model'),
-    };
-    await engine.setConfig(KEY_PREVIOUS_SNAPSHOT, JSON.stringify(snapshot));
-    try {
-      const undone = await undoRetrievalUpgrade(engine);
-      expect(undone.status).toBe('undone');
-      const after = await engine.executeRaw<{ n: number }>(
-        `SELECT count(*)::int AS n FROM content_chunks WHERE embedding IS NOT NULL`,
-      );
-      expect(Number(after[0]?.n)).toBe(Number(before[0]?.n));
-    } finally {
-      await engine.unsetConfig(KEY_PREVIOUS_SNAPSHOT);
-    }
-  }, 120000);
 });
 
 describe('marker integrity across surfaces', () => {
@@ -924,10 +863,8 @@ describe('marker integrity across surfaces', () => {
     expect(marker.state?.superseded?.length).toBe(1);
     expect(marker.state?.superseded?.[0]?.to_model).toBe('openai:text-embedding-3-large');
 
-    // ONE resume-command template: the force flag renders iff the state has it.
     const state = marker.state as MigrationState;
-    expect(renderResumeCommand({ ...state, force_sunset_target: true })).toContain('--force-sunset-target');
-    expect(renderResumeCommand(state)).not.toContain('--force-sunset-target');
+    expect(renderResumeCommand(state)).toBe('gbrain migrate embeddings --to openai:text-embedding-3-small --dim 1536 --yes');
 
     // Converge again: resume B for real (drains the invalidated chunks).
     embeddedTexts = [];
@@ -1066,7 +1003,7 @@ describe('empty-brain migration (plan pin 15)', () => {
       // File plane points elsewhere so the FIRST run has real work (config
       // convergence) instead of instantly skipping. Same width as the fresh
       // column ⇒ the plan must NOT show the destructive-deletion warning.
-      writeFileConfig('zeroentropyai:zembed-1', FROM_DIMS);
+      writeFileConfig('voyage:voyage-4', FROM_DIMS);
 
       const cap1 = captureStdout();
       let code1: number;

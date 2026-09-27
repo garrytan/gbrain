@@ -84,16 +84,7 @@ describe('KNOWN_CONFIG_KEYS', () => {
     // or `config set` rejects the wave's own enable command without --force.
     expect(KNOWN_CONFIG_KEYS).toContain('agent.use_gateway_loop');
     expect(KNOWN_CONFIG_KEYS).toContain('openrouter_api_key');
-    expect(KNOWN_CONFIG_KEYS).toContain('zeroentropy_api_key');
     expect(KNOWN_CONFIG_KEYS).toContain('deepseek_api_key');
-  });
-
-  test('registers the provider_sunset suppression key (v0.46.3 documented command)', () => {
-    // doctor.ts + docs/guides/embedding-migration.md both document
-    // `gbrain config set doctor.suppress_provider_sunset true`; the key must
-    // be registered or the documented command exits 1 with "Unknown config
-    // key". Exact key, deliberately not a 'doctor.' prefix.
-    expect(KNOWN_CONFIG_KEYS).toContain('doctor.suppress_provider_sunset');
   });
 
   test('contains the working-tree sync toggle (untracked-gap fix)', () => {

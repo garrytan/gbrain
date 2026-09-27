@@ -47,9 +47,9 @@ beforeEach(async () => {
   // CI fix: put_page's handler at src/core/operations.ts:622 computes
   // `noEmbed = !isAvailable('embedding')`. When the gateway has been
   // configured by a sibling test (or by the cli.ts module-load path
-  // reading .env.testing) with a fake/stale ZEROENTROPY_API_KEY,
+  // reading .env.testing) with a fake/stale VOYAGE_API_KEY,
   // isAvailable returns true → put_page tries to embed → the real
-  // ZeroEntropy API returns 401 in CI. This test exercises write-through
+  // Voyage API returns 401 in CI. This test exercises write-through
   // behavior, not embedding. Reset the gateway so isAvailable returns
   // false → noEmbed=true → no network call.
   resetGateway();

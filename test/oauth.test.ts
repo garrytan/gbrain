@@ -952,6 +952,15 @@ describe('operation scope annotations', () => {
     const remoteReadOnlyMutatingOps = new Set(['think', 'request_tools']);
     for (const op of operations) {
       if (op.mutating) {
+        if (['join_brain', 'sync_brain_skills', 'leave_brain'].includes(op.name)) {
+          const { operationScopesAllowed } = require('../src/core/scope.ts');
+          expect(op.scope).toBe('read');
+          expect(op.requiredScopes).toEqual(['skills_member_self']);
+          expect(operationScopesAllowed(['read'], op)).toBe(false);
+          expect(operationScopesAllowed(['admin'], op)).toBe(false);
+          expect(operationScopesAllowed(['read', 'skills_member_self'], op)).toBe(true);
+          continue;
+        }
         if (remoteReadOnlyMutatingOps.has(op.name)) {
           expect(op.scope, `${op.name} remote-gated mutating op should be read-scoped`).toBe('read');
           continue;

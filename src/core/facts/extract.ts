@@ -31,6 +31,7 @@ import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
 import { isNullLikeEntity } from './write-single.ts';
+import { isAIInvocationPolicyError } from '../ai/invocation-guard.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -179,6 +180,8 @@ export type FactNotability = 'high' | 'medium' | 'low';
  */
 export const ENTITY_HINTS_CAP = 5;
 
+export interface FactEmbeddingSignature { model: string; dimensions: number; }
+
 export interface ExtractInput {
   turnText: string;
   /** Opaque session id (MCP _meta.session_id, CLI --session, or null). */
@@ -199,6 +202,7 @@ export interface ExtractInput {
   engine?: BrainEngine;
   /** Abort signal for shutdown propagation. */
   abortSignal?: AbortSignal;
+  embedding?: FactEmbeddingSignature | null;
   /** Cap on number of facts returned per turn. Defaults to 10. */
   maxFactsPerTurn?: number;
   /** Optional pre-embedding admission selector for extracted fact tiers. */
@@ -645,9 +649,13 @@ export async function extractFactsFromTurnWithOutcome(
 
     let embedding: Float32Array | null = null;
     try {
-      embedding = await embedOne(factText);
+      if (input.embedding !== null) {
+        embedding = await embedOne(factText, { abortSignal: input.abortSignal,
+          ...(input.embedding ? { embeddingModel: input.embedding.model, dimensions: input.embedding.dimensions } : {}) });
+      }
     } catch (err) {
-      if (isAbort(err)) throw err;
+      input.abortSignal?.throwIfAborted();
+      if (isAbort(err) || isAIInvocationPolicyError(err)) throw err;
       // Gateway-down → NULL embedding; classifier still runs without
       // fast-path. (eE8 distinction.)
       embedding = null;
@@ -829,6 +837,11 @@ function clampConfidence(x: number | undefined): number {
 }
 
 function isAbort(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return err.name === 'AbortError' || /aborted|cancell?ed/i.test(err.message);
+  const seen = new Set<Error>();
+  while (err instanceof Error && !seen.has(err)) {
+    if (err.name === 'AbortError' || /aborted|cancell?ed/i.test(err.message)) return true;
+    seen.add(err);
+    err = err.cause;
+  }
+  return false;
 }

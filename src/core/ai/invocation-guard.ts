@@ -28,6 +28,13 @@ export function isAIInvocationPolicyError(error: unknown): boolean {
 export function withAIInvocationGuard<T>(guard: AIInvocationGuard, run: () => Promise<T>): Promise<T> {
   return guards.run(guard, run);
 }
+export function withAIInvocationPreflight<T>(preflight: (call: AIInvocation) => Promise<void>, run: () => Promise<T>): Promise<T> {
+  const parent = guards.getStore();
+  return guards.run(async call => {
+    await preflight(call);
+    return parent ? parent(call) : { settle: async () => {} };
+  }, run);
+}
 export function hasAIInvocationGuard(): boolean { return guards.getStore() !== undefined; }
 
 /** One provider attempt. No guessed usage, no release on an ambiguous failure. */

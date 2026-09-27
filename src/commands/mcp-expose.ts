@@ -955,10 +955,15 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
 
   // Human summary -----------------------------------------------------------
   const tokenHint = tildify(tokenPath, d.home);
+  const ownerCredential = opts.noService && !keptService ? '<existing-server-admin-token-file>' : shellQuote(tokenPath);
+  const ownerLogin = `gbrain mcp admin login-link --url ${receipt.mcp_url} --admin-token-file ${ownerCredential}`;
   s.say('');
   s.say(opts.noTailscale ? 'GBrain MCP server configured (not published — --no-tailscale)' : `GBrain MCP server published on ${mode === 'funnel' ? 'the public internet via Tailscale Funnel' : 'your tailnet'}`);
   s.say(`  MCP URL   ${receipt.mcp_url}`);
-  s.say(`  Admin     ${receipt.admin_url}   (token: ${tokenHint})`);
+  s.say(`  Admin     ${receipt.admin_url}   (owner session required)`);
+  s.say(opts.noService && !keptService
+    ? '  Owner     use the credential configured for your existing server; --no-service does not change it.'
+    : `  Owner     ${tokenHint} (protected service credential)`);
   s.say(`  Reach     ${mode === 'funnel' ? 'public (Funnel) — cloud agents can connect; gbrain OAuth/bearer + scoped grants protect it.' : 'tailnet only — your devices. Cloud agents (Grok Bot, Muse, ChatGPT) need `--funnel`.'}`);
   s.say(`  Service   ${keptService ? `${serviceLabel(keptService.target, keptService.state, d)} (kept, --no-service)` : opts.noService ? 'skipped (--no-service)' : serviceLabel(target, serviceReceipt.state, d)}`);
   if (engine === 'pglite') {
@@ -972,17 +977,22 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   if (tailnetHealth === 'pending') s.say(`  Health    ${publicUrl}/health still pending — re-run \`gbrain mcp expose --status\` in a minute.`);
   if (tailnetHealth === 'unresolved') s.say(`  Health    ${publicUrl}/health: ${unresolvedDetail(tsStatus!.dnsName!)}`);
   s.say('');
-  s.say('Next');
-  s.say(`  Grant a client   gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
+  s.say('Next — choose the connection method supported by the intended client');
+  s.say(`  Owner login      ${ownerLogin}`);
+  s.say('  Native OAuth     gbrain mcp admin register --help (public/confidential PKCE; exact client redirect URIs)');
+  s.say('                   The native client starts authorization; the owner separately reviews consent.');
+  s.say(`  Machine client   gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
   s.say(`                     --url ${receipt.mcp_url} \\`);
-  s.say(`                     --admin-token-file ${tokenHint} --credentials-out /private/<name>.json`);
-  s.say(`  Then inside it   gbrain connect ${receipt.mcp_url} --harness <id> --credentials-file /private/<name>.json --install`);
-  const local = localAgentGuidance(engine, opts.port, tokenHint);
+  s.say(`                     --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`);
+  s.say(`  Machine install  gbrain connect ${receipt.mcp_url} --harness <id> --credentials-file /private/<name>.json --install`);
+  const local = localAgentGuidance(engine, opts.port, ownerCredential);
   s.say(`  Local agents     ${local.lines[0]}`);
   for (const line of local.lines.slice(1)) s.say(`                   ${line}`);
   s.say('  Check            gbrain mcp expose --status');
   s.nextActions.push(
-    `gbrain mcp grant <name> --harness <id> --profile memory-writer --source default --url ${receipt.mcp_url} --admin-token-file ${tokenHint} --credentials-out /private/<name>.json`,
+    `gbrain mcp grant <name> --harness <id> --profile memory-writer --source default --url ${receipt.mcp_url} --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`,
+    ownerLogin,
+    'gbrain mcp admin register --help',
     ...local.nextActions,
     'gbrain mcp expose --status',
   );

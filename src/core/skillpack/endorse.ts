@@ -14,6 +14,7 @@
  * handles user-facing argv parsing + git invocations.
  */
 
+import { assertLegacySkillFilesystemWrite } from './writer-guard.ts';
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -174,7 +175,10 @@ export function runEndorse(opts: EndorseOptions): EndorseResult {
 
   // Atomic write via .tmp + rename.
   const tmp = endPath + '.tmp';
+  assertLegacySkillFilesystemWrite(endPath);
+  assertLegacySkillFilesystemWrite(tmp);
   writeFileSync(tmp, stableStringify(next));
+  assertLegacySkillFilesystemWrite(endPath);
   renameSync(tmp, endPath);
 
   // git stage + commit.

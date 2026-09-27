@@ -1,6 +1,6 @@
 # Connect GBrain to Codex
 
-Adding memory to an existing Codex agent preserves its identity and needs no private repository. Use the [memory-only walkthrough](../tutorials/connect-coding-agent.md). Connecting an existing hosted brain? Use [private handoff and profiles](../guides/hosted-harness-access.md), including configuration that survives a new shell.
+Adding memory to an existing Codex agent preserves its identity and needs no private repository. Use the [memory-only walkthrough](../tutorials/connect-coding-agent.md). Connecting an existing hosted brain? Choose [native OAuth or a private machine handoff](../guides/hosted-harness-access.md). Opening the owner dashboard or managing clients uses [MCP administration](ADMIN.md) with its separate owner credential.
 
 > New to this? The [Give your coding agent a memory](../tutorials/connect-coding-agent.md)
 > tutorial walks both paths (local-from-nothing and connect-to-an-existing-brain)
@@ -98,11 +98,12 @@ block, removable with `gbrain bootstrap harness --remove`.
 
 ## Fastest path: `gbrain connect`
 
-The brain host publishes the server with `gbrain mcp expose` (tailnet-only is
-enough for your own laptops; [remote MCP guide](../guides/remote-mcp.md)) and
-prints `https://your-machine.your-tailnet.ts.net/mcp`. Then, anywhere `gbrain`
-is installed (mint a token on the brain host first; substitute an ngrok or
-cloud-host URL if you used one of those):
+Use the brain's configured HTTPS endpoint if it already has one. Otherwise,
+publish on the brain host with `gbrain mcp expose` (tailnet-only is enough for
+your own laptops; [remote MCP guide](../guides/remote-mcp.md)), which prints
+`https://your-machine.your-tailnet.ts.net/mcp`. Mint a token on the brain host,
+then run `gbrain connect` inside the intended client environment. Substitute
+the configured endpoint below for an existing ngrok or cloud-host deployment:
 
 **Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*.
 
@@ -157,7 +158,7 @@ everything it can do.
 > prefer `capture` for quick notes (auto-slug + dedupe), `put_page` for
 > full-control writes; if a narrowed token's list lacks capture, use `put_page`.
 > Why brains differ on the default:
-> [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-serve-over-http).
+> [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-grant-memory-access).
 
 ## Remove
 

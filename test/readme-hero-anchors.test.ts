@@ -10,16 +10,6 @@
  * If this test fails, ask: did we deliberately rotate the headline?
  *   - If yes: update the anchors here AND in the corresponding plan/spec.
  *   - If no: the README rewrite dropped something it shouldn't have.
- *
- * v0.40.8.1 — Garry rewrote the README to drop all version chatter from
- * the lead (CHANGELOG.md owns version history; README is current docs).
- * The original "ZeroEntropy default story" anchor was deliberately rotated
- * out of the hero. The new load-bearing anchor is the search-vs-answer
- * framing ("Search gives you raw pages. GBrain gives you the answer.")
- * which is the headline differentiator of the post-rewrite hero.
- * ZeroEntropy still appears further down the README; the guard just no
- * longer pins it to the hero specifically. The reviewed harness onboarding
- * rewrite now leads with controlled memory and distinct local/hosted paths.
  */
 
 import { describe, test, expect } from 'bun:test';

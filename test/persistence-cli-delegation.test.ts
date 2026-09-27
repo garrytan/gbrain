@@ -90,6 +90,17 @@ describe('CLI-only persistence delegation before engine connection', () => {
     });
   });
 
+  test('fact extraction delegates stable input and request identity before connecting', async () => {
+    await withOwner(async (_dir, calls, connect) => {
+      const params = { turn_text: 'A synthetic recorded preference.', visibility: 'private', request_id: ID };
+      await runDeferredPersistenceCommand('call', ['--source', 'call-source', 'extract_facts', JSON.stringify(params)], connect);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].operation).toBe('extract_facts');
+      expect(calls[0].params).toEqual(params);
+      expect(calls[0].routing.source).toBe('call-source');
+    });
+  });
+
   test('forget uses the frozen verb with a stable opaque fact ID and request UUID', async () => {
     await withOwner(async (_dir, calls, connect) => {
       await runDeferredPersistenceCommand('forget', ['42', '--reason', 'correction', '--request-id', ID, '--json'], connect);

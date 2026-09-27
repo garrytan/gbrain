@@ -109,12 +109,12 @@ describe('loadActivePackBestEffort — #4653 DB-plane schema_pack (tier 4)', () 
     });
   });
 
-  it('a throwing getConfig degrades to file/env resolution, never throws', async () => {
+  it('a throwing getConfig returns null instead of a fallback pack, never throws', async () => {
     await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
       const boom = { getConfig: async () => { throw new Error('no config table'); } } as never;
       const ctx = { ...fakeCtx(), engine: boom } as OperationContext;
       const result = await loadActivePackBestEffort(ctx);
-      expect(result?.manifest.name).toBe('gbrain-base');
+      expect(result).toBeNull();
     });
   });
 });

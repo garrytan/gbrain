@@ -22,7 +22,7 @@ beforeAll(async () => {
   eng = new PGLiteEngine();
   await eng.connect({});
   await eng.initSchema();
-  const dim = await probeEmbeddingDim(eng); // match schema column width (1280 ZE / 1536 OpenAI)
+  const dim = await probeEmbeddingDim(eng); // match schema column width (1024 Voyage / 1536 OpenAI)
 
   await eng.putPage('companies/widget-co', { type: 'company', title: 'Widget Co', compiled_truth: 'A payments company.', timeline: '' });
   // The investor's body deliberately NEVER mentions Widget Co — only the edge connects them.

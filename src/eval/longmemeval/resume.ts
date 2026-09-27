@@ -25,6 +25,8 @@ import {
   scoreRecall,
   type RecallBucket,
 } from './metrics.ts';
+import { readerConfigHash, READER_MAX_TOKENS, READER_PROMPT_SHA, READER_PROMPT_VERSION, type ReaderConfig } from './reader.ts';
+import { normalizeModelId } from '../../core/model-id.ts';
 
 /**
  * Parse a JSONL file into rows; corrupt lines are skipped (SIGKILL tail).
@@ -91,6 +93,43 @@ export function checkResumeConfigHash(
     if (h !== currentHash) { mismatched++; foreign.add(h); }
   }
   return { mismatched, unstamped, foreign: [...foreign].sort() };
+}
+
+/** Reader runs are separate even when retrieval pins match. Historical direct rows retain their old receipt shape. */
+export function checkResumeReaderConfig(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  config: ReaderConfig,
+  model: string,
+  retrievalOnly = false,
+  judge = false,
+): { mismatched: number; unknown: number } {
+  const expected = readerConfigHash(config, model);
+  let mismatched = 0;
+  let unknown = 0;
+  for (const row of rows) {
+    if (row.kind === 'by_type_summary' || typeof row.question_id !== 'string') continue;
+    if (row.retrieval_only === true) {
+      if (!retrievalOnly && !judge) mismatched++;
+      continue;
+    }
+    if (retrievalOnly && isScoredQuestionRow(row)) { mismatched++; continue; }
+    const hasReader = typeof row.reader_config_hash === 'string' || typeof row.reader_prompt_sha === 'string';
+    if (!hasReader) {
+      // Pre-reader failures have no hypothesis and are retried, not merged.
+      if (isScoredQuestionRow(row)) unknown++;
+      continue;
+    }
+    if (typeof row.reader_config_hash === 'string') {
+      if (row.reader_config_hash !== expected) mismatched++;
+      continue;
+    }
+    const legacyDirect = config.mode === 'direct' && config.promptSha === READER_PROMPT_SHA &&
+      config.promptVersion === READER_PROMPT_VERSION && config.maxTokens === READER_MAX_TOKENS &&
+      row.reader_prompt_sha === READER_PROMPT_SHA && row.reader_max_tokens === READER_MAX_TOKENS &&
+      typeof row.reader_model === 'string' && normalizeModelId(row.reader_model) === normalizeModelId(model);
+    if (!legacyDirect) mismatched++;
+  }
+  return { mismatched, unknown };
 }
 
 /**
@@ -315,4 +354,3 @@ export function countDegradation(
   }
   return out;
 }
-

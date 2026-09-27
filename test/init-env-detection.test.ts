@@ -44,14 +44,6 @@ describe('groupReadyByProvider — embedding touchpoint', () => {
     });
   });
 
-  test('ZEROENTROPY_API_KEY alone → zeroentropyai is NOT auto-pickable (sunset exclusion)', async () => {
-    // v0.46.3: recipes with `sunset` metadata are excluded from auto-pick —
-    // a fresh install must not be steered onto a provider that dies on
-    // 2026-09-04. Explicit --embedding-model still works (with a warning).
-    const got = await groupReadyByProvider('embedding', { ZEROENTROPY_API_KEY: 'ze-test' });
-    expect(got.map(p => p.recipeId)).not.toContain('zeroentropyai');
-  });
-
   test('OPENAI_API_KEY + VOYAGE_API_KEY → both providers in ready list', async () => {
     const got = await groupReadyByProvider('embedding', {
       OPENAI_API_KEY: 'sk-test',
@@ -66,7 +58,6 @@ describe('groupReadyByProvider — embedding touchpoint', () => {
     const got = await groupReadyByProvider('embedding', {
       OPENAI_API_KEY: 'sk-test',
       VOYAGE_API_KEY: 'pa-test',
-      ZEROENTROPY_API_KEY: 'ze-test',
     });
     const ids = got.map(p => p.recipeId);
     const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
@@ -83,11 +74,11 @@ describe('groupReadyByProvider — embedding touchpoint', () => {
     expect(got.map(p => p.recipeId)).not.toContain('anthropic');
   });
 
-  test('regression: bug reporter scenario — only OPENAI_API_KEY set → openai picked, ZE not present', async () => {
+  test('regression: bug reporter scenario — only OPENAI_API_KEY set → openai picked, Voyage not present', async () => {
     const got = await groupReadyByProvider('embedding', { OPENAI_API_KEY: 'sk-test' });
     const ids = got.map(p => p.recipeId);
     expect(ids).toContain('openai');
-    expect(ids).not.toContain('zeroentropyai');
+    expect(ids).not.toContain('voyage');
   });
 });
 
@@ -97,9 +88,9 @@ describe('groupReadyByProvider — chat touchpoint', () => {
     expect(got.map(p => p.recipeId)).toContain('openai');
   });
 
-  test('ZEROENTROPY_API_KEY alone → no chat ready (ZE has no chat touchpoint)', async () => {
-    const got = await groupReadyByProvider('chat', { ZEROENTROPY_API_KEY: 'ze-test' });
-    expect(got.map(p => p.recipeId)).not.toContain('zeroentropyai');
+  test('VOYAGE_API_KEY alone → no chat ready (Voyage has no chat touchpoint)', async () => {
+    const got = await groupReadyByProvider('chat', { VOYAGE_API_KEY: 'voyage-test' });
+    expect(got.map(p => p.recipeId)).not.toContain('voyage');
   });
 
   test('ANTHROPIC_API_KEY → anthropic chat ready', async () => {

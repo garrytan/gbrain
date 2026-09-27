@@ -19,7 +19,7 @@ export async function runReadPerformance(options: ReadWorkloadOptions & { manife
   let admin: ReturnType<typeof postgres> | undefined;
   function sourceHashes() {
     return Object.fromEntries(['scripts/persistence/performance.ts', 'scripts/persistence/read-workload.ts', 'scripts/persistence/read-metrics.ts', 'scripts/persistence/read-admission.ts',
-      'tests/heavy/_read_latency_workload.ts', 'src/core/persistence/coordinator.ts', 'src/core/persistence/journal.ts',
+      'scripts/persistence/read-diagnostics.ts', 'tests/heavy/_read_latency_workload.ts', 'src/core/persistence/coordinator.ts', 'src/core/persistence/journal.ts',
       'src/core/persistence/consumer.ts', 'src/core/persistence/activation.ts', 'src/core/persistence/page-mutations.ts', 'src/core/search/hybrid.ts',
       'src/core/pglite-engine.ts', 'src/core/postgres-engine.ts'].map(file =>
       [file, createHash('sha256').update(readFileSync(resolve(import.meta.dir, '../..', file))).digest('hex')]));

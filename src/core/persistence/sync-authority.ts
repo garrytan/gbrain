@@ -3,7 +3,9 @@ import type { SyncOpts } from '../../commands/sync.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
-import { currentSubmissionAuthority, authorizeJobExecution, assertCurrentRemoteJobPrincipal, authorityDigest, type RemoteJobAuthority } from '../minions/submission-authority.ts';
+import { currentSubmissionAuthority, currentJobSignal, authorizeJobExecution, assertCurrentRemoteJobPrincipal, authorityDigest, type RemoteJobAuthority } from '../minions/submission-authority.ts';
+import { assertSourceFilesystemActive } from '../minions/source-filesystem.ts';
+import { throwIfAborted } from '../abort-check.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { submissionAuthority, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from './identity.ts';
@@ -17,6 +19,32 @@ function assertDurableSyncCaller(): void {
 }
 
 export interface SyncAuthority { writer: WriteAuthority; remoteJob?: RemoteJobAuthority; remoteData?: Record<string, unknown>; }
+export interface SyncProcessingOptions { noEmbed: boolean; noExtract: boolean; noSchemaPack: boolean; }
+export function syncProcessingOptions(opts: SyncOpts): SyncProcessingOptions {
+  return { noEmbed: opts.noEmbed === true, noExtract: opts.noExtract === true, noSchemaPack: opts.noSchemaPack === true };
+}
+export function assertSyncDispatchActive(): void {
+  assertSourceFilesystemActive(true);
+  throwIfAborted(currentJobSignal());
+}
+export async function resolveSyncPersistenceMode(engine: BrainEngine, opts: SyncOpts): Promise<boolean> {
+  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  assertSyncDispatchActive();
+  if (brain?.enabled || opts.signal?.aborted) return brain?.enabled === true;
+  const [source] = await engine.executeRaw<{ claimed: boolean }>(`SELECT
+    EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id) AS claimed
+    FROM sources s WHERE s.id=$1`, [opts.sourceId ?? 'default']);
+  if (source?.claimed) {
+    throw new OperationError('writer_coordinator_required', 'Claimed-source sync, including connectors, requires explicit persistence activation.',
+      'Stop older writers and review gbrain sources writer status, then explicitly activate persistence before retrying. Claiming a source alone does not exclude running legacy writers.');
+  }
+  return false;
+}
+export async function assertManagedSyncActive(engine: BrainEngine, lock = false): Promise<void> {
+  const [brain] = await engine.executeRaw<{ enabled: boolean }>(`SELECT enabled FROM persistence_brain WHERE singleton=1${lock ? ' FOR SHARE' : ''}`);
+  if (!brain?.enabled) throw new OperationError('writer_coordinator_required', 'Sync cannot publish through an inactive persistence coordinator.',
+    'Stop older writers and review gbrain sources writer status, then explicitly activate persistence before retrying. Claiming a source alone does not exclude running legacy writers.');
+}
 export async function managedSyncAuthority(engine: BrainEngine, sourceId: string, incarnation: string, repoPath: string): Promise<SyncAuthority> {
   assertDurableSyncCaller();
   const current = currentSubmissionAuthority();

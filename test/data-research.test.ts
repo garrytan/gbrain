@@ -261,6 +261,68 @@ describe('data-research', () => {
       expect(result).toContain('>');
     });
 
+    test.each([
+      '<style>.hidden { color: red; }</style><script>hidden()</script><!-- hidden --><p>Hello</p><p>World<br>Again</p>',
+      '&lt;style&gt;.hidden { color: red; }&lt;/style&gt;&lt;script&gt;hidden()&lt;/script&gt;&lt;!-- hidden --&gt;&lt;p&gt;Hello&lt;/p&gt;&lt;p&gt;World&lt;br&gt;Again&lt;/p&gt;',
+      '&#60;style&#62;.hidden { color: red; }&#60;/style&#62;&#60;script&#62;hidden()&#60;/script&#62;&#60;!-- hidden --&#62;&#60;p&#62;Hello&#60;/p&#62;&#60;p&#62;World&#60;br&#62;Again&#60;/p&#62;',
+      '&amp;lt;style&amp;gt;.hidden { color: red; }&amp;lt;/style&amp;gt;&amp;lt;script&amp;gt;hidden()&amp;lt;/script&amp;gt;&amp;lt;!-- hidden --&amp;gt;&amp;lt;p&amp;gt;Hello&amp;lt;/p&amp;gt;&amp;lt;p&amp;gt;World&amp;lt;br&amp;gt;Again&amp;lt;/p&amp;gt;',
+    ])('strips raw or decoded email markup without joining paragraphs: %s', (html) => {
+      expect(stripEmailHtml(html)).toBe('Hello\nWorld\nAgain');
+    });
+
+    test('removes mixed-case blocks with attributes and comment contents', () => {
+      expect(stripEmailHtml('<STYLE type="text/css">hidden css</STYLE><SCRIPT defer>hidden script</SCRIPT><!-- <p>hidden comment</p> --><DIV>Visible</DIV>')).toBe('Visible');
+    });
+
+    test.each([
+      ['1 < 2 and 3 > 1; R&D says "yes".', '1 < 2 and 3 > 1; R&D says "yes".'],
+      ['1 &lt; 2 and 3 &gt; 1; R&amp;D says &quot;yes&quot;.', '1 < 2 and 3 > 1; R&D says "yes".'],
+      ['中文 café 😀 &amp; &#128512; &#39;fine&#39;', "中文 café 😀 & 😀 'fine'"],
+      ['&copy; &#x1F600; &#-1; &#55296; &#56319; &#57343; &#1114112;', '&copy; &#x1F600; &#-1; &#55296; &#56319; &#57343; &#1114112;'],
+      ['&#55295; &#57344; &#1114111;', '\uD7FF \uE000 \u{10FFFF}'],
+      ['&amp;amp;lt;p&amp;amp;gt;Deep&amp;amp;lt;/p&amp;amp;gt;', '&lt;p&gt;Deep&lt;/p&gt;'],
+      ['Hello &amp;amp; goodbye', 'Hello & goodbye'],
+      ['', ''],
+      ['<p>Visible</p><broken', 'Visible\n<broken'],
+    ])('preserves text and bounded entity decoding: %s', (html, expected) => {
+      expect(stripEmailHtml(html)).toBe(expected);
+    });
+
+    test('leaves overflowing decimal entities literal', () => {
+      const entity = `&#${'9'.repeat(400)};`;
+      expect(stripEmailHtml(entity)).toBe(entity);
+    });
+
+    test.each([
+      ['<p>Contact &lt;alice@example.com&gt; to confirm.</p>', 'Contact <alice@example.com> to confirm.'],
+      ['<p>Contact <a@example.com> to confirm.</p>', 'Contact <a@example.com> to confirm.'],
+      ['Constraint: x&lt;y and z&gt;0.', 'Constraint: x<y and z>0.'],
+      ['Constraint: x<y and z>0.', 'Constraint: x<y and z>0.'],
+      ['&lt;span class="note"&gt;R&amp;D&lt;/span&gt; &lt;a href="https://example.com"&gt;Link&lt;/a&gt;', 'R&D Link'],
+      ['<font color="red">Legacy</font> <custom-placeholder>literal</custom-placeholder>', 'Legacy <custom-placeholder>literal</custom-placeholder>'],
+    ])('distinguishes recognized HTML from visible angle-bracket text: %s', (html, expected) => {
+      expect(stripEmailHtml(html)).toBe(expected);
+    });
+
+    test.each([
+      '<span title="x&lt;y">Visible</span>',
+      '<a href="https://example.com" title="1 &lt; 2">Visible</a>',
+      '<span title="x&gt;y">Visible</span>',
+      '<span title="x>y and x<z">Visible</span>',
+      '<span title="say &quot;hi&quot;">Visible</span>',
+      '&lt;span title=&quot;x&amp;lt;y&quot;&gt;Visible&lt;/span&gt;',
+      '&lt;span title="say &amp;quot;hi&amp;quot;"&gt;Visible&lt;/span&gt;',
+      "<span title='x<y and x>z'>Visible</span>",
+    ])('discards attributes without decoding their contents into markup: %s', (html) => {
+      expect(stripEmailHtml(html)).toBe('Visible');
+    });
+
+    test('caps encoded input before decoding or removing hidden blocks', () => {
+      const prefix = '&lt;style&gt;hidden&lt;/style&gt;&lt;p&gt;';
+      const html = prefix + 'x'.repeat(500 * 1024 - prefix.length) + 'outside-the-cap';
+      expect(stripEmailHtml(html)).toBe('x'.repeat(500 * 1024 - prefix.length) + '\n...[truncated]');
+    });
+
     test('truncates >500KB input (ReDoS prevention)', () => {
       // Use a string just over 500KB to trigger truncation
       const huge = '<p>' + 'x'.repeat(510 * 1024) + '</p>';

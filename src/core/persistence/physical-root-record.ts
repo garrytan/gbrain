@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
-import { sha256 } from './digest.ts';
+import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 
 export const PHYSICAL_ROOT_MARKER = '.gbrain-owner.json';
@@ -11,13 +11,14 @@ export interface PhysicalRootReservation {
   version: 1; token: string; brainId: string; worktreeId: string; hostId: string;
   root: string; coordinationPath: string; initialDevice: string | null; initialInode: string | null; initialBirth: string | null;
 }
-interface PhysicalRootStamp { version: 1; token: string; brainId: string; worktreeId: string; root: string; device: string; inode: string; birth: string; }
+export interface PhysicalRootStamp { version: 1; token: string; brainId: string; worktreeId: string; root: string; device: string; inode: string; birth: string; }
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value);
 export function physicalRootError(message = 'The physical checkout identity changed or belongs to another owner.'): OperationError {
   return new OperationError('recovery_required', message, 'Use verified writer transfer or source recovery; do not remove ownership markers to claim this path.');
 }
 export function isPhysicalRootMetadata(name: string): boolean {
-  return name === PHYSICAL_ROOT_MARKER || /^\.gbrain-owner-[a-f0-9]{64}\.json$/.test(name);
+  return name === PHYSICAL_ROOT_MARKER || /^\.gbrain-owner-[a-f0-9]{64}\.json$/.test(name)
+    || /^\.gbrain-owner\.json\.[a-f0-9-]{36}\.tmp$/.test(name);
 }
 export function physicalRootReservationPath(root: string): string {
   return join(dirname(root), `${RESERVATION_PREFIX}${sha256(root)}.json`);
@@ -65,6 +66,16 @@ export function readPhysicalRootReservation(path: string): PhysicalRootReservati
     || !isAbsolute(lockRelative) && lockRelative !== '..' && !lockRelative.startsWith(`..${sep}`)) throw physicalRootError('The stable coordination lock must live outside the canonical checkout.');
   return value;
 }
+export function readPhysicalRootStamp(root: string): PhysicalRootStamp | null {
+  const value = readPrivate(join(root, PHYSICAL_ROOT_MARKER)) as PhysicalRootStamp | null;
+  if (value && (value.version !== 1 || ![value.token,value.brainId,value.worktreeId].every(uuid)
+    || typeof value.root !== 'string' || !isAbsolute(value.root)
+    || ![value.device,value.inode,value.birth].every(part => typeof part === 'string' && /^\d+$/.test(part)))) throw physicalRootError();
+  return value;
+}
+export function restorePhysicalRootReservation(value: PhysicalRootReservation): void {
+  createPrivate(physicalRootReservationPath(value.root), value);
+}
 export function reservePhysicalRootRecord(root: string, identity: Omit<PhysicalRootReservation, 'version' | 'token' | 'root' | 'initialDevice' | 'initialInode' | 'initialBirth'>): PhysicalRootReservation {
   const info = existsSync(root) ? statSync(root, { bigint: true }) : null;
   if (info && !info.isDirectory()) throw physicalRootError('The canonical checkout path is not a directory.');
@@ -103,21 +114,30 @@ export function assertPhysicalRootStamp(directory: string, reservation: Physical
   const value = readPrivate(join(directory, PHYSICAL_ROOT_MARKER)) as PhysicalRootStamp | null;
   const info = statSync(directory, { bigint: true });
   if (!value || value.version !== 1 || value.token !== reservation.token || value.brainId !== reservation.brainId || value.worktreeId !== reservation.worktreeId
-    || value.root !== reservation.root || value.device !== info.dev.toString() || value.inode !== info.ino.toString() || value.birth !== info.birthtimeNs.toString()) throw physicalRootError();
+    || value.root !== reservation.root || value.inode !== info.ino.toString() || value.birth !== info.birthtimeNs.toString()) throw physicalRootError();
+  if (value.device !== info.dev.toString()) {
+    if (typeof value.device === 'string' && /^\d+$/.test(value.device)) throw physicalRootError('The filesystem device identifier changed while the other checkout identity fields still match. Inspect writer status and use deliberate self-transfer to re-stamp this same root.');
+    throw physicalRootError();
+  }
 }
 /** Explicit verified transfer may adopt a copied stamp of this same logical worktree. */
-export function adoptTransferredRootStamp(directory: string, reservation: PhysicalRootReservation): void {
+export function adoptTransferredRootStamp(directory: string, reservation: PhysicalRootReservation, temporaryToken: string = randomUUID()): void {
   const path = join(directory, PHYSICAL_ROOT_MARKER);
   const previous = readPrivate(path) as PhysicalRootStamp | null;
   if (previous && (previous.brainId !== reservation.brainId || previous.worktreeId !== reservation.worktreeId)) throw physicalRootError();
-  if (!previous) { writePhysicalRootStamp(directory, reservation); return; }
-  try { assertPhysicalRootStamp(directory, reservation); return; } catch { /* verified transfer installs the new local inode stamp */ }
+  if (previous) {
+    try { assertPhysicalRootStamp(directory, reservation); return; } catch {}
+  }
   const info = statSync(directory, { bigint: true });
   const stamp: PhysicalRootStamp = { version: 1, token: reservation.token, brainId: reservation.brainId, worktreeId: reservation.worktreeId,
     root: reservation.root, device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() };
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try { createPrivate(temporary, stamp); renameSync(temporary, path); flushDirectory(directory); }
-  finally { try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
+  const temporary = `${path}.${temporaryToken}.tmp`;
+  let created = false;
+  try {
+    created = createPrivate(temporary, stamp);
+    if (digest(readPrivate(temporary)) !== digest(stamp)) throw physicalRootError('The prepared ownership stamp contains unexpected bytes.');
+    renameSync(temporary, path); flushDirectory(directory);
+  } finally { if (created) try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
   assertPhysicalRootStamp(directory, reservation);
 }
 export function assertPhysicalRoot(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {

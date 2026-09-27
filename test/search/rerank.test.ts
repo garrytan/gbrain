@@ -12,14 +12,6 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { __setSunsetClockForTests } from '../../src/core/ai/gateway.ts';
-
-// Pin a pre-sunset clock: the auth-audit test below reaches the REAL
-// gateway.rerank with zerank-2; past ZEROENTROPY_SUNSET_DATE the short-circuit
-// would fire before the missing-key check and flip the audited reason from
-// 'auth' to 'sunset_short_circuit' — a deterministic wall-clock time bomb.
-beforeEach(() => __setSunsetClockForTests(() => new Date('2026-09-01T00:00:00Z')));
-afterEach(() => __setSunsetClockForTests(null));
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -48,16 +40,16 @@ function makeResult(slug: string, score: number, chunk: string): SearchResult {
 // Setup: gateway must be configured so the rerank-audit logger doesn't
 // trip on missing env. We can call configureGateway with a minimal stub.
 // NOTE: this stub omits embedding_model, so the gateway falls back to the
-// v0.37 default (zeroentropyai:zembed-1 / 1280-d). Without the afterAll
+// v0.37 default (voyage:voyage-4 / 1024-d). Without the afterAll
 // reset below it would LEAK that default to the next file in the shard
 // process — a sibling that runs initSchema in beforeAll would build a
-// vector(1280) column and then mismatch on 1536-d fixtures. resetGateway
+// vector(1024) column and then mismatch on 1536-d fixtures. resetGateway
 // in afterAll restores the empty slot so the legacy-embedding preload
 // re-pins OpenAI/1536 for the next file.
 beforeAll(async () => {
   const { configureGateway } = await import('../../src/core/ai/gateway.ts');
   configureGateway({
-    env: { ZEROENTROPY_API_KEY: 'test-key' },
+    env: { VOYAGE_API_KEY: 'test-key' },
   });
 });
 
@@ -175,15 +167,14 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
   });
 
   test('missing gateway reranker API key fail-opens and audits ONE no_key row (v0.48.2)', async () => {
-    const { configureGateway, _resetSunsetWarningsForTest } = await import('../../src/core/ai/gateway.ts');
+    const { configureGateway } = await import('../../src/core/ai/gateway.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-search-'));
     try {
       await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
         // The no_key row is once-per-process-per-model — clear the memo so
         // this test observes the write regardless of file order.
-        _resetSunsetWarningsForTest();
         configureGateway({
-          reranker_model: 'zeroentropyai:zerank-2',
+          reranker_model: 'voyage:rerank-2.5',
           env: {},
         });
 
@@ -192,18 +183,18 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
           enabled: true,
           topNIn: 1,
           topNOut: null,
-          model: 'zeroentropyai:zerank-2',
+          model: 'voyage:rerank-2.5',
         });
 
         expect(out).toEqual(results);
         const failures = readRecentRerankFailures(1);
         expect(failures).toHaveLength(1);
         expect(failures[0]!.reason).toBe('no_key');
-        expect(failures[0]!.error_summary).toContain('ZEROENTROPY_API_KEY');
+        expect(failures[0]!.error_summary).toContain('VOYAGE_API_KEY');
       });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
-      configureGateway({ env: { ZEROENTROPY_API_KEY: 'test-key' } });
+      configureGateway({ env: { VOYAGE_API_KEY: 'test-key' } });
     }
   });
 

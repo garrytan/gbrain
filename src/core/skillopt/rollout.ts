@@ -23,6 +23,8 @@ import { operations, type OperationContext } from '../operations.ts';
 import { loadConfig } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { BenchmarkTask, Trajectory } from './types.ts';
+import { sharedSkillToolAccess } from '../shared-skills/tool-access.ts';
+import { authorizeSkillRead } from '../shared-skills/policy.ts';
 
 /**
  * D13: which tools SkillOpt rollouts are allowed to call.
@@ -36,6 +38,7 @@ export const READ_ONLY_BRAIN_TOOLS: ReadonlySet<string> = new Set(
 );
 
 export interface RolloutOpts {
+  operationContext?: OperationContext;
   engine: BrainEngine;
   skillText: string;
   task: BenchmarkTask;
@@ -68,7 +71,9 @@ export async function runRollout(opts: RolloutOpts): Promise<Trajectory> {
   // Build the tool handlers + defs. F10: when write-capture is on, swap
   // in the virtual-write registry (read-only base + virtual put_page /
   // submit_job / file_upload). Default: read-only allowlist only (D13).
-  const ctx = buildOpContext(engine);
+  const original = opts.operationContext;
+  const ctx = original ? { ...original, remote: true } : buildOpContext(engine);
+  if (original && original.engine !== engine) throw new Error('Optimizer context engine mismatch');
   let defs, handlers;
   if (opts.writeCapture) {
     const { buildWriteCaptureRegistry } = await import('./write-capture.ts');
@@ -76,7 +81,7 @@ export async function runRollout(opts: RolloutOpts): Promise<Trajectory> {
     defs = registry.defs;
     handlers = registry.handlers;
   } else {
-    const r = buildReadOnlyToolRegistry(ctx);
+    const r = buildReadOnlyToolRegistry(ctx, original ? new Set(await sharedSkillToolAccess(original)) : undefined, original);
     defs = r.defs;
     handlers = r.handlers;
   }
@@ -183,11 +188,13 @@ interface ToolRegistry {
  * Tool names are prefixed `brain_` for Anthropic-name compliance (same
  * convention as the subagent handler's buildBrainTools).
  */
-function buildReadOnlyToolRegistry(ctx: OperationContext): ToolRegistry {
+function buildReadOnlyToolRegistry(ctx: OperationContext, allowed?: ReadonlySet<string>, original?: OperationContext): ToolRegistry {
   const defs: ChatToolDef[] = [];
   const handlers = new Map<string, ToolHandler>();
   for (const op of operations) {
     if (!READ_ONLY_BRAIN_TOOLS.has(op.name)) continue;
+    if (op.mutating || op.localOnly) continue;
+    if (allowed && !allowed.has(op.name)) continue;
     const toolName = `brain_${op.name}`;
     defs.push({
       name: toolName,
@@ -197,7 +204,8 @@ function buildReadOnlyToolRegistry(ctx: OperationContext): ToolRegistry {
     handlers.set(toolName, {
       idempotent: true, // All read-only ops are idempotent by construction.
       execute: async (input: unknown) => {
-        return op.handler(ctx, (input as Record<string, unknown>) ?? {});
+        const active = original?.remote !== false && original ? await authorizeSkillRead(original, op.name) : ctx;
+        return op.handler({ ...active, remote: true }, (input as Record<string, unknown>) ?? {});
       },
     });
   }

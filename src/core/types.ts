@@ -1100,6 +1100,16 @@ export interface ResolvedColumn {
   embeddingModel: string;
 }
 
+export interface VectorPoolMeta {
+  underfilled: boolean;
+  escalations: number;
+  innerLimit: number;
+  incomplete?: boolean;
+  reason?: 'candidate_budget' | 'iterative_scan_unavailable' | 'deadline';
+  candidatePool?: number;
+  exactFallback?: boolean;
+}
+
 export interface SearchOpts extends PageReadPolicy {
   limit?: number;
   offset?: number;
@@ -1109,10 +1119,9 @@ export interface SearchOpts extends PageReadPolicy {
    * candidate pool before the per-page DISTINCT collapse, underfilling the
    * result). Engines have no telemetry sink; the HYBRID layer passes a
    * collector here and owns the emit. Called at most once per searchVector
-   * call, only when the escalation loop ended with the page set still
-   * underfilled at the HNSW substrate cap (ef_search hard ceiling).
+   * call, only when bounded work ended before exhaustion could be proved.
    */
-  onVectorPoolMeta?: (m: { underfilled: boolean; escalations: number; innerLimit: number }) => void;
+  onVectorPoolMeta?: (m: VectorPoolMeta) => void;
   /**
    * v0.42 — intent-aware adaptive return-sizing. `true` enables with config/
    * default caps; an object overrides caps per-call; omitted/`false` = off
@@ -1238,11 +1247,13 @@ export interface SearchOpts extends PageReadPolicy {
    * v0.27.0: filter results to pages updated/created after this date. ISO-8601 string.
    */
   afterDate?: string;
+  afterDateInclusive?: boolean;
   /**
    * @deprecated v0.29.1: use `until` instead. Removed in v0.30.
    * v0.27.0: filter results to pages updated/created before this date. ISO-8601 string.
    */
   beforeDate?: string;
+  beforeDateInclusive?: boolean;
   /**
    * @deprecated v0.29.1: use `recency` ('off' | 'on' | 'strong') instead. Removed in v0.30.
    * v0.27.0: recency boost strength. 0 = off, 1 = moderate, 2 = aggressive.
@@ -1331,25 +1342,7 @@ export interface SearchOpts extends PageReadPolicy {
    * Sensible operator overrides for dense-embedder corpora: 0.85-0.95.
    */
   floorRatio?: number;
-  /**
-   * v0.36 cross-modal wave: route this search through the multimodal
-   * embedding space (Voyage multimodal-3 by default).
-   *
-   * - 'text' (default for queries that don't match image-intent regex):
-   *   existing text-embedding path. No behavior change vs pre-v0.36.
-   * - 'image': force routing through the multimodal model + embedding_image
-   *   column. Skip LLM expansion (image embeddings handle synonyms in-space)
-   *   and skip keyword search (no FTS index on image content).
-   * - 'both': run text and image vector searches in parallel; merge via
-   *   modality-weighted RRF.
-   * - 'auto' (literal): same effect as undefined — let intent classifier
-   *   decide. Accepted on the wire so MCP callers can be explicit.
-   *
-   * Cross-modal override matrix (D9): when effective modality is 'image',
-   * cross-modal path overrides expansion (false) and reranker (false)
-   * regardless of mode bundle. zerank-2 can't rerank image embeddings;
-   * sending them produces garbage scores.
-   */
+
   crossModal?: 'text' | 'image' | 'both' | 'auto';
   /**
    * v0.40.4 — per-call override for the graph-signals stage. Threads
@@ -1836,54 +1829,6 @@ export interface EvalCaptureFailure {
   reason: EvalCaptureFailureReason;
 }
 
-/**
- * WP2/T3 — CLOSED degradation vocabulary for `HybridSearchMeta.degraded`
- * (D6). Every stage a search can degrade through has an enumerated name;
- * consumers (MCP `_meta.retrieval`, telemetry, `--explain`) match on these
- * codes. Additive-forever: new stages append, existing names never change.
- *
- *   embed_unavailable  — no embedding ran (no provider, or provider errored)
- *   embed_timeout      — every query embed hit the wall-clock deadline
- *   expansion_failed   — the LLM multi-query expander threw; original only
- *   expansion_partial  — some (not all) variant embeds survived; results
- *                        salvaged from the surviving lists (ENG-15)
- *   rescore_skipped    — original-query embed failed, so the cosine
- *                        re-score stage was skipped (variant-list salvage)
- *   vector_arm_failed  — an engine.searchVector arm threw; surviving arms
- *                        (or keyword) carried the result
- *   budget_dropped_all — the first result alone exceeded the token budget
- *                        and NOTHING was returned (GBRAIN_SEARCH_SALVAGE=off
- *                        strict path — the result set is empty)
- *   budget_truncated   — the minKeep failsafe kept ONE result truncated to
- *                        fit the budget (results non-empty but cut; distinct
- *                        stage so consumers can tell "empty" from "clipped")
- *   keyword_zero       — the keyword arm returned zero rows on a path where
- *                        it was the primary recall arm (vector unavailable)
- *   cache_prestamp     — served from a cache row written before the
- *                        degradation stamp existed; cleanliness unprovable
- *   reranker_skipped   — the mode enables the reranker but it did not run:
- *                        reason `no_key` (provider key absent) or
- *                        `sunset_short_circuit` (provider dead past its
- *                        announced date); results are in RRF order
- *   rerank_passthrough — the reranker was enabled and the provider answered
- *                        SUCCESSFULLY but with an empty/malformed result set,
- *                        so results passed through in raw RRF order with no
- *                        rerank_score (#4648 — distinguishes "reranker off"
- *                        from "reranker died silently")
- *   keyword_relaxed_carried — OR-relaxed lexical rows VOTED in fusion because
- *                        every text vector list came back empty on a
- *                        vector-enabled run (e.g. mid embed-backfill). The
- *                        result set leans on noise-shaped rank evidence, so
- *                        the cache write takes the degraded (short) TTL —
- *                        otherwise a transitional relaxed-carried row would
- *                        shadow the recovered pipeline for the full TTL
- *                        under the same knobs hash (2026-09 red-team).
- *   safe_index_pending — a remote/untrusted read returned nothing while its
- *                        scope still holds markdown pages below the safe-chunk
- *                        index version (withheld from remote chunk retrieval
- *                        until `gbrain reindex --markdown` seals them); stamped
- *                        by the search/query ops' retrieval meta (#5004)
- */
 export const DEGRADED_STAGES = [
   'embed_unavailable',
   'embed_timeout',
@@ -1899,6 +1844,9 @@ export const DEGRADED_STAGES = [
   'rerank_passthrough',
   'keyword_relaxed_carried',
   'safe_index_pending',
+  'vector_candidates_incomplete',
+  'projection_pending',
+  'projection_status_unknown',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 
@@ -1916,10 +1864,11 @@ export const DEGRADED_REASONS = [
   'original_embed_failed',
   'first_result_truncated',
   'no_key',
-  'sunset_short_circuit',
   // #4648 — rerank_passthrough reasons (mirror RerankPassThroughReason).
   'empty_result_set',
   'malformed_shape',
+  'candidate_budget',
+  'iterative_scan_unavailable',
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 
@@ -1983,7 +1932,7 @@ export interface HybridSearchMeta {
    * the caller asked for more distinct pages than the candidate pool could
    * yield). Omitted on clean runs. Exhaustion is VISIBLE, not silent.
    */
-  vector_pool_underfilled?: { escalations: number; innerLimit: number };
+  vector_pool_underfilled?: Omit<VectorPoolMeta, 'underfilled'>;
   /**
    * v0.42.3.0 — autocut decision (signal, cut point, kept/total, gapRatio).
    * Omitted when autocut didn't run (no reranker). Surfaced for

@@ -151,17 +151,7 @@ export interface ModeBundle {
    * (rounding error vs Opus, meaningful vs Haiku).
    */
   reranker_enabled: boolean;
-  /**
-   * Provider:model for the reranker. Bundle default is
-   * `DEFAULT_RERANKER_MODEL` (ai/defaults.ts — `voyage:rerank-2.5` since
-   * v0.48.2, flipped from the sunsetting ZeroEntropy zerank-2 ahead of the
-   * 2026-09-04 hosted shutdown). Rides VOYAGE_API_KEY; a brain without the
-   * key fails open per search (`RerankError('no_key')`, one audit row per
-   * process, no stderr — `gbrain search modes` / `gbrain doctor` say so).
-   * Keyed non-voyage installs get explicit `search.reranker.enabled false`
-   * at init. Because `reranker_model` is folded into the knobs hash
-   * unconditionally, the flip re-keyed every cached result set once.
-   */
+
   reranker_model: string;
   /** Candidates to send upstream (default 30). The full result list always
    *  reaches the user — topNIn just caps API spend on the rerank call. */
@@ -323,14 +313,7 @@ export interface ModeBundle {
    * run. Override: `search.autocut_jump` config → mode bundle.
    */
   autocut_jump: number;
-  /**
-   * v0.46.15 (#1863) — weak-top floor: when the TOP rerank score is below
-   * this, autocut no-ops (gap normalization by a weak top manufactures
-   * spurious cliffs). Scale-dependent on the reranker — tuned on zerank-2's
-   * score scale; the v0.48.2 voyage default is measured against it by the
-   * pre-registered rerank A/B (rule R2) and re-tuned there if it moves.
-   * Config: `search.autocut_min_top`.
-   */
+
   autocut_min_top: number;
   /**
    * Autocut floor: never trim the returned set below this many results when
@@ -491,15 +474,6 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     expansion: false,
     expansion_variant_budget: null,
     searchLimit: 25,
-    // v0.36.0.0 (D6): reranker flipped ON for `balanced` mode bundle. The
-    // real-corpus benchmark shows zerank-2 reshuffles 60% of top-1 results
-    // — the headline ZE quality story reaches the 80% of installs that
-    // stay on `balanced`. Per-query rerank cost ~$0.025/M tokens, ~150ms
-    // p50 added latency. A missing VOYAGE_API_KEY is handled via the
-    // src/core/search/rerank.ts fail-open contract: one `no_key` audit row per
-    // process, results pass through in RRF order, `reranker_skipped` stamped
-    // on the search meta. Opt out with
-    // `gbrain config set search.reranker.enabled false`.
     reranker_enabled: true,
     reranker_model: DEFAULT_RERANKER_MODEL,
     // v0.42.3.0 D4: topNIn = searchLimit (25) so the cross-encoder scores
@@ -784,12 +758,6 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     return bundle[key];
   };
 
-  // v0.40.6.1: `reranker_timeout_ms` resolution slots the resolved recipe's
-  // touchpoint default between override and bundle, so local rerankers
-  // (llama.cpp serving Qwen3-Reranker / self-hosted ZE on CPU) inherit
-  // their cold-start headroom without forcing users to discover the
-  // `search.reranker.timeout_ms` config key.
-  // Precedence: per-call > config override > recipe.touchpoints.reranker.default_timeout_ms > mode bundle.
   const resolvedRerankerModel = pick('reranker_model');
   const pickRerankerTimeoutMs = (): number => {
     if (pc.reranker_timeout_ms !== undefined) return pc.reranker_timeout_ms;
@@ -890,234 +858,6 @@ export function attributeKnob<K extends keyof ModeBundle>(
  * reorder or add a knob without bumping a constant — a hash collision would
  * mean stale cache rows silently reading the wrong shape.
  */
-// v0.35.0.0+ bump 1→2: reranker fields participate in the cache key so a
-// tokenmax-with-reranker write can't be served to a reranker-off lookup.
-// v0.35.6.0   bump 2→3: floor_ratio participates so a floor-on write can't
-// be served to a floor-off lookup (cross-floor contamination, codex T1).
-// CDX2-F13 convention: under a version bump, additions are APPEND-ONLY at
-// the end of `parts[]` — reordering existing fields would silently rebuild
-// the hash for every existing row.
-//
-// CDX2-F12 mid-deploy duplicate-row note: because `cacheRowId()` (in
-// src/core/search/query-cache.ts) includes knobsHash, a v=2 process and a
-// v=3 process writing the same `(source_id, query_text)` produce DISTINCT
-// row IDs. Expect a temporary hit-rate dip + cache-row doubling for hot
-// queries during a rolling deploy. Clears naturally within
-// `cache.ttl_seconds` (default 3600s). The CHANGELOG note covers this.
-//
-// v0.36 wave: cross-modal knobs ALSO participate in v=3 hash (D2 cache
-// contamination fix — a text-mode cache hit cannot silently serve an
-// image-mode caller). v0.35.6.0's floor_ratio bump and v0.36's cross-modal
-// extensions both land under v=3, with cross-modal fields appended after
-// the floor_ratio entry (CDX2-F13 append-only convention).
-//
-// v0.40.4 bump 3→4: graph_signals participates in the cache key. A
-// graph-on write must NOT be served to a graph-off lookup (ranking
-// shifts when adjacency / cross-source / session-demote stamps move
-// results). v0.39 T21 (master) also added schema_pack identity fields
-// under v=4.
-//
-// v0.40.3.0 bump 4→5: contextual_retrieval and contextual_retrieval_disabled
-// added under v=5 (per D8 sequencing — first to land claimed v=4; the
-// contextual-retrieval wave rebased to v=5). Mid-deploy hit-rate dip is
-// expected — clears within cache.ttl_seconds (3600s default).
-//
-// v0.42 bump 5→6: alias_resolved_boost (T19, plan D6) adds a new post-fusion
-// stage. Results whose slug is a canonical_slug in slug_aliases get a
-// 1.05x multiplier. Cached pre-v0.42 entries don't reflect the boost so
-// must invalidate. Same one-time miss-spike pattern as prior bumps;
-// fills within cache.ttl_seconds (3600s default).
-//
-// T2 bump 6→7: title_boost (retrieval-maxpool incident) adds a post-fusion
-// stage that multiplies title-phrase-matching results. A title-boost-on write
-// must NOT be served to a title-boost-off lookup (ranking shifts). Same
-// one-time miss-spike pattern; fills within cache.ttl_seconds.
-//
-// v0.42.3.0 bump 7→8: autocut (score-discontinuity result-sizing) adds `ac`
-// + `acj` parts. Default-ON in reranked modes trims the returned set, so an
-// autocut-on write must NOT be served to an autocut-off lookup. ONE-TIME
-// global cache cold-miss on upgrade — EVERY query_cache row invalidates,
-// including conservative/no-reranker calls where autocut is a no-op (the hash
-// is global, not per-mode). Refills within cache.ttl_seconds (3600s default).
-//
-// bump 8→9 (issue #1777): `archive/` moved from DEFAULT_HARD_EXCLUDES to a 0.5
-// source-boost demote. The source-boost / hard-exclude policy is NOT part of the
-// knobs hash, so without a version bump cached rows would keep returning the old
-// archive-excluded result set for up to cache.ttl_seconds. Bumping forces the fix
-// to take effect immediately (one-time global cache cold-miss on upgrade; refills
-// within cache.ttl_seconds). Same cache-key-contamination convention as the
-// autocut / title_boost / graph_signals bumps above.
-//
-// bump 10→11 (#1400 input_type fix): asymmetric embedding models (zembed-1
-// hosted or local, Voyage v3+) had their query-side input_type stripped by
-// the AI SDK before the wire, so every cached row's key embedding AND result
-// set were computed with document-side query vectors. The fix changes what
-// embedQuery() produces for those providers; pre-fix rows must not be served
-// to post-fix lookups. Same one-time global cold-miss pattern as the bumps
-// above (the hash is global, not per-provider); refills within
-// cache.ttl_seconds (3600s default).
-//
-// bump 11→12 (2026-07-16, #2825): the resolved hard-exclude slug-prefix list
-// (defaults ∪ GBRAIN_SEARCH_EXCLUDE ∪ exclude_slug_prefixes, minus
-// include_slug_prefixes) folds into the key via ctx.hardExcludes. It only
-// applied at DB-query build time (cache miss), so a process with
-// GBRAIN_SEARCH_EXCLUDE set could be served cached rows containing excluded
-// slugs written by a process without it, and vice versa. Same one-time
-// global cold-miss pattern as the bumps above; refills within
-// cache.ttl_seconds (3600s default).
-//
-// bump 12→13 (#3390/#3391): embedding-provider migration wave. The `prov=`
-// component only isolates callers that thread KnobsHashContext.embeddingModel;
-// legacy callers hash `prov=default` before AND after a provider swap, so a
-// cache row computed against the pre-migration embedding space could be
-// served post-migration. `gbrain migrate embeddings` purges query_cache
-// directly at swap time; this version bump is the belt-and-braces for rows
-// written between the #3391 stale-fix (which changes which chunks count as
-// current) and the operator's migration run. Same one-time global cold-miss
-// pattern as the bumps above.
-//
-// bump 14→15: the FTS configuration name (GBRAIN_FTS_LANGUAGE, resolved by
-// getFtsLanguage()) folds into the key via the `fts=` part. It reaches BOTH
-// engines' keyword SQL (websearch_to_tsquery/to_tsvector in postgres-engine
-// and pglite-engine) and the two search_vector trigger functions, so it
-// changes which rows the keyword arm returns — but it only applied at
-// DB-query build time (cache miss). Switching language and running
-// `gbrain reindex-search-vector` therefore left every pre-switch query_cache
-// row reachable: the freshly retokenized index was silently bypassed for up
-// to cache.ttl_seconds, with no warning and no way for an operator to tell.
-// Same one-time global cold-miss pattern as the bumps above; refills within
-// cache.ttl_seconds (3600s default).
-//
-// bump 15→16 (#3515): `detail` folds into the key via ctx.detail (det=).
-// detail is result-affecting by design — it gates dedup, chunk-source
-// filtering, and the compiled_truth boost — but was absent from the key, so
-// a `--detail low` write (compiled-truth-only result set) was served to a
-// default `medium` lookup for the whole TTL. Same contamination class as
-// [CDX-4], floor_ratio (v=3), and relationalRetrieval (v=10). v=14 was
-// claimed by #3514 (compiled_truth boost scope, #3430) and v=15 by the
-// `fts=` fold (#3677), so this lands as v=16 per the D8 sequencing
-// convention (see the v=4/v=5 note above). Same one-time global cold-miss
-// pattern as the bumps above.
-//
-// bump 16→17 (WP2/T3): degradation-stamp epoch. HybridSearchMeta gains
-// `degraded[]` + `retrieved_count` and every cache write now stamps them
-// (degraded rows additionally get a short TTL). A pre-stamp row served as a
-// hit would claim a clean run it can't prove; bumping makes pre-upgrade rows
-// unreachable (one-time cold-miss, refills within cache.ttl_seconds), and
-// any row that still lacks the stamp surfaces as
-// degraded:[{stage:'cache_prestamp'}] at hit time (belt-and-braces).
-// (Merge note: both this wave and master's #3515 wave claimed v=16 in
-// flight; the merge sequences them as 16 then 17.)
-//
-// bump 18→19 (#3621): `ack=` (autocut minKeep floor) joins the key. The
-// floor changes how many rows survive the cut, so a minKeep=1 write
-// (trimmed to the cliff) must NOT be served to a minKeep=6 lookup (which
-// expects the floor) — same contamination class as ac=/acj=. The PR
-// authored this as v=16; master had already reached 18, so it sequences
-// here per the D8 convention. Same one-time global cold-miss pattern.
-//
-// bump 19→20 (#3002): pre-fusion pool floor. hybridSearch's innerLimit
-// gains a floor (PRE_FUSION_POOL_FLOOR=50, and at least offset+limit), so
-// every recall arm fetches a wider candidate pool at small limits — same
-// knobs, different result set. A cache row written under the old limit*2
-// pool math must NOT be served post-upgrade.
-//
-// bump 20→21 (#895): recency DEFAULT_FALLBACK coefficient lowered 0.5→0.3
-// (recency-decay.ts) so unmapped notes can't out-boost entity pages under
-// --recency. A compile-time constant, not a per-call knob, but it reorders
-// every recency-weighted result set, so pre-fix cache rows must become
-// unreachable. Both bumps ship in the same release; no new key parts —
-// the version bump alone invalidates. Same one-time global cold-miss
-// pattern as the bumps above; refills within cache.ttl_seconds (3600s).
-//
-// bump 21→22 (mw2 wave): result-affecting stamp/injection changes for
-// identical knobs — #1663 exact-lookup injection, #3995 relational page-1
-// evidence slot, #3783 keyword_hit stamps, #4220 status. Pre-upgrade rows
-// (≤1h TTL) would be served missing the injected identity page + honesty
-// stamps, and CRAG then mis-grades them weak_semantic. Version-only
-// invalidation; one-time cold-miss spike on upgrade.
-//
-// bump 22→23 folds excludePrivate (#4352): the private-visibility posture
-// joins the key via ctx.excludePrivate (xp=). #4352 originally shipped a
-// wholesale cache skip for excludePrivate=true — but that posture is the
-// DEFAULT for every remote MCP caller, so the skip disabled the semantic
-// cache for exactly the highest-volume beneficiaries. Folding it instead
-// means cache rows written with private rows included can never serve a
-// private-excluding lookup and vice versa, and remote callers get their
-// ~50% cache savings back. Same contamination class as detail (v=16) and
-// hardExcludes (v=12); same one-time global cold-miss pattern as the bumps
-// above, refills within cache.ttl_seconds (3600s default).
-//
-// bump 23→24 (#4358 residual): hybrid.ts's `pagedRequest` skip-cache gate
-// only bypassed the cache for offset>0 (the #4368 wave absorbed the
-// positive-offset half of the original #4358 fix, which used `!== 0`, as
-// `> 0`). A negative offset re-slices an already-sliced stored page just as
-// badly as a positive one, and — since offset isn't part of this hash — a
-// negative-offset request could read OR write the same cache row an
-// offset=0 (or any other offset) request shares. Any row written while that
-// gap was live may hold a wrong page under a knobsHash a clean request can
-// still reach. No new key part; the bump alone invalidates (the PR authored
-// this as v=22; master had already reached 23, so it sequences here per the
-// D8 convention). Same one-time global cold-miss pattern as the bumps
-// above; refills within cache.ttl_seconds (3600s).
-//
-// bump 24→25 (#3617): `kof=` (keyword AND→OR fallback knob) joins the key.
-// The PR authored this as 23→24, but 24 was claimed by the negative-offset
-// bump above while it was open, so it takes the next free number per the D8
-// convention. Same one-time global cold-miss pattern as the bumps above.
-//
-// bump 25→26 folds salience/recency + intent_patterns (#4415) — wave-g. Three
-// new ctx parts:
-//   sal=/rec= — the EFFECTIVE per-call salience/recency modes (explicit
-//     SearchOpts ?? auto-suggested, resolved by the same chain bare
-//     hybridSearch uses — see hybrid.ts resolveEffectiveSalience/
-//     resolveEffectiveRecency). #4415 extended the per-call knobs to the
-//     default MCP `search` surface, so a salience:'strong' write (reordered
-//     result set) could be served to a salience:'off' lookup of the same
-//     query for the whole TTL — same contamination class as det= (v=16).
-//   ipat= — fingerprint of the applied `search.intent_patterns` config.
-//     The patterns change classification (intent weights + auto salience/
-//     recency/detail) and therefore results; without the fold, a config
-//     edit kept serving old-classification rows for up to the TTL.
-// Same one-time global cold-miss pattern as the bumps above; refills
-// within cache.ttl_seconds (3600s default). (Authored as 23→24 on the
-// wave-g branch; 24 and 25 were claimed by the two bumps above while it
-// was in flight, so it takes the next free number per the D8 convention.)
-//
-// v=27 (master, 0.48.0.0): adaptive-return gate + intent fold (see the ar=/ari=
-// key parts below). bump 27→28 (#4256, fixes #3695's fusion path): compiledTruthBoost now
-// suppresses the 2x compiled-truth authority boost for synthetic chunkless
-// title rows (chunk_id 0 + empty chunk_text) in both rrfFusion variants —
-// result ordering changes for identical knobs, so cached rows ranked under
-// the old boost must not be served under the new semantics. No new key
-// part; version-only invalidation (same class as the 13→14 detail=medium
-// boost-scope bump and the 21→22 stamp/injection epoch). One-time global
-// cold-miss spike on upgrade; refills within cache.ttl_seconds (3600s).
-//
-// bump 28→29 (ranker wave): `evb=` — the expansion_variant_budget knob joins
-// the key (append-only, last part). A budget-weighted write (variant lists
-// subordinated in RRF) must not serve a legacy lookup or a different budget;
-// `null` hashes as `evb=legacy` so the all-null bundles re-key exactly once.
-//
-// v=29 ALSO carries `rrp=` (ranker wave, same release — one bump per wave):
-// the relational_rerank_pin knob. Pinning relational-arm rows above the
-// reranked text rows reorders the cached page for identical other knobs, so
-// a pin-3 write must never serve a pin-0 lookup (and vice versa). Appended as
-// the last part with NO separate version bump: v=29 has not shipped in a
-// release yet, so `evb=` and `rrp=` ride the same 28→29 one-time cold miss.
-//
-// v=29 ALSO carries `kacf=` (ranker wave Phase E2, same release): the
-// keyword_arm_confidence_floor knob. Down-weighting the keyword + title lists
-// on a weak keyword arm reorders the fused page for identical other knobs, so
-// a floor-0.6 write must never serve a floor-off lookup (and vice versa).
-// `null` hashes as `kacf=off`; appended after `rrp=`, same unshipped epoch.
-//
-// v=29 ALSO carries `mbg=` (ranker wave Phase E3, same release): the
-// metadata_boost_gate knob. Under `lexical`, vector-only-voter queries skip
-// the post-fusion metadata boosts and the fused page is re-ordered for
-// identical other knobs, so a `lexical` write must never serve an `always`
-// lookup (and vice versa). A partial-knobs literal hashes as `mbg=always`;
-// appended after `kacf=`, same unshipped epoch — no extra bump.
 export const KNOBS_HASH_VERSION = 29;
 
 /**
@@ -1753,4 +1493,3 @@ export async function loadSearchModeConfig(
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-

@@ -74,35 +74,13 @@ export interface GBrainConfig {
   openai_api_key?: string;
   anthropic_api_key?: string;
   /**
-   * ZeroEntropy API key. v0.37 fix wave (CDX2-5+6): ZE became the default
-   * embedding + reranker provider in v0.36 but lacked a file-plane config
-   * slot. `gbrain config set zeroentropy_api_key X` wrote DB plane,
-   * `loadConfig` only merged OpenAI/Anthropic, and `buildGatewayConfig`
-   * at cli.ts:1401 only mapped those two — so the key never reached the
-   * embed pipeline. Now wired through: file plane → loadConfig env
-   * merge → buildGatewayConfig env dict → recipe reads ZEROENTROPY_API_KEY.
-   */
-  zeroentropy_api_key?: string;
-  /**
    * OpenRouter API key. File-plane slot so `gbrain config set
    * openrouter_api_key X` (or config.json) reaches the openrouter recipe:
    * file plane → loadConfig env merge → buildGatewayConfig env dict → recipe
    * reads OPENROUTER_API_KEY.
    */
   openrouter_api_key?: string;
-  /**
-   * Voyage AI API key (#2662). File-plane slot so `~/.gbrain/config.json`'s
-   * `voyage_api_key` reaches the voyage recipe the same way
-   * zeroentropy_api_key/openrouter_api_key do: file plane →
-   * buildGatewayConfig env dict → recipe reads VOYAGE_API_KEY. Before this,
-   * launchd/daemon/MCP contexts without a process-env export silently
-   * failed multimodal embeds despite config.json looking complete.
-   *
-   * NOTE: `gbrain config set voyage_api_key X` routes to the FILE plane
-   * (FILE_PLANE_API_KEYS in src/commands/config.ts); a value that landed in
-   * the DB plane anyway is still honored via the #2119 read-side merge
-   * (DB_MERGED_PROVIDER_KEY_FIELDS, env > file > DB).
-   */
+
   voyage_api_key?: string;
   /**
    * Alibaba DashScope API key (#3500). File-plane slot so config.json's
@@ -149,7 +127,7 @@ export interface GBrainConfig {
   azure_openai_endpoint?: string;
   azure_openai_deployment?: string;
   azure_openai_use_entra?: string;
-  /** AI gateway config (v0.14+). v0.36+ default: "zeroentropyai:zembed-1" / 1280 / "anthropic:claude-haiku-4-5-20251001". */
+
   embedding_model?: string;
   embedding_dimensions?: number;
   /**
@@ -739,7 +717,6 @@ export function loadConfig(): GBrainConfig | null {
     ...(dbUrl ? { database_path: undefined } : {}),
     ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
     ...(process.env.ANTHROPIC_API_KEY ? { anthropic_api_key: process.env.ANTHROPIC_API_KEY } : {}),
-    ...(process.env.ZEROENTROPY_API_KEY ? { zeroentropy_api_key: process.env.ZEROENTROPY_API_KEY } : {}),
     ...(process.env.OPENROUTER_API_KEY ? { openrouter_api_key: process.env.OPENROUTER_API_KEY } : {}),
     ...(process.env.GBRAIN_EMBEDDING_MODEL ? { embedding_model: process.env.GBRAIN_EMBEDDING_MODEL } : {}),
     ...(process.env.GBRAIN_EMBEDDING_DIMENSIONS ? { embedding_dimensions: parseInt(process.env.GBRAIN_EMBEDDING_DIMENSIONS, 10) } : {}),
@@ -1222,7 +1199,6 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'database_path',
   'openai_api_key',
   'anthropic_api_key',
-  'zeroentropy_api_key',
   'openrouter_api_key',
   'voyage_api_key',
   'dashscope_api_key',
@@ -1554,13 +1530,6 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.
   'auto_timeline',
-  // v0.46.3: the provider_sunset doctor check's own suppression escape hatch
-  // (doctor.ts) and docs/guides/embedding-migration.md both document
-  // `gbrain config set doctor.suppress_provider_sunset true`, but the key was
-  // never registered — the documented command exited 1 with "Unknown config
-  // key". Same class as auto_chronicle above. Deliberately an exact key, not
-  // a blanket 'doctor.' prefix (unbounded namespaces defeat the typo gate).
-  'doctor.suppress_provider_sunset',
   // #2606: chronicle judge output-token cap (default 4000). Event-dense
   // pages overflowed the old hardcoded 1500 and were misrecorded as
   // no_events; the cap is now configurable and truncation is surfaced.
