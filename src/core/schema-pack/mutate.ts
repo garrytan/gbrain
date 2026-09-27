@@ -51,6 +51,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { extname, join } from 'node:path';
+import { CASED_WORD_CHARS } from '../cjk.ts';
 import { gbrainPath } from '../config.ts';
 import { computeManifestSha8, parseSchemaPackManifest } from './manifest-v1.ts';
 import type {
@@ -444,13 +445,15 @@ export async function withMutation(
 // Validation helpers used by primitives
 // ────────────────────────────────────────────────────────────────────────
 
-const SLUG_RE = /^[a-z0-9._-]+$/i;
+// Letters of every script (#24): `schema detect` suggests `люди` for `люди/`.
+// Case-insensitive, as the ASCII class was.
+const TYPE_NAME_RE = new RegExp(`^[${CASED_WORD_CHARS}._-]+$`, 'u');
 
 function validateTypeName(name: unknown): void {
-  if (typeof name !== 'string' || name.length === 0 || !SLUG_RE.test(name)) {
+  if (typeof name !== 'string' || name.length === 0 || !TYPE_NAME_RE.test(name)) {
     throw new SchemaPackMutationError(
       'INVALID_RESULT',
-      `type name must be a slug-shape string [a-z0-9._-]+ (got: ${JSON.stringify(name)})`,
+      `type name must be letters, digits, '.', '_' or '-' (got: ${JSON.stringify(name)})`,
     );
   }
 }

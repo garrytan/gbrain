@@ -14,6 +14,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
   classifyStoredType,
   sanitizeTypeForDisplay,
+  safeCliToken,
   renderTypeWarningSummary,
   type TypeUsagePack,
 } from '../src/core/schema-pack/type-usage.ts';
@@ -75,6 +76,23 @@ describe('sanitizeTypeForDisplay', () => {
     const out = sanitizeTypeForDisplay(long);
     expect(out.length).toBe(64);
     expect(out.endsWith('...')).toBe(true);
+  });
+});
+
+// #24: type names of every script are valid (`schema edit`), so the
+// copy-pasteable `schema add-type` hint must keep them; shell syntax stays out.
+describe('safeCliToken', () => {
+  test('keeps type names of every script', () => {
+    expect(safeCliToken('person')).toBe('person');
+    expect(safeCliToken('люди')).toBe('люди');
+    expect(safeCliToken('Люди.v2')).toBe('Люди.v2');
+  });
+
+  test('rejects quotes, spaces and shell metacharacters', () => {
+    expect(safeCliToken("x'; touch pwn; #")).toBeNull();
+    expect(safeCliToken('люди мира')).toBeNull();
+    expect(safeCliToken('-flag')).toBeNull();
+    expect(safeCliToken('a$(b)')).toBeNull();
   });
 });
 

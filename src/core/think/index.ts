@@ -32,7 +32,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
-import { foldSlugText, SLUG_WORD_CHARS } from '../cjk.ts';
+import { slugifyText } from '../cjk.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -960,17 +960,15 @@ export function stripGapsSection(answer: string): string {
   return kept.replace(/\s+$/, '');
 }
 
-const SYNTHESIS_DROP_RE = new RegExp(`[^${SLUG_WORD_CHARS}\\s]+`, 'gu');
-
 /**
- * `synthesis/<stem>-<date>` for a question: the shared letter fold (ADR-0001),
- * other characters dropped, whitespace runs → one hyphen, capped at 60 code
- * points. Letters of every script survive, so two non-Latin questions on one
- * day no longer share `synthesis/untitled-<date>` (#21).
+ * `synthesis/<stem>-<date>` for a question: slugifyText's shared letter fold
+ * (ADR-0001), every non-letter run → one hyphen (`e-mail` stays `e-mail`,
+ * #24), capped at 60 code points. Letters of every script survive, so two
+ * non-Latin questions on one day no longer share `synthesis/untitled-<date>`
+ * (#21).
  */
 export function synthesisSlug(question: string, date: string): string {
-  const stem = foldSlugText(question).replace(SYNTHESIS_DROP_RE, '').trim().replace(/\s+/g, '-');
-  return `synthesis/${Array.from(stem).slice(0, 60).join('') || 'untitled'}-${date}`;
+  return `synthesis/${slugifyText(question, 60) || 'untitled'}-${date}`;
 }
 
 /**

@@ -17,7 +17,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
-import { PAGE_SLUG_SEG } from '../cjk.ts';
+import { DIR_NAME_SLUG_RE } from '../cjk.ts';
 
 export interface CreateSlugInput {
   /**
@@ -72,11 +72,6 @@ export class SlugRegistryError extends Error {
 // SlugRegistry
 // ---------------------------------------------------------------------------
 
-// Shares the page-slug segment grammar (all scripts, #738/#3417) with
-// validatePageSlug; keeps this site's dir/name shape (>= 2 segments).
-// `u` flag required by PAGE_SLUG_SEG's \p{...} classes.
-const SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`, 'u');
-
 export class SlugRegistry {
   /**
    * `sourceId` scopes every existence probe to the SAME source the paired
@@ -99,7 +94,7 @@ export class SlugRegistry {
   async create(input: CreateSlugInput): Promise<CreatedSlug> {
     const { desiredSlug, displayName, onCollision = 'append-numeric', maxDisambiguator = 50 } = input;
 
-    if (!SLUG_RE.test(desiredSlug)) {
+    if (!DIR_NAME_SLUG_RE.test(desiredSlug)) {
       throw new SlugRegistryError('invalid_slug', `Invalid slug: ${desiredSlug} (expect dir/name form)`, desiredSlug);
     }
 
@@ -139,7 +134,7 @@ export class SlugRegistry {
    * pre-flight checks in interactive flows.
    */
   async isFree(slug: string): Promise<boolean> {
-    if (!SLUG_RE.test(slug)) return false;
+    if (!DIR_NAME_SLUG_RE.test(slug)) return false;
     const existing = await this.engine.getPage(slug, this.scope());
     return !existing;
   }
@@ -151,7 +146,7 @@ export class SlugRegistry {
    * but aren't obviously the same person.
    */
   async suggestDisambiguators(desiredSlug: string, n = 3): Promise<string[]> {
-    if (!SLUG_RE.test(desiredSlug)) return [];
+    if (!DIR_NAME_SLUG_RE.test(desiredSlug)) return [];
     const out: string[] = [];
     for (let i = 2; i <= 2 + 20 && out.length < n; i++) {
       const candidate = `${desiredSlug}-${i}`;
