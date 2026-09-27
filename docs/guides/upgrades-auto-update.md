@@ -57,6 +57,21 @@ action on the user's local sleep window — is owned by
 [quiet-hours.md](quiet-hours.md); this doc only covers the self-upgrade
 hook into it.
 
+For always-on installs, autopilot swaps the CLI during an idle quiet-hours
+window, then relaunches. The relaunched process runs `post-upgrade` before it
+opens the brain or starts work. Package postinstall migrations are deferred
+during this swap so the running daemon does not touch the database. If the source pull, package install, binary
+replacement, version check, or required setup fails, the attempt is not
+confirmed. A setup failure is retried on the next launch; the existing
+autopilot service is not reinstalled during the upgrade.
+Unchanged binary swaps and clean source pull failures retry after 24 hours.
+Package-manager failures may leave a partial install and require repair before
+the daemon restarts. A source checkout left uncertain
+by an interrupted pull or failed install stops autopilot until that checkout is
+repaired and successfully upgraded. A separately installed official binary can
+take over only if it reaches the intended version and completes strict
+post-upgrade setup; the source guard remains until the checkout is repaired.
+
 ## Implementation
 
 ### The Check (cron-initiated)

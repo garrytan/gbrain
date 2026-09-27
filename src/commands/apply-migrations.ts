@@ -326,7 +326,7 @@ function orchestratorOptsFrom(cli: ApplyMigrationsArgs): OrchestratorOpts {
  * Entry point. Does not call connectEngine — each phase inside an
  * orchestrator manages its own engine / subprocess lifecycle.
  */
-export async function runApplyMigrations(args: string[]): Promise<void> {
+export async function runApplyMigrations(args: string[], opts: { requireComplete?: boolean } = {}): Promise<void> {
   const cli = parseArgs(args);
   if (cli.help) { printHelp(); return; }
 
@@ -531,6 +531,9 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   const toRun: Migration[] = [...plan.partial, ...plan.pending, ...plan.applied.filter(migration => migration.reconcile)]
     .sort((left, right) => compareVersions(left.version, right.version));
   if (toRun.length === 0) {
+    if (opts.requireComplete && plan.wedged.length > 0) {
+      process.exit(1);
+    }
     if (schemaBehind) {
       console.error(
         'Orchestrator migrations are up to date, but schema migrations are behind. ' +
@@ -539,7 +542,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
       process.exit(1);
     }
     console.log('All migrations up to date.');
-    process.exit(0);
+    return;
   }
   if (!schemaBehind && plan.pending.length === 0 && plan.partial.length === 0) {
     console.log('All migrations up to date. This covers orchestrator checkpoints only; host publication and client activation are being rechecked.');
@@ -553,7 +556,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   // result; we persist it here with a canonical shape. If the write fails,
   // surface the error and DO NOT proceed to the next migration (a silent
   // ledger drop was the root cause of the original infinite-retry symptom).
-  let failed = false;
+  let failed = opts.requireComplete === true && plan.wedged.length > 0;
   for (const m of toRun) {
     const recordCheckpoint = !m.reconcile || !plan.applied.includes(m);
     console.log(`\n=== Applying migration v${m.version}: ${m.featurePitch.headline} ===`);
@@ -611,6 +614,10 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
 
       if (result.status === 'partial') {
         console.log(`Migration v${m.version} finished as PARTIAL. Re-run \`gbrain apply-migrations --yes\` after resolving any pending host-work items.`);
+        if (opts.requireComplete) {
+          failed = true;
+          break;
+        }
       } else if (m.reconcile && result.pending_host_work) {
         console.log(`Migration v${m.version} mechanical checks complete; host publication or client actions remain pending.`);
       } else {

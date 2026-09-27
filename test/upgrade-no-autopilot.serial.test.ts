@@ -8,6 +8,46 @@ import { VERSION } from '../src/version.ts';
 const REPO = resolve(import.meta.dir, '..');
 
 describe('upgrade autopilot opt-out propagation', () => {
+  test('swap-only postinstall does not start migrations against the live brain', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-postinstall-deferred-'));
+    try {
+      const bin = join(home, 'bin');
+      mkdirSync(bin);
+      writeFileSync(join(bin, 'gbrain'), '#!/bin/sh\necho called > "$HOME/unexpected-migrations.log"\nexit 42\n', { mode: 0o755 });
+      const result = spawnSync(process.execPath, ['--no-env-file', join(REPO, 'scripts/postinstall.ts')], {
+        cwd: home,
+        env: { HOME: home, GBRAIN_HOME: home, PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, GBRAIN_DEFER_POSTINSTALL_MIGRATIONS: '1' },
+        encoding: 'utf8', timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(join(home, 'unexpected-migrations.log'))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('strict post-upgrade reports a mechanical failure with a nonzero exit', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-post-upgrade-strict-'));
+    try {
+      mkdirSync(join(home, '.gbrain'));
+      writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({
+        engine: 'pglite', database_path: join(home, 'db'),
+        self_upgrade: { mode: 'auto', mode_prompted: true },
+      }));
+      const driver = join(home, 'driver.ts');
+      writeFileSync(driver, `import { mock } from 'bun:test';\nmock.module(${JSON.stringify(join(REPO, 'src/commands/apply-migrations.ts'))}, () => ({ runApplyMigrations: async () => { throw new Error('synthetic migration failure'); } }));\nconst { runPostUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nconst { currentExitCode } = await import(${JSON.stringify(join(REPO, 'src/core/cli-force-exit.ts'))});\nawait runPostUpgrade(['--strict', '--no-autopilot-install']);\nprocess.exit(currentExitCode());\n`);
+      const result = spawnSync(process.execPath, ['--no-env-file', driver], {
+        cwd: home,
+        env: { HOME: home, GBRAIN_HOME: home, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, GBRAIN_SKIP_REFERENCE_SWEEP: '1' },
+        encoding: 'utf8', timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stderr).toContain('synthetic migration failure');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test('upgrade forwards the opt-out through package postinstall and post-upgrade', () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-upgrade-optout-'));
     try {
@@ -18,9 +58,9 @@ describe('upgrade autopilot opt-out propagation', () => {
       mkdirSync(join(home, '.bun', 'install', 'global'), { recursive: true });
       writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'https://github.com/garrytan/gbrain' } }));
       const driver = join(pkg, 'src', 'cli.ts');
-      writeFileSync(driver, `const { runUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nawait runUpgrade(['--no-autopilot-install']);\n`);
+      writeFileSync(driver, `import { appendFileSync } from 'node:fs';\nif (process.argv.includes('--version')) { console.log('gbrain ${VERSION}'); process.exit(0); }\nif (process.argv.includes('post-upgrade')) { appendFileSync(${JSON.stringify(join(home, 'calls.log'))}, 'current:' + process.argv.slice(2).join(' ') + ':no-autopilot=' + process.env.GBRAIN_NO_AUTOPILOT_INSTALL + '\\n'); process.exit(0); }\nconst { runUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nawait runUpgrade(['--no-autopilot-install']);\n`);
       writeFileSync(join(bin, 'bun'), `#!/bin/sh\nprintf 'bun:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(REPO, 'scripts/postinstall.ts'))}\n`, { mode: 0o755 });
-      writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf 'gbrain:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\nif [ "$1" = '--version' ]; then echo 'gbrain ${VERSION}'; fi\n`, { mode: 0o755 });
+      writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf 'gbrain:%s:no-autopilot=%s\\n' "$*" "$GBRAIN_NO_AUTOPILOT_INSTALL" >> "$HOME/calls.log"\nif [ "$1" = 'post-upgrade' ]; then exit 42; fi\nif [ "$1" = '--version' ]; then echo 'gbrain ${VERSION}'; fi\n`, { mode: 0o755 });
       const result = spawnSync(process.execPath, ['--no-env-file', driver], {
         cwd: home,
         env: { HOME: home, GBRAIN_HOME: home, BUN_INSTALL: join(home, '.bun'), PATH: `${bin}:/usr/bin:/bin` },
@@ -30,7 +70,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       const calls = readFileSync(join(home, 'calls.log'), 'utf8');
       expect(calls).toContain('bun:update gbrain:no-autopilot=1');
       expect(calls).toContain('gbrain:apply-migrations --yes --non-interactive:no-autopilot=1');
-      expect(calls).toContain('gbrain:post-upgrade --no-autopilot-install:no-autopilot=1');
+      expect(calls).toContain('current:post-upgrade --no-autopilot-install:no-autopilot=1');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

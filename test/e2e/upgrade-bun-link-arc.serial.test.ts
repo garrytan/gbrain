@@ -13,9 +13,9 @@
  *      marker while every git operation stays on the local filesystem.
  *   2. The upgrade sequence: REAL `git -C <root> pull --ff-only` against the
  *      local bare origin (one commit ahead), THEN `bun install` in the clone.
- *      Only `bun` and `gbrain` are PATH-shimmed (argv recorders that exit 0 and
- *      print nothing, except the `--version` reply verifyUpgrade needs). The
- *      bun recorder also notes `git rev-parse HEAD` at call time, so
+ *      `bun` and `gbrain` are PATH-shimmed, while verification and setup
+ *      re-execute the current CLI entrypoint. The bun recorder also notes
+ *      `git rev-parse HEAD` at call time, so
  *      pull-BEFORE-install ordering is provable without shimming git.
  *   3. runPostUpgrade advances its checkpoint: the migration ledger at
  *      `$GBRAIN_HOME/.gbrain/migrations/completed.jsonl`
@@ -23,7 +23,7 @@
  *      runApplyMigrations tail of runPostUpgrade), plus the
  *      `self_upgrade.mode/mode_prompted` one-shot in config.json.
  *   4. `--swap-only` stops after the swap + verify + breadcrumb: no
- *      `gbrain post-upgrade`, no `gbrain features` child.
+ *      `post-upgrade` re-exec, no `gbrain features` child.
  *
  * Drive mode (and why nothing here is in-process except pure detection):
  *   - `detectInstallMethod` spawns nothing on the bun-link path, so test 1
@@ -53,7 +53,7 @@
 
 import { describe, test, expect, afterEach, afterAll } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -65,7 +65,7 @@ const REPO_ROOT = join(import.meta.dir, '..', '..');
 const CLI_PATH = join(REPO_ROOT, 'src', 'cli.ts');
 const REAL_UPGRADE_TS = join(REPO_ROOT, 'src', 'commands', 'upgrade.ts');
 
-/** Version the gbrain shim reports, so verifyUpgrade's parse is deterministic. */
+/** Version the current CLI entrypoint reports, so verification is deterministic. */
 const SHIM_NEW_VERSION = '9.9.9.9';
 
 const cleanupDirs: string[] = [];
@@ -125,7 +125,7 @@ function makeBase(label: string): BaseFixture {
   writeShim(
     shimDir,
     'bun',
-    `printf 'bun %s ::head=%s\\n' "$*" "$(git rev-parse HEAD 2>/dev/null || echo none)" >> "${argvLog}"\nexit 0\n`,
+    `printf 'bun %s ::head=%s ::defer=%s\\n' "$*" "$(git rev-parse HEAD 2>/dev/null || echo none)" "$GBRAIN_DEFER_POSTINSTALL_MIGRATIONS" >> "${argvLog}"\nexit 0\n`,
   );
   // Recorder; answers --version so verifyUpgrade resolves a new version.
   writeShim(
@@ -188,6 +188,9 @@ function buildFixture(label: string): Fixture {
     driver,
     [
       "import { dirname } from 'node:path';",
+      "import { appendFileSync } from 'node:fs';",
+      `if (process.argv[2] === '--version') { appendFileSync(${JSON.stringify(base.argvLog)}, 'current --version\\n'); console.log('gbrain ${SHIM_NEW_VERSION}'); process.exit(0); }`,
+      `if (process.argv[2] === 'post-upgrade') { appendFileSync(${JSON.stringify(base.argvLog)}, 'current post-upgrade\\n'); process.exit(0); }`,
       'const expectedRoot = dirname(import.meta.dir);',
       'const origLog = console.log;',
       'console.log = (...a) => {',
@@ -309,6 +312,77 @@ describe('detectInstallMethod — bun-link marker', () => {
 // ── 2 + 4. the upgrade arc (spawned fixture-entry driver; see header) ────────
 
 describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain shimmed)', () => {
+  test('dirty tracked checkout is left untouched without a stop marker', async () => {
+    const fx = buildFixture('dirty-checkout');
+    writeFileSync(join(fx.clone, 'notes.txt'), 'local edit\n');
+    const run = await spawnWithShims(fx, [fx.driver, '--swap-only']);
+    expect(run.code).toBe(1);
+    expect(git(['rev-parse', 'HEAD'], fx.clone).trim()).toBe(fx.cloneHeadBefore);
+    expect(readFileSync(join(fx.clone, 'notes.txt'), 'utf8')).toBe('local edit\n');
+    expect(argvLines(fx)).toEqual([]);
+    expect(existsSync(join(fx.home, '.gbrain', 'source-upgrade-incomplete'))).toBe(false);
+  }, 120_000);
+
+  test('failed git pull exits nonzero without clearing the pending update', async () => {
+    const fx = buildFixture('pull-failed');
+    writeFileSync(join(fx.clone, 'feature.txt'), 'local conflicting change\n');
+    writeFileSync(join(fx.home, '.gbrain', 'last-update-check'), 'pending\n');
+    const run = await spawnWithShims(fx, [fx.driver, '--swap-only']);
+    expect(run.code).toBe(1);
+    expect(git(['rev-parse', 'HEAD'], fx.clone).trim()).toBe(fx.cloneHeadBefore);
+    expect(argvLines(fx)).toEqual([]);
+    expect(existsSync(join(fx.home, '.gbrain', 'last-update-check'))).toBe(true);
+    expect(existsSync(join(fx.home, '.gbrain', 'just-upgraded-from'))).toBe(false);
+    expect(existsSync(join(fx.home, '.gbrain', 'source-upgrade-incomplete'))).toBe(false);
+  }, 120_000);
+
+  test('failed bun install exits nonzero after pull without confirming upgrade', async () => {
+    const fx = buildFixture('install-failed');
+    writeShim(fx.shimDir, 'bun', `printf 'bun %s\\n' "$*" >> "${fx.argvLog}"\nexit 42\n`);
+    writeFileSync(join(fx.home, '.gbrain', 'last-update-check'), 'pending\n');
+    const run = await spawnWithShims(fx, [fx.driver, '--swap-only']);
+    expect(run.code).toBe(1);
+    expect(git(['rev-parse', 'HEAD'], fx.clone).trim()).toBe(fx.originHead);
+    expect(argvLines(fx)).toEqual(['bun install']);
+    expect(existsSync(join(fx.home, '.gbrain', 'last-update-check'))).toBe(true);
+    expect(existsSync(join(fx.home, '.gbrain', 'just-upgraded-from'))).toBe(false);
+    expect(existsSync(join(fx.home, '.gbrain', 'source-upgrade-incomplete'))).toBe(true);
+  }, 120_000);
+
+  test('an incomplete upgrade in one source checkout blocks another checkout', async () => {
+    const first = buildFixture('guard-first');
+    writeShim(first.shimDir, 'bun', `printf 'bun %s\\n' "$*" >> "${first.argvLog}"\nexit 42\n`);
+    const failed = await spawnWithShims(first, [first.driver, '--swap-only']);
+    expect(failed.code).toBe(1);
+    const markerPath = join(first.home, '.gbrain', 'source-upgrade-incomplete');
+    const originalMarker = readFileSync(markerPath, 'utf8');
+    expect(JSON.parse(originalMarker).repoRoot).toBe(realpathSync(first.clone));
+
+    const second = buildFixture('guard-second');
+    const blocked = await spawnWithShims(second, [second.driver, '--swap-only'], {
+      GBRAIN_HOME: first.home,
+    });
+    expect(blocked.code).toBe(1);
+    expect(blocked.err).toContain('Auto-upgrade failed');
+    expect(git(['rev-parse', 'HEAD'], second.clone).trim()).toBe(second.cloneHeadBefore);
+    expect(argvLines(second)).toEqual([]);
+    expect(readFileSync(markerPath, 'utf8')).toBe(originalMarker);
+  }, 120_000);
+
+  test('unattended target mismatch preserves the pending update after a successful source pull', async () => {
+    const fx = buildFixture('target-mismatch');
+    writeFileSync(join(fx.home, '.gbrain', 'last-update-check'), 'pending\n');
+    const run = await spawnWithShims(fx, [fx.driver, '--swap-only'], {
+      GBRAIN_UPGRADE_TARGET_VERSION: '99.99.99.0',
+    });
+    expect(run.code).toBe(1);
+    expect(git(['rev-parse', 'HEAD'], fx.clone).trim()).toBe(fx.originHead);
+    expect(argvLines(fx)).toEqual([`bun install ::head=${fx.originHead} ::defer=1`, 'current --version']);
+    expect(existsSync(join(fx.home, '.gbrain', 'last-update-check'))).toBe(true);
+    expect(existsSync(join(fx.home, '.gbrain', 'just-upgraded-from'))).toBe(false);
+    expect(existsSync(join(fx.home, '.gbrain', 'source-upgrade-incomplete'))).toBe(true);
+  }, 120_000);
+
   test('full arc: pull --ff-only THEN bun install; state + breadcrumb written; post-upgrade chained', async () => {
     const fx = buildFixture('full');
     // Pre-seed the update-check cache + snooze so the clear-on-upgrade step is observable.
@@ -318,7 +392,7 @@ describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain
     const run = await spawnWithShims(fx, [fx.driver]);
     assertExit0('upgrade driver (full arc)', run);
     expect(run.out).toContain('Detected install method: bun-link');
-    expect(run.out).toContain(`Upgrading bun-link source clone at ${fx.clone}...`);
+    expect(run.out).toContain(`Upgrading bun-link source clone at ${realpathSync(fx.clone)}...`);
     expect(run.out).toContain('DRIVER_EXIT_OK');
     expect(run.out).not.toContain('TRIPWIRE_MISMATCH');
     expect(run.err).not.toContain('Auto-upgrade failed');
@@ -329,9 +403,9 @@ describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain
     // Recorder sequence: the bun shim saw the POST-pull HEAD (pull ran first),
     // then verify → post-upgrade → features, in order, and nothing else.
     expect(argvLines(fx)).toEqual([
-      `bun install ::head=${fx.originHead}`,
-      'gbrain --version',
-      'gbrain post-upgrade',
+      `bun install ::head=${fx.originHead} ::defer=`,
+      'current --version',
+      'current post-upgrade',
       'gbrain features',
     ]);
 
@@ -344,6 +418,7 @@ describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain
     expect(readFileSync(join(fx.home, '.gbrain', 'just-upgraded-from'), 'utf-8').trim()).toBe(VERSION);
     expect(existsSync(join(fx.home, '.gbrain', 'last-update-check'))).toBe(false);
     expect(existsSync(join(fx.home, '.gbrain', 'update-snoozed'))).toBe(false);
+    expect(existsSync(join(fx.home, '.gbrain', 'source-upgrade-incomplete'))).toBe(false);
   }, 120_000);
 
   test('--swap-only: swap + verify + breadcrumb, but NO post-upgrade and NO features child', async () => {
@@ -356,9 +431,10 @@ describe('runUpgrade — bun-link arc (real git vs local bare origin; bun/gbrain
     expect(git(['rev-parse', 'HEAD'], fx.clone).trim()).toBe(fx.originHead);
     // ...but the child chain stops after the version verify.
     expect(argvLines(fx)).toEqual([
-      `bun install ::head=${fx.originHead}`,
-      'gbrain --version',
+      `bun install ::head=${fx.originHead} ::defer=1`,
+      'current --version',
     ]);
+    expect(existsSync(join(fx.home, '.gbrain', 'source-upgrade-incomplete'))).toBe(false);
 
     // State + breadcrumb still written (the next launch runs post-upgrade).
     const state = JSON.parse(readFileSync(join(fx.home, '.gbrain', 'upgrade-state.json'), 'utf-8'));
