@@ -15,6 +15,7 @@
  */
 
 import type { PageValidator, PageValidationContext, ValidationFinding } from '../writer.ts';
+import { PAGE_SLUG_SEG } from '../../cjk.ts';
 
 const MD_LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
 
@@ -99,6 +100,10 @@ export function isNonBrainRef(href: string): boolean {
   return /^(mailto:|tel:|javascript:|data:|#)/i.test(href);
 }
 
+// dir/name (>= 2 segments) on the page-slug segment grammar shared with
+// validatePageSlug and SlugRegistry. `u` flag required by PAGE_SLUG_SEG.
+const LINK_SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`, 'u');
+
 /**
  * Normalize a link href to a brain slug. Accepts:
  *   "people/alice-smith.md"
@@ -114,11 +119,12 @@ export function normalizeToSlug(href: string): string | null {
   while (/^\.\.?\/+/.test(s)) s = s.replace(/^\.\.?\/+/, '');
   // Strip leading slashes
   s = s.replace(/^\/+/g, '');
-  // Strip trailing .md
-  s = s.replace(/\.md$/i, '');
-  // Must look like dir/name (or dir/name/subname)
-  if (!/^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)+$/i.test(s)) return null;
-  return s.toLowerCase();
+  // Strip trailing .md; compose to NFC (a macOS-written й/ё arrives as NFD,
+  // stored slugs are NFC); lowercase (links may be written in any case)
+  s = s.replace(/\.md$/i, '').normalize('NFC').toLowerCase();
+  // Must look like dir/name (or dir/name/subname), slugs of every script (#11)
+  if (!LINK_SLUG_RE.test(s)) return null;
+  return s;
 }
 
 /**
