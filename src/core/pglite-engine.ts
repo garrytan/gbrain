@@ -2623,33 +2623,48 @@ export class PGLiteEngine implements BrainEngine {
     // #3695 — chunk_id 0 + empty chunk_text never gains chunk authority);
     // and detail='low' filters only the REPRESENTATIVE — pages without a
     // compiled_truth chunk still surface (unlike the keyword arm's filter).
+    // Chunk 12 (lexical perf): result-preserving restructure — rank the
+    // page-grain candidates FIRST (top-N CTE), then attach the
+    // representative-chunk LATERAL and the `stale` subquery per output row.
+    // The LATERAL is 1:1 per page (LIMIT 1, ON true) and neither it nor
+    // `stale` influences ordering, so the row set, scores, and order are
+    // unchanged while rep lookups drop from #matched-pages to <= limit.
     const titlesSql =
-      `SELECT
-         p.slug, p.id as page_id, p.title, p.type, p.source_id,
-         p.effective_date, p.effective_date_source,
+      `WITH top_pages AS (
+         SELECT
+           p.slug, p.id as page_id, p.title, p.type, p.source_id,
+           p.effective_date, p.effective_date_source,
+           p.updated_at AS page_updated_at,
+           ts_rank_cd(${titleVector}, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score
+         FROM pages p
+         JOIN sources s ON s.id = p.source_id
+         WHERE ${titleVector} @@ websearch_to_tsquery('${ftsLang}', $1)
+           ${extraFilter} ${hardExcludeClause} ${visibilityClause}
+         ORDER BY score DESC, p.id ASC
+         LIMIT $2 OFFSET $3
+       )
+       SELECT
+         tp.slug, tp.page_id, tp.title, tp.type, tp.source_id,
+         tp.effective_date, tp.effective_date_source,
          COALESCE(rep.id, 0) as chunk_id,
          COALESCE(rep.chunk_index, 0) as chunk_index,
          COALESCE(rep.chunk_text, '') as chunk_text,
          COALESCE(rep.chunk_source, 'compiled_truth') as chunk_source,
-         ts_rank_cd(${titleVector}, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
-         CASE WHEN p.updated_at < (
-           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
+         tp.score AS score,
+         CASE WHEN tp.page_updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = tp.page_id
          ) THEN true ELSE false END AS stale
-       FROM pages p
-       JOIN sources s ON s.id = p.source_id
+       FROM top_pages tp
        LEFT JOIN LATERAL (
          SELECT cc.id, cc.chunk_index, cc.chunk_text, cc.chunk_source
          FROM content_chunks cc
-         WHERE cc.page_id = p.id
+         WHERE cc.page_id = tp.page_id
            AND cc.modality = 'text'
            ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
          ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
          LIMIT 1
        ) rep ON true
-       WHERE ${titleVector} @@ websearch_to_tsquery('${ftsLang}', $1)
-         ${extraFilter} ${hardExcludeClause} ${visibilityClause}
-       ORDER BY score DESC, p.id ASC
-       LIMIT $2 OFFSET $3`;
+       ORDER BY tp.score DESC, tp.page_id ASC`;
 
     let { rows } = await this.db.query(titlesSql, params);
     if (rows.length === 0) {
