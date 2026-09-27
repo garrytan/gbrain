@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { isPhysicalRootMetadata } from '../src/core/persistence/physical-root.ts';
 import { tmpdir } from 'node:os';
@@ -53,6 +53,24 @@ async function queued(source:string,requestId=randomUUID()){
     slug:'queued',requestId,callerIntent:{content:'queued'},intent:{content:'queued'},authority,
     worktreeId:binding.worktree_id,topologyGeneration:binding.topology_generation});
 }
+
+test('worktree manifest permits only in-tree skill links and excludes unsyncable trees',()=>fixture(async(_home,_source,root)=>{
+  mkdirSync(join(root,'content'));
+  writeFileSync(join(root,'content','note.md'),'Syncable');
+  mkdirSync(join(root,'node_modules'));
+  writeFileSync(join(root,'node_modules','generated.js'),'Generated');
+  mkdirSync(join(root,'.claude','skills'),{recursive:true});
+  symlinkSync('../../content',join(root,'.claude','skills','ignored'));
+  mkdirSync(join(root,'.agents','skills','agent'),{recursive:true});
+  writeFileSync(join(root,'.agents','skills','agent','SKILL.md'),'Agent skill');
+  mkdirSync(join(root,'skills'));
+  symlinkSync('../.agents/skills/agent',join(root,'skills','agent'));
+
+  const manifest=worktreeManifest(root);
+  expect(Object.keys(manifest.files).sort()).toEqual(['content/note.md','example.md']);
+  symlinkSync('example.md',join(root,'content-link.md'));
+  expect(()=>worktreeManifest(root)).toThrow(/unsafe symbolic link/);
+}),60_000);
 
 test('archive/restore advance topology and permanently invalidate accepted old bindings',()=>fixture(async(_home,source)=>{
   const old=(await getWorktreeBinding(engine,source))!;const accepted=await queued(source);

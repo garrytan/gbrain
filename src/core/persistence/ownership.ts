@@ -3,6 +3,7 @@ import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'no
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
+import { pruneDir } from '../sync.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { digest, sha256 } from './digest.ts';
 import { localHostId, persistenceHome } from './identity.ts';
@@ -149,6 +150,17 @@ export async function activateManagedPersistence(engine: BrainEngine, opts: { co
   await activatePersistence(engine, opts);
 }
 
+function isInTreeSkillLink(root: string, path: string): boolean {
+  const sourcePath = relative(root, path).split(sep);
+  if (sourcePath.length !== 2 || sourcePath[0] !== 'skills') return false;
+  try {
+    const target = realpathSync(path);
+    return containsPath(root, target) && statSync(target).isDirectory() && lstatSync(join(target, 'SKILL.md')).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /** Deterministic content manifest includes deletions by exact path-set equality. */
 export function worktreeManifest(root: string): { digest: string; files: Record<string, string> } {
   const canonical = realpathSync(root);
@@ -156,9 +168,21 @@ export function worktreeManifest(root: string): { digest: string; files: Record<
   const visit = (dir: string) => {
     for (const name of readdirSync(dir).sort()) {
       if (name === '.git' || name === '.gbrain-managed' || isPhysicalRootMetadata(name)) continue;
+      // Hidden trees are never syncable source content (the sync walker prunes
+      // them before descent), including workspace-local agent configuration.
+      if (name.startsWith('.')) continue;
       const path = join(dir, name), info = lstatSync(path);
-      if (info.isSymbolicLink()) throw new OperationError('writer_manifest_unsafe', 'Canonical worktree transfer requires a symlink-free manifest.');
-      if (info.isDirectory()) visit(path);
+      if (info.isSymbolicLink()) {
+        // Repositories may expose their in-tree agent skills at `skills/<name>`.
+        // Sync never follows that link, and its target is constrained to a
+        // normal in-tree skill directory. Every other link remains unsafe.
+        if (isInTreeSkillLink(canonical, path)) continue;
+        throw new OperationError('writer_manifest_unsafe', 'Canonical worktree transfer refuses an unsafe symbolic link.');
+      }
+      if (info.isDirectory()) {
+        if (!pruneDir(name, dir)) continue;
+        visit(path);
+      }
       else if (info.isFile()) files[relative(canonical, path).split(sep).join('/')] = sha256(readFileSync(path));
     }
   };
