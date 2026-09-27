@@ -48,6 +48,13 @@ describe('#2415: buildSynthesisPrompt output root', () => {
   });
 });
 
+describe('#12: buildSynthesisPrompt basename keeps every script', () => {
+  test('a Cyrillic transcript basename survives instead of falling back to session-<date>', () => {
+    const prompt = buildSynthesisPrompt({ ...transcript, basename: 'Созвон с Йорком' }, 'chunk', 0, 1);
+    expect(prompt).toContain('Source file basename: созвон-с-йорком');
+  });
+});
+
 describe('#2415: loadAllowedSlugPrefixes remap', () => {
   // Runs from the repo root, so skills/_brain-filing-rules.json resolves.
   test("default 'wiki' returns the filing-rule globs verbatim", async () => {
