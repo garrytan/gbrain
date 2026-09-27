@@ -837,12 +837,14 @@ describe('ChildWorkerSupervisor', () => {
 
     it('settles the run loop instead of hanging, and counts each failure as a crash', async () => {
       const h = makeUnlaunchableHarness('enoent');
-      const { events, maxCrashesFired } = await runUntilTerminal(h, {
-        maxCrashes: 2,
-        hardStopMaxCrashes: 3,
-        _backoffFloorMs: 1,
-        stopAfterEvents: 200,
-      });
+      const { events, maxCrashesFired } = await withEnv({ PATH: '' }, async () =>
+        runUntilTerminal(h, {
+          maxCrashes: 2,
+          hardStopMaxCrashes: 3,
+          _backoffFloorMs: 1,
+          stopAfterEvents: 200,
+        }),
+      );
 
       // The load-bearing assertion is simply that we got here: pre-fix,
       // runUntilTerminal's wall-clock net threw because run() never settled.
