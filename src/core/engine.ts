@@ -1114,6 +1114,20 @@ export interface BrainEngine {
    * interpolation as defense in depth (D12).
    */
   getEmbeddingsByChunkIds(ids: number[], column?: string): Promise<Map<number, Float32Array>>;
+  /**
+   * Optional in-DB cosine similarity (rescore fast path). When implemented,
+   * cosineReScore computes per-chunk cosine via pgvector `<=>` instead of
+   * hydrating N full vectors through getEmbeddingsByChunkIds. Engines that
+   * don't implement it keep the hydration path — cosineReScore detects the
+   * method's presence and falls back on any error. The resolved column
+   * descriptor carries the pgvector type/dims so the query vector binds
+   * with the right cast.
+   */
+  getCosineScoresByChunkIds?(
+    ids: number[],
+    queryEmbedding: Float32Array,
+    column: ResolvedColumn,
+  ): Promise<Map<number, number>>;
 
   // Chunks
   /**

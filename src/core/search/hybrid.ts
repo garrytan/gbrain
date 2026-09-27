@@ -23,6 +23,7 @@ import type {
   DegradedStage,
   DegradedStageEntry,
   DegradedReason,
+  ResolvedColumn,
 } from '../types.ts';
 import { affectsRecall } from '../types.ts';
 import { resolveSearchDateBounds } from './date-bounds.ts';
@@ -2119,7 +2120,7 @@ export async function hybridSearch(
   // in the same vector space the HNSW just ranked in. Pre-v0.36 this
   // always pulled from `embedding` and silently corrupted alt-column ranks.
   if (queryEmbedding) {
-    fused = await cosineReScore(engine, fused, queryEmbedding, resolvedCol.name);
+    fused = await cosineReScore(engine, fused, queryEmbedding, resolvedCol);
   }
 
   // Phase E3 (Cat 13): metadata boost gate — decided from the SAME lexical
@@ -3150,7 +3151,7 @@ export async function cosineReScore(
   engine: BrainEngine,
   results: SearchResult[],
   queryEmbedding: Float32Array,
-  column: string = 'embedding',
+  column: string | ResolvedColumn = 'embedding',
 ): Promise<SearchResult[]> {
   const chunkIds = results
     .map(r => r.chunk_id)
@@ -3158,19 +3159,26 @@ export async function cosineReScore(
 
   if (chunkIds.length === 0) return results;
 
-  let embeddingMap: Map<number, Float32Array>;
-  try {
-    // v0.36 (D9): hydrate from the active column so rescore happens in
-    // the same embedding space the HNSW just ranked in. Without this,
-    // a Voyage HNSW retrieval would HNSW-rank against Voyage vectors but
-    // rescore against OpenAI vectors → NaN or wrong rankings.
-    embeddingMap = await engine.getEmbeddingsByChunkIds(chunkIds, column);
-  } catch {
-    // DB error is non-fatal, return results without re-scoring
-    return results;
+  // In-DB cosine fast path: when `column` is the resolved descriptor and the
+  // engine implements getCosineScoresByChunkIds, cosine similarity is computed
+  // in-DB via pgvector `<=>` — the query returns (chunk_id, cosine) pairs
+  // instead of hydrating N 1024-dim vectors (~8KB text each) across the WASM
+  // boundary, the rescore stage's dominant cost. Any error falls back to the
+  // hydration path below.
+  let cosineById: Map<number, number>;
+  const resolvedCol = typeof column === 'string' ? undefined : column;
+  if (resolvedCol && typeof engine.getCosineScoresByChunkIds === 'function') {
+    try {
+      cosineById = await engine.getCosineScoresByChunkIds(chunkIds, queryEmbedding, resolvedCol);
+    } catch {
+      cosineById = await hydrateCosineById(engine, chunkIds, queryEmbedding, resolvedCol.name);
+    }
+  } else {
+    cosineById = await hydrateCosineById(
+      engine, chunkIds, queryEmbedding, typeof column === 'string' ? column : column.name);
   }
 
-  if (embeddingMap.size === 0) return results;
+  if (cosineById.size === 0) return results;
 
   // Normalize RRF scores to 0-1 for blending
   const maxRrf = Math.max(...results.map(r => r.score));
@@ -3186,8 +3194,7 @@ export async function cosineReScore(
     // results). Route it through the SAME blend with cosine=0 instead of
     // excluding it — excluding would make embed_skip pages unsearchable,
     // a different (undesired) behavior change.
-    const chunkEmb = r.chunk_id != null ? embeddingMap.get(r.chunk_id) : undefined;
-    const cosine = chunkEmb ? cosineSimilarity(queryEmbedding, chunkEmb) : 0;
+    const cosine = r.chunk_id != null ? cosineById.get(r.chunk_id) ?? 0 : 0;
     const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
     const blended = 0.7 * normRrf + 0.3 * cosine;
 
@@ -3196,9 +3203,37 @@ export async function cosineReScore(
     }
 
     // v0.46.15: stamp the raw cosine — evidence + --explain read it (the
-    // hydration map is already paid for; zero extra probes).
+    // cosine map is already paid for; zero extra probes).
     return { ...r, score: blended, cosine };
   }).sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Hydration fallback for cosineReScore: fetch chunk embeddings by id and
+ * compute cosine similarity in JS — the pre-fast-path behavior, unchanged.
+ * Returns an empty map on DB error or when nothing hydrates (the caller
+ * returns results unmodified, as before).
+ */
+async function hydrateCosineById(
+  engine: BrainEngine,
+  chunkIds: number[],
+  queryEmbedding: Float32Array,
+  columnName: string,
+): Promise<Map<number, number>> {
+  let embeddingMap: Map<number, Float32Array>;
+  try {
+    // v0.36 (D9): hydrate from the active column so rescore happens in
+    // the same embedding space the HNSW just ranked in. Without this,
+    // a Voyage HNSW retrieval would HNSW-rank against Voyage vectors but
+    // rescore against OpenAI vectors → NaN or wrong rankings.
+    embeddingMap = await engine.getEmbeddingsByChunkIds(chunkIds, columnName);
+  } catch {
+    // DB error is non-fatal, return results without re-scoring
+    return new Map();
+  }
+  const out = new Map<number, number>();
+  for (const [id, emb] of embeddingMap) out.set(id, cosineSimilarity(queryEmbedding, emb));
+  return out;
 }
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
