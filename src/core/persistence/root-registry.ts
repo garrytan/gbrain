@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { configDir } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
 
@@ -18,16 +18,6 @@ function gitMetadataDirectory(root: string): string | null {
   if (statSync(git).isDirectory()) return git;
   const match = /^gitdir:\s*(.+)\s*$/m.exec(readFileSync(git, 'utf8'));
   return match ? resolve(root, match[1]) : null;
-}
-function enclosingGitMetadata(root: string): string | null {
-  let current = root;
-  for (;;) {
-    const metadata = gitMetadataDirectory(current);
-    if (metadata) return metadata;
-    const parent = dirname(current);
-    if (parent === current) return null;
-    current = parent;
-  }
 }
 function syncDirectory(directory: string): void {
   let fd: number | undefined;
@@ -51,18 +41,51 @@ function markerExists(path: string): boolean {
     throw new OperationError('writer_coordinator_required', 'Managed-root marker cannot be inspected.');
   }
 }
+function pathWithin(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+function gitMarkerCoversPath(marker: string, root: string, path: string): boolean {
+  // A v1 marker has no owner or complete scope evidence. Only an explicitly
+  // attested v2 marker can narrow an enclosing Git repository's refusal.
+  try {
+    const value = JSON.parse(readFileSync(marker, 'utf8'));
+    if (value.version !== 2 || value.managed !== true || !/^[a-f0-9-]{36}$/i.test(value.brain_id)
+      || typeof value.owner_home !== 'string' || !isAbsolute(value.owner_home)
+      || canonicalFilesystemPath(value.owner_home) !== value.owner_home
+      || !Array.isArray(value.scope_roots) || !value.scope_roots.length) return true;
+    const roots: string[] = value.scope_roots;
+    if (roots.some(entry => typeof entry !== 'string' || !isAbsolute(entry)
+      || canonicalFilesystemPath(entry) !== entry || !pathWithin(root, entry))) return true;
+    const ownerDirectory = join(value.owner_home, '.gbrain', 'persistence', 'managed-roots');
+    const records = registeredManagedRootRecords(ownerDirectory).filter(record => pathWithin(root, record.root));
+    if (!records.some(record => record.brainId === value.brain_id)) return true;
+    if (records.some(record => !roots.some(entry => pathWithin(entry, record.root))
+      && !markerExists(join(record.root, '.gbrain-managed')))) return true;
+    return roots.some(entry => pathWithin(entry, path) || pathWithin(path, entry));
+  } catch { return true; }
+}
 /** Shared refusal marker helps installations with separate homes. It NEVER grants ownership. */
 export function hasManagedRootMarker(path: string): boolean {
   let current = canonicalFilesystemPath(path);
+  const target = current;
   for (;;) {
     // A prepared claim is already a durable refusal, including when its target
     // directory does not yet exist. Ownership still requires SQL/native proof.
     const reservation = join(dirname(current), `.gbrain-owner-${createHash('sha256').update(current).digest('hex')}.json`);
     if (markerExists(reservation)) return true;
     if (existsSync(current) && statSync(current).isDirectory()) {
+      // Git metadata may live outside the worktree behind a .git file or
+      // symlink. Its own marker fences direct writes to that directory too.
+      if (markerExists(join(current, 'gbrain-managed.json'))) return true;
       if (markerExists(join(current, '.gbrain-owner.json'))) return true;
       const metadata = gitMetadataDirectory(current);
-      if (markerExists(join(current, '.gbrain-managed')) || metadata && markerExists(join(metadata, 'gbrain-managed.json'))) return true;
+      if (markerExists(join(current, '.gbrain-managed'))) return true;
+      if (metadata) {
+        const marker = join(metadata, 'gbrain-managed.json');
+        if (markerExists(marker) && (target === canonicalFilesystemPath(join(current, '.git'))
+          || gitMarkerCoversPath(marker, current, target))) return true;
+      }
     }
     const parent = dirname(current);
     if (parent === current) return false;
@@ -104,31 +127,81 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
     const file = join(directory, `${brainId}.${key}.json`);
     const value = JSON.stringify({ version: 1, brain_id: brainId, root, ...record, local_path: root,
       ...(record.topology_generation != null ? { topology_generation: String(record.topology_generation) } : {}) });
-    writePrivateRecord(file, value);
     if (existsSync(root) && statSync(root).isDirectory()) {
-      const metadata = enclosingGitMetadata(root);
+      const metadata = gitMetadataDirectory(root);
       const marker = metadata ? join(metadata, 'gbrain-managed.json') : join(root, '.gbrain-managed');
-      if (!existsSync(marker)) writePrivateRecord(marker, JSON.stringify({ version: 1, managed: true, brain_id: brainId }));
+      if (!existsSync(marker)) {
+        writePrivateRecord(marker, JSON.stringify(metadata
+          ? { version: 2, managed: true, brain_id: brainId, owner_home: canonicalFilesystemPath(dirname(configDir())), scope_roots: [root] }
+          : { version: 1, managed: true, brain_id: brainId }));
+      } else if (metadata) {
+        // Widen refusal before publishing a newly registered Git root. Never
+        // auto-upgrade an unverifiable v1 marker.
+        try {
+          const value = JSON.parse(readFileSync(marker, 'utf8'));
+          if (value.version === 2 && value.managed === true && Array.isArray(value.scope_roots)
+            && !value.scope_roots.includes(root)) {
+            writePrivateRecord(marker, JSON.stringify({ ...value, scope_roots: [...value.scope_roots, root] }));
+          }
+        } catch { /* Malformed markers remain broad refusal evidence. */ }
+      }
     }
+    writePrivateRecord(file, value);
   }
   syncDirectory(directory);
 }
-/** Available before connect, including while another process owns local PGLite. */
-export function registeredManagedRoots(): string[] {
-  const directory = registryDirectory();
+/** Explicit, operator-attested migration only; never called by refresh/connect. */
+export function attestLegacyGitMarkerScope(input: {
+  gitRoot: string; ownerHome: string; brainId: string; expectedRoots: string[];
+}): { marker: string; backup: string; roots: string[] } {
+  const root = canonicalFilesystemPath(input.gitRoot);
+  const ownerHome = canonicalFilesystemPath(input.ownerHome);
+  if (root !== input.gitRoot || ownerHome !== input.ownerHome || !/^[a-f0-9-]{36}$/i.test(input.brainId))
+    throw new OperationError('storage_error', 'Canonical Git root, owner home, and brain ID are required.');
+  const metadata = gitMetadataDirectory(root);
+  if (!metadata) throw new OperationError('storage_error', 'Git metadata is required for marker attestation.');
+  const marker = join(metadata, 'gbrain-managed.json');
+  const original = readFileSync(marker, 'utf8');
+  let value: { version?: unknown; managed?: unknown; brain_id?: unknown };
+  try { value = JSON.parse(original); }
+  catch { throw new OperationError('storage_error', 'Only a readable v1 Git marker can be attested.'); }
+  if (value.version !== 1 || value.managed !== true || value.brain_id !== input.brainId)
+    throw new OperationError('storage_error', 'The v1 marker brain identity does not match the attestation.');
+  const records = registeredManagedRootRecords(join(ownerHome, '.gbrain', 'persistence', 'managed-roots'))
+    .filter(record => pathWithin(root, record.root));
+  if (!records.some(record => record.brainId === input.brainId))
+    throw new OperationError('storage_error', 'The owner registry has no matching Git-root scope.');
+  const roots = [...new Set(records.map(record => record.root))].sort();
+  if (!Array.isArray(input.expectedRoots) || input.expectedRoots.some(path => typeof path !== 'string'
+    || !isAbsolute(path) || canonicalFilesystemPath(path) !== path || !pathWithin(root, path))
+    || JSON.stringify([...new Set(input.expectedRoots)].sort()) !== JSON.stringify(roots))
+    throw new OperationError('storage_error', 'Expected roots must exactly match the owner registry, including stale roots.');
+  const backup = `${marker}.v1-backup-${randomUUID()}`;
+  writePrivateRecord(backup, original);
+  writePrivateRecord(marker, JSON.stringify({ version: 2, managed: true, brain_id: input.brainId,
+    owner_home: ownerHome, scope_roots: roots }));
+  return { marker, backup, roots };
+}
+/** Retain brain identity for v2 scope validation and explicit attestation. */
+function registeredManagedRootRecords(directory = registryDirectory()): { root: string; brainId: string }[] {
   let files: string[];
   try { files = readdirSync(directory); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
-  const roots: string[] = [];
+  const roots: { root: string; brainId: string }[] = [];
   for (const file of files.filter(file => file.endsWith('.json'))) {
     try {
       const value = JSON.parse(readFileSync(join(directory, file), 'utf8'));
-      if (value.version !== 1 || typeof value.root !== 'string' || !isAbsolute(value.root)) throw new Error('invalid record');
-      roots.push(canonicalFilesystemPath(value.root));
+      if (value.version !== 1 || typeof value.root !== 'string' || !isAbsolute(value.root)
+        || !/^[a-f0-9-]{36}$/i.test(value.brain_id)) throw new Error('invalid record');
+      roots.push({ root: canonicalFilesystemPath(value.root), brainId: value.brain_id });
     } catch {
       throw new OperationError('writer_coordinator_required', 'Managed-root ownership records are unreadable.',
         'Repair the local persistence registry through writer administration before running filesystem maintenance.');
     }
   }
   return roots;
+}
+/** Available before connect, including while another process owns local PGLite. */
+export function registeredManagedRoots(): string[] {
+  return registeredManagedRootRecords().map(record => record.root);
 }
