@@ -10,6 +10,34 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.59.1.0] - 2026-09-27
+
+**Unattended upgrades now confirm the new installation and finish setup before autopilot resumes.**
+
+Autopilot checks the installed version after a swap, drains its worker before
+updating a source checkout, and completes required setup before opening the
+brain on relaunch. Failed package installs and interrupted source updates stop
+the daemon with a repair path instead of reporting success. A staged official
+binary can take over an incomplete source update after version and setup checks.
+
+### To take advantage of v0.59.1.0
+
+Run `gbrain upgrade`. Existing `self_upgrade.mode=auto` installations use the
+safer swap and relaunch flow on their next update. If a source checkout was
+left incomplete, repair it and run `gbrain upgrade --no-autopilot-install` from
+that checkout before restarting autopilot.
+
+### Itemized changes
+
+### Fixed
+
+- Failed pulls, package installs, binary replacements, version checks, and
+  required post-upgrade setup no longer report an applied update.
+- Package postinstall defers migrations during an unattended swap; the
+  relaunched CLI runs them before normal work.
+- Dirty source checkouts are left untouched, while uncertain source updates
+  retain a stop marker until repaired.
+
 ## [0.59.0.0] - 2026-09-25
 
 **The LongMemEval reader now checks the evidence before giving its short answer.**
