@@ -12,14 +12,60 @@ is `scripts/bench-reindex-markdown.ts`.
 On-demand reference (see CLAUDE.md Reference map). Current behavior + invariants
 only.
 
+## CI runner capacity
+
+Repository-owned Linux validation jobs use ephemeral Ubicloud runners pinned to
+Ubuntu 24.04. The Ubicloud Managed Runners GitHub App must have access to this
+repository and active billing in its connected project; runner labels alone do
+not grant access. No Ubicloud API token is passed to workflow jobs.
+
+| Workload | Runner | Capacity |
+| --- | --- | --- |
+| Unit, serial, E2E, browser, compatibility, read-performance and deployment-matrix tests | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
+| Heavy test suite and persistence invariant/soak matrix | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
+| Native ARM64 glibc and musl tests | `ubicloud-standard-16-arm-ubuntu-2404` | 16 vCPU, 48 GB RAM |
+| Coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
+| Planning, status aggregation, dependency audit, gitleaks and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
+
+macOS and Windows matrices stay on GitHub-hosted runners. Release building and
+publishing also stay unchanged. The pinned upstream OSV reusable workflow does
+not expose a runner override, so its runner remains upstream-owned.
+
+The migration does not change shards, test selection, commands, timeouts,
+thresholds, artifact collection or required check identities. The security
+matrix retains its existing OS labels and changes only the Linux execution
+target. `test/scripts/ci-runner-routing.test.ts` pins capacity and platform
+routing; `.github/actionlint.yaml` declares the exact custom runner labels.
+Actual GitHub job records and completed checks establish runner availability;
+local workflow tests do not. More CPU and memory do not guarantee proportional
+speedups for serial tests or external-provider requests.
+
 Shared-skill tests distinguish canonical publication, protocol delivery, installed
 files and native harness use. `test/shared-skills-transports.test.ts` and
 `test/e2e/shared-skills-transports.test.ts` use real HTTP authentication, OAuth
 issuance and a new stdio process; they do not prove vendor-native activation.
 `test/persistence-skill-bundles.serial.test.ts` and
 `test/persistence-skill-crash.slow.test.ts` exercise typed file-set CAS and
-independent-process publication/restoration kills on both engines through
-`test/e2e/persistence-skill-bundles-postgres.test.ts`.
+independent-process publication/restoration kills on PGLite in the unit lane and
+PostgreSQL through `test/e2e/persistence-skill-bundles-postgres.test.ts`.
+
+Shared persistence suites use `test/helpers/test-backends.ts`: direct invocation
+defaults to PGLite, and a safe `DATABASE_URL` opts into both engines. Their E2E
+wrappers select PostgreSQL before registering tests, refusing a missing or unsafe
+database instead of silently running only the local backend. Backend selection is
+captured at registration so hooks retain it after the import environment restores.
+Every backend's assertions remain in the shared suites; engine-specific cases run
+in their owning lane.
+
+Ordinary PostgreSQL `setupDB()` clears fixture data, operator configuration and
+source sync identity while retaining `config.version` and the stored embedding
+identity, avoiding historical migration
+replay against an already-current schema. Migration-focused fixtures use
+`setupDB({ replayMigrations: true })`; an absent ledger also runs the cold chain.
+`test/e2e/fixture-reset-postgres.test.ts` checks both paths, cleanup and vector-shape
+preservation, including the deliberate legacy-width restoration helper. That
+helper aligns both the physical columns and stored embedding identity with the
+legacy test configuration; ordinary resets preserve that identity.
 
 The required `shared-skills-compatibility` CI job builds the pinned pre-feature
 executable with `scripts/build-shared-skills-baseline.sh` and supplies
@@ -77,8 +123,9 @@ Search reliability has real-planner and transport regressions in
 restricted-reader and FORCE-RLS roles; the candidate tests distinguish natural
 plans from forced-HNSW controls and prove server cancellation of exact fallback.
 `test/e2e/projection-recovery-parity.test.ts` runs the shared Markdown/code
-recovery, graph-edge preservation and migration-origin contracts against both
-engines. PGLite work caps never count a Promise race as cancellation evidence.
+recovery, graph-edge preservation and migration-origin contracts against
+PostgreSQL; their root suites cover PGLite in the unit lane. PGLite work caps never
+count a Promise race as cancellation evidence.
 The recovery parity entry also runs `symbol-resolver-projection-race.test.ts`:
 paused resolver/rebuild ordering, atomic rollback, candidate revalidation, and
 a real PostgreSQL lock-wait receipt before releasing the competing writer.
@@ -113,7 +160,48 @@ optional-write jobs, and saved pages with failed enrichment are positive control
 maintenance handler with failed phases, incomplete children, budget deferrals,
 abort/lock loss, and successful warning-only controls.
 
+### Coverage responsibilities before consolidation
+
+Assign ownership to an **assertion and its execution boundary**, not to a test
+filename or a shared helper. Record the contract, backend, runtime version,
+OS/architecture/libc, source-versus-compiled artifact, transport/authentication,
+process/storage/crash boundary, workload size and required cadence. Shared
+scenario code across two engines is not duplicate engine coverage: PostgreSQL
+JSONB, locking and pooler behavior are not established by a PGLite pass.
+
+| Responsibility | Execution owner | What it does not establish |
+|---|---|---|
+| Keyless behavior, structural guards and shared contracts | Unit shards and `verify` in `test.yml`; process-isolated serial and dedicated slow lanes where required | Real PostgreSQL, native activation or compiled behavior |
+| PostgreSQL behavior and engine parity | Named and diff-selected jobs in `e2e.yml`; the complete nightly runner corpus | Execution of key-gated or native-door assertions merely because their files were discovered |
+| Durable publication and recovery under sustained load | `persistence-validation.yml` and `scripts/persistence/README.md` | Power-loss safety, production authentication or equivalence to two smaller databases |
+| Native lock ABI and compiled-process exclusion | `native-locks.yml`, compiled smoke and release validation | All compiled CLI features or native-harness activation |
+| Browser journeys | Required `admin-browser` job and `admin/e2e/*.pw.ts` | Vendor-native agent behavior |
+| Native agent doors and heavier operational scenarios | Explicit jobs in `heavy-tests.yml` | A passing skipped door or generic protocol test is not native activation |
+| Live-provider and optional recipe/eval behavior | Their explicitly configured opt-in commands/jobs | A missing key, early return or skipped assertion is not live-provider evidence |
+| Line-coverage accounting | PR `prCorpus` and nightly `fullCorpus` reports | Subprocess coverage, all platforms or proof that every discovered case executed |
+
+Before removing repeated work, identify the surviving owner for the same
+contract **and every relevant boundary**, prove that owner actually executes,
+and retain its cadence, failure gate and coverage artifacts. A shared fixture
+can reduce maintenance while keeping both engine arms. Making one crash lane
+authoritative or collecting LCOV in a named owner requires a separate ownership
+change; nightly sharding alone makes neither change.
+
+Name the profile when reporting “all tests.” The local fast loop, `test:full`,
+`ci:local`, required PR checks and nightly `fullCorpus` are not interchangeable
+supersets. Native matrices, sustained persistence validation, browser tests and
+optional recipe/eval commands have separate responsibilities. A faster nightly
+E2E schedule does not shorten a PR critical path dominated by persistence.
+Report matched executed timings separately from dry-run partition estimates,
+including setup, queueing and retries; never count skip-only output as coverage.
+
 ### Test command tiers
+
+The sequential E2E runner gives each test file a fresh `HOME` and `GBRAIN_HOME`.
+Configuration written by a CLI initialization or schema migration remains
+available within that file, but cannot change a later file's selected schema or
+harness state. Each file's home is removed after it exits, including failures;
+the runner's exit trap also cleans up interrupted runs.
 
 Test command tiers, each with a clear scope:
 
@@ -446,7 +534,16 @@ per-file pools, and up to four selected E2E workers. E2E selection and exclusion
 run once before setup; the resulting file lists are frozen and executed against
 separate Postgres services. An explicit empty selection launches no tests;
 selection errors, failed workers, cancellations, and unexpected skips fail the
-existing aggregate checks. Nightly full-corpus lanes remain separate.
+existing aggregate checks. Nightly full-corpus E2E uses four independent
+Postgres jobs with the same weighted partitioner and one fresh Bun process per
+file, sequential within each job. It does not use the selected-E2E exclusion
+list: default discovery includes every `test/e2e/*.test.ts` and
+`test/phantom-redirect-engine-parity.test.ts`.
+Each full-profile worker first initializes its own service schema with the
+guarded `setupLegacyEmbeddingDB()` helper, in a temporary home with provider
+keys stripped and local environment-file loading disabled. No partition relies
+on a preceding file to create shared tables. Bootstrap is a separate timed CI
+step and must be included in end-to-end comparisons.
 
 Refresh after a large test wave or when the longest shard repeatedly exceeds
 the mean shard execution time by 25%:
@@ -455,6 +552,7 @@ the mean shard execution time by 25%:
 bun run weights:mine --lane unit --run <successful-test-run>
 bun run weights:mine --lane serial --run <successful-test-run>
 bun run weights:mine --lane e2e --run <successful-e2e-run>
+bun run weights:mine --lane e2e --e2e-profile full --run <successful-full-corpus-run>
 ```
 
 The miner accepts `--from-file` or stdin for timestamped GitHub-format logs and
@@ -462,14 +560,26 @@ The miner accepts `--from-file` or stdin for timestamped GitHub-format logs and
 unit matrix jobs, includes `evals/`, and closes the final file at the Bun summary.
 Serial timing uses runner durations, never timestamps of buffered output. E2E
 uses each file's Bun summary and merges partial selections into known weights.
-File/stdin imports also merge unobserved entries; only a complete GitHub unit or
-serial run replaces that lane's entire map. Captured artifacts need their final
+File/stdin imports also merge unobserved entries; only a complete GitHub unit,
+serial or explicit full-profile E2E run replaces that lane's entire map. Captured artifacts need their final
 successful completion marker, and GitHub imports verify every expected job.
 Incomplete or failed inputs leave the existing map intact. Sidecar metadata
 records the source run/commit, units, and counts. Unit/E2E weights are milliseconds;
 serial weights remain seconds. New files receive the corpus p75 estimate. Empty
 maps and zero-cost ties distribute files deterministically; corrupt serial
 weights warn and retain safe fallback scheduling.
+
+The default E2E miner reads selected jobs and merges partial observations.
+`--e2e-profile full` instead requires a successful GitHub run with a source SHA
+matching checkout HEAD. It pins the run attempt and full-job IDs, reconstructs
+default discovery using the committed runner and tracked test paths, and
+requires every source file exactly once across complete successful job logs.
+Missing/extra files, ambiguous basenames, duplicate execution or failed evidence
+leave weights and metadata untouched. Basename resolution preserves the
+outside-directory parity entry. Full mode replaces the complete map and records
+source SHA, attempt, jobs, log hash and corpus hash; file/stdin imports cannot
+claim full-profile provenance. These weights schedule work; they are not an
+observed parallel runtime.
 
 CI retains timestamped unit/E2E logs, frozen E2E selection, and serial attempt
 records for 14 days. Compare push-to-required-green time including queueing,
@@ -579,6 +689,20 @@ batch (`-n 100000 -x`) so an argv overflow fails loud instead of spawning a
 second, overwriting bun process. On a green run each lane writes
 `$COVERAGE_DIR/lane-manifest.json` (`{lane, sha, lcovCount, complete}`); a red
 run writes no manifest, which downstream merging treats as an incomplete lane.
+E2E shards use distinct `e2e-1` through `e2e-4` lane names (unsharded runs use
+`e2e`), with an `executed-files.txt` receipt written only after every selected
+file completes its native Bun report successfully. The runner requires a fresh
+parent-owned JUnit report for the selected file and matching final console
+pass/fail/skip totals. Python 3's standard XML parser validates the document
+and checks its actual testcase counts against each suite and the console;
+a zero exit without that report cannot borrow a nested child's summary as
+completion evidence. Each coverage invocation atomically creates its own
+`COVERAGE_DIR`; an existing destination, even an empty one, is refused without
+changing its contents. Use a new path for a rerun. Failed or cancelled runs
+write no completion receipt, and shorter or skip-only runs cannot inherit old
+coverage or delete another run's outputs.
+Skip-only files can emit no LCOV, so execution-file counts and LCOV counts are
+intentionally different measures.
 `run-e2e.sh` specifics: `COVERAGE_DIR` is normalized to an absolute path
 against the repo root before `HOME` moves (the script redirects
 `HOME`/`GBRAIN_HOME` and E2E tests spawn CLI subprocesses with varying cwd —
@@ -594,19 +718,42 @@ non-`GBRAIN_`-prefixed so the hermetic env scrub keeps them.
   three dedicated slow jobs (`slow-eval-longmemeval`,
   `slow-entity-resolve-perf`, `slow-brainbench-e2e`). Deterministic (runs identically on every PR); this
   is the corpus the gates run against.
-- **fullCorpus** — nightly, schedule-only in `.github/workflows/e2e.yml`:
+- **fullCorpus** — nightly or explicit manual opt-in in `.github/workflows/e2e.yml`:
   `coverage-full-{unit,serial,slow,e2e}` + `coverage-full-report`. Fully
   self-contained (every lane re-runs with coverage inside that workflow,
-  including the full `test/e2e/*` glob against real Postgres) — the honest
+  including the full default E2E discovery across four isolated Postgres
+  workers) — the honest
   merged unit+serial+slow+e2e number, kept as the `coverage-full-merged` trend
   artifact.
+
+The E2E workflow's manual `full_corpus` boolean defaults to `false`. Setting it
+to `true` executes the same full unit/serial/slow/E2E profile, report and receipt
+checks as a schedule; selected E2E receives the same explicit empty sentinel.
+Ordinary pushes, PRs and default manual runs retain their existing selection.
+Explicit full manual runs have a separate concurrency group, so they do not
+cancel ordinary validation on the same branch. To measure a branch before the
+next scheduled run, dispatch `e2e.yml` on that branch with `full_corpus=true`.
+
+The nightly E2E artifacts are `coverage-full-e2e-1` through `-4`, with one
+manifest per artifact and one coverage directory per Bun process. Lightweight
+`e2e-full-execution-*` artifacts also carry the manifest and executed-file list.
+Full-profile `e2e-status` requires the matrix job to succeed and validates all four
+same-commit receipts against the exact expected partitions using
+`scripts/verify-nightly-e2e.ts`. Missing artifacts, duplicate identities, wrong
+commits, omitted or repeated files, failures and cancellations cannot report
+complete execution. The report independently verifies these receipts before
+merging; missing execution evidence prevents publishing a full-corpus report.
+Coverage percentages remain advisory and the report job itself is not an
+`e2e-status` dependency. The receipts prove file execution, not execution of
+every optional assertion within a file.
 
 **Merge** (`scripts/merge-lcov.ts`). Walks the input dirs for `lcov.info` +
 `lane-manifest.json`, sums DA hits per file:line, normalizes paths
 repo-relative, and emits a merged lcov plus a summary JSON: src-only
 totals/per-dir/per-file percentages, a `lineHits` map (the diff gate's input),
 and the never-loaded src file list. `--manifest-expect lane,lane,...` pins the
-expected lane set (`serial-1` through `serial-4` for PRs, `serial` nightly).
+expected lane set (`serial-1` through `serial-4` for PRs, `serial` nightly,
+and `e2e-1` through `e2e-4` nightly).
 The merger checks commit SHA (`--sha` overrides checkout HEAD for offline
 artifacts), duplicate identities, and actual per-lane LCOV counts; a missing or `complete: false` manifest, an unparseable
 lcov, or a `shard` lane with `lcovCount != 1` marks the summary
@@ -1196,6 +1343,10 @@ When asked to "run all E2E tests" or "run tests", that means ALL tiers:
 - Always spin up the test DB, source zshrc, run everything, tear down.
 
 ### E2E test DB lifecycle (ALWAYS follow this)
+
+The sequential E2E runner requires Python 3 for standard-library XML validation
+of Bun's native JUnit reports. CI and the local Docker runner provide it; direct
+host runs must have `python3` on `PATH` before launching tests.
 
 `setupDB()` clears rows while preserving physical schema. Fixtures that seed
 fixed legacy-width text vectors use `setupLegacyEmbeddingDB()` instead: it

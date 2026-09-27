@@ -63,12 +63,22 @@ export async function runRow(value: unknown, root = process.cwd()): Promise<numb
   const env = { ...process.env };
   delete env.SHARD; // The prepared list is already partitioned.
   console.log(`selected E2E shard ${row.shard}: ${row.files.length} frozen files`);
-  const child = Bun.spawn(["bash", "scripts/run-e2e.sh", ...row.files], { cwd: root, env, stdout: "inherit", stderr: "inherit" });
-  const term = () => child.kill("SIGTERM");
-  const interrupt = () => child.kill("SIGINT");
+  let child: ReturnType<typeof Bun.spawn> | undefined;
+  let pendingSignal: "SIGTERM" | "SIGINT" | undefined;
+  const forward = (signal: "SIGTERM" | "SIGINT") => {
+    pendingSignal = signal;
+    child?.kill(signal);
+  };
+  const term = () => forward("SIGTERM");
+  const interrupt = () => forward("SIGINT");
   process.once("SIGTERM", term);
   process.once("SIGINT", interrupt);
-  try { return await child.exited; }
+  try {
+    child = Bun.spawn(["bash", "scripts/run-e2e.sh", ...row.files], { cwd: root, env, stdout: "inherit", stderr: "inherit" });
+    if (pendingSignal) child.kill(pendingSignal);
+    const code = await child.exited;
+    return pendingSignal ? (pendingSignal === "SIGINT" ? 130 : 143) : code;
+  }
   finally { process.off("SIGTERM", term); process.off("SIGINT", interrupt); }
 }
 async function main() {

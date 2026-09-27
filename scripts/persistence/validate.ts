@@ -82,7 +82,7 @@ export async function runValidation(options: ValidationOptions) {
     async function phase(name: string): Promise<{ config: HarnessConfig; path: string }> {
       const root = join(scratch, name); mkdirSync(root);
       manifest.phase_inputs[name] = Object.fromEntries(['scripts/persistence/harness.ts', 'scripts/persistence/schedules.ts',
-        'scripts/persistence/worker.ts', 'scripts/persistence/validate.ts', 'scripts/persistence/failure-diagnostics.ts', 'scripts/persistence/resource-sampling.ts',
+        'scripts/persistence/worker.ts', 'scripts/persistence/validate.ts', 'scripts/persistence/failure-diagnostics.ts',
         'src/core/atomic-write.ts', 'src/core/persistence/staging.ts', 'src/core/persistence/model.ts',
         'src/core/persistence/effect-recovery.ts', 'src/core/persistence/effect-model.ts', 'src/core/persistence/effects.ts',
         'src/core/persistence/coordinator.ts', 'src/core/persistence/consumer.ts',
@@ -143,7 +143,8 @@ export async function runValidation(options: ValidationOptions) {
         admission: distribution(results.flatMap(row => row.result.admission_ms)),
         caller_completion: distribution(results.flatMap(row => row.result.completion_ms)),
         concurrent_canonical_read: distribution(ownerResults.flatMap(owner => owner.concurrent_read_ms)),
-        peak_owner_rss_bytes: Math.max(...ownerResults.map(owner => owner.peak_rss_bytes)) };
+        peak_owner_rss_bytes: ownerResults.reduce((peak: number | null, owner) =>
+          owner.peak_rss_bytes === null ? peak : Math.max(peak ?? 0, owner.peak_rss_bytes), null) };
     }
     manifest.status = 'passed';
     const executedBoundaries = manifest.crash_cases.map((entry: { boundary: string }) => entry.boundary);

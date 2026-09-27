@@ -106,7 +106,7 @@ have no per-client row: they serve the server-resolved surface directly.
 
 ## The verbs
 
-### recall(query?, entity?, budget_tokens?, since?, session_id?, limit?, …) — read
+### recall(query?, entity?, budget_tokens?, budget_policy?, source_id?, since?, session_id?, limit?, …) — read
 
 Retrieve saved facts and (with `query`) budget-packed page snippets.
 
@@ -119,10 +119,33 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   composes with `entity` and `session_id` in the same query, before the
   per-arm limit. An unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
-- `budget_tokens`: SERVER-side packing — facts pack first (limit-capped
-  one-liners, so search-arm starvation is bounded), search results take the
-  remainder. The estimator is char/4 (±10–15%); `budget_used` reports packed
-  tokens, `dropped_count` what didn't fit. Never advisory, never client-side.
+- `budget_tokens`: SERVER-side packing — by default facts pack first and search
+  results take the remainder. A positive finite numeric budget is floored;
+  other values leave the arrays unbudgeted. Costs are `ceil(fact.length/4)` or
+  `ceil(title.length/4) + ceil(chunk.length/4)`, not exact tokenizer counts or
+  JSON-envelope size. `budget_used` reports estimated packed tokens and
+  `dropped_count` counts candidates that did not fit. Legacy compatibility:
+  a positive numeric budget below one reports budget zero but keeps all facts
+  and no pages; this old path is not a strict fractional cap.
+- `budget_policy`: optional `facts_first | query_first`, default `facts_first`.
+  Explicit facts-first preserves the default behavior, including its fractional
+  quirk. Query-first applies only with a nonblank `query` and positive finite
+  numeric budget: pack the ranked page prefix first, then the fact prefix in the
+  remaining budget. If the floored budget is zero, keep neither arm. An exhausted
+  remainder keeps zero second-arm items. Each arm stops at its first oversized
+  item without skipping to smaller later items or truncating. No page hits or
+  an oversized first page leaves the full budget for facts. Without a nonblank
+  query, use exact legacy facts-first behavior; without a positive finite budget,
+  keep the unbudgeted arrays. Candidate selection, source grants, visibility,
+  fact filters and per-arm limits are unchanged.
+- `source_id`: optional concrete source for both evidence arms. An explicit
+  `default` is distinct from omission. The existing authorization resolver
+  checks the selector before source existence; denied, nonexistent and archived
+  sources fail rather than falling back to a broader grant. Omission preserves
+  the existing context/grant scope and local federation behavior.
+  Selector failures use stamped v1 errors: `scope_denied` for a denied source,
+  `not_found` for a missing or archived source, and `invalid_params` for an
+  invalid selector. `detail` preserves the underlying source-error classification.
 - No embedding provider configured? The search arm degrades to keyword-only
   and the response notes `search_degraded` — never an error.
 
@@ -136,7 +159,66 @@ Response — an additive SUPERSET of the plain facts envelope on EVERY call
 | `total` | int | count of facts returned |
 | `results[]` | array | search arm only: `slug`, `title`, `chunk`, `evidence`, `create_safety`, `provenance` (origin page slug) |
 | `search_degraded` | string? | present when keyword-only fallback fired |
-| `budget_tokens` / `budget_used` / `dropped_count` | int? | present when `budget_tokens` was passed |
+| `budget_tokens` / `budget_used` / `dropped_count` | int? | present for a positive finite numeric budget, including when its floor is zero |
+| `budget_packing` | object? | present only when a valid `budget_policy` is supplied; effective policy and per-arm accounting |
+
+`budget_packing` contains `policy` (effective `facts_first | query_first`),
+`applied` (whether the requested budget policy applied), `reason`, and `facts` /
+`results` objects with `candidates`, `kept`, `dropped`, and `used`. Candidates are
+the already authorized, filtered, limit-capped arms, not all rows in the brain.
+`candidates = kept + dropped` per arm; the sums of `used` and `dropped` equal
+`budget_used` and `dropped_count` when those frozen fields exist. On unbudgeted
+calls, `used` counts the unchanged returned evidence and frozen budget fields
+remain absent. Omitting the policy adds no new response field. Optional null or
+empty-string policy values normalize to absence through the ordinary transport
+validator; invalid types and enum values are `invalid_params`.
+
+Reasons, in precedence order: `no_query` (query-first requested without a nonblank
+query), `no_positive_finite_budget`, `budget_below_one` (a positive budget floors to zero),
+`no_candidates`, `first_items_exceed_budget` (candidates exist but neither prefix
+head fits), and `packed`. Ineligible query-first requests report effective
+`facts_first` and `applied: false`. `packed` does not guarantee all required
+evidence fit, or that a returned page answers the question.
+
+For `budget_below_one`, eligible query-first applies an empty budget to both
+arms and reports `applied: true`. Facts-first preserves the legacy sub-one
+overrun, but reports `applied: false` rather than claiming its evidence fit.
+With an explicit CLI policy, local and thin callers preserve an explicit
+`--source default` over ambient selectors and reject missing or archived
+sources. The policy accepts concrete source IDs, not `__all__`; omit the source
+selector to retain the existing context/grant scope. Legacy calls without the
+policy retain their existing CLI source-resolution and fractional-budget rules.
+
+**Opt-in caller:** for a question about saved page evidence with a tight budget:
+
+```bash
+gbrain recall --query 'zebra telescope' --budget-tokens 75 --budget-policy query_first --json
+```
+
+```json
+{"name":"recall","arguments":{"query":"zebra telescope","budget_tokens":75,"budget_policy":"query_first"}}
+```
+
+Keep entity-first, event/session-filtered and fact-focused callers on facts-first;
+an irrelevant matching page can otherwise displace their useful fact. The policy
+does not change `context_pack` or existing third-party calls. Maintained caller
+guidance lives in `skills/query/SKILL.md` and `skills/brain-ops/SKILL.md`; schema
+advertisement and documentation are not evidence of native-harness adoption.
+Require an observed opted-in call in a fresh conversation before claiming it.
+
+The named CLI accepts the policy before or after the other options, including
+`--budget-policy=query_first`, and rejects missing/invalid values. Its omitted
+and explicit facts-first paths preserve legacy integer parsing of budget text
+(`0.5` becomes an absent budget). Only explicit query-first with a nonblank query
+preserves numeric fractions until the operation floors them. MCP and
+`gbrain call recall` use the numeric operation contract above. Opt-in named calls
+forward fact filters and use the remote operation on thin clients; `--watch`,
+`--since-last-run`, `--rollup`, and `--as-context` cannot be combined with the new
+policy option. Their existing calls without the option are unchanged.
+For opted-in local and thin `--json` calls, selector rejections and remote
+operation failures emit structured errors on stdout and exit nonzero. Remote
+error messages, suggestions, details and documentation references are retained,
+including ordinary read errors without mutation receipts.
 
 **evidence** (enum, zero-LLM heuristic): `alias_hit` \| `exact_title_match` \|
 `high_vector_match` \| `keyword_exact` \| `weak_semantic` — why each result

@@ -379,11 +379,10 @@ four numeric segments are required first. Historical 3-segment versions
 DRIFT_STALE_PKG / DRIFT_UNEXPECTED, and refuses to proceed on
 DRIFT_UNEXPECTED. This is why the two must move together.
 
-**The CI version-gate** rejects pushes where `VERSION` and
-`package.json` disagree, OR where `VERSION` is not strictly greater
-than master's VERSION. If a queue collision claims your version on
-master before yours lands, /ship's queue-aware allocator (Step 12)
-will detect drift and re-bump on the next run.
+**Auto-renumber when needed; never ask.** Use `/ship`'s queue-aware allocator,
+update all version stamps and the PR title, then report the number. This overrides
+its ALREADY_BUMPED rebump prompt, not scope, merge or deployment approvals.
+CI rejects mismatched `VERSION`/`package.json` or versions not newer than master.
 
 ### Version consistency and conflict recovery
 

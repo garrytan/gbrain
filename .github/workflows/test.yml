@@ -34,7 +34,7 @@ jobs:
   # Re-run checks for every event. Only dependencies and PGLite snapshots are cached.
   gitleaks:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -83,7 +83,7 @@ jobs:
 
   security-regressions:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubicloud-standard-16-ubuntu-2404' || matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -103,7 +103,7 @@ jobs:
 
   dependency-audit:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -125,7 +125,7 @@ jobs:
     # this into `test (1)` via `if: matrix.shard == 1`, which made shard 1
     # the slowest matrix worker). scripts/run-verify-parallel.sh fans out
     # the 20 checks via & + wait (~5s vs ~15-25s sequential).
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -169,7 +169,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     # Keep the existing timeout headroom for memory-constrained runners,
     # bounded rescue attempts, and the machine-exclusive tail on shard 1.
     timeout-minutes: 25
@@ -244,7 +244,7 @@ jobs:
     # atom doesn't dominate a shard's wallclock. Companion file
     # test/eval-longmemeval.slow.test.ts (the pure-bucket half) stays in
     # the matrix because it's light (~42s).
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -289,7 +289,7 @@ jobs:
     # + deleting the CI-gate-duplicated full-corpus test) cut it to ~72s
     # local, still far past the ~40s keep-in-matrix bar. Same pattern as
     # slow-eval-longmemeval above.
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -355,7 +355,7 @@ jobs:
     # — a PR cannot rewrite the thing it's compared against. Exit 1 blocks the
     # merge until the regression is fixed or blessed (justification in the
     # updated baseline / fixture diff in corpus-bless mode).
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 10  # ~15s hermetic run; matches the per-job-timeout hardening (#2254)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -396,7 +396,7 @@ jobs:
     # subdivisible without weakening the perf guarantee). Pulled out of the
     # matrix (see scripts/test-shard.sh) so a single 159s atom doesn't
     # dominate a shard's wallclock. Runs in parallel with the matrix.
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -469,7 +469,7 @@ jobs:
     # (replaces FNV-1a path hash). Weights live in scripts/test-weights.json,
     # mined from real CI logs via scripts/mine-shard-weights.ts. Missing
     # weights fall back to corpus median — new test files work immediately.
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     # 22, not 15: under parallel PR load the PGLite WASM cold-starts stretch a
     # shard past 15 min while every test is still passing — the timeout then
     # cancels the job and the test-status gate reads it as a failure. 13 runs
@@ -535,7 +535,7 @@ jobs:
   coverage-report:
     needs: [serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, slow-brainbench-e2e, test]
     if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -597,7 +597,7 @@ jobs:
 
   admin-browser:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -624,7 +624,7 @@ jobs:
 
   shared-skills-compatibility:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -643,7 +643,7 @@ jobs:
     name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && 'full-suite-not-run' || 'test-status' }}
     needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation, admin-browser, shared-skills-compatibility]
     if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Aggregate result
@@ -678,7 +678,7 @@ jobs:
     name: Native-only result (full CI not run)
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.native_only == true }}
     needs: [native-locks]
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Record validation scope

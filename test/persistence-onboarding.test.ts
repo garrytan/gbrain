@@ -13,11 +13,12 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { persistenceHome } from '../src/core/persistence/identity.ts';
 import { PHYSICAL_ROOT_MARKER } from '../src/core/persistence/physical-root-record.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
 
-for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'postgres' && !process.env.DATABASE_URL)(`deliberate onboarding (${kind})`, () => {
+for (const kind of testBackends()) describe(`deliberate onboarding (${kind})`, () => {
   let engine: BrainEngine, close: (() => Promise<void>) | undefined;
   const home = mkdtempSync(join(tmpdir(), 'gbrain-onboarding-')), root = join(home, 'canonical');
   beforeAll(async () => {

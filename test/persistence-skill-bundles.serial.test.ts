@@ -25,7 +25,9 @@ import { managedSyncAuthority } from '../src/core/persistence/sync-authority.ts'
 import { SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS } from '../src/core/shared-skills/persistence-schema.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 const home = mkdtempSync(join(tmpdir(), 'gbrain-skill-persistence-'));
 const oldHome = process.env.GBRAIN_HOME;
 const fixtures: Array<{ engine: BrainEngine; root: string; binding: WorktreeBinding; close(): Promise<void> }> = [];
@@ -35,10 +37,13 @@ let hostId: string;
 beforeAll(async () => {
   process.env.GBRAIN_HOME = home;
   hostId = localHostId();
-  const local = new PGLiteEngine();
-  await local.connect({}); await local.initSchema();
-  const engines = [{ engine: local as BrainEngine, close: () => local.disconnect() }];
-  if (process.env.DATABASE_URL) engines.push(await isolatedPersistencePostgres(process.env.DATABASE_URL));
+  const engines: Array<{ engine: BrainEngine; close(): Promise<void> }> = [];
+  if (backends.includes('pglite')) {
+    const local = new PGLiteEngine();
+    await local.connect({}); await local.initSchema();
+    engines.push({ engine: local, close: () => local.disconnect() });
+  }
+  if (backends.includes('postgres')) engines.push(await isolatedPersistencePostgres(process.env.DATABASE_URL!));
   for (const item of engines) {
     for (const statement of SHARED_SKILLS_PERSISTENCE_SCHEMA_STATEMENTS) await item.engine.executeRaw(statement);
     const gitRoot = join(home, item.engine.kind); mkdirSync(gitRoot);

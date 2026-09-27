@@ -154,6 +154,7 @@ beforeAll(async () => {
             'world', 'medium', NOW(), 'perf-seed', 1.0, NOW()
      FROM generate_series(0, ${TARGET_ENTITIES - 1}) t, generate_series(1, 20) g`,
   );
+  await engine.executeRaw('ANALYZE pages, links, page_aliases, facts');
 }, 300_000);
 
 afterAll(async () => {

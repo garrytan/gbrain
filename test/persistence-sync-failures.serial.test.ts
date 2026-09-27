@@ -25,7 +25,9 @@ import { localHostId } from '../src/core/persistence/identity.ts';
 import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 const home = mkdtempSync(join(tmpdir(), 'gbrain-sync-failures-'));
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
@@ -44,8 +46,10 @@ async function fixture(engine: BrainEngine, files: Record<string, string>) {
   return { id, root, head };
 }
 beforeAll(async () => {
-  const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engines.push(lite);
-  if (process.env.DATABASE_URL) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL); engines.push(pg.engine); closePostgres = pg.close; }
+  if (backends.includes('pglite')) {
+    const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engines.push(lite);
+  }
+  if (backends.includes('postgres')) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engines.push(pg.engine); closePostgres = pg.close; }
 }, 120_000);
 afterAll(async () => {
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
@@ -273,7 +277,7 @@ test('local single and all-source CLI JSON carry durable diagnostics and fail th
   }
 }), 120_000);
 
-test('a new process reads the same failed receipt from a persisted PGLite brain', async () => withEnv(env, async () => {
+test.skipIf(!backends.includes('pglite'))('a new process reads the same failed receipt from a persisted PGLite brain', async () => withEnv(env, async () => {
   const database = join(home, 'restart-db');
   const engine = new PGLiteEngine(); await engine.connect({ database_path: database }); await engine.initSchema();
   let expected: Awaited<ReturnType<typeof performManagedSync>>, sourceId: string;

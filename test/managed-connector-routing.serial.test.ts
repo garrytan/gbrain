@@ -12,7 +12,9 @@ import { APPLICATION_AUTHORITY, withSubmissionAuthority } from '../src/core/mini
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
+const backends = testBackends();
 const directory = mkdtempSync(join(tmpdir(), 'gbrain-connector-routing-'));
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
@@ -22,9 +24,11 @@ const issue = { number: 1, title: 'Routing example', state: 'open', body: 'A dur
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
 
 beforeAll(async () => {
-  const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engines.push(lite);
-  if (process.env.DATABASE_URL) {
-    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+  if (backends.includes('pglite')) {
+    const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engines.push(lite);
+  }
+  if (backends.includes('postgres')) {
+    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
     engines.push(pg.engine); closePostgres = pg.close;
   }
 }, 120_000);

@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: '0 6 * * *'  # Nightly at 6am UTC
   workflow_dispatch:
+    inputs:
+      full_corpus:
+        description: Run the complete scheduled coverage profile
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,7 +21,7 @@ permissions:
 # PR number for pull_request events (fork-safe), github.ref fallback for
 # push/scheduled runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -29,7 +34,7 @@ jobs:
     # Postgres and HARD-FAILS if DATABASE_URL is missing, so the guard can never
     # silently skip.
     name: JSONB parity (#2339 regression guard)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 15
     services:
       postgres:
@@ -103,7 +108,7 @@ jobs:
 
   # Freeze selection before setup; each worker owns a separate Postgres service.
   prepare-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
@@ -117,9 +122,11 @@ jobs:
       - name: Select and freeze E2E files
         id: select
         shell: bash
+        env:
+          FULL_CORPUS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            # Nightly coverage carries the full E2E corpus separately.
+          if [ "$FULL_CORPUS" = "true" ]; then
+            # Full-profile coverage carries the complete E2E corpus separately.
             : > "$RUNNER_TEMP/selected.txt"
           else
             git fetch origin master --quiet
@@ -142,7 +149,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 60
     services:
       postgres:
@@ -196,7 +203,7 @@ jobs:
 
   tier1:
     name: Tier 1 (Mechanical)
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -325,7 +332,7 @@ jobs:
     # OpenAI/Anthropic tokens and must not fire when the build
     # can't even pass the cheapest DB guard.
     needs: jsonb-parity
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     services:
       postgres:
@@ -417,17 +424,17 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ──────────────────────────────────────────────────────────────────────
-  # Nightly coverage-full pipeline (schedule-only). The honest
+  # Full coverage pipeline (scheduled or explicitly dispatched). The honest
   # "unit + serial + E2E merged" number the containment sprint mandates:
   # every lane runs WITH coverage inside THIS workflow (no cross-workflow
   # artifact fetch — that channel is racy by construction), then one merge
   # job compares against the fullCorpus baseline and uploads the trend
-  # artifact. PR runs never pay this cost; the schedule gate on every job
+  # artifact. PR runs never pay this cost; the full-profile gate on every job
   # below is load-bearing.
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -454,8 +461,8 @@ jobs:
           overwrite: true
 
   coverage-full-serial:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -477,8 +484,8 @@ jobs:
           overwrite: true
 
   coverage-full-slow:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -507,9 +514,13 @@ jobs:
           overwrite: true
 
   coverage-full-e2e:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+    runs-on: ubicloud-standard-16-ubuntu-2404
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -536,13 +547,30 @@ jobs:
             test/fixtures/pglite-snapshot.version
           key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/search/projection-statistics.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/company-brain/receipt-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
-      - name: Full e2e glob with coverage (all files, incl. engine-parity)
+      - name: Bootstrap isolated E2E schema
+        shell: bash
+        run: |
+          bootstrap_home=$(mktemp -d "$RUNNER_TEMP/e2e-bootstrap.XXXXXX")
+          trap 'rm -rf "$bootstrap_home"' EXIT
+          unset GBRAIN_DATABASE_URL GBRAIN_E2E_ALLOW_DB
+          HOME="$bootstrap_home" GBRAIN_HOME="$bootstrap_home" \
+            GBRAIN_TEST_KEEP_AMBIENT_ENV=0 GBRAIN_TEST_KEEP_PROVIDER_KEYS=0 \
+            bun --no-env-file \
+              --preload ./test/helpers/operator-env-preload.ts \
+              --preload ./test/helpers/provider-keys-preload.ts \
+              -e 'import { setupLegacyEmbeddingDB, teardownDB } from "./test/e2e/helpers.ts"; try { await setupLegacyEmbeddingDB(); } finally { await teardownDB(); }'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+          GBRAIN_MODEL_DISCOVERY: 'off'
+      - name: Full e2e shard ${{ matrix.shard }}/4 with coverage
         # run-e2e.sh redirects HOME, so COVERAGE_DIR must be absolute; its
         # env scrub keeps non-GBRAIN vars, so COVERAGE_DIR and
         # E2E_FILE_TIMEOUT_SECS survive. 300s/file absorbs instrumentation
         # overhead on the slowest files (the default cap is 180s).
         run: bash scripts/run-e2e.sh
         env:
+          SHARD: ${{ matrix.shard }}/4
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           COVERAGE_DIR: ${{ runner.temp }}/coverage
@@ -553,16 +581,27 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: coverage-full-e2e
+          name: coverage-full-e2e-${{ matrix.shard }}
           path: ${{ runner.temp }}/coverage
           retention-days: 14
           if-no-files-found: ignore
           overwrite: true
+      - name: Upload execution receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: e2e-full-execution-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/coverage/lane-manifest.json
+            ${{ runner.temp }}/coverage/executed-files.txt
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
 
   coverage-full-report:
     needs: [coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
-    if: always() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
+    runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -581,10 +620,15 @@ jobs:
         env:
           COVERAGE_CORPUS: fullCorpus
         run: |
+          if [ "${{ needs.coverage-full-e2e.result }}" != "success" ]; then
+            echo "Full E2E did not succeed; refusing a complete report from prior-attempt artifacts"
+            exit 1
+          fi
+          bun scripts/verify-nightly-e2e.ts "$RUNNER_TEMP/coverage-artifacts" 4 "$GITHUB_SHA"
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-full-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-full-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,slow,e2e \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-full-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
@@ -604,15 +648,17 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
-  # The stable aggregate includes nightly execution lanes on schedules.
+  # The stable aggregate includes full-profile execution lanes when requested.
   # Coverage reporting itself remains advisory; failed tests never do.
   e2e-status:
     needs: [jsonb-parity, tier1, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
       - name: Aggregate result
+        env:
+          FULL_CORPUS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}
         run: |
           JSONB="${{ needs.jsonb-parity.result }}"
           TIER1="${{ needs.tier1.result }}"
@@ -628,7 +674,7 @@ jobs:
               exit 1
             fi
           done
-          if [ "$EVENT" = "schedule" ]; then
+          if [ "$FULL_CORPUS" = "true" ]; then
             FULL_UNIT="${{ needs.coverage-full-unit.result }}"
             FULL_SERIAL="${{ needs.coverage-full-serial.result }}"
             FULL_SLOW="${{ needs.coverage-full-slow.result }}"
@@ -636,9 +682,24 @@ jobs:
             echo "full-unit=$FULL_UNIT full-serial=$FULL_SERIAL full-slow=$FULL_SLOW full-e2e=$FULL_E2E"
             for r in "$FULL_UNIT" "$FULL_SERIAL" "$FULL_SLOW" "$FULL_E2E"; do
               if [ "$r" != "success" ]; then
-                echo "✗ scheduled full-corpus job did not succeed (got $r) — E2E fail"
+                echo "✗ full-corpus job did not succeed (got $r) — E2E fail"
                 exit 1
               fi
             done
           fi
-          echo "✓ all required e2e jobs succeeded — E2E green"
+          echo "✓ all required e2e jobs succeeded"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+        with:
+          bun-version: 1.3.13
+      - name: Download nightly execution receipts
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: e2e-full-execution-*
+          path: ${{ runner.temp }}/e2e-execution
+      - name: Verify complete nightly execution
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
+        run: bun scripts/verify-nightly-e2e.ts "$RUNNER_TEMP/e2e-execution" 4 "$GITHUB_SHA"

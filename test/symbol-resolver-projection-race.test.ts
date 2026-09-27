@@ -7,6 +7,9 @@ import { installPageProjection, preparePageProjection, readProjectionSnapshot } 
 import { resolveSymbolEdgesIncremental } from '../src/core/chunkers/symbol-resolver.ts';
 import { resolveCodeReadiness } from '../src/core/code-graph-readiness.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
+
+const backends = testBackends();
 
 function deferred() {
   let resolve!: () => void;
@@ -36,10 +39,12 @@ describe('symbol resolver and projection replacement serialization', () => {
   let pg: Awaited<ReturnType<typeof isolatedPersistencePostgres>> | undefined;
 
   beforeAll(async () => {
-    lite = new PGLiteEngine();
-    await lite.connect({});
-    await lite.initSchema();
-    if (process.env.DATABASE_URL) pg = await isolatedPersistencePostgres(process.env.DATABASE_URL);
+    if (backends.includes('pglite')) {
+      lite = new PGLiteEngine();
+      await lite.connect({});
+      await lite.initSchema();
+    }
+    if (backends.includes('postgres')) pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
   }, 120_000);
 
   afterAll(async () => {
@@ -178,16 +183,16 @@ describe('symbol resolver and projection replacement serialization', () => {
     }
   }
 
-  test('PGlite queues actual projection replacement behind the paused resolver transaction', async () => {
+  test.skipIf(!backends.includes('pglite'))('PGlite queues actual projection replacement behind the paused resolver transaction', async () => {
     await replacementRace(lite);
   }, 60_000);
 
-  test.skipIf(!process.env.DATABASE_URL)('Postgres reports the actual publisher waiting on the resolver page guard', async () => {
+  test.skipIf(!backends.includes('postgres'))('Postgres reports the actual publisher waiting on the resolver page guard', async () => {
     await replacementRace(pg!.engine);
   }, 60_000);
 
   test('a failure after edge updates rolls metadata and watermarks back together', async () => {
-    for (const engine of [lite, ...(pg ? [pg.engine] : [])]) {
+    for (const engine of [...(lite ? [lite] : []), ...(pg ? [pg.engine] : [])]) {
       const sourceId = `resolver-rollback-${engine.kind}`;
       await seed(engine, sourceId);
       const beforeEdges = await edges(engine, sourceId);
@@ -216,7 +221,7 @@ describe('symbol resolver and projection replacement serialization', () => {
   }, 60_000);
 
   test('candidates are revalidated under the page guard before any metadata or watermark update', async () => {
-    for (const engine of [lite, ...(pg ? [pg.engine] : [])]) {
+    for (const engine of [...(lite ? [lite] : []), ...(pg ? [pg.engine] : [])]) {
       for (const change of ['watermark', 'projection', 'archive', 'slug'] as const) {
         const sourceId = `resolver-stale-${engine.kind}-${change}`;
         const { snapshot } = await seed(engine, sourceId);

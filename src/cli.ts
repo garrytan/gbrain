@@ -470,6 +470,13 @@ async function main() {
     return;
   }
 
+  if (command === 'extract' && !args.some(arg => arg === '--help' || arg === '-h')
+    && args.some(arg => ['--repair-attendance', '--apply-preview', '--backup-verified', '--confirm', '--checkpoint'].includes(arg.split('=')[0]))) {
+    const { runAttendanceRepairCli } = await import('./commands/extract-attendance-repair.ts');
+    await runAttendanceRepairCli(args.slice(1), cliOpts.brain);
+    return;
+  }
+
   // v0.42 self-upgrade: ride this invocation as an update heartbeat. Cache-read-
   // only, fail-open, never blocks. Skips the update path's own commands + sets
   // GBRAIN_SKIP_STARTUP_HOOKS for their children. Runs for every real command.
@@ -2960,6 +2967,19 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  if (command === 'recall' && isThinClient(loadConfig())) {
+    const { hasRecallBudgetPolicy, runRecall } = await import('./commands/recall.ts');
+    if (hasRecallBudgetPolicy(args)) {
+      if (getCliOptions().brain) {
+        console.error('--brain is not supported on a thin-client install: the remote server is a single brain. ' +
+          'Remove the flag, or run from a machine with local mounts (gbrain mounts list).');
+        process.exit(1);
+      }
+      await runRecall(null as never, args);
+      return;
+    }
+  }
+
   // All remaining CLI-only commands need a DB connection.
   // db-availability loop (4c): `serve` alone survives a dead POSTGRES here —
   // degraded mode keeps the MCP server present in the harness (the classified
@@ -2990,35 +3010,35 @@ async function handleCliOnly(command: string, args: string[]) {
         return null;
       }
     })();
-    const degradable =
-      command === 'serve' &&
+    if (command === 'serve' &&
       process.env.GBRAIN_SERVE_DEGRADED !== '0' &&
       process.env.GBRAIN_SERVE_DEGRADED !== 'false' &&
-      resolvedEngineKind === 'postgres';
-    if (!degradable) throw serveConnectError;
-    try {
-      const d = classifyDbAccessError(serveConnectError, { url: loadConfig()?.database_url ?? null, brainId: dbMarkerBrainId() });
-      console.error(`${formatDbMarker(d)}\n${d.message}\n${d.remediation} Run: gbrain db-repair`);
-    } catch { /* marker is best-effort; degraded serve still starts */ }
-    const { createDegradedEngine } = await import('./core/degraded-engine.ts');
-    const degraded = createDegradedEngine({
-      initialError: serveConnectError,
-      // Guarded reconnect: connectEngine's no-config path calls
-      // process.exit(1) directly — if config.json disappears while serve is
-      // degraded, the reconnect must THROW into the classified envelope, not
-      // kill the live MCP server mid-RPC. HOST brains only: a mount routes
-      // through connectMountEngine before loadConfig() and needs no host
-      // config, so the guard must not brick a mount serve's recovery.
-      reconnect: async () => {
-        if ((dbMarkerBrainId() ?? 'host') === 'host' && !loadConfig()) {
-          throw new Error('No brain configured (config.json missing or unreadable). Run: gbrain init');
-        }
-        return connectEngine();
-      },
-    });
-    const { runServe } = await import('./commands/serve.ts');
-    await runServe(degraded, args);
-    return; // serve doesn't disconnect
+      resolvedEngineKind === 'postgres') {
+      try {
+        const d = classifyDbAccessError(serveConnectError, { url: loadConfig()?.database_url ?? null, brainId: dbMarkerBrainId() });
+        console.error(`${formatDbMarker(d)}\n${d.message}\n${d.remediation} Run: gbrain db-repair`);
+      } catch { /* marker is best-effort; degraded serve still starts */ }
+      const { createDegradedEngine } = await import('./core/degraded-engine.ts');
+      const degraded = createDegradedEngine({
+        initialError: serveConnectError,
+        // Guarded reconnect: connectEngine's no-config path calls
+        // process.exit(1) directly — if config.json disappears while serve is
+        // degraded, the reconnect must THROW into the classified envelope, not
+        // kill the live MCP server mid-RPC. HOST brains only: a mount routes
+        // through connectMountEngine before loadConfig() and needs no host
+        // config, so the guard must not brick a mount serve's recovery.
+        reconnect: async () => {
+          if ((dbMarkerBrainId() ?? 'host') === 'host' && !loadConfig()) {
+            throw new Error('No brain configured (config.json missing or unreadable). Run: gbrain init');
+          }
+          return connectEngine();
+        },
+      });
+      const { runServe } = await import('./commands/serve.ts');
+      await runServe(degraded, args);
+      return; // serve doesn't disconnect
+    }
+    throw serveConnectError;
   }
   try {
     switch (command) {
@@ -3884,6 +3904,9 @@ TOOLS
   extract links --by-mention [--ner] --source db
   extract timeline --from-meetings [--infer-dates] --source db
   extract --stale [--source-id ID] [--catch-up] [--dry-run] [--json]
+  extract links --source db --repair-attendance --source-id ID
+        [--limit 250] [--after-slug SLUG] [--json]
+        Apply: --apply-preview FILE --confirm DIGEST --yes --backup-verified --checkpoint FILE
   extract --explain <kind> [--json] Full details: gbrain extract --help
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain

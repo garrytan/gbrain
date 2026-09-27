@@ -205,6 +205,19 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required to validate native E2E JUnit reports." >&2
+  exit 1
+fi
+
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  mkdir -p "$(dirname "$COVERAGE_DIR")"
+  if ! mkdir "$COVERAGE_DIR"; then
+    echo "ERROR: COVERAGE_DIR must be a new, unused directory for each E2E invocation." >&2
+    exit 1
+  fi
+fi
+
 # PGLite snapshot fast path — ~90 e2e files boot in-memory PGLite; a cold boot
 # replays every migration (~3.5x per booting file). Every other runner already
 # activates this; the env scrub above deliberately keep-lists the var. Placed
@@ -227,6 +240,60 @@ fail_list=()
 total_pass=0
 total_fail=0
 file_idx=0
+
+completed_e2e_passes() {
+  python3 - "${1#./}" "$E2E_TMP_HOME/current.junit.xml" "$E2E_TMP_HOME/current.log" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+expected, report, log = sys.argv[1:]
+try:
+    root = ET.parse(report).getroot()
+    suites = root.findall('testsuite')
+    if root.tag != 'testsuites' or len(suites) != 1 or suites[0].get('file') != expected:
+        raise ValueError('wrong selected-file suite')
+    for node in [root, *root.iter('testsuite')]:
+        cases = list(node.iter('testcase'))
+        skipped = sum(case.find('skipped') is not None for case in cases)
+        if any(case.find('failure') is not None or case.find('error') is not None for case in cases):
+            raise ValueError('failed testcase')
+        for key, count in [('tests', len(cases)), ('failures', 0), ('skipped', skipped)]:
+            if node.get(key) != str(count):
+                raise ValueError(f'inconsistent {key} count')
+        if node.get('errors', '0') != '0':
+            raise ValueError('reported errors')
+    tests = int(root.get('tests'))
+    skipped = int(root.get('skipped'))
+    header = False
+    counts = {}
+    final = None
+    with open(log) as stream:
+        for raw in stream:
+            line = re.sub(r'\x1b\[[0-9;]*m', '', raw.rstrip('\n'))
+            header = header or line in (expected + ':', '::group::' + expected + ':')
+            count = re.fullmatch(r'\s*(\d+) (pass|fail|skip|todo)\s*', line)
+            if count:
+                value, kind = count.groups()
+                if kind == 'pass':
+                    counts = {'skip': 0, 'todo': 0}
+                counts[kind] = int(value)
+            summary = re.match(r'^Ran (\d+) tests? across (\d+) files?\. \[[0-9.]+(?:ms|s)\]', line)
+            if summary:
+                final = (int(summary[1]), int(summary[2]), counts.copy())
+    if not header or final is None:
+        raise ValueError('missing final console report')
+    final_tests, final_files, counts = final
+    if final_tests != tests or final_files != 1 or counts.get('pass') != tests - skipped or counts.get('fail') != 0:
+        raise ValueError('missing or inconsistent final console report')
+    if counts.get('skip', 0) + counts.get('todo', 0) != skipped:
+        raise ValueError('inconsistent skipped/todo count')
+    print(tests - skipped)
+except (OSError, ET.ParseError, ValueError, TypeError) as error:
+    print(f'E2E report validation: {error}', file=sys.stderr)
+    sys.exit(1)
+PY
+}
 
 for f in "${files[@]}"; do
   name=$(basename "$f")
@@ -287,16 +354,24 @@ for f in "${files[@]}"; do
   else
     TIMEOUT_CMD=""
   fi
+  FILE_HOME="$E2E_TMP_HOME/file-$file_idx"
+  mkdir -p "$FILE_HOME/.gbrain"
   rc=0
-  $TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
+  rm -f "$E2E_TMP_HOME/current.junit.xml"
+  HOME="$FILE_HOME" GBRAIN_HOME="$FILE_HOME" $TIMEOUT_CMD bun test --timeout=60000 --reporter=junit --reporter-outfile="$E2E_TMP_HOME/current.junit.xml" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
   ACTIVE_E2E_PID=$!
   wait "$ACTIVE_E2E_PID" || rc=$?
   ACTIVE_E2E_PID=""
   output=$(cat "$E2E_TMP_HOME/current.log")
+  rm -rf "$FILE_HOME"
+  if [ "$rc" -eq 0 ] && ! p=$(completed_e2e_passes "$f"); then
+    echo "FAILED: $name did not produce a complete native Bun report for the selected file"
+    rc=1
+  fi
   if [ "$rc" -eq 0 ]; then
     if [ "$f" = "test/e2e/pgbouncer-teardown.test.ts" ] && \
        [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ] && \
-       ! grep -qE '^[[:space:]]*[1-9][0-9]* pass$' <<< "$output"; then
+       [ "$p" -eq 0 ]; then
       fail_files=$((fail_files + 1))
       fail_list+=("$name")
       echo "$output"
@@ -304,8 +379,6 @@ for f in "${files[@]}"; do
       continue
     fi
     pass_files=$((pass_files + 1))
-    # Extract pass/fail counts from bun's summary (e.g., "123 pass")
-    p=$(echo "$output" | grep -oE '[0-9]+ pass' | tail -1 | grep -oE '[0-9]+' || echo 0)
     total_pass=$((total_pass + p))
     echo "$output" | tail -8
   else
@@ -375,6 +448,10 @@ fi
 # complete:true means the lcov data represents the whole E2E lane.
 if [ -n "${COVERAGE_DIR:-}" ]; then
   LCOV_COUNT=$(find "$COVERAGE_DIR" -name 'lcov.info' 2>/dev/null | grep -c '^' || true)
-  printf '{"lane":"e2e","sha":"%s","lcovCount":%s,"complete":true}\n' \
-    "$(git rev-parse HEAD)" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
+  LANE="e2e"
+  [ -z "$RUNNER_SHARD" ] || LANE="e2e-$shard_n"
+  RUN_SHA=$(git rev-parse HEAD)
+  printf '%s\n' "${files[@]}" > "$COVERAGE_DIR/executed-files.txt"
+  printf '{"lane":"%s","sha":"%s","lcovCount":%s,"complete":true}\n' \
+    "$LANE" "$RUN_SHA" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
 fi

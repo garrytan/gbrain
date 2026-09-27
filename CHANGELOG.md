@@ -10,6 +10,252 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.59.0.0] - 2026-09-25
+
+**The LongMemEval reader now checks the evidence before giving its short answer.**
+
+When an answer depends on several old conversations, the benchmark reader now
+briefly extracts the relevant facts and reasons over them before answering. A
+matched study over 361 questions moved from 308 to 324 judged correct answers
+with the same full sessions, dates and question text. A separate replication
+using the published supporting sessions also found a gain from notes in both
+natural language and JSON; changing the format to JSON alone did not help.
+These are reader comparisons, not evidence that everyday `gbrain think`
+improved. The full research record includes losses, ambiguous grades, and nine
+notes responses that reached the original 512-token output limit.
+
+### How to use it
+
+```bash
+gbrain eval longmemeval DATASET --reader-mode notes --reader-max-tokens 1024 --judge --output notes.ndjson
+gbrain eval longmemeval DATASET --reader-mode direct --judge --output direct.ndjson
+```
+
+The first command's reader settings are now the defaults. Direct keeps the
+original prompt and 512-token cap, so existing baseline runs remain
+reproducible. `--reader-mode notes --reader-max-tokens 512` reproduces the
+original treatment's output budget, but risks the same cutoffs. The larger
+default cap is a mitigation, not a separately measured answer-quality gain. A
+bounded nine-case replay of the prior cutoffs finished all nine naturally at
+1024 tokens (445–603 output tokens), but did not remeasure answer accuracy.
+
+### What to watch
+
+The reader still sees the same sanitized full conversations in the same order;
+notes do not recover facts missing from retrieval. Output-limit, empty and
+unknown completions now record an error and preserve any partial text only as
+a diagnostic. They cannot be judged as complete answers or silently inflate
+accuracy. Receipts pin the reader mode, prompt, model, output budget and finish
+reason; resume rejects a different reader configuration even with the
+retrieval-mixing override. Paid reader and judge calls remain opt-in.
+
+### To take advantage of v0.59.0.0
+
+`gbrain upgrade` should apply the update. If it reports a partial migration or
+`gbrain doctor` flags one, run `gbrain apply-migrations --yes --no-autopilot-install`
+and then `gbrain doctor`. Read `skills/migrations/v0.59.0.0.md` for the
+reader-default comparison boundary and verify the flags with
+`gbrain eval longmemeval --help`. No database migration or new model key is
+required; running a judged benchmark still needs its configured providers.
+
+### Itemized changes
+
+### Added
+
+- Add a shared LongMemEval reader config and request builder with explicit
+  `direct|notes` selection and output budget flags, plus per-row and summary
+  configuration pins and strict resume checks. The stable package subpath
+  `gbrain/eval/longmemeval/reader` lets companion evaluation tools use the
+  same request builder instead of copying prompts. Existing invocation-guard
+  and canonical-pricing modules are also exported through stable package
+  subpaths so a capped companion evaluator can reuse the real cost controls.
+- Preserve original transfer and oracle comparison receipts, negative excerpt
+  experiments, source audits and the primary-study compendium under `docs/eval/`
+  and `docs/research/`, without promoting the experimental selector.
+
+### Fixed
+
+- Retain all provider text blocks and any incomplete partial text separately
+  from a completed hypothesis. Output-limit, empty and unknown completions are
+  recorded as failed reader rows, kept in the judged denominator, and fail the
+  benchmark instead of passing a partial answer to the judge.
+- In the inactive experimental excerpt runner, future incomplete reader
+  responses also stop before judging rather than entering a completed pair;
+  historical records and results remain untouched.
+
+## [0.58.1.0] - 2026-09-24
+
+**Spend less time rebuilding test fixtures without dropping database coverage.**
+
+Contributors can check the same behavior with less repeated setup. Shared
+database checks keep their local and server-backed coverage, but no longer
+repeat the local half inside the server-backed lane. Ordinary database resets
+reuse an already-current migration history; tests of migration behavior still
+replay it explicitly.
+
+The complete nightly database collection now runs across four independent
+workers. A final check requires every expected file to be accounted for once,
+on the same revision, before accepting the run. Cancelled workers cannot report
+success, and one coverage run cannot overwrite another run's output.
+
+This release changes test infrastructure, not your stored memories or normal
+GBrain commands. It does not enable paid-provider tests or reduce the sustained
+durability workload.
+
+### For contributors
+
+Run the complete local gate with `bun run ci:local`. To exercise the complete
+scheduled coverage profile on demand, dispatch the E2E workflow with
+`full_corpus=true`; ordinary dispatches keep their existing scope.
+
+| Work | What changes | What stays covered |
+| --- | --- | --- |
+| Shared database contracts | Each backend has its own execution owner | Both PGLite and PostgreSQL assertions |
+| Database setup | Current migration history survives ordinary resets | Explicit cold replay, cleanup and embedding identity |
+| Large fixtures | Reuse setup and analyze the original seeded data | Original sizes, assertions and performance thresholds |
+| Nightly database checks | Four isolated workers with exact file receipts | The complete discovered collection |
+
+The matched sequential E2E benchmark on the audited baseline `31f257a` improved from
+43m05.91s to 37m48.30s, a 12.28% reduction. Both timing runs retained the same
+two host-environment failures; they are timing evidence, not passing gates.
+The integrated changes separately passed the complete clean Docker gate.
+The four-worker nightly benefit is not yet measured, and a 50% reduction in
+overall test time is not established.
+
+## To take advantage of v0.58.1.0
+
+No database migration, service change or user configuration is required.
+Contributors should use the updated runners and the coverage ownership guidance
+in [Testing](docs/TESTING.md).
+
+### Itemized changes
+
+- Select PostgreSQL before registering shared E2E suites, retaining local-only
+  cases in their unit owners and refusing missing or unsafe test databases.
+- Preserve the migration ledger and stored embedding identity during ordinary
+  fixture resets. Explicit legacy-width setup aligns both columns and identity.
+- Reuse the embedded admin fixture, batch configured-root fixtures, and analyze
+  dense graph and entity-card data without shrinking their workloads.
+- Validate native test reports, cancellation status, exclusive coverage roots
+  and exact same-revision nightly execution receipts.
+- Refresh full-profile scheduling weights from complete recorded runs and
+  document the separate unit, integration, durability and native coverage owners.
+
+
+## [0.58.0.0] - 2026-09-24
+
+**Separate confirmed attendance from mentions, and give question evidence room in recall.**
+
+Meeting notes often name people who were invited, absent, or simply discussed.
+When your active schema does not define its own attendance rules, GBrain now
+requires an explicit attendee list with confirmed person references before
+recording attendance. Mentioning someone elsewhere in a note is not enough.
+Examples in code blocks and hidden comments do not count either.
+
+For a question about your notes, you can now give matching pages first use of
+recall's limited reading budget. Stored facts fill the remaining space. The
+existing facts-first default stays unchanged because questions about those
+facts can get worse when pages take their place.
+
+Historical attendance cleanup is a separate, local-only operation. Preview a
+small source-scoped window, review its proposed changes, then approve that
+exact preview only after verifying a full database backup. Upgrading alone
+does not authorize or run this repair.
+
+### Try question-first recall
+
+```bash
+gbrain recall --query 'What did the planning meeting decide?' \
+  --budget-tokens 512 --budget-policy query_first --json
+```
+
+The same `budget_policy` option is available on the `recall` memory verb.
+Omit it to retain existing behavior, or explicitly select `facts_first`.
+
+| Controlled comparison | Complete evidence with the default | With the selected policy |
+| --- | --- | --- |
+| Eleven synthetic page-evidence questions | 1 of 11 | 9 of 11 with query-first |
+| Three fact-focused controls | 3 of 3 | 3 of 3 with facts-first |
+| One deliberately misrouted fact question | 1 of 1 | 0 of 1 with query-first |
+
+These are measurements of retained evidence, not generated-answer accuracy or
+a broad semantic-search benchmark. See the [evaluation record](docs/eval/ATTENDANCE_RECALL_EVALUATION.md)
+for the matched baseline, fixture identity and excluded expansion experiment.
+
+### Things to watch
+
+Schema-pack-owned attendance directions remain unchanged, including the shipped
+base and company packs; they do not gain incoming attendance lookup. Missing
+packs or unresolved attendees preserve the prior graph for retry instead of
+guessing. Historical repair requires separate operator approval, briefly locks
+link writes database-wide, and cannot be undone by reverting the binary.
+
+## To take advantage of v0.58.0.0
+
+Follow [the upgrade and verification guide](skills/migrations/v0.58.0.0.md).
+No new schema migration, automatic backfill, provider change or capture opt-in
+is required. Preserve existing service and re-embedding opt-outs. If an earlier
+migration failed, inspect that failure before running
+`gbrain apply-migrations --yes --no-autopilot-install`; that command is not an
+attendance repair. Follow the [attendance operator guide](docs/guides/attendance-evidence.md)
+before previewing or applying historical changes.
+
+### Itemized changes
+
+- **Attendance evidence:** Canonical attendee lists resolve live person pages
+  in the allowed source scope. Origin-owned reconciliation preserves unrelated
+  and manual links, honors each source's schema pack, and keeps incomplete
+  extraction retryable across publication, filesystem, DB, stale and sweep
+  paths. Timeline extraction consumes supported attendance evidence.
+- **Recall packing:** One-shot CLI and memory-verb callers can select
+  `budget_policy: "query_first"` or `"facts_first"`, with explicit packing
+  accounting and matching validation across local and remote transports.
+  Conditional query expansion is not included.
+- **Historical repair:** Trusted-local `extract links --repair-attendance`
+  supports bounded previews, exact-digest approval, private receipts and
+  checkpoints, transactional source/endpoint revalidation, and crash replay.
+  MCP and thin clients cannot run it; `--yes` alone cannot authorize an apply.
+- **Concurrent write admission:** When several tools write at once, PostgreSQL
+  admissions get more time to progress behind short counter transactions.
+  Individual lock waits allow up to 100ms while preserving the five-second
+  retry budget, retained request IDs, and pool access for reads between attempts.
+
+### For contributors
+
+Attendance and repair regressions run against PGLite and PostgreSQL. Each E2E
+file now receives its own temporary HOME and GBRAIN_HOME, preventing one file's
+initialization from changing the schema configuration used by the next file.
+
+## [0.57.1.0] - 2026-09-24
+
+**More capacity for Linux CI, with the same acceptance checks.**
+
+Contributors' Linux tests run on larger, single-job Ubicloud machines rather
+than waiting for GitHub's standard Linux runner pool. Ordinary test and database
+jobs have 16 virtual CPUs and 64 GB of memory; the heavy suite and long-running
+persistence checks have 30 virtual CPUs and 120 GB. Lightweight reporting stays
+on smaller machines. Test coverage, failure handling and acceptance thresholds
+remain unchanged. This release does not change installed memory behavior.
+
+### To take advantage of v0.57.1.0
+
+The workflow routing takes effect in repository CI after merging; no local
+upgrade is needed. Forks must authorize the Ubicloud Managed Runners app and
+configure billing before using these runner labels. See
+[CI runner capacity](docs/TESTING.md#ci-runner-capacity) for sizes and prerequisites.
+More capacity does not guarantee a proportional speedup for serial tests.
+
+### Itemized changes
+
+### For contributors
+
+- Move repository-owned Linux CI jobs to Ubuntu 24.04 Ubicloud runners, including
+  native ARM64 validation on 16-vCPU, 48-GB machines.
+- Preserve all shards, test commands, timeouts, artifacts and status-check names.
+  Keep macOS, Windows, release publishing and the upstream OSV workflow unchanged.
+- Validate custom runner labels with actionlint and regression tests covering
+  workload sizes, native platforms and the unchanged security matrix identities.
+
 ## [0.57.0.0] - 2026-09-24
 
 **Know when an accepted write needs attention.**

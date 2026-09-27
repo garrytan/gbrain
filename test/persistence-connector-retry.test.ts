@@ -13,7 +13,7 @@ import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint } from './helpers/connector-fixture.ts';
 
-const { engines, env, source, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
+const { engines, env, backends, source, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
 afterAll(teardown);
 
@@ -30,6 +30,7 @@ test('explicit connector retry replaces a real storage failure without changing 
         'test', import.meta.path, '--test-name-pattern', '^explicit connector retry replaces a real storage failure without changing ordinary replay or the cursor$'], {
         env: { PATH: process.env.PATH, HOME: childHome, GBRAIN_HOME: childHome, TMPDIR: childHome,
           DATABASE_URL: process.env.DATABASE_URL, GBRAIN_TEST_ALLOW_DATABASE_URL: '1', GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1',
+          GBRAIN_TEST_BACKEND: backends.includes('pglite') ? undefined : 'postgres',
           GBRAIN_PGLITE_SNAPSHOT: process.env.GBRAIN_PGLITE_SNAPSHOT, GBRAIN_TEST_CONNECTOR_UNPRIVILEGED: '1' },
         stdout: 'pipe', stderr: 'pipe',
       });

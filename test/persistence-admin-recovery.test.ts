@@ -18,8 +18,10 @@ import { parsePersistenceAdminArgs } from '../src/commands/persistence-admin.ts'
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
-for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'postgres' && !process.env.DATABASE_URL)(`writer recovery (${kind})`, () => {
+const backends = testBackends();
+for (const kind of backends) describe(`writer recovery (${kind})`, () => {
   const directory = mkdtempSync(join(tmpdir(), 'gbrain-admin-recovery-'));
   let engine: BrainEngine, close: (() => Promise<void>) | undefined;
   beforeAll(async () => {
@@ -198,7 +200,7 @@ for (const kind of ['pglite', 'postgres'] as const) describe.skipIf(kind === 'po
   }), 30_000);
 });
 
-test('writer parser accepts explicit self-transfer and cleanup opt-ins', () => {
+test.skipIf(!backends.includes('pglite'))('writer parser accepts explicit self-transfer and cleanup opt-ins', () => {
   expect(parsePersistenceAdminArgs('writer', ['transfer', 'prepare', 'default', '--self-transfer']).params.self_transfer).toBe(true);
   expect(parsePersistenceAdminArgs('writer', ['activate', '--confirm-quiesced', '--cleanup-dead-local-locks']).params.cleanup_dead_local_locks).toBe(true);
 });

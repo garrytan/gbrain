@@ -3,7 +3,74 @@
 [Subsystem index](../KEY_FILES.md). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
 
-- `src/core/markdown-code.ts` — `stripCodeBlocks` masks fenced and inline code while preserving every CR/LF and UTF-16 code-unit offset. Citation paragraphs and later link references retain their original boundaries, including after an unclosed fence. `parseTimelineEntries` in `src/core/link-extraction.ts` groups the optional dash with its trailing whitespace so leading whitespace does not trigger overlapping repetition. Existing date, delimiter, and code-fence recognition rules remain unchanged. Pinned through real FS/DB link and timeline consumers by `test/timeline-parser-regression.test.ts`; its adversarial whitespace workload runs in a timeout-bounded child process.
+## Attendance evidence and ownership
+
+The shared and filesystem extractors recognize canonical attendance only from
+supported explicit lists and uniquely resolved person targets when no pack owns
+the relationship. Callers resolve source identities before
+`resolvedLinkCandidate` orients a Markdown or uniquely resolved bare-wikilink claim as person-to-meeting with the
+meeting as its origin.
+Only parsed link targets can make canonical body claims; display-label slugs stay
+ordinary mentions. `hasAttendanceEvidence` indexes the ordered, nonoverlapping
+evidence ranges rather than rescanning them for every reference. Strict
+frontmatter resolution has a separate, source-keyed cache capped at 256 entries
+within one resolver lifetime.
+Accepted ranges exclude HTML-comment spans, including comments inside an
+otherwise valid list line; a reference scanner seeing those spans cannot
+promote their hidden targets. Engine-backed link extraction requires a loaded
+ontology before graph writes. Failed local preparation instead returns an
+automatic-link error so the note can commit without rewriting pack-owned edges.
+`DerivedLinkEndpointChangedError` identifies only missing or revision-changed
+endpoints detected before graph mutation. Automatic publication catches that
+specific failure, preserving its note and prior graph with retryable auto-link
+metadata; direct reconciliation still refuses. Other errors propagate and roll
+back publication rather than being mislabeled as a harmless link conflict.
+`replaceDerivedLinks` validates that origin and the locked person/meeting types
+and revisions; its `preserveExisting` path keeps matching row identities while
+refreshing their evidence context and origin field. Ambiguous bare-name spellings
+remain mentions rather than asserted attendees, and nonmatching constrained pack
+rules suppress canonical fallback in both extractors.
+Automatic preparation discovers resolved frontmatter targets before applying
+pack target-type constraints, so an unchanged pack-owned attendance row is not
+deleted merely because its endpoint appears only in frontmatter. Missing
+endpoint metadata remains incomplete; known non-person targets are not admitted.
+Filesystem attendance reconciliation excludes legacy rows whose producer is
+unknown; existing canonical-write and sweep handling of those rows is unchanged.
+`prepareAutomaticLinks`, DB/stale extraction, filesystem extraction, and sweep
+share that ownership, so attendee re-extraction cannot delete a meeting claim,
+and removing the meeting's evidence can remove it. `link-reconciliation.ts` owns
+the shared source/default/federation resolution policy, re-exported by the extract
+command. Filesystem attendance uses file evidence with database endpoint metadata;
+missing, ambiguous, or denied attendance resolution preserves the prior graph and
+does not advance extraction watermarks. Incomplete local preparation still allows
+`put_page` to commit the note, with auto-link error metadata and retryable extraction.
+The shared Markdown mask preserves positions while respecting backtick and tilde
+fence closing rules. Attendance opts into comment masking in that same scanner,
+so comment openers inside code do not conceal later evidence. Other callers keep
+their existing code-only masking. Pack-owned outgoing mappings,
+including the shipped base and company packs, stay unchanged. See
+[explicit attendance evidence](../../guides/attendance-evidence.md) for grammar,
+coverage limits, and the distinction from a historical repair.
+
+## Recall source selection
+
+`recall.source_id` narrows both fact and page arms using the existing authorized
+scope resolver, then checks source liveness. Explicit `default` is not omission.
+With no selector, fact scope and page federation retain their previous behavior.
+The opted-in thin CLI uses engine-free scope resolution and refuses `--brain`;
+its source tests execute the real remote dispatcher, not only a canned response.
+Degraded serving has its own explicit `serve` dispatch guard, so the generated
+registry cannot assign its flags to the preceding thin-recall branch.
+`test/cli-recall-flag-ownership.test.ts` pins fresh generation and real CLI
+rejection of serve-only flags before a brain opens.
+
+## Files
+
+- `src/core/extract-timeline-from-meetings.ts` — normalizes canonical incoming and pack-owned outgoing `attended` edges into meeting/person roles before timeline fan-out. SQL requires a live person and live meeting (including legacy meeting notes); existing private-meeting filtering, source opt-in and source-qualified deduplication still apply. Dual-engine tests in `test/extract-timeline-attendance.test.ts` use an empty gazetteer so a body-mention fallback cannot conceal a broken attendance consumer.
+
+- `src/core/ops/facts.ts` — shared fact/memory operations, including `recall`. Recall keeps source/visibility and fact filters before per-arm candidate limits. Its default/explicit `facts_first` packing preserves the frozen memory-verb contract, including the positive sub-one budget quirk. Optional `query_first` packs the ranked page prefix first only with a nonblank query and positive finite budget; floor-zero and exhausted remainders explicitly return empty arms rather than call the unbounded zero-budget packer. Neither arm skips oversized prefix items or truncates. No-query and inactive-budget paths keep legacy behavior. Only policy-supplied calls add `budget_packing` effective-policy/reason and candidate/kept/dropped/estimated-used accounting. Counter sums match the frozen fields. Do not change the global packer or fact relevance to implement this policy. `test/recall-budget-policy.test.ts` pins numeric boundaries, compatibility, candidate ordering, filters, source/private/safe-projection behavior and shared transport validation.
+
+- `src/core/markdown-code.ts` — `stripCodeBlocks` masks fenced and inline code while preserving every CR/LF and UTF-16 code-unit offset. Citation paragraphs and later link references retain their original boundaries, including after an unclosed fence. `parseTimelineEntries` in `src/core/link-extraction.ts` groups the optional dash with its trailing whitespace so leading whitespace does not trigger overlapping repetition. Existing date and delimiter rules remain unchanged. Standalone backtick and tilde fences require valid closing markers; historical inline triple-backtick spans remain masked. Pinned through real FS/DB link and timeline consumers by `test/timeline-parser-regression.test.ts`; its adversarial whitespace workload runs in a timeout-bounded child process.
 
 - `src/core/check-resolvable.ts` — Resolver validation: reachability, MECE overlap, DRY checks, structured fix objects. `CROSS_CUTTING_PATTERNS.conventions` is an array (notability gate accepts `conventions/quality.md` and `_brain-filing-rules.md`). `extractTriggers()` delegates to the shared SKILL.md parser, so MECE gap detection and the trigger index agree on block lists, single-line flow sequences, wrapped flow sequences, and CRLF input. `extractDelegationTargets()` parses `> **Convention:**`, `> **Filing rule:**`, and inline backtick references. DRY suppression is proximity-based via `DRY_PROXIMITY_LINES = 40`. `parseResolverEntries` accepts BOTH the markdown table AND a compact list format (`- **skill-name**: trigger1 | trigger2 | trigger3` or `- skill-name: trigger1 | trigger2`); shapes can mix in one file, folded by the multi-resolver merge. Skill name MUST be kebab-lowercase (regex `[a-z][a-z0-9-]+`) so prose bullets like `- **Note**:`/`- **Convention**:`/`- **TODO**:` don't false-match as skill rows. `skillPath` is ALWAYS derived as `skills/<name>/SKILL.md`: an optional `→ \`skills/path\`` (or ASCII `->`) suffix is stripped from the trigger but NOT honored as the path — two consumers (`routing-eval.ts:skillSlugFromPath`, the manifest lookup) assume the convention; use the table format for non-conventional paths. Multi-trigger rows fan out to one entry per trigger sharing the same `skillPath`; `checkResolvable` dedupes so the reachability count counts each skill once. Pinned by `test/check-resolvable.test.ts` (resolver shapes plus trigger array syntax cases) + `test/check-resolvable-openclaw-compact.test.ts` (8 cases over `test/fixtures/openclaw-compact-resolver/` and `test/fixtures/openclaw-mixed-merge/`). Tutorial: `docs/guides/scaling-skills.md` (three-tier scaling: ~300-skill agent to ~4K tokens/turn from ~25K). `checkResolvable(skillsDir, opts?)` takes an optional `skillsDirSource` (the detection tier from `autoDetectSkillsDir`, threaded by both callers: doctor.ts and the check-resolvable command; an explicit `--skills-dir` passes `null`). An `unreachable` issue downgrades from `error` to `warning` only when ALL hold: the directory was found via the ungated `cwd_walk_up` tier, no resolver file contributes rows (no `RESOLVER.md`; a generic `AGENTS.md` with zero table rows counts as absent), unreachable skills outnumber reachable ones, and no `manifest.json` exists on disk. This keeps a foreign tool's `skills/` dir walked up to from cwd from being scored as a broken gbrain skillpack, while a real skillpack (RESOLVER.md present, higher-confidence tier, dense trigger coverage, or any manifest.json, even a corrupted one) stays strict. A foreign dir with zero `triggers:` and no resolver file still hard-fails via the `missing_file` branch (separate follow-up).
 

@@ -6,18 +6,24 @@ import { spawnSync } from 'node:child_process';
 import { safeLoad } from 'js-yaml';
 
 const root = join(import.meta.dir, '..', '..');
-type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string }> };
+type Job = { needs?: string | string[]; if?: string; steps: Array<{ name?: string; run?: string; uses?: string; env?: Record<string, string> }> };
 type Workflow = { on: Record<string, { paths?: string[] }>; jobs: Record<string, Job> };
 const loadWorkflow = (name: string) => safeLoad(readFileSync(join(root, '.github/workflows', name), 'utf8')) as Workflow;
 const unit = loadWorkflow('test.yml');
 const e2e = loadWorkflow('e2e.yml');
 
-function aggregate(workflow: Workflow, name: string, event: string, results: Record<string, string>) {
-  const script = workflow.jobs[name].steps.find(step => step.name === 'Aggregate result')!.run!
+const fullProfile = "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)";
+function aggregate(workflow: Workflow, name: string, event: string, results: Record<string, string>, fullCorpus = false) {
+  const step = workflow.jobs[name].steps.find(step => step.name === 'Aggregate result')!;
+  const render = (value: string) => value
     .replace(/\$\{\{ needs\.([\w-]+)\.result \}\}/g, (_, job) => results[job] ?? 'success')
+    .replaceAll('${{ ' + fullProfile + ' }}', String(event === 'schedule' || (event === 'workflow_dispatch' && fullCorpus)))
     .replace(/\$\{\{ github.event_name \}\}/g, event);
+  const script = render(step.run!);
+  const env = Object.fromEntries(Object.entries(step.env ?? {}).map(([key, value]) => [key, render(value)]));
   expect(script).not.toContain('${{');
-  return spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8' }).status;
+  expect(Object.values(env).join('\n')).not.toContain('${{');
+  return spawnSync('bash', ['-e', '-c', script], { encoding: 'utf8', env: { ...process.env, ...env } }).status;
 }
 
 describe('CI execution evidence', () => {
@@ -64,8 +70,10 @@ describe('CI execution evidence', () => {
     for (const job of needs) {
       for (const result of ['failure', 'cancelled', 'skipped']) {
         expect(aggregate(e2e, 'e2e-status', 'schedule', { [job]: result }), `${job}: ${result}`).toBe(1);
+        expect(aggregate(e2e, 'e2e-status', 'workflow_dispatch', { [job]: result }, true), `manual full ${job}: ${result}`).toBe(1);
       }
     }
+    expect(aggregate(e2e, 'e2e-status', 'workflow_dispatch', {}, true)).toBe(0);
   });
 
   test('admin manifest changes trigger the security scan and CI installs are frozen', () => {
