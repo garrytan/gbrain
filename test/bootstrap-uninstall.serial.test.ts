@@ -19,6 +19,7 @@ import {
   uninstallWorkspace,
 } from '../src/core/bootstrap/uninstall.ts';
 import { BootstrapError } from '../src/core/bootstrap/lock.ts';
+import { readBootId, readPidNs } from '../src/core/pglite-lock.ts';
 import { readReceipt, writeReceipt, type InstallReceipt } from '../src/core/bootstrap/format.ts';
 
 let ws: string;
@@ -387,10 +388,16 @@ describe('probeLivePgliteHolder', () => {
     mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
     writeFileSync(
       join(dataDir, '.gbrain-lock', 'lock'),
-      JSON.stringify({ pid: process.pid, command: 'embed --stale', subcommand: 'embed' }),
+      JSON.stringify({
+        pid: process.pid,
+        command: 'embed --stale',
+        subcommand: 'embed',
+        pid_ns: readPidNs(),
+        boot_id: readBootId(),
+      }),
       'utf8',
     );
-    expect(probeLivePgliteHolder(dataDir)).toEqual({ pid: process.pid, serve: false });
+    expect(probeLivePgliteHolder(dataDir)).toEqual({ pid: process.pid, serve: false, isSelf: true });
   });
 
   test('legacy lock without subcommand falls back to command-string parsing', () => {
@@ -398,10 +405,10 @@ describe('probeLivePgliteHolder', () => {
     mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
     writeFileSync(
       join(dataDir, '.gbrain-lock', 'lock'),
-      JSON.stringify({ pid: process.pid, command: 'gbrain serve' }),
+      JSON.stringify({ pid: process.pid, command: 'gbrain serve', pid_ns: readPidNs(), boot_id: readBootId() }),
       'utf8',
     );
-    expect(probeLivePgliteHolder(dataDir)).toEqual({ pid: process.pid, serve: true });
+    expect(probeLivePgliteHolder(dataDir)).toEqual({ pid: process.pid, serve: true, isSelf: true });
   });
 
   test('absent or unreadable lock → null', () => {

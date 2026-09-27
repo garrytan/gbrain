@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 import { bootstrapDoctorChecks, type Check } from '../src/commands/doctor.ts';
+import { readBootId, readPidNs } from '../src/core/pglite-lock.ts';
 import { writeHarnessReceipt } from '../src/core/bootstrap/format.ts';
 import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { VERSION } from '../src/version.ts';
@@ -537,11 +538,32 @@ describe('bootstrap_serve_lock', () => {
     });
   }, T);
 
-  test('#5481: live NON-serve holder whose pid IS this doctor process → no check (self lock is not a foreign collision)', async () => {
+  test('#5481: live NON-serve holder whose pid IS this doctor process, matching namespace evidence → no check (self lock is not a foreign collision)', async () => {
     const { parent, home } = makeHome();
     writeHeartbeat(home, [{ outcome: 'ok' }]);
-    writeLock(home, { pid: process.pid, subcommand: 'sync' });
+    writeLock(home, { pid: process.pid, subcommand: 'sync', pid_ns: readPidNs(), boot_id: readBootId() });
     expect(byName(await run(parent), 'bootstrap_serve_lock')).toBeUndefined();
+  }, T);
+
+  test('#5481: pid matches but namespace evidence is foreign → still warns (a shared-mount container cannot masquerade as self via pid reuse)', async () => {
+    const { parent, home } = makeHome();
+    writeHeartbeat(home, [{ outcome: 'ok' }]);
+    writeLock(home, {
+      pid: process.pid,
+      subcommand: 'sync',
+      pid_ns: 'pid:[99999999]',
+      boot_id: '00000000-0000-0000-0000-000000000000',
+    });
+    const c = byName(await run(parent), 'bootstrap_serve_lock');
+    if (process.platform === 'linux') {
+      expect(c?.status).toBe('warn');
+      expect(c?.message).toContain('non-serve');
+    } else {
+      // Non-Linux platforms have no PID namespaces; a pid match alone is
+      // trusted there, matching pglite-lock.ts's own acquisition-time
+      // platform short-circuit.
+      expect(c).toBeUndefined();
+    }
   }, T);
 
   test('dead holder / no lock → no check (stale lock dir is inert)', async () => {

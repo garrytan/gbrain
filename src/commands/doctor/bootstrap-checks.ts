@@ -437,14 +437,14 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
   try {
     const dataDir = resolveBrainDataDir(home);
     const holder = probeLivePgliteHolder(dataDir);
-    // #5481: a non-serve holder whose pid is THIS doctor invocation is not a
-    // foreign collision — it is this process's own lock, read back from the
-    // file it wrote (the lock's `subcommand` is always this process's own
-    // argv, per pglite-lock.ts, so a self-held lock can never read as
-    // `serve`: `bootstrapDoctorChecks` has exactly one caller, doctor's own
-    // pipeline). With no separate session to block, it is inert like the
-    // dead-holder/corrupt-lock cases above and pushes no check at all.
-    if (holder && holder.pid !== process.pid) {
+    // #5481: a non-serve holder that IS this doctor invocation (per
+    // `holder.isSelf`, which also checks pid-namespace evidence so a
+    // container/host sharing a mounted PGLite dir can't have its foreign
+    // holder mistaken for self via pid reuse) is not a foreign collision —
+    // it is this process's own lock, read back from the file it wrote. With
+    // no separate session to block, it is inert like the dead-holder/
+    // corrupt-lock cases above and pushes no check at all.
+    if (holder && !holder.isSelf) {
       checks.push({
         name: 'bootstrap_serve_lock',
         status: holder.serve ? 'ok' : 'warn',

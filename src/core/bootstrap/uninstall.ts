@@ -35,7 +35,7 @@ import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../config.ts';
 import { isPathContained, realpathOrResolve } from '../path-confine.ts';
-import { isProcessAlive } from '../pglite-lock.ts';
+import { isProcessAlive, readBootId, readPidNs } from '../pglite-lock.ts';
 import { readReceipt, receiptPath, type InstallReceipt } from './format.ts';
 import { BootstrapError } from './lock.ts';
 import type { ExecRunner } from './repo.ts';
@@ -48,6 +48,22 @@ export interface LiveHolder {
   pid: number;
   /** True when the lock file says the holder is `gbrain serve`. */
   serve: boolean;
+  /**
+   * True when `pid` matches THIS process AND the lock's namespace evidence
+   * (`pid_ns`/`boot_id`) also matches THIS process's own (#5481). A bare
+   * numeric pid match is not proof of self-identity: containers/hosts
+   * sharing a mounted PGLite directory can reuse the same namespace-local
+   * pid for a genuinely different process, so pid alone would let a foreign
+   * holder masquerade as self. Mirrors the cross-namespace-incomparable
+   * guard `pglite-lock.ts` already applies at lock-acquisition time. Every
+   * lock this codebase writes stamps both fields (`pglite-lock.ts`), so a
+   * genuine self-lock always has matching evidence; missing/mismatched
+   * evidence is treated as NOT self (fail toward warning, not toward
+   * silently suppressing a real foreign collision). Non-Linux platforms
+   * have no PID namespaces, so a pid match alone is trusted there, matching
+   * the acquisition path's own platform short-circuit.
+   */
+  isSelf: boolean;
 }
 
 /**
@@ -59,7 +75,7 @@ export interface LiveHolder {
  */
 export function probeLivePgliteHolder(dataDir: string): LiveHolder | null {
   const lockPath = join(dataDir, '.gbrain-lock', 'lock');
-  let raw: { pid?: unknown; subcommand?: unknown; command?: unknown };
+  let raw: { pid?: unknown; subcommand?: unknown; command?: unknown; pid_ns?: unknown; boot_id?: unknown };
   try {
     raw = JSON.parse(readFileSync(lockPath, 'utf8')) as typeof raw;
   } catch {
@@ -74,7 +90,12 @@ export function probeLivePgliteHolder(dataDir: string): LiveHolder | null {
     const parts = raw.command.trim().split(/\s+/);
     serve = parts[0] === 'serve' || parts[1] === 'serve';
   }
-  return { pid, serve };
+  const lockPidNs = typeof raw.pid_ns === 'string' ? raw.pid_ns : null;
+  const lockBootId = typeof raw.boot_id === 'string' ? raw.boot_id : null;
+  const namespaceMatches = process.platform !== 'linux'
+    || (lockPidNs != null && lockBootId != null && lockPidNs === readPidNs() && lockBootId === readBootId());
+  const isSelf = pid === process.pid && namespaceMatches;
+  return { pid, serve, isSelf };
 }
 
 /** The PGLite data dir for a gbrain home: config.json's database_path when it

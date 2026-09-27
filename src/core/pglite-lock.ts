@@ -60,10 +60,10 @@ function isServeCommand(metadata: LockMetadata): boolean {
 function readMetadata(lockDir: string): LockMetadata | null {
   try { return JSON.parse(readFileSync(join(lockDir, LOCK_FILE), 'utf8')); } catch { return null; }
 }
-function readPidNs(): string | null {
+export function readPidNs(): string | null {
   try { return readlinkSync('/proc/self/ns/pid'); } catch { return null; }
 }
-function readBootId(): string | null {
+export function readBootId(): string | null {
   try { return readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() || null; } catch { return null; }
 }
 
