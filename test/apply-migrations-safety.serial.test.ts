@@ -26,6 +26,33 @@ function entries(ledger: string): CompletedMigrationEntry[] {
 }
 
 describe('migration runner completion safety', () => {
+  for (const state of ['partial', 'wedged'] as const) {
+    test(`strict relaunch setup rejects a ${state} migration`, async () => {
+      await fixture(async (home, ledger) => {
+        if (state === 'wedged') {
+          writeFileSync(ledger, Array.from({ length: 3 }, () => JSON.stringify({ version: '0.11.0', status: 'partial' })).join('\n') + '\n');
+        }
+        const script = join(home, 'strict.ts');
+        writeFileSync(script, `
+import { migrations } from ${JSON.stringify(join(root, 'src/commands/migrations/index.ts'))};
+import { runApplyMigrations } from ${JSON.stringify(join(root, 'src/commands/apply-migrations.ts'))};
+migrations.splice(0, migrations.length, {
+  version: '0.11.0', featurePitch: { headline: 'fixture migration' },
+  orchestrator: async () => ({ version: '0.11.0', status: 'partial', phases: [] }),
+});
+await runApplyMigrations(['--yes'], { requireComplete: true });
+`);
+        const child = Bun.spawnSync([process.execPath, '--no-env-file', script], {
+          cwd: home, env: { HOME: home, GBRAIN_HOME: home, PATH: process.env.PATH ?? '' },
+          stdout: 'pipe', stderr: 'pipe', timeout: 30_000,
+        });
+        expect(child.exitCode).toBe(1);
+        expect(child.stdout.toString()).not.toContain('All migrations up to date.');
+        expect(entries(ledger)).toHaveLength(state === 'wedged' ? 3 : 1);
+      });
+    }, 30_000);
+  }
+
   test('live-owner retries do not wedge a pending content migration after the owner exits', async () => {
     await fixture(async (home, ledger) => {
       const database = join(home, '.gbrain', 'brain');

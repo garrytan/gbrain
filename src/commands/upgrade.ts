@@ -4,6 +4,8 @@ import { basename, join, dirname, resolve } from 'path';
 import { parseSemver, semverGt } from '../core/semver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { VERSION } from '../version.ts';
+import { beginSourceUpgrade, clearSourceUpgradeGuard } from '../core/source-upgrade-guard.ts';
+import { currentCliInvocation } from '../core/current-cli-invocation.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 
@@ -35,15 +37,28 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   // relaunched binary runs migrations on boot (split-brain guard). v0.42.
   const swapOnly = args.includes('--swap-only');
   const noAutopilotInstall = args.includes('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1';
-  const upgradeEnv = noAutopilotInstall ? { ...process.env, GBRAIN_NO_AUTOPILOT_INSTALL: '1' } : process.env;
+  const upgradeEnv = {
+    ...process.env,
+    ...(noAutopilotInstall ? { GBRAIN_NO_AUTOPILOT_INSTALL: '1' } : {}),
+    ...(swapOnly ? { GBRAIN_DEFER_POSTINSTALL_MIGRATIONS: '1' } : {}),
+  };
 
   // Capture old version BEFORE upgrading (Codex finding: old binary runs this code)
   const oldVersion = VERSION;
+  // The unattended daemon passes its already-validated cache target to this
+  // child. An invalid value must not turn a failed swap into a success.
+  const target = opts.targetVersion ?? process.env.GBRAIN_UPGRADE_TARGET_VERSION;
+  if (target && !parseSemver(target)) {
+    console.error(`Invalid upgrade target version: ${target}`);
+    setCliExitVerdict(1);
+    return;
+  }
   const method = detectInstallMethod();
 
   console.log(`Detected install method: ${method}`);
 
   let upgraded = false;
+  let sourceRoot: string | undefined;
   switch (method) {
     case 'bun-link': {
       const linkInfo = detectBunLink();
@@ -51,12 +66,31 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         console.error('bun-link detected but could not resolve repo root.');
         break;
       }
+      sourceRoot = linkInfo.repoRoot;
       console.log(`Upgrading bun-link source clone at ${linkInfo.repoRoot}...`);
+      let pulled = false;
+      let cleanHead = '';
+      let guardWritten = false;
       try {
+        // The marker precedes any source mutation, including abrupt process
+        // death during pull or install. An unsafe checkout cannot resume work.
+        const trackedChanges = execFileSync('git', ['-C', linkInfo.repoRoot, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8', timeout: 10_000 }).trim();
+        if (trackedChanges) throw new Error('source checkout has tracked local edits');
+        cleanHead = execFileSync('git', ['-C', linkInfo.repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 }).trim();
+        beginSourceUpgrade(linkInfo.repoRoot, target);
+        guardWritten = true;
         execFileSync('git', ['-C', linkInfo.repoRoot, 'pull', '--ff-only'], { stdio: 'inherit', timeout: 120_000 });
+        pulled = true;
         execFileSync('bun', ['install'], { cwd: linkInfo.repoRoot, env: upgradeEnv, stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
+        if (guardWritten && !pulled && cleanHead) {
+          try {
+            const currentHead = execFileSync('git', ['-C', linkInfo.repoRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 10_000 }).trim();
+            const status = execFileSync('git', ['-C', linkInfo.repoRoot, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8', timeout: 10_000 }).trim();
+            if (currentHead === cleanHead && !status) clearSourceUpgradeGuard(linkInfo.repoRoot);
+          } catch { /* keep the guard when checkout state is uncertain */ }
+        }
         console.error('Auto-upgrade failed. Try manually:');
         console.error(`  cd ${linkInfo.repoRoot} && git pull && bun install`);
       }
@@ -111,7 +145,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
-          toVersion: opts.targetVersion ?? result.targetVersion ?? 'unknown',
+          toVersion: target ?? result.targetVersion ?? 'unknown',
           error: result.reason,
           hint: 'Integrity check failed; existing binary retained. Retry or download manually.',
         });
@@ -122,7 +156,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
-          toVersion: opts.targetVersion ?? result.targetVersion ?? 'unknown',
+          toVersion: target ?? result.targetVersion ?? 'unknown',
           error: `${result.reason}${result.error ? `: ${result.error}` : ''}`,
           hint: 'Download from https://github.com/garrytan/gbrain/releases',
         });
@@ -148,15 +182,26 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       console.log('  Download from https://github.com/garrytan/gbrain/releases');
   }
 
-  if (upgraded) {
+  if (!upgraded) {
+    // The caller (especially autopilot) must never interpret a failed pull,
+    // install, or binary replacement as an applied update.
+    setCliExitVerdict(1);
+    return;
+  }
+
+  {
     const newVersion = verifyUpgrade();
+    if (method === 'bun-link' && !parseSemver(newVersion)) {
+      console.error('Source upgrade could not verify the installed version; leaving autopilot stopped.');
+      setCliExitVerdict(1);
+      return;
+    }
     // #4366: a still-older resolved version means the swap never happened
     // (exact-tag Git pins make `bun update` a successful no-op). Fail loudly
     // and return BEFORE the breadcrumb/cache bookkeeping below, so the
     // pending-upgrade marker survives and keeps nagging.
-    const target = opts.targetVersion;
-    if (target && assessUpgradeOutcome(target, newVersion) === 'mismatch') {
-      console.error(`Upgrade did not take effect: still running ${newVersion}, expected ${target}.`);
+    if (target && assessUpgradeOutcome(target, newVersion) !== 'ok') {
+      console.error(`Upgrade did not take effect: observed ${newVersion || 'no version'}, expected ${target}.`);
       console.error('Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');
       console.error(`  bun add -g github:garrytan/gbrain#v${target}`);
       recordUpgradeError({
@@ -190,8 +235,9 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     // --swap-only stops here: the swap is done + smoke-verified, but the
     // (potentially 30-min) post-upgrade is deferred to the next launch so the
     // autopilot silent channel can swap + relaunch without freezing its tick.
-    // connectEngine's pending-migration probe + runPostUpgrade run on boot.
+    // The relaunched autopilot runs post-upgrade before it opens the brain.
     if (swapOnly) {
+      if (sourceRoot) clearSourceUpgradeGuard(sourceRoot);
       return;
     }
     // Run post-upgrade feature discovery (reads migration files from the NEW binary).
@@ -204,12 +250,13 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
       process.env.GBRAIN_POST_UPGRADE_TIMEOUT_MS || 1_800_000,
     );
     try {
-      execFileSync('gbrain', ['post-upgrade', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])], { env: upgradeEnv, stdio: 'inherit', timeout: postUpgradeTimeoutMs });
+      const { loadConfigFileOnly } = await import('../core/config.ts');
+      const invocation = currentCliInvocation(['post-upgrade', ...(loadConfigFileOnly() ? ['--strict'] : []), ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
+      execFileSync(invocation.file, invocation.args, { env: upgradeEnv, stdio: 'inherit', timeout: postUpgradeTimeoutMs });
+      if (sourceRoot) clearSourceUpgradeGuard(sourceRoot);
     } catch (e) {
-      // post-upgrade is best-effort, don't fail the upgrade. BUT leave a
-      // trail so `gbrain doctor` can surface it and give the user a clear
-      // paste-ready recovery command. Silent failure here is how users end
-      // up with half-upgraded brains and no signal.
+      // The binary may have swapped, but required setup did not complete.
+      // Keep an actionable trail and report failure to the caller.
       recordUpgradeError({
         phase: 'post-upgrade',
         fromVersion: oldVersion,
@@ -217,6 +264,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         error: e instanceof Error ? e.message : String(e),
         hint: 'Run: gbrain apply-migrations --yes',
       });
+      setCliExitVerdict(1);
     }
     // Run features scan to show what's new and what to fix
     try {
@@ -269,7 +317,8 @@ function findBunInstallRootFromArgv(): string | null {
 
 function verifyUpgrade(): string {
   try {
-    const output = execSync('gbrain --version', { encoding: 'utf-8', timeout: 10_000 }).trim();
+    const invocation = currentCliInvocation(['--version']);
+    const output = execFileSync(invocation.file, invocation.args, { encoding: 'utf-8', timeout: 10_000 }).trim();
     console.log(`Upgrade complete. Now running: ${output}`);
     return output.replace(/^gbrain\s*/i, '').trim();
   } catch {
@@ -356,10 +405,11 @@ function saveUpgradeState(oldVersion: string, newVersion: string) {
  * one-time informational banner, and rewrite an existing autopilot systemd unit
  * to Restart=always so the silent channel's exit-for-relaunch respawns.
  */
-async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void> {
+async function applySelfUpgradeSetup(noAutopilotInstall: boolean, strict = false): Promise<void> {
   try {
     const { loadConfig, saveConfig } = await import('../core/config.ts');
     const cfg = loadConfig();
+    if (!cfg && strict) throw new Error('configuration unavailable for self-upgrade setup');
     if (cfg) {
       const su = cfg.self_upgrade ?? {};
       let changed = false;
@@ -387,8 +437,8 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
         saveConfig(cfg);
       }
     }
-  } catch {
-    /* best-effort */
+  } catch (e) {
+    if (strict) throw e;
   }
   if (noAutopilotInstall) return;
   try {
@@ -404,12 +454,16 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
 
 export async function runPostUpgrade(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain post-upgrade [--no-autopilot-install]');
+    console.log('Usage: gbrain post-upgrade [--no-autopilot-install] [--strict]');
     console.log('Prints feature pitches for new migrations and runs apply-migrations.');
     console.log('--no-autopilot-install (or GBRAIN_NO_AUTOPILOT_INSTALL=1) skips autopilot installation and service rewrites.');
     console.log('Idempotent — safe to re-run any time.');
     return;
   }
+
+  // The unattended relaunch requires a nonzero exit when mechanical setup
+  // fails. Interactive post-upgrade retains its historical best-effort mode.
+  const strict = args.includes('--strict');
 
   // v0.35.8.0: lay down ~/.gbrain/.gitignore retroactively. Existing users
   // never re-run `gbrain init`, so init-only coverage misses them entirely
@@ -426,7 +480,13 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   // Restart=always so the silent channel's exit-for-relaunch respawns. All
   // file-plane + mechanical + idempotent; never blocks the upgrade.
   const noAutopilotInstall = args.includes('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1';
-  await applySelfUpgradeSetup(noAutopilotInstall);
+  try {
+    await applySelfUpgradeSetup(noAutopilotInstall, strict);
+  } catch (e) {
+    console.error(`Self-upgrade setup failed: ${e instanceof Error ? e.message : String(e)}`);
+    setCliExitVerdict(1);
+    if (strict) return;
+  }
   // Cosmetic: print feature pitches for migrations newer than the prior binary.
   try {
     const statePath = join(process.env.HOME || '', '.gbrain', 'upgrade-state.json');
@@ -457,7 +517,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   // (autopilot install) doesn't hit a subprocess boundary.
   try {
     const { runApplyMigrations } = await import('./apply-migrations.ts');
-    await runApplyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
+    await runApplyMigrations(['--yes', '--non-interactive', ...(strict ? ['--require-db'] : []), ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])], { requireComplete: strict });
   } catch (e) {
     // Surface the error but don't throw — post-upgrade is best-effort.
     // Users can re-run `gbrain apply-migrations` manually if they want
@@ -465,6 +525,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`\napply-migrations failed: ${msg}`);
     console.error('Run `gbrain apply-migrations --yes` manually to retry.');
+    if (strict) setCliExitVerdict(1);
   }
 
   // v0.28.5 (X1): explicitly apply pending schema migrations.
@@ -667,6 +728,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`\nSchema auto-apply skipped: ${msg}`);
     console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
+    if (strict) setCliExitVerdict(1);
   }
 
   // v0.25.1: agent-readable advisory listing recommended skills the
@@ -811,6 +873,10 @@ function isNewerThan(version: string, baseline: string): boolean {
   return false;
 }
 
+export function isPublishedBinaryExecutable(execPath: string): boolean {
+  return /(?:^|[/\\])(?:gbrain(?:-darwin-arm64|-linux-x64)?|gb)(?:\.exe)?$/.test(execPath);
+}
+
 export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'clawhub' | 'unknown' {
   const execPath = process.execPath || '';
 
@@ -834,7 +900,7 @@ export function detectInstallMethod(): 'bun' | 'bun-link' | 'binary' | 'clawhub'
   }
 
   // Check if running as compiled binary
-  if (execPath.endsWith('/gbrain') || execPath.endsWith('\\gbrain.exe')) {
+  if (isPublishedBinaryExecutable(execPath)) {
     return 'binary';
   }
 

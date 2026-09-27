@@ -24,7 +24,7 @@ test/autopilot-install.test.ts	autopilot wrapper script — env source order (v0
 test/autopilot-install.test.ts	autopilot wrapper script — gbrain-owned env file (#2608)	5	readFileSync
 test/autopilot-install.test.ts	autopilot wrapper script — key sourcing (#2608)	1	readFileSync
 test/autopilot-pause-marker.test.ts	pause marker fences minion job pickup	1	readFileSync
-test/autopilot-self-upgrade.test.ts	autopilot self-upgrade static-shape regressions	4	readFileSync
+test/autopilot-self-upgrade.test.ts	autopilot self-upgrade static-shape regressions	8	readFileSync
 test/autopilot-shutdown-engine-close.test.ts	autopilot.ts graceful engine shutdown (#1872)	6	readFileSync
 test/autopilot-supervisor-wiring.test.ts	autopilot.ts ↔ ChildWorkerSupervisor wiring	7	readFileSync
 test/backlinks-job-default.test.ts	backlinks Minion handler — empty payload defaults to check, not fix	3	readFileSync
@@ -328,7 +328,7 @@ test/timing-safe.test.ts	extraction contract	1	readFileSync
 test/tool-catalog.test.ts	freshness guard	2	readFileSync
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
 test/upgrade-skill-publish-prompt-race.test.ts	gbrain upgrade — skill-publish prompt wiring (#4318 residual)	3	readFileSync
-test/upgrade.serial.test.ts	detectInstallMethod heuristic (source analysis)	13	readFileSync
+test/upgrade.serial.test.ts	detectInstallMethod heuristic (source analysis)	14	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane A — defaults sweep	8	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane B — init paths	3	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane C.3 — Voyage key reaches buildGatewayConfig	3	readFileSync

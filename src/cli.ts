@@ -2946,10 +2946,10 @@ async function handleCliOnly(command: string, args: string[]) {
   // contract matters (live daemon, DB outage). #1525: positional spellings
   // resolve to flags (or exit 2 on an unknown word) BEFORE connectEngine.
   if (command === 'autopilot') {
-    const { resolveAutopilotPositionals, runAutopilotStatus, uninstallDaemon } = await import('./commands/autopilot.ts');
-    args = resolveAutopilotPositionals(args);
-    if (args.includes('--uninstall')) { uninstallDaemon(); return; }
-    if (args.includes('--status')) { runAutopilotStatus(args); return; }
+    const { preflightAutopilotCommand } = await import('./commands/autopilot-upgrade.ts');
+    const preflight = preflightAutopilotCommand(args);
+    args = preflight.args;
+    if (preflight.handled) return;
   }
 
   // Thin-client `think` dispatch: runThinkCli already routes through

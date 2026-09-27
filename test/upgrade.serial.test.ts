@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSy
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
 import * as upgradeModule from '../src/commands/upgrade.ts';
-import { resolveBunGlobalRoot } from '../src/commands/upgrade.ts';
+import { isPublishedBinaryExecutable, resolveBunGlobalRoot } from '../src/commands/upgrade.ts';
 import { formatMarker } from '../src/core/self-upgrade.ts';
 import type { BinarySelfUpdateResult } from '../src/core/binary-self-update.ts';
 import { VERSION } from '../src/version.ts';
@@ -48,12 +48,12 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
 
   test('checks node_modules before binary', () => {
     const nodeModulesIdx = source.indexOf('node_modules');
-    const binaryIdx = source.indexOf("endsWith('/gbrain')");
+    const binaryIdx = source.indexOf('if (isPublishedBinaryExecutable(execPath))');
     expect(nodeModulesIdx).toBeLessThan(binaryIdx);
   });
 
   test('checks binary before clawhub', () => {
-    const binaryIdx = source.indexOf("endsWith('/gbrain')");
+    const binaryIdx = source.indexOf('if (isPublishedBinaryExecutable(execPath))');
     const clawhubIdx = source.indexOf("clawhub --version");
     expect(binaryIdx).toBeLessThan(clawhubIdx);
   });
@@ -132,6 +132,13 @@ describe('detectInstallMethod heuristic (source analysis)', () => {
     expect(source).toContain('releases');
     expect(source).toContain('#658');
   });
+});
+
+test('official binaries and the gb shim remain valid recovery executables', () => {
+  for (const name of ['gbrain', 'gbrain-darwin-arm64', 'gbrain-linux-x64', 'gb', 'gbrain.exe']) {
+    expect(isPublishedBinaryExecutable(`/opt/bin/${name}`)).toBe(true);
+  }
+  expect(isPublishedBinaryExecutable('/usr/local/bin/bun')).toBe(false);
 });
 
 describe('resolveBunGlobalRoot', () => {
@@ -293,6 +300,7 @@ describe('runUpgrade target verification (#4366)', () => {
     writeFileSync(
       driverPath,
       mockPrelude +
+        `if (process.argv.includes('--version')) { console.log('gbrain ${opts.observedVersion}'); process.exit(0); }\n` +
         `import { runUpgrade } from '${repoRoot}src/commands/upgrade.ts';\n` +
         `const t = process.env.TEST_TARGET_VERSION;\n` +
         `await runUpgrade(['--swap-only'], t ? { targetVersion: t } : {});\n`,
@@ -386,11 +394,14 @@ describe('runUpgrade target verification (#4366)', () => {
     ['replace_failed', 'EACCES: permission denied'],
   ] as const) {
     test(`binary self-update ${reason} records to_version = attempted release`, async () => {
-      const { home } = await runUpgradeAgainstFakeInstall({
+      const { home, exitCode } = await runUpgradeAgainstFakeInstall({
         observedVersion: OLD,
         binaryResult: { ok: false, reason, targetVersion: TARGET, error },
       });
       try {
+        expect(exitCode).toBe(1);
+        expect(existsSync(join(home, '.gbrain', 'last-update-check'))).toBe(true);
+        expect(existsSync(join(home, '.gbrain', 'just-upgraded-from'))).toBe(false);
         const errPath = join(home, '.gbrain', 'upgrade-errors.jsonl');
         const records = readFileSync(errPath, 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
         const rec = records.find((r) => r.phase === 'binary-self-update');

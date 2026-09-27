@@ -21,7 +21,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, uti
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'path';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadPreferences } from '../core/preferences.ts';
 import { loadConfig, loadConfigFileOnly, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
@@ -33,6 +33,7 @@ import {
 import { ChildWorkerSupervisor } from '../core/minions/child-worker-supervisor.ts';
 import { VERSION } from '../version.ts';
 import {
+  AUTO_CHECK_INTERVAL_MS,
   canSelfUpdate,
   decideSelfUpgrade,
   isCacheFresh,
@@ -42,8 +43,11 @@ import {
 } from '../core/self-upgrade.ts';
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { detectInstallMethod } from './upgrade.ts';
+import { sourceUpgradeIncomplete } from '../core/source-upgrade-guard.ts';
+import { currentCliInvocation } from '../core/current-cli-invocation.ts';
+import { beginPendingUpgrade, pendingUpgradeExists } from '../core/autopilot-upgrade-pending.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
-import { inspectLock } from '../core/db-lock.ts';
+import { clearPendingIfUnchanged, computeAutopilotIdle, drainUpgradeWorker, mayRetryUnchangedInstall, stopOnUpgradeReportFailure } from './autopilot-upgrade-runtime.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
@@ -347,38 +351,19 @@ function reconcileSelfUpgradeAtBoot(): void {
   }
 }
 
-/** Conservative idle: no cycle running AND (Postgres) no active/waiting jobs.
- * Any ambiguity / error → NOT idle (we'd rather skip an upgrade window). */
-async function computeAutopilotIdle(engine: BrainEngine, engineType: string): Promise<boolean> {
-  try {
-    const cycle = await inspectLock(engine, 'gbrain-cycle');
-    if (cycle) return false; // a cycle (sync/extract/embed/...) is running
-    if (engineType === 'postgres') {
-      const rows = await (engine as any).executeRaw?.(
-        `SELECT count(*)::int AS n FROM minion_jobs WHERE status IN ('active','waiting')`,
-      );
-      const busy = Number((rows as Array<{ n: number }>)?.[0]?.n ?? 0);
-      return busy === 0;
-    }
-    return true; // pglite: no separate worker queue; cycle-lock-free is the signal
-  } catch {
-    return false;
-  }
-}
-
 /**
  * The autopilot silent self-upgrade channel. Opt-in (`self_upgrade.mode=auto`).
  * Fires only when behind + idle + in quiet hours + the install can self-update
- * and the target isn't known-bad. On apply: write the breadcrumb, run
- * `gbrain upgrade --swap-only` (fast; defers post-upgrade to the relaunch),
- * then unlink the autopilot lock and exit(0) so the supervisor relaunches the
- * new binary (no in-process re-exec — Bun has no execve). Never throws.
+ * and the target isn't known-bad. On apply: write the breadcrumb, swap through
+ * the current CLI, then exit for supervisor relaunch and setup. Never throws.
  */
 async function attemptAutopilotSelfUpgrade(
   engine: BrainEngine,
   engineType: string,
   lockPath: string,
-): Promise<void> {
+  beforeSwap: () => Promise<void>,
+): Promise<boolean | void> {
+  let swapStarted = false;
   try {
     const cfg = loadConfig();
     if (!cfg) return;
@@ -413,7 +398,9 @@ async function attemptAutopilotSelfUpgrade(
       idle,
       inQuietHours: verdict !== 'allow',
       canSelfUpdate: canSelfUpdate(installMethod),
-      throttledByInterval: false, // cache TTL is the fetch throttle
+      throttledByInterval: typeof cfg.self_upgrade?.last_check_ts === 'number'
+        && Date.now() >= cfg.self_upgrade.last_check_ts
+        && Date.now() - cfg.self_upgrade.last_check_ts < AUTO_CHECK_INTERVAL_MS,
     });
 
     if (decision.action !== 'apply') {
@@ -437,17 +424,28 @@ async function attemptAutopilotSelfUpgrade(
     console.log(`[autopilot] self-upgrade: applying ${VERSION} -> ${latestVersion} (idle, quiet hours).`);
 
     try {
-      execSync('gbrain upgrade --swap-only', {
+      beginPendingUpgrade(latestVersion);
+      swapStarted = true;
+      await beforeSwap();
+      const invocation = currentCliInvocation(['upgrade', '--swap-only', '--no-autopilot-install']);
+      execFileSync(invocation.file, invocation.args, {
         stdio: 'inherit',
         timeout: 300_000,
-        env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+        env: {
+          ...process.env,
+          GBRAIN_SKIP_STARTUP_HOOKS: '1',
+          GBRAIN_NO_AUTOPILOT_INSTALL: '1',
+          GBRAIN_UPGRADE_TARGET_VERSION: latestVersion,
+        },
       });
     } catch (e) {
+      if (!sourceUpgradeIncomplete() && mayRetryUnchangedInstall(installMethod)) clearPendingIfUnchanged(VERSION);
       const fresh = loadConfig();
       if (fresh) {
-        const failed = new Set(fresh.self_upgrade?.failed_versions ?? []);
-        failed.add(latestVersion);
-        fresh.self_upgrade = { ...(fresh.self_upgrade ?? {}), failed_versions: [...failed] };
+        // Pull/download/install failures may be transient. Keep this release
+        // eligible after a bounded retry delay; only a failed relaunch marks
+        // the version known-bad in reconcileSelfUpgradeAtBoot.
+        fresh.self_upgrade = { ...(fresh.self_upgrade ?? {}), last_check_ts: Date.now() };
         delete fresh.self_upgrade.attempting_version;
         saveConfig(fresh);
       }
@@ -459,20 +457,14 @@ async function attemptAutopilotSelfUpgrade(
         outcome: 'failed',
         error: e instanceof Error ? e.message : String(e),
       });
-      console.error(`[autopilot] self-upgrade swap failed; staying on ${VERSION}.`);
-      return;
+      if (sourceUpgradeIncomplete() || pendingUpgradeExists()) {
+        console.error('[autopilot] upgrade incomplete; stopping until the installation is repaired.');
+        return true;
+      }
+      console.error(`[autopilot] self-upgrade swap failed; staying on ${VERSION} and retrying after 24h.`);
+      return true;
     }
 
-    // Swap done + smoke-verified by `upgrade --swap-only`. Exit cleanly so the
-    // supervisor relaunches the NEW binary, which reconciles the breadcrumb.
-    logSelfUpgrade({
-      channel: 'autopilot',
-      action: 'apply',
-      current: VERSION,
-      latest: latestVersion,
-      outcome: 'applied',
-      reason: 'swapped; exiting for supervisor relaunch',
-    });
     console.log('[autopilot] self-upgrade swapped; exiting for relaunch.');
     try {
       unlinkSync(lockPath);
@@ -481,7 +473,7 @@ async function attemptAutopilotSelfUpgrade(
     }
     process.exit(0);
   } catch {
-    /* the self-upgrade channel must never break the tick */
+    return stopOnUpgradeReportFailure(swapStarted);
   }
 }
 
@@ -678,6 +670,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   reconcileSelfUpgradeAtBoot();
 
   let stopping = false;
+  let upgrading = false;
   let childSupervisor: ChildWorkerSupervisor | null = null;
 
   // #1872: graceful engine shutdown. On PGLite the cycle steps run INLINE in
@@ -735,7 +728,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       // (operator export, nested supervision) would silently disable it.
       env: { ...process.env, GBRAIN_SUPERVISED: undefined } as Record<string, string | undefined>,
       maxCrashes: 5,
-      isStopping: () => stopping,
+      isStopping: () => stopping || upgrading,
       onMaxCrashesExceeded: (count, max) => {
         console.error(`[autopilot] ${count}/${max} consecutive worker crashes, giving up.`);
         void shutdown('max_crashes');
@@ -811,7 +804,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     await closeEngine();
     deregisterEngineClose();
     try { unlinkSync(lockPath); } catch { /* already gone */ }
-    process.exit(sig === 'max_crashes' || sig === 'cycle-failure-cap' ? 1 : 0);
+    process.exit(sig === 'max_crashes' || sig === 'cycle-failure-cap' || sig === 'source-upgrade-incomplete' ? 1 : 0);
   };
   process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
   process.on('SIGINT',  () => { void shutdown('SIGINT'); });
@@ -1000,7 +993,14 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     // v0.42 self-upgrade silent channel (opt-in self_upgrade.mode=auto). Runs
     // each tick; cache TTL throttles the actual GitHub fetch. On apply it swaps
     // + exits for supervisor relaunch (never returns). No-op unless mode=auto.
-    await attemptAutopilotSelfUpgrade(engine, engineType, lockPath);
+    if (await attemptAutopilotSelfUpgrade(engine, engineType, lockPath, async () => {
+      // Drain the worker before the swap; keep it stopped until relaunch.
+      upgrading = true;
+      await drainUpgradeWorker(childSupervisor);
+    })) {
+      await shutdown(sourceUpgradeIncomplete() || pendingUpgradeExists() ? 'source-upgrade-incomplete' : 'upgrade-retry');
+      return;
+    }
 
     // --no-worker peer-liveness probe (v0.19.1). Runs every cycle, cheap
     // (single SELECT). See NO_WORKER_WARN_TICKS comment above for caveats.

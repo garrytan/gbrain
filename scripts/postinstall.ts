@@ -21,6 +21,10 @@
 
 import { which } from 'bun';
 
+// Unattended swap-only keeps the running daemon's database untouched. The
+// relaunched CLI runs strict post-upgrade before opening the brain.
+if (process.env.GBRAIN_DEFER_POSTINSTALL_MIGRATIONS === '1') process.exit(0);
+
 const HINT =
   '[gbrain] postinstall skipped. If installed via bun install -g github:...: ' +
   'run `gbrain doctor` and `gbrain apply-migrations --yes` manually. ' +
