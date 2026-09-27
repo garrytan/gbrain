@@ -17,6 +17,7 @@
  */
 
 import type { ResolverResult } from '../resolvers/interface.ts';
+import { PAGE_SLUG_SEG } from '../cjk.ts';
 
 // ---------------------------------------------------------------------------
 // Tweet citations
@@ -197,8 +198,10 @@ function assertMessageId(id: unknown): asserts id is string {
   }
 }
 
-// Slug: dir/name with allowed characters. Matches PageType dir conventions.
-const SLUG_RE = /^[a-z0-9][a-z0-9\-]*(\/[a-z0-9][a-z0-9\-]*)+$/;
+// Slug: dir/name (>= 2 segments) on the page-slug segment grammar shared with
+// validatePageSlug and SlugRegistry, so slugs of every script pass (#11).
+// `u` flag required by PAGE_SLUG_SEG's \p{...} classes.
+const SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`, 'u');
 function assertSlug(slug: unknown): asserts slug is string {
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) {
     throw new ScaffoldError('invalid_slug', `Invalid slug: ${JSON.stringify(slug)}`);
