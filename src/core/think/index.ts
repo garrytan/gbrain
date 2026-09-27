@@ -32,6 +32,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { foldSlugText, SLUG_WORD_CHARS } from '../cjk.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -959,6 +960,19 @@ export function stripGapsSection(answer: string): string {
   return kept.replace(/\s+$/, '');
 }
 
+const SYNTHESIS_DROP_RE = new RegExp(`[^${SLUG_WORD_CHARS}\\s]+`, 'gu');
+
+/**
+ * `synthesis/<stem>-<date>` for a question: the shared letter fold (ADR-0001),
+ * other characters dropped, whitespace runs → one hyphen, capped at 60 code
+ * points. Letters of every script survive, so two non-Latin questions on one
+ * day no longer share `synthesis/untitled-<date>` (#21).
+ */
+export function synthesisSlug(question: string, date: string): string {
+  const stem = foldSlugText(question).replace(SYNTHESIS_DROP_RE, '').trim().replace(/\s+/g, '-');
+  return `synthesis/${Array.from(stem).slice(0, 60).join('') || 'untitled'}-${date}`;
+}
+
 /**
  * Persist a synthesis page + its evidence. Returns the saved slug.
  * Synthesis pages are written under `synthesis/<slugified-question>-<date>.md`.
@@ -976,13 +990,7 @@ export async function persistSynthesis(
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const slugSafe = result.question
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, '')
-    .trim()
-    .replace(/\s+/g, '-')
-    .slice(0, 60) || 'untitled';
-  const slug = `synthesis/${slugSafe}-${today}`;
+  const slug = synthesisSlug(result.question, today);
 
   // Build the markdown body
   const body = [

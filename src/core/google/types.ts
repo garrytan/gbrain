@@ -82,6 +82,7 @@ export function deriveSourceId(account: string): string {
   const local = account.split('@')[0] ?? 'gmail';
   const id = `gmail-${local}`
     .toLowerCase()
+    // gbrain-allow-ascii-class: source id must pass the ASCII SOURCE_ID_RE
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .slice(0, 32)

@@ -89,6 +89,7 @@ export const CLOUD_ATTACH_FLOW_HINT =
 export function slugifyRepoName(name: string): string {
   const slug = name
     .toLowerCase()
+    // gbrain-allow-ascii-class: GitHub repository names are ASCII
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug || 'agent';

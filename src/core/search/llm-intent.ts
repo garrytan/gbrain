@@ -72,6 +72,7 @@ export async function classifyModalityWithLLM(
  * trailing punctuation + casing. Anything unrecognized → fallback.
  */
 export function parseModality(raw: string, fallback: ModalityMode): ModalityMode {
+  // gbrain-allow-ascii-class: parses an English enum from model output
   const normalized = raw.trim().toLowerCase().replace(/[^a-z]+/g, '');
   if (normalized === 'text' || normalized === 'image' || normalized === 'both') {
     return normalized;
