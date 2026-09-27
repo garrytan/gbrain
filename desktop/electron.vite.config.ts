@@ -1,4 +1,5 @@
 import { defineConfig } from 'electron-vite';
+import { resolve } from 'node:path';
 
 export default defineConfig({
   main: {},
@@ -12,5 +13,14 @@ export default defineConfig({
       },
     },
   },
-  renderer: {},
+  renderer: {
+    publicDir: resolve('..', 'admin/public'),
+    resolve: {
+      alias: {
+        'react-dom': resolve('..', 'admin/node_modules/react-dom'),
+        react: resolve('..', 'admin/node_modules/react'),
+      },
+    },
+    esbuild: { jsx: 'automatic' },
+  },
 });

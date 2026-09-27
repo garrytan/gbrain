@@ -79,6 +79,17 @@ const scrollTarget = panelScrollTarget[panel];
 const mockApi = `
 <script>
 window.pmbrainDesktop = {
+   onNavigate: () => () => {},
+   productRequest: async ({ path }) => {
+     const overview = {
+       version: 'preview', engine: 'pglite', schema_pack: 'preview', chat_model: 'mimo:mimo-v2.5-pro', embedding_model: 'zhipu:embedding-3', embedding_dimensions: 1024, expansion_model: null,
+       stats: { page_count: 0, chunk_count: 0, embedded_count: 0, link_count: 0, timeline_entry_count: 0, pages_by_type: {} },
+       embedding_coverage: 0, pending_embeddings: 0, recent_write_at: null, sources: [], main_source_id: 'default', federated_source_count: 0,
+       provider_status: { providers: { mimo: true, zhipu: true }, chat: { enabled: true, chat_model: 'mimo:mimo-v2.5-pro', provider: 'mimo', missing: [] } }, llm_enabled: true, config: {}
+     };
+     const body = path.startsWith('/admin/api/brain/overview') ? overview : path === '/admin/api/theme' ? { source: '${theme}' } : { error: '此预览不连接真实知识服务' };
+     return { status: path.startsWith('/admin/api/brain/overview') || path === '/admin/api/theme' ? 200 : 503, contentType: 'application/json', body: JSON.stringify(body) };
+   },
    getSetup: async () => ({
     setup: {
       needsSetup: ${firstRun},
@@ -333,6 +344,7 @@ window.pmbrainDesktop = {
   quit: async () => {}
 };
 console.log('PMBrain mock injected: panel=${panel}, theme=${theme}, integrations count=9');
+window.location.hash = 'settings-${panel}';
 // HTML 初始状态已在 Node.js 侧修改，无需 setTimeout 切换面板
 // 等 DOM 渲染后滚动到目标区域
 setTimeout(() => {
@@ -364,7 +376,7 @@ const rendererAssetBase = prepareOnly
 html = html.replace(/(["'])\.\/assets\//g, `$1${rendererAssetBase}`);
 
 // 移除 CSP 限制
-html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]+ \/>/, '');
+html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '');
 
 // 注入 mock API（插到 </head> 前），提供 JS 降级
 html = html.replace('</head>', `${mockApi}\n</head>`);

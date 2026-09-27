@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const html = readFileSync(resolve('src/renderer/index.html'), 'utf8');
+const html = readFileSync(resolve('src/renderer/settings-content.html'), 'utf8');
 const renderer = readFileSync(resolve('src/renderer/src.ts'), 'utf8');
 const mainIndex = readFileSync(resolve('src/main/index.ts'), 'utf8');
 const styles = readFileSync(resolve('src/renderer/style.css'), 'utf8');
@@ -273,11 +273,11 @@ describe('desktop settings renderer contracts', () => {
     expect(styles).toContain('.connection-spine');
   });
 
-  test('keeps local MCP setup and routes shared member management to the admin console', () => {
+  test('keeps local MCP setup and routes shared member management within the product', () => {
     expect(html).toContain('本机 Agent 接入');
     expect(html).toContain('共享成员接入');
     expect(html).toContain('id="shared-open-admin"');
-    expect(html).toContain('凭证创建与成员管理请到 PMBrain 管理控制台');
+    expect(html).toContain('凭证创建与成员管理请到 MCP 接入页面');
     for (const removedId of [
       'shared-member-name',
       'shared-client',

@@ -1,0 +1,644 @@
+
+    <main class="app-shell">
+      <aside class="rail">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div><b>PMBrain</b><small>DESKTOP</small></div>
+        </div>
+        <nav aria-label="配置步骤">
+          <span class="rail-group">设置</span>
+          <button class="rail-item active" data-target="basic" title="基础配置"><span>01</span>基础配置</button>
+          <button class="rail-item" data-target="models" title="模型配置"><span>02</span>模型配置</button>
+          <span class="rail-group separated">连接与维护</span>
+          <button class="rail-item" data-target="integrations" title="MCP 接入"><span>03</span>MCP 接入</button>
+          <button class="rail-item" data-target="system" title="系统设置"><span>04</span>系统设置</button>
+          <button class="rail-item" data-target="updates" title="软件更新"><span>05</span>软件更新</button>
+          <button class="rail-item" data-target="repair" title="软件修复"><span>06</span>软件修复</button>
+        </nav>
+        <div class="service-status">
+          <i id="service-dot"></i>
+          <div><b id="service-label">等待配置</b><small id="service-detail">LOCAL</small></div>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="page-eyebrow">FIRST RUN</p>
+            <h1 id="page-title">把 PMBrain 安顿在这台电脑上</h1>
+          </div>
+          <div class="top-actions">
+            <button class="ghost" id="open-logs">日志</button>
+            <button class="solid" id="open-admin" disabled>进入管理台</button>
+          </div>
+        </header>
+
+        <div class="notice error" id="global-error" role="alert" aria-live="assertive" hidden></div>
+        <div class="notice success" id="global-success" role="status" aria-live="polite" hidden></div>
+
+        <section class="panel active" id="panel-basic">
+          <div class="existing-config" id="existing-config" hidden>
+            <span>LOCAL CONFIG</span>
+            <div><b>已自动接入本机配置</b><small>数据库与 API Key 均沿用现有值；留空不会清除原配置。</small></div>
+          </div>
+          <div class="section-heading">
+            <div><span class="index">01A</span><h2>数据库</h2></div>
+            <p>PGLite 适合单机自用；多人共享或局域网并发建议使用 Docker Postgres。</p>
+          </div>
+          <div class="mode-grid" role="radiogroup" aria-label="数据库模式">
+            <label class="mode-card selected" id="mode-pglite-card">
+              <input type="radio" name="engine" value="pglite" checked />
+              <span class="mode-icon">P</span>
+              <span><b>PGLite 零配置</b><small>本机单用户最省事。数据在用户目录，不支持多人并发写入。</small></span>
+              <em>单机推荐</em>
+            </label>
+            <label class="mode-card" id="mode-postgres-card">
+              <input type="radio" name="engine" value="postgres" />
+              <span class="mode-icon docker">D</span>
+              <span><b>Docker Postgres</b><small>适合多用户、局域网共享，以及更大规模知识库。</small></span>
+              <em class="mode-tag-alt">多用户推荐</em>
+            </label>
+          </div>
+          <div class="engine-usage-hint" id="database-engine-hint" role="note">
+            <b>使用建议</b>
+            <p id="database-engine-hint-text">PGLite 是嵌入式单写者数据库，同一时间只适合本机一个服务进程访问。若需要多人同时通过 MCP/局域网使用，请选择 Docker Postgres。</p>
+          </div>
+          <div class="database-safety"><b>数据库切换说明</b><p>切换 PGLite / Postgres 只会改变连接目标，不会自动迁移、删除或备份原数据库。PGLite 数据仍保留在原位置；切换前请确认目标数据库和数据范围。</p></div>
+          <div class="field-group" id="pglite-fields">
+            <label for="database-path">数据库位置</label>
+            <div class="input-action"><input id="database-path" spellcheck="false" /><button class="ghost choose" data-input="database-path">选择</button></div>
+            <small>选择保存 PMBrain 数据库的本机位置；现有用户会继续使用原位置。</small>
+          </div>
+          <div class="field-group" id="postgres-fields" hidden>
+            <label for="database-instance">Docker 中可用的 PMBrain 数据库</label>
+            <select id="database-instance"><option value="">正在检查 Docker 中可用的 PMBrain 数据库…</option></select>
+            <label class="database-url-label" for="database-url">Postgres 连接地址</label>
+            <input id="database-url" type="password" spellcheck="false" placeholder="postgresql://postgres:postgres@127.0.0.1:5433/pmbrain" />
+            <div class="field-help"><small id="postgres-status">已有数据库可填写地址；当前使用 PGLite 时可一键创建 Docker 数据库并迁移完整知识库。</small><button type="button" class="text-button" id="docker-help-open">第一次使用 Docker？查看四步教程</button></div>
+            <button type="button" class="solid" id="migrate-to-docker">扫描一键迁移方案</button>
+            <div class="database-safety" id="docker-migration-plan" hidden>
+              <b>迁移预检结果</b>
+              <p id="docker-migration-summary"></p>
+              <ul id="docker-migration-details"></ul>
+              <label id="docker-migration-unknown-choice" hidden><input type="checkbox" id="docker-migration-skip-unknown" /> 跳过未知旧表并继续；这些表不会进入新库，原 PGLite 和冷备会保留。</label>
+              <div class="repair-backup-actions"><button type="button" class="solid" id="docker-migration-confirm">备份并开始迁移</button><button type="button" class="ghost" id="docker-migration-cancel">取消迁移</button></div>
+            </div>
+            <small>先扫描旧库并展示处理方案；确认后才冷备、创建专属 Docker 库。全部校验和新服务检查通过后才切换，原库始终保留。</small>
+            <button type="button" class="text-button" id="docker-install-guide">未安装 Docker Desktop？查看官方安装说明</button>
+          </div>
+
+          <div class="section-heading separated">
+            <div><span class="index">01B</span><h2>原始资料与主源</h2></div>
+            <p>选择原始资料目录后，PMBrain 会将其注册为主源；启用 Git 后，快速维护可自动同步目录变化。</p>
+          </div>
+          <div class="field-group">
+            <label for="knowledge-directory">原始资料目录</label>
+            <div class="input-action"><input id="knowledge-directory" spellcheck="false" placeholder="默认：Documents\PMBrain" /><button class="ghost choose" data-input="knowledge-directory">选择</button></div>
+            <small>这里保存你自己的 Markdown、文档与资料；配置和升级不会删除或覆盖这些文件。</small>
+          </div>
+          <div class="source-summary source-status-card" id="knowledge-source-status" hidden>
+            <b id="knowledge-source-title">主源</b>
+            <div class="source-status-content">
+              <code id="knowledge-source-path"></code>
+              <p id="knowledge-source-git-status"></p>
+              <button type="button" class="ghost source-git-button" id="enable-knowledge-source-git" hidden><span>启用 Git 自动同步</span></button>
+            </div>
+          </div>
+          <details class="advanced-block source-advanced">
+            <summary>高级：自定义主源 ID</summary>
+            <div class="field-group">
+              <label for="knowledge-source-id">主源 ID</label>
+              <input id="knowledge-source-id" spellcheck="false" placeholder="留空时按目录自动生成，例如 desktop-a1b2c3d4" />
+              <small id="knowledge-source-hint">主源 ID 用于 CLI 和 MCP 路由。普通用户保持自动生成即可。</small>
+            </div>
+          </details>
+          <div class="panel-next"><button class="primary" id="next-models"><span>下一步：模型配置</span></button></div>
+        </section>
+
+        <section class="panel" id="panel-models">
+          <div class="section-heading">
+            <div><span class="index">02</span><h2>模型配置</h2></div>
+            <p>普通模型用于问答与 AI 深度整理，配置完成后会按任务自动使用。向量模型用于语义检索和向量化，需要单独配置。</p>
+          </div>
+          <div class="model-stack">
+            <section class="model-card">
+              <div class="model-card-heading">
+                <div><b>普通模型</b><button type="button" class="model-add-button" id="add-custom-chat-model" aria-label="添加自定义普通模型"><i aria-hidden="true">＋</i><span>自定义模型</span></button></div>
+                <small id="chat-model-effective">当前未配置</small>
+              </div>
+              <div class="model-fields chat-fields">
+                <label>
+                  <span>供应商</span>
+                  <div class="provider-picker">
+                    <select id="chat-provider">
+                      <option value="">请选择供应商</option>
+                      <option value="mimo">mimo</option>
+                      <option value="zhipu">zhipu</option>
+                      <option value="deepseek">deepseek</option>
+                      <option value="openai">openai</option>
+                      <option value="anthropic">anthropic</option>
+                      <option value="google">google</option>
+                      <option value="openrouter">openrouter</option>
+                      <option value="ollama">ollama</option>
+                    </select>
+                    <ul class="provider-dropdown" id="chat-provider-dropdown" hidden></ul>
+                  </div>
+                </label>
+                <label>
+                  <span>模型名称</span>
+                  <span class="model-picker"><input id="chat-model-name" spellcheck="false" placeholder="mimo-v2.5-pro" autocomplete="off" /><button type="button" class="model-picker-trigger" data-model-input="chat-model-name" aria-label="展开普通模型列表">⌄</button><ul class="model-dropdown" id="chat-model-dropdown" hidden></ul></span>
+                </label>
+                <label>
+                  <span>API Key</span>
+                  <span class="secret-input model-connection-field"><input id="chat-api-key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-secret="chat-api-key" aria-label="显示普通模型 API Key">&#128065;</button><button type="button" class="model-test-button" id="test-chat-model" aria-label="测试普通模型连接" title="测试普通模型连接"><svg class="model-test-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12h4l2-7 4 14 2-7h4" /><path d="M19 8v8M16 11h6" /></svg></button></span>
+                </label>
+              </div>
+              <small class="model-load-status" id="chat-model-load-status" hidden></small>
+            </section>
+            <section class="model-card">
+              <div class="model-card-heading">
+                <div><b>向量化模型</b><button type="button" class="model-add-button" id="add-custom-embedding-model" aria-label="添加自定义向量模型"><i aria-hidden="true">＋</i><span>自定义模型</span></button></div>
+                <small id="embedding-model-effective">当前未配置</small>
+              </div>
+              <div class="model-fields embedding-fields">
+                <label>
+                  <span>供应商</span>
+                  <div class="provider-picker">
+                    <select id="embedding-provider">
+                      <option value="">暂不启用向量化</option>
+                      <option value="zhipu">zhipu</option>
+                      <option value="zeroentropy">zeroentropy</option>
+                      <option value="openai">openai</option>
+                      <option value="openrouter">openrouter</option>
+                      <option value="voyage">voyage</option>
+                      <option value="google">google</option>
+                      <option value="minimax">minimax</option>
+                      <option value="dashscope">dashscope</option>
+                      <option value="ollama">ollama</option>
+                      <option value="llama-server">llama-server</option>
+                      <option value="litellm">litellm</option>
+                    </select>
+                    <ul class="provider-dropdown" id="embedding-provider-dropdown" hidden></ul>
+                  </div>
+                </label>
+                <label>
+                  <span>模型名称</span>
+                  <span class="model-picker"><input id="embedding-model-name" spellcheck="false" placeholder="embedding-3" autocomplete="off" /><button type="button" class="model-picker-trigger" data-model-input="embedding-model-name" aria-label="展开向量模型列表">⌄</button><ul class="model-dropdown" id="embedding-model-dropdown" hidden></ul></span>
+                </label>
+                <label>
+                  <span>API Key</span>
+                  <span class="secret-input model-connection-field"><input id="embedding-api-key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-secret="embedding-api-key" aria-label="显示向量化模型 API Key">&#128065;</button><button type="button" class="model-test-button" id="test-embedding-model" aria-label="测试向量模型连接" title="测试向量模型连接"><svg class="model-test-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12h4l2-7 4 14 2-7h4" /><path d="M19 8v8M16 11h6" /></svg></button></span>
+                </label>
+              </div>
+              <small class="model-load-status" id="embedding-model-load-status" hidden></small>
+              <small>未配置时仅保留原文、分块和关键词检索；本地模型不可用时不会回退到云端或其他默认模型。</small>
+            </section>
+            <section class="model-card">
+              <div class="model-card-heading">
+                <div><b>图片 / OCR 模型</b></div>
+                <small id="ocr-model-effective">自动使用普通模型</small>
+              </div>
+              <div class="model-fields ocr-fields">
+                <label>
+                  <span>供应商（可选）</span>
+                  <select id="ocr-provider"><option value="">请选择供应商</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option><option value="ollama">ollama</option><option value="custom-openai">自定义 OpenAI 接口</option></select>
+                </label>
+                <label>
+                  <span>模型名称（可选）</span>
+                  <input id="ocr-model-name" spellcheck="false" placeholder="留空时使用普通模型" autocomplete="off" />
+                </label>
+                <label>
+                  <span>API Key</span>
+                  <span class="secret-input model-connection-field"><input id="ocr-api-key" type="password" autocomplete="off" /><button type="button" class="secret-toggle" data-secret="ocr-api-key" aria-label="显示图片识别模型 API Key">&#128065;</button><button type="button" class="model-test-button" id="test-ocr-model" aria-label="测试图片识别模型" title="测试图片识别模型"><svg class="model-test-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12h4l2-7 4 14 2-7h4" /><path d="M19 8v8M16 11h6" /></svg></button></span>
+                </label>
+              </div>
+              <small class="model-load-status" id="ocr-model-load-status" hidden></small>
+              <small>留空时自动使用上面的普通模型；单独填写后优先使用这里的模型。模型不支持图片时会跳过识别并提示，不会导致整次维护失败。</small>
+            </section>
+          </div>
+          <details class="advanced-block model-advanced" id="advanced-model-settings">
+            <summary>高级：按任务层级与 Dream 阶段指定模型</summary>
+            <div class="advanced-copy">按任务选择供应商和模型即可，不需要手动拼写 <code>provider:model</code>。API Key 会复用上方模型配置。任务层级未指定时跟随普通模型；Dream 阶段未指定时跟随「推理任务」再跟随普通模型。保存上方基础配置不会清空这里的覆盖，请在本区单独保存或清除。</div>
+            <div class="advanced-model-grid">
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>轻量任务</b><small>规则判断、意图识别、短文本处理</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="utility">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-utility-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-utility-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="utility" aria-label="展开轻量任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-utility-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-utility-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-utility-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>推理任务</b><small>需要分析、归纳和检索的普通任务</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="reasoning">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-reasoning-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-reasoning-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="reasoning" aria-label="展开推理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-reasoning-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-reasoning-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-reasoning-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>深度任务</b><small>复杂问题、多步规划和长文本推理</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="deep">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-deep-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-deep-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="deep" aria-label="展开深度任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-deep-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-deep-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-deep-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>子代理任务</b><small>Dream 和后台子代理的长流程执行</small></div><button type="button" class="text-button advanced-inherit" data-advanced-tier="subagent">跟随普通模型</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-subagent-provider"><option value="">跟随当前解析</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-subagent-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-tier="subagent" aria-label="展开子代理任务模型列表">⌄</button><ul class="model-dropdown" id="advanced-subagent-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-subagent-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-subagent-effective">尚未读取</small>
+              </article>
+            </div>
+            <p class="advanced-section-title">Dream 阶段模型（可选覆盖）</p>
+            <div class="advanced-copy advanced-copy-compact">以下各阶段可单独覆盖任务层级。留空会按该阶段实际使用的轻量、推理或子代理层级继续继承普通模型；高级模型不可用时运行时也会回退到普通模型。</div>
+            <div class="advanced-model-grid advanced-phase-grid">
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>知识页生成</b><small>Dream synthesize</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="synthesize">跟随任务层级</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-synthesize-provider"><option value="">跟随任务层级</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-synthesize-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="synthesize" aria-label="展开知识页生成模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-synthesize-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-synthesize-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-synthesize-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>生成结果判定</b><small>Dream synthesize_verdict</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="synthesize_verdict">跟随任务层级</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-synthesize_verdict-provider"><option value="">跟随任务层级</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-synthesize_verdict-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="synthesize_verdict" aria-label="展开生成结果判定模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-synthesize_verdict-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-synthesize_verdict-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-synthesize_verdict-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>模式发现</b><small>Dream patterns</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="patterns">跟随任务层级</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-patterns-provider"><option value="">跟随任务层级</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-patterns-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="patterns" aria-label="展开模式发现模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-patterns-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-patterns-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-patterns-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>知识原子抽取</b><small>Dream extract_atoms</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="extract_atoms">跟随任务层级</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-extract_atoms-provider"><option value="">跟随任务层级</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-extract_atoms-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="extract_atoms" aria-label="展开知识原子抽取模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-extract_atoms-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-extract_atoms-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-extract_atoms-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>概念合成</b><small>Dream synthesize_concepts</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="synthesize_concepts">跟随任务层级</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-synthesize_concepts-provider"><option value="">跟随任务层级</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-synthesize_concepts-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="synthesize_concepts" aria-label="展开概念合成模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-synthesize_concepts-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-synthesize_concepts-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-synthesize_concepts-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>知识合并</b><small>Dream consolidate</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="consolidate">跟随任务层级</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-consolidate-provider"><option value="">跟随任务层级</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-consolidate-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="consolidate" aria-label="展开知识合并模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-consolidate-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-consolidate-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-consolidate-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>对话事实回填</b><small>Dream conversation_facts_backfill</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="conversation_facts_backfill">跟随任务层级</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-conversation_facts_backfill-provider"><option value="">跟随任务层级</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-conversation_facts_backfill-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="conversation_facts_backfill" aria-label="展开对话事实回填模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-conversation_facts_backfill-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-conversation_facts_backfill-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-conversation_facts_backfill-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>观点提炼</b><small>Dream propose_takes</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="propose_takes">跟随推理任务</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-propose_takes-provider"><option value="">跟随推理任务</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-propose_takes-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="propose_takes" aria-label="展开观点提炼模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-propose_takes-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-propose_takes-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-propose_takes-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>观点评价</b><small>Dream grade_takes</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="grade_takes">跟随推理任务</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-grade_takes-provider"><option value="">跟随推理任务</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-grade_takes-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="grade_takes" aria-label="展开观点评价模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-grade_takes-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-grade_takes-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-grade_takes-effective">尚未读取</small>
+              </article>
+              <article class="advanced-task-card">
+                <div class="advanced-task-heading"><div><b>校准画像</b><small>Dream calibration_profile</small></div><button type="button" class="text-button advanced-phase-inherit" data-advanced-phase="calibration_profile">跟随推理任务</button></div>
+                <div class="advanced-task-fields">
+                  <label><span>供应商</span><select id="advanced-phase-calibration_profile-provider"><option value="">跟随推理任务</option><option value="mimo">mimo</option><option value="zhipu">zhipu</option><option value="deepseek">deepseek</option><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="google">google</option><option value="openrouter">openrouter</option></select></label>
+                  <label><span>模型名称</span><span class="model-picker"><input id="advanced-phase-calibration_profile-model-name" spellcheck="false" placeholder="先选择供应商，也可输入自定义模型" autocomplete="off" /><button type="button" class="advanced-model-picker-trigger" data-advanced-phase="calibration_profile" aria-label="展开校准画像模型列表">⌄</button><ul class="model-dropdown" id="advanced-phase-calibration_profile-model-dropdown" hidden></ul></span><small class="advanced-task-status" id="advanced-phase-calibration_profile-model-status"></small></label>
+                </div>
+                <small class="advanced-task-effective" id="advanced-phase-calibration_profile-effective">尚未读取</small>
+              </article>
+            </div>
+            <div class="advanced-actions"><small id="advanced-model-status">展开后读取当前高级路由。</small><button type="button" class="solid" id="save-advanced-models" disabled><span>保存高级路由</span><i></i></button></div>
+          </details>
+          <div class="form-footer">
+            <p id="config-path"></p>
+            <button class="primary" id="save-setup"><span>保存配置并启动</span><i></i></button>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-connections" hidden>
+          <div class="section-heading">
+            <div><span class="index">设置</span><h2>数据连接</h2></div>
+            <p>连接一次，以后由 PMBrain 在后台自动同步。授权信息只保留在本机。</p>
+          </div>
+
+          <section class="system-block" aria-labelledby="daily-connectors-title">
+            <div class="subsection-heading"><div><span>连接</span><h3 id="daily-connectors-title">数据连接</h3></div><p>这里只管理账号连接和自动同步设置。</p></div>
+            <div id="daily-connectors">尚未读取</div>
+            <details id="daily-connectors-advanced">
+              <summary>高级设置</summary>
+              <div class="field-group">
+                <label for="daily-chat-secret" id="daily-chat-secret-label">ChatGPT / Claude 整行 Cookie:</label>
+                <p id="daily-chat-secret-help">登录状态下 → F12 → Network → 点对应网站请求 → Headers → Request Headers → 复制整行 <code>Cookie:</code>。只保存在本机，不要发给任何人。</p>
+                <input id="daily-chat-secret" type="password" autocomplete="off" placeholder="选择上方连接或管理后再填写" />
+                <div class="input-action">
+                  <button type="button" class="solid" id="daily-chat-save"><span>保存并验证</span></button>
+                  <button type="button" class="ghost" id="daily-chat-sync"><span>立即同步</span></button>
+                  <button type="button" class="ghost" id="daily-chat-logout"><span>断开连接</span></button>
+                </div>
+              </div>
+              <hr />
+              <p id="daily-google-status">尚未读取</p>
+              <div class="input-action">
+                <button type="button" class="primary" id="daily-google-connect"><span>连接 Google</span><i></i></button>
+              </div>
+              <pre id="daily-google-message" hidden></pre>
+              <button type="button" class="ghost" id="daily-google-open-consent" hidden>打开授权页</button>
+              <div class="field-group"><label for="daily-google-account">账号提示</label><input id="daily-google-account" placeholder="you@gmail.com" autocomplete="off" /></div>
+              <div class="input-action"><button type="button" class="ghost" id="daily-google-client">选择客户端 JSON</button><small id="daily-google-client-name">未选择</small></div>
+              <button type="button" class="ghost" id="daily-google-paste-mode">改用粘贴网址</button>
+              <div class="field-group" id="daily-google-paste-wrap" hidden>
+                <label for="daily-google-redirect">粘贴打不开的页面地址</label>
+                <input id="daily-google-redirect" placeholder="浏览器地址栏里的完整网址" autocomplete="off" />
+                <button type="button" class="solid" id="daily-google-finish"><span>完成授权</span><i></i></button>
+              </div>
+              <div class="field-group">
+                <label for="daily-google-source">知识源 ID</label>
+                <input id="daily-google-source" placeholder="gmail-you" />
+                <button type="button" class="ghost" id="daily-google-source-save">登记为知识源</button>
+              </div>
+            </details>
+          </section>
+
+          <section class="system-block" aria-labelledby="daily-waiting-title" hidden>
+            <div class="subsection-heading"><div><span>TODO</span><h3 id="daily-waiting-title">待我处理</h3></div><p>从邮件、会议和 AI 对话里找出待办。</p></div>
+            <div class="daily-source-controls" aria-label="从哪里发现待办">
+              <label><input type="checkbox" id="daily-waiting-gmail" checked /> Gmail <b id="daily-waiting-gmail-state">未连接</b></label>
+              <label><input type="checkbox" id="daily-waiting-meeting" checked /> 会议 <b id="daily-waiting-meeting-state">✅</b></label>
+              <label><input type="checkbox" id="daily-waiting-conversation" checked /> AI 对话 <b id="daily-waiting-conversation-state">未连接</b></label>
+            </div>
+            <button type="button" class="solid" id="daily-waiting-scan"><span>立即扫描</span></button>
+            <div id="daily-waiting">尚未读取</div>
+          </section>
+
+          <section class="system-block" aria-labelledby="daily-chronicle-title" hidden>
+            <div class="subsection-heading"><div><span>DAY</span><h3 id="daily-chronicle-title">生命年表</h3></div></div>
+            <p id="daily-chronicle-empty" hidden>PMBrain 可以把会议、对话和重要事件整理成时间线。</p>
+            <p id="daily-chronicle-history-note" hidden></p>
+            <div class="input-action" id="daily-chronicle-empty-actions" hidden>
+              <button type="button" class="primary" id="daily-chronicle-enable"><span>开启时间记忆</span></button>
+              <button type="button" class="ghost" id="daily-chronicle-history"><span>整理历史记录</span></button>
+            </div>
+            <div id="daily-chronicle-content">
+              <div class="field-group"><label for="daily-chronicle-date">日期</label><input id="daily-chronicle-date" type="date" /></div>
+              <div class="daily-two">
+                <article><b>这一天</b><div id="daily-chronicle-today">尚未读取</div></article>
+                <article><b>往年今日</b><div id="daily-chronicle-memory">尚未读取</div></article>
+              </div>
+            </div>
+          </section>
+
+          <section class="system-block" aria-labelledby="daily-identity-title" hidden>
+            <div class="subsection-heading"><div><span>PEOPLE</span><h3 id="daily-identity-title">人物关联</h3></div><p>搜索姓名并确认，不会按中文名自动合并。</p></div>
+            <div class="field-group"><label for="daily-identity-query">搜索人物</label><input id="daily-identity-query" placeholder="张三" /></div>
+            <button type="button" class="ghost" id="daily-identity-search"><span>搜索</span></button>
+            <div id="daily-identity-suggestions"></div>
+            <div id="daily-identity-results">尚未读取</div>
+            <button type="button" class="solid" id="daily-identity-merge"><span>把选中的记录视为同一个人</span></button>
+            <div id="daily-identity-groups">尚未读取</div>
+            <div id="daily-person-card" hidden></div>
+          </section>
+        </section>
+
+        <section class="panel" id="panel-integrations">
+          <div class="section-heading">
+            <div><span class="index">03</span><h2>MCP / API 配置助手</h2></div>
+            <p>本机 Agent 保持本地连接；共享成员使用独立、可撤销的最小权限凭证。</p>
+          </div>
+          <section class="integration-section" aria-labelledby="local-integration-title">
+            <div class="subsection-heading"><div><span>03A / LOCAL</span><h3 id="local-integration-title">本机 Agent 接入</h3></div><p>始终连接本机 sidecar；开启共享模式不会让已有本机配置失效。</p></div>
+            <div class="credential-switch">
+              <label><input type="radio" name="credential" value="api_key" checked /> API Key + Bearer（自动接入）</label>
+              <label><input type="radio" name="credential" value="oauth" /> OAuth client_credentials（只生成凭证）</label>
+            </div>
+            <div class="integration-grid" id="integration-grid"></div>
+          </section>
+
+          <section class="integration-section shared-access" aria-labelledby="shared-integration-title">
+            <div class="subsection-heading"><div><span>03B / LAN</span><h3 id="shared-integration-title">共享成员接入</h3></div><p>凭证创建与成员管理请到 MCP 接入页面中的「Agent 凭证管理」。</p></div>
+            <button class="primary" id="shared-open-admin"><span>管理成员凭证</span></button>
+          </section>
+          <div class="finish-bar">
+            <div><b>配置完成后</b><small>重启对应 AI 客户端，让它重新加载 MCP 配置。</small></div>
+            <button class="primary" id="finish-open-admin">进入知识工作台</button>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-system">
+          <div class="section-heading">
+            <div><span class="index">04</span><h2>系统设置</h2></div>
+          </div>
+
+          <section class="system-block" aria-labelledby="network-mode-title">
+            <div class="subsection-heading"><div><span>04A / NETWORK</span><h3 id="network-mode-title">连接模式</h3></div></div>
+            <div class="network-mode-grid" role="radiogroup" aria-label="PMBrain 网络模式">
+              <label class="network-mode-card selected" id="network-mode-local-card"><input id="network-mode-local" type="radio" name="network-mode" value="local" checked /><span><b>本地模式</b><small>仅本机 Agent 访问 127.0.0.1，局域网电脑无法连接。</small></span><em>默认</em></label>
+              <label class="network-mode-card" id="network-mode-shared-card"><input id="network-mode-shared" type="radio" name="network-mode" value="shared" /><span><b>共享模式</b><small>在选定网卡的固定 IPv4 上开放 MCP，供同一局域网成员使用。</small></span></label>
+            </div>
+            <div class="engine-usage-hint warning" id="pglite-shared-warning" role="status" hidden>
+              <b>PGLite + 共享模式</b>
+              <p>当前数据库是 PGLite：它不支持多进程/多用户并发写入。局域网多人同时调用时，容易出现排队、超时或体验变差。若要稳定给多人使用，建议在「基础配置」改选 Docker Postgres 后再开共享。</p>
+            </div>
+            <div class="shared-network-fields" id="shared-network-fields" hidden>
+              <label for="shared-address"><span>固定局域网入口</span><select id="shared-address" aria-label="选择共享网络适配器和 IPv4 地址"><option value="">请选择网卡与 IPv4</option></select></label>
+              <small id="shared-address-note">PMBrain 会锁定这张网卡和这个 IPv4，不会在网络变化时自动切到其他地址。</small>
+              <div class="fixed-ip-note"><b>避免地址变化</b><p>建议在路由器设置“DHCP 地址保留”，把这个 IPv4 固定给本机。若网卡、Wi-Fi 或 VPN 导致地址消失，PMBrain 会立即停止共享并通知你，不会静默切换。首次出现 Windows 防火墙提示时，请只允许“专用网络”。</p></div>
+            </div>
+
+            <div class="connection-spine" id="shared-connection-spine" aria-label="MCP 局域网连接路径" hidden>
+              <article><span>01</span><b>本机 sidecar</b><small id="system-local-url">等待本地服务</small></article>
+              <i aria-hidden="true"></i>
+              <article><span>02</span><b>固定 LAN 网关</b><small id="system-shared-url">共享模式未开启</small></article>
+              <i aria-hidden="true"></i>
+              <article><span>03</span><b>员工 Agent</b><small>Bearer 凭证 · 独立权限</small></article>
+            </div>
+            <div class="gateway-status" id="gateway-status" role="status"><i></i><div><b>仅本机连接</b><small>共享网关未启动。</small></div><button type="button" class="gateway-restart" id="restart-shared-gateway" hidden><span>重启共享</span><i></i></button></div>
+          </section>
+
+          <section class="system-block" aria-labelledby="memory-writeback-title">
+            <div class="subsection-heading"><div><span>04B / AGENT</span><h3 id="memory-writeback-title">AI 长期记忆</h3></div></div>
+            <p>让连接 PMBrain 的 AI 跨会话记住你的重要信息。内容保存在本地 Facts。默认关闭。</p>
+            <div class="network-mode-grid" role="radiogroup" aria-label="AI 长期记忆">
+              <label class="network-mode-card selected" id="memory-mode-off-card"><input id="memory-mode-off" type="radio" name="memory-writeback" value="off" checked /><span><b>关闭</b><small>不主动写 Facts。你说“记住”时仍可手动保存。</small></span></label>
+              <label class="network-mode-card" id="memory-mode-salient-card"><input id="memory-mode-salient" type="radio" name="memory-writeback" value="salient" /><span><b>重要内容</b><small>只记偏好、决定、承诺和项目状态。推荐。</small></span><em>推荐</em></label>
+              <label class="network-mode-card" id="memory-mode-all-card"><input id="memory-mode-all" type="radio" name="memory-writeback" value="all" /><span><b>全部事实</b><small>更积极保存你直接说的事实，仍排除寒暄和推测。</small></span></label>
+            </div>
+            <div class="memory-setup-hint" id="memory-setup-hint" role="alert" hidden><div><b id="memory-setup-title">请先完成 MCP 接入</b><small id="memory-setup-detail">请先到“MCP 接入”更新至少一个 AI 客户端，验证连接后再开启长期记忆。</small></div><button type="button" id="memory-open-integrations">去 MCP 接入</button></div>
+            <p class="engine-usage-hint" id="memory-shared-warning" hidden>共享模式开启自动记忆后，保存的事实可能被同一知识范围内获授权的成员读取。</p>
+            <p>临时记忆：按保存时设置的有效期过期　保存位置：本地 PMBrain Facts</p>
+            <div id="memory-agent-status"><small>已接入 Agent 状态将在本地服务启动后显示。</small></div>
+          </section>
+
+          <section class="system-block" aria-labelledby="desktop-behavior-title">
+            <div class="subsection-heading"><div><span>04C / DESKTOP</span><h3 id="desktop-behavior-title">桌面行为</h3></div></div>
+            <div class="system-setting-grid">
+              <label class="setting-toggle" for="launch-at-login"><input id="launch-at-login" type="checkbox" /><span><b>开机自动启动 PMBrain</b><small>登录 Windows 后启动桌面端，并按数据库类型准备本地服务。</small></span></label>
+              <label for="close-behavior"><span>点击窗口 × 时</span><select id="close-behavior"><option value="tray">最小化到托盘（默认）</option><option value="quit">退出 PMBrain</option></select></label>
+              <label for="system-theme-select"><span>界面外观</span><select id="system-theme-select" aria-label="界面主题"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+            </div>
+          </section>
+          <div class="system-save-bar"><p id="system-save-note"></p><button class="primary" id="save-system-settings" disabled><span>保存系统设置</span><i></i></button></div>
+        </section>
+
+        <section class="panel" id="panel-updates">
+          <div class="section-heading">
+            <div><span class="index">05</span><h2>软件更新</h2></div>
+            <p>自动从 GitHub Releases 检查并下载桌面版更新。</p>
+          </div>
+          <article class="update-card">
+            <div class="update-version"><span>CURRENT</span><b id="update-current">—</b></div>
+            <div class="update-copy"><b id="update-title">等待检查更新</b><p id="update-message">PMBrain 会在启动后自动检查，此处也可以手动检查。</p><p class="update-metrics" id="update-metrics" hidden></p></div>
+            <button class="primary" id="update-action"><span>检查更新</span><i></i></button>
+          </article>
+          <div class="update-progress" id="update-progress" hidden role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div>
+          <section class="update-release-notes" id="update-release-notes" hidden aria-labelledby="update-release-notes-title">
+            <div class="update-release-notes-head">
+              <div><span>VERSION NOTES</span><h3 id="update-release-notes-title">版本更新记录</h3></div>
+              <time id="update-release-date"></time>
+            </div>
+            <div class="update-release-notes-body" id="update-release-notes-body"></div>
+          </section>
+          <div class="update-safety">
+            <span>SAFE UPDATE</span>
+            <p>安装前自动停止 sidecar；PGLite 需要兼容迁移时会先创建升级冷备，并通过一次性恢复副本验证 schema 和关键数据计数，再启动唯一 sidecar 完成迁移与健康检查。失败时保留备份、数据库和日志，不会自动覆盖或整库重建。</p>
+          </div>
+        </section>
+
+        <section class="panel repair-panel" id="panel-repair">
+          <div class="section-heading">
+            <div><span class="index">06</span><h2>软件修复</h2></div>
+            <p>查看升级前备份，或在副本上修复大字段损坏。自动升级只保留最近 2 份备份；修复当前库前会先留底。</p>
+          </div>
+          <div class="repair-summary">
+            <div><span>DATABASE BACKUPS</span><b id="repair-backup-count">等待读取备份清单</b></div>
+            <div class="repair-summary-side">
+              <p id="repair-database-path">当前数据库：等待读取</p>
+              <button class="ghost" id="repair-prune-backups" type="button"><span>清理旧备份</span><i></i></button>
+            </div>
+          </div>
+          <article class="diagnostic-export-card">
+            <div><span>BACKUP LOCATION</span><h3>备份保存位置</h3><p id="repair-backup-root">等待读取备份目录</p><small>新备份会写入此目录，现有备份不会自动搬迁。可改到 D 盘等其他磁盘，以减少系统盘占用。</small></div>
+            <div class="repair-location-actions">
+              <button class="ghost" id="repair-open-backup-root" type="button"><span>打开备份目录</span><i></i></button>
+              <button class="primary" id="repair-change-backup-root" type="button"><span>更改位置</span><i></i></button>
+            </div>
+          </article>
+          <article class="diagnostic-export-card">
+            <div><span>TOAST REPAIR</span><h3>大字段损坏修复</h3><p>启动失败若提示大字段/toast 损坏，先在副本上诊断。确认后才替换当前库，并留下 pre-toast-repair 原库。不会删除 Wiki、知识页、Facts 或原始资料。</p><p class="repair-toast-result" id="repair-toast-result" hidden></p></div>
+            <div class="repair-location-actions">
+              <button class="ghost" id="repair-toast-diagnose" type="button"><span>在副本上诊断</span><i></i></button>
+              <button class="primary" id="repair-toast-replace" type="button" hidden><span>确认替换当前库</span><i></i></button>
+            </div>
+          </article>
+          <article class="diagnostic-export-card">
+            <div><span>SUPPORT BUNDLE</span><h3>导出脱敏诊断包</h3><p>收集版本、Doctor、桌面与 Sidecar 日志、数据库/模型/MCP/更新状态和近期错误。不会打包数据库或知识内容，API Key、Token、密码和个人路径会自动脱敏。</p></div>
+            <button class="primary" id="export-diagnostic"><span>导出诊断包</span><i></i></button>
+          </article>
+          <div class="repair-backup-list" id="repair-backup-list" aria-live="polite">
+            <div class="repair-empty">打开本页后读取已验证的升级前数据库备份。</div>
+          </div>
+        </section>
+
+        <section class="panel recovery-panel" id="panel-recovery">
+          <div class="recovery-code">STARTUP / INTERRUPTED</div>
+          <h2>本机配置已保留，PMBrain 服务没有成功启动</h2>
+          <p id="recovery-message">请重试启动；如果仍然失败，可以打开日志查看原因。无需重新填写数据库或 API Key。</p>
+          <p class="recovery-owner" id="recovery-owner" role="status" hidden></p>
+          <article class="recovery-toast" id="recovery-toast" hidden>
+            <div><span>TOAST REPAIR</span><h3>数据库大字段损坏</h3><p>知识页还在。这是搜索用的派生分块坏了，不会自动重置 WAL。先在副本上诊断，你确认后才替换当前库。</p><p class="repair-toast-result" id="recovery-toast-result" hidden></p></div>
+            <div class="recovery-actions">
+              <button class="primary" id="recovery-toast-diagnose" type="button"><span>在副本上诊断修复</span><i></i></button>
+              <button class="ghost" id="recovery-toast-replace" type="button" hidden><span>确认替换当前库</span><i></i></button>
+            </div>
+          </article>
+          <div class="recovery-actions">
+            <button class="primary" id="recovery-retry"><span>重新启动服务</span><i></i></button>
+            <button class="recovery-terminate" id="recovery-terminate" hidden><span>结束占用进程并重启</span><i></i></button>
+            <button class="ghost" id="recovery-logs">打开日志</button>
+            <button class="ghost" id="recovery-settings">修改配置</button>
+          </div>
+          <div class="recovery-note"><b>数据安全</b><span>只会结束经过身份校验的 PMBrain 进程；不会删除数据库、知识内容或锁文件，也不会清空或重建 config.json。</span></div>
+        </section>
+      </section>
+    </main>
+    <dialog class="help-dialog" id="docker-help" aria-labelledby="docker-help-title">
+      <div class="help-dialog-head"><div><span>DOCKER POSTGRES</span><h2 id="docker-help-title">四步启动本机数据库</h2></div><button type="button" class="ghost icon-button" id="docker-help-close" aria-label="关闭 Docker 教程">×</button></div>
+      <ol class="docker-steps">
+        <li><b>安装并启动 Docker Desktop</b><p>Windows 10/11 需要先确认 Docker Desktop 正常运行；如提示 WSL2，请按引导安装并重启电脑。</p></li>
+        <li><b>在 PowerShell 启动 pgvector Postgres</b><pre id="docker-command">docker run -d --name pmbrain-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pmbrain -p 5433:5432 -v pmbrain-postgres-data:/var/lib/postgresql/data pgvector/pgvector:pg16</pre><button type="button" class="text-button" id="docker-copy-command">复制命令</button></li>
+        <li><b>启用向量扩展</b><pre>docker exec -it pmbrain-postgres psql -U postgres -d pmbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"</pre></li>
+        <li><b>回到 PMBrain 填写连接地址</b><pre>postgresql://postgres:postgres@127.0.0.1:5433/pmbrain</pre><p>已有数据库可填写地址并保存配置；已有 PGLite 知识库请使用页面上的一键迁移按钮。</p></li>
+      </ol>
+      <div class="help-dialog-foot"><small>本教程适合手动配置现有数据库。一键迁移会自动创建专属容器和数据库；Docker Desktop 本体需先安装。</small><button type="button" class="solid" id="docker-help-done">我知道了</button></div>
+    </dialog>
+    <dialog class="help-dialog custom-provider-dialog" id="custom-provider-dialog" aria-labelledby="custom-provider-title">
+      <form id="custom-provider-form" novalidate>
+          <div class="help-dialog-head"><div><span>LOCAL MODEL ENDPOINT</span><h2 id="custom-provider-title">添加自定义模型</h2></div><button type="button" class="ghost icon-button" id="custom-provider-close" aria-label="关闭自定义模型表单">×</button></div>
+          <div class="custom-provider-form-body">
+            <div class="custom-provider-endpoint-preview"><i aria-hidden="true"></i><div><b>OpenAI-compatible</b><small id="custom-provider-target-copy">PMBrain 将调用该地址下的模型接口。</small></div></div>
+            <div class="custom-provider-capabilities" aria-label="自定义模型固定能力"><span><small>供应商路由</small><code>custom-openai</code></span><span><small>协议</small><b>OpenAI 兼容</b></span></div>
+            <label><span>供应商名称 <i class="required-marker" aria-hidden="true">*</i></span><input id="custom-provider-name" maxlength="80" placeholder="例如：本地 Qwen" autocomplete="off" required aria-required="true" aria-describedby="custom-provider-error" /></label>
+            <label><span><span id="custom-provider-base-url-label">Base URL</span> <i class="required-marker" aria-hidden="true">*</i></span><input id="custom-provider-base-url" inputmode="url" placeholder="例如：http://127.0.0.1:8000/v1" autocomplete="off" required aria-required="true" aria-describedby="custom-provider-error" /><small>请填写当前模型服务的 API 根地址；普通模型与向量模型可以使用不同端口。</small></label>
+            <label><span>模型名称（模型 ID） <i class="required-marker" aria-hidden="true">*</i></span><input id="custom-provider-model-id" maxlength="160" placeholder="例如：Qwen3-6B 或 Qwen3-Embedding-8B" autocomplete="off" required aria-required="true" aria-describedby="custom-provider-error" /><small>填写模型服务实际暴露的模型 ID，添加后会自动选入对应模型卡片。</small></label>
+            <p class="custom-provider-error" id="custom-provider-error" role="alert" hidden></p>
+          </div>
+          <div class="help-dialog-foot"><small>普通模型和向量模型的 Base URL、模型 ID、API Key 分别保存，可连接不同端口并使用不同凭证；API Key 可选，本地无鉴权接口可留空。最后点击页面“保存配置并启动”才会写入配置。</small><div class="custom-provider-actions"><button type="button" class="ghost" id="custom-provider-cancel">取消</button><button type="submit" class="solid" id="custom-provider-confirm">添加模型</button></div></div>
+      </form>
+    </dialog>
+    <dialog class="help-dialog integration-progress-dialog" id="integration-progress-dialog" aria-labelledby="integration-progress-title" aria-describedby="integration-progress-message">
+      <div class="help-dialog-head"><div><span id="integration-progress-stage">MCP 接入</span><h2 id="integration-progress-title">正在准备连接</h2></div></div>
+      <div class="integration-progress-body" aria-live="polite">
+        <div class="integration-progress-state busy" id="integration-progress-state"><i aria-hidden="true"></i><div><b id="integration-progress-state-title">正在处理</b><p id="integration-progress-message">正在创建并验证凭证。</p></div></div>
+        <div class="result-console" id="result-console" hidden>
+          <div><b id="result-title">配置结果</b><button class="ghost" id="copy-result">复制</button></div>
+          <pre id="result-content"></pre>
+          <p id="result-meta"></p>
+        </div>
+      </div>
+      <div class="help-dialog-foot"><small id="integration-progress-footnote">完成后会告诉你是否需要重启客户端。</small><button type="button" class="solid" id="integration-progress-close" disabled>完成</button></div>
+    </dialog>
+    <div class="wait-overlay" id="setup-wait" hidden role="dialog" aria-modal="true" aria-labelledby="setup-wait-title" aria-describedby="setup-wait-message">
+      <div class="wait-dialog" aria-live="polite">
+        <div class="wait-spinner" aria-hidden="true"></div>
+        <div>
+          <span class="wait-stage" id="setup-wait-stage">正在处理</span>
+          <b id="setup-wait-title">正在保存配置</b>
+          <p id="setup-wait-message">第一次配置会比较慢，请耐心等待。请不要关闭窗口或重复点击按钮。</p>
+          <div class="wait-actions" id="setup-wait-actions" hidden>
+            <button type="button" class="solid" id="setup-wait-defer">稍后处理，进入 PMBrain</button>
+            <button type="button" class="ghost" id="setup-wait-continue">继续等待</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  

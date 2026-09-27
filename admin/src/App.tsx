@@ -105,7 +105,7 @@ function BrandMark() {
   return <span className="brand-mark" aria-hidden="true"><BrainCircuit /></span>;
 }
 
-export function App() {
+export function App({ embedded = false }: { embedded?: boolean } = {}) {
   const [page, setPage] = useState<Page>(getPage);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
   const [supportPanel, setSupportPanel] = useState<'wecom' | 'donate' | null>(null);
@@ -142,11 +142,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    return applyThemeMode(themeMode);
-  }, [themeMode]);
+    if (!embedded) return applyThemeMode(themeMode);
+  }, [themeMode, embedded]);
 
   useEffect(() => {
-    if (page === 'login') return;
+    if (embedded || page === 'login') return;
     let active = true;
     const syncDesktopTheme = () => {
       void api.theme()
@@ -168,7 +168,7 @@ export function App() {
       window.removeEventListener('focus', syncDesktopTheme);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [page]);
+  }, [page, embedded]);
 
   const navigate = (target: string) => {
     window.location.hash = target;

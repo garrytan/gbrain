@@ -1,4 +1,5 @@
-:root {
+@scope (.desktop-settings) {
+:scope {
   color: var(--text);
   background: var(--page);
   color-scheme: dark;
@@ -37,7 +38,7 @@
   --focus-ring: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
-:root[data-theme="light"] {
+:scope[data-theme="light"] {
   color-scheme: light;
   --page: #f7f8fb;
   --rail: #fbfcff;
@@ -73,7 +74,7 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 82% -10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 34%), var(--page); -webkit-font-smoothing: antialiased; }
+:scope { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(circle at 82% -10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 34%), var(--page); -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -360,7 +361,7 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .result-console pre { max-height: 260px; margin: 0; padding: 18px; overflow: auto; color: var(--text-secondary); font: 11px/1.6 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .result-console p { margin: 0; padding: 10px 14px; color: var(--text-muted); border-top: 1px solid var(--line); font-size: 11px; }
 .integration-progress-dialog { width: min(660px, calc(100vw - 36px)); overflow: hidden; }
-.integration-progress-body { display: grid; gap: 14px; padding: 20px; overflow-y: auto; }
+.integration-progress-:scope { display: grid; gap: 14px; padding: 20px; overflow-y: auto; }
 .integration-progress-state { display: grid; grid-template-columns: 12px minmax(0, 1fr); align-items: start; gap: 13px; padding: 15px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; background: var(--surface); }
 .integration-progress-state > i { width: 9px; height: 9px; margin-top: 3px; border-radius: 50%; background: var(--accent); }
 .integration-progress-state.busy > i { width: 12px; height: 12px; margin-top: 0; border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent); border-top-color: var(--accent); background: transparent; animation: spin .8s linear infinite; }
@@ -437,7 +438,7 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .update-release-notes-head span { color: var(--accent); font: 700 9px Consolas, monospace; letter-spacing: .12em; }
 .update-release-notes-head h3 { margin: 5px 0 0; font-size: 15px; }
 .update-release-notes-head time { color: var(--text-muted); font: 10px Consolas, monospace; }
-.update-release-notes-body { display: grid; gap: 9px; padding-top: 13px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.update-release-notes-:scope { display: grid; gap: 9px; padding-top: 13px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
 .update-release-notes-body h4 { margin: 4px 0 0; color: var(--text); font-size: 13px; }
 .update-release-notes-body p { margin: 0; }
 .update-release-notes-body ul, .update-release-notes-body ol { display: grid; gap: 5px; margin: 0; padding-left: 20px; }
@@ -515,7 +516,7 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
 .help-dialog-foot small { color: var(--text-muted); font-size: 10px; line-height: 1.55; }
 .custom-provider-dialog { width: min(620px, calc(100vw - 36px)); overflow: hidden; }
 .custom-provider-dialog form { display: flex; max-height: calc(100vh - 48px); flex-direction: column; }
-.custom-provider-form-body { display: grid; gap: 15px; padding: 20px; overflow-y: auto; }
+.custom-provider-form-:scope { display: grid; gap: 15px; padding: 20px; overflow-y: auto; }
 .custom-provider-form-body label > span { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; font-weight: 650; }
 .custom-provider-form-body .required-marker { color: var(--danger); font-style: normal; }
 .custom-provider-form-body label > small { display: block; margin-top: 6px; color: var(--text-muted); font-size: 10px; line-height: 1.5; }
@@ -623,3 +624,5 @@ select { cursor: pointer; appearance: auto; -webkit-appearance: auto; }
   .daily-two { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto !important; } }
+
+}

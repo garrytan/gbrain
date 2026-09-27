@@ -387,7 +387,7 @@ const SETTINGS_SECTIONS: Array<{
   { key: 'dream', label: '自动化', description: '管理稳定的知识整理和定时任务' },
 ];
 
-function AppearanceSettings({
+export function AppearanceSettings({
   themeMode,
   onThemeModeChange,
 }: {
@@ -398,7 +398,7 @@ function AppearanceSettings({
     <section className="pm-card appearance-settings settings-panel">
       <div className="settings-panel-title">
         <span className="settings-panel-icon"><MonitorCog /></span>
-        <div><h2>界面外观</h2><p>仅调整当前管理页面，不会覆盖 PMBrain 桌面端的主题选择。</p></div>
+        <div><h2>界面外观</h2><p>调整 PMBrain 工作台与设置的统一外观。</p></div>
       </div>
       <div className="theme-choice" role="radiogroup" aria-label="界面主题">
         {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (

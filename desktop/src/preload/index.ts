@@ -166,6 +166,8 @@ export interface DesktopSetupState {
 }
 
 export interface PMBrainDesktopApi {
+  productRequest(request: import('../main/product-request.js').ProductRequest): Promise<import('../main/product-request.js').ProductResponse>;
+  onNavigate(listener: (target: string) => void): () => void;
   getState(): Promise<SidecarState | null>;
   getStartupProgress(): Promise<StartupProgress>;
   onStartupProgress(listener: (progress: StartupProgress) => void): () => void;
@@ -263,6 +265,12 @@ export interface PMBrainDesktopApi {
 }
 
 const api: PMBrainDesktopApi = {
+  onNavigate: listener => {
+    const handler = (_event: Electron.IpcRendererEvent, target: string) => listener(target);
+    ipcRenderer.on('desktop:navigate', handler);
+    return () => ipcRenderer.removeListener('desktop:navigate', handler);
+  },
+  productRequest: request => ipcRenderer.invoke('desktop:product-request', request),
   getState: () => ipcRenderer.invoke('desktop:get-state'),
   getStartupProgress: () => ipcRenderer.invoke('desktop:get-startup-progress'),
   onStartupProgress: (listener) => {

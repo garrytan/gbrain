@@ -128,14 +128,22 @@ const PANEL_COPY: Record<Panel, { eyebrow: string; title: string }> = {
   recovery: { eyebrow: 'RECOVERY', title: '恢复 PMBrain 本地服务' },
 };
 
-function switchPanel(target: Panel): void {
+export function switchPanel(target: Panel, notify = true): void {
+  if (notify) window.dispatchEvent(new CustomEvent('pmbrain:settings-panel', { detail: target }));
   document.querySelectorAll('.rail-item').forEach((item) => item.classList.toggle('active', (item as HTMLElement).dataset.target === target));
-  document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === `panel-${target}`));
+  document.querySelectorAll('.desktop-settings .panel').forEach((panel) => panel.classList.toggle('active', panel.id === `panel-${target}`));
   const copy = PANEL_COPY[target];
   $('#page-eyebrow').textContent = state?.setup.needsSetup && target === 'basic' ? 'FIRST RUN / 01' : copy.eyebrow;
   $('#page-title').textContent = state?.setup.needsSetup && target === 'basic'
     ? '把 PMBrain 安顿在这台电脑上'
     : copy.title;
+}
+
+export function activateSettingsPanel(target: Panel, notify = false): void {
+  switchPanel(target, notify);
+  if (target === 'models' && ($<HTMLDetailsElement>('#advanced-model-settings')).open) void loadAdvancedModels(true);
+  if (target === 'integrations') refreshIntegrationPanel();
+  if (target === 'repair') void loadPgliteUpgradeBackups();
 }
 
 function renderTheme(theme: DesktopThemeState): void {
@@ -1632,7 +1640,7 @@ function populate(next: DesktopSetupState): void {
   renderProviderDropdown('embedding');
   syncAdvancedProviderOptions();
   const activePanel = (document.querySelector<HTMLElement>('.panel.active')?.id.replace('panel-', '') || 'basic') as Panel;
-  switchPanel(activePanel);
+  switchPanel(activePanel, false);
   $('#existing-config').hidden = setup.needsSetup;
   ($<HTMLSelectElement>('#system-theme-select')).value = setup.current.theme;
   const radio = document.querySelector<HTMLInputElement>(`input[name="engine"][value="${setup.current.engine}"]`);

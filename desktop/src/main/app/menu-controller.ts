@@ -17,8 +17,8 @@ export function installAppMenu(dependencies: AppMenuDependencies): void {
       label: 'PMBrain',
       submenu: [
         {
-          label: '打开管理控制台',
-          click: () => void dependencies.openAdmin().catch(error => dependencies.reportError('无法打开管理控制台', error)),
+          label: '打开知识工作台',
+          click: () => void dependencies.openAdmin().catch(error => dependencies.reportError('无法打开知识工作台', error)),
         },
         { label: '基础配置', click: () => void dependencies.openPanel('basic') },
         { label: '模型配置', click: () => void dependencies.openPanel('models') },

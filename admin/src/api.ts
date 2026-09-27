@@ -52,6 +52,7 @@ import type {
 } from '../../shared/contracts/index.ts';
 
 interface ContractParser { parse(value: unknown): unknown }
+import { productFetch } from './lib/product-fetch';
 
 const BASE = '';
 
@@ -66,7 +67,7 @@ export function isPgliteBusyError(error: unknown): boolean {
 // no auto-reauth via saved token, no localStorage/sessionStorage read.
 // The HttpOnly cookie set by /admin/login is the only session credential.
 async function apiFetch<T = any>(path: string, options?: RequestInit, schema?: ContractParser): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await productFetch(`${BASE}${path}`, {
     ...options,
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -89,7 +90,7 @@ async function apiFetch<T = any>(path: string, options?: RequestInit, schema?: C
 
 // v0.36.1.0 (T15 / E6) — SVG fetch (text/plain payload, NOT JSON).
 async function apiFetchText(path: string) {
-  const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin' });
+  const res = await productFetch(`${BASE}${path}`, { credentials: 'same-origin' });
   if (res.status === 401) {
     window.location.hash = '#login';
     throw new Error('Unauthorized');
@@ -99,7 +100,7 @@ async function apiFetchText(path: string) {
 }
 
 async function apiUploadFile<T>(path: string, file: File, schema: ContractParser): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await productFetch(`${BASE}${path}`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

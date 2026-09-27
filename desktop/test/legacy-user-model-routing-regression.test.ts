@@ -17,7 +17,7 @@ const main = readdirSync(resolve('src/main'), { recursive: true })
   .join('\n');
 const modelSync = readFileSync(resolve('src/main/models/model-config-sync.ts'), 'utf8');
 const renderer = readFileSync(resolve('src/renderer/src.ts'), 'utf8');
-const html = readFileSync(resolve('src/renderer/index.html'), 'utf8');
+const html = readFileSync(resolve('src/renderer/settings-content.html'), 'utf8');
 const advanced = readFileSync(resolve('src/main/advanced-model-config.ts'), 'utf8');
 const configManager = readFileSync(resolve('src/main/config-manager.ts'), 'utf8');
 const setupController = readFileSync(resolve('src/main/startup/setup-controller.ts'), 'utf8');

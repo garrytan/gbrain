@@ -91,6 +91,7 @@ function NaturalLanguagePanel({
   const [executeClicked, setExecuteClicked] = useState(false);
   const [error, setError] = useState(initialWorkspace.error);
   const [history, setHistory] = useState<NaturalTaskHistoryItem[]>(() => loadNaturalHistory());
+  const [historyQuery, setHistoryQuery] = useState('');
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(initialWorkspace.activeHistoryId);
   const [pendingContext, setPendingContext] = useState(initialWorkspace.pendingContext);
   const [attachments, setAttachments] = useState<KnowledgeAttachment[]>([]);
@@ -493,7 +494,16 @@ function NaturalLanguagePanel({
             <h2>知识助手</h2>
           </div>
           {compact && <button className="pm-ghost" onClick={() => onNavigate?.('import')}>完整视图</button>}
+          {!compact && <span className="pm-muted">{chatModel || '尚未配置模型'}</span>}
         </div>
+        {!compact && !preview && !run && !searchPayload && <div className="product-chat-welcome">
+          <Layers3 aria-hidden="true" /><h1>有什么可以帮你的吗？</h1><p>基于你的知识库，进行搜索、分析、总结和创作</p>
+          <div className="product-quick-actions">
+            <button onClick={() => setText('帮我搜索知识库中关于')}><Search /><span><b>搜索我的知识库</b><small>查找相关资料</small></span></button>
+            <button onClick={() => setText('请总结以下资料的核心要点：')}><FileText /><span><b>总结文档内容</b><small>提炼核心要点</small></span></button>
+            <button onClick={() => setText('基于我的知识库，帮我撰写：')}><Sparkles /><span><b>帮我写点内容</b><small>基于我的资料创作</small></span></button>
+          </div>
+        </div>}
         {pendingContext && <div className="assistant-followup">请补充上一个问题需要的信息，点击“AI搜索”后会继续判断。</div>}
         <div className="assistant-composer">
           {attachments.length > 0 && (
@@ -748,6 +758,10 @@ function NaturalLanguagePanel({
       </div>
       {!compact && (
         <div className="pm-card nl-history">
+          <label className="product-history-search"><Search size={18} /><input aria-label="搜索工作记录" placeholder="搜索工作记录…" value={historyQuery} onChange={event => setHistoryQuery(event.target.value)} /></label>
+          <button className="product-new-work" disabled={loading} onClick={() => {
+            setText(''); setPreview(null); setRun(null); setSearchPayload(null); setError(''); setPendingContext(''); setActiveHistoryId(null); setAttachments([]); setAttachmentError('');
+          }}>＋ 新建对话</button>
           <div className="pm-section-head">
             <h2>最近 5 条</h2>
             {history.length > 0 && (
@@ -767,7 +781,7 @@ function NaturalLanguagePanel({
             <div className="pm-empty compact-empty">暂无历史记录。每次执行任务后会自动保留在这里。</div>
           ) : (
             <div className="nl-history-list">
-              {history.map(item => (
+              {history.filter(item => item.text.includes(historyQuery)).map(item => (
                 <button
                   key={item.id}
                   className={item.id === activeHistoryId ? 'active' : ''}

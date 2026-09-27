@@ -33,10 +33,12 @@ import type { DesktopKnowledgeSourceStatus } from './knowledge-source-git.js';
 import type { PgliteOwnerStatus } from '../../../src/core/pglite-owner-control.js';
 import type { ProductSurfaceHandlers } from './product-surfaces.js';
 import { isSafeGoogleConsentUrl } from '../../../src/core/creds/oauth-envelope.js';
+import { validateProductRequest, type ProductRequest, type ProductResponse } from './product-request.js';
 
 type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => any;
 
 export interface DesktopIpcHandlers {
+  productRequest: (request: ProductRequest) => Promise<ProductResponse>;
   assertTrustedSender: (event: IpcMainInvokeEvent) => void;
   mainWindow: () => BrowserWindow | null;
   state: () => SidecarState | null;
@@ -108,6 +110,7 @@ function registerTrustedHandler(
 }
 
 export function registerDesktopIpcHandlers(handlers: DesktopIpcHandlers): void {
+  registerTrustedHandler('desktop:product-request', handlers, (_event, request) => handlers.productRequest(validateProductRequest(request)));
   registerTrustedHandler('desktop:get-state', handlers, () => handlers.state());
   registerTrustedHandler('desktop:get-startup-progress', handlers, () => handlers.startupProgress());
   registerTrustedHandler('desktop:get-theme', handlers, () => handlers.theme());
@@ -172,11 +175,11 @@ export function registerDesktopIpcHandlers(handlers: DesktopIpcHandlers): void {
   registerTrustedHandler('desktop:get-pglite-recovery-status', handlers, () => handlers.pgliteRecoveryStatus());
   registerTrustedHandler('desktop:terminate-pglite-owner-and-retry', handlers, async (_event, pid: number) => {
     const url = await handlers.terminatePgliteOwnerAndRetry(pid);
-    if (url) await handlers.mainWindow()?.loadURL(url);
+    if (url) handlers.mainWindow()?.webContents.send('desktop:navigate', 'import');
   });
   registerTrustedHandler('desktop:retry', handlers, async () => {
     const url = await handlers.retry();
-    if (url) await handlers.mainWindow()?.loadURL(url);
+    if (url) handlers.mainWindow()?.webContents.send('desktop:navigate', 'import');
   });
   registerTrustedHandler('desktop:open-logs', handlers, () => handlers.openLogs());
   registerTrustedHandler('desktop:export-diagnostic-bundle', handlers, () => handlers.exportDiagnosticBundle());

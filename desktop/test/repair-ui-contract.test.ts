@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('software repair UI contract', () => {
-  const html = readFileSync(resolve(import.meta.dir, '../src/renderer/index.html'), 'utf8');
+  const html = readFileSync(resolve(import.meta.dir, '../src/renderer/settings-content.html'), 'utf8');
   const css = readFileSync(resolve(import.meta.dir, '../src/renderer/style.css'), 'utf8');
 
   test('software repair exposes toast diagnose and confirm replace', () => {

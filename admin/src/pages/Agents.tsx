@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { api } from '../api';
+import { productFetch } from '../lib/product-fetch';
 import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
 import { CopyButton } from '../lib/clipboard';
 import {
@@ -666,7 +667,7 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
     setError('');
     try {
       // Use the CLI registration endpoint (POST to admin API)
-      const res = await fetch('/admin/api/register-client', {
+      const res = await productFetch('/admin/api/register-client', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

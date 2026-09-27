@@ -162,7 +162,7 @@ export class SidecarController {
           if (state.phase === 'failed' || state.phase === 'stopped') {
             void this.dependencies.stopLan().then(this.dependencies.sendSystemSettingsState);
           }
-          if (openAdmin && state.phase === 'ready') void this.dependencies.getMainWindow()?.loadURL(state.adminUrl);
+          if (openAdmin && state.phase === 'ready') this.dependencies.getMainWindow()?.webContents.send('desktop:navigate', 'import');
         },
       });
       this.manager = manager;
@@ -203,7 +203,7 @@ export class SidecarController {
     if (this.startupPromise) {
       await this.startupPromise;
       if (openAdmin && this.manager && this.stateValue?.phase === 'ready') {
-        await this.dependencies.getMainWindow()?.loadURL(await this.manager.createAdminLink());
+        this.dependencies.getMainWindow()?.webContents.send('desktop:navigate', 'import');
       }
       return;
     }
