@@ -67,6 +67,7 @@ import { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
+import { SLUG_PATH_SHAPE_RE } from '../core/cjk.ts';
 // v0.41.18.0: withRetry + isRetryableConnError + WithRetryOpts moved to
 // src/core/retry.ts as the canonical primitive. Engine methods
 // (addLinksBatch/addTimelineEntriesBatch/upsertChunks) now self-retry via
@@ -561,10 +562,9 @@ export async function extractLinksFromFile(
       async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
         if (!name) return null;
         const trimmed = name.trim();
-        // Same broadened slug-shape as makeResolver step 1: accepts
-        // digit-leading folders (`90-people/nicolai`) and nested paths.
-        // Exact Set membership guards it — no false positives.
-        if (/\//.test(trimmed) && /^[a-z0-9][a-z0-9/_-]*$/.test(trimmed) && allSlugs.has(trimmed)) {
+        // The exact-slug step, same shape as makeResolver's. Exact Set
+        // membership guards it — no false positives.
+        if (/\//.test(trimmed) && SLUG_PATH_SHAPE_RE.test(trimmed) && allSlugs.has(trimmed)) {
           return trimmed;
         }
         const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);

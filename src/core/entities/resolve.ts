@@ -23,7 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { SLUG_NON_WORD_RUN_RE, SLUG_WORD_CHARS, foldSlugText } from '../cjk.ts';
+import { SLUG_NON_WORD_RUN_RE, SLUG_PATH_SHAPE_RE, foldSlugText } from '../cjk.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
 import { isUndefinedTableError } from '../utils.ts';
 
@@ -420,17 +420,13 @@ async function tryPrefixExpansion(
   return null;
 }
 
-// Slug shape: the word chars slugify keeps (SLUG_WORD_CHARS — every script,
-// ADR-0001) plus `/`, `_`, `-`, and the `.` sync keeps in path slugs
-// (`notes/v1.0.0`). Built from the shared grammar so an existing page's slug
-// always takes the exact-page branch; it only gates a SELECT by slug.
-const SLUG_SHAPE_RE = new RegExp(`^[${SLUG_WORD_CHARS}/._-]+$`, 'u');
-
+// Slug shape comes from the shared grammar (SLUG_PATH_SHAPE_RE) so an existing
+// page's slug always takes the exact-page branch; it only gates a SELECT by slug.
 function looksLikeSlug(s: string): boolean {
   // Anything with whitespace or capital letters is a display name, not a slug.
   if (/\s/.test(s)) return false;
   if (s !== s.toLowerCase()) return false;
-  return SLUG_SHAPE_RE.test(s);
+  return SLUG_PATH_SHAPE_RE.test(s);
 }
 
 async function tryExactSlug(

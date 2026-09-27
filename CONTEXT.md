@@ -30,6 +30,13 @@ The rule that turns free text into a Slug: which characters are kept, which
 fold, which are dropped. Every grammar shares one letter fold
 (`cjk.ts:foldSlugText`).
 
+**Exact-slug step**:
+The check that runs before any fuzzy match: a value that already looks like a
+Slug is looked up exactly. Its shape test must accept everything the Slug
+grammar produces. Otherwise a real page is skipped and fuzzy matching may pick
+a sibling.
+_Avoid_: "slug-shape check", "step 1" — both depend on which resolver you mean.
+
 **Lexical arm**:
 The search branch that matches words. Language-dependent: stemming and stop
 words come from one configuration for the whole Brain.
