@@ -146,6 +146,15 @@ export function slugifyText(s: string, maxCodePoints: number): string {
  */
 export const PAGE_SLUG_SEG = `[${SLUG_WORD_CHARS}][${SLUG_WORD_CHARS}\\-]*`;
 
+/**
+ * Shape of a value that may already be a stored slug: SLUG_WORD_CHARS (every
+ * script, ADR-0001) plus `/`, `_`, `-`, and the `.` sync keeps in path slugs
+ * (`notes/v1.0.0`, `people/а.с.-example`). Every exact-slug step tests it
+ * before any fuzzy match, so it must accept every slug a grammar mints. It only
+ * gates an exact lookup: accepting too much costs a miss, never a wrong page.
+ */
+export const SLUG_PATH_SHAPE_RE = new RegExp(`^[${SLUG_WORD_CHARS}/._-]+$`, 'u');
+
 export const CJK_SENTENCE_DELIMITERS = ['。', '！', '？']; // 。！？
 export const CJK_CLAUSE_DELIMITERS = ['；', '：', '，', '、']; // ；：，、
 

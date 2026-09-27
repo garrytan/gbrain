@@ -99,6 +99,19 @@ describe('extractLinksFromFile', () => {
     expect(attended[0].to_slug).toBe('meetings/sync');
   });
 
+  it('frontmatter source: a Cyrillic or dotted slug passes the exact-slug step (#11)', async () => {
+    // `source:` carries no dir hint, and the FS resolver has no fuzzy step, so
+    // the exact-slug step is the only way to reach these pages.
+    const allSlugs = new Set([
+      'notes/test', 'источники/2024-01-12-планёрка', 'люди/а.с.-пример', 'sources/résumé-v2',
+    ]);
+    for (const target of ['источники/2024-01-12-планёрка', 'люди/а.с.-пример', 'sources/résumé-v2']) {
+      const content = `---\nsource: ${target}\ntype: note\n---\nText.`;
+      const links = await extractLinksFromFile(content, 'notes/test.md', allSlugs, { includeFrontmatter: true });
+      expect(links.filter(l => l.link_type === 'source').map(l => l.to_slug)).toEqual([target]);
+    }
+  });
+
   it('frontmatter attendees: a stroke-letter name also resolves to the FOLDED ASCII page slug (#4855)', async () => {
     // The other half of the dual-form lookup: the basename index keys through
     // normalizeBasename, which folds đ → d, so a people page minted with an
