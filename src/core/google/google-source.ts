@@ -854,11 +854,15 @@ async function sweepGmail(
     state.gmail_pending_thread_ids = [...unlanded];
     await saveGoogleState(deps, state);
   };
+  // A managed sweep cannot write once its signal aborts (the lease refuses),
+  // so it parks the whole window before importing and banks per batch; an
+  // abort then repeats at most one batch.
+  if (deps.managed && threadIds.length > 0) await checkpoint();
   let failed = 0;
   let landedSinceCheckpoint = 0;
   for (const tid of threadIds) {
     if (deps.opts.signal?.aborted) {
-      await checkpoint();
+      if (!deps.managed) await checkpoint();
       return false;
     }
     if (poisoned(tid)) {
@@ -872,7 +876,7 @@ async function sweepGmail(
       const newest = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
       if (newest > (state.gmail_newest_ms ?? 0)) state.gmail_newest_ms = newest;
       progressTick(`thread ${tid}`);
-      if (failed === 0 && ++landedSinceCheckpoint >= BACKFILL_BATCH_THREADS) {
+      if ((failed === 0 || deps.managed) && ++landedSinceCheckpoint >= BACKFILL_BATCH_THREADS) {
         landedSinceCheckpoint = 0;
         await checkpoint();
       }
@@ -904,12 +908,13 @@ async function sweepGmail(
     }
   }
   if (deps.opts.signal?.aborted) {
-    await checkpoint();
+    if (!deps.managed) await checkpoint();
     return false;
   }
   state.gmail_pending_thread_ids = [...unlanded];
-  // The delta cursor advances only when every flagged thread landed —
-  // a partial drain re-lists the same window next run (idempotent).
+  // Unmanaged: the delta cursor advances only when every flagged thread
+  // landed — a partial drain re-lists the same window next run (idempotent).
+  // A managed sweep already advanced it above, with unlanded threads parked.
   if (failed === 0 && newHistoryId) {
     state.gmail_history_id = newHistoryId;
   }
