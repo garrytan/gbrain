@@ -151,9 +151,16 @@ describe('Scaffolder', () => {
     expect(l).toBe('[A lice](people/alice.md)');
   });
 
+  // #11: the slug grammar is shared with validatePageSlug (every script).
+  test('entityLink accepts non-Latin slugs', () => {
+    expect(entityLink({ slug: 'people/алиса-пример', displayText: 'Алиса' })).toBe('[Алиса](people/алиса-пример.md)');
+    expect(entityLink({ slug: 'люди/алёна-йорк', displayText: 'Алёна' })).toBe('[Алёна](люди/алёна-йорк.md)');
+  });
+
   test('entityLink rejects invalid slug', () => {
     expect(() => entityLink({ slug: 'invalid', displayText: 'x' })).toThrow(ScaffoldError);
     expect(() => entityLink({ slug: 'Bad/Slug', displayText: 'x' })).toThrow(ScaffoldError);
+    expect(() => entityLink({ slug: 'Люди/Алиса', displayText: 'x' })).toThrow(ScaffoldError);
   });
 
   test('timelineLine builds canonical form', () => {
@@ -525,6 +532,18 @@ describe('link validator', () => {
     expect(normalizeToSlug('x')).toBeNull();
   });
 
+  // #11: slugs of every script go through the existence check.
+  test('normalizeToSlug keeps non-Latin slugs; lowercases; still needs dir/name', () => {
+    expect(normalizeToSlug('../../people/алиса-пример.md')).toBe('people/алиса-пример');
+    expect(normalizeToSlug('Люди/Алёна-Йорк.md')).toBe('люди/алёна-йорк');
+    expect(normalizeToSlug('одно-слово')).toBeNull();
+  });
+
+  test('normalizeToSlug composes NFD hrefs (macOS й/ё) to the NFC slug the engine stores', () => {
+    expect(normalizeToSlug('люди/йорк-пример.md')).toBe('люди/йорк-пример');
+    expect(normalizeToSlug('люди/ёж.md')).toBe('люди/ёж');
+  });
+
   test('isExternalUrl detects http(s)', () => {
     expect(isExternalUrl('https://example.com')).toBe(true);
     expect(isExternalUrl('http://example.com')).toBe(true);
@@ -586,6 +605,21 @@ describe('link validator', () => {
       engine,
     });
     expect(findings.some(f => f.severity === 'warning')).toBe(true);
+  });
+
+  test('flags a dangling Cyrillic wikilink and passes an existing one', async () => {
+    await engine.putPage('people/алиса-пример', { type: 'person', title: 'Алиса', compiled_truth: 'x', frontmatter: {} });
+    const findings = await linkValidator.validate({
+      slug: 'people/bob',
+      type: 'person',
+      compiledTruth: 'Встреча с [Алисой](../people/алиса-пример.md) и [Борисом](../people/борис-пример.md).',
+      timeline: '',
+      frontmatter: {},
+      engine,
+    });
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe('error');
+    expect(findings[0].message).toContain('people/борис-пример');
   });
 
   test('ignores links inside fenced code', async () => {

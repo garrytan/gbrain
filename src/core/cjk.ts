@@ -139,10 +139,12 @@ export function slugifyText(s: string, maxCodePoints: number): string {
 
 /**
  * Page-slug segment grammar (no anchors): word-char lead, then word-char or
- * hyphen continuation. Single source for validatePageSlug (operations.ts),
- * SlugRegistry's SLUG_RE, and the dream-cycle SUMMARY_SLUG_RE so every slug
- * validator shares one grammar (#738). Compose with the `u` flag — see
- * SLUG_WORD_CHARS.
+ * hyphen continuation. Shared by SlugRegistry's SLUG_RE, the Scaffolder's
+ * entityLink slug check, the link validator's normalizeToSlug, the subagent
+ * wikilink SLUG_RE and the dream-cycle SUMMARY_SLUG_RE, so they accept one
+ * grammar (#738, #11). validatePageSlug (ops/context.ts) builds on the same
+ * letters but widens the segment with `.` and `_` (#4665). Compose with the
+ * `u` flag — see SLUG_WORD_CHARS.
  */
 export const PAGE_SLUG_SEG = `[${SLUG_WORD_CHARS}][${SLUG_WORD_CHARS}\\-]*`;
 
