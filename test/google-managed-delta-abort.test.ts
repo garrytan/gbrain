@@ -10,7 +10,7 @@ afterAll(teardown);
 
 const b64url = (s: string) => Buffer.from(s, 'utf-8').toString('base64url');
 const NOW_MS = Math.floor(Date.now() / 1000) * 1000;
-// 30 threads: one full 25-thread checkpoint batch plus a partial second batch.
+// 30 threads: banked after the first landing, then after a full 25-thread batch.
 const TIDS = Array.from({ length: 30 }, (_, i) => `17aa00000000c${String(i).padStart(3, '0')}`);
 
 test('managed gmail delta: an aborted drain banks per batch; resume drops no thread and repeats at most the unbanked one', async () => withEnv(env, async () => {
@@ -53,26 +53,26 @@ test('managed gmail delta: an aborted drain banks per batch; resume drops no thr
     await run(); // anchors the history cursor at 1000, empty backfill
     expect((await state())?.gmail_history_id).toBe('1000');
 
-    // History flags 30 threads; the wall-clock budget expires during the 27th
-    // fetch: 25 threads are banked, #26 landed after the last checkpoint.
+    // History flags 30 threads; the wall-clock budget expires during the 28th
+    // fetch: 26 threads are banked (1 + 25), #27 landed after the last checkpoint.
     historyId = '1010';
     flagged = TIDS;
     const controller = new AbortController();
     let fetches = 0;
-    onThread = () => { if (++fetches >= 27) controller.abort(); };
+    onThread = () => { if (++fetches >= 28) controller.abort(); };
     const aborted = await run(controller.signal).then((r) => r.status, (e: Error) => e.name);
     expect(['partial', 'AbortError']).toContain(aborted);
     const banked = await state();
     expect(banked?.gmail_history_id).toBe('1010');
-    expect(banked?.gmail_pending_thread_ids).toEqual(TIDS.slice(25));
-    expect(await imports()).toHaveLength(26);
+    expect(banked?.gmail_pending_thread_ids).toEqual(TIDS.slice(26));
+    expect(await imports()).toHaveLength(27);
 
-    // Resume: only the five parked threads are fetched; every thread lands and
+    // Resume: only the four parked threads are fetched; every thread lands and
     // only the one landed-but-unbanked thread is imported a second time.
     onThread = () => { fetches++; };
     fetches = 0;
     expect((await run()).status).not.toBe('partial');
-    expect(fetches).toBe(5);
+    expect(fetches).toBe(4);
     const all = await imports();
     expect(new Set(all).size).toBe(30);
     expect(all).toHaveLength(31);
