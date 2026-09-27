@@ -1,0 +1,7 @@
+{
+  "name": "fixture-good",
+  "scripts": {
+    "build": "bun build --compile --no-compile-autoload-bunfig --outfile bin/tool src/cli.ts",
+    "build:all": "bun build --compile --no-compile-autoload-bunfig --target=bun-linux-x64 --outfile bin/tool-linux src/cli.ts"
+  }
+}

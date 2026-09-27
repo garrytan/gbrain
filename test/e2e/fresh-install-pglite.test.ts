@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, test } fr
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import {
   configureGateway,
   resetGateway,
@@ -383,7 +384,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
         title: 'E2E Test',
         compiled_truth: 'fresh install end-to-end happy path',
       });
-      await engine.upsertChunks('test/e2e-page', [
+      await installFixtureChunks(engine, 'test/e2e-page', [
         { chunk_index: 0, chunk_text: 'fresh install end-to-end happy path', chunk_source: 'compiled_truth' },
       ]);
 

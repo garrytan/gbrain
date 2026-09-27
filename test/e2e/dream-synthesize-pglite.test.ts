@@ -1081,16 +1081,20 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       const content = 'User: routine chat that the model mangles\n'.repeat(120);
       const filePath = join(rig.corpusDir, '2026-08-16-mangled.txt');
       writeFileSync(filePath, content);
-      await seedVerdictFor(rig, filePath, content);
+      const hash = await seedVerdictFor(rig, filePath, content);
+      const slug = `wiki/personal/reflections/2026-08-16-fallback-${hash.slice(0, 6)}`;
 
       let calls = 0;
       __setChatTransportForTests(async () => {
         calls++;
-        const text = calls === 1 ? 'sure! here are your pages, enjoy' : 'nothing worth writing';
+        const text = calls === 1 ? 'sure! here are your pages, enjoy' : 'saved';
         return {
-          text,
-          blocks: [{ type: 'text', text }],
-          stopReason: 'end',
+          text: calls === 2 ? '' : text,
+          blocks: calls === 2 ? [{
+            type: 'tool-call', toolCallId: 'fallback-save', toolName: 'brain_put_page',
+            input: { slug, content: '---\ntitle: Fallback synthesis\ntype: reflection\n---\n\nSaved through the fallback loop.' },
+          }] : [{ type: 'text', text }],
+          stopReason: calls === 2 ? 'tool_calls' : 'end',
           usage: { input_tokens: 100, output_tokens: 20, cache_read_tokens: 0, cache_creation_tokens: 0 },
           model: 'anthropic:claude-sonnet-4-6',
           providerId: 'anthropic',
@@ -1110,6 +1114,9 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       const jr = (typeof jobs[0]!.result === 'string' ? JSON.parse(jobs[0]!.result as string) : jobs[0]!.result) as Record<string, unknown>;
       expect(jr.synth_mode_used).toBe('agentic_fallback');
       expect(jr.fallback_reason).toBe('unparseable');
+      expect(jr.pages_written).toBe(1);
+      expect((await rig.engine.getPage(slug))?.compiled_truth).toContain('Saved through the fallback loop.');
+      expect(readFileSync(join(rig.brainDir, `${slug}.md`), 'utf8')).toContain('Saved through the fallback loop.');
     } finally {
       if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = savedKey;
@@ -1131,14 +1138,20 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       const content = 'User: agentic-dial conversation\n'.repeat(120);
       const filePath = join(rig.corpusDir, '2026-08-16-agentic-dial.txt');
       writeFileSync(filePath, content);
-      await seedVerdictFor(rig, filePath, content);
+      const hash = await seedVerdictFor(rig, filePath, content);
+      const slug = `wiki/personal/reflections/2026-08-16-agentic-${hash.slice(0, 6)}`;
 
+      let calls = 0;
       __setChatTransportForTests(async () => {
-        const text = 'nothing to write';
+        calls++;
+        const text = 'saved';
         return {
-          text,
-          blocks: [{ type: 'text', text }],
-          stopReason: 'end',
+          text: calls === 1 ? '' : text,
+          blocks: calls === 1 ? [{
+            type: 'tool-call', toolCallId: 'agentic-save', toolName: 'brain_put_page',
+            input: { slug, content: '---\ntitle: Agentic synthesis\ntype: reflection\n---\n\nSaved through the agentic loop.' },
+          }] : [{ type: 'text', text }],
+          stopReason: calls === 1 ? 'tool_calls' : 'end',
           usage: { input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
           model: 'anthropic:claude-sonnet-4-6',
           providerId: 'anthropic',
@@ -1152,6 +1165,8 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       expect(synthesis.agentic_jobs).toBe(1);
       expect(synthesis.oneshot_jobs).toBe(0);
       expect(synthesis.fallback_jobs).toBe(0);
+      expect((await rig.engine.getPage(slug))?.compiled_truth).toContain('Saved through the agentic loop.');
+      expect(readFileSync(join(rig.brainDir, `${slug}.md`), 'utf8')).toContain('Saved through the agentic loop.');
     } finally {
       if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = savedKey;

@@ -464,7 +464,8 @@ What the arms say:
   and autocut off, expansion costs thirteen questions against `balanced`
   (+2 / −15: multi-session −7, temporal −5) plus the Haiku call per query.
   `gbrain config set search.mode balanced` keeps the reranker and drops
-  expansion; `gbrain config set search.expansion_variant_budget 0.25`
+  expansion (`gbrain query` still expands in every mode unless `--no-expand`);
+  `gbrain config set search.expansion_variant_budget 0.25`
   recovers most of the loss if you keep it on.
 - **Slot starvation is not the miss class** (from the 2026-09-02 sibling run;
   no in-repo arm yet): session-diverse over-fetch fills every top-5 to 5.00

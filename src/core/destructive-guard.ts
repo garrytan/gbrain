@@ -1,3 +1,5 @@
+import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { managedPersistenceEnabled } from './persistence/ownership.ts';
 /**
  * Destructive operation guard — v0.26.5
  *
@@ -328,6 +330,15 @@ export async function softDeleteSource(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<SoftDeletedSource | null> {
+  if(await managedPersistenceEnabled(engine)){
+    const {runManagedSourceLifecycle}=await import('./persistence/source-lifecycle.ts');
+    const result=await runManagedSourceLifecycle(engine,{operation:'archive',sourceId});
+    if(result.noop)return null;
+    const [row]=await engine.executeRaw<{name:string;archived_at:string;archive_expires_at:string;n:number}>(`SELECT name,archived_at,archive_expires_at,
+      (SELECT count(*)::integer FROM pages WHERE source_id=$1) AS n FROM sources WHERE id=$1`,[sourceId]);
+    return row?{id:sourceId,name:row.name,deletedAt:new Date(row.archived_at),expiresAt:new Date(row.archive_expires_at),pageCount:row.n}:null;
+  }
+  await assertUnmanagedCanonicalWriter(engine, 'sources archive');
   // Atomic: only flip rows that are currently active. Returns the metadata
   // we need without a follow-up SELECT. RETURNING projects the columns the
   // caller cares about; pageCount is a separate count.
@@ -373,6 +384,11 @@ export async function restoreSource(
   sourceId: string,
   refederate: boolean = true,
 ): Promise<boolean> {
+  if(await managedPersistenceEnabled(engine)){
+    const {runManagedSourceLifecycle}=await import('./persistence/source-lifecycle.ts');
+    const result=await runManagedSourceLifecycle(engine,{operation:'restore',sourceId,refederate});return !result.noop;
+  }
+  await assertUnmanagedCanonicalWriter(engine, 'sources restore');
   const federatedPatch = refederate ? '{"federated": true}' : '{"federated": false}';
   const rows = await engine.executeRaw<{ id: string }>(
     `UPDATE sources
@@ -454,6 +470,18 @@ export interface PurgeExpiredResult {
 export async function purgeExpiredSources(
   engine: BrainEngine,
 ): Promise<PurgeExpiredResult> {
+  if(await managedPersistenceEnabled(engine)){
+    const {runManagedSourceLifecycle}=await import('./persistence/source-lifecycle.ts');
+    const candidates=await engine.executeRaw<{id:string;incarnation:string}>(`SELECT id,incarnation FROM sources WHERE archived=true
+      AND archive_expires_at IS NOT NULL AND archive_expires_at<=now() ORDER BY id`);
+    const result:PurgeExpiredResult={purged:[],blocked:[]};
+    for(const source of candidates){
+      try{const receipt=await runManagedSourceLifecycle(engine,{operation:'purge',sourceId:source.id,expectedIncarnation:source.incarnation,confirmDestructive:true,expiredOnly:true});if(!receipt.noop)result.purged.push(source.id);}
+      catch(error){result.blocked.push({id:source.id,reason:error instanceof Error?error.message:'Source lifecycle could not finish.'});}
+    }
+    return result;
+  }
+  await assertUnmanagedCanonicalWriter(engine, 'sources purge');
   const candidates = await engine.executeRaw<{ id: string; config: unknown; local_path: string | null }>(
     `SELECT id, config, local_path FROM sources
      WHERE archived = true

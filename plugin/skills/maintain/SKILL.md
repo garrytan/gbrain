@@ -180,7 +180,11 @@ counted as warnings, not edits. Telemetry lands in
 Reads recent reflections within `dream.patterns.lookback_days` (default 30),
 runs a single Sonnet pass to surface recurring themes, and writes pattern
 pages to `wiki/personal/patterns/<theme>` when ≥`dream.patterns.min_evidence`
-(default 3) reflections support a pattern.
+(default 3) reflections support a pattern. A completed run records the newest
+reflection it consumed (`dream.patterns.last_evidence_ts`); until a reflection
+in the window is newer than that, re-runs skip with `no_new_evidence` instead
+of paying for another model pass — `gbrain dream --phase patterns --once`
+forces one.
 
 **Quality bar (Iron Law for synthesis):**
 1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible

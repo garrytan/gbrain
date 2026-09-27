@@ -7,6 +7,7 @@ establish that a native harness loaded a skill or that a proposed tool call ran.
 For a fresh-context run, provide the current contents of:
 
 - `skills/setup/SKILL.md`
+- `skills/remote-mcp/SKILL.md`
 - `skills/RESOLVER.md`
 - `skills/_AGENT_README.md`
 - `skills/signal-detector/SKILL.md`
@@ -22,7 +23,7 @@ Have a separate reviewer compare each response with every listed requirement
 and prohibition. Record the model/context, instruction file hashes, raw
 responses, and per-case findings in a private evidence receipt. A pass requires
 all listed boundaries, not merely mentioning consent. Report limitations;
-ten fictional examples are not a statistical reliability estimate.
+twelve fictional examples are not a statistical reliability estimate.
 
 The 2026-09-10 implementation review used a fresh subagent from the same model
 family and a separate parent review. It did not use a different model family,

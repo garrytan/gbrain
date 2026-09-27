@@ -12,9 +12,9 @@ file, the workflow pins, and the affected assertions together.
   version stamp; CI installs the RELEASE TAG `v2026.8.3` = commit `3c27eb62` — the two
   differ by post-release main commits, same declared version. If a CI door run ever
   diverges from these notes, re-observe against the tag checkout.)
-- Installer sha256: `2076946edc23b3aed4a82ccb2e6b38ab593575626206dbdd192384e375b6d57c`
-  (observed 2026-08-31; the served `scripts/install.sh` matched byte-for-byte
-  against the upstream repo at `a071fc80d`). Full-script review notes for
+- Installer sha256: `5854b15670b51a8daae8f59ddfa917062de9f74be261eb73b4b8d719710f8968`
+  (observed 2026-09-09; the served `scripts/install.sh` matched byte-for-byte
+  against the upstream repo at `95d426560`). Full-script review notes for
   this pin: the door flags (`--skip-setup`/`--non-interactive`/`--skip-browser`/
   `--skip-computer-use`/`--branch`/`--commit`/`--force-commit`) are intact
   and unknown flags hard-fail (`exit 1`, so a dropped flag can never silently
@@ -23,7 +23,7 @@ file, the workflow pins, and the affected assertions together.
   duckduckgo connectivity probe); no eval/base64 obfuscation; sudo limited to
   distro package installs (the one setuid chrome-sandbox sudo is
   desktop-build-only, never in the door path); the Node support gate is
-  24.11+; the `run_locked_uv_sync` helper runs the Tier-0 `uv sync --locked`
+  22.22+/24.11+/26+; the `run_locked_uv_sync` helper runs the Tier-0 `uv sync --locked`
   with PROJECT `[tool.uv]` config discovery enabled in a subshell while
   user/system uv config is redirected to an empty XDG dir, so the sync is
   hash-verified instead of falling through to the non-hash-verified PyPI
@@ -116,7 +116,7 @@ non-interactive. `hermes cron tick` = run due jobs once and exit. `hermes cron l
   `git -C ~/.hermes/hermes-agent rev-parse HEAD` and loud-fails on any mismatch, so an
   installer that silently ignores unknown flags (or a moved checkout layout) can never
   run unpinned upstream code on a runner that later holds secrets.
-- `HERMES_INSTALL_SHA256: "2076946edc23b3aed4a82ccb2e6b38ab593575626206dbdd192384e375b6d57c"`
+- `HERMES_INSTALL_SHA256: "5854b15670b51a8daae8f59ddfa917062de9f74be261eb73b4b8d719710f8968"`
 - Door test asserts `hermes --version` output contains `v$HERMES_VERSION` when the env var is set.
 - `hermes --version` output shape: `Hermes Agent v0.20.0 (2026.8.3)` + install dir + python lines.
 - Missing-secret posture is SPLIT by trigger: on `pull_request` the paid leg is

@@ -224,13 +224,28 @@ export function scanSensitive(
   const out: SensitivityFinding[] = [];
 
   // (a) Secrets — scanText applies the fingerprint allowlist itself.
+  const secretFingerprints = new Set<string>();
   for (const f of scanText(text, { allowlist: config.allowlist })) {
     out.push({ family: `secret:${f.pattern}`, fingerprint: f.fingerprint });
+    secretFingerprints.add(f.fingerprint);
   }
 
-  // (b) PII — detection over the ordered PII_PATTERNS families.
+  // (b) PII — detection over the ordered PII_PATTERNS families. secret-scan
+  // OWNS the credential-shaped families it also matches (jwt, bearer): a
+  // value the secret pass already reported is not reported a second time
+  // under `pii:*`. Dedupe is by fingerprint, not by family name, so a short
+  // bearer token under the secret-scan floor still reaches `pii:bearer`, and
+  // `Bearer <vendor key>` collapses onto the vendor finding. The PII bearer
+  // match includes the `Bearer ` keyword; the token-only fingerprint is the
+  // one secret-scan emits, so both spellings are checked.
   for (const f of findPii(text)) {
-    pushUnlessAllowed(out, `pii:${f.family}`, text.slice(f.start, f.end), config.allowlist);
+    const value = text.slice(f.start, f.end);
+    const tokenOnly = value.replace(/^[Bb]earer\s+/, '');
+    if (
+      secretFingerprints.has(fingerprintValue(value).fingerprint) ||
+      secretFingerprints.has(fingerprintValue(tokenOnly).fingerprint)
+    ) continue;
+    pushUnlessAllowed(out, `pii:${f.family}`, value, config.allowlist);
   }
 
   // (c1) Private path shapes.

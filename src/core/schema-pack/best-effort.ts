@@ -53,9 +53,31 @@ export async function loadActivePackBestEffort(
       cfg: loadConfig(),
       remote: ctx.remote ?? true,
       sourceId: ctx.sourceId,
+      // #4653: tier-4 DB-plane schema_pack. Without it every caller here fell
+      // through to the file/default tiers while `schema active` and
+      // get_active_schema_pack honored the DB tier — a split resolution
+      // inside one process.
+      dbConfig: await readDbSchemaPack(ctx.engine),
     });
   } catch {
     return null;
+  }
+}
+
+/**
+ * Read the DB-plane `schema_pack` key (tier 4) from a live engine. Null-safe
+ * and never throws: callers without an engine (tests pass `engine: null`) or
+ * on brains predating the config table get undefined and fall through to
+ * env/file resolution. ONE spelling of the tier-4 read, shared by the CLI
+ * inspection verbs, the MCP schema ops and both loaders in this module.
+ */
+export async function readDbSchemaPack(
+  engine: Pick<BrainEngine, 'getConfig'> | null | undefined,
+): Promise<string | undefined> {
+  try {
+    return (await engine?.getConfig?.('schema_pack'))?.trim() || undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -70,11 +92,11 @@ export async function loadActivePackBestEffort(
  *     OperationContext (and passes something like `{ engine } as never`)
  *     silently runs under REMOTE trust gating. A tier-1 trust rejection then
  *     returns null — indistinguishable from "there is no pack".
- *   - **DB-side pack visibility.** Reads the engine's `schema_pack` config key
- *     and pairs it with FILE-ONLY config, so a post-unify DB-side pack flip is
- *     visible. Full `loadConfig()` merges transient env/database state and can
- *     resolve a DIFFERENT pack than the onboard checks do — which is how a
- *     recommender and its handler end up disagreeing about the same brain.
+ *   - **FILE-ONLY config.** Pairs the engine's `schema_pack` config key with
+ *     `loadConfigFileOnly()`, matching the onboard checks. Full `loadConfig()`
+ *     merges transient env/database state and can resolve a DIFFERENT pack
+ *     than the onboard checks do — which is how a recommender and its handler
+ *     end up disagreeing about the same brain.
  *
  * Same null contract as `loadActivePackBestEffort` (D4): null means the pack
  * could not be resolved and is NOT a license to fall back to hardcoded
@@ -90,10 +112,7 @@ export async function loadActivePackForLocalEngine(
   engine: Pick<BrainEngine, 'getConfig'>,
 ): Promise<ResolvedPack | null> {
   try {
-    let dbConfig: string | undefined;
-    try {
-      dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
-    } catch { /* engine.config may not exist on very old brains */ }
+    const dbConfig = await readDbSchemaPack(engine);
     return await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig })
       .catch(() => null);
   } catch {

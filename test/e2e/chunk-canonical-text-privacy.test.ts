@@ -17,6 +17,7 @@ import * as gateway from '../../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { readContentChunksEmbeddingDim } from '../../src/core/embedding-dim-check.ts';
 
 const SOURCE = 'canonical-chunk-privacy-fixture';
 const NUL = String.fromCharCode(0);
@@ -78,7 +79,13 @@ for (const kind of ['pglite', 'postgres'] as const) {
       await imported(slug, 'Public canonical replacement � control.');
       const before = await engine.getChunks(slug, { sourceId: SOURCE, requireSafeChunks: true });
       expect(before).toHaveLength(1);
-      const vector = new Float32Array(1536); vector[0] = 1;
+      // This checks canonical storage, independent of the shared Postgres
+      // database's embedding profile. The isolated PGLite arm stays legacy.
+      const dimensions = kind === 'postgres'
+        ? (await readContentChunksEmbeddingDim(engine)).dims
+        : LEGACY_EMBEDDING_CONFIG.embedding_dimensions;
+      if (!dimensions) throw new Error('Fixture requires a dimensioned text embedding column');
+      const vector = new Float32Array(dimensions); vector[0] = 1;
       const poison = before[0].chunk_text.replace('�', LONE_HI) + NUL;
       // Embedding refresh supplies body fields only; omitted code metadata
       // retains its stored value under the upsert contract.
@@ -105,7 +112,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
       await engine.upsertChunks(slug, [{ ...input[0], chunk_text: `${poison} changed` }], { sourceId: SOURCE });
       expect(await version(slug)).toBeLessThan(0);
       expect(await engine.getChunks(slug, { sourceId: SOURCE, requireSafeChunks: true })).toEqual([]);
-      const [changed] = await engine.getChunks(slug, { sourceId: SOURCE });
+      const [changed] = await engine.getChunks(slug, { sourceId: SOURCE, includeUnsealed: true });
       expect(changed.chunk_text).toBe(`${before[0].chunk_text} changed`);
       [hash] = await hashes();
       expect(hash.stored).toBe(hash.recomputed);
@@ -182,7 +189,9 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const page = (await engine.getPage(slug, { sourceId: SOURCE }))!;
         expect(page.compiled_truth).toContain(TAKES_FENCE_BEGIN);
         expect(page.compiled_truth).not.toContain(NUL);
-        const [chunk] = await engine.getChunks(slug, { sourceId: SOURCE });
+        // OCR imports remain unavailable to normal retrieval until their complete projection is sealed.
+        expect(await engine.getChunks(slug, { sourceId: SOURCE })).toEqual([]);
+        const [chunk] = await engine.getChunks(slug, { sourceId: SOURCE, includeUnsealed: true });
         expect(chunk.chunk_text).toContain('Public OCR.');
         expect(chunk.chunk_text).not.toContain(PRIVATE);
       } finally {

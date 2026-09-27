@@ -1,8 +1,16 @@
 # GBrain for Muse
 
-Install a small local GBrain CLI in Muse's durable user-files area, then teach
-Muse to use it for explicit memory and recall. Start keyless. If you already
-have a hosted brain, use the same CLI workflow as a thin client instead.
+Give Muse explicit, portable memory with provenance. The recommended shape
+runs the brain on **your own computer**, publishes it over MCP with
+`gbrain mcp expose --funnel`, grants Muse a `memory-writer` client, and
+installs the thin GBrain CLI in Muse's durable user-files area as a client.
+If no computer of yours can stay online, install a small local GBrain in that
+durable area instead. Either way, establish the durable path first and start
+keyless.
+
+**Say to your agent:** *"connect muse to my brain"* — *"use my brain over
+mcp"*. On your computer, the `remote-mcp` skill publishes and grants; inside
+Muse, the paste-in prompt below installs the connection.
 
 This guide covers **Meta's Muse personal agent**.
 
@@ -32,12 +40,62 @@ replacement of the runtime cell.
 
 | Your situation | Use |
 | --- | --- |
-| New brain and a confirmed durable user-files directory | Local setup below, adapter `muse` |
-| Existing hosted brain | [Hosted harness access](hosted-harness-access.md), adapter `muse`, thin CLI |
-| No confirmed persistent custom-files location | Resolve that platform capability before creating durable local memory |
+| You have (or can run) GBrain on your own computer, and a confirmed durable user-files directory in Muse — recommended | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because Muse's runtime is in the vendor's cloud, not on your tailnet), grant Muse a client, then install the thin CLI at the durable root ([hosted harness access](hosted-harness-access.md), adapter `muse`) |
+| Existing hosted brain elsewhere | Same client-side steps: [hosted harness access](hosted-harness-access.md), adapter `muse`, thin CLI |
+| No always-on machine; new brain and a confirmed durable directory | [Local setup](#alternative-install-gbrain-inside-muse) below, adapter `muse` |
+| No confirmed persistent custom-files location | Resolve that platform capability before installing either the thin CLI or durable local memory |
+| Want to keep the connection tailnet-only | Joining Muse's runtime to your tailnet (userspace `tailscaled`, ephemeral auth key) is advanced, not automated by gbrain, and unverified; Sentinel's egress policy applies either way |
 | A native MCP option appears in your account | Treat it as a new capability to verify; this guide does not claim Muse supports native MCP |
 
-## Paste this into Muse
+## Recommended: your brain on your computer, reached over MCP
+
+On the computer that holds the brain:
+
+```bash
+gbrain mcp expose --funnel                      # consent prompt, Tailscale install/login if needed, service, URL
+gbrain mcp grant muse-example --harness muse --profile memory-writer --source default \
+  --url https://your-machine.your-tailnet.ts.net/mcp \
+  --admin-token-file ~/.gbrain/serve/admin-token \
+  --credentials-out /private/muse-example.json
+```
+
+Deliver `/private/muse-example.json` into Muse's durable user-files area
+through the product's supported secure file flow (never paste it into chat),
+then paste this into Muse:
+
+```text
+Connect this agent to my existing GBrain over MCP. Read:
+https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
+and its linked hosted-access guide.
+
+First identify the documented or platform-confirmed durable user-files area
+available to your runtime and choose an absolute gbrain root there; tell me the
+persistence evidence, or report the blocker instead of using a temporary path.
+
+The brain is published at https://your-machine.your-tailnet.ts.net/mcp and my
+private credential file is at <durable-area>/private/muse-example.json.
+Install GBrain at that root (reuse a matching installation; preserve existing
+state), then run gbrain connect with --harness muse, that credentials file,
+--install and the absolute --root. Use the generated absolute bin/gbrain
+launcher for every memory command. Keep secrets out of chat and command output.
+Use Muse's normal permission and secure credential flows for any blocked
+download or egress; a denial is a reported boundary, not something to route
+around.
+
+Run gbrain mcp verify and show me the server checks. Attach the generated
+GBRAIN-INSTRUCTIONS.md through the native custom-skill mechanism available in
+this account and report its exact location or name; keep your current identity.
+Then remember a harmless randomized test fact with provenance, recall it in a
+fresh conversation, and report each unverified platform step separately.
+```
+
+Muse's memory now lives on your machine. `gbrain mcp expose --status` on your
+computer re-checks the service and public URL; revoke Muse's client on the
+host when it should stop.
+
+## Alternative: install GBrain inside Muse
+
+Use this when no computer of yours can stay online. Paste this into Muse:
 
 ```text
 Set up GBrain as my durable memory. Read:
@@ -68,11 +126,14 @@ Once the durable root is established, follow the
 [shared setup commands](in-agent-setup.md#2-run-the-shipped-setup-helper), replacing
 the example root and selecting `--harness muse`. The helper works without root
 and does not create a system service or agent identity. Initial fact storage and
-recall do not require extracting credentials from a Muse connector.
+recall do not require extracting credentials from a Muse connector. The rest
+of this guide's local-installation sections apply to this path.
 
 ## Attach instructions and test a fresh conversation
 
-Read `<ROOT>/instructions/gbrain-skill.md` and save it through Muse's available
+Read the memory instructions — `<ROOT>/GBRAIN-INSTRUCTIONS.md` for a
+connection to your published brain, `<ROOT>/instructions/gbrain-skill.md` for
+a local installation — and save them through Muse's available
 custom-skill or standing-instruction mechanism. Keep the exact absolute
 `<ROOT>/bin/gbrain` path in that skill. Public documentation does not establish
 an automatic `AGENTS.md` loader or hook API, so merely writing a repository file
@@ -133,9 +194,14 @@ hosted grants separately if you connected to an existing brain.
 
 The local installer, CLI, and recovery path have hermetic repository tests.
 **An actual Muse account has not been used to verify this integration.** The
+Tailscale publish path (`gbrain mcp expose`) has repository tests with a fake
+Tailscale runner; a real Funnel endpoint reached from Muse and Muse's native
+skill activation are separate observed steps. The
 remaining acceptance checks are concrete:
 
 - Establish and record the durable root and its behavior across runtime replacement.
+- For the published-brain path: `gbrain mcp expose --status` verifies on your
+  computer and `gbrain mcp verify` passes its server checks from inside Muse.
 - Complete allowed package downloads and run the generated launcher.
 - Save, recall, correct, and forget the randomized fact through separate commands.
 - Make a fresh conversation select the native skill and invoke that launcher.

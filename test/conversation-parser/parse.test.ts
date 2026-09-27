@@ -1338,3 +1338,62 @@ describe('unrecognized_headings — folded speaker headings surface (#4136)', ()
     expect(messages.length).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Date-fallback anchoring (#4681 narrow cut): an anchor whose date cannot be
+// reconstructed still opens its own message instead of being dropped and
+// folding its body into the previous speaker.
+// ---------------------------------------------------------------------------
+
+describe('date-fallback anchoring applies to every pattern (#4681)', () => {
+  test('a telegram anchor with an unknown month opens a fallback-dated message instead of folding', () => {
+    // buildIso() returning null used to drop the anchor; on a multi_line
+    // pattern the body then folded into the PREVIOUS speaker while the parse
+    // still returned regex_match (silent misattribution). Reachable on
+    // telegram-text-export with any non-English 3-letter month.
+    const body = [
+      'Alice Doe, [Mar 15, 2024 at 6:37:00 PM]',
+      'hello',
+      'Bob Roe, [Xyz 15, 2024 at 6:38:00 PM]',
+      'bad month',
+      'Alice Doe, [Mar 15, 2024 at 6:39:00 PM]',
+      'bye',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-15' });
+    expect(r.matched_pattern_id).toBe('telegram-text-export');
+    expect(r.messages).toHaveLength(3);
+    expect(r.messages[0].text).toBe('hello');
+    expect(r.messages[1].speaker).toContain('Bob');
+    expect(r.messages[1].text).toBe('bad month');
+    // Inherits the previous anchor's timestamp (NOT midnight): a midnight
+    // stamp mid-page would open a new too-short segment downstream in
+    // extract-conversation-facts and lose the following message.
+    expect(r.messages[1].timestamp).toBe('2024-03-15T18:37:00Z');
+    expect(r.messages[2].text).toBe('bye');
+    expect(r.date_fallback_count).toBe(1);
+  });
+
+  test('a first-anchor date failure anchors at midnight of the page fallback date', () => {
+    const body = [
+      'Bob Roe, [Xyz 15, 2024 at 6:38:00 PM]',
+      'bad month',
+      'Alice Doe, [Mar 15, 2024 at 6:39:00 PM]',
+      'bye',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-15' });
+    expect(r.matched_pattern_id).toBe('telegram-text-export');
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0].speaker).toContain('Bob');
+    expect(r.messages[0].text).toBe('bad month');
+    expect(r.messages[0].timestamp).toBe('2024-03-15T00:00:00Z');
+    expect(r.date_fallback_count).toBe(1);
+  });
+
+  test('healthy pages carry no date_fallback_count (JSON stays byte-identical)', () => {
+    const body = ['Alice Doe, [Mar 15, 2024 at 6:37:00 PM]', 'hello', 'Bob Roe, [Mar 15, 2024 at 6:38:00 PM]', 'hi'].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-15' });
+    expect(r.messages).toHaveLength(2);
+    expect(r.date_fallback_count).toBeUndefined();
+    expect('date_fallback_count' in JSON.parse(JSON.stringify(r))).toBe(false);
+  });
+});

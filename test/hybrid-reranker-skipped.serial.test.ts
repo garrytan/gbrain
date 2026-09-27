@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { HybridSearchMeta, SearchResult } from '../src/core/types.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 const { hybridSearch, hybridSearchCached, awaitPendingSearchCacheWrites } = await import('../src/core/search/hybrid.ts');
 const {
@@ -61,7 +62,7 @@ beforeAll(async () => {
   for (const [slug, title, type] of fixtures) {
     const truth = `${title} is a builder shipping reranker plumbing.`;
     await engine.putPage(slug, { type, title, compiled_truth: truth });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: truth, chunk_source: 'compiled_truth' },
     ]);
   }

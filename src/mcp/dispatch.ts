@@ -125,6 +125,8 @@ export interface ToolResult {
 }
 
 export interface DispatchOpts {
+  /** Configuration selected by the resident transport, never populated from wire params. */
+  config?: OperationContext['config'];
   /** Defaults to true (remote/untrusted). Local CLI callers (`gbrain call`) pass false. */
   remote?: boolean;
   /** Override the default stderr logger (e.g. CLI uses console.* directly). */
@@ -468,7 +470,7 @@ export function buildOperationContext(
       : undefined) ?? metaSessionIdFrom(params);
   return {
     engine,
-    config: loadConfig() || { engine: 'postgres' },
+    config: opts.config ?? loadConfig() ?? { engine: 'postgres' },
     logger: opts.logger || stderrLogger,
     dryRun: !!params.dry_run,
     remote: opts.remote ?? true,
@@ -604,7 +606,7 @@ export async function dispatchToolCall(
   // config read.
   const unknownParamWarnings = findUnknownParams(op, safeParams);
   if (unknownParamWarnings.length > 0) {
-    const strictMode = await resolveStrictParamsMode(engine, loadConfig());
+    const strictMode = await resolveStrictParamsMode(engine, opts.config ?? loadConfig());
     if (strictMode === 'reject') {
       logVerb(false);
       // Privacy (amendment 11): the raw unknown key rides `suggestion` ONLY.

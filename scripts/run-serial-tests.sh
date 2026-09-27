@@ -20,6 +20,7 @@
 # Invoked separately by run-unit-parallel.sh after the parallel pass succeeds.
 #
 # Knobs:
+#   SHARD=N/M                    weighted shard; unset runs every file
 #   GBRAIN_SERIAL_POOL=N          pool width (default min(detect_cpus, 4),
 #                                 then memory-adapted; 1 restores the old
 #                                 fully-sequential behavior)
@@ -42,6 +43,25 @@ export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="commit.gpgsign" GIT_CONFIG_VALUE_0="
 # parallel runner) so the bunfig preload guard passes and nothing can
 # reach a real brain.
 unset DATABASE_URL GBRAIN_DATABASE_URL
+SERIAL_SHARD="${SHARD:-}"
+# Routing belongs to this invocation, never to tests that start nested runners.
+unset SHARD
+shard_n=1
+shard_m=1
+LANE=serial
+if [ -n "$SERIAL_SHARD" ]; then
+  if ! [[ "$SERIAL_SHARD" =~ ^[0-9]+/[0-9]+$ ]]; then
+    echo "[serial-tests] ERROR: invalid SHARD=$SERIAL_SHARD (expected N/M)" >&2
+    exit 2
+  fi
+  shard_n=${SERIAL_SHARD%/*}
+  shard_m=${SERIAL_SHARD#*/}
+  if [ "$shard_n" -lt 1 ] || [ "$shard_m" -lt 1 ] || [ "$shard_n" -gt "$shard_m" ]; then
+    echo "[serial-tests] ERROR: invalid SHARD=$SERIAL_SHARD (need 1 <= N <= M)" >&2
+    exit 2
+  fi
+  LANE="serial-$shard_n"
+fi
 cd "$(dirname "$0")/.."
 
 . scripts/lib/test-env.sh
@@ -89,60 +109,38 @@ while IFS= read -r f; do
   files+=("$f")
 done < <(find test -name '*.serial.test.ts' -not -path 'test/e2e/*' | sort)
 
-if [ "${#files[@]}" -eq 0 ]; then
-  echo "[serial-tests] no *.serial.test.ts files found"
-  exit 0
-fi
-
-# --dry-run-list mirrors run-unit-shard.sh for inline checks/tests. Lists
-# ALL discovered files, pooled and exclusive alike.
-if [ "${1:-}" = "--dry-run-list" ]; then
-  printf '%s\n' "${files[@]}"
-  exit 0
-fi
-
-ensure_pglite_snapshot "serial-tests"
-
 # Partition into pooled vs exclusive (exclusive entries missing from the
 # discovered set are simply ignored — the list names repo files, and a
 # sandbox copy of this script won't have them).
 pool_files=()
 exclusive_present=()
-for f in "${files[@]}"; do
+for f in ${files[@]+"${files[@]}"}; do
   if is_exclusive "$f"; then
-    exclusive_present+=("$f")
+    [ "$shard_n" -ne 1 ] || exclusive_present+=("$f")
   else
     pool_files+=("$f")
   fi
 done
 
-# LPT dispatch: heaviest-first into the work-stealing pool (descending-weight
-# dispatch into a width-P pool IS longest-processing-time-first). Weights are
-# ADVISORY (scripts/serial-weights.json, seconds, mined from
-# .context/serial-durations.txt below); absent file / corrupt JSON / missing
-# bun keep discovery order (bun, not node: bun-only dev machines are the
-# common case — the script runs `bun test` right after). Absent key → corpus
-# p75 (same doctrine as
-# scripts/sharding.ts). Rank stability is all that matters — a wrong order
-# costs idle tail, never correctness. The --dry-run-list output above stays
-# discovery-ordered on purpose (pinned by test/scripts/run-serial-pool.test.ts).
-if [ "${#pool_files[@]}" -gt 1 ] && [ -f scripts/serial-weights.json ] && command -v bun >/dev/null 2>&1; then
-  lpt_sorted=$(printf '%s\n' "${pool_files[@]}" | bun -e '
-    const fs = require("fs");
-    let w = {};
-    try { w = JSON.parse(fs.readFileSync("scripts/serial-weights.json", "utf8")); } catch {}
-    const files = fs.readFileSync(0, "utf8").split("\n").filter(Boolean);
-    const vals = Object.values(w).filter((v) => typeof v === "number").sort((a, b) => a - b);
-    const p75 = vals.length ? vals[Math.floor(vals.length * 0.75)] : 0;
-    const wt = (f) => (typeof w[f] === "number" ? w[f] : p75);
-    files.sort((a, b) => (wt(b) - wt(a)) || (a < b ? -1 : 1));
-    process.stdout.write(files.join("\n"));
-  ' 2>/dev/null) || lpt_sorted=""
-  if [ -n "$lpt_sorted" ]; then
-    pool_files=()
-    while IFS= read -r f; do pool_files+=("$f"); done <<< "$lpt_sorted"
+# One scheduler owns membership AND heaviest-first dispatch. Bad weights are
+# advisory; a missing/broken scheduler is an execution error, never an empty run.
+if [ "${#pool_files[@]}" -gt 0 ]; then
+  selected=$(printf '%s\n' "${pool_files[@]}" | bun scripts/sharding.ts \
+    "$shard_n" "$shard_m" --weights scripts/serial-weights.json --fallback-on-error)
+  pool_files=()
+  if [ -n "$selected" ]; then
+    while IFS= read -r f; do pool_files+=("$f"); done <<< "$selected"
   fi
 fi
+ordered_files=()
+if [ "${#pool_files[@]}" -gt 0 ]; then ordered_files+=("${pool_files[@]}"); fi
+if [ "${#exclusive_present[@]}" -gt 0 ]; then ordered_files+=("${exclusive_present[@]}"); fi
+if [ "${1:-}" = "--dry-run-list" ]; then
+  if [ "${#ordered_files[@]}" -gt 0 ]; then printf '%s\n' "${ordered_files[@]}" | sort; fi
+  exit 0
+fi
+
+if [ "${#ordered_files[@]}" -gt 0 ]; then ensure_pglite_snapshot "serial-tests"; fi
 
 # ──────────────────────────────────────────────────────────────────────────
 # Pool sizing: min(detect_cpus, 4) — each pooled bun process can hold a
@@ -180,14 +178,99 @@ command -v timeout >/dev/null 2>&1 && TIMEOUT_BIN="timeout"
 [ -z "$TIMEOUT_BIN" ] && command -v gtimeout >/dev/null 2>&1 && TIMEOUT_BIN="gtimeout"
 
 LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gbrain-serial.XXXXXX")
-trap 'rm -rf "$LOG_DIR"' EXIT
+RUN_SHA=$(git rev-parse HEAD 2>/dev/null || echo "${GITHUB_SHA:-unknown}")
+if [ "${#ordered_files[@]}" -gt 0 ]; then
+  printf '%s\n' "${ordered_files[@]}" > "$LOG_DIR/selected.txt"
+else
+  : > "$LOG_DIR/selected.txt"
+fi
+if [ -n "${COVERAGE_DIR:-}" ]; then
+  mkdir -p "$COVERAGE_DIR"
+  rm -f "$COVERAGE_DIR/lane-manifest.json"
+fi
+
+now_ms() {
+  local stamp
+  stamp=$(date +%s%3N)
+  case "$stamp" in
+    *[!0-9]*|'') bun -e 'console.log(Date.now())' ;;
+    *) printf '%s\n' "$stamp" ;;
+  esac
+}
+
+# Every attempt has its own files; concurrent workers never append shared JSON.
+# The parent assembles one artifact on success, failure, or cancellation.
+write_timings() {
+  local final_rc="$1"
+  mkdir -p .context 2>/dev/null || return 0
+  bun -e '
+    const fs = require("fs"), path = require("path");
+    const [dir, lane, sha, finalRc, timeout] = process.argv.slice(1);
+    const read = (name) => { try { return fs.readFileSync(path.join(dir, name), "utf8").trim(); } catch { return ""; } };
+    const selected = read("selected.txt").split("\n").filter(Boolean);
+    const byFile = new Map(selected.map(file => [file, []]));
+    for (const name of fs.readdirSync(dir).filter(n => /^\d+\.file$/.test(n)).sort((a,b) => parseInt(a)-parseInt(b))) {
+      const key = name.slice(0, -5), file = read(name), rawExit = read(key + ".exit");
+      const exitCode = rawExit === "" ? null : Number(rawExit);
+      const rawMs = read(key + ".duration-ms"), start = Number(read(key + ".start-ms"));
+      const durationMs = rawMs ? Number(rawMs) : start ? Math.max(0, Date.now() - start) : null;
+      const status = exitCode === 0 ? "pass" : exitCode === null ? "cancelled"
+        : exitCode === 124 || (exitCode === 137 && durationMs >= Number(timeout) * 1000) ? "timeout"
+        : exitCode === 137 || exitCode === 143 ? "external-kill" : "fail";
+      const attempts = byFile.get(file) ?? [];
+      attempts.push({ attempt: attempts.length + 1, durationMs, status, exitCode });
+      byFile.set(file, attempts);
+    }
+    const files = [...byFile].map(([file, attempts]) => {
+      const last = attempts.at(-1);
+      return { file, durationMs: last?.durationMs ?? null, status: last?.status ?? "not-run", attempts };
+    });
+    const result = { version: 1, lane, sha, complete: Number(finalRc) === 0, files };
+    const out = ".context/serial-timings.json";
+    fs.writeFileSync(out + ".tmp", JSON.stringify(result, null, 2) + "\n");
+    fs.renameSync(out + ".tmp", out);
+  ' "$LOG_DIR" "$LANE" "$RUN_SHA" "$final_rc" "$PER_FILE_TIMEOUT" || \
+    echo "[serial-tests] warning: could not write timing artifact" >&2
+}
+
+running_exclusive=0
+handle_interrupt() {
+  local code="$1" pid children="" roots=""
+  trap '' INT TERM
+  collect_descendants() {
+    local child
+    for child in $(pgrep -P "$1" 2>/dev/null); do
+      collect_descendants "$child"
+      printf '%s\n' "$child"
+    done
+  }
+  # Only live children owned by this runner: never signal by process name.
+  roots=$(jobs -rp)
+  for pid in $roots; do children="$children $(collect_descendants "$pid")"; done
+  for pid in $children $roots; do kill -TERM "$pid" 2>/dev/null || true; done
+  if [ "$running_exclusive" -eq 0 ]; then
+    sleep 1
+    for pid in $children $roots; do kill -KILL "$pid" 2>/dev/null || true; done
+  fi
+  for pid in $roots; do wait "$pid" 2>/dev/null || true; done
+  exit "$code"
+}
+finish() {
+  local code="$?"
+  trap - EXIT
+  write_timings "$code"
+  rm -rf "$LOG_DIR"
+}
+trap 'handle_interrupt 130' INT
+trap 'handle_interrupt 143' TERM
+trap finish EXIT
 
 if [ -n "$TIMEOUT_BIN" ]; then
   TIMEOUT_DESC="${PER_FILE_TIMEOUT}s via $TIMEOUT_BIN"
 else
   TIMEOUT_DESC="none (no timeout/gtimeout on PATH)"
 fi
-echo "[serial-tests] ${#files[@]} file(s): pool=$POOL (${#exclusive_present[@]} exclusive), per-file timeout=$TIMEOUT_DESC"
+echo "[serial-tests] ${#ordered_files[@]} file(s): pool=$POOL (${#exclusive_present[@]} exclusive), lane=$LANE, per-file timeout=$TIMEOUT_DESC"
 
 # Per-test timeout is 120s (not the fast-loop 60s): pooled contention can
 # push a 30-50s file past 60s — the same flake class the slow lane hardened
@@ -196,15 +279,19 @@ echo "[serial-tests] ${#files[@]} file(s): pool=$POOL (${#exclusive_present[@]} 
 run_one_file() {
   # $1 file, $2 log path, $3 exit-sentinel path, $4 wrap ("wrap"|"nowrap")
   local f="$1" log="$2" exitf="$3" wrap="$4" rc=0
+  local key="${log%.log}" started finished
+  printf '%s\n' "$f" > "$key.file"
+  started=$(now_ms)
+  printf '%s\n' "$started" > "$key.start-ms"
   # COVERAGE_DIR (opt-in): every bun process needs its OWN coverage dir — a
   # second process reusing a dir OVERWRITES lcov.info. The log basename is
   # unique per file (pool idx / exclusive i), so it keys the dir. Empty/unset
   # COVERAGE_DIR leaves the exec line byte-identical to pre-coverage behavior.
   local cov_args=()
   if [ -n "${COVERAGE_DIR:-}" ]; then
-    local key
-    key=$(basename "$log" .log)
-    cov_args=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/serial-$key")
+    local cov_key
+    cov_key=$(basename "$log" .log)
+    cov_args=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/serial-$cov_key")
   fi
   if [ "$wrap" = "wrap" ] && [ -n "$TIMEOUT_BIN" ]; then
     "$TIMEOUT_BIN" -k 15 "$PER_FILE_TIMEOUT" \
@@ -213,6 +300,9 @@ run_one_file() {
     bun test --max-concurrency=1 --timeout=120000 ${cov_args[@]+"${cov_args[@]}"} "$f" > "$log" 2>&1 || rc=$?
   fi
   echo "$rc" > "$exitf"
+  finished=$(now_ms)
+  echo "$((finished - started))" > "$key.duration-ms"
+  echo "$(((finished - started) / 1000))" > "$key.dur"
 }
 
 start_epoch=$(date +%s)
@@ -225,10 +315,7 @@ if [ "${#pool_files[@]}" -gt 0 ]; then
       sleep 0.05
     done
     (
-      s=$(date +%s)
       run_one_file "$f" "$LOG_DIR/$idx.log" "$LOG_DIR/$idx.exit" "wrap"
-      e=$(date +%s)
-      echo "$((e - s))" > "$LOG_DIR/$idx.dur"
     ) &
     idx=$((idx + 1))
   done
@@ -238,10 +325,10 @@ fi
 # Exclusive lane: sequential, unwrapped (see EXCLUSIVE_FILES comment).
 if [ "${#exclusive_present[@]}" -gt 0 ]; then
   for f in "${exclusive_present[@]}"; do
-    s=$(date +%s)
-    run_one_file "$f" "$LOG_DIR/$idx.log" "$LOG_DIR/$idx.exit" "nowrap"
-    e=$(date +%s)
-    echo "$((e - s))" > "$LOG_DIR/$idx.dur"
+    running_exclusive=1
+    run_one_file "$f" "$LOG_DIR/$idx.log" "$LOG_DIR/$idx.exit" "nowrap" &
+    wait "$!"
+    running_exclusive=0
     idx=$((idx + 1))
   done
 fi
@@ -259,10 +346,6 @@ fi
 #                           fails again is a real failure. Never a silent pass.
 #   anything else         → real failure
 # ──────────────────────────────────────────────────────────────────────────
-ordered_files=()
-if [ "${#pool_files[@]}" -gt 0 ]; then ordered_files+=("${pool_files[@]}"); fi
-if [ "${#exclusive_present[@]}" -gt 0 ]; then ordered_files+=("${exclusive_present[@]}"); fi
-
 fail_count=0
 failed_files=()
 rescue_files=()
@@ -273,7 +356,7 @@ rescue_files=()
 # directly), so only PASSING files accumulate here — no double counting.
 pass_total=0
 i=0
-for f in "${ordered_files[@]}"; do
+for f in ${ordered_files[@]+"${ordered_files[@]}"}; do
   dur="?"
   [ -f "$LOG_DIR/$i.dur" ] && dur=$(cat "$LOG_DIR/$i.dur")
   if [ ! -f "$LOG_DIR/$i.exit" ]; then
@@ -320,7 +403,10 @@ if [ "${#rescue_files[@]}" -gt 0 ]; then
     wrap_mode="wrap"
     is_exclusive "$f" && wrap_mode="nowrap"
     s=$(date +%s)
-    run_one_file "$f" "$LOG_DIR/$i.log" "$LOG_DIR/$i.exit" "$wrap_mode"
+    [ "$wrap_mode" != "nowrap" ] || running_exclusive=1
+    run_one_file "$f" "$LOG_DIR/$i.log" "$LOG_DIR/$i.exit" "$wrap_mode" &
+    wait "$!"
+    running_exclusive=0
     e=$(date +%s)
     rc=$(cat "$LOG_DIR/$i.exit" 2>/dev/null || echo 1)
     if [ "$rc" = "0" ]; then
@@ -341,7 +427,7 @@ fi
 # Slowest-file table: feeds flake triage + future weight mining.
 echo "[serial-tests] slowest files:"
 i=0
-for f in "${ordered_files[@]}"; do
+for f in ${ordered_files[@]+"${ordered_files[@]}"}; do
   [ -f "$LOG_DIR/$i.dur" ] && echo "$(cat "$LOG_DIR/$i.dur") $f"
   i=$((i + 1))
 done | sort -rn | awk 'NR<=10' | sed 's/^/  /'
@@ -352,7 +438,7 @@ done | sort -rn | awk 'NR<=10' | sed 's/^/  /'
 if mkdir -p .context 2>/dev/null; then
   {
     di=0
-    for f in "${ordered_files[@]}"; do
+    for f in ${ordered_files[@]+"${ordered_files[@]}"}; do
       [ -f "$LOG_DIR/$di.dur" ] && echo "$(cat "$LOG_DIR/$di.dur") $f"
       di=$((di + 1))
     done
@@ -373,8 +459,8 @@ fi
 # treats a missing manifest as a degraded lane.
 if [ -n "${COVERAGE_DIR:-}" ]; then
   LCOV_COUNT=$(find "$COVERAGE_DIR" -name 'lcov.info' 2>/dev/null | grep -c '^' || true)
-  printf '{"lane":"serial","sha":"%s","lcovCount":%s,"complete":true}\n' \
-    "$(git rev-parse HEAD)" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
+  printf '{"lane":"%s","sha":"%s","lcovCount":%s,"complete":true}\n' \
+    "$LANE" "$RUN_SHA" "${LCOV_COUNT:-0}" > "$COVERAGE_DIR/lane-manifest.json"
 fi
 # bun-summary-format aggregate: run-unit-parallel.sh's headline counter
 # (bun_summary_count awk: $1 numeric, $2 == "pass") reads this line — without

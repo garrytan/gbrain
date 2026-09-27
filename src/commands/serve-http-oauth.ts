@@ -8,6 +8,31 @@ import { OAuthConsentError } from '../core/oauth-grants.ts';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { isRetryableError } from '../core/retry-matcher.ts';
 
+export function withBearerScopeHint(middleware: RequestHandler, scopes: readonly string[]): RequestHandler {
+  const scope = scopes.join(' ');
+  return async (req, res, next) => {
+    const originalSet = res.set;
+    res.set = function (this: Response, field: string | Record<string, string | string[]>, value?: string | string[]) {
+      if (typeof field === 'string'
+        && field.toLowerCase() === 'www-authenticate'
+        && typeof value === 'string'
+        && /^Bearer(?:\s|$)/i.test(value)
+        && !/(?:^|,)\s*scope=/i.test(value)) {
+        value += `, scope="${scope}"`;
+      }
+      if (typeof field === 'string') {
+        return originalSet.call(this, field, value as string);
+      }
+      return originalSet.bind(this)(field);
+    } as typeof res.set;
+    try {
+      await middleware(req, res, next);
+    } finally {
+      res.set = originalSet;
+    }
+  };
+}
+
 function sendOAuthError(res: Response, error: unknown): void {
   if (error instanceof OAuthError) {
     res.status(error instanceof InvalidClientError ? 401 : 400).json(error.toResponseObject());

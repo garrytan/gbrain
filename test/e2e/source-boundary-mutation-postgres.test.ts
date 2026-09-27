@@ -71,12 +71,14 @@ describePg('#4109 source-boundary mutation deletion races — Postgres', () => {
     const mutation = getEngine().addLink(from, to).finally(() => {
       settled = true;
     });
+    const settledMutation = mutation.catch(() => undefined);
     // The FOR KEY SHARE endpoint lookup must block on the open delete.
     await Bun.sleep(50);
     expect(settled).toBeFalse();
 
     releaseDelete.resolve();
     await deletion;
+    await settledMutation;
     await expect(mutation).rejects.toThrow(
       `addLink failed: to page "${to}" (source=default) not found`,
     );
@@ -105,11 +107,13 @@ describePg('#4109 source-boundary mutation deletion races — Postgres', () => {
       .finally(() => {
         settled = true;
       });
+    const settledMutation = mutation.catch(() => undefined);
     await Bun.sleep(50);
     expect(settled).toBeFalse();
 
     releaseDelete.resolve();
     await deletion;
+    await settledMutation;
     await expect(mutation).rejects.toThrow(
       `addTimelineEntry failed: page "${slug}" (source=default) not found`,
     );

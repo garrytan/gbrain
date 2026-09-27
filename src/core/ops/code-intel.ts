@@ -92,6 +92,7 @@ const code_callees: Operation = {
       limit,
       allSources,
       sourceId,
+      bareFallback: true, // #4670: honor the documented "bare or qualified" contract
     });
     const { resolveCodeReadiness } = await import('../code-graph-readiness.ts');
     // #4352: thread trust — see code_callers.

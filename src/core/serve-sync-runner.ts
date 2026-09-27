@@ -40,6 +40,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { withLegacySyncDelegation } from './persistence/sync-authority.ts';
 import type { BrainEngine } from './engine.ts';
 import { registerBackgroundWorkDrainer } from './background-work.ts';
 import {
@@ -74,11 +75,16 @@ let shuttingDown = false;
 let shutdownPromise: Promise<void> | null = null;
 let drainerRegistered = false;
 
-/** Deferred-embed drain state (see maybeDrainDeferredEmbeds). */
-let deferredEmbedsPending = false;
-let deferredEmbedSourceId: string | undefined;
-let embedDrainRunning = false;
-let embedDrainController = new AbortController();
+interface DeferredEmbeds {
+  pending: Set<string | undefined>;
+  controller: AbortController;
+  running?: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  stopped: boolean;
+  unregister: () => void;
+}
+/** Each datastore owns its backlog and actual provider/SQL lifetime. */
+const deferredEmbeds = new Map<BrainEngine, DeferredEmbeds>();
 
 const isTerminal = (s: DelegatedSyncState): boolean => s === 'done' || s === 'error';
 
@@ -165,8 +171,9 @@ export function startDelegatedSync(
     deadlineTimer.unref?.();
   }
 
-  job.settled = (async () => {
+  job.settled = withLegacySyncDelegation(async () => {
     try {
+      await (await import('./persistence/maintenance.ts')).assertUnmanagedCanonicalWriter(engine, 'shared-secret sync delegation');
       const { performSync } = await import('../commands/sync.ts');
       let sourceId = job.sourceId;
       if (!sourceId) {
@@ -205,9 +212,7 @@ export function startDelegatedSync(
       // Wire noEmbed means the USER declined embeds — honor it by skipping
       // the drain too (performSync above always ran noEmbed regardless).
       if (!options.dryRun && !options.noEmbed && r.added + r.modified > 0) {
-        deferredEmbedsPending = true;
-        deferredEmbedSourceId = sourceId;
-        scheduleEmbedDrain(engine);
+        scheduleDeferredSyncEmbeds(engine, sourceId);
       }
     } catch (e) {
       job.jobError = e instanceof Error ? e.message : String(e);
@@ -217,7 +222,7 @@ export function startDelegatedSync(
       if (deadlineTimer) clearTimeout(deadlineTimer);
       job.finishedAt = Date.now();
     }
-  })();
+  });
 
   return { ok: true, protocol: 2, jobId: job.id };
 }
@@ -267,7 +272,11 @@ export function shutdownDelegatedSync(timeoutMs?: number): Promise<void> {
   shuttingDown = true;
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
-    try { embedDrainController.abort(); } catch { /* noop */ }
+    for (const state of deferredEmbeds.values()) {
+      state.stopped = true;
+      state.controller.abort();
+      if (state.timer) clearTimeout(state.timer);
+    }
     const job = current;
     if (!job || isTerminal(job.state)) return;
     log(`abort job=${job.id} reason=shutdown`);
@@ -320,37 +329,64 @@ function ensureDrainerRegistered(): void {
  * Never throws.
  */
 export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<void> {
-  if (!deferredEmbedsPending || embedDrainRunning || shuttingDown) return;
+  const state = deferredEmbeds.get(engine);
+  if (!state || state.stopped || shuttingDown) return;
+  if (state.running) return state.running;
+  if (!state.pending.size) return;
   if (isDelegatedSyncRunning()) return;
-  embedDrainRunning = true;
-  try {
+  const work = (async () => {
     const { detectCapabilities } = await import('./capability.ts');
     if (!detectCapabilities().embeddings.available) return;
     const { runEmbedCore } = await import('../commands/embed.ts');
-    const r = await runEmbedCore(engine, {
-      stale: true,
-      sourceId: deferredEmbedSourceId,
-      signal: embedDrainController.signal,
-    });
-    log(`embed-drain embedded=${r.embedded} failures=${r.failures} source=${deferredEmbedSourceId ?? 'all'}`);
-    // Nothing left to embed and nothing failing ⇒ the deferred backlog is done.
-    if (r.embedded === 0 && r.failures === 0) {
-      deferredEmbedsPending = false;
-      deferredEmbedSourceId = undefined;
+    // Snapshot one fair pass. A source queued again during its own provider
+    // call stays pending, even when that earlier call reports no stale work.
+    for (const sourceId of [...state.pending]) {
+      if (state.stopped) break;
+      state.pending.delete(sourceId);
+      try {
+        const r = await runEmbedCore(engine, { stale: true, sourceId, signal: state.controller.signal, quiet: true });
+        log(`embed-drain embedded=${r.embedded} failures=${r.failures} source=${sourceId ?? 'all'}`);
+        if (r.embedded !== 0 || r.failures !== 0) state.pending.add(sourceId);
+      } catch (error) {
+        state.pending.add(sourceId);
+        log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
-  } catch (e) {
-    log(`embed-drain failed: ${e instanceof Error ? e.message : String(e)}`);
-  } finally {
-    embedDrainRunning = false;
-  }
+  })().catch(error => { log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)}`); });
+  state.running = work;
+  try { await work; }
+  finally { if (state.running === work) state.running = undefined; }
 }
 
-/** One-shot post-job kick so embeds don't wait for the next 10-min idle tick. */
-function scheduleEmbedDrain(engine: BrainEngine): void {
-  const t = setTimeout(() => {
+/** Shared post-import kick for legacy and authenticated owner delegation. */
+export function scheduleDeferredSyncEmbeds(engine: BrainEngine, sourceId?: string): void {
+  if (shuttingDown) return;
+  let state = deferredEmbeds.get(engine);
+  if (!state) {
+    state = { pending: new Set(), controller: new AbortController(), stopped: false, unregister: () => {} };
+    const owned = state;
+    state.unregister = engine.registerBeforeDisconnect(async () => {
+      owned.stopped = true;
+      owned.controller.abort();
+      if (owned.timer) clearTimeout(owned.timer);
+      // A provider may ignore abort. The actual promise must settle before
+      // disconnect closes the datastore or releases its native owner lock.
+      await owned.running?.catch(() => {});
+      owned.unregister();
+      if (deferredEmbeds.get(engine) === owned) deferredEmbeds.delete(engine);
+    });
+    deferredEmbeds.set(engine, state);
+  }
+  if (state.stopped) return;
+  state.pending.add(sourceId);
+  if (state.timer) return;
+  const owned = state;
+  state.timer = setTimeout(() => {
+    owned.timer = undefined;
+    if (owned.stopped) return;
     void maybeDrainDeferredEmbeds(engine);
   }, 5_000);
-  t.unref?.();
+  state.timer.unref?.();
 }
 
 /** Test seam: reset every module singleton (serial tests only). */
@@ -358,13 +394,14 @@ export function __resetDelegatedSyncForTests(): void {
   current = null;
   shuttingDown = false;
   shutdownPromise = null;
-  deferredEmbedsPending = false;
-  deferredEmbedSourceId = undefined;
-  embedDrainRunning = false;
-  embedDrainController = new AbortController();
+  for (const state of deferredEmbeds.values()) {
+    state.stopped = true; state.controller.abort(); state.unregister();
+    if (state.timer) clearTimeout(state.timer);
+  }
+  deferredEmbeds.clear();
 }
 
 /** Test seam: report whether the deferred-embed backlog is pending. */
-export function __deferredEmbedsPendingForTests(): boolean {
-  return deferredEmbedsPending;
+export function __deferredEmbedsPendingForTests(engine?: BrainEngine): boolean {
+  return engine ? !!deferredEmbeds.get(engine)?.pending.size : [...deferredEmbeds.values()].some(state => state.pending.size > 0);
 }

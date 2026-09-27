@@ -16,7 +16,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
-import { hasDatabase, setupDB, teardownDB, getEngine, getConn } from './helpers.ts';
+import { hasDatabase, setupLegacyEmbeddingDB, teardownDB, getEngine, getConn } from './helpers.ts';
 
 // Mock embedBatch BEFORE importing runCycle so no real OpenAI calls happen
 // even when the full cycle's embed phase runs.
@@ -61,7 +61,7 @@ describeE2E('E2E: runCycle against real Postgres', () => {
   let repo: string;
 
   beforeAll(async () => {
-    await setupDB();
+    await setupLegacyEmbeddingDB();
     repo = makeGitRepo();
   }, 30_000);
 

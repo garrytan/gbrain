@@ -162,7 +162,7 @@ export async function runJobInChild(opts: RunJobInChildOpts): Promise<unknown> {
 
   const inv = buildSpawnInvocation(opts.tiniPath, opts.invocation.cmd, [
     ...opts.invocation.argsPrefix,
-    ...buildChildArgs(opts.jobId),
+    ...buildChildArgs(opts.jobId, base),
   ]);
 
   let child: ChildProcess;

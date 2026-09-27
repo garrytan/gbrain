@@ -63,7 +63,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       # This job runs bare `bun test` (not run-e2e.sh), so the snapshot must
       # be activated here or the restored tar is never read (the engine gates
@@ -101,24 +101,47 @@ jobs:
         # (the unit wrappers strip the URL per #3485).
         run: bun test --timeout=60000 test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts test/phantom-redirect-engine-parity.test.ts
 
-  # ──────────────────────────────────────────────────────────────────────
-  # selected-e2e (test-gap plan G1): PR-time signal for the e2e files that
-  # otherwise run only in the scheduled nightly full glob.
-  # scripts/select-e2e.ts picks the diff-relevant files — fail-closed:
-  # uncertain diffs emit ALL, git failure exits 2 and FAILS this job (the
-  # run step must never be wrapped in `|| true`). Files already carried by
-  # the named jobs and the live-key token spenders are excluded with a loud
-  # per-file echo (no silent caps); the nightly full glob remains the
-  # backstop for the excluded set. Fork PRs: this job needs ONLY the
-  # Postgres service container (no repository secrets), so outside
-  # contributors run it natively — no skip path needed. select-e2e's
-  # --classify-only mode is load-bearing in coverage-diff-gate.ts on every
-  # PR; this job consumes the default file-selection mode and must not
-  # change the script's exit semantics. On scheduled runs the step
-  # early-exits green: coverage-full-e2e already runs the full glob that
-  # night. The aggregate requires that full-corpus execution on schedules.
+  # Freeze selection before setup; each worker owns a separate Postgres service.
+  prepare-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+      - name: Select and freeze E2E files
+        id: select
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Nightly coverage carries the full E2E corpus separately.
+            : > "$RUNNER_TEMP/selected.txt"
+          else
+            git fetch origin master --quiet
+            bun scripts/select-e2e.ts > "$RUNNER_TEMP/selected.txt"
+          fi
+          matrix=$(bun scripts/e2e-matrix.ts prepare < "$RUNNER_TEMP/selected.txt")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$matrix" > "$RUNNER_TEMP/e2e-selection.json"
+      - name: Upload frozen selection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-selection
+          path: ${{ runner.temp }}/e2e-selection.json
+          retention-days: 14
+          overwrite: true
+
   selected-e2e:
-    name: Selected E2E (diff-relevant)
+    name: Selected E2E (diff-relevant) ${{ matrix.shard }}
+    needs: prepare-e2e
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare-e2e.outputs.matrix) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -137,9 +160,6 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
-        with:
-          # select-e2e diffs origin/master...HEAD — needs real history.
-          fetch-depth: 0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
@@ -156,41 +176,23 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
-      - name: Select and run diff-relevant E2E files
+      - name: Run frozen E2E partition
+        shell: bash
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
-          # #3485 preload guard: this job intentionally tests against a DB.
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "scheduled run — coverage-full-e2e carries the full glob tonight; nothing to select"
-            exit 0
-          fi
-          git fetch origin master --quiet
-          # exit 2 from the selector fails this step — fail-loud by design.
-          bun scripts/select-e2e.ts > /tmp/selected.txt
-          # Exclusions (echoed per file, never silent): files the named jobs
-          # above already run this same workflow, plus live-key token
-          # spenders (this job carries no provider keys, so they would
-          # self-skip anyway — the list makes the spend guarantee explicit).
-          EXCLUDE='test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts test/e2e/engine-parity.test.ts test/e2e/serve-http-multi-agent.test.ts test/e2e/postgres-bootstrap.test.ts test/e2e/sync-delegation-under-serve.serial.test.ts test/e2e/dream-synthesize-pglite.test.ts test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts test/e2e/voyage-rerank-live.test.ts test/e2e/voyage-multimodal.test.ts'
-          : > /tmp/run.txt
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            case " $EXCLUDE " in
-              *" $f "*) echo "excluded (named-job / live-key lane): $f" ;;
-              *) echo "$f" >> /tmp/run.txt ;;
-            esac
-          done < /tmp/selected.txt
-          COUNT=$(wc -l < /tmp/run.txt | tr -d ' ')
-          echo "selector emitted $(wc -l < /tmp/selected.txt | tr -d ' ') file(s); running $COUNT after exclusions"
-          if [ "$COUNT" -eq 0 ]; then
-            echo "doc-only or fully-excluded diff — nothing to run here"
-            exit 0
-          fi
-          xargs -a /tmp/run.txt bash scripts/run-e2e.sh
+          E2E_MATRIX_ROW: ${{ toJSON(matrix) }}
+        run: bun scripts/capture-test-log.ts --job 'Selected E2E (diff-relevant) ${{ matrix.shard }}' --out "$RUNNER_TEMP/e2e.log" -- bun scripts/e2e-matrix.ts run
+      - name: Upload E2E timing log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: timings-e2e-${{ matrix.shard }}
+          path: ${{ runner.temp }}/e2e.log
+          retention-days: 14
+          overwrite: true
 
   tier1:
     name: Tier 1 (Mechanical)
@@ -228,7 +230,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       # Bare `bun test` job — activate the restored snapshot (see jsonb-parity).
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
@@ -252,7 +254,7 @@ jobs:
         # binding path could reach master with every PR lane green. It
         # already uses the same setupDB/teardownDB TRUNCATE-reset pattern
         # (test/e2e/helpers.ts) as the other DB-backed files on this line.
-        # Also added to the selected-e2e EXCLUDE list above so a PR
+        # Also added to the E2E_EXCLUSIONS in scripts/e2e-matrix.ts so a PR
         # touching sync.ts doesn't run it a second time there.
         run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts
         env:
@@ -357,7 +359,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       # Bare `bun test` job — activate the restored snapshot (see jsonb-parity).
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
@@ -537,7 +539,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Full e2e glob with coverage (all files, incl. engine-parity)
         # run-e2e.sh redirects HOME, so COVERAGE_DIR must be absolute; its
@@ -611,7 +613,7 @@ jobs:
   # The stable aggregate includes nightly execution lanes on schedules.
   # Coverage reporting itself remains advisory; failed tests never do.
   e2e-status:
-    needs: [jsonb-parity, tier1, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
+    needs: [jsonb-parity, tier1, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -621,11 +623,12 @@ jobs:
           JSONB="${{ needs.jsonb-parity.result }}"
           TIER1="${{ needs.tier1.result }}"
           TIER2="${{ needs.tier2.result }}"
+          PREPARE="${{ needs.prepare-e2e.result }}"
           SELECTED="${{ needs.selected-e2e.result }}"
           EVENT="${{ github.event_name }}"
           echo "event=$EVENT"
-          echo "jsonb-parity=$JSONB  tier1=$TIER1  tier2=$TIER2  selected-e2e=$SELECTED"
-          for r in "$JSONB" "$TIER1" "$TIER2" "$SELECTED"; do
+          echo "jsonb-parity=$JSONB  tier1=$TIER1  tier2=$TIER2  prepare-e2e=$PREPARE  selected-e2e=$SELECTED"
+          for r in "$JSONB" "$TIER1" "$TIER2" "$PREPARE" "$SELECTED"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated e2e job did not succeed (got $r) — E2E fail"
               exit 1

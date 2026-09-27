@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
@@ -659,6 +660,10 @@ describe('delete_page / restore_page write-through symmetry (#4022)', () => {
       ...overrides,
     } as OperationContext;
   }
+  async function mutationArgs(slug: string) {
+    const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true });
+    return { slug, expected_revision: snapshot!.revision, request_id: randomUUID() };
+  }
 
   test('[REGRESSION resurrect] delete_page removes the recorded source_path artifact', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
@@ -672,15 +677,15 @@ describe('delete_page / restore_page write-through symmetry (#4022)', () => {
     const written = await writePageThrough(engine, slug, { sourceId: 'default' });
     expect(written.path).toBe(path.join(brainDir, authored));
 
-    const res = await delete_page.handler(ctxOf(), { slug }) as Record<string, any>;
+    const res = await delete_page.handler(ctxOf(), await mutationArgs(slug)) as Record<string, any>;
 
     expect(res.status).toBe('soft_deleted');
     // Pre-fix the delete was DB-only: the authored `.md` survived, the next
     // timer-based commit pushed it back into git, and `gbrain sync`
     // re-imported it — resurrecting the page the user deleted.
     expect(fs.existsSync(path.join(brainDir, authored))).toBe(false);
-    expect(res.write_through?.removed).toBe(true);
-    expect(res.write_through?.path).toBe(path.join(brainDir, authored));
+    expect(res.write_request.state).toBe('committed');
+    expect(res.persistence).toMatchObject({ mode: 'filesystem', file_written: true });
   });
 
   test('restore_page re-renders the artifact (sync --full must not re-delete the restored page)', async () => {
@@ -690,11 +695,11 @@ describe('delete_page / restore_page write-through symmetry (#4022)', () => {
     const written = await writePageThrough(engine, slug, { sourceId: 'default' });
     expect(fs.existsSync(written.path!)).toBe(true);
 
-    const del = await delete_page.handler(ctxOf(), { slug }) as Record<string, any>;
-    expect(del.write_through?.removed).toBe(true);
+    const del = await delete_page.handler(ctxOf(), await mutationArgs(slug)) as Record<string, any>;
+    expect(del.write_request.state).toBe('committed');
     expect(fs.existsSync(written.path!)).toBe(false);
 
-    const res = await restore_page.handler(ctxOf(), { slug }) as Record<string, any>;
+    const res = await restore_page.handler(ctxOf(), await mutationArgs(slug)) as Record<string, any>;
 
     expect(res.status).toBe('restored');
     // Without the re-render a restored page has a DB row and no artifact, and
@@ -706,19 +711,19 @@ describe('delete_page / restore_page write-through symmetry (#4022)', () => {
 
   test('sandbox subagents stay DB-only on both planes (matches put_page trust gate)', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
-    const slug = 'concepts/sandboxed';
+    const slug = 'wiki/agents/12/sandboxed';
     await seedPage(slug);
     const written = await writePageThrough(engine, slug, { sourceId: 'default' });
     expect(fs.existsSync(written.path!)).toBe(true);
 
-    const sandboxCtx = ctxOf({ viaSubagent: true });
-    const del = await delete_page.handler(sandboxCtx, { slug }) as Record<string, any>;
+    const sandboxCtx = ctxOf({ viaSubagent: true, subagentId: 12 });
+    const del = await delete_page.handler(sandboxCtx, await mutationArgs(slug)) as Record<string, any>;
     expect(del.status).toBe('soft_deleted');
     expect(del.write_through?.skipped).toBe('subagent_sandbox');
     // The DB row is soft-deleted but the sandboxed caller never touches disk.
     expect(fs.existsSync(written.path!)).toBe(true);
 
-    const rest = await restore_page.handler(sandboxCtx, { slug }) as Record<string, any>;
+    const rest = await restore_page.handler(sandboxCtx, await mutationArgs(slug)) as Record<string, any>;
     expect(rest.status).toBe('restored');
     expect(rest.write_through?.skipped).toBe('subagent_sandbox');
   });

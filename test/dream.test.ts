@@ -763,17 +763,17 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     // is shared file-wide; a leaked patch breaks every later test's
     // resetPgliteState.
     await seedSource('gamma');
-    const original = (engine as any).executeRaw.bind(engine);
+    const original = (engine as any).executeRaw;
     let restored = false;
     try {
       // Throw a TypeError on the source-lookup SELECT that assertSourceExists runs.
       // Other executeRaw calls (used by engine internals during cycle) keep
       // working so the test exercises ONLY the resolution-path failure.
-      (engine as any).executeRaw = async (sql: string, params?: unknown[]) => {
+      (engine as any).executeRaw = async function(this: PGLiteEngine, sql: string, params?: unknown[]) {
         if (typeof sql === 'string' && /FROM\s+sources\s+WHERE\s+id\s*=/i.test(sql)) {
           throw new TypeError('synthetic-test-bug');
         }
-        return original(sql, params);
+        return original.call(this, sql, params);
       };
       await expect(
         runDream(engine, ['--dir', repo, '--source', 'gamma', '--phase', 'lint', '--json'])

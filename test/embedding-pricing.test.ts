@@ -48,6 +48,18 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     expect(r.kind).toBe('known');
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.05);
   });
+
+  test('Google gemini-embedding-001 at $0.15/MTok', () => {
+    const r = lookupEmbeddingPrice('google:gemini-embedding-001');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.15);
+  });
+
+  test('Google gemini-embedding-2 at $0.20/MTok (text rate, not shared with -001)', () => {
+    const r = lookupEmbeddingPrice('google:gemini-embedding-2');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.20);
+  });
 });
 
 describe('lookupEmbeddingPrice — fall-through behavior', () => {
@@ -114,6 +126,7 @@ describe('lookupEmbeddingPrice — nested gateway ids (#2504)', () => {
     ['openrouter:openai/text-embedding-3-large', 0.13, 'openai:text-embedding-3-large'],
     ['openrouter:voyage/voyage-4', 0.06, 'voyage:voyage-4'],
     ['openrouter:mistral/mistral-embed', 0.10, 'mistral:mistral-embed'],
+    ['openrouter:google/gemini-embedding-001', 0.15, 'google:gemini-embedding-001'],
   ])('%s falls back to the nested vendor row', (model, expected, key) => {
     const r = lookupEmbeddingPrice(model as string);
     expect(r.kind).toBe('known');
@@ -208,5 +221,21 @@ describe('#4344 — every hosted voyage recipe model has a pricing entry', () =>
     const r = lookupEmbeddingPrice(model);
     expect(r.kind).toBe('known');
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(expected);
+  });
+});
+
+// Same coverage gate as #4344, for the `google` recipe: every embedding model
+// the recipe offers as HOSTED must have a pricing row, so the class (#4953 —
+// gemini-embedding-001 / gemini-embedding-2 shipped in the recipe with no
+// rows, every cost surface read "unavailable") cannot recur when Google ships
+// the next generation. Folded from #4989 (credit: dov-kela).
+describe('every hosted google recipe model has a pricing entry', () => {
+  test('recipe models ⊆ pricing table', async () => {
+    const { google } = await import('../src/core/ai/recipes/google.ts');
+    const models: string[] = (google as any).touchpoints.embedding.models;
+    expect(models).toContain('gemini-embedding-001');
+    expect(models).toContain('gemini-embedding-2');
+    const missing = models.filter((m) => lookupEmbeddingPrice(`google:${m}`).kind !== 'known');
+    expect(missing).toEqual([]);
   });
 });

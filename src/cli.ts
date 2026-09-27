@@ -36,6 +36,7 @@ import type { Operation, OperationContext } from './core/operations.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
+import { runCliPreflight } from './core/cli-preflight.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
@@ -449,26 +450,15 @@ function maybeEmitUpdateMarker(command: string): void {
 }
 
 async function main() {
+  // cwd-.env quarantine → ~/.gbrain/.env → #3688 guardrails loader (fail-closed).
+  await runCliPreflight();
+
   // Parse global flags (--quiet / --progress-json / --progress-interval)
   // BEFORE command dispatch, so `gbrain --progress-json doctor` works.
   // The stripped argv is what the command sees.
   const rawArgs = process.argv.slice(2);
   const { cliOpts, rest: args } = parseGlobalFlags(rawArgs);
   setCliOptions(cliOpts);
-
-  // #3688: operator-configured guardrail providers load before ANY command
-  // dispatch. Fail-closed by design: when GBRAIN_GUARDRAILS_MODULE is set but
-  // broken, abort rather than silently run without the operator's firewall.
-  // (Unset → zero cost, the OSS distribution stays inert.)
-  if (process.env.GBRAIN_GUARDRAILS_MODULE) {
-    try {
-      const { loadGuardrailProvidersFromEnv } = await import('./core/guardrails.ts');
-      await loadGuardrailProvidersFromEnv();
-    } catch (err) {
-      console.error(`guardrails: ${(err as Error)?.message ?? String(err)}`);
-      process.exit(1);
-    }
-  }
 
   let command = args[0];
 
@@ -722,7 +712,16 @@ async function main() {
     return;
   }
 
-  // Local engine path (unchanged behavior for local installs).
+  // The live PGLite owner exposes canonical operations over a dedicated
+  // local socket. Delegate before opening a competing engine connection.
+  {
+    const { runDelegatedCliOperation } = await import('./commands/persistence-delegate.ts');
+    if (await runDelegatedCliOperation(op.name, params, cfgPre, {
+      brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined,
+    }, formatResult)) return;
+  }
+
+  // No live serve owns the selected brain; connect through the normal lock path.
   const engine = await connectEngine();
   // #2084: the teardown contract (bounded drain of every background-work sink,
   // bounded disconnect, computed-deadline backstop) lives in finishCliTeardown
@@ -829,10 +828,8 @@ async function main() {
     // (leaves facts/cache/eval-capture writes racing teardown). The finally's
     // drain bounds teardown; the hard-deadline timer armed at teardown entry
     // bounds a hung one.
-    if (e instanceof OperationError) {
-      console.error(`Error [${e.code}]: ${e.message}`);
-      if (e.suggestion) console.error(`  Fix: ${e.suggestion}`);
-    } else {
+    const { reportPersistenceCliError } = await import('./commands/persistence-delegate.ts');
+    if (!await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest)) {
       console.error(e instanceof Error ? e.message : String(e));
     }
     setCliExitVerdict(1);
@@ -863,15 +860,11 @@ function printCliOnlyHelp(command: string) {
  * Timeout policy (ENG-4): user override via --timeout=Ns wins; otherwise
  * 180s for `think` (LLM calls), 30s for everything else.
  *
- * Error policy (CDX-4): callRemoteTool's hardening pass guarantees every
- * thrown value reaches us as a RemoteMcpError. The switch below is
- * exhaustively typed (TS `never` check); adding a new reason variant fails
- * compilation until this dispatcher knows what to render.
+ * Error policy: callRemoteTool normalizes every failure to RemoteMcpError;
+ * the exhaustive switch requires a renderer for every reason variant.
  *
- * Renderer policy: the MCP tool result is unpacked via unpackToolResult
- * (which JSON.parses the text content) and handed to the SAME formatResult
- * the local-engine path uses. Renderer parity is enforced by data shape,
- * not by per-command audit.
+ * Renderer policy: unpackToolResult parses MCP text and shares formatResult
+ * with the local-engine path, enforcing parity through the result shape.
  */
 async function runThinClientRouted(
   op: Operation,
@@ -913,6 +906,11 @@ async function runThinClientRouted(
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
+      const { reportPersistenceCliError } = await import('./commands/persistence-delegate.ts');
+      if (await reportPersistenceCliError(e, params.json === true)) {
+        process.off('SIGINT', onSigint);
+        process.exit(sigintController.signal.aborted ? 130 : 1);
+      }
       const url = cfg.remote_mcp!.mcp_url;
       switch (e.reason) {
         case 'config':
@@ -1946,7 +1944,7 @@ export function formatResult(
 // work on any install shape.
 export const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'sync', 'embed', 'extract', 'extract-conversation-facts', 'enrich', 'migrate', 'retrieval-upgrade', 'apply-migrations',
-  'repair-jsonb', 'orphans', 'integrity', 'serve',
+  'repair-jsonb', 'orphans', 'integrity', 'serve', 'call',
   // v0.43 (#2095): watch streams against a LOCAL engine; thin clients get
   // the volunteer_context MCP op instead.
   'watch',
@@ -1994,6 +1992,7 @@ export const THIN_CLIENT_REFUSED_COMMANDS = new Set([
  * place during code review.
  */
 const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
+  call: '`call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `gbrain call` on the host.',
   sync: 'sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `gbrain sync` on the host.',
   embed: 'embed runs on the host. Run `gbrain embed` or `gbrain cycle` on the host machine.',
   extract: 'extract runs on the host. Run `gbrain extract` or `gbrain cycle` on the host machine.',
@@ -2067,6 +2066,13 @@ async function handleCliOnly(command: string, args: string[]) {
       if (await routeThinClientCommand(cfg!, command, args)) return;
       refuseThinClient(command, cfg!.remote_mcp!.mcp_url);
     }
+  }
+
+  // Local deferred connections must not bypass the remote installation route.
+  if (command === 'capture' || command === 'forget' || command === 'call' || command === 'sources' && ['writer', 'add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'].includes(args[0]) || command === 'takes' && ['add', 'update', 'supersede', 'resolve'].includes(args[0]) && !hasHelpFlag(args)) {
+    const { runDeferredPersistenceCommand } = await import('./commands/persistence-delegate.ts');
+    await runDeferredPersistenceCommand(command, args, connectEngine);
+    return;
   }
 
   // cathedral-6: `agent register` guards run PRE-connectEngine. A thin client
@@ -2887,6 +2893,7 @@ async function handleCliOnly(command: string, args: string[]) {
   // refused (exit verdict set inside); false falls through unchanged.
   if (command === 'sync') {
     const cfgSync = loadConfig();
+    if (await (await import('./commands/sync-persistence-delegate.ts')).maybeDelegateSyncToPersistence(cfgSync, args)) return;
     if (cfgSync?.engine === 'pglite' && cfgSync.database_path && !cfgSync.database_url) {
       const { maybeDelegateSyncToServe } = await import('./commands/sync-delegate.ts');
       if (await maybeDelegateSyncToServe(cfgSync.database_path, args)) return;
@@ -3075,11 +3082,6 @@ async function handleCliOnly(command: string, args: string[]) {
         const { runServe } = await import('./commands/serve.ts');
         await runServe(engine, args);
         return; // serve doesn't disconnect
-      }
-      case 'call': {
-        const { runCall } = await import('./commands/call.ts');
-        await runCall(engine, args);
-        break;
       }
       case 'sweep': {
         // [CX2-5] Trusted local sweep entry — succeeds precisely because no
@@ -3283,11 +3285,6 @@ async function handleCliOnly(command: string, args: string[]) {
         break;
       }
       // v0.38 — Capture: single human-facing entrypoint for ingestion.
-      case 'capture': {
-        const { runCapture } = await import('./commands/capture.ts');
-        await runCapture(engine, args);
-        break;
-      }
       case 'conversation-parser': {
         // v0.41.13.0 — debug + introspection CLI for the new parser
         // cathedral. `scan <slug>` requires a connected brain; the
@@ -3390,12 +3387,6 @@ async function handleCliOnly(command: string, args: string[]) {
         // `--supersessions`, `--include-expired`, `--as-context`, `--json`.
         const { runRecall } = await import('./commands/recall.ts');
         await runRecall(engine, args);
-        break;
-      }
-      case 'forget': {
-        // v0.31: shorthand for expireFact. `gbrain forget <fact-id>`.
-        const { runForget } = await import('./commands/recall.ts');
-        await runForget(engine, args);
         break;
       }
       case 'notability-eval': {

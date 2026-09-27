@@ -14,6 +14,8 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
+import { auth, extractWWWAuthenticateParams, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { hasDatabase } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
@@ -359,22 +361,24 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.token_endpoint).toContain('/token');
     expect(meta.scopes_supported).toContain('read');
     expect(meta.scopes_supported).toContain('write');
-    expect(meta.scopes_supported).toContain('admin');
+    // This server runs with --enable-dcr: discovery advertises the
+    // self-registration ceiling, never a privileged scope
+    // (scopesSupportedForDiscovery in src/core/scope.ts).
+    expect(meta.scopes_supported).not.toContain('admin');
   });
 
-  // T2 (eng-review): scopes_supported advertises the full ALLOWED_SCOPES_LIST
-  // so MCP clients (Claude Desktop, ChatGPT, Perplexity) can discover the
-  // v0.28 sources_admin and users_admin scopes via standard discovery.
-  // Pre-v0.28 the list was hardcoded to ['read','write','admin'] in
-  // serve-http.ts:195 and this assertion would have failed.
-  test('OAuth metadata advertises all 5 v0.28 scopes (sources_admin + users_admin)', async () => {
+  // With --enable-dcr, scopes_supported is exactly the DCR ceiling (`read write`,
+  // canonical order) so a client that copies discovery into /register is
+  // accepted. The full operator list (admin, read, sources_admin, users_admin,
+  // write) is still advertised WITHOUT DCR — pinned by
+  // test/e2e/sources-remote-mcp.test.ts ('OAuth /.well-known advertises all 5 scopes').
+  test('OAuth metadata under --enable-dcr advertises exactly the self-registration ceiling', async () => {
     const res = await fetch(`${BASE}/.well-known/oauth-authorization-server`);
     const meta = await res.json() as any;
-    expect(meta.scopes_supported).toContain('sources_admin');
-    expect(meta.scopes_supported).toContain('users_admin');
-    expect(meta.scopes_supported).toEqual(
-      expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
-    );
+    expect(meta.scopes_supported).toEqual(['read', 'write']);
+    for (const privileged of ['admin', 'sources_admin', 'users_admin', 'agent']) {
+      expect(meta.scopes_supported).not.toContain(privileged);
+    }
   });
 
   // =========================================================================
@@ -400,9 +404,9 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.resource).toBe(`${BASE}/mcp`);
     expect(meta.resource).not.toBe(`${BASE}/`);
     expect(meta.authorization_servers).toContain(`${BASE}/`);
-    expect(meta.scopes_supported).toEqual(
-      expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
-    );
+    // --enable-dcr server: the protected-resource document mirrors the AS
+    // metadata's self-registration ceiling.
+    expect(meta.scopes_supported).toEqual(['read', 'write']);
   });
 
   // Setting resourceServerUrl moves the SDK's document to the path-inserted
@@ -443,6 +447,115 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.ok).toBe(true);
     expect((await meta.json() as any).resource).toBe(`${BASE}/mcp`);
   });
+
+  test('scope discovery permits DCR without requesting operator-only delegation', async () => {
+    const metadata = await (await fetch(`${BASE}/.well-known/oauth-authorization-server`)).json() as any;
+    const response = await fetch(metadata.registration_endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'e2e-discovered-scopes',
+        redirect_uris: ['https://example.test/callback'],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+        scope: metadata.scopes_supported.join(' '),
+      }),
+    });
+    const client = await response.json() as any;
+    if (client.client_id) dcrClientIds.push(client.client_id);
+    expect(response.status).toBe(201);
+    expect(client.scope.split(' ')).toEqual(metadata.scopes_supported);
+    expect(metadata.scopes_supported).not.toContain('agent');
+    for (const path of ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource']) {
+      const resource = await (await fetch(`${BASE}${path}`)).json() as any;
+      expect(resource.scopes_supported).toEqual(metadata.scopes_supported);
+    }
+  });
+
+  test.each(['agent', 'read write agent'])('DCR still rejects explicit delegation scope %s', async scope => {
+    const name = `e2e-refused-delegation-${scope.replaceAll(' ', '-')}`;
+    const response = await fetch(`${BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: name, redirect_uris: ['https://example.test/callback'],
+        grant_types: ['authorization_code'], token_endpoint_auth_method: 'none', scope }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_client_metadata' });
+    await withSql(async sql => {
+      expect(await sql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`).toHaveLength(0);
+    });
+  });
+
+  for (const [label, registeredScope, explicitScope, expectedRequest] of [
+    ['read-only discovery', 'read', undefined, 'read'],
+    ['read-only overbroad hint', 'read', 'read write', 'read write'],
+    ['explicit writer request', 'read write', 'read write', 'read write'],
+  ] as const) {
+    test(`SDK scope selection and owner-approved PKCE: ${label}`, async () => {
+      const redirectUri = 'https://example.test/callback';
+      const metadata = { client_name: `e2e-scope-${label}`, redirect_uris: [redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'],
+        token_endpoint_auth_method: 'none', scope: registeredScope };
+      const registration = await fetch(`${BASE}/register`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(metadata) });
+      expect(registration.status).toBe(201);
+      const client = await registration.json() as any;
+      dcrClientIds.push(client.client_id);
+      const challenge = await mcpCall('', 'tools/list');
+      expect(challenge.status).toBe(401);
+      const discovered = extractWWWAuthenticateParams(challenge);
+      let verifier = '';
+      let authorizationUrl: URL | undefined;
+      let tokens: OAuthTokens | undefined;
+      const provider: OAuthClientProvider = {
+        redirectUrl: redirectUri, clientMetadata: metadata,
+        clientInformation: () => client, tokens: () => tokens,
+        saveTokens: value => { tokens = value; },
+        saveCodeVerifier: value => { verifier = value; }, codeVerifier: () => verifier,
+        redirectToAuthorization: value => { authorizationUrl = value; },
+      };
+      expect(await auth(provider, { serverUrl: `${BASE}/mcp`,
+        resourceMetadataUrl: discovered.resourceMetadataUrl, scope: explicitScope ?? discovered.scope })).toBe('REDIRECT');
+      expect(authorizationUrl!.searchParams.get('scope')).toBe(expectedRequest);
+      const pending = await fetch(authorizationUrl!, { redirect: 'manual' });
+      expect(pending.status).toBe(302);
+      const requestId = new URL(pending.headers.get('location')!, BASE).searchParams.get('oauth_request');
+      expect(requestId).toBeTruthy();
+      const login = await fetch(`${BASE}/admin/login`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.51' },
+        body: JSON.stringify({ token: ADMIN_BOOTSTRAP_TOKEN }) });
+      expect(login.status).toBe(200);
+      const session = login.headers.get('set-cookie')?.match(/gbrain_admin=([^;]+)/);
+      expect(session).toBeTruthy();
+      const cookie = `gbrain_admin=${session![1]}`;
+      const detailsResponse = await fetch(`${BASE}/admin/api/oauth-requests/${requestId}`, {
+        headers: { Cookie: cookie, 'X-Forwarded-For': '192.0.2.51' } });
+      expect(detailsResponse.status).toBe(200);
+      const details = await detailsResponse.json() as any;
+      expect(details.scopes).toEqual(registeredScope.split(' '));
+      const approval = await fetch(`${BASE}/admin/api/oauth-requests/${requestId}`, { method: 'POST',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', 'X-Forwarded-For': '192.0.2.51' },
+        body: JSON.stringify({ decision: 'approve', csrf: details.csrf }) });
+      expect(approval.status).toBe(200);
+      const code = new URL((await approval.json() as any).redirectUrl).searchParams.get('code')!;
+      expect(await auth(provider, { serverUrl: `${BASE}/mcp`, authorizationCode: code })).toBe('AUTHORIZED');
+      expect(tokens!.scope).toBe(registeredScope);
+      if (label === 'read-only overbroad hint') expect(tokens!.scope).not.toBe(expectedRequest);
+      else expect(tokens!.scope).toBe(expectedRequest);
+      const listed = await mcpToolResult(tokens!.access_token, 'tools/list');
+      expect(listed.tools.some((tool: any) => tool.name === 'get_page')).toBe(true);
+      if (registeredScope === 'read') {
+        expect(listed.tools.some((tool: any) => tool.name === 'put_page')).toBe(false);
+        const denied = await mcpToolResult(tokens!.access_token, 'tools/call', {
+          name: 'put_page', arguments: { slug: 'e2e-scope-denied', content: '# Not permitted' },
+        });
+        expect(denied.isError).toBe(true);
+        expect(denied.content[0].text).toContain('insufficient_scope');
+      }
+    });
+  }
 
   // =========================================================================
   // Fix 3: Express 5 compatibility

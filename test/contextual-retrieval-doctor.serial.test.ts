@@ -69,6 +69,10 @@ describe('contextual_retrieval_coverage doctor check', () => {
     expect(result.status).toBe('warn');
     expect(result.message).toContain('older chunker_version');
     expect(result.message).toContain('gbrain reindex --markdown');
+    // #5004: name the consequence — pages below the safe-chunk index version
+    // are withheld from every remote/MCP chunk read until reindexed.
+    expect(result.message).toContain('1 page(s) below the safe-chunk index version');
+    expect(result.message).toContain('withheld from remote/MCP chunk retrieval');
   });
 
   test('NULL mode column is flagged separately', async () => {

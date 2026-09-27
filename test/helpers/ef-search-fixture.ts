@@ -12,6 +12,7 @@
 
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
+import { installFixtureChunks } from './page-projection.ts';
 
 export const CORPUS_SIZE = 150;
 export const SEARCH_LIMIT = 100; // MAX_SEARCH_LIMIT — innerLimit becomes 500
@@ -60,6 +61,6 @@ export async function seedCorpus(eng: BrainEngine, dim: number): Promise<void> {
         embedding: prngUnitVector(i, dim),
       },
     ];
-    await eng.upsertChunks(slug, chunks);
+    await installFixtureChunks(eng, slug, chunks);
   }
 }

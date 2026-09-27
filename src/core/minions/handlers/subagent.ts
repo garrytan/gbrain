@@ -24,6 +24,7 @@
  * as P2 items in the plan file.
  */
 
+import { retainToolWriteRequestId, assertToolWriteCommitted, isPendingToolWrite } from '../tool-write-identity.ts';
 import Anthropic from '@anthropic-ai/sdk';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
@@ -698,17 +699,20 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           if (prior?.status === 'pending' && !toolDef.idempotent) {
             throw new Error(`non-idempotent tool "${use.name}" pending on resume; cannot safely re-run`);
           }
+          retainToolWriteRequestId(use.input, ctx.id, last.message_idx, useOrdinal, use.id, use.name);
           await persistToolExecPending(engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input);
           try {
             const output = await toolDef.execute(use.input, {
               engine, jobId: ctx.id, remote: true, signal: ctx.signal,
             });
+            assertToolWriteCommitted(output, use.name);
             await persistToolExecComplete(engine, ctx.id, last.message_idx, useOrdinal, use.id, output);
             synthesizedResults.push({
               type: 'tool_result', tool_use_id: use.id,
               content: asStringIfNotObject(output),
             } as ContentBlock);
           } catch (e) {
+            if (isPendingToolWrite(e)) throw e;
             const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
             await persistToolExecFailed(engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input, errText);
             synthesizedResults.push({
@@ -1040,6 +1044,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         }
 
         // Fresh or idempotent-replay dispatch.
+        retainToolWriteRequestId(use.input, ctx.id, assistantIdx, useOrdinal, use.id, toolName);
         await persistToolExecPending(engine, ctx.id, assistantIdx, useOrdinal, use.id, toolName, use.input);
         logSubagentHeartbeat({ job_id: ctx.id, event: 'tool_called', turn_idx: turnIdx, tool_name: toolName });
 
@@ -1051,6 +1056,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             remote: true,
             signal: ctx.signal,
           });
+          assertToolWriteCommitted(output, toolName);
           await persistToolExecComplete(engine, ctx.id, assistantIdx, useOrdinal, use.id, output);
           logSubagentHeartbeat({
             job_id: ctx.id,
@@ -1065,6 +1071,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             content: asStringIfNotObject(output),
           } as ContentBlock);
         } catch (e) {
+          if (isPendingToolWrite(e)) throw e;
           const errText = e instanceof Error
             ? (e.stack ?? e.message)
             : String(e);
@@ -1182,16 +1189,21 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   // Map ToolDef → ToolHandler (gateway shape). Each handler is a thin wrapper
   // that invokes the existing brain-tool dispatch.
   const toolHandlers = new Map<string, ToolHandler>();
+  // toolLoop invokes execute/failure hooks sequentially; preserve the typed
+  // receipt across its string-only failure hook without settling the ledger.
+  let pendingToolWrite: unknown;
   for (const t of toolDefs) {
     toolHandlers.set(t.name, {
       idempotent: t.idempotent === true,
       async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
-        return await t.execute(input, {
-          engine,
-          jobId: ctx.id,
-          remote: true,
-          signal,
-        });
+        try {
+          const output = await t.execute(input, { engine, jobId: ctx.id, remote: true, signal });
+          assertToolWriteCommitted(output, t.name);
+          return output;
+        } catch (error) {
+          if (isPendingToolWrite(error)) pendingToolWrite = error;
+          throw error;
+        }
       },
     });
   }
@@ -1383,6 +1395,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       heartbeat('llm_call_completed', { turn_idx: turnIdx, tokens: usage });
     },
     onToolCallStart: async (turnIdx, messageIdx, ordinal, toolName, input, providerToolCallId) => {
+      retainToolWriteRequestId(input, ctx.id, messageIdx, ordinal, providerToolCallId, toolName);
       // CRITICAL — read back the canonical gbrain_tool_use_id from RETURNING,
       // NOT the locally-generated UUID. On crash-replay the (job_id,
       // message_idx, ordinal) row already exists with the ORIGINAL UUID from
@@ -1429,6 +1442,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       );
     },
     onToolCallFailed: async (gbrainToolUseId, errorMsg) => {
+      if (pendingToolWrite) throw pendingToolWrite;
       await engine.executeRaw(
         `UPDATE subagent_tool_executions
            SET status = 'failed', error = $1, ended_at = now()
@@ -1630,12 +1644,15 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
       if (exec?.status === 'pending' && !toolDef.idempotent) {
         throw new Error(`non-idempotent tool "${call.toolName}" pending on resume; cannot safely re-run`);
       }
+      retainToolWriteRequestId(call.input, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName);
       await persistToolExecPending(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input);
       try {
         const output = await toolDef.execute(call.input, { engine, jobId, remote: true, signal });
+        assertToolWriteCommitted(output, call.toolName);
         await persistToolExecComplete(engine, jobId, msg.message_idx, callIdx, call.toolCallId, output);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output });
       } catch (e) {
+        if (isPendingToolWrite(e)) throw e;
         const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
         await persistToolExecFailed(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input, errText);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: errText, isError: true });

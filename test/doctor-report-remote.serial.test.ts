@@ -183,6 +183,22 @@ describe('doctorReportRemote — source scope (#4592)', () => {
     expect(message(after, 'brain_score')).toBe(message(before, 'brain_score'));
   });
 
+  test('contextual_retrieval_coverage counts only the granted source (#5004 unsealed pages, #4592 class)', async () => {
+    // putPage caps chunker_version below the safe-chunk fence, so every page
+    // here is "unsealed" and the check reports a count. A caller granted only
+    // SRCA must read SRCA's count: adding an unsealed page to SRCB moves nothing.
+    const ctx = {
+      engine,
+      remote: true,
+      auth: { token: 't', clientId: 'c', scopes: ['admin'], allowedSources: [SRCA] },
+    } as unknown as OperationContext;
+    const before = await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport;
+    expect(message(before, 'contextual_retrieval_coverage')).toContain('below the safe-chunk index version');
+    await put(SRCB, 'notes/epsilon');
+    const after = await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport;
+    expect(message(after, 'contextual_retrieval_coverage')).toBe(message(before, 'contextual_retrieval_coverage'));
+  });
+
   test('extract_atoms_backlog / drift / orphan probes never name or count an excluded source (wave review)', async () => {
     // 12 eligible-but-unextracted pages in the EXCLUDED source: brain-wide the
     // backlog is >= 12 (and the drain hint may name the source); a caller

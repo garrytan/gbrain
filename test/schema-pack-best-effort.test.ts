@@ -5,7 +5,7 @@
 // facts/eligibility, enrichment-service) depend on this contract.
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadActivePackBestEffort } from '../src/core/schema-pack/best-effort.ts';
@@ -78,6 +78,43 @@ describe('loadActivePackBestEffort', () => {
     await withEnv({ GBRAIN_HOME: tmpDir }, async () => {
       // resolves, doesn't throw.
       await expect(loadActivePackBestEffort(fakeCtx())).resolves.toBeNull();
+    });
+  });
+});
+
+describe('loadActivePackBestEffort — #4653 DB-plane schema_pack (tier 4)', () => {
+  function engineWithDbPack(pack: string | null) {
+    return { getConfig: async (key: string) => (key === 'schema_pack' ? pack : null) } as never;
+  }
+
+  it('honors the engine-side schema_pack when the ctx carries a live engine', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const ctx = { ...fakeCtx(), engine: engineWithDbPack('gbrain-base-v2') } as OperationContext;
+      const result = await loadActivePackBestEffort(ctx);
+      expect(result?.manifest.name).toBe('gbrain-base-v2');
+    });
+  });
+
+  it('a path-shaped DB schema_pack never escapes ~/.gbrain/schema-packs (unknown pack → null)', async () => {
+    // Unguarded, `gbrainPath('schema-packs', '../evil')` lands on
+    // <home>/.gbrain/evil — plant a valid pack there and prove the tier-4
+    // string cannot reach it (isValidPackName gate in defaultPackLocator).
+    const evilDir = join(tmpDir, '.gbrain', 'evil');
+    mkdirSync(evilDir, { recursive: true });
+    const base = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'schema-pack', 'base', 'gbrain-base.yaml'), 'utf-8');
+    writeFileSync(join(evilDir, 'pack.yaml'), base.replace('name: gbrain-base', 'name: evil-pack'), 'utf-8');
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const ctx = { ...fakeCtx(), engine: engineWithDbPack('../evil') } as OperationContext;
+      expect(await loadActivePackBestEffort(ctx)).toBeNull();
+    });
+  });
+
+  it('a throwing getConfig degrades to file/env resolution, never throws', async () => {
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      const boom = { getConfig: async () => { throw new Error('no config table'); } } as never;
+      const ctx = { ...fakeCtx(), engine: boom } as OperationContext;
+      const result = await loadActivePackBestEffort(ctx);
+      expect(result?.manifest.name).toBe('gbrain-base');
     });
   });
 });

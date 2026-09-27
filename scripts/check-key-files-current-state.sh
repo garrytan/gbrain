@@ -6,7 +6,7 @@
 # per file. This guard makes that recurrence structurally impossible. A written
 # rule caused the disease; a CI guard cures it.
 #
-# TWO HARD GATES (fail the build):
+# THREE HARD GATES (fail the build):
 #   1. Bolded-release-clause ban — the reference docs (docs/architecture/KEY_FILES.md,
 #      docs/architecture/thin-client.md, docs/TESTING.md) describe CURRENT behavior
 #      only. Release history lives in CHANGELOG.md + git. The bolded `**v0.<digit>`
@@ -15,6 +15,9 @@
 #      marker is banned, so this never false-fires on legitimate version mentions.
 #   2. CLAUDE.md size cap — the structural backstop. Even if someone ignores the
 #      prose rule and pads CLAUDE.md, the size gate catches it.
+#   3. One KEY_FILES.md bullet per src file — a cherry-pick that keeps both sides
+#      of a hunk leaves two "- `src/x.ts`" bullets describing two different
+#      "current states" for one file. Merge into the survivor, never append a twin.
 #
 # SOFT WARNS (stderr, non-fatal): prose history markers that suggest narration
 # creeping back ("pre-fix", ", then v0.", "superseded by") in the reference docs.
@@ -70,6 +73,21 @@ if [ -f "$claude" ]; then
     echo "      CLAUDE.md is orientation + resolver, not the implementation spec. Per-file/" >&2
     echo "      per-command/per-test detail belongs in the on-demand reference docs" >&2
     echo "      (docs/architecture/KEY_FILES.md, docs/TESTING.md, docs/RELEASING.md), not here." >&2
+  fi
+fi
+
+# ── Gate 3: one KEY_FILES.md bullet per src file ───────────────────────────
+# ponytail: KNOWN_DUP_PATHS seeds the pairs that pre-date the gate so it lands
+# green; merge a pair and delete its entry here — never add to this list.
+KNOWN_DUP_PATHS='src/cli.ts|src/commands/dream.ts|src/core/context/resolve-ipc.ts|src/core/context/turn-context.ts|src/core/cycle/transcript-discovery.ts'
+key_files="$ROOT/docs/architecture/KEY_FILES.md"
+if [ -f "$key_files" ]; then
+  dups=$(grep -oE '^- `src/[^`]+`' "$key_files" | sort | uniq -d | grep -vE "^- \`($KNOWN_DUP_PATHS)\`$" || true)
+  if [ -n "$dups" ]; then
+    fail=1
+    echo "FAIL: docs/architecture/KEY_FILES.md has more than one bullet for the same src file (two 'current states' for one file):" >&2
+    printf '%s\n' "$dups" | sed 's/^/        /' >&2
+    echo "      Fold the newer sentences into the existing bullet and delete the twin." >&2
   fi
 fi
 

@@ -29,12 +29,15 @@ describe('Ollama recipe — chat touchpoint', () => {
     }
   });
 
-  test('local chat models advertise no hosted-only capabilities', () => {
-    // Local Ollama chat serves plain completions; the gateway must not route
-    // tool-use / subagent / structured-output work here.
+  test('local chat models advertise no tool-loop capabilities but do declare structured outputs', () => {
+    // Local Ollama chat serves plain completions; tool support varies by the
+    // loaded model, so the gateway must not route tool-use / subagent work
+    // here. Structured output is different: Ollama enforces json_schema
+    // server-side (grammar-constrained decoding since 0.5, model-independent),
+    // so the recipe declares it and chat()/expand() may send a schema (#4863).
     const tp = getRecipe('ollama')!.touchpoints.chat!;
     expect(tp.supports_tools).toBe(false);
     expect(tp.supports_subagent_loop).toBe(false);
-    expect(tp.supports_structured_outputs).toBe(false);
+    expect(tp.supports_structured_outputs).toBe(true);
   });
 });

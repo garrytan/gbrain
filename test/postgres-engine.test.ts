@@ -66,14 +66,15 @@ describe('postgres-engine / search path timeout isolation', () => {
     expect(fn).toMatch(/alwaysTransaction:\s*true/);
   });
 
-  test('withScopedReadTransaction owns the sql.begin() wrap (and only opens it when needed)', () => {
-    // (extractMethod can't grab this one: `private async ...<T>(`.)
-    const stripped = stripComments(SRC);
-    // The transaction lives in the helper...
-    expect(stripped).toMatch(/this\.sql\.begin\s*\(/);
-    // ...and the flag-off / non-alwaysTransaction path is a true
-    // pass-through on the shared pool — no per-read transaction hold.
-    expect(stripped).toMatch(
+  test('withScopedReadTransaction uses the composable transaction when needed', () => {
+    // Keep the inspected body bounded; behavioral scope/savepoint coverage
+    // lives in postgres-engine-rls-scope.test.ts.
+    const helper = stripComments(SRC).split('private async withScopedReadTransaction<T>')[1]!.split('async connect(')[0]!;
+    expect(helper).toMatch(/this\.transaction\(async engine =>/);
+    expect(helper).toMatch(/const tx = \(engine as PostgresEngine\)\.sql;/);
+    expect(helper).toMatch(/await callback\(tx\)/);
+    // Flag off without a transaction requirement preserves pool passthrough.
+    expect(helper).toMatch(
       /if\s*\(!this\.rlsScopeBindingEnabled\s*&&\s*!opts\?\.alwaysTransaction\)\s*\{\s*return\s+await\s+callback\(this\.sql\);/,
     );
   });

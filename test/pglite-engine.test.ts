@@ -5,6 +5,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -92,12 +93,13 @@ describe('PGLiteEngine: Pages', () => {
   test('putPage restores a soft-deleted page', async () => {
     const slug = 'notes/restore-on-put';
     await engine.putPage(slug, testPage);
-    await engine.upsertChunks(slug, [{
+    await installFixtureChunks(engine, slug, [{
       chunk_index: 0,
       chunk_text: 'restored visibility marker',
       chunk_source: 'compiled_truth',
       token_count: 3,
     }]);
+    expect((await engine.searchKeyword('restored visibility marker')).map(result => result.slug)).toContain(slug);
     await engine.softDeletePage(slug, { sourceId: 'default' });
     expect(await engine.getPage(slug)).toBeNull();
     expect((await engine.searchKeyword('restored visibility marker')).map(result => result.slug)).not.toContain(slug);
@@ -108,6 +110,8 @@ describe('PGLiteEngine: Pages', () => {
       compiled_truth: 'restored visibility marker',
     });
 
+    // Restoring canonical content invalidates the old derived projection.
+    await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: 'restored visibility marker', chunk_source: 'compiled_truth', token_count: 3 }]);
     expect(restored.title).toBe('Restored Title');
     expect((await engine.getPage(slug))?.title).toBe('Restored Title');
     expect((await engine.searchKeyword('restored visibility marker')).map(result => result.slug)).toContain(slug);
@@ -236,14 +240,14 @@ describe('PGLiteEngine: Search', () => {
       type: 'company', title: 'NovaMind',
       compiled_truth: 'NovaMind builds AI agents for enterprise automation.',
     });
-    await engine.upsertChunks('companies/novamind', [
+    await installFixtureChunks(engine, 'companies/novamind', [
       { chunk_index: 0, chunk_text: 'NovaMind builds AI agents for enterprise', chunk_source: 'compiled_truth' },
     ]);
     await engine.putPage('concepts/rag', {
       type: 'concept', title: 'Retrieval-Augmented Generation',
       compiled_truth: 'RAG combines retrieval with generation for better answers.',
     });
-    await engine.upsertChunks('concepts/rag', [
+    await installFixtureChunks(engine, 'concepts/rag', [
       { chunk_index: 0, chunk_text: 'RAG combines retrieval with generation', chunk_source: 'compiled_truth' },
     ]);
     await engine.putPage('mail/example', {
@@ -255,7 +259,7 @@ describe('PGLiteEngine: Search', () => {
         subject: 'Example launch subject',
       },
     });
-    await engine.upsertChunks('mail/example', [
+    await installFixtureChunks(engine, 'mail/example', [
       { chunk_index: 0, chunk_text: 'Launch evidence for citation metadata', chunk_source: 'compiled_truth' },
     ]);
     await engine.putPage('notes/generated-title', {
@@ -266,7 +270,7 @@ describe('PGLiteEngine: Search', () => {
         thread_id: 'standalone-thread-id',
       },
     });
-    await engine.upsertChunks('notes/generated-title', [
+    await installFixtureChunks(engine, 'notes/generated-title', [
       { chunk_index: 0, chunk_text: 'Non-email evidence for subject gating', chunk_source: 'compiled_truth' },
     ]);
     await engine.putPage('mail/whitespace-message-id', {
@@ -278,7 +282,7 @@ describe('PGLiteEngine: Search', () => {
         subject: 'Subject must remain gated',
       },
     });
-    await engine.upsertChunks('mail/whitespace-message-id', [
+    await installFixtureChunks(engine, 'mail/whitespace-message-id', [
       { chunk_index: 0, chunk_text: 'Whitespace-only email identity evidence', chunk_source: 'compiled_truth' },
     ]);
   });
@@ -335,7 +339,7 @@ describe('PGLiteEngine: Search', () => {
   test('searchVector carries email citation metadata through the outer CTE', async () => {
     const embedding = new Float32Array(CHUNK_EMBED_DIM);
     embedding[0] = 1;
-    await engine.upsertChunks('mail/example', [
+    await installFixtureChunks(engine, 'mail/example', [
       {
         chunk_index: 0,
         chunk_text: 'Launch evidence for citation metadata',
@@ -353,7 +357,7 @@ describe('PGLiteEngine: Search', () => {
   test('searchVector treats whitespace-only message_id as absent', async () => {
     const embedding = new Float32Array(CHUNK_EMBED_DIM);
     embedding[1] = 1;
-    await engine.upsertChunks('mail/whitespace-message-id', [
+    await installFixtureChunks(engine, 'mail/whitespace-message-id', [
       {
         chunk_index: 0,
         chunk_text: 'Whitespace-only email identity evidence',
@@ -382,7 +386,7 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
       type: 'concept', title: 'Chinese essay',
       compiled_truth: '测试 内容 测试 测试 多次',
     });
-    await engine.upsertChunks('originals/chinese-essay', [
+    await installFixtureChunks(engine, 'originals/chinese-essay', [
       { chunk_index: 0, chunk_text: '测试 内容 测试 测试 多次', chunk_source: 'compiled_truth' },
     ]);
 
@@ -390,7 +394,7 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
       type: 'concept', title: 'Japanese essay',
       compiled_truth: '今日は晴れです。明日は雨です。',
     });
-    await engine.upsertChunks('originals/japanese-essay', [
+    await installFixtureChunks(engine, 'originals/japanese-essay', [
       { chunk_index: 0, chunk_text: '今日は晴れです。明日は雨です。', chunk_source: 'compiled_truth' },
     ]);
 
@@ -398,7 +402,7 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
       type: 'concept', title: 'Korean essay',
       compiled_truth: '한글 테스트 문서 입니다',
     });
-    await engine.upsertChunks('originals/korean-essay', [
+    await installFixtureChunks(engine, 'originals/korean-essay', [
       { chunk_index: 0, chunk_text: '한글 테스트 문서 입니다', chunk_source: 'compiled_truth' },
     ]);
 
@@ -407,7 +411,7 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
       type: 'concept', title: 'English essay',
       compiled_truth: 'NovaMind builds AI agents for enterprise automation.',
     });
-    await engine.upsertChunks('originals/english-essay', [
+    await installFixtureChunks(engine, 'originals/english-essay', [
       { chunk_index: 0, chunk_text: 'NovaMind builds AI agents for enterprise', chunk_source: 'compiled_truth' },
     ]);
 
@@ -420,7 +424,7 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
         subject: 'Example CJK email subject',
       },
     });
-    await engine.upsertChunks('mail/cjk-example', [
+    await installFixtureChunks(engine, 'mail/cjk-example', [
       { chunk_index: 0, chunk_text: '郵件引用識別', chunk_source: 'compiled_truth' },
     ]);
   });
@@ -460,7 +464,7 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
       type: 'concept', title: 'One-hit',
       compiled_truth: '只有一个 测试 in this page',
     });
-    await engine.upsertChunks('originals/chinese-one-hit', [
+    await installFixtureChunks(engine, 'originals/chinese-one-hit', [
       { chunk_index: 0, chunk_text: '只有一个 测试 in this page', chunk_source: 'compiled_truth' },
     ]);
 
@@ -517,7 +521,7 @@ describe('PGLiteEngine: Chunks', () => {
       { chunk_index: 0, chunk_text: 'Chunk zero', chunk_source: 'compiled_truth' },
       { chunk_index: 1, chunk_text: 'Chunk one', chunk_source: 'compiled_truth' },
     ]);
-    const chunks = await engine.getChunks('test/chunks');
+    const chunks = await engine.getChunks('test/chunks', { includeUnsealed: true });
     expect(chunks.length).toBe(2);
     expect(chunks[0].chunk_text).toBe('Chunk zero');
     expect(chunks[1].chunk_text).toBe('Chunk one');
@@ -529,7 +533,7 @@ describe('PGLiteEngine: Chunks', () => {
       { chunk_index: 0, chunk_text: 'Mixed-case chunk', chunk_source: 'compiled_truth' },
     ]);
 
-    const chunks = await engine.getChunks('test/chunkcase');
+    const chunks = await engine.getChunks('test/chunkcase', { includeUnsealed: true });
     expect(chunks.length).toBe(1);
     expect(chunks[0].chunk_text).toBe('Mixed-case chunk');
   });
@@ -544,7 +548,7 @@ describe('PGLiteEngine: Chunks', () => {
     await engine.upsertChunks('test/orphan', [
       { chunk_index: 0, chunk_text: 'Updated', chunk_source: 'compiled_truth' },
     ]);
-    const chunks = await engine.getChunks('test/orphan');
+    const chunks = await engine.getChunks('test/orphan', { includeUnsealed: true });
     expect(chunks.length).toBe(1);
     expect(chunks[0].chunk_text).toBe('Updated');
   });
@@ -563,14 +567,14 @@ describe('PGLiteEngine: Chunks', () => {
       { chunk_index: 0, chunk_text: 'Gone', chunk_source: 'compiled_truth' },
     ]);
     await engine.deleteChunks('test/delete-chunks');
-    const chunks = await engine.getChunks('test/delete-chunks');
+    const chunks = await engine.getChunks('test/delete-chunks', { includeUnsealed: true });
     expect(chunks.length).toBe(0);
   });
 
   test('getChunksWithEmbeddings returns embedding data', async () => {
     await engine.putPage('test/embed', testPage);
     const embedding = new Float32Array(CHUNK_EMBED_DIM).fill(0.1);
-    await engine.upsertChunks('test/embed', [
+    await installFixtureChunks(engine, 'test/embed', [
       { chunk_index: 0, chunk_text: 'With embedding', chunk_source: 'compiled_truth', embedding },
     ]);
     const chunks = await engine.getChunksWithEmbeddings('test/embed');
@@ -1510,7 +1514,7 @@ describe('PGLiteEngine: v0.13.1 error-wrap on connect() (#223)', () => {
     // create()).
     // #2084 wrapped the create call in preservingProcessExitCode (Emscripten
     // exitCode containment); the try/catch + error wrap around it is unchanged.
-    expect(src).toContain('this._db = await preservingProcessExitCode(() =>');
+    expect(src).toContain('this._db = this._attachDatabase(await preservingProcessExitCode(() =>');
     expect(src).toContain('PGlite.create({');
     expect(src).toContain('https://github.com/garrytan/gbrain/issues/223');
     expect(src).toContain('gbrain doctor');

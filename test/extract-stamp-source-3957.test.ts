@@ -281,8 +281,10 @@ describe('#3957 put_page auto-timeline threads ctx.sourceId', () => {
       slug: 'people/bob',
       content: `# Bob\n\n${CANON_BULLET}\n`,
       type: 'person',
-    }) as { auto_timeline?: { created?: number } };
-    expect(result.auto_timeline?.created).toBe(1);
+    }) as { write_request: { state: string } };
+    // Timeline projection now commits with the canonical receipt; it is no
+    // longer a best-effort post-write extraction advisory.
+    expect(result.write_request.state).toBe('committed');
 
     const rows = await engine.executeRaw<{ source_id: string; source: string; summary: string }>(
       `SELECT p.source_id, te.source, te.summary

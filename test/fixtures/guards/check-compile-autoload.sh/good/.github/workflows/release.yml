@@ -1,0 +1,4 @@
+jobs:
+  build:
+    steps:
+      - run: bun build --compile --no-compile-autoload-bunfig --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts

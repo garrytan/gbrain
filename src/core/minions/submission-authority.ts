@@ -11,7 +11,6 @@ import { coerceLegacyPermissions, normalizeTokenScopes, parseLegacyTokenScope } 
 import { isValidSourceId } from '../source-id.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import type { MinionJob } from './types.ts';
-import { effectiveDelegation, snapshotFromJob } from './delegated-policy.ts';
 
 export const REMOTE_JOB_NAMES = ['sync', 'import', 'lint', 'lint-fix'] as const;
 export type RemoteJobName = typeof REMOTE_JOB_NAMES[number];
@@ -117,7 +116,7 @@ async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: Re
   return { canonicalRoot, worktreeRoot, sourceCreatedAt: new Date(source.created_at as string).toISOString() };
 }
 
-async function assertCurrentPrincipal(engine: BrainEngine, authority: RemoteJobAuthority): Promise<void> {
+export async function assertCurrentRemoteJobPrincipal(engine: BrainEngine, authority: RemoteJobAuthority): Promise<void> {
   const { principal, grant } = authority;
   let scopes: string[], sourceId: string | undefined;
   if (principal.kind === 'oauth_client') {
@@ -176,7 +175,7 @@ export async function prepareRemoteJob(
       allowedOperations: ctx.auth?.allowedOperations == null ? null : [...ctx.auth.allowedOperations] },
     payloadHash: authorityDigest(data),
   };
-  await assertCurrentPrincipal(ctx.engine, authority);
+  await assertCurrentRemoteJobPrincipal(ctx.engine, authority);
   return { data, authority };
 }
 
@@ -186,6 +185,10 @@ async function assertCurrentAgent(engine: BrainEngine, a: RemoteAgentAuthority, 
   const [source] = await engine.executeRaw<Record<string, unknown>>('SELECT archived, created_at FROM sources WHERE id = $1', [a.grant.sourceId]);
   if (!source || source.archived !== false || new Date(source.created_at as string).toISOString() !== a.grant.sourceCreatedAt) deny('agent source is missing, archived, or was replaced');
   if (data.__delegation_grant !== undefined) {
+    // Grant profiles reference the complete operation catalog. Filesystem
+    // writers need this module during catalog initialization; load the policy
+    // only when an actual delegated job is being checked.
+    const { effectiveDelegation, snapshotFromJob } = await import('./delegated-policy.ts');
     const submitted = snapshotFromJob(data);
     if (!submitted || submitted.clientId !== a.principal.id || submitted.sourceId !== a.grant.sourceId
       || authorityDigest(submitted.tools) !== authorityDigest(a.grant.allowedTools)
@@ -245,7 +248,7 @@ export async function authorizeJobExecution(engine: BrainEngine, job: Pick<Minio
     return a;
   }
   if (job.name !== a.grant.jobName || authorityDigest(job.data) !== a.payloadHash) deny('job data or name differs from its accepted grant');
-  await assertCurrentPrincipal(engine, a);
+  await assertCurrentRemoteJobPrincipal(engine, a);
   const boundary = await sourceBoundary(engine, a.grant.sourceId, a.grant.jobName);
   for (const key of ['canonicalRoot', 'worktreeRoot', 'sourceCreatedAt'] as const) {
     if (boundary[key] !== a.grant[key]) deny('source registration or filesystem root changed; submit a new job');

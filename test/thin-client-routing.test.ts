@@ -8,7 +8,7 @@
  *   (b) host-bound forms return false (search modes --reset, search tune
  *       --apply, quarantine scan/clear, takes extract) so the caller falls
  *       through to refuseThinClient's hint;
- *   (c) recognized-but-malformed routable forms print usage + exit(1)
+ *   (c) recognized-but-malformed routable forms report a nonzero CLI verdict
  *       instead of returning false (the subcommand IS routable — the args
  *       are just wrong).
  *
@@ -19,17 +19,19 @@
  * JSON.parse(content[0].text) path.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as mcpClient from '../src/core/mcp-client.ts';
 import { routeThinClientCommand } from '../src/commands/thin-client-routing.ts';
+import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
-const cfg = {} as GBrainConfig; // callRemoteTool is stubbed; cfg is never read
+const cfg: GBrainConfig = { engine: 'pglite', remote_mcp: { mcp_url: 'http://127.0.0.1:1/mcp', issuer_url: 'http://127.0.0.1:1', oauth_client_id: 'fixture', oauth_client_secret: 'fixture' } };
 
 const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
 let callSpy: ReturnType<typeof spyOn>;
 let logSpy: ReturnType<typeof spyOn>;
 let errSpy: ReturnType<typeof spyOn>;
+let previousExitCode: typeof process.exitCode;
 const logs: string[] = [];
 const errs: string[] = [];
 
@@ -55,7 +57,15 @@ afterAll(() => {
   errSpy.mockRestore();
 });
 
+afterEach(() => {
+  _resetCliExitVerdictForTests();
+  // Verdicts also mirror process.exitCode; undefined does not clear it in Bun.
+  process.exitCode = previousExitCode ?? 0;
+});
+
 beforeEach(() => {
+  previousExitCode = process.exitCode;
+  _resetCliExitVerdictForTests();
   calls.length = 0;
   logs.length = 0;
   errs.length = 0;
@@ -64,7 +74,13 @@ beforeEach(() => {
 /** One recorded remote call, asserted whole (op name + exact args). */
 function soleCall(): { tool: string; args: Record<string, unknown> } {
   expect(calls).toHaveLength(1);
-  return calls[0]!;
+  const call = calls[0]!;
+  if (['takes_add', 'takes_update', 'takes_resolve', 'takes_supersede'].includes(call.tool)) {
+    expect(call.args.request_id).toMatch(/^[0-9a-f-]{36}$/);
+    const { request_id, ...args } = call.args;
+    return { ...call, args };
+  }
+  return call;
 }
 
 describe('routeThinClientCommand — (a) op name + param mapping per route', () => {
@@ -216,8 +232,14 @@ describe('routeThinClientCommand — (c) malformed routable forms print usage + 
     } finally {
       exitSpy.mockRestore();
     }
-    expect(exited).toBe('EXIT:1');
-    expect(errs.join('\n')).toContain('Usage:');
+    if (command === 'takes' && ['add', 'update', 'resolve', 'supersede'].includes(args[0])) {
+      expect(exited).toBeNull();
+      expect(currentExitCode()).toBe(1);
+      expect(errs.join('\n')).toContain('Error [invalid_params]');
+    } else {
+      expect(exited).toBe('EXIT:1');
+      expect(errs.join('\n')).toContain('Usage:');
+    }
     // No remote write attempted on a usage error.
     expect(calls).toHaveLength(0);
   }

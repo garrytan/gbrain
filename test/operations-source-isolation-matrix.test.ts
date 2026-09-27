@@ -24,6 +24,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { readOps } from './helpers/ops-registry.ts';
@@ -245,9 +246,6 @@ beforeAll(async () => {
     await engine.addTag(`notes/${name}-note`, `${name}-topic`, { sourceId: src });
     await engine.addTag(`people/${name}-person`, `${name}-topic`, { sourceId: src });
     await engine.addLink(`notes/${name}-note`, `people/${name}-person`, `${MARK} ctx`, 'mentions', 'markdown', undefined, undefined, { fromSourceId: src, toSourceId: src });
-    await engine.upsertChunks(`notes/${name}-note`, [{
-      chunk_index: 0, chunk_text: `${MARK} chunk text ${name}-secret-content`, chunk_source: 'compiled_truth', token_count: 5,
-    }], { sourceId: src });
     await engine.createVersion(`notes/${name}-note`, { sourceId: src });
     await engine.putRawData(`notes/${name}-note`, 'crm', { owner: MARK }, { sourceId: src });
     await engine.logIngest({
@@ -280,6 +278,15 @@ beforeAll(async () => {
         page_id: (page as any).id, row_num: 1, claim: `${MARK} take claim`,
         kind: 'view', holder: `${name}-holder`, weight: 0.8,
       }] as any);
+    }
+    // Publish the final synthetic page state after every fixture mutation so
+    // positive controls exercise eligible retrieval in both sources.
+    for (const slug of [`people/${name}-person`, `notes/${name}-note`, `misc/${name}-orphan`, `stubs/${name}-stub`]) {
+      const fixturePage = await engine.getPage(slug, { sourceId: src });
+      await installFixtureChunks(engine, slug, [{
+        chunk_index: 0, chunk_text: fixturePage!.compiled_truth,
+        chunk_source: 'compiled_truth', token_count: 5,
+      }], { sourceId: src });
     }
   }
   // Contradictions probe report (both-endpoints-beta finding).

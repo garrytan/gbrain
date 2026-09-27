@@ -1,3 +1,4 @@
+import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
  * Truth-predicate pins (split-brain fix): after a schema rebuild NULLs every
  * vector, every status surface must tell the truth even though `embedded_at`
@@ -107,7 +108,7 @@ describe('truth predicates survive a schema rebuild', () => {
   test('seed: pages embedded through the real pipeline read as covered', async () => {
     for (const slug of PAGES) {
       await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}\n\nbody of ${slug}` });
-      await engine.upsertChunks(slug, [
+      await installFixtureChunks(engine, slug, [
         { chunk_index: 0, chunk_text: `chunk for ${slug}`, chunk_source: 'compiled_truth', token_count: 4 },
       ]);
     }
@@ -212,7 +213,7 @@ describe('nullable embedding signature (D9 honesty)', () => {
       await engine.putPage('truth-nullsig', {
         type: 'note', title: 'truth-nullsig', compiled_truth: '# truth-nullsig\n\nnull provenance body',
       });
-      await engine.upsertChunks('truth-nullsig', [
+      await installFixtureChunks(engine, 'truth-nullsig', [
         { chunk_index: 0, chunk_text: 'chunk for truth-nullsig', chunk_source: 'compiled_truth', token_count: 4 },
       ]);
 

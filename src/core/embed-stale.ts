@@ -1,3 +1,4 @@
+import { readProjectionSnapshot, installPageEmbeddings } from './page-state/projections.ts';
 /**
  * Stale-chunk embedding loop, extracted from `src/commands/embed.ts:embedAllStale`
  * for reuse by the v0.40 `embed-backfill` Minion handler (D15.2 — codex
@@ -22,7 +23,7 @@ import type { Chunk, ChunkInput } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retry.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
-import { invalidateStaleSignatureEmbeddingsGuarded } from './embedding-invalidation.ts';
+import { invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
 import {
   resolveActiveEmbeddingColumnFromEngine,
   quoteIdentifier,
@@ -157,7 +158,8 @@ export async function resolveProvenanceStamp(
 /**
  * Stamp `pages.embedding_signature` once EVERY chunk on the page carries an
  * active-column vector written by the signature's model against the CURRENT
- * chunk_text (`embedded_text_hash = md5(chunk_text)`). Judged from DB state,
+ * chunk_text (`embedded_text_hash = md5(chunk_text)`) at the signature's vector
+ * width. Judged from DB state,
  * not from the caller's batch: `listStaleChunks` pages by ROW with no page
  * alignment, so a page straddling a batch boundary is never wholly in one
  * batch — the batch that lands its last chunk stamps it here. A partially
@@ -172,23 +174,23 @@ export async function stampIfPageProvenanceComplete(
   sourceId: string,
   { signature, column }: ProvenanceStamp,
 ): Promise<boolean> {
-  // Signature is `<provider:model>:<dims>`; the model part is what
-  // upsertChunks records in content_chunks.model.
-  const model = signature.slice(0, signature.lastIndexOf(':'));
-  const colId = quoteIdentifier(column);
-  const rows = await engine.executeRaw<{ complete: boolean }>(
-    `SELECT count(*) > 0
-            AND bool_and(COALESCE(
-              cc.${colId} IS NOT NULL
-              AND cc.model = $1
-              AND cc.embedded_text_hash = md5(cc.chunk_text), false)) AS complete
-       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE p.slug = $2 AND p.source_id = $3`,
-    [model, slug, sourceId],
-  );
-  if (rows[0]?.complete !== true) return false;
-  await engine.setPageEmbeddingSignature(slug, { sourceId, signature });
-  return true;
+  return engine.transaction(async tx => {
+    await tx.lockPageKeys([{ sourceId, slug }]);
+    // Signature is `<provider:model>:<dims>`; the model part is what
+    // upsertChunks records in content_chunks.model.
+    const { model, dims } = splitEmbeddingSignature(signature);
+    const colId = quoteIdentifier(column);
+    const rows = await tx.executeRaw<{ complete: boolean }>(
+      `SELECT count(*) > 0
+              AND bool_and(${currentSpaceChunkPredicate(colId, 1, 4)}) AS complete
+         FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = $2 AND p.source_id = $3 AND p.text_projection_revision=p.knowledge_revision`,
+      [model, slug, sourceId, dims],
+    );
+    if (rows[0]?.complete !== true) return false;
+    await tx.setPageEmbeddingSignature(slug, { sourceId, signature });
+    return true;
+  });
 }
 
 /** Probe input for `probeEmbedder`. Exported so tests can detect probe calls. */
@@ -282,7 +284,9 @@ export async function embedStalePages(
       // SUP-3874: split legacy oversized rows before embedding so a single
       // pre-cap chunk cannot permanently fail the page.
       await healOversizedPageChunks(engine, slug, { sourceId });
-      const existing = await engine.getChunks(slug, { sourceId });
+      const prepared = await readProjectionSnapshot(engine, slug, sourceId);
+      if (!prepared) continue;
+      const existing = prepared.chunks;
       const staleIdx = new Set(
         (await engine.executeRaw<{ chunk_index: number }>(
           `SELECT cc.chunk_index
@@ -294,7 +298,7 @@ export async function embedStalePages(
       );
       if (staleIdx.size === 0) continue;
       const stale = existing.filter(c => staleIdx.has(c.chunk_index));
-      const pageRow = await engine.getPage(slug, { sourceId });
+      const pageRow = prepared.snapshot.page;
       const embeddings = await embedFn(
         wrapChunkTextsForStoredMode(pageRow, stale),
         { abortSignal: opts.signal },
@@ -310,13 +314,12 @@ export async function embedStalePages(
         embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
         token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
       }));
-      await engine.upsertChunks(slug, merged, { sourceId });
-      if (opts.embeddingSignature && stale.length === existing.length) {
-        await engine.setPageEmbeddingSignature(slug, { sourceId, signature: opts.embeddingSignature });
-      }
-      if (stale.length === existing.length) {
-        await restampIfDemotedToTitleTier(engine, pageRow, slug, sourceId);
-      }
+      if (!await engine.transaction(async tx => {
+        if (!await installPageEmbeddings(tx, prepared, merged,
+          opts.embeddingSignature && stale.length === existing.length ? opts.embeddingSignature : undefined)) return false;
+        if (stale.length === existing.length) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, sourceId);
+        return true;
+      })) continue;
       result.embedded += stale.length;
       result.pagesProcessed += 1;
     } catch (e) {
@@ -463,16 +466,16 @@ export async function embedStaleForSource(
         // re-embed reproduces the page's wrapping convention instead of
         // silently stripping contextual prefixes (mirrors
         // src/commands/embed.ts:embedAllStale).
-        const pageRow = await observed(pacer, () =>
-          engine.getPage(slug, { sourceId: keySourceId }),
-        );
-        const embeddings = await embedFn(
-          wrapChunkTextsForStoredMode(pageRow, stale),
-          { abortSignal: signal },
-        );
-        const existing = await observed(pacer, () =>
-          engine.getChunks(slug, { sourceId: keySourceId }),
-        );
+        const prepared = await observed(pacer, () => readProjectionSnapshot(engine, slug, keySourceId));
+        if (!prepared) return;
+        const selected = new Map(stale.map(c => [c.chunk_index, c]));
+        const existing = prepared.chunks;
+        stale = existing.filter(c => selected.get(c.chunk_index)?.chunk_text === c.chunk_text)
+          .map(c => ({ ...selected.get(c.chunk_index)!, ...c }));
+        if (!stale.length) return;
+        const pageRow = prepared.snapshot.page;
+        const embeddings = await embedFn(wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: signal });
+
         const staleIdxToEmbedding = new Map<number, Float32Array>();
         for (let j = 0; j < stale.length; j++) {
           staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
@@ -484,23 +487,14 @@ export async function embedStaleForSource(
           embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
           token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
         }));
-        await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
-        // Stamp provenance from DB state, not this batch (#4825): the keyset
-        // drain has no page alignment, so a page straddling a batch boundary
-        // is never wholly in one batch — the batch that lands its last chunk
-        // stamps it. Preserved chunks of other provenance keep it unstamped.
-        if (stamp) {
-          await observed(pacer, () =>
-            stampIfPageProvenanceComplete(engine, slug, keySourceId, stamp),
-          );
-        }
-        // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
-        // title tier — keep the stamped mode honest (mixed pages stay as-is).
-        if (stale.length === existing.length) {
-          await observed(pacer, () =>
-            restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
-          );
-        }
+        // The keyset's last batch stamps complete DB provenance (#4825),
+        // with context demotion in the same transaction as its vector writes.
+        if (!await observed(pacer, () => engine.transaction(async tx => {
+          if (!await installPageEmbeddings(tx, prepared, merged)) return false;
+          if (stamp) await stampIfPageProvenanceComplete(tx, slug, keySourceId, stamp);
+          if (stale.length === existing.length) await restampIfDemotedToTitleTier(tx, prepared.snapshot.page, slug, keySourceId);
+          return true;
+        }))) return;
         result.embedded += stale.length;
         result.pagesProcessed += 1;
       } catch (e: unknown) {

@@ -54,6 +54,7 @@ import {
 } from '../core/link-extraction.ts';
 // #3190: pack-aware link typing on every extract surface (db/stale/fs).
 import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts';
+import { resolveIncludeFrontmatter } from '../core/extract-frontmatter.ts';
 import { inferLinkTypeFromPack } from '../core/schema-pack/link-inference.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
@@ -69,14 +70,13 @@ import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '.
 import { withRetry, isRetryableConnError } from '../core/retry.ts';
 export { withRetry };
 export type { WithRetryOpts } from '../core/retry.ts';
-import { buildGazetteer, findMentionedEntities } from '../core/by-mention.ts';
+import { buildGazetteer, findMentionedEntities, hashGazetteer } from '../core/by-mention.ts';
 // #4611: the cross-source link fallback follows the configured
 // `sources.default` (validated shape) instead of the literal 'default'.
 import { isValidSourceId } from '../core/source-id.ts';
 import {
   loadOpCheckpoint, recordCompleted, clearOpCheckpoint, mentionsFingerprint,
 } from '../core/op-checkpoint.ts';
-import { createHash } from 'crypto';
 // v0.41.15.0 (T7, D9): --workers N for the fs-walk inner loops via the
 // shared sliding-pool helper + PGLite-clamp wrapper.
 import { runSlidingPool } from '../core/worker-pool.ts';
@@ -381,6 +381,54 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
   return files;
 }
 
+/**
+ * Slug → real on-disk relPath, for every markdown file under a brain dir.
+ *
+ * A slug is NOT a path. `pathToSlug` lowercases each segment and slugifies
+ * it, so rebuilding a file's path as `join(dir, slug + '.md')` only finds
+ * files whose names already happen to be slugs — `Meeting Notes.md` slugs to
+ * `meeting-notes`, and `Report.md` only appears to round-trip on a
+ * case-insensitive filesystem. Every per-slug extractor resolves through this
+ * index instead, so a legitimately-named file is never mistaken for a
+ * deleted one.
+ *
+ * Collisions are possible (two files can slug to one slug). The file whose
+ * name IS the slug wins, which is exactly what the old reconstructed path
+ * found; otherwise the first walked entry wins, so the choice never depends
+ * on directory-read order.
+ */
+export function buildSlugPathIndex(
+  files: ReadonlyArray<{ relPath: string }>,
+): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const file of files) {
+    const slug = pathToSlug(file.relPath);
+    if (!index.has(slug) || file.relPath === `${slug}.md`) index.set(slug, file.relPath);
+  }
+  return index;
+}
+
+/**
+ * Resolve one requested slug to its on-disk relPath: the index first, then
+ * the legacy `slug + '.md'` reconstruction. The index only covers what
+ * `walkMarkdownFiles` emits, but sync ADMITS files the walker never emits —
+ * `_`-prefixed names, and dot-dirs waived via `sync.include_hidden` — and
+ * those slugs still round-trip to their real path. Without the fallback the
+ * per-slug extractors treated every such page as deleted and it imported
+ * with no edges. Only a miss on BOTH means "no file behind this slug".
+ */
+export function resolveSlugRelPath(
+  slugToPath: ReadonlyMap<string, string>,
+  repoPath: string,
+  slug: string,
+): string | undefined {
+  const indexed = slugToPath.get(slug);
+  if (indexed !== undefined) return indexed;
+  const legacy = `${slug}.md`;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- legacy is `slug + '.md'` for a slug read from the pages table; every stored slug passed validateSlug (no `..` segments, no leading `/`), and repoPath is the registered source root
+  return existsSync(join(repoPath, legacy)) ? legacy : undefined;
+}
+
 // --- Link extraction ---
 
 /**
@@ -391,13 +439,13 @@ export function walkMarkdownFiles(dir: string): { path: string; relPath: string 
  *   2. Wikilinks:          [[relative/path]] or [[relative/path|Display Text]]
  *
  * Both are resolved relative to the file that contains them. External URLs
- * (containing ://) are always skipped. For wikilinks, the .md suffix is added
- * if absent and section anchors (#heading) are stripped.
+ * (containing ://) are always skipped. Section anchors (#heading) are stripped
+ * from both (#4995); for wikilinks, the .md suffix is added if absent.
  */
 export function extractMarkdownLinks(content: string): { name: string; relTarget: string }[] {
   const results: { name: string; relTarget: string }[] = [];
 
-  const mdPattern = /\[([^\]]+)\]\(([^)]+\.md)\)/g;
+  const mdPattern = /\[([^\]]+)\]\(([^)#]+\.md)(?:#[^)]*)?\)/g;
   let match;
   while ((match = mdPattern.exec(content)) !== null) {
     let target = match[2];
@@ -928,7 +976,9 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
     await extractStaleFromDB(engine, {
       dryRun: args.includes('--dry-run'),
       jsonMode: args.includes('--json'),
-      includeFrontmatter: args.includes('--include-frontmatter'),
+      // Flag present → true; absent → the configured knob, so the stale sweep
+      // sync hints at never stamps pages fresh without their frontmatter edges.
+      includeFrontmatter: args.includes('--include-frontmatter') || undefined,
       sourceIdFilter: staleSourceId,
       catchUp: args.includes('--catch-up'),
     });
@@ -1284,7 +1334,11 @@ async function extractForSlugs(
   const stdoutQuiet = jsonMode || quiet;
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
-  const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
+  // Same real-path resolution the sync hooks use (see buildSlugPathIndex).
+  // Rebuilding `slug + '.md'` here made the cycle's incremental extract treat
+  // every non-slug filename as a deleted file and skip it without a word.
+  const slugToPath = buildSlugPathIndex(allFiles);
+  const allSlugs = new Set(slugToPath.keys());
 
   const doLinks = mode === 'links' || mode === 'all';
   const doTimeline = mode === 'timeline' || mode === 'all';
@@ -1375,10 +1429,10 @@ async function extractForSlugs(
       // #1972: bail before doing any work for this slug on abort. Trailing
       // flushLinks/flushTimeline still commit accumulated rows — no torn write.
       if (isAborted(signal)) return;
-      const relPath = slug + '.md';
+      const relPath = resolveSlugRelPath(slugToPath, brainDir, slug);
+      if (relPath === undefined) return; // deleted file — sync already handled removal
       const fullPath = join(brainDir, relPath);
       try {
-        if (!existsSync(fullPath)) return; // deleted file — sync already handled removal
         const content = readFileSync(fullPath, 'utf-8');
 
         if (doLinks) {
@@ -1603,14 +1657,48 @@ async function extractTimelineFromDir(
 
 // --- Sync integration hooks ---
 
+/**
+ * What a per-slug sync hook actually got done. `created` is the row count
+ * (unchanged reporting); `processed` is the subset of the requested slugs
+ * whose file was found on disk and read successfully.
+ *
+ * The split exists because the watermark stamp lives at the CALL SITE: the
+ * caller may only stamp `links_extracted_at` for slugs the extractor really
+ * read. Stamping the whole requested set marks silently-skipped pages fresh
+ * and hides them from `extract --stale` forever.
+ */
+export interface ExtractForSlugsResult {
+  created: number;
+  processed: string[];
+}
+
+/**
+ * The slugs both sync hooks read, in the order the caller asked for them.
+ * One `links_extracted_at` watermark covers link AND timeline extraction, so
+ * a slug is only fresh when both halves read it.
+ */
+export function slugsSafeToStamp(
+  links: ExtractForSlugsResult,
+  timeline: ExtractForSlugsResult,
+): string[] {
+  const timelineRead = new Set(timeline.processed);
+  return links.processed.filter((slug) => timelineRead.has(slug));
+}
+
 export async function extractLinksForSlugs(
   engine: BrainEngine,
   repoPath: string,
   slugs: string[],
-  opts?: { sourceId?: string },
-): Promise<number> {
+  opts?: { sourceId?: string; includeFrontmatter?: boolean },
+): Promise<ExtractForSlugsResult> {
   const allFiles = walkMarkdownFiles(repoPath);
-  const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
+  // Resolve each requested slug to its REAL path (see buildSlugPathIndex).
+  // The old reconstructed path missed any file whose name is not already a
+  // slug: `existsSync` was false, the page was skipped in silence, and the
+  // caller stamped it extracted anyway — so `extract --stale` never came
+  // back for it and the edges were lost for good.
+  const slugToPath = buildSlugPathIndex(allFiles);
+  const allSlugs = new Set(slugToPath.keys());
   // v0.18.0+ multi-source: post-sync extract reconciles same-source edges.
   // Markdown→markdown links within one repo always live in the caller's
   // sourceId. Cross-source extraction (rare) would need a per-repo source
@@ -1622,18 +1710,30 @@ export async function extractLinksForSlugs(
   const globalBasename = await isGlobalBasenameEnabled(engine);
   // #3190: pack-aware typing on the sync inline hook too.
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  // #4999: resolved HERE, like isGlobalBasenameEnabled above, so every caller
+  // (sync, GitHub/Google source inline extracts) honours the configured
+  // frontmatter knob without per-caller threading — an unattended sync used to
+  // skip `related:` edges and then stamp the page fresh, defeating the knob.
+  const includeFrontmatter = opts?.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   let created = 0;
+  // Only a slug whose file was found AND read counts as processed. The
+  // caller stamps the watermark for these and no others, so a silent skip
+  // leaves the page stale and `extract --stale` picks it up next run.
+  const processed: string[] = [];
   for (const slug of slugs) {
-    const filePath = join(repoPath, slug + '.md');
-    if (!existsSync(filePath)) continue;
+    const relPath = resolveSlugRelPath(slugToPath, repoPath, slug);
+    if (relPath === undefined) continue;
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- relPath comes from the slug→path index built by walkMarkdownFiles(repoPath) (repo-relative entries of that walk) or the validated-slug legacy fallback, never from a caller
+    const filePath = join(repoPath, relPath);
     try {
       const content = readFileSync(filePath, 'utf-8');
-      for (const link of await extractLinksFromFile(content, slug + '.md', allSlugs, { globalBasename, pack })) {
+      processed.push(slug);
+      for (const link of await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, includeFrontmatter, pack })) {
         try { await engine.addLink(link.from_slug, link.to_slug, link.context, link.link_type, link.link_source, undefined, undefined, linkOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback when batch path declines a row
       }
-    } catch { /* skip */ }
+    } catch { /* skip: unreadable — not processed, stays stale */ }
   }
-  return created;
+  return { created, processed };
 }
 
 export async function extractTimelineForSlugs(
@@ -1641,23 +1741,30 @@ export async function extractTimelineForSlugs(
   repoPath: string,
   slugs: string[],
   opts?: { sourceId?: string },
-): Promise<number> {
+): Promise<ExtractForSlugsResult> {
+  // Real-path resolution, same as extractLinksForSlugs. Both halves come off
+  // one `links_extracted_at` stamp, so both must agree on what was read.
+  const slugToPath = buildSlugPathIndex(walkMarkdownFiles(repoPath));
   // v0.18.0+ multi-source: source-qualify so timeline rows don't fan out
   // across every source containing the slug (the addTimelineEntry's
   // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
   const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
   let created = 0;
+  const processed: string[] = [];
   for (const slug of slugs) {
-    const filePath = join(repoPath, slug + '.md');
-    if (!existsSync(filePath)) continue;
+    const relPath = resolveSlugRelPath(slugToPath, repoPath, slug);
+    if (relPath === undefined) continue;
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- relPath comes from the walkMarkdownFiles(repoPath) index or the validated-slug legacy fallback, never from a caller
+    const filePath = join(repoPath, relPath);
     try {
       const content = readFileSync(filePath, 'utf-8');
+      processed.push(slug);
       for (const entry of extractTimelineFromContent(content, slug)) {
         try { await engine.addTimelineEntry(entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ } // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries
       }
-    } catch { /* skip */ }
+    } catch { /* skip: unreadable — not processed, stays stale */ }
   }
-  return created;
+  return { created, processed };
 }
 
 // ─── DB-source extractors (v0.10.3 graph layer) ────────────────────────────
@@ -2045,7 +2152,8 @@ export async function extractStaleFromDB(
     jsonMode: boolean;
     /** Embedded callers (the cycle) own the report: emit nothing on stdout. */
     quiet?: boolean;
-    includeFrontmatter: boolean;
+    /** Unset → the configured knob (resolveIncludeFrontmatter); explicit wins. */
+    includeFrontmatter?: boolean;
     sourceIdFilter?: string;
     catchUp: boolean;
     /**
@@ -2058,7 +2166,8 @@ export async function extractStaleFromDB(
     timeBudgetMs?: number;
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number }> {
-  const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
+  const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
+  const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
   const timeBudgetMs = opts.timeBudgetMs ?? STALE_TIME_BUDGET_MS;
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
@@ -2292,10 +2401,7 @@ async function extractMentionsFromDb(
   // checkpoint cleanly. Without it, resumed pages would skip new
   // entities silently (codex flag).
   const allowCrossSource = await isCrossSourceLinksEnabled(engine);
-  const gazetteerHash = createHash('sha256')
-    .update([...gazetteer.keys()].sort().join('|'))
-    .digest('hex')
-    .slice(0, 8) + (allowCrossSource ? ':xs' : '');
+  const gazetteerHash = hashGazetteer(gazetteer) + (allowCrossSource ? ':xs' : '');
 
   // #4304: --since prunes at the ref level BEFORE the checkpoint diff and
   // the per-page getPage loop. Refs outside the window never enter the

@@ -2,8 +2,9 @@
  * #4888 — `gbrain sync --json` must keep stdout pure JSON. Every human line
  * performSync emits through slog() used to land on stdout AHEAD of the
  * envelope, so the documented `--json | jq` contract failed on the success
- * path. Under --json those lines route to stderr; JSON lines (a cost-gate
- * status line, the final envelope) stay on stdout.
+ * path. Under --json those lines route to stderr; the final envelope is the
+ * ONLY stdout document (#4684: the cost-gate status object rides inside it as
+ * `cost_gate`, never as a second top-level JSON value).
  *
  * Real PGLite + a real git repo through the CLI entry (`runSync`): the leak
  * is a property of the whole command path, not of one helper.
@@ -14,6 +15,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -148,6 +150,31 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
     const { stdout, stderr } = await run(['--skip-failed', '--dry-run', '--no-pull', '--no-embed', '--json']);
     for (const l of lines(stdout)) expect(() => JSON.parse(l)).not.toThrow();
     expect(stderr.join('')).toContain('Acknowledged 1 pre-existing failure(s).');
+  }, 60_000);
+
+  test('#4684: a --json run that reaches the cost gate emits exactly ONE document, gate nested as cost_gate', async () => {
+    // The issue's repro: Git-backed source, nothing new to embed -> the gate
+    // takes below_floor, then the envelope. Pre-fix stdout was two documents.
+    // A dummy key satisfies the pre-gate credential preflight; the up_to_date
+    // path never reaches an embed call, so nothing networks.
+    await run(['--no-pull', '--no-embed']);
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-test-4684' },
+    });
+    let stdout: string[];
+    try {
+      ({ stdout } = await run(['--no-pull', '--json']));
+    } finally {
+      resetGateway();
+    }
+    const out = lines(stdout);
+    expect(out).toHaveLength(1);
+    const env = JSON.parse(out[0]) as Record<string, unknown>;
+    expect(env.schema_version).toBe(1);
+    expect(env.sync_status).toBe('up_to_date');
+    expect(env.cost_gate).toMatchObject({ gate: 'below_floor', mode: 'inline' });
   }, 60_000);
 
   test('sync trigger --source <id> --json prints one JSON line with job_id on stdout', async () => {

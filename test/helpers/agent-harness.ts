@@ -38,7 +38,7 @@ import * as path from 'node:path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { operations, type OperationContext, type Operation } from '../../src/core/operations.ts';
 import { saveConfig, gbrainPath, type GBrainConfig } from '../../src/core/config.ts';
-import { addSource } from '../../src/core/sources-ops.ts';
+import { addSource, SourceOpError } from '../../src/core/sources-ops.ts';
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1. Hermetic child environment
@@ -1374,10 +1374,14 @@ export async function seedBrainForAgent(
       if (sourceId !== 'default') {
         const srcDir = path.join(home, `source-${sourceId}`);
         fs.mkdirSync(srcDir, { recursive: true });
+        // Door tests can make HOME a Git checkout. Give this source its own
+        // worktree so .gbrain/persistence remains outside the canonical root.
+        const initialized = spawnSync('git', ['init', '-q', srcDir], { encoding: 'utf8' });
+        if (initialized.status !== 0) throw new Error(`Cannot initialize the synthetic source worktree: ${initialized.stderr}`);
         try {
           await addSource(engine, { id: sourceId, localPath: srcDir, force: true });
-        } catch {
-          /* already registered — fine */
+        } catch (error) {
+          if (!(error instanceof SourceOpError) || error.code !== 'source_id_taken') throw error;
         }
       }
 
@@ -1396,7 +1400,7 @@ export async function seedBrainForAgent(
     } finally {
       // Release the PGLite lock so the spawned `gbrain serve` can open the
       // same data dir.
-      try { await engine.disconnect(); } catch { /* best-effort */ }
+      await engine.disconnect();
     }
 
     // Persist a keyless config so the spawned `gbrain serve` reads the same

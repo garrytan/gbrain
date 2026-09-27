@@ -91,6 +91,12 @@ export interface Page {
   timeline: string;
   frontmatter: Record<string, unknown>;
   content_hash?: string;
+  /** Source-relative canonical file identity; snapshot reads expose it for guarded import comparisons. */
+  source_path?: string | null;
+  /** Opaque canonical state; independent of indexing and telemetry updates. */
+  knowledge_revision?: string;
+  /** Revision whose text/search chunks have been atomically installed. */
+  text_projection_revision?: string | null;
   /** v0.29 — deterministic 0..1 score; populated by the recompute_emotional_weight cycle phase. */
   emotional_weight?: number;
   created_at: Date;
@@ -1643,14 +1649,7 @@ export interface RawData {
   fetched_at: Date;
 }
 
-// Versions
-export interface PageVersion {
-  id: number;
-  page_id: number;
-  compiled_truth: string;
-  frontmatter: Record<string, unknown>;
-  snapshot_at: Date;
-}
+export type { PageVersion } from './page-state/version-types.ts';
 
 // Stats + Health
 export interface BrainStats {
@@ -1879,6 +1878,11 @@ export interface EvalCaptureFailure {
  *                        otherwise a transitional relaxed-carried row would
  *                        shadow the recovered pipeline for the full TTL
  *                        under the same knobs hash (2026-09 red-team).
+ *   safe_index_pending — a remote/untrusted read returned nothing while its
+ *                        scope still holds markdown pages below the safe-chunk
+ *                        index version (withheld from remote chunk retrieval
+ *                        until `gbrain reindex --markdown` seals them); stamped
+ *                        by the search/query ops' retrieval meta (#5004)
  */
 export const DEGRADED_STAGES = [
   'embed_unavailable',
@@ -1894,6 +1898,7 @@ export const DEGRADED_STAGES = [
   'reranker_skipped',
   'rerank_passthrough',
   'keyword_relaxed_carried',
+  'safe_index_pending',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 

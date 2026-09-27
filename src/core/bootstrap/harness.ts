@@ -2108,6 +2108,12 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   // from the host registration or degrade honestly.
   let token: string | null = null;
   let tokenSource = '';
+  // #4586: the [C8] ownership probe doubles as the LIVE verdict for the
+  // claude-code mcp target. Positive evidence only — a URL that is not ours,
+  // or a non-HTTP transport at OUR (user) scope — flips the displayed state
+  // to 'failed'; not-found / unparseable stays the receipt's honest degrade.
+  // Status is read-only: the receipt itself is never rewritten here.
+  let claudeLiveError: string | null = null;
   const claudeMcp = receipt.targets.find((t) => t.host === 'claude-code' && t.kind === 'mcp');
   if (claudeMcp) {
     try {
@@ -2122,12 +2128,29 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
         if (info.found && info.url === receipt.url) {
           token = parseClaudeMcpGetBearer(out);
           if (token) tokenSource = 'claude registration';
+        } else if (info.found && info.url) {
+          claudeLiveError =
+            `registration now points at ${info.url}, not ${receipt.url} — owned by another install; ` +
+            're-run `gbrain bootstrap harness --force` to reclaim, or --remove';
+        } else if (info.found) {
+          // No URL line: a stdio (or other non-HTTP) launch. Only a same-scope
+          // entry is a replacement; a project-scope one merely shadows ours
+          // from that cwd, which re-running the harness cannot undo.
+          const type = out.match(/^\s*Type:\s*(\S+)/m)?.[1];
+          if (type && type.toLowerCase() !== 'http' && /^\s*Scope:\s*User\b/im.test(out)) {
+            claudeLiveError =
+              `registration at user scope is now a ${type} serve (a \`claude mcp add\` or ` +
+              '`bootstrap hooks --scope user` replaced the HTTP wiring) — re-run `gbrain bootstrap harness` to reclaim';
+          }
         }
       }
     } catch {
       /* degrade */
     }
   }
+  const liveTargets = receipt.targets.map((t) =>
+    t === claudeMcp && claudeLiveError ? { ...t, state: 'failed' as const, error: claudeLiveError } : t,
+  );
   if (!token) {
     const codexMcp = receipt.targets.find((t) => t.host === 'codex' && t.kind === 'mcp');
     if (codexMcp?.path && existsSync(codexMcp.path)) {
@@ -2216,7 +2239,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
           token_name: receipt.token.name,
           token_verified: tokenVerified,
           degraded_per_turn: degraded,
-          targets: receipt.targets,
+          targets: liveTargets,
           ...(instructionsProbes.length > 0 ? { instructions_blocks: instructionsProbes } : {}),
           pending_previous_tokens: receipt.token.previous_ids ?? [],
           receipt_path: harnessReceiptPath(d.gbrainHome),
@@ -2228,7 +2251,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   } else {
     d.log(serveLine);
     d.log(tokenLine);
-    for (const t of receipt.targets) {
+    for (const t of liveTargets) {
       d.log(`  ${t.host}/${t.kind} (${t.scope}): ${t.state}${t.error ? ` — ${t.error}` : ''}`);
     }
     for (const p of instructionsProbes) {
@@ -2251,7 +2274,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   // crashed apply's pending/failed targets and an unconverged rotation are
   // NOT success just because /health answers (ship-review P2). The
   // token-unrecoverable honest degrade stays 0 per the documented contract.
-  const allTargetsConfirmed = receipt.targets.every((t) => t.state === 'confirmed');
+  const allTargetsConfirmed = liveTargets.every((t) => t.state === 'confirmed');
   const rotationConverged = (receipt.token.previous_ids?.length ?? 0) === 0;
   // Half-removed state (red-team CRITICAL): --remove under a live PGLite
   // serve strips every host target but defers the revoke, leaving a

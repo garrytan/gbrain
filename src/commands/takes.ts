@@ -10,19 +10,14 @@
  *   takes supersede <slug> --row N ...     — strikethrough old + append new
  *   takes resolve <slug> --row N --outcome true|false [--value N --unit u]
  *
- * Markdown is canonical. Every mutate command routes through the shared
- * write-through core (src/core/takes-write.ts — also the takes_* MCP ops'
- * backend): lock → resolve page → fence edit → write .md → DB mirror. This
- * file owns arg parsing + rendering + exit codes only.
+ * Markdown is canonical. The four direct mutation commands use the same
+ * durable takes_* operations as MCP, via takes-mutation.ts. This dispatcher
+ * retains read/maintenance command parsing and presentation.
  */
 
 import { existsSync } from 'node:fs';
-import type { BrainEngine, TakeKind } from '../core/engine.ts';
+import type { BrainEngine } from '../core/engine.ts';
 import {
-  addTakeToPage,
-  updateTakeOnPage,
-  supersedeTakeOnPage,
-  resolveTakeOnPage,
   TakesWriteError,
 } from '../core/takes-write.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
@@ -82,28 +77,6 @@ function exitTakesError(err: unknown): never {
     }
   }
   throw err;
-}
-
-function ensureKind(raw: string | undefined): TakeKind {
-  if (!raw) {
-    console.error('Missing --kind. Expected one of: fact, take, bet, hunch.');
-    process.exit(1);
-  }
-  if (raw !== 'fact' && raw !== 'take' && raw !== 'bet' && raw !== 'hunch') {
-    console.error(`Invalid --kind "${raw}". Expected: fact, take, bet, hunch.`);
-    process.exit(1);
-  }
-  return raw;
-}
-
-function ensureFloat(raw: string | undefined, fallback: number): number {
-  if (raw === undefined) return fallback;
-  const n = parseFloat(raw);
-  if (!Number.isFinite(n)) {
-    console.error(`Invalid weight "${raw}". Expected a number 0..1.`);
-    process.exit(1);
-  }
-  return n;
 }
 
 // Fail-closed (#2698 residual, TODOS.md): `resolveSourceId` only ever
@@ -255,172 +228,6 @@ async function cmdEmbed(engine: BrainEngine, args: string[]): Promise<void> {
   if (result.failures > 0) {
     throw new Error(`takes embedding failed for ${result.failures} take(s)`);
   }
-}
-
-async function cmdAdd(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
-  const slug = args[0];
-  if (!slug) {
-    console.error('Usage: gbrain takes add <slug> --claim "..." --kind <k> --who <h> [--weight 0.5] [--source "..."] [--since YYYY-MM]');
-    process.exit(1);
-  }
-  const claim = flagValue(args, '--claim');
-  if (!claim) { console.error('Missing --claim'); process.exit(1); }
-  const kind = ensureKind(flagValue(args, '--kind'));
-  const holder = flagValue(args, '--who');
-  if (!holder) { console.error('Missing --who'); process.exit(1); }
-  const weight = ensureFloat(flagValue(args, '--weight'), 0.5);
-  const source = flagValue(args, '--source');
-  const since = flagValue(args, '--since');
-  const dirArg = flagValue(args, '--dir');
-  const brainDir = await resolveBrainDir(engine, dirArg ?? null);
-
-  try {
-    const { rowNum } = await addTakeToPage(
-      { engine, slug, brainDir, sourceId },
-      { claim, kind, holder, weight, source, sinceDate: since },
-    );
-    console.log(`Added take #${rowNum} to ${slug}.`);
-  } catch (err) {
-    exitTakesError(err);
-  }
-}
-
-async function cmdUpdate(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
-  const slug = args[0];
-  const rowNumStr = flagValue(args, '--row');
-  if (!slug || !rowNumStr) {
-    console.error('Usage: gbrain takes update <slug> --row N [--weight 0.7] [--source "..."] [--since YYYY-MM]');
-    process.exit(1);
-  }
-  const rowNum = parseInt(rowNumStr, 10);
-  const fields: { weight?: number; source?: string; since_date?: string } = {};
-  const w = flagValue(args, '--weight');
-  if (w !== undefined) fields.weight = ensureFloat(w, 0.5);
-  const s = flagValue(args, '--source');
-  if (s !== undefined) fields.source = s;
-  const since = flagValue(args, '--since');
-  if (since !== undefined) fields.since_date = since;
-  const dirArg = flagValue(args, '--dir');
-  const brainDir = await resolveBrainDir(engine, dirArg ?? null);
-
-  // v0.46.x (EV1): markdown is canonical, so a row missing from the on-disk
-  // fence now REFUSES the whole write instead of the old DB-update-then-warn
-  // path — that path was self-defeating (its own reconcile hint, extract
-  // takes, would clobber the DB-only update it had just written).
-  try {
-    await updateTakeOnPage(
-      { engine, slug, brainDir, sourceId },
-      rowNum,
-      { weight: fields.weight, source: fields.source, sinceDate: fields.since_date },
-    );
-    console.log(`Updated take #${rowNum} on ${slug}.`);
-  } catch (err) {
-    exitTakesError(err);
-  }
-}
-
-async function cmdSupersede(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
-  const slug = args[0];
-  const rowNumStr = flagValue(args, '--row');
-  if (!slug || !rowNumStr) {
-    console.error('Usage: gbrain takes supersede <slug> --row N --claim "..." [--kind k] [--who h] [--weight 0.5] [--source "..."]');
-    process.exit(1);
-  }
-  const rowNum = parseInt(rowNumStr, 10);
-  const claim = flagValue(args, '--claim');
-  if (!claim) { console.error('Missing --claim'); process.exit(1); }
-  const dirArg = flagValue(args, '--dir');
-  const brainDir = await resolveBrainDir(engine, dirArg ?? null);
-
-  // v0.46.x (EV1): fence-first — kind/holder inherit from the MARKDOWN row
-  // (canonical), the fence assigns the new row number, and a row absent from
-  // the on-disk fence refuses instead of the old DB-only write.
-  const kindArg = flagValue(args, '--kind');
-  try {
-    const result = await supersedeTakeOnPage(
-      { engine, slug, brainDir, sourceId },
-      rowNum,
-      {
-        claim,
-        kind: kindArg !== undefined ? ensureKind(kindArg) : undefined,
-        holder: flagValue(args, '--who'),
-        weight: flagValue(args, '--weight') !== undefined
-          ? ensureFloat(flagValue(args, '--weight'), 0.5)
-          : undefined,
-        source: flagValue(args, '--source'),
-        sinceDate: flagValue(args, '--since'),
-      },
-    );
-    console.log(`Superseded #${result.oldRow} → new #${result.newRow} on ${slug}.`);
-  } catch (err) {
-    exitTakesError(err);
-  }
-}
-
-async function cmdResolve(engine: BrainEngine, args: string[], sourceId?: string): Promise<void> {
-  const slug = args[0];
-  const rowNumStr = flagValue(args, '--row');
-  const qualityStr = flagValue(args, '--quality');
-  const outcomeStr = flagValue(args, '--outcome');
-  if (!slug || !rowNumStr || (!qualityStr && !outcomeStr)) {
-    console.error('Usage: gbrain takes resolve <slug> --row N --quality correct|incorrect|partial|unresolvable [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]');
-    console.error('       (back-compat) gbrain takes resolve <slug> --row N --outcome true|false [...]');
-    process.exit(1);
-  }
-  if (qualityStr && outcomeStr) {
-    console.error('Error: --quality and --outcome are mutually exclusive (choose one).');
-    process.exit(1);
-  }
-  const rowNum = parseInt(rowNumStr, 10);
-
-  // v0.30.0: --quality is the new primary input. --outcome stays as a back-compat
-  // alias auto-mapping true→correct / false→incorrect; cannot express partial
-  // or unresolvable (v0.36.1.1).
-  let quality: 'correct' | 'incorrect' | 'partial' | 'unresolvable' | undefined;
-  let outcome: boolean | undefined;
-  if (qualityStr) {
-    if (qualityStr !== 'correct' && qualityStr !== 'incorrect' && qualityStr !== 'partial' && qualityStr !== 'unresolvable') {
-      console.error(`Invalid --quality "${qualityStr}". Expected: correct, incorrect, partial, unresolvable.`);
-      process.exit(1);
-    }
-    quality = qualityStr;
-  } else if (outcomeStr) {
-    if (outcomeStr !== 'true' && outcomeStr !== 'false') {
-      console.error(`Invalid --outcome "${outcomeStr}". Expected: true or false.`);
-      process.exit(1);
-    }
-    outcome = outcomeStr === 'true';
-    console.error('[deprecated] --outcome is the v0.28 alias for --quality. Prefer --quality correct|incorrect|partial in new scripts.');
-  }
-
-  const valueStr = flagValue(args, '--value');
-  const value = valueStr === undefined ? undefined : parseFloat(valueStr);
-  const unit = flagValue(args, '--unit');
-  // --evidence is the v0.30.0 alias for --source on the resolve subcommand
-  // (semantic clarity: "what evidence resolved this bet?").
-  const source = flagValue(args, '--evidence') ?? flagValue(args, '--source');
-  const resolvedBy = flagValue(args, '--by') ?? resolveOwnerHolder({ configValue: await engine.getConfig('emotional_weight.user_holder') });
-  const dirArg = flagValue(args, '--dir');
-  const brainDir = await resolveBrainDir(engine, dirArg ?? null);
-
-  // Back-compat --outcome maps onto quality; the shared core takes quality only.
-  const finalQuality = quality ?? (outcome === true ? 'correct' : 'incorrect');
-
-  // v0.46.x (EV1): markdown is canonical — the fence row must exist on disk
-  // (the old path resolved the DB first and warned when the fence lacked the
-  // row, leaving a resolution the next reconcile couldn't see).
-  try {
-    await resolveTakeOnPage(
-      { engine, slug, brainDir, sourceId },
-      rowNum,
-      { quality: finalQuality, evidence: source, value, unit, resolvedBy },
-    );
-  } catch (err) {
-    exitTakesError(err);
-  }
-
-  const valueSummary = valueStr ? ` value=${value}${unit ? ` ${unit}` : ''}` : '';
-  console.log(`Resolved take #${rowNum} on ${slug}: quality=${finalQuality}${valueSummary}.`);
 }
 
 /**
@@ -666,7 +473,10 @@ Subcommands:
                                           Calibration curve binned by stated weight (v0.30.0)
 
 Common flags:
-  --dir <path>    Override the brain directory (default: sync.repo_path config)
+  --dir <path>    Verify the configured canonical directory for mutations
+  --source-id <id> Select the source for a mutation (--source remains claim provenance)
+  --request-id <uuid> Reuse the original mutation ID after a pending/lost response
+  --expected-revision <uuid> / --force  Conditional mutation / explicit overwrite
   --help, -h      Show this help
 `);
     return;
@@ -681,10 +491,10 @@ Common flags:
     case 'list':        return cmdList(engine, rest);
     case 'search':      return cmdSearch(engine, rest);
     case 'embed':       return cmdEmbed(engine, rest);
-    case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
-    case 'update':      return cmdUpdate(engine, rest, await resolveTakesSourceId(engine));
-    case 'supersede':   return cmdSupersede(engine, rest, await resolveTakesSourceId(engine));
-    case 'resolve':     return cmdResolve(engine, rest, await resolveTakesSourceId(engine));
+    case 'add':
+    case 'update':
+    case 'supersede':
+    case 'resolve': { const { runTakesMutation } = await import('./takes-mutation.ts'); return runTakesMutation(engine, args); }
     // #2411: `takes propose` used to fall through to the slug path and print
     // "No takes on propose." — the LLM proposal queue had no drain surface.
     case 'propose':     return cmdPropose(engine, rest, await resolveTakesSourceId(engine));

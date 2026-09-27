@@ -27,6 +27,7 @@ import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { E2E_EXCLUSIONS, prepareMatrix } from '../../scripts/e2e-matrix.ts';
 import { E2E_TEST_MAP } from '../../scripts/e2e-test-map.ts';
 
 const repoRoot = join(import.meta.dir, '..', '..');
@@ -50,10 +51,13 @@ const LIVE_KEY_FILES = new Set([
 
 describe('selected-e2e job wiring', () => {
   const job = jobBlock('selected-e2e');
+  const prep = jobBlock('prepare-e2e');
 
   test('consumes select-e2e with nothing masking its exit code', () => {
-    expect(job).toContain('bun scripts/select-e2e.ts');
-    const selectorLine = job.split('\n').find(l => l.includes('bun scripts/select-e2e.ts'))!;
+    expect(prep).toContain('bun scripts/select-e2e.ts');
+    expect(job).not.toContain('bun scripts/select-e2e.ts');
+    expect(job).toContain('bun scripts/e2e-matrix.ts run');
+    const selectorLine = prep.split('\n').find(l => l.includes('bun scripts/select-e2e.ts'))!;
     expect(selectorLine).not.toContain('|| true');
     expect(selectorLine).not.toContain('|| echo');
     expect(job).not.toContain('continue-on-error');
@@ -74,7 +78,7 @@ describe('selected-e2e job wiring', () => {
   });
 
   test('checkout fetches real history for the master diff', () => {
-    expect(job).toContain('fetch-depth: 0');
+    expect(prep).toContain('fetch-depth: 0');
   });
 
   test('selector emits separate lines so workflow exclusions retain other selected files', () => {
@@ -93,26 +97,15 @@ describe('selected-e2e job wiring', () => {
       const selected = spawnSync(process.execPath, ['--no-env-file', join(repoRoot, 'scripts/select-e2e.ts')], { cwd: dir, encoding: 'utf8' });
       expect(selected.status, selected.stderr).toBe(0);
       expect(selected.stdout).toBe(files.join('\n') + '\n');
-      writeFileSync(join(dir, 'selected.txt'), selected.stdout);
-      // Execute the workflow's actual exclusion loop, with only its temporary
-      // paths relocated so concurrent tests never share /tmp/run.txt.
-      const start = job.indexOf("EXCLUDE='");
-      const end = job.indexOf('done < /tmp/selected.txt', start) + 'done < /tmp/selected.txt'.length;
-      const filter = job.slice(start, end)
-        .replaceAll('/tmp/selected.txt', `'${join(dir, 'selected.txt')}'`)
-        .replaceAll('/tmp/run.txt', `'${join(dir, 'run.txt')}'`);
-      const filtered = spawnSync('bash', ['-e', '-c', filter], { encoding: 'utf8' });
-      expect(filtered.status, filtered.stderr).toBe(0);
-      expect(readFileSync(join(dir, 'run.txt'), 'utf8')).toBe(files.slice(1).join('\n') + '\n');
+      const filtered = prepareMatrix(selected.stdout.trim().split('\n'), new Map());
+      expect(filtered.include.flatMap(row => row.files).sort()).toEqual(files.slice(1));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test('every EXCLUDE entry is named by another job here or is a live-key spender', () => {
-    const m = job.match(/EXCLUDE='([^']+)'/);
-    expect(m).not.toBeNull();
-    const excluded = m![1].split(/\s+/).filter(Boolean);
+    const excluded = [...E2E_EXCLUSIONS];
     expect(excluded.length).toBeGreaterThan(0);
     const restOfWorkflow = yml.replace(job, '');
     for (const f of excluded) {
@@ -140,7 +133,7 @@ describe('e2e file claim ratchet', () => {
       .filter(f => f.endsWith('.test.ts'))
       .map(f => `test/e2e/${f}`);
     expect(files.length).toBeGreaterThan(150);
-    const orphans = files.filter(f => !mapped.has(f) && !yml.includes(f) && !baseline.has(f));
+    const orphans = files.filter(f => !mapped.has(f) && !yml.includes(f) && !E2E_EXCLUSIONS.has(f) && !baseline.has(f));
     if (orphans.length > 0) {
       throw new Error(
         `new e2e file(s) with no PR-time claim — map them in scripts/e2e-test-map.ts ` +
@@ -167,7 +160,7 @@ describe('e2e file claim ratchet', () => {
   });
 
   test('no redundant baseline entries: a mapped or workflow-named file must leave the baseline', () => {
-    const redundant = baselineEntries.filter(f => mapped.has(f) || yml.includes(f));
+    const redundant = baselineEntries.filter(f => mapped.has(f) || yml.includes(f) || E2E_EXCLUSIONS.has(f));
     if (redundant.length > 0) {
       throw new Error(
         `baseline row(s) already claimed by E2E_TEST_MAP or the workflow — ` +

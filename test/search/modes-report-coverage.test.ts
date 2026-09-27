@@ -120,6 +120,10 @@ describe('#4604 buildModesReport — full-bundle knob coverage', () => {
     const report = await buildModesReport(stubEngine());
     expect(report.per_call_note).toBe(MODES_REPORT_PER_CALL_NOTE);
     expect(report.per_call_note).toContain('Per-call');
+    // #4601: the `query` op always passes `expand` (default on), so the
+    // bundle's `expansion` row never governs it — the note must say so or the
+    // dashboard gives a confident wrong answer for the primary agent verb.
+    expect(report.per_call_note).toContain('`query` op');
   });
 });
 

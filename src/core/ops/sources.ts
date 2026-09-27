@@ -8,7 +8,7 @@
 
 import type { Operation } from './contract.ts';
 import { OperationError } from './contract.ts';
-import { sourceScopeOpts } from './context.ts';
+import { assertSourceInCallerScope, assertSourceInCallerWriteScope, sourceScopeOpts } from './context.ts';
 import { resolveAuthCapabilities } from '../harness/capabilities.ts';
 
 // --- v0.28: whoami + sources management ---
@@ -105,6 +105,8 @@ const sources_add: Operation = {
   scope: 'sources_admin',
   handler: async (ctx, p) => {
     const { addSource } = await import('../sources-ops.ts');
+    if(ctx.remote!==false&&await (await import('../persistence/ownership.ts')).managedPersistenceEnabled(ctx.engine))
+      throw new OperationError('writer_coordinator_required','Managed source lifecycle requires the verified owner CLI. An ordinary MCP grant does not confer owner administration authority.');
 
     // v0.28.1 codex finding (CRITICAL + HIGH): a `sources_admin` token over
     // HTTP MCP must not be able to plant content at arbitrary host paths.
@@ -193,7 +195,12 @@ const sources_remove: Operation = {
     'Hard-remove a source (cascades pages/chunks/embeddings). Refuses to ' +
     'delete the auto-managed clone dir unless its resolved path is confined ' +
     'under $GBRAIN_HOME/clones/ (realpath+lstat — symlink-safe). For most ' +
-    'workflows prefer sources_archive for the soft-delete path.',
+    'workflows prefer the soft-delete path (`gbrain sources archive`). ' +
+    "Confined to the caller's WRITE authority, not its read scope: an untrusted " +
+    'caller may remove only its own write source (a federated read grant naming ' +
+    'a source does not make it removable); any other id answers not_found, ' +
+    'indistinguishable from a nonexistent source. Only the trusted local CLI ' +
+    '(`gbrain sources remove`) can remove any source.',
   params: {
     id: { type: 'string', required: true, description: "Source id to remove, as listed by sources_list (e.g. 'wiki'). A source id, not a page slug." },
     confirm_destructive: {
@@ -210,7 +217,16 @@ const sources_remove: Operation = {
   mutating: true,
   scope: 'sources_admin',
   handler: async (ctx, p) => {
+    // Source isolation on the DESTRUCTIVE path keys on WRITE authority (O4-1;
+    // supersedes the #4433 wave-L read-ladder check that let a federated read
+    // grant hard-delete a sibling source): a `sources_admin` token may remove
+    // only its own write source; out-of-authority ids answer not_found
+    // (anti-enumeration), an unbound client keeps full authority, trusted
+    // local CLI passes. sources_status keeps the READ helper.
+    assertSourceInCallerWriteScope(ctx, p.id as string);
     const { removeSource } = await import('../sources-ops.ts');
+    if(ctx.remote!==false&&await (await import('../persistence/ownership.ts')).managedPersistenceEnabled(ctx.engine))
+      throw new OperationError('writer_coordinator_required','Managed source lifecycle requires the verified owner CLI. An ordinary MCP grant does not confer owner administration authority.');
     return removeSource(ctx.engine, {
       id: p.id as string,
       confirmDestructive: (p.confirm_destructive as boolean) === true,
@@ -235,19 +251,11 @@ const sources_status: Operation = {
   },
   scope: 'read',
   handler: async (ctx, p) => {
-    // Source isolation, mirroring sources_list's #4433 wave-L posture
-    // exactly (the maintainer decision that superseded the wave-g "scalar
-    // callers keep the full listing" carve-out): EVERY untrusted caller
-    // (anything not strictly remote === false) is confined through the
-    // canonical sourceScopeOpts ladder — federated grant > scalar bound
-    // source. Trusted local CLI keeps the full operator view. Out-of-scope
-    // ids answer not_found, indistinguishable from a nonexistent source
-    // (anti-enumeration), matching get_agent_job's shape.
-    const scope = ctx.remote === false ? {} : sourceScopeOpts(ctx);
-    const allowed = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
-    if (allowed && !allowed.includes(p.id as string)) {
-      throw new OperationError('not_found', `Unknown source: ${p.id}`);
-    }
+    // Source isolation (#4433 wave-L posture, the maintainer decision that
+    // superseded the wave-g "scalar callers keep the full listing"
+    // carve-out), via the helper shared with sources_remove: out-of-scope ids
+    // answer not_found (matching get_agent_job's shape), trusted local passes.
+    assertSourceInCallerScope(ctx, p.id as string);
     const { getSourceStatus } = await import('../sources-ops.ts');
     return getSourceStatus(ctx.engine, p.id as string);
   },

@@ -124,7 +124,7 @@ pointing at the `unify-types` PROTECTED Minion handler.
 v0.41.22 ships **gbrain-base-v2** as the declared successor to
 gbrain-base@1.x — collapses 94 noisy types to 15 canonical via
 declarative mapping_rules. Run via `gbrain onboard --check --explain`
-(preview) → `gbrain jobs submit unify-types --allow-protected --params
+(preview) → `gbrain jobs submit unify-types --params
 '{"target_pack":"gbrain-base-v2","apply":true}'` (apply — `apply`
 defaults to false, so a bare submit is a dry run). See
 `skills/schema-unify/SKILL.md` for the full playbook.

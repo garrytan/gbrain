@@ -553,6 +553,35 @@ async function runOptimizationLoop(
           // Apply under LR budget.
           const applied = applyEditBatch(checkpoint!.best_skill_text, fresh, lrBudget);
 
+          if (fresh.length === 0) {
+            // #4741: the optimizer proposed NOTHING (reflect returned/parsed no
+            // edits, or every edit was already in the rejected buffer). This
+            // used to fall into the all-rejected branch below ([].every() is
+            // true) and log the same 'no_edits_applied' as "gated N candidates
+            // and rejected all" — so a whole run of zero candidates read as a
+            // real `no_improvement`. Say so per step; nothing to reject-buffer.
+            const why = reflectResult.errors[0]
+              ? `no_edits_proposed: ${reflectResult.errors[0]}`
+              : 'no_edits_proposed';
+            process.stderr.write(`[skillopt] epoch ${epoch} step ${step}: optimizer proposed no edits (${why})\n`);
+            logEvent({
+              kind: 'step',
+              run_id: runId,
+              skill: skillName,
+              epoch,
+              step,
+              sel_score_median: checkpoint!.best_sel_score,
+              sel_score_runs: [],
+              accepted: false,
+              edits_attempted: 0,
+              edits_applied: 0,
+              delta: 0,
+              reason: why,
+              cumulative_cost_usd: tracker.snapshot().cumulativeCostUsd,
+            } as never);
+            continue;
+          }
+
           if (applied.results.every((r) => r.outcome === 'rejected')) {
             // Nothing applied; record rejected entries + skip gate.
             const newRejections = fresh.map((e) =>

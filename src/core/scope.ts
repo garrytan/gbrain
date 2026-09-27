@@ -47,6 +47,77 @@ export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
 ]);
 
 /**
+ * Ceiling for anonymous Dynamic Client Registration (RFC 7591). A network
+ * caller that self-registers may hold at most `read write`; every privileged
+ * scope needs an operator-created grant (`gbrain auth register-client`, the
+ * admin API) or a later `gbrain auth rescope-client`. The owner-approval
+ * step on /authorize shows the requested scopes but never narrows them, so
+ * the ceiling is what keeps "approve" from meaning "grant admin".
+ */
+export const DCR_REGISTRABLE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(['read', 'write']);
+
+/**
+ * A `client_credentials` DCR client (only reachable under
+ * `--enable-dcr-insecure`) mints tokens with NO owner approval at all, so its
+ * ceiling is tighter still: read-only.
+ */
+const DCR_MACHINE_SCOPES: ReadonlySet<Scope> = new Set<Scope>(['read']);
+
+/**
+ * null when the requested DCR scopes fit under the ceiling; otherwise the
+ * `invalid_client_metadata` message naming the offending scopes + remedy.
+ * Unknown scope strings are ignored here (filterAllowedScopes drops them);
+ * `agent` keeps its own wording because it also needs delegation bindings.
+ */
+export function dcrScopeViolation(requested: readonly string[], grantTypes: readonly string[]): string | null {
+  if (requested.includes('agent')) {
+    return 'agent scope requires an operator-approved grant with explicit delegation bindings; dynamic registration cannot grant it';
+  }
+  const machine = grantTypes.includes('client_credentials');
+  const ceiling = machine ? DCR_MACHINE_SCOPES : DCR_REGISTRABLE_SCOPES;
+  const over = [...new Set(requested.filter((s) => isScope(s) && !ceiling.has(s)))];
+  if (over.length === 0) return null;
+  const limit = [...ceiling].join(' ');
+  return (
+    `Scope "${over.join(' ')}" cannot be granted through dynamic client registration; ` +
+    (machine
+      ? `a client_credentials registration is limited to \`${limit}\` because it is issued without owner approval. `
+      : `self-registered clients are limited to \`${limit}\`. `) +
+    'Register the client with `gbrain auth register-client` / the admin API instead, ' +
+    'or register with a narrower scope and widen it later with `gbrain auth rescope-client <client_id> --scopes ...`.'
+  );
+}
+
+/**
+ * `scopes_supported` for OAuth discovery. The MCP SDK router emits ONE value
+ * into the RFC 8414 authorization-server document and the RFC 9728
+ * protected-resource document(s), so this is the single place that decides
+ * what a client reading discovery is told it may ask for:
+ *
+ *  - DCR enabled (either mode): exactly the anonymous-registration ceiling,
+ *    `read write`, in canonical order. Clients commonly copy `scopes_supported`
+ *    verbatim into their /register request; advertising a privileged scope
+ *    would steer every such client straight into `dcrScopeViolation` (HTTP 400)
+ *    even though the server is willing to register it at `read write`. The
+ *    tighter read-only ceiling for `client_credentials` registrations stays in
+ *    `dcrScopeViolation` — authorization_code is the DCR default and may hold
+ *    both, so advertising `read` alone would under-describe it.
+ *  - DCR disabled: every scope except operator-only `agent`, which also needs
+ *    delegation bindings no OAuth request can carry. Operator-registered
+ *    clients see the full set they may hold.
+ *
+ * Narrowed discovery never narrows an operator-registered client: one that
+ * omits `scope` at /authorize or /token receives its full registered set
+ * (`grantScopes` in oauth-grants.ts falls back to the row's scope), and an
+ * explicit request is intersected with its registration, not with this list.
+ */
+export function scopesSupportedForDiscovery(opts: { enableDcr: boolean }): Scope[] {
+  return opts.enableDcr
+    ? ALLOWED_SCOPES_LIST.filter((s) => DCR_REGISTRABLE_SCOPES.has(s))
+    : ALLOWED_SCOPES_LIST.filter((s) => s !== 'agent');
+}
+
+/**
  * Hierarchy table: which required scopes are implied by which granted scope.
  * `admin` implies all (escape hatch for legacy + super-admin tokens).
  * `write` implies `read`. The two `*_admin` siblings only imply themselves.

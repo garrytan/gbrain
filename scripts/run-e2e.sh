@@ -15,7 +15,7 @@
 # shard, per-file bun startup (~1-2s) amortizes under the natural per-file
 # test time of 5-10s.
 #
-# Exits non-zero on the first failing file so CI fails fast.
+# Reports every file failure, then exits non-zero if any file failed.
 #
 # `--timeout=60000` matches the unit test suite. Bun's default is 5s,
 # which is too tight for setupDB's TRUNCATE CASCADE on ~30 tables on
@@ -34,6 +34,8 @@
 # Trap cleans up the tmpdir even on test failure.
 
 set -euo pipefail
+RUNNER_SHARD="${SHARD:-}"
+unset SHARD
 
 cd "$(dirname "$0")/.."
 
@@ -91,6 +93,33 @@ fi
 E2E_TMP_HOME=$(mktemp -d "${TMPDIR:-/tmp}/gbrain-e2e.XXXXXX")
 trap 'rm -rf "$E2E_TMP_HOME"' EXIT
 
+# The foreground file runs as an owned child so signals interrupt wait promptly.
+# Snapshot descendants before signalling: reparented children cannot be found later.
+ACTIVE_E2E_PID=""
+e2e_descendants() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null || true); do
+    e2e_descendants "$child"
+    printf '%s\n' "$child"
+  done
+}
+interrupt_e2e() {
+  local code="$1" descendants="" pid
+  trap '' INT TERM
+  if [ -n "$ACTIVE_E2E_PID" ]; then
+    descendants=$(e2e_descendants "$ACTIVE_E2E_PID")
+    kill -TERM "$ACTIVE_E2E_PID" 2>/dev/null || true
+    for pid in $descendants; do kill -TERM "$pid" 2>/dev/null || true; done
+    sleep 1
+    for pid in $descendants; do kill -KILL "$pid" 2>/dev/null || true; done
+    kill -KILL "$ACTIVE_E2E_PID" 2>/dev/null || true
+    wait "$ACTIVE_E2E_PID" 2>/dev/null || true
+  fi
+  exit "$code"
+}
+trap 'interrupt_e2e 130' INT
+trap 'interrupt_e2e 143' TERM
+
 export HOME="$E2E_TMP_HOME"
 export GBRAIN_HOME="$E2E_TMP_HOME"
 mkdir -p "$E2E_TMP_HOME/.gbrain"
@@ -115,7 +144,7 @@ mkdir -p "$E2E_TMP_HOME/.gbrain"
 for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPENCODE_|GBRAIN_)[A-Za-z0-9_]*' | sort -u); do
   case "$_e2e_var" in
     GBRAIN_HOME) ;;  # required for HOME isolation (set above) — keep
-    GBRAIN_PGLITE_SNAPSHOT) ;;  # snapshot fast-path fixture (exported by ci-local.sh / runners) — keep
+    GBRAIN_PGLITE_SNAPSHOT|GBRAIN_NO_SNAPSHOT) ;;  # snapshot fast-path fixture (exported by ci-local.sh / runners) — keep
     GBRAIN_TEST_ALLOW_DATABASE_URL) ;;  # #3485 preload opt-in (set above) — keep
     GBRAIN_TEST_KEEP_PROVIDER_KEYS) ;;  # provider-keys preload opt-in (set above) — keep
     GBRAIN_CI_DISABLE_TEST_ENV_FILE) ;;  # CI forbids loading checkout-local .env.testing — keep through Bun startup
@@ -147,33 +176,19 @@ else
   files=(test/e2e/*.test.ts test/phantom-redirect-engine-parity.test.ts)
 fi
 
-# SHARD env (e.g. SHARD=1/4) keeps every M-th file starting at index N (1-indexed).
-# Used by scripts/ci-local.sh to fan 4 shards in parallel against 4 postgres
-# containers. Sequential execution within a shard is preserved (the TRUNCATE
-# CASCADE no-race rationale at the top of this file still holds).
-if [ -n "${SHARD:-}" ]; then
-  shard_n=${SHARD%/*}
-  shard_m=${SHARD#*/}
-  if ! printf '%s' "$shard_n" | grep -qE '^[0-9]+$' || \
-     ! printf '%s' "$shard_m" | grep -qE '^[0-9]+$' || \
-     [ "$shard_n" -lt 1 ] || [ "$shard_m" -lt 1 ] || [ "$shard_n" -gt "$shard_m" ]; then
-    echo "ERROR: invalid SHARD=$SHARD (expected N/M with 1<=N<=M, both integers)" >&2
-    exit 1
+# Weighted across isolated databases, sequential within each shard.
+if [ -n "$RUNNER_SHARD" ]; then
+  if ! [[ "$RUNNER_SHARD" =~ ^[0-9]+/[0-9]+$ ]]; then
+    echo "ERROR: invalid SHARD=$RUNNER_SHARD (expected N/M)" >&2
+    exit 2
   fi
-  filtered=()
-  i=0
-  for f in "${files[@]}"; do
-    if [ $((i % shard_m + 1)) -eq "$shard_n" ]; then
-      filtered+=("$f")
-    fi
-    i=$((i + 1))
-  done
-  # ${filtered[@]:-} avoids "unbound variable" under `set -u` when no files matched.
-  files=("${filtered[@]:-}")
-  # If the empty placeholder slipped in, drop it.
-  if [ "${#files[@]}" -eq 1 ] && [ -z "${files[0]}" ]; then
-    files=()
-  fi
+  shard_n=${RUNNER_SHARD%/*}
+  shard_m=${RUNNER_SHARD#*/}
+  selected=$(printf '%s\n' "${files[@]}" | bun scripts/sharding.ts "$shard_n" "$shard_m" --weights scripts/e2e-weights.json)
+  files=()
+  while IFS= read -r f; do
+    [ -n "$f" ] && files+=("$f")
+  done <<< "$selected"
 fi
 
 if [ "$DRY_RUN_LIST" = "1" ]; then
@@ -186,7 +201,7 @@ fi
 
 if [ "${#files[@]}" -eq 0 ]; then
   # Empty shard (e.g. SHARD=4/4 with only 3 files): nothing to do.
-  echo "No files for shard ${SHARD:-(unsharded)}; exiting clean."
+  echo "No files for shard ${RUNNER_SHARD:-(unsharded)}; exiting clean."
   exit 0
 fi
 
@@ -272,7 +287,13 @@ for f in "${files[@]}"; do
   else
     TIMEOUT_CMD=""
   fi
-  if output=$($TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" 2>&1); then
+  rc=0
+  $TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" > "$E2E_TMP_HOME/current.log" 2>&1 &
+  ACTIVE_E2E_PID=$!
+  wait "$ACTIVE_E2E_PID" || rc=$?
+  ACTIVE_E2E_PID=""
+  output=$(cat "$E2E_TMP_HOME/current.log")
+  if [ "$rc" -eq 0 ]; then
     if [ "$f" = "test/e2e/pgbouncer-teardown.test.ts" ] && \
        [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ] && \
        ! printf '%s\n' "$output" | grep -qE '^[[:space:]]*[1-9][0-9]* pass$'; then

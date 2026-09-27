@@ -30,11 +30,14 @@ is needed. gbrain stamps an embedding-provenance
 signature (`<provider:model>:<dims>`) onto each page when its chunks are
 embedded. After you point the config at the new model, the stored
 signatures differ from the current one, and `gbrain embed --stale`
-re-embeds exactly those pages:
+revisits those pages. Chunks already matching the target model, current text
+hash, and vector width keep their embeddings. A fully current page can have
+its signature restamped without another provider call; interrupted batches
+do not discard completed current vectors.
 
 ```bash
 # After switching to the new same-dim model in your config:
-gbrain embed --stale          # re-embeds signature-drifted pages
+gbrain embed --stale          # embeds stale chunks; preserves current vectors
 gbrain embed --stale --dry-run # preview the count without re-embedding
 ```
 

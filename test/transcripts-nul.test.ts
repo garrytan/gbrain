@@ -46,7 +46,11 @@ afterEach(() => {
 
 const NO_PATTERNS = { userPatternsPath: '/nonexistent-patterns.txt' };
 
-/** Minimal codex-rollout JSONL: session_meta + one user turn + one reply. */
+/**
+ * Minimal codex-rollout JSONL: session_meta + one user turn + one reply.
+ * A ROOT rollout: payload.id === payload.session_id (#4981 keys identity on
+ * payload.id; a differing id would model a forked child thread with its own page).
+ */
 function writeCodexSession(
   name: string,
   sessionId: string,
@@ -58,7 +62,7 @@ function writeCodexSession(
     JSON.stringify({
       timestamp: startIso,
       type: 'session_meta',
-      payload: { id: name, session_id: sessionId, timestamp: startIso, cwd },
+      payload: { id: sessionId, session_id: sessionId, timestamp: startIso, cwd },
     }),
     JSON.stringify({
       timestamp: startIso,

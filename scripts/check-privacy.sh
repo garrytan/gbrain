@@ -25,6 +25,8 @@
 
 set -euo pipefail
 
+. "$(dirname "$0")/lib/guard-candidates.sh"
+
 BANNED_NAME='wintermute'
 # v0.25.1 (codex T7): additional patterns from wintermute-specific filesystem
 # layouts that would leak private fork context if they slipped through a port.
@@ -90,6 +92,12 @@ if [ -z "$FILES" ]; then
   exit 0
 fi
 
+SCAN_PATTERNS=(-iF -e "$BANNED_NAME")
+for path in "${BANNED_PATHS[@]}"; do
+  SCAN_PATTERNS+=(-e "$path")
+done
+FILES="$(guard_candidates "${SCAN_PATTERNS[@]}" <<< "$FILES")"
+
 # Allow-list: files in which the banned name is legitimate.
 # Meta-rule docs (define the rule itself), auto-generated LLM indexes,
 # historical upgrade guides, and the test that enforces the rule
@@ -117,10 +125,10 @@ ALLOW_LIST=(
   'skills/migrations/v0.9.0.md'
   'skills/migrations/v0.14.0.md'
   'test/storage-status.test.ts'
-  # CHANGELOG.md documents the rule (the v0.25.1 entry references the
-  # banned literals in describing what's banned). Same exception status
-  # as CLAUDE.md and this script itself: meta-documentation needs to
-  # name the patterns it forbids.
+  # CHANGELOG.md: the v0.25.1 entry documents the BANNED_PATHS literals in
+  # describing what the guard forbids, so it is exempt from the PATH check
+  # only. The fork-name check still runs on it (see the loop below): the
+  # notes are the most-read public artifact and the name has leaked there.
   'CHANGELOG.md'
   # skills/migrations/v0.25.1.md is the agent-readable upgrade
   # walkthrough; it explains the privacy-guard extension to the
@@ -185,11 +193,18 @@ while IFS= read -r file; do
   [ -z "$file" ] && continue
   [ ! -f "$file" ] && continue
   if is_allowed "$file"; then
+    # CHANGELOG.md is allow-listed for the BANNED_PATHS literals only; the
+    # fork-name check applies to it like any other public artifact.
+    if [ "$file" = "CHANGELOG.md" ] && grep -in "$BANNED_NAME" "$file" >/dev/null 2>&1; then
+      echo "[check-privacy] BANNED NAME in $file:" >&2
+      grep -in "$BANNED_NAME" "$file" | sed 's|^|  |' >&2
+      FOUND=1
+    fi
     continue
   fi
   # Case-insensitive grep; only specific extensions + known docs.
   case "$file" in
-    *.md|*.ts|*.mjs|*.js|*.py|*.sh|*.json|*.yaml|*.yml|*.txt|README*|CHANGELOG*|CLAUDE*|AGENTS*)
+    *.md|*.ts|*.tsx|*.mjs|*.js|*.jsx|*.py|*.sh|*.json|*.yaml|*.yml|*.txt|README*|CHANGELOG*|CLAUDE*|AGENTS*)
       if grep -in "$BANNED_NAME" "$file" >/dev/null 2>&1; then
         echo "[check-privacy] BANNED NAME in $file:" >&2
         grep -in "$BANNED_NAME" "$file" | sed 's|^|  |' >&2

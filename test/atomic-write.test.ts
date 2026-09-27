@@ -10,10 +10,10 @@
  *   4. No tmp residue on the happy path.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync, chmodSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { atomicWriteFileSync } from '../src/core/atomic-write.ts';
+import { atomicStagingPath, atomicWriteFileSync } from '../src/core/atomic-write.ts';
 
 let dir: string;
 
@@ -30,6 +30,55 @@ function tmpSiblings(): string[] {
 }
 
 describe('atomicWriteFileSync', () => {
+  test('journaled staging is flushed before the synchronous boundary and renamed afterward', () => {
+    const target = join(dir, 'page.md');
+    const stagingPath = atomicStagingPath(target);
+    writeFileSync(target, 'original');
+    let reached = false;
+    atomicWriteFileSync(target, 'replacement', { stagingPath, afterStagingFlush: () => {
+      reached = true;
+      expect(readFileSync(stagingPath, 'utf8')).toBe('replacement');
+      expect(readFileSync(target, 'utf8')).toBe('original');
+    } });
+    expect(reached).toBe(true);
+    expect(readFileSync(target, 'utf8')).toBe('replacement');
+    expect(tmpSiblings()).toEqual([]);
+  });
+
+  test('exclusive-create rejection never unlinks an existing journaled stage, even matching bytes', () => {
+    const target = join(dir, 'page.md');
+    const stagingPath = atomicStagingPath(target);
+    writeFileSync(target, 'original');
+    for (const bytes of ['unexpected', 'replacement']) {
+      writeFileSync(stagingPath, bytes);
+      expect(() => atomicWriteFileSync(target, 'replacement', { stagingPath })).toThrow();
+      expect(readFileSync(stagingPath, 'utf8')).toBe(bytes);
+      expect(readFileSync(target, 'utf8')).toBe('original');
+    }
+  });
+
+  test('unexpected stage bytes survive callback failure and invalid stage paths are refused', () => {
+    const target = join(dir, 'page.md');
+    const stagingPath = atomicStagingPath(target);
+    writeFileSync(target, 'original');
+    expect(() => atomicWriteFileSync(target, 'replacement', { stagingPath, afterStagingFlush: () => {
+      writeFileSync(stagingPath, 'unexpected');
+      throw new Error('fixture interrupted');
+    } })).toThrow('fixture interrupted');
+    expect(readFileSync(stagingPath, 'utf8')).toBe('unexpected');
+    expect(readFileSync(target, 'utf8')).toBe('original');
+    expect(() => atomicWriteFileSync(target, 'replacement', { stagingPath: atomicStagingPath(join(dir, 'other.md')) })).toThrow('invalid journaled staging path');
+    expect(() => atomicWriteFileSync(target, 'replacement', { stagingPath: target })).toThrow('invalid journaled staging path');
+  });
+
+  test('a directory occupying the preallocated stage is preserved', () => {
+    const target = join(dir, 'page.md');
+    const stagingPath = atomicStagingPath(target);
+    mkdirSync(stagingPath);
+    expect(() => atomicWriteFileSync(target, 'replacement', { stagingPath })).toThrow();
+    expect(statSync(stagingPath).isDirectory()).toBe(true);
+  });
+
   test('writes content and leaves no tmp residue', () => {
     const target = join(dir, 'page.md');
     atomicWriteFileSync(target, '# hello\n');

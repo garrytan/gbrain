@@ -604,6 +604,14 @@ interface PathContainmentOps {
 
 const nativePathContainmentOps: PathContainmentOps = { relative, isAbsolute, sep };
 
+export function gitRelativePath(
+  from: string,
+  to: string,
+  pathOps: Pick<PathContainmentOps, 'relative'> = nativePathContainmentOps,
+): string {
+  return pathOps.relative(from, to).replace(/\\/g, '/');
+}
+
 export function isWithinRoot(
   childReal: string,
   rootReal: string,

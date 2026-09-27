@@ -49,8 +49,8 @@ describe('drain-loop wiring (structural — the shape guard only covers worker.t
 describe('db-lock heartbeat wiring (structural — issue #6 cancellation)', () => {
   const src = readFileSync(new URL('../src/core/db-lock.ts', import.meta.url), 'utf-8');
   test('withRefreshingLock aborts a per-tick signal into handle.refresh and guards re-entrancy', () => {
-    expect(src).toContain('handle.refresh({ signal: tickAbort.signal })');
-    expect(src).toContain('if (refreshTickInFlight) return;');
+    expect(src).toContain('handle.refresh({ signal: abort.signal })');
+    expect(src).toContain('if (stopping || lost || activeRefresh) return;');
     // refresh() forwards the opts to executeRawDirect as the trailing arg.
     expect(src).toMatch(/executeRawDirect<\{ id: string \}>\([\s\S]*?refreshOpts,\s*\)/);
   });

@@ -109,12 +109,12 @@ describe('thin-client routing audit — v0.32 ROUTE additions wire callRemoteToo
     expect(src).toContain(`callRemoteTool(cfg!, 'recall'`);
   });
 
-  test('src/commands/recall.ts: forget routing branch calls callRemoteTool with op="forget_fact"', () => {
+  test('src/commands/recall.ts: forget routing branch calls callRemoteTool with op="forget"', () => {
     const src = readFileSync(
       join(import.meta.dir, '..', 'src', 'commands', 'recall.ts'),
       'utf8',
     );
-    expect(src).toContain(`callRemoteTool(cfg!, 'forget_fact'`);
+    expect(src).toContain(`callRemoteTool(cfg!, 'forget'`);
   });
 
   test('src/commands/jobs.ts: list/get routing branches call callRemoteTool', () => {

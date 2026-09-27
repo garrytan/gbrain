@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { readContentChunksEmbeddingDim } from '../src/core/embedding-dim-check.ts';
 
 let engine: PGLiteEngine;
@@ -64,7 +65,7 @@ async function seedTextPage(slug: string, vec: Float32Array) {
     compiled_truth: `body for ${slug}`,
     timeline: '',
   });
-  await engine.upsertChunks(slug, [
+  await installFixtureChunks(engine, slug, [
     {
       chunk_index: 0,
       chunk_text: `body for ${slug}`,
@@ -83,7 +84,7 @@ async function seedImagePage(slug: string, vec: Float32Array) {
     compiled_truth: '',
     timeline: '',
   });
-  await engine.upsertChunks(slug, [
+  await installFixtureChunks(engine, slug, [
     {
       chunk_index: 0,
       chunk_text: slug,
@@ -140,7 +141,7 @@ describe('searchVector column routing (v0.27.1)', () => {
     await seedImagePage('photos/keyword', fakeImage1024(3));
     // Force image chunk_text to overlap with the text chunk's words so the
     // FTS would otherwise match both rows.
-    await engine.upsertChunks('photos/keyword', [
+    await installFixtureChunks(engine, 'photos/keyword', [
       {
         chunk_index: 0,
         chunk_text: 'body for notes/keyword',

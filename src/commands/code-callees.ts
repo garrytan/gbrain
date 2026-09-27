@@ -55,6 +55,7 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
       limit,
       allSources,
       sourceId: sourceId ?? undefined,
+      bareFallback: true, // #4670: bare method names resolve via content_chunks.symbol_name
     });
 
     // Call-graph readiness ('edge' grain): distinguishes "graph not built / still

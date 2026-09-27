@@ -32,6 +32,11 @@ export function requiresSafeChunks(scope?: PageReadScope): boolean {
   return scope?.requireSafeChunks ?? scope?.excludePrivate ?? false;
 }
 
+/** Every user sees projections only from the current canonical revision. */
+export function currentTextProjectionFilter(alias: string): string {
+  return `${alias}.text_projection_revision = ${alias}.knowledge_revision`;
+}
+
 /** Older fragments lack trustworthy provenance, even if markers were removed later. */
 export function safeChunksFilter(alias: string): string {
   return `COALESCE(${alias}.chunker_version, 0) >= ${SAFE_FENCE_CHUNKER_VERSION}`;

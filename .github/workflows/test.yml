@@ -10,6 +10,12 @@ on:
   # Frees a load-saturated local machine (e.g. many Conductor agents running
   # their own bun-test suites at once — load avg 120 on 16 cores).
   workflow_dispatch:
+    inputs:
+      native_only:
+        description: Run native platform checks only; this does not satisfy full CI
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -19,13 +25,15 @@ permissions:
 # from forks sharing a branch name don't cancel each other) and falls back to
 # github.ref for push/scheduled runs. Mirrors heavy-tests.yml; frees runners
 # and stops a stale-SHA run from reporting a flaky failure on an obsolete commit.
+# Explicit native-only retries use a separate group so full persistence soaks finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && '-native-only' || '' }}
   cancel-in-progress: true
 
 jobs:
   # Re-run checks for every event. Only dependencies and PGLite snapshots are cached.
   gitleaks:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -74,6 +82,7 @@ jobs:
           gitleaks detect --redact --no-banner --log-opts "$RANGE"
 
   security-regressions:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -93,6 +102,7 @@ jobs:
         run: bun test --timeout 60000 test/guarded-http-tls.serial.test.ts
 
   dependency-audit:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -108,6 +118,7 @@ jobs:
         working-directory: admin
 
   verify:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     # Pre-test gates: privacy/jsonb/source-id/etc + typecheck + admin-build.
     # Lives in its own runner so the matrix shards aren't carrying ~2-3min
     # of verify work in addition to their test files (the old shape stuffed
@@ -138,7 +149,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - run: bun run verify
       # Guard: no bare `bun test` in workflows/scripts — bun ignores
@@ -148,18 +159,19 @@ jobs:
       - run: bash scripts/check-bun-test-timeout.sh
 
   serial-tests:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     # *.serial.test.ts — one bun process per file (module-registry isolation),
     # POOLED across files by scripts/run-serial-tests.sh (was strictly
     # sequential: an 8.5-minute job whose serialization the quarantine
     # contract never required). Lives in its own runner so the matrix shards
     # aren't carrying the serial tail.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
-    # 25, not 15: on smaller runners the memory clamp in
-    # scripts/run-serial-tests.sh sizes the pool to 1, and the fully
-    # sequential suite runs 12-13 minutes — a slow runner then hits a 15m
-    # cap with every test passing (observed: canceled at exactly 15:00
-    # with zero failures). On 4-core runners pool=4 finishes in ~3m and
-    # the extra headroom is never used.
+    # Keep the existing timeout headroom for memory-constrained runners,
+    # bounded rescue attempts, and the machine-exclusive tail on shard 1.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -177,31 +189,53 @@ jobs:
       # not once per job per run. This job SAVES; verify + matrix + slow jobs
       # restore-only. The key is an approximation on purpose: it only has to
       # be a superset-trigger of real schema changes.
-      # KEY HAS 11 HOMES (this save + 5 restores here: verify, matrix,
-      # slow-eval, slow-perf, slow-brainbench; + 5 restores in e2e.yml:
-      # jsonb-parity, selected-e2e, tier1, tier2, coverage-full-e2e) — edit
-      # all together, or drift shows up only as silent rebuild cost.
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+      # HASH INPUTS HAVE 13 HOMES: 11 legacy keys (six here and five in
+      # e2e.yml) plus two default-profile keys here (slow-brainbench and
+      # brainbench). Edit all together when schema dependencies change;
+      # profile names stay distinct, and the serial save reuses its restore key.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        id: snapshot-cache
         with:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - run: bun run test:serial
         env:
+          SHARD: ${{ matrix.shard }}/4
           COVERAGE_DIR: ${{ runner.temp }}/coverage
       - name: Upload coverage (serial lane)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: coverage-serial
+          name: coverage-serial-${{ matrix.shard }}
           path: ${{ runner.temp }}/coverage
           retention-days: 14
           if-no-files-found: ignore
           overwrite: true
+      - name: Save legacy snapshot (single writer)
+        if: success() && matrix.shard == 1
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: ${{ steps.snapshot-cache.outputs.cache-primary-key }}
+      - name: Upload serial timings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: timings-serial-${{ matrix.shard }}
+          path: |
+            .context/serial-timings.json
+            .context/serial-durations.txt
+          include-hidden-files: true
+          retention-days: 14
+          overwrite: true
 
   slow-eval-longmemeval:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     # Dedicated runner for the LongMemEval end-to-end test file. The file
     # was originally 359s. TODO #1 (engine-sharing in runEvalLongMemEval
     # via RunOpts.engine) cut it to ~200s by amortizing PGLite cold-create
@@ -227,7 +261,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-eval && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
@@ -248,6 +282,7 @@ jobs:
           overwrite: true
 
   slow-brainbench-e2e:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     # Dedicated runner for the BrainBench CLI e2e file. At 98s mined it was
     # the matrix's single heaviest atom (10% of the whole corpus weight) and
     # the hard floor on shard-count scaling; a Phase-2 rewrite (spawn batching
@@ -271,7 +306,13 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot-default.tar
+            test/fixtures/pglite-snapshot-default.version
+          key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         # Absolutized: this file's batch jobs spawn CLI children with varying
@@ -279,6 +320,8 @@ jobs:
         run: |
           . scripts/lib/test-env.sh
           ensure_pglite_snapshot slow-brainbench
+          ensure_default_pglite_snapshot slow-brainbench
+          echo "GBRAIN_TEST_DEFAULT_SNAPSHOT=${GBRAIN_TEST_DEFAULT_SNAPSHOT:-}" >> "$GITHUB_ENV"
           # Export absolute (CLI children spawn with varying cwd); keep an
           # already-absolute inherited path as-is; export nothing on build failure.
           if [ -n "${GBRAIN_PGLITE_SNAPSHOT:-}" ]; then
@@ -304,6 +347,7 @@ jobs:
           overwrite: true
 
   brainbench:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     # BrainBench memory-conformance gate (Cathedral 2). Hermetic: in-memory
     # PGLite, zero API keys, ~15s for the full 141-fixture × 3-harness run.
     # Governance (decision 4): compares HEAD's run against MAIN's committed
@@ -327,6 +371,12 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot-default.tar
+            test/fixtures/pglite-snapshot-default.version
+          key: pglite-snapshot-default-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - run: bash scripts/ci-brainbench-gate.sh
         env:
@@ -339,6 +389,7 @@ jobs:
           fi
 
   slow-entity-resolve-perf:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     # Dedicated runner for the entity-resolve perf test (~159s, single perf
     # describe with one test that builds 5000+ pages and asserts the NEW
     # tryPrefixExpansion shape is 5x faster than the OLD shape — not
@@ -362,7 +413,7 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
         run: bash -c '. scripts/lib/test-env.sh && ensure_pglite_snapshot slow-perf && echo "GBRAIN_PGLITE_SNAPSHOT=${GBRAIN_PGLITE_SNAPSHOT:-}" >> "$GITHUB_ENV"'
@@ -398,6 +449,7 @@ jobs:
           bun run src/cli.ts protocol conformance --synthesize
 
   test:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     # Pure matrix shard — no verify, no serial. Each shard runs its slice
     # of the unit test set under one `bun test` invocation.
     #
@@ -444,10 +496,11 @@ jobs:
           path: |
             test/fixtures/pglite-snapshot.tar
             test/fixtures/pglite-snapshot.version
-          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'src/core/pglite-engine.ts', 'src/core/fts-language.ts', 'src/core/vector-index.ts', 'src/core/ai/defaults.ts', 'src/core/timeline-dedup-repair.ts', 'src/core/pages-upsert-arbiter.ts', 'src/core/link-extraction.ts', 'src/core/grants/*.ts', 'src/core/scope.ts', 'src/core/sql-query.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/page-state/schema.ts', 'src/core/lease-schema.ts', 'src/core/page-state/projection-schema.ts', 'src/core/persistence/schema.ts', 'src/core/persistence/effect-schema.ts', 'src/core/persistence/writer-guard-schema.ts', 'src/core/persistence/topology-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Run test shard ${{ matrix.shard }}/10
-        run: scripts/test-shard.sh ${{ matrix.shard }} 10
+        shell: bash
+        run: bun scripts/capture-test-log.ts --job 'test (${{ matrix.shard }})' --out "$RUNNER_TEMP/unit.log" -- bash scripts/test-shard.sh ${{ matrix.shard }} 10
         env:
           COVERAGE_DIR: ${{ runner.temp }}/coverage
       - name: Upload coverage (shard lane)
@@ -459,9 +512,18 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
           overwrite: true
+      - name: Upload unit timing log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: timings-unit-${{ matrix.shard }}
+          path: ${{ runner.temp }}/unit.log
+          retention-days: 14
+          overwrite: true
+
 
   # ──────────────────────────────────────────────────────────────────────
-  # coverage-report: merges the PR corpus (10 shards + serial + 2 slow
+  # coverage-report: merges the PR corpus (10 unit + 4 serial + 3 slow
   # lanes) into one honest number, renders it to the step summary, and runs
   # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
   # ADVISORY during the report-only window: deliberately NOT in test-status's
@@ -472,7 +534,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   coverage-report:
     needs: [serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, slow-brainbench-e2e, test]
-    if: always()
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -499,7 +561,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,sloweval,slowperf,slowbrainbench \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial-1,serial-2,serial-3,serial-4,sloweval,slowperf,slowbrainbench \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
@@ -526,11 +588,19 @@ jobs:
           if-no-files-found: ignore
           overwrite: true
 
+  native-locks:
+    uses: ./.github/workflows/native-locks.yml
+
+  persistence-validation:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    uses: ./.github/workflows/persistence-validation.yml
+
   # The stable aggregate succeeds only when every required lane ran successfully.
   # Coverage percentages remain advisory until their separate graduation.
   test-status:
-    needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test]
-    if: always()
+    name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && 'full-suite-not-run' || 'test-status' }}
+    needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-eval-longmemeval, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation]
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -546,11 +616,45 @@ jobs:
           SLOW_BRAINBENCH="${{ needs.slow-brainbench-e2e.result }}"
           BRAINBENCH="${{ needs.brainbench.result }}"
           TEST="${{ needs.test.result }}"
-          echo "gitleaks=$GITLEAKS  security-regressions=$SECURITY  dependency-audit=$AUDIT  verify=$VERIFY  serial-tests=$SERIAL  slow-eval-longmemeval=$SLOW_EVAL  slow-entity-resolve-perf=$SLOW_PERF  slow-brainbench-e2e=$SLOW_BRAINBENCH  brainbench=$BRAINBENCH  test=$TEST"
-          for r in "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$SERIAL" "$SLOW_EVAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST"; do
+          NATIVE_LOCKS="${{ needs.native-locks.result }}"
+          PERSISTENCE="${{ needs.persistence-validation.result }}"
+          echo "gitleaks=$GITLEAKS  security-regressions=$SECURITY  dependency-audit=$AUDIT  verify=$VERIFY  serial-tests=$SERIAL  slow-eval-longmemeval=$SLOW_EVAL  slow-entity-resolve-perf=$SLOW_PERF  slow-brainbench-e2e=$SLOW_BRAINBENCH  brainbench=$BRAINBENCH  test=$TEST  native-locks=$NATIVE_LOCKS  persistence=$PERSISTENCE"
+          for r in "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$SERIAL" "$SLOW_EVAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST" "$NATIVE_LOCKS" "$PERSISTENCE"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated job did not succeed (got $r) — CI fail"
               exit 1
             fi
           done
           echo "✓ all gated jobs succeeded — CI green"
+
+
+  # A native-only run emits its own scoped result, never the required full-suite check.
+  native-only-status:
+    name: Native-only result (full CI not run)
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.native_only == true }}
+    needs: [native-locks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record validation scope
+        env:
+          NATIVE_RESULT: ${{ needs.native-locks.result }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+          case "$NATIVE_RESULT" in success|failure|cancelled|skipped) ;; *) exit 1 ;; esac
+          printf '{"scope":"native-only","full_ci":false,"head":"%s","run_id":"%s","native_result":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$NATIVE_RESULT" > native-only-scope.json
+          echo 'Native-only validation. The full Test suite was not run.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload validation scope
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-only-validation-scope
+          path: native-only-scope.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Require native success
+        env:
+          NATIVE_RESULT: ${{ needs.native-locks.result }}
+        run: test "$NATIVE_RESULT" = success

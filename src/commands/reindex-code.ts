@@ -481,7 +481,7 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
       }
       const n = v ? parseFloat(v) : NaN;
       if (!Number.isFinite(n) || n <= 0) {
-        console.error(`gbrain reindex --code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
+        console.error(`gbrain reindex-code: ${flag} requires a positive number in USD, or off/unlimited (got ${v ?? '(missing)'})`);
         process.exit(2);
       }
       maxCostUsd = n;

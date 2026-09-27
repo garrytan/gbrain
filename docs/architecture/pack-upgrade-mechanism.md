@@ -54,7 +54,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │  gbrain onboard --check shows finding                          │
 │  gbrain onboard --check --explain shows per-cluster narrative  │
 │  User reviews; if OK, runs:                                    │
-│    gbrain jobs submit unify-types --allow-protected \          │
+│    gbrain jobs submit unify-types \                            │
 │      --params '{"target_pack":"gbrain-base-v2","apply":true}'  │
 │  (omit "apply":true for a dry-run; that is the default)        │
 │  (Autopilot never auto-fires this; manual_only)                │

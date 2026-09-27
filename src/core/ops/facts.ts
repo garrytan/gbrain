@@ -1,3 +1,4 @@
+import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { readHolders } from './context.ts';
 /**
  * Hot-memory (facts) operation cluster — pure move from operations.ts
@@ -495,13 +496,19 @@ function parseEntityList(v: unknown): string[] {
   return [];
 }
 
+// #4761: the budget packers price the RENDERED line (+ its newline), never the
+// raw fields — see renderCardLine & co. in context/turn-context.ts. packToBudget
+// treats budget <= 0 as NO CAP, so a sub-floor budget must drop explicitly.
+const lineCost = (line: string) => estimateTokens(line + '\n');
+const dropAll = <T>(items: T[]) => ({ items: [] as T[], meta: { budget: 0, used: 0, dropped: items.length, kept: 0 } });
+
 const context_pack: Operation = {
   name: 'context_pack',
   description:
     'MEMORY VERB (v1): budget-packed session-boundary bundle for a set of standing entities — entity cards + open threads + hot facts, zero-LLM, sub-second. Call at session start (warm cold context) and after compaction (rehydrate what the summary lost). WORLD-ONLY by default; pass include_private (honored for LOCAL trusted callers only) to widen all arms. budget_tokens packs server-side (response reports budget_used + dropped_count; cards pack first, then facts). Branch on structured fields, never prose. protocol_version rides every response.',
   params: {
     entities: { type: 'string', required: true, description: 'Comma-separated entity names/slugs to bundle. Capped at 8.' },
-    budget_tokens: { type: 'number', description: 'Server-side token budget (char/4). Cards pack first, then facts. Response adds budget_tokens, budget_used, dropped_count.' },
+    budget_tokens: { type: 'number', description: 'Server-side token budget (char/4). Cards pack first, then facts; each item costs its rendered line and the envelope + section headers are reserved, so `text` fits the budget. Response adds budget_tokens, budget_used (tokens of `text`), dropped_count.' },
     since: { type: 'string', description: 'ISO 8601 datetime. When set, open-thread events are filtered to those after this cursor.' },
     session_id: { type: 'string', description: 'Opaque session id; keys the hot-memory cache and (on the push path) the session cursor.' },
     include_private: { type: 'boolean', description: 'Local trusted callers only: widen ALL arms to include private facts. Ignored (world-only) for remote callers. Default false.' },
@@ -511,7 +518,8 @@ const context_pack: Operation = {
   cliHints: { name: 'context-pack' },
   annotations: { title: 'context_pack (boundary bundle)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES } = await import('../context/turn-context.ts');
+    const { assembleContextPack, renderPack, isAfter, PACK_DEFAULT_MAX_ENTITIES, renderCardLine, renderThreadLine, renderFactLine, packHeaderCost } =
+      await import('../context/turn-context.ts');
     const sourceId = ctx.sourceId ?? 'default';
     const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : undefined;
     if (rawSince !== undefined && !Number.isFinite(Date.parse(rawSince))) {
@@ -545,33 +553,33 @@ const context_pack: Operation = {
 
     let cards = res.cards ?? [];
     let facts = res.facts ?? [];
-    let budgetUsed: number | undefined;
+    // The SAME since filter the assembler applied (pre-landing review: the raw
+    // flatMap silently dropped the documented `since` contract from the
+    // structured array whenever budget packing ran) — shared with the card
+    // cost below, since a card's rendered threads ride its budget.
+    const threadsOf = (c: (typeof cards)[number]) =>
+      (c.open_threads ?? []).filter((t) => !since || (t.date !== null && isAfter(t.date, since)));
     let droppedCount: number | undefined;
     if (budgetTokens !== null) {
+      // #4761: reserve the envelope + headers, then price each card as its
+      // rendered line plus its rendered (since-filtered) thread lines.
+      const itemBudget = budgetTokens - packHeaderCost();
       const cardCost = (c: (typeof cards)[number]) =>
-        estimateTokens(`${c.entity.title} ${c.summary} ${(c.open_threads ?? []).map((t) => t.text).join(' ')}`);
-      const cardPack = packToBudget(cards, cardCost, budgetTokens);
+        lineCost(renderCardLine(c)) + threadsOf(c).reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
+      const cardPack = itemBudget > 0 ? packToBudget(cards, cardCost, itemBudget) : dropAll(cards);
       cards = cardPack.items;
-      const remaining = budgetTokens - cardPack.meta.used;
-      const factPack =
-        remaining > 0
-          ? packToBudget(facts, (f) => estimateTokens(f.fact), remaining)
-          : { items: [] as typeof facts, meta: { budget: 0, used: 0, dropped: facts.length, kept: 0 } };
+      const remaining = itemBudget - cardPack.meta.used;
+      const factPack = remaining > 0 ? packToBudget(facts, (f) => lineCost(renderFactLine(f)), remaining) : dropAll(facts);
       facts = factPack.items;
-      budgetUsed = cardPack.meta.used + factPack.meta.used;
       droppedCount = cardPack.meta.dropped + factPack.meta.dropped;
     }
-    // Recompute open_threads with the SAME since filter the assembler applied
-    // (pre-landing review: the raw flatMap silently dropped the documented
-    // `since` contract from the structured array whenever budget packing ran).
-    const open_threads = cards
-      .flatMap((c) => c.open_threads ?? [])
-      .filter((t) => !since || (t.date !== null && isAfter(t.date, since)));
+    const open_threads = cards.flatMap(threadsOf);
     // Re-render the injectable block from the FINAL sets (adversarial review):
     // `text` is what harnesses inject, so it must honor the same budget the
     // structured arrays report — the assembler's pre-budget rendering would
-    // overrun the declared budget_tokens.
+    // overrun the declared budget_tokens. budget_used reports that text.
     const text = budgetTokens !== null ? renderPack(cards, open_threads, facts) : res.text;
+    const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 
     return {
       protocol_version: MEMORY_VERBS_VERSION,
@@ -607,12 +615,12 @@ const context_pack: Operation = {
 const delta: Operation = {
   name: 'delta',
   description:
-    'MEMORY VERB (v1): "what changed since T" for heartbeats — pages updated after `since` + hot facts newer than `since` + open-thread events after `since`, zero-LLM. Lets a periodic wake maintain warm state in O(changes) instead of re-deriving. Optionally scope thread deltas to `entities`. WORLD-ONLY by default; include_private honored for local trusted callers only. budget_tokens packs server-side (pages first, then facts). protocol_version rides every response.',
+    'MEMORY VERB (v1): "what changed since T" for heartbeats — pages updated after `since` + hot facts newer than `since` + open-thread events after `since`, zero-LLM. Lets a periodic wake maintain warm state in O(changes) instead of re-deriving. Optionally scope thread deltas to `entities`. WORLD-ONLY by default; include_private honored for local trusted callers only. budget_tokens packs server-side (pages first, then facts; threads are never dropped). protocol_version rides every response.',
   params: {
     since: { type: 'string', description: 'ISO 8601 cursor. Returns pages/facts/thread-events newer than this timestamp. Optional when session_id carries an established cursor.' },
     since_slug: { type: 'string', description: 'Stateless keyset resume: pass back `next_cursor.slug` from the previous response (paired with `since`=next_cursor.since) to page through pages sharing one timestamp. Ignored when session_id is set (the session cursor carries it).' },
     entities: { type: 'string', description: 'Optional comma-separated entity scope for thread-event deltas. Capped at 8.' },
-    budget_tokens: { type: 'number', description: 'Server-side token budget (char/4). Pages pack first, then facts. Response adds budget_tokens, budget_used, dropped_count.' },
+    budget_tokens: { type: 'number', description: 'Server-side token budget (char/4). Pages pack first, then facts; each item costs its rendered line and the envelope + section headers + every thread line are reserved, so `text` fits the budget. Threads are never dropped (budget_used can exceed the budget only when the header + threads alone do). Response adds budget_tokens, budget_used (tokens of `text`), dropped_count.' },
     session_id: { type: 'string', description: 'Opaque session id. Drives the per-session cursor: the first call establishes it, each call advances it to the newest DELIVERED change (at-least-once — with has_more:true the undelivered tail returns on the next wake). Without it, pass an explicit `since` for a stateless delta.' },
     include_private: { type: 'boolean', description: 'Local trusted callers only: widen ALL arms to include private facts. Ignored (world-only) for remote callers. Default false.' },
   },
@@ -621,7 +629,8 @@ const delta: Operation = {
   cliHints: { name: 'delta' },
   annotations: { title: 'delta (what changed since)', readOnlyHint: true },
   handler: async (ctx, p) => {
-    const { assembleDeltaContext, renderDelta, PACK_DEFAULT_MAX_ENTITIES } = await import('../context/turn-context.ts');
+    const { assembleDeltaContext, renderDelta, PACK_DEFAULT_MAX_ENTITIES, renderPageLine, renderFactLine, renderThreadLine, deltaHeaderCost } =
+      await import('../context/turn-context.ts');
     const { getSessionContextState, upsertSessionContextState } = await import('../context/session-state.ts');
     const sourceId = ctx.sourceId ?? 'default';
     const rawSince = typeof p.since === 'string' && p.since.trim() ? p.since : null;
@@ -730,8 +739,9 @@ const delta: Operation = {
     // needed; the keyset already excludes everything at/before the cursor.
     let pages = res.deltaPages ?? [];
     let facts = res.facts ?? [];
+    // Threads are NEVER budget-dropped: they are the commitments a heartbeat
+    // must not miss, and they have no keyset of their own to resume from.
     const threads = res.openThreads ?? [];
-    let budgetUsed: number | undefined;
     let droppedCount: number | undefined;
     let factsDropped = 0;
     const fetchedPages = pages.length;
@@ -739,15 +749,16 @@ const delta: Operation = {
       // packToBudget keeps a contiguous PREFIX (order-preserving, stops at the
       // first overflow) — with oldest-first pages the kept set stays contiguous
       // from the cursor, which the advance logic below depends on.
-      const pagePack = packToBudget(pages, (pg) => estimateTokens(`${pg.title} ${pg.slug}`), budgetTokens);
+      // #4761: reserve the envelope + headers (they embed `since`, so price per
+      // call) AND every thread line, then cost each page/fact as its rendered
+      // line — `text` fits the budget whenever the reserved part alone does.
+      const itemBudget =
+        budgetTokens - deltaHeaderCost(effectiveSince) - threads.reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
+      const pagePack = itemBudget > 0 ? packToBudget(pages, (pg) => lineCost(renderPageLine(pg)), itemBudget) : dropAll(pages);
       pages = pagePack.items;
-      const remaining = budgetTokens - pagePack.meta.used;
-      const factPack =
-        remaining > 0
-          ? packToBudget(facts, (f) => estimateTokens(f.fact), remaining)
-          : { items: [] as typeof facts, meta: { budget: 0, used: 0, dropped: facts.length, kept: 0 } };
+      const remaining = itemBudget - pagePack.meta.used;
+      const factPack = remaining > 0 ? packToBudget(facts, (f) => lineCost(renderFactLine(f)), remaining) : dropAll(facts);
       facts = factPack.items;
-      budgetUsed = pagePack.meta.used + factPack.meta.used;
       droppedCount = pagePack.meta.dropped + factPack.meta.dropped;
       factsDropped = factPack.meta.dropped;
     }
@@ -755,6 +766,9 @@ const delta: Operation = {
     // has_more covers ALL undelivered content — fetch-limit overflow, budget-
     // dropped pages, AND budget-dropped facts (pre-landing review: facts were
     // silently lost when pages fit but facts overflowed).
+    // ponytail: dropped facts keep the pre-existing ceiling — the cursor still
+    // advances past delivered pages, so they re-surface only if their
+    // created_at is after the new cursor; a per-arm cursor would fix it.
     const hasMore = res.deltaOverflow === true || pagesDropped > 0 || factsDropped > 0;
 
     // Cursor advance (keyset, at-least-once): advance to the last DELIVERED
@@ -786,7 +800,10 @@ const delta: Operation = {
     // Re-render the injectable block from the FINAL sets (adversarial review):
     // `text` must honor the budget AND the boundary-tie exclusion the
     // structured arrays reflect — the assembler's render predates both.
+    // budget_used reports that text; it exceeds budget_tokens only when the
+    // header + the never-truncated threads alone do.
     const text = renderDelta(pages, facts, threads, effectiveSince);
+    const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 
     return {
       protocol_version: MEMORY_VERBS_VERSION,
@@ -819,6 +836,7 @@ const forget_fact: Operation = {
   name: 'forget_fact',
   description: 'Forget a fact by recording a durable withdrawal in its source and visibility. Strikes the Markdown facts fence when writable; otherwise keeps the withdrawal in the database. Stale imports cannot reactivate the same normalized claim. This retracts memory; original prose, files and backups may retain the text. Idempotent on already-expired or unknown ids.',
   params: {
+    request_id: WRITE_REQUEST_PARAM,
     id: { type: 'number', required: true, description: 'Fact id to forget.' },
     reason: { type: 'string', required: false, description: 'Optional reason; written to the fence row\'s context cell as "forgotten: <reason>". Default: "forgotten".' },
   },
@@ -826,21 +844,8 @@ const forget_fact: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'forget_fact', id: p.id };
-    const id = p.id as number;
-    const reason = typeof p.reason === 'string' ? p.reason : undefined;
-    const { forgetFactInFence } = await import('../facts/forget.ts');
-    const result = await forgetFactInFence(ctx.engine, id, {
-      reason,
-      sourceId: ctx.sourceId ?? 'default',
-      worldOnly: ctx.remote !== false,
-    });
-    if (!result.ok && result.path === 'not_found') {
-      throw new OperationError('fact_not_found', `Fact id ${id} not found.`);
-    }
-    if (!result.ok && result.path === 'already_expired') {
-      throw new OperationError('fact_already_expired', `Fact id ${id} already expired.`);
-    }
-    return { id, expired: true, path: result.path, reason: result.reason };
+    const { submitForgetMutation } = await import('../persistence/memory-mutations.ts');
+    return submitForgetMutation(ctx, 'forget_fact', p);
   },
 };
 

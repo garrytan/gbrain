@@ -14,6 +14,9 @@ import * as db from '../../src/core/db.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { configureGateway } from '../../src/core/ai/gateway.ts';
+import { runSchemaTransition } from '../../src/core/embedding-migration.ts';
+import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
 
 // Local opt-in configuration; container CI must not import developer credentials.
 const envPath = resolve(import.meta.dir, '../../.env.testing');
@@ -142,6 +145,40 @@ export async function setupDB(): Promise<PostgresEngine> {
 }
 
 /**
+ * Opt-in setup for fixtures that seed legacy-width text vectors. Bare CLI
+ * init tests can create the shared database at the new-install width; row
+ * truncation alone cannot make those columns fit a later 1536-d fixture.
+ * Ordinary setupDB preserves custom shapes for schema/migration tests.
+ */
+export async function setupLegacyEmbeddingDB(): Promise<PostgresEngine> {
+  configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+  const target = await setupDB();
+  const dims = LEGACY_EMBEDDING_CONFIG.embedding_dimensions;
+  const columns = await target.executeRaw<{ table_name: string; type_name: string; dims: number }>(`
+    SELECT c.relname AS table_name, t.typname AS type_name, a.atttypmod AS dims
+      FROM pg_attribute a
+      JOIN pg_class c ON c.oid = a.attrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      JOIN pg_type t ON t.oid = a.atttypid
+     WHERE n.nspname = 'public'
+       AND c.relname IN ('content_chunks', 'query_cache', 'facts', 'takes')
+       AND a.attname = 'embedding' AND a.attnum > 0 AND NOT a.attisdropped`);
+  if (columns.length !== 4 || columns.some(column => !['vector', 'halfvec'].includes(column.type_name))) {
+    throw new Error('Legacy embedding fixture requires all four text embedding columns');
+  }
+  if (columns.some(column => column.table_name !== 'takes' && Number(column.dims) !== dims)) {
+    await runSchemaTransition(target, dims);
+  }
+  const takes = columns.find(column => column.table_name === 'takes')!;
+  if (Number(takes.dims) !== dims) {
+    // Production transition deliberately leaves takes alone (search is
+    // trigram-based). This empty test table also receives fixed-width seeds.
+    await target.executeRaw(`ALTER TABLE takes ALTER COLUMN embedding TYPE ${takes.type_name}(${dims}) USING NULL`);
+  }
+  return target;
+}
+
+/**
  * Disconnect from DB. Call in afterAll() of each test file.
  */
 export async function teardownDB(): Promise<void> {
@@ -169,10 +206,10 @@ export function getConn() {
 
 /**
  * Import all fixture files from test/e2e/fixtures/ into the brain.
+ * An explicit engine lets a fixture own its database without shared resets.
  * Returns the list of import results.
  */
-export async function importFixtures() {
-  const e = getEngine();
+export async function importFixtures(e: PostgresEngine = getEngine()) {
   const results: Array<{ slug: string; status: string; chunks: number }> = [];
 
   const files = findMarkdownFiles(FIXTURES_DIR);

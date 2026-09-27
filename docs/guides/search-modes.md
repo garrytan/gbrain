@@ -37,6 +37,14 @@ and maintenance commands remain available.
 | `reranker` (cross-encoder)    | off            | `voyage:rerank-2.5` | `voyage:rerank-2.5` |
 | `autocut` (rerank-cliff cut)  | off            | off        | off            |
 
+The `expansion` row is not decisive for any shipped verb today: `gbrain query`
+(the only verb that can expand) expands by default in every mode — pass
+`--no-expand` / `expand: false` to opt out — while `gbrain search`, the memory
+verbs and the eval harnesses pin expansion per call. The bundle value (and the
+`search.expansion` config key) only reaches a caller that leaves `expansion`
+unset AND wires an `expandFn`; none ship today. `gbrain search modes` reports
+the bundle value, not what `query` does.
+
 - **`conservative`** — smallest payloads. Pairs naturally with a cheap
   downstream model (Haiku-class) or a high query volume.
 - **`balanced`** — the default and the fallback when no mode is set.
@@ -47,7 +55,8 @@ Seven of the knobs deserve a sentence:
 
 - **`expansion`** rewrites your query into multiple variants via a cheap
   LLM call per search (adds roughly $1.50 per 1K queries) — better recall,
-  small extra cost.
+  small extra cost. `gbrain query` expands in every mode unless `--no-expand`;
+  this knob does not turn it off (see the caption under the table).
 - **`expansion_variant_budget`** (config key
   `search.expansion_variant_budget`) is the total RRF weight the expansion
   variants share at fusion time (`weight_i = b / n_voting_arms`; the original

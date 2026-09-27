@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
-import { readClientGrant, grantValidationContext, delegationReasons, type ClientGrant } from '../grants/service.ts';
+import { delegationReasons, type ClientGrant } from '../grants/model.ts';
 import { validGrantPrefixes, normalizeGrantBrain } from '../grants/model.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeSlugPrefix } from '../ops/context.ts';
@@ -47,6 +47,9 @@ export function intersectDelegatedPrefixes(a: readonly string[], b: readonly str
 }
 
 export async function currentDelegationGrant(engine: BrainEngine, clientId: string, servingBrainId?: string): Promise<ClientGrant> {
+  // Grant services expose profiles backed by the full operation catalog.
+  // Queued writer modules may load this policy while that catalog is initializing.
+  const { readClientGrant, grantValidationContext } = await import('../grants/service.ts');
   const grant = await readClientGrant(engine, clientId);
   const reasons = delegationReasons(grant, await grantValidationContext(engine, servingBrainId));
   if (grant.allowedOperations !== null && !grant.allowedOperations.includes('submit_agent')) reasons.push('delegation_operation_withdrawn');
@@ -111,6 +114,7 @@ export function snapshotFromJob(data: Record<string, unknown>): DelegationSnapsh
 }
 
 export async function effectiveDelegation(engine: BrainEngine, snapshot: DelegationSnapshot, jobId?: number): Promise<DelegationSnapshot> {
+  const { grantValidationContext } = await import('../grants/service.ts');
   if (snapshot.legacy && jobId !== undefined) {
     const rows = await engine.executeRaw<{ data: Record<string, unknown> }>('SELECT data FROM minion_jobs WHERE id=$1', [jobId]);
     const stored = rows[0]?.data;

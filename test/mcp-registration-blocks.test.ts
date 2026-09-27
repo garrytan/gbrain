@@ -9,8 +9,28 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { OAUTH_SECRET_NOTE, openclawThinClientBlock } from '../src/core/mcp-registration.ts';
 import { OAUTH_SECRET_NOTE as CONNECT_REEXPORTED_NOTE } from '../src/commands/connect.ts';
+
+const ROOT = dirname(import.meta.dir);
+
+describe('OpenClaw stdio registration docs (#4842)', () => {
+  // OpenClaw 2026.8.x reads ~/.openclaw/openclaw.json `mcp.servers`, never
+  // ~/.openclaw/config.json `mcpServers`; the supported wiring is the CLI.
+  const openclawDoc = readFileSync(join(ROOT, 'docs/mcp/OPENCLAW.md'), 'utf8');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+
+  test('no doc prescribes the retired ~/.openclaw/config.json path', () => {
+    expect(openclawDoc).not.toMatch(/~\/\.openclaw\/config\.json/);
+    expect(readme).not.toMatch(/~\/\.openclaw\/config\.json/);
+  });
+
+  test('OPENCLAW.md registers via the openclaw mcp CLI', () => {
+    expect(openclawDoc).toContain('openclaw mcp add');
+  });
+});
 
 const OPTS = {
   issuerUrl: 'https://brain.example.com',

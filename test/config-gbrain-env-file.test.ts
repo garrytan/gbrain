@@ -113,6 +113,19 @@ describe('loadConfig — ~/.gbrain/.env secrets file (#3893)', () => {
     );
   });
 
+  test('a bare CR terminates a line, as in Bun\'s own loader (grammar shared with env-trust.ts)', async () => {
+    await withEnvFile(
+      'GBRAIN_TEST_ENV_FILE_A=first\rGBRAIN_TEST_ENV_FILE_B=second\r\nGBRAIN_TEST_ENV_FILE_C=third\n',
+      { GBRAIN_TEST_ENV_FILE_A: undefined, GBRAIN_TEST_ENV_FILE_B: undefined, GBRAIN_TEST_ENV_FILE_C: undefined },
+      () => {
+        loadConfig();
+        expect(process.env.GBRAIN_TEST_ENV_FILE_A).toBe('first');
+        expect(process.env.GBRAIN_TEST_ENV_FILE_B).toBe('second');
+        expect(process.env.GBRAIN_TEST_ENV_FILE_C).toBe('third');
+      },
+    );
+  });
+
   test('a missing ~/.gbrain/.env is not an error', async () => {
     await withEnvFile(null, {}, () => {
       const cfg = loadConfig();

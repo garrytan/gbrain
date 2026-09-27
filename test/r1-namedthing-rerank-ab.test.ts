@@ -295,9 +295,9 @@ describe('CLI', () => {
     expect(parseArgs([]).relationalPin).toBeUndefined();
     expect(parseArgs([]).searchPins).toBeUndefined();
     expect(parseArgs(['--search-pin', 'search.autocut=true'])).toMatchObject({ searchPins: { 'search.autocut': 'true' } });
-    expect(parseArgs(['--search-pin', ' search.relational_rerank_pin = 5 ', '--search-pin', 'search.token_budget=off', '--search-pin', 'search.token_budget=4000']).searchPins).toEqual({
+    expect(parseArgs(['--search-pin', ' search.relational_rerank_pin = 5 ', '--search-pin', 'search.tokenBudget=off', '--search-pin', 'search.tokenBudget=4000']).searchPins).toEqual({
       'search.relational_rerank_pin': '5',
-      'search.token_budget': '4000',
+      'search.tokenBudget': '4000',
     });
     // A value may itself contain '=' — only the first one splits.
     expect(parseArgs(['--search-pin', 'search.x=a=b']).searchPins).toEqual({ 'search.x': 'a=b' });
@@ -310,8 +310,8 @@ describe('CLI', () => {
     expect(buildOverlay(parseArgs(['--search-pin', 'search.autocut=false', '--autocut', 'on']))).toEqual({ 'search.autocut': 'true' });
     expect(buildOverlay(parseArgs(['--relational-pin', '3', '--search-pin', 'search.relational_rerank_pin=9']))).toEqual({ 'search.relational_rerank_pin': '3' });
     // Non-colliding search pins ride along untouched; no explicit flag → the pin stands.
-    expect(buildOverlay(parseArgs(['--autocut', 'off', '--search-pin', 'search.token_budget=4000', '--search-pin', 'search.autocut=true']))).toEqual({
-      'search.token_budget': '4000',
+    expect(buildOverlay(parseArgs(['--autocut', 'off', '--search-pin', 'search.tokenBudget=4000', '--search-pin', 'search.autocut=true']))).toEqual({
+      'search.tokenBudget': '4000',
       'search.autocut': 'false',
     });
     expect(buildOverlay(parseArgs(['--search-pin', 'search.autocut=true']))).toEqual({ 'search.autocut': 'true' });

@@ -10,8 +10,7 @@
  *   2.  Continuity: B writes → A reads (search + get_page); A's workspace
  *       stays invisible to B.
  *   3.  Isolation: an out-of-grant per-call source_id → permission_denied.
- *   4.  put_page with a foreign `source_id` param: warn-ignored (put_page
- *       declares no such param), row lands in the token's write source.
+ *   4.  put_page with a foreign `source_id` is denied without mutation.
  *   5.  Facts: B `remember`s a world fact → B and A (federated grant) recall
  *       it; a nova-scoped C does not — the cross-agent recall continuity pin.
  *   6.  Concurrency hammer: ~24 parallel put_page across A+B tokens.
@@ -412,29 +411,23 @@ describeE2E('serve-http multi-agent E2E (cathedral-6)', () => {
   }, 30_000);
 
   // =========================================================================
-  // Case 4 — put_page with a foreign source_id param (undeclared → warn-ignore)
+  // Case 4 — explicit source routing cannot expand the write grant
   // =========================================================================
 
-  test('case 4: put_page foreign source_id param is warn-ignored; row lands in the token write source', async () => {
-    // put_page declares NO source_id param; in the default strict_params=warn
-    // mode the dispatcher accepts the call, appends a warning content block,
-    // and the write routes by the TOKEN's source — never the param.
+  test('case 4: put_page foreign source_id is denied before mutation', async () => {
     const put = await callTool(tokenA!, 'put_page', {
       slug: 'agents/foreign-param',
       content: pageBody('Foreign param probe', 'Body written with a foreign source_id param.'),
       source_id: 'proj-widget',
     });
-    expect(put.isError).toBe(false);
-    expect(put.payload?.slug).toBe('agents/foreign-param');
-    // The warn-ignore block is model-visible (content[1]).
-    expect(put.text).toContain('unknown parameter "source_id" ignored');
+    expect(put.isError).toBe(true);
+    expect(put.payload?.error).toBe('permission_denied');
 
     const conn = getConn();
     const rows = await conn.unsafe(
       `SELECT source_id FROM pages WHERE slug = 'agents/foreign-param'`,
     ) as unknown as Array<{ source_id: string }>;
-    expect(rows.length).toBe(1);
-    expect(rows[0].source_id).toBe(A_SOURCE);
+    expect(rows).toEqual([]);
   }, 30_000);
 
   // =========================================================================
@@ -497,8 +490,8 @@ describeE2E('serve-http multi-agent E2E (cathedral-6)', () => {
     const puts: Put[] = [];
     for (let i = 0; i < 10; i++) puts.push({ token: tokenA!, slug: `hammer/a-${i}` });
     // shared-a: same slug, same source, written twice by A. The two writes
-    // sit in DIFFERENT chunks (sequential) so the case pins last-write-wins
-    // row semantics rather than manufacturing an insert race.
+    // sit in DIFFERENT chunks (sequential); the second carries the revision
+    // returned by the first committed request and is a canonical no-op.
     puts.push({ token: tokenA!, slug: 'hammer/shared-a' });
     for (let i = 0; i < 5; i++) puts.push({ token: tokenB!, slug: `hammer/b-${i}` });
     for (let i = 5; i < 10; i++) puts.push({ token: tokenB!, slug: `hammer/b-${i}` });
@@ -510,12 +503,27 @@ describeE2E('serve-http multi-agent E2E (cathedral-6)', () => {
     expect(puts.length).toBe(24);
 
     const failures: string[] = [];
+    const revisions = new Map<string, string>();
     for (let i = 0; i < puts.length; i += 8) {
       const chunk = puts.slice(i, i + 8);
       await Promise.all(chunk.map(async p => {
-        const res = await callTool(p.token, 'put_page', { slug: p.slug, content: body(p.slug) });
+        const key = `${p.token}:${p.slug}`;
+        const args = { slug: p.slug, content: body(p.slug), request_id: crypto.randomUUID(),
+          ...(revisions.has(key) ? { expected_revision: revisions.get(key)! } : {}) };
+        let res = await callTool(p.token, 'put_page', args);
+        const deadline = Date.now() + 30_000;
+        while (res.isError && res.payload?.write_request &&
+          ['queued', 'running', 'recovering'].includes(res.payload.write_request.state) && Date.now() < deadline) {
+          await Bun.sleep(100);
+          res = await callTool(p.token, 'put_page', args);
+        }
         if (res.status >= 500) failures.push(`${p.slug}: HTTP ${res.status}`);
         else if (res.isError) failures.push(`${p.slug}: isError ${res.text.slice(0, 200)}`);
+        else {
+          expect(res.payload?.write_request?.state).toBe('committed');
+          expect(typeof res.payload?.revision).toBe('string');
+          revisions.set(key, res.payload.revision);
+        }
       }));
     }
     expect(

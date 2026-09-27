@@ -7,6 +7,7 @@
 import { describe, expect, test } from 'bun:test';
 import { loadConfigWithEngine, DB_MERGED_PROVIDER_KEY_FIELDS, type GBrainConfig } from '../src/core/config.ts';
 import { FILE_PLANE_API_KEYS } from '../src/commands/config.ts';
+import { adaptiveReturnFromConfig } from '../src/core/search/return-policy.ts';
 
 interface FakeEngine {
   getConfig(key: string): Promise<string | null | undefined>;
@@ -658,5 +659,57 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
       expect(merged?.content_sanity?.disabled_patterns).toEqual([]);
     });
+  });
+});
+
+// #4605 — `search.adaptive_return*` are registered DB-plane keys (E5a) and the
+// 0.48.0.0 notes call them "now a real knob", but loadConfigWithEngine never
+// nested a search.* row, and hybrid.ts feeds adaptiveReturnFromConfig(cfg)
+// with THIS merged object — so `gbrain config set search.adaptive_return true`
+// was accepted, stored, echoed by `config get`, and never read. Same class and
+// same shape as the #1475 eval.* merge above (strict bool, file > DB, no
+// spurious container).
+describe('search.adaptive_return* DB-plane merge (#4605)', () => {
+  test('DB rows reach adaptiveReturnFromConfig', async () => {
+    const engine = makeEngine({
+      'search.adaptive_return': 'true',
+      'search.adaptive_return_entity_max': '1',
+      'search.adaptive_return_other_max': '7',
+      'search.adaptive_return_min_keep': '2',
+    });
+    const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+    expect(adaptiveReturnFromConfig(merged as Record<string, unknown> | null)).toEqual({
+      enabled: true,
+      entityMax: 1,
+      otherMax: 7,
+      minKeep: 2,
+    });
+  });
+
+  test('false reaches the runtime too (explicit opt-out), and the caps merge independently', async () => {
+    const merged = await loadConfigWithEngine(
+      makeEngine({ 'search.adaptive_return': 'false', 'search.adaptive_return_entity_max': '3' }),
+      { engine: 'pglite' },
+    );
+    expect(merged?.search).toEqual({ adaptive_return: false, adaptive_return_entity_max: 3 });
+  });
+
+  test('file plane wins over DB', async () => {
+    const base: GBrainConfig = { engine: 'pglite', search: { adaptive_return: false, adaptive_return_entity_max: 9 } };
+    const merged = await loadConfigWithEngine(
+      makeEngine({ 'search.adaptive_return': 'true', 'search.adaptive_return_entity_max': '1' }),
+      base,
+    );
+    expect(merged?.search).toEqual({ adaptive_return: false, adaptive_return_entity_max: 9 });
+  });
+
+  test('unrecognised bool / non-numeric cap are treated as unset; no keys → no container', async () => {
+    const junk = await loadConfigWithEngine(
+      makeEngine({ 'search.adaptive_return': 'TRUE', 'search.adaptive_return_other_max': 'lots' }),
+      { engine: 'pglite' },
+    );
+    expect(junk?.search).toBeUndefined();
+    const none = await loadConfigWithEngine(makeEngine({ embedding_multimodal: 'true' }), { engine: 'pglite' });
+    expect(none?.search).toBeUndefined();
   });
 });

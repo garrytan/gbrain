@@ -13,8 +13,20 @@
  *     (regression guard for FAIL-CLOSED behavior)
  */
 
-import { describe, test, expect } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, test, expect } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { matchesSlugAllowList, operations, OperationError, type OperationContext } from '../src/core/operations.ts';
+
+let engine: PGLiteEngine;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-allow-list-'));
+beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
+afterEach(async () => { expect(await engine.executeRaw('SELECT id FROM pages')).toEqual([]); await disposePersistenceConsumer(engine); });
+afterAll(async () => { await engine.disconnect(); rmSync(home, { recursive: true, force: true }); });
 
 const STUB_LOGGER = {
   info: () => {},
@@ -22,18 +34,16 @@ const STUB_LOGGER = {
   error: () => {},
 };
 
-const STUB_CONFIG = {} as unknown as Parameters<typeof operations[number]['handler']>[0]['config'];
+const STUB_CONFIG = { engine: 'pglite' as const, embedding_disabled: true };
 
 function findOp(name: string) {
   const op = operations.find(o => o.name === name);
   if (!op) throw new Error(`operation ${name} not found`);
-  return op;
+  return { ...op, handler: (ctx: OperationContext, p: Record<string, unknown>) => withEnv({ GBRAIN_HOME: home }, () => op.handler(ctx, p)) };
 }
 
-// Stub engine that fails loudly if put_page actually reaches importFromContent.
-// We expect every test in this file to short-circuit at the namespace/allow-list
-// check, so every engine method throws a recognizable error that lets us assert
-// "got past the gate" if it ever happens.
+// Dry-run validation is engine-free. Actual calls exercise registration and
+// the durable authority boundary with a real engine and persist no pages.
 function stubEngine() {
   return new Proxy({} as never, {
     get(_target, prop: string) {
@@ -44,11 +54,12 @@ function stubEngine() {
 
 function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
   return {
-    engine: stubEngine(),
+    engine: overrides.dryRun ? stubEngine() : engine,
     config: STUB_CONFIG,
     logger: STUB_LOGGER,
     dryRun: false,
     remote: true,
+    sourceId: 'default',
     viaSubagent: true,
     subagentId: 42,
     jobId: 100,
@@ -142,7 +153,7 @@ describe('put_page — trusted-workspace allow-list', () => {
     // The slug regex in validatePageSlug rejects `..`; here we test the
     // allow-list layer specifically with a slug that LOOKS legal but isn't on the list.
     await expect(put_page.handler(ctx, {
-      slug: 'wiki/people/garry-tan',
+      slug: 'wiki/people/alice-example',
       content: '---\ntitle: x\n---\nbody',
     })).rejects.toMatchObject({
       code: 'permission_denied',

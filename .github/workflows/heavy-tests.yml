@@ -210,7 +210,7 @@ jobs:
       HERMES_VERSION: "0.20.0"
       HERMES_GIT_TAG: "v2026.8.3"
       HERMES_GIT_COMMIT: "3c27eb6234bf91b8ceee9e9071591b31e9b148cb"
-      HERMES_INSTALL_SHA256: "2076946edc23b3aed4a82ccb2e6b38ab593575626206dbdd192384e375b6d57c"
+      HERMES_INSTALL_SHA256: "5854b15670b51a8daae8f59ddfa917062de9f74be261eb73b4b8d719710f8968"
       GBRAIN_REAL_HERMES_E2E: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -470,7 +470,7 @@ jobs:
       # keyless and paid runs each pay the 2-4 min compile.
       - name: Build gbrain (compile once for both door runs)
         run: |
-          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          bun build --compile --no-compile-autoload-bunfig --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
           echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
 
       # SECRETLESS provisioning: the npm registry verifies the per-platform
@@ -681,7 +681,7 @@ jobs:
 
       - name: Build gbrain (compile once for the doors)
         run: |
-          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          bun build --compile --no-compile-autoload-bunfig --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
           echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
 
       - name: Install codex + claude (pinned npm versions, refuse on drift)
@@ -784,7 +784,7 @@ jobs:
       # Compile gbrain ONCE for both bun test invocations below.
       - name: Build gbrain (compile once for both door runs)
         run: |
-          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          bun build --compile --no-compile-autoload-bunfig --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
           echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
 
       # SECRETLESS provisioning, pack-verify-install: `npm pack` DOWNLOADS
@@ -995,7 +995,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Build gbrain
         run: |
-          bun build --compile --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
+          bun build --compile --no-compile-autoload-bunfig --outfile "$RUNNER_TEMP/gbrain-door-bin" src/cli.ts
           echo "GBRAIN_COMPILED_BIN=$RUNNER_TEMP/gbrain-door-bin" >> "$GITHUB_ENV"
       - name: Install opencode@latest (unpinned — the whole point)
         timeout-minutes: 10

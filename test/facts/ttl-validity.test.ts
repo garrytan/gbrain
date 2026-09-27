@@ -112,8 +112,15 @@ describe('WP5 read-time TTL validity — active reads', () => {
   });
 
   test('findCandidateDuplicates (embedding branch) excludes lapsed rows', async () => {
-    const emb = new Float32Array(1536);
-    emb[7] = 1.0;
+    // TTL filtering is independent of the embedding model; match the actual
+    // facts column even when an earlier shard file changed the gateway shape.
+    const [column] = await engine.executeRaw<{ dims: number }>(
+      `SELECT atttypmod AS dims FROM pg_attribute
+       WHERE attrelid = 'facts'::regclass AND attname = 'embedding'`,
+    );
+    expect(column.dims).toBeGreaterThan(0);
+    const emb = new Float32Array(column.dims);
+    emb[0] = 1.0;
     const embEntity = 'people/ttl-embed-example';
     const lapsedEmb = await engine.insertFact(
       {

@@ -6,6 +6,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { __setEmbedTransportForTests } from '../../src/core/ai/gateway.ts';
 import { runSearchDiagnose } from '../../src/commands/search-diagnose.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
@@ -31,7 +32,7 @@ beforeAll(async () => {
     compiled_truth: 'Indoor greek amphitheater for adversarial debate.',
   });
   const ci: ChunkInput[] = [{ chunk_index: 0, chunk_text: 'Indoor greek amphitheater for adversarial debate.', chunk_source: 'compiled_truth', token_count: 10 }];
-  await engine.upsertChunks('projects/mingtang', ci);
+  await installFixtureChunks(engine, 'projects/mingtang', ci);
   await engine.setPageAliases('projects/mingtang', 'default', ['hall of light']);
 });
 

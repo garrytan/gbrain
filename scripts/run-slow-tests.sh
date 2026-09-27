@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 
 . scripts/lib/test-env.sh
 ensure_pglite_snapshot "run-slow-tests"
+ensure_default_pglite_snapshot "run-slow-tests"
 
 slow_files=()
 while IFS= read -r f; do

@@ -293,13 +293,13 @@ other config field):
 
 ```bash
 gbrain reinit-pglite --embedding-model voyage:voyage-code-3 --embedding-dimensions 1024
-gbrain reindex --code --yes
+gbrain reindex-code --yes
 ```
 
 (`gbrain config set embedding_model` is refused because the schema column
 has to resize alongside the config.)
 
-`gbrain reindex --code` prints a recommendation when the configured
+`gbrain reindex-code` prints a recommendation when the configured
 embedding model isn't code-tuned. Suppress with
 `GBRAIN_NO_CODE_MODEL_NUDGE=1` if you've intentionally chosen another
 provider (single-vendor procurement, compliance, no Voyage key).

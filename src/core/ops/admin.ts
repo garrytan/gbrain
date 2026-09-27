@@ -1,3 +1,5 @@
+import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
+import { PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
 import { readPolicyOpts } from './context.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 /**
@@ -146,7 +148,8 @@ const run_doctor: Operation = {
     // Source isolation (cross-model P1): a source-bound caller's report must
     // not aggregate other sources' activity. Scope-aware checks (connection,
     // brain_score, chronicle_projection_health, multi_source_drift,
-    // volunteer_channels, extract_atoms_backlog) filter on these ids;
+    // volunteer_channels, extract_atoms_backlog,
+    // contextual_retrieval_coverage) filter on these ids;
     // unscoped ctx = brain-wide.
     const scope = sourceScopeOpts(ctx);
     const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);
@@ -165,7 +168,8 @@ const get_versions: Operation = {
   handler: async (ctx, p) => {
     const versions = await ctx.engine.getVersions(p.slug as string, await readPolicyOpts(ctx));
     if (ctx.remote === false) return versions;
-    return versions.map(v => ({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth) }));
+    return versions.map(v => ({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth),
+      ...(typeof v.timeline === 'string' ? { timeline: sanitizeRemoteBody(v.timeline) } : {}) }));
   },
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
@@ -175,21 +179,17 @@ const revert_version: Operation = {
   name: 'revert_version',
   description: 'Revert page to a previous version',
   params: {
+    ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', required: true, description: 'Slug of the page to revert.' },
     version_id: { type: 'number', required: true, description: 'Numeric version id to revert to, as returned by get_versions. Not a version NUMBER offset — pass the id field.' },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    pageMutationSource(ctx, p, 'revert_version');
     enforceClientSlugFence(ctx, p.slug as string, 'revert_version');
     if (ctx.dryRun) return { dry_run: true, action: 'revert_version', slug: p.slug, version_id: p.version_id };
-    // v0.31.8 (D7): thread ctx.sourceId so multi-source brains revert the
-    // intended page row instead of whichever same-slug row Postgres returns
-    // first.
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    await ctx.engine.createVersion(p.slug as string, sourceOpts);
-    await ctx.engine.revertToVersion(p.slug as string, p.version_id as number, sourceOpts);
-    return { status: 'reverted' };
+    return submitPageMutation(ctx, { operation: 'revert_version', params: p });
   },
   cliHints: { name: 'revert', positional: ['slug', 'version_id'] },
 };

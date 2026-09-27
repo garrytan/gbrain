@@ -193,7 +193,8 @@ a recurring shell job shaped like:
 gbrain jobs submit shell --params '{"cmd": "cd <brain-repo> && git add projects/<pipeline-name> <output-dirs> && git commit -m \"<pipeline-name> ingest checkpoint\" && git push"}'
 ```
 
-Shell jobs require `GBRAIN_ALLOW_SHELL_JOBS=1` on the WORKER environment — see
+Shell jobs require the WORKER to be started with `gbrain jobs work --allow-shell-jobs`
+(or `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the worker) — see
 minion-orchestrator Preconditions. Do not set it yourself: it is an RCE-class
 authorization that belongs to the operator running the daemon, and a submit-side
 env prefix (`GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit ...`) is a no-op in

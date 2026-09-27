@@ -155,8 +155,10 @@ export async function doctorReportRemote(
   // When the arbiter is missing, EVERY putPage fails with "no unique or
   // exclusion constraint" and the version counter can't see it.
   {
-    const { pagesUpsertArbiterCheck } = await import('./checks/core-health.ts');
+    const { pagesUpsertArbiterCheck, linkSourceCheckConstraintCheck } = await import('./checks/core-health.ts');
     checks.push(await pagesUpsertArbiterCheck(engine));
+    // 2d. #4613: links_link_source_check shape — same drift class as 2b/2c.
+    checks.push(await linkSourceCheckConstraintCheck(engine));
   }
 
   // v0.42.x — Life Chronicle (#2390): orphaned event projections. Reads already
@@ -450,7 +452,7 @@ export async function doctorReportRemote(
   //   - chunker_version drift (pre-v40 pages not yet re-embedded)
   //   - contextual_retrieval_mode IS NULL (mode never evaluated)
   //   - synopsis-failures audit JSONL entries from the last 7 days
-  checks.push(await checkContextualRetrievalCoverage(engine));
+  checks.push(await checkContextualRetrievalCoverage(engine, { sourceIds: opts.sourceIds }));
 
   // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
   // search by the hard-exclude prefix policy. Pure SQL COUNT, safe on the

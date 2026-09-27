@@ -14,6 +14,12 @@ gbrain mcp grant NAME --harness ID --profile PROFILE --source SOURCE --url URL -
 gbrain mcp grant NAME --client ID --if-version N --profile PROFILE --url URL --harness ID --dry-run
 gbrain mcp verify --client ID --harness ID --url URL --credentials-file FILE [--delegate]
 gbrain mcp adapters | profiles
+gbrain mcp expose [--port N] [--funnel] [--surface verbs|starter|full] [--enable-dcr] [--no-tailscale] [--no-service] [--no-install] [--force] [--dry-run] [--yes] [--json]
+gbrain mcp expose --status [--json]
+gbrain mcp expose --remove [--yes] [--json]
+
+expose publishes the gbrain HTTP MCP server on your Tailscale tailnet (--funnel: public, for cloud agents)
+and keeps it running as a user service. Engine-free. See: gbrain mcp expose --help
 
 --profile defaults to memory-writer for new clients; omitted profiles preserve existing grants.
 Delegation requires --bound-tools T1,T2.
@@ -71,6 +77,14 @@ export function parseMcpGrant(args: string[]): ProvisionGrantInput {
 export async function runMcp(args: string[], engine?: BrainEngine): Promise<void> {
   const value = (flag: string) => { const i = args.indexOf(flag); return i < 0 ? undefined : args[i + 1]; };
   try {
+    if (args[0] === 'expose') {
+      // Engine-free Tailscale publication (src/commands/mcp-expose.ts) — it
+      // owns its own help, argument validation and exit-code mapping.
+      const { runMcpExpose } = await import('./mcp-expose.ts');
+      const code = await runMcpExpose(args.slice(1));
+      if (code !== 0) setCliExitVerdict(code);
+      return;
+    }
     if (!args.length || args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
     if (args[0] === 'adapters' || args[0] === 'profiles') validateHarnessArguments(args.slice(1), { flags: ['--json'] });
     if (args[0] === 'adapters') { console.log(JSON.stringify(publicHarnessMetadata(), null, 2)); return; }
@@ -90,7 +104,7 @@ export async function runMcp(args: string[], engine?: BrainEngine): Promise<void
       if (report.status !== 'passed') setCliExitVerdict(report.status === 'failed' ? 1 : 2);
       return;
     }
-    if (args[0] !== 'grant') throw new Error('Expected mcp grant, verify, adapters or profiles');
+    if (args[0] !== 'grant') throw new Error('Expected mcp grant, verify, adapters, profiles or expose');
     const input = parseMcpGrant(args);
     if ((!input.clientId || input.resume) && !input.dryRun && !value('--credentials-out')) throw new Error('--credentials-out is required before creating a client or resuming delivery');
     // Refuse an occupied handoff destination before granting anything.

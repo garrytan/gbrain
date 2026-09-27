@@ -59,7 +59,7 @@ test('re-embed merge via carryChunkMetadata keeps an image chunk image', async (
   ]);
 
   // Simulate the embed --stale merge: load chunks, rebuild ChunkInputs, upsert.
-  const loaded = await engine.getChunks('img-page');
+  const loaded = await engine.getChunks('img-page', { includeUnsealed: true });
   expect(loaded[0]!.modality).toBe('image');
   const merged = loaded.map(c => carryChunkMetadata(c, {
     chunk_index: c.chunk_index,
@@ -69,7 +69,7 @@ test('re-embed merge via carryChunkMetadata keeps an image chunk image', async (
   }));
   await engine.upsertChunks('img-page', merged);
 
-  const after = await engine.getChunks('img-page');
+  const after = await engine.getChunks('img-page', { includeUnsealed: true });
   expect(after[0]!.modality).toBe('image');
 });
 
@@ -82,7 +82,7 @@ test('write-side contract: omitting modality (pre-fix behavior) resets it to tex
   await engine.upsertChunks('img-page-2', [
     { chunk_index: 0, chunk_text: 'more ocr', chunk_source: 'compiled_truth' },
   ]);
-  const after = await engine.getChunks('img-page-2');
+  const after = await engine.getChunks('img-page-2', { includeUnsealed: true });
   // This assertion documents WHY the carry is load-bearing: the upsert
   // overwrites, so the omission class corrupts. If this ever flips to
   // COALESCE semantics, the carry (and this test) can be revisited.

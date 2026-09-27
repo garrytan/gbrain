@@ -44,7 +44,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Concrete content and derived-information read policy parity.
   "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
-  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
+  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts"],
   "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
   "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
@@ -147,7 +147,14 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Agent-job scope fences over real Postgres.
   "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
+  "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
+  "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
+  "src/core/persistence/**": ["test/e2e/persistence-chaos.test.ts", "test/e2e/persistence-runtime-matrix.test.ts"],
+  "src/core/pool-budget.ts": ["test/e2e/persistence-runtime-matrix.test.ts"],
+  "src/core/connection-manager.ts": ["test/e2e/persistence-runtime-matrix.test.ts", "test/e2e/pgbouncer-teardown.test.ts"],
   "src/core/postgres-engine.ts": [
+    "test/e2e/persistence-chaos.test.ts",
+    "test/e2e/db-lock-acquisition-token.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
@@ -165,6 +172,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
+    "test/e2e/persistence-chaos.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
     "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
@@ -225,7 +233,16 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Schema source of truth: any change must pass the cross-engine drift gate.
   "src/schema.sql": ["test/e2e/schema-drift.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts"],
-  "src/core/migrate.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/migrate-chain.test.ts"],
+  "src/core/migrate.ts": [
+    "test/e2e/schema-drift.test.ts",
+    "test/e2e/migrate-chain.test.ts",
+    "test/e2e/link-source-check-repair-postgres.test.ts",
+  ],
+  // #4613: the links_link_source_check self-heal must use migration v114's
+  // two-phase DDL (DROP + ADD NOT VALID, then VALIDATE outside the txn) on real
+  // Postgres — lock semantics PGLite can't observe. Keyed on the repair module
+  // and on migrate.ts (the definition it reproduces).
+  "src/core/link-source-check-repair.ts": ["test/e2e/link-source-check-repair-postgres.test.ts"],
   // MCP stdio + HTTP transports share dispatch.
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // G6: the --surface verbs CEILING journey over a real `serve --http` boot

@@ -30,7 +30,7 @@ describe('cli.ts — disconnect hard-deadline armed at teardown entry, not befor
     // Between the op-dispatch engine connect and the try there is no
     // setTimeout call site (`setTimeout(` matches calls only; the
     // ReturnType<typeof setTimeout> annotation stays allowed).
-    const connectIdx = cli.indexOf('// Local engine path (unchanged behavior for local installs).');
+    const connectIdx = cli.indexOf('// No live serve owns the selected brain; connect through the normal lock path.');
     expect(connectIdx).toBeGreaterThan(-1);
     const tryIdx = cli.indexOf('try {', connectIdx);
     expect(tryIdx).toBeGreaterThan(-1);

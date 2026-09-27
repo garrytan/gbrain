@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 // v0.42 Type Unification (T9) — rewriteLinksBatch primitive.
 //
 // Eng review Finding 1.2: rewriteLinks() called per-page (N calls) is fine
@@ -47,6 +48,7 @@ export async function rewriteLinksBatch(
   pairs: ReadonlyArray<RewriteLinkPair>,
 ): Promise<number> {
   if (pairs.length === 0) return 0;
+  await assertUnmanagedCanonicalWriter(engine, 'schema link rewrite');
   // Looking up new page_id for each (to_slug, source_id) pair in one query
   // via unnest, then updating links.from_page_id + links.to_page_id +
   // links.origin_page_id via correlated subquery against the resolved

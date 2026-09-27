@@ -1,16 +1,11 @@
 /**
- * put_page's write-through response on a durability-hardened repo reports
- * `committed: true` for both a successful and a FAILED background push — the
- * commit lands locally either way, but the push runs detached in the
- * post-commit hook, so the caller had no field to distinguish "pushed fine"
- * from "still local-only". This pins the honest contract: `committed` is
- * commit-only, `pushed: 'pending'` says the push outcome isn't known yet, and
- * `lastPushStatus` surfaces the hook's own log so a caller (or health
- * tooling) can see whether pushes for this branch are currently landing.
+ * Canonical publication and optional Git effects have separate durable
+ * outcomes. Receipt polling must distinguish an unconfigured upstream from
+ * a failed push without invalidating the already-committed canonical page.
  */
 
 import { describe, test, expect, beforeAll, beforeEach, afterEach, afterAll } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync, appendFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, chmodSync } from 'fs';
 import { execSync, execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -19,8 +14,12 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
+import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 const putPageOp = operations.find((o) => o.name === 'put_page')!;
+const receiptOp = operations.find((o) => o.name === 'get_write_request')!;
 
 let engine: PGLiteEngine;
 let repo: string;
@@ -59,6 +58,17 @@ function makeCtx(opts: Partial<OperationContext> = {}): OperationContext {
     sourceId: 'default',
     ...opts,
   };
+}
+
+async function settledGit(requestId: string, expected: 'skipped' | 'retrying'): Promise<any> {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const receipt: any = await receiptOp.handler(makeCtx(), { request_id: requestId });
+    const effect = receipt.effects.find((item: { kind: string }) => item.kind === 'git');
+    if (expected === 'skipped' ? effect?.push === 'skipped' : effect?.reason === 'git_push_unavailable' && effect.state === 'queued') return receipt;
+    if (Date.now() >= deadline) throw new Error(`Git effect did not settle: ${JSON.stringify(effect)}`);
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
 }
 
 describe('put_page write-through — commit/push reporting on a hardened repo', () => {
@@ -100,45 +110,49 @@ describe('put_page write-through — commit/push reporting on a hardened repo', 
     process.env.GBRAIN_HOME = gbrainHome;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await disposePersistenceConsumer(engine);
     if (oldGbrainHome === undefined) delete process.env.GBRAIN_HOME; else process.env.GBRAIN_HOME = oldGbrainHome;
     if (repo) rmSync(repo, { recursive: true, force: true });
     if (gbrainHome) rmSync(gbrainHome, { recursive: true, force: true });
   });
 
-  test('reports committed + pending push, not an implied success, with no push history yet', async () => {
+  test('reports durable Git work and an explicit skipped push without an upstream', async () => {
     const res: any = await putPageOp.handler(makeCtx(), {
       slug: 'notes/ppr-fresh',
       content: '---\ntype: concept\ntitle: PPR Fresh\n---\n\nbody',
     });
 
-    expect(res.write_through.committed).toBe(true);
-    expect(res.write_through.pushed).toBe('pending');
-    expect(res.write_through.lastPushStatus.status).toBe('unknown');
+    expect(res.state).toBe('committed');
+    expect(res.write_through.written).toBe(true);
+    expect(res.persistence.git_state).toBe('queued');
+    await runPersistenceEffects(engine, { engine: 'pglite', embedding_disabled: true }, { hostId: localHostId(), limit: 8 });
+    const settled = await settledGit(res.request_id, 'skipped');
+    expect(settled.state).toBe('committed');
+    expect(settled.revision).toBe(res.revision);
+    expect(settled.effects).toContainEqual({ kind: 'git', state: 'committed', push: 'skipped', reason: 'no_tracking_remote' });
+    expect(git(repo, 'show', 'HEAD:notes/ppr-fresh.md')).toContain('PPR Fresh');
   });
 
-  test('surfaces a prior LOCAL-ONLY push failure instead of hiding it behind committed:true', async () => {
-    // Simulate the hook having already logged an unresolved push failure for
-    // this branch (e.g. from an earlier write in the same session).
-    // CX2-8: GBRAIN_HOME is a PARENT dir — the resolved home is
-    // $GBRAIN_HOME/.gbrain, so the push log lives under it.
-    mkdirSync(join(gbrainHome, '.gbrain'), { recursive: true });
-    appendFileSync(
-      join(gbrainHome, '.gbrain', 'brain-push.log'),
-      '2025-01-01T00:00:00Z [push] LOCAL-ONLY, NEEDS ATTENTION: main @ deadbee could not reach origin. Run: gbrain sources pull <id> && git push\n',
-    );
+  test('a failed push remains retryable while the canonical receipt and local Git commit stay durable', async () => {
+    // A missing local Git remote exercises a real push failure without network
+    // access or hook subprocesses. The outbox disables the legacy hook.
+    git(repo, 'remote', 'add', 'origin', join(repo, 'missing-remote.git'));
+    git(repo, 'config', 'branch.main.remote', 'origin');
+    git(repo, 'config', 'branch.main.merge', 'refs/heads/main');
 
     const res: any = await putPageOp.handler(makeCtx(), {
       slug: 'notes/ppr-broken-push',
       content: '---\ntype: concept\ntitle: PPR Broken Push\n---\n\nbody',
     });
 
-    // The commit itself still succeeds (git commit doesn't touch the network) —
-    // that's the honest part of `committed: true`. What must NOT happen is the
-    // caller reading `committed: true` as "this is durably on the remote".
-    expect(res.write_through.committed).toBe(true);
-    expect(res.write_through.pushed).toBe('pending');
-    expect(res.write_through.lastPushStatus.status).toBe('needs_attention');
-    expect(res.write_through.lastPushStatus.detail).toContain('NEEDS ATTENTION');
+    expect(res.state).toBe('committed');
+    await runPersistenceEffects(engine, { engine: 'pglite', embedding_disabled: true }, { hostId: localHostId(), limit: 8 });
+    const receipt = await settledGit(res.request_id, 'retrying');
+    expect(receipt.state).toBe('committed');
+    expect(receipt.revision).toBe(res.revision);
+    expect(receipt.effects).toContainEqual({ kind: 'git', state: 'queued', reason: 'git_push_unavailable' });
+    expect(receipt.effects.some((effect: { push?: string }) => effect.push === 'committed')).toBe(false);
+    expect(git(repo, 'show', 'HEAD:notes/ppr-broken-push.md')).toContain('PPR Broken Push');
   });
 });

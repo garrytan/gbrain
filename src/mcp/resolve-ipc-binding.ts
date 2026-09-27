@@ -33,12 +33,15 @@ import { VOLUNTEER_MAX_PAGES_CAP } from '../core/context/volunteer.ts';
 import { assembleTurnContext } from '../core/context/turn-context.ts';
 import { makeContextPackIpcHandler } from './context-pack-handler.ts';
 import { logTurnContextDeliveryFireAndForget } from '../core/context/volunteer-events.ts';
+import { persistenceSocketPathForConfig, startPersistenceIpcServer, type PersistenceIpcProvider, type PersistenceIpcBinding } from '../core/persistence/ipc.ts';
 
 export interface ResolveIpcBinding {
   /** The bound listener, or null when binding was skipped/failed (best-effort). */
   server: Server | null;
   /** The socket path the listener bound (null when not bound). */
   socketPath: string | null;
+  /** Dedicated persistence listener; its larger frames never enter hook handlers. */
+  persistence?: PersistenceIpcBinding;
   /** Idempotent teardown: close the listener + reap the socket file. */
   close(): void;
 }
@@ -81,11 +84,23 @@ export function isVolunteerProbeShaped(req: {
 export async function bindResolveIpcForServe(
   engine: BrainEngine,
   defaultSource: string,
+  persistenceProvider?: PersistenceIpcProvider,
 ): Promise<ResolveIpcBinding> {
+  let persistence: PersistenceIpcBinding | null = null;
   try {
     const cfg = loadConfig();
     const resolveSocket = resolveSocketPathForConfig(cfg);
     if (!resolveSocket) return NULL_BINDING;
+
+    if (persistenceProvider && cfg?.engine === 'pglite') {
+      const persistenceSocket = persistenceSocketPathForConfig(cfg);
+      if (persistenceSocket) {
+        try { persistence = await startPersistenceIpcServer(persistenceSocket, persistenceProvider); }
+        catch {
+          process.stderr.write('[persistence-ipc] listener unavailable; local callers will receive owner_unavailable.\n');
+        }
+      }
+    }
 
     // [S3#6] turn_context requires the shared secret from the config-keyed
     // path (created 0600 here if absent). If the secret can't be
@@ -224,21 +239,26 @@ export async function bindResolveIpcForServe(
 
     // startResolveIpcServer returns null when the socket is already owned
     // by a live listener (another serve) — that serve is the IPC provider.
-    if (!server) return NULL_BINDING;
+    if (!server && !persistence) return NULL_BINDING;
 
     let closed = false;
     return {
       server,
-      socketPath: resolveSocket,
+      socketPath: server ? resolveSocket : null,
+      ...(persistence ? { persistence } : {}),
       close: () => {
         if (closed) return;
         closed = true;
         // server.close() unlinks the pathname THIS listener bound; never
         // blind-unlink the path — it may belong to a newer live serve (#4896).
-        try { server.close(); } catch { /* noop */ }
+        try { server?.close(); } catch { /* noop */ }
+        persistence?.close();
       },
     };
   } catch {
+    if (persistence) {
+      return { server: null, socketPath: null, persistence, close: () => persistence?.close() };
+    }
     /* resolve IPC is best-effort; never block serve */
     return NULL_BINDING;
   }

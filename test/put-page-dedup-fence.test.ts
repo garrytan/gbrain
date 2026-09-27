@@ -26,8 +26,15 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { operations, OperationError } from '../src/core/operations.ts';
 import type { OperationContext, Operation, AuthInfo } from '../src/core/operations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv } from './helpers/with-env.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 let engine: PGLiteEngine;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-dedup-fence-'));
+let victimRevision: string;
 
 const VICTIM_SLUG = 'people/alice-example';
 const VICTIM_ID = 'external-uuid-victim';
@@ -45,7 +52,7 @@ function page(id: string, body: string): string {
 function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
   return {
     engine,
-    config: { engine: 'pglite' } as any,
+    config: { engine: 'pglite', embedding_disabled: true },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     remote: true,
@@ -58,6 +65,7 @@ function boundAuth(prefixes: string[]): AuthInfo {
   return {
     token: 'test-token',
     clientId: 'gbrain_cl_dedup_fence',
+    principal: { kind: 'oauth_client', id: 'gbrain_cl_dedup_fence' },
     scopes: ['read', 'write', 'agent'],
     sourceId: 'default',
     boundSlugPrefixes: prefixes,
@@ -66,7 +74,7 @@ function boundAuth(prefixes: string[]): AuthInfo {
 
 /** The attacker's move: echo the victim's frontmatter id under an in-fence slug. */
 async function putEchoingVictimId(ctx: OperationContext, slug: string, id = VICTIM_ID) {
-  return put().handler(ctx, { slug, content: page(id, 'Attacker body, different text.') });
+  return withEnv({ GBRAIN_HOME: home }, () => put().handler(ctx, { slug, content: page(id, 'Attacker body, different text.') }));
 }
 
 async function expectFenced(p: Promise<unknown>): Promise<void> {
@@ -76,10 +84,11 @@ async function expectFenced(p: Promise<unknown>): Promise<void> {
   } catch (e) {
     expect(e).toBeInstanceOf(OperationError);
     expect((e as OperationError).code).toBe('permission_denied');
-    expect((e as Error).message).toContain('write scope');
     // The oracle guard: the resolved slug belongs to a page the caller may
     // not see, so it must never appear in the denial.
     expect((e as Error).message).not.toContain('alice-example');
+    expect(JSON.stringify(e)).not.toContain(VICTIM_SLUG);
+    expect((await engine.readPageSnapshot(VICTIM_SLUG, { sourceId: 'default' }))!.revision).toBe(victimRevision);
   }
 }
 
@@ -90,16 +99,21 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  if (engine) await engine.disconnect();
+  if (engine) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
+  rmSync(home, { recursive: true, force: true });
 }, 60_000);
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,scope,source_id,federated_read,bound_slug_prefixes,bound_tools,delegated_slug_prefixes,bound_source_id,bound_max_concurrent)
+    VALUES('gbrain_cl_dedup_fence','Example dedup client','read write agent','default',$1,$2,$3,$4,'default',1)`,
+  [['default'], ['emp-bob/'], ['put_page'], ['emp-bob/*']]);
   const victim = await importFromContent(engine, VICTIM_SLUG, page(VICTIM_ID, 'Confidential.'), {
     noEmbed: true,
     sourceId: 'default',
   });
   expect(victim.status).toBe('imported');
+  victimRevision = (await engine.readPageSnapshot(VICTIM_SLUG, { sourceId: 'default' }))!.revision;
 });
 
 describe('put_page: dedup-resolved slug is fenced by the caller\'s own confinement', () => {
@@ -149,7 +163,7 @@ describe('put_page: dedup-resolved slug is fenced by the caller\'s own confineme
     const r = await putEchoingVictimId(ctx, 'wiki/agents/7/second', 'in-fence-id') as {
       slug: string; status: string;
     };
-    expect(r.status).toBe('skipped');
+    expect(r.status).toBe('duplicate');
     expect(r.slug).toBe('wiki/agents/7/first');
   });
 
@@ -166,7 +180,7 @@ describe('put_page: dedup-resolved slug is fenced by the caller\'s own confineme
     const r = await putEchoingVictimId(ctx, 'emp-bob/second', 'bob-id') as {
       slug: string; status: string;
     };
-    expect(r.status).toBe('skipped');
+    expect(r.status).toBe('duplicate');
     expect(r.slug).toBe('emp-bob/first');
   });
 
@@ -182,7 +196,8 @@ describe('put_page: dedup-resolved slug is fenced by the caller\'s own confineme
 
   test('regression: an unconfined caller keeps the dedup redirect', async () => {
     const r = await putEchoingVictimId(makeCtx(), 'anywhere/notes') as { slug: string; status: string };
-    expect(r.status).toBe('skipped');
+    expect(r.status).toBe('duplicate');
     expect(r.slug).toBe(VICTIM_SLUG);
+    expect((await engine.readPageSnapshot(VICTIM_SLUG, { sourceId: 'default' }))!.revision).toBe(victimRevision);
   });
 });

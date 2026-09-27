@@ -402,3 +402,23 @@ describe('extractLinksFromFile — slug normalization (T-OBS-1 regression)', () 
     expect(links[0].from_slug).toBe('decisions/0001-living-repo-pattern');
   });
 });
+
+// #4995: the FS walker's mdPattern required `.md)` to be adjacent, so an
+// anchored link (`[B](b.md#section)`) produced no edge — while its own doc
+// comment promised anchors are stripped.
+describe('#4995 — anchored markdown links on the FS path', () => {
+  it('extractMarkdownLinks strips the #anchor', () => {
+    const links = extractMarkdownLinks('[see](b.md#section) and [D](../registry/tally.md#a b)');
+    expect(links).toHaveLength(2);
+    expect(links[0].relTarget).toBe('b.md');
+    expect(links[1].relTarget).toBe('../registry/tally.md');
+  });
+
+  it('extractLinksFromFile links an anchored sibling', async () => {
+    const allSlugs = new Set(['a', 'b']);
+    const links = await extractLinksFromFile('See [B](b.md#section).', 'a.md', allSlugs);
+    expect(links).toHaveLength(1);
+    expect(links[0].from_slug).toBe('a');
+    expect(links[0].to_slug).toBe('b');
+  });
+});

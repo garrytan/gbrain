@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 /**
  * google-source — Gmail/Calendar/Contacts sync for the `google` source kind.
  *
@@ -911,13 +912,16 @@ async function runExtractAndEmbed(
 
   if (!deps.opts.noExtract && totalChanges <= 100) {
     try {
-      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted } = await import('../../commands/extract.ts');
+      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted, slugsSafeToStamp } = await import('../../commands/extract.ts');
       const extractOpts = { sourceId: deps.sourceId };
-      await extractLinksForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
-      await extractTimelineForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
+      const linksResult = await extractLinksForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
+      const timelineResult = await extractTimelineForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
+      // Stamp only the slugs both hooks actually read from disk; a page the
+      // extractor skipped stays stale for 'gbrain extract --stale'.
       await stampExtracted(
         deps.engine,
-        pagesAffected.map((slug) => ({ slug, source_id: deps.sourceId })),
+        slugsSafeToStamp(linksResult, timelineResult)
+          .map((slug) => ({ slug, source_id: deps.sourceId })),
       );
     } catch { /* extraction is best-effort */ }
   } else if (totalChanges > 100 && !deps.opts.noExtract) {
@@ -956,6 +960,7 @@ export async function runGoogleSync(
   fetchImpl?: FetchImpl,
   vaultOverride?: CredentialVault,
 ): Promise<SyncResult> {
+  await assertUnmanagedCanonicalWriter(engine, 'Google source sync');
   if (!cfg.account) {
     throw new Error(
       `Google source "${sourceId}" has no account configured. Re-add it: gbrain sources add ${sourceId} --kind google --account <email>`,

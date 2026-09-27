@@ -11,6 +11,7 @@ conversation. Those are separate release checks.
 | Backup and restore | Database-only facts, private archive permissions, checksums/path rejection, changing-file rejection, private staging after interrupted publication, relocated writes, original-brain preservation, and unfinished-job quarantine | Explicitly choose and verify a protected off-VM copy |
 | Memory behavior | Remember, recall, correction, withdrawal, restart, and withdrawal surviving stale-source reimport | Observe GBrain calls across actual harness conversations |
 | Hosted onboarding | Real CLI → HTTP administration → private credential handoff → MCP memory round trip, on PostgreSQL and PGLite | Reload the native client and observe its calls |
+| Tailscale publish (`gbrain mcp expose`) | Pure helpers (status/serve-status parsing including `funnelCapable` and foreground sessions, install and login argv — `set --operator` then flagless `up` — error classification), service rendering (wrapper, launchd plist, systemd unit — no token literal in any generated file, `%` escaping, 0600 token and receipt, symlinked paths refused), and the command against a fake Tailscale runner in a temporary home: dry-run plan without mutations, consent exit 2 and interactive decline, missing-binary plan and install path, the HTTPS / Funnel pre-checks stopping at exit 2 before any `serve` argv, `linux-systemd` happy path producing receipt + wrapper + unit (`enable` + `restart`), classified `https_not_enabled`, foreign-handler refusal and foreign-listener refusal before any publish, `verify.local` timeout, `--no-service` re-run preserving the service block, `--status` with and without a receipt, `--remove` leaving Tailscale and the token file in place | A real tailnet: certificate issuance, `tailscale serve` and `funnel` reachability, the macOS app-bundle CLI accepting `up`/`serve`, and a cloud agent reaching the Funnel URL |
 | Grants and tokens | Profiles, separate write fences, operation ceilings, source restrictions, revision conflicts, stable credentials, scope removal, refresh ceilings, and confidential/public PKCE flows | A real Grok Bot native OAuth connector test before promoting that adapter |
 | Delegation | Atomic admission, queued/running policy changes, replay restrictions, per-client accounting, and a real HTTP → queue → CLI worker journey | Confirm the deployed worker and configured provider complete the actual task |
 | Admin UI | Headless Chrome against the real HTTP/PostgreSQL service: preview, creation, unlimited/concurrency-1 defaults, stale-edit rejection, reload, lost-response reconciliation, and credential recovery without duplicate grants or secret rotation | Normal operator deployment checks |
@@ -72,6 +73,11 @@ the result of every cleanup. A fluent answer alone is insufficient.
    the original remains unchanged.
 5. If delegation is granted, explicitly run the paid worker challenge. Require
    the randomized terminal result and successful cleanup, not just a job ID.
+
+When the brain is published with `gbrain mcp expose`, also record
+`gbrain mcp expose --status` on the host (service running, publish config
+present, local and tailnet health `ok`) alongside the client-side
+`gbrain mcp verify` result; the two prove different halves.
 
 Missing native activation, untested persistence, unknown mutation outcomes,
 unavailable workers, and failed cleanup stay incomplete. Muse native MCP support

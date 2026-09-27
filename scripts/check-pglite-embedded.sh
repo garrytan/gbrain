@@ -36,6 +36,7 @@ GBRAIN_HOME_DIR="$BUILD_DIR/home"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 mkdir -p "$BUILD_DIR/scripts" "$GBRAIN_HOME_DIR"
 cp -R "$REPO_ROOT/src" "$BUILD_DIR/src"
+cp -R "$REPO_ROOT/native" "$BUILD_DIR/native"
 # Shared operation/queue boundaries can reach embedded bootstrap assets even
 # from an engine-only import. Keep the compiled graph's file imports available.
 cp -R "$REPO_ROOT/templates" "$BUILD_DIR/templates"
@@ -46,7 +47,7 @@ ln -s "$REPO_ROOT/node_modules" "$BUILD_DIR/node_modules"
 
 # Compile a focused smoketest (imports PGLiteEngine, not the whole CLI) so the
 # failure mode is laser-focused on PGLite asset embedding, not unrelated wiring.
-if ! (cd "$BUILD_DIR" && bun build --compile --outfile "$OUT_BIN" scripts/pglite-embedded-smoketest.ts >"$BUILD_DIR/compile.log" 2>&1); then
+if ! (cd "$BUILD_DIR" && bun build --compile --no-compile-autoload-bunfig --outfile "$OUT_BIN" scripts/pglite-embedded-smoketest.ts >"$BUILD_DIR/compile.log" 2>&1); then
   # In some sandboxes `bun build --compile` is unavailable (no network for the
   # baseline download, seccomp, etc). Fail SOFT there — like the compiled-binary
   # e2e — so local dev without compile support isn't blocked. CI has compile.

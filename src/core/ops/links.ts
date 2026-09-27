@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from '../persistence/maintenance.ts';
 /**
  * Links + graph operation cluster — pure move from operations.ts (v0.46.x
  * tranche 1). MANAGED_LINK_SOURCES stays exported (test suite + operations.ts
@@ -75,6 +76,7 @@ const add_link: Operation = {
       }
     }
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
+    await assertUnmanagedCanonicalWriter(ctx.engine, 'add_link');
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
     // 'markdown' default) so hand/tool-created CLI edges are honestly manual,
     // and forbid forging the reconciliation-managed built-ins.
@@ -128,6 +130,7 @@ const remove_link: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
+    await assertUnmanagedCanonicalWriter(ctx.engine, 'remove_link');
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
       : undefined;

@@ -1,3 +1,10 @@
+import { MANAGED_WRITER_GUARD_SQL } from './persistence/writer-guard-schema.ts';
+import { PERSISTENCE_TOPOLOGY_SCHEMA_SQL } from './persistence/topology-schema.ts';
+import { PERSISTENCE_SCHEMA_STATEMENTS, PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL } from './persistence/schema.ts';
+import { PERSISTENCE_EFFECT_SCHEMA_SQL } from './persistence/effect-schema.ts';
+import { PAGE_PROJECTION_SCHEMA_SQL, PAGE_PROJECTION_ACTIVATION_SQL } from './page-state/projection-schema.ts';
+import { LEASE_TOKEN_SCHEMA_SQL } from './lease-schema.ts';
+import { PAGE_STATE_SCHEMA_SQL, PAGE_VERSION_DELETION_SCHEMA_SQL } from './page-state/schema.ts';
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
 import { getFtsLanguage } from './fts-language.ts';
@@ -10,6 +17,7 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
+import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
 import { GRANT_COLUMNS_SQL, GRANT_AUDIT_SCHEMA_SQL, GRANT_SPEND_COLUMNS_SQL } from './grants/schema.ts';
 import { FACT_WITHDRAWAL_SCHEMA_SQL, FACT_WITHDRAWAL_BACKFILL_SQL } from './facts/withdrawal-schema.ts';
 import { repairLegacyClientGrants } from './grants/migration.ts';
@@ -6551,6 +6559,16 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
   FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol();
     `,
   },
+  { version: 150, name: 'canonical_page_revisions_and_guards', idempotent: true, sql: PAGE_STATE_SCHEMA_SQL },
+  { version: 151, name: 'durable_concurrent_persistence', idempotent: true, sql: PERSISTENCE_SCHEMA_STATEMENTS.join(';\n') + ';' },
+  { version: 152, name: 'unique_lock_acquisition_tokens', idempotent: true, sql: LEASE_TOKEN_SCHEMA_SQL },
+  { version: 153, name: 'verified_text_projection_activation', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL + PAGE_PROJECTION_ACTIVATION_SQL },
+  { version: 154, name: 'preserve_sanitized_page_search_vectors', idempotent: true, sql: PAGE_PROJECTION_SCHEMA_SQL },
+  { version: 155, name: 'recoverable_postcommit_persistence_effects', idempotent: true, sql: PERSISTENCE_EFFECT_SCHEMA_SQL },
+  { version: 156, name: 'managed_alias_and_source_checkpoint_guards', idempotent: true, sql: MANAGED_WRITER_GUARD_SQL },
+  { version: 157, name: 'recoverable_source_topology', idempotent: true, sql: PERSISTENCE_TOPOLOGY_SCHEMA_SQL },
+  { version: 158, name: 'canonical_version_deletion_state', idempotent: true, sql: PAGE_VERSION_DELETION_SCHEMA_SQL },
+  { version: 159, name: 'index_retained_publication_recovery', idempotent: true, sql: PERSISTENCE_REQUEST_RECOVERY_INDEX_SQL + ';' },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -6924,6 +6942,27 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
       );
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
+  // #4613: same drift class for links_link_source_check. A brain stamped past
+  // v114 whose CHECK still carries the pre-v114 allowlist rejects every kebab
+  // provenance write; the version counter can't see it. Refuses loudly on
+  // violators. Ledger-gated: below v114 the pending loop replays v114 itself
+  // (the repair would rewrite the constraint twice; pre-v11 has no column).
+  if (current >= LINK_SOURCE_GATE_MIGRATION_VERSION) {
+    try {
+      const l = await repairLinkSourceCheck(engine);
+      if (l.repaired) {
+        console.error(`[migrate] restored links_link_source_check to the v114 kebab-case gate (#4613)`);
+      } else if (l.reason === 'violations') {
+        console.error(
+          `[migrate] cannot restore links_link_source_check: ${l.violations} links row(s) have a ` +
+          `non-kebab link_source — fix or delete them, then re-run (#4613). See \`gbrain doctor\`.`,
+        );
+      }
+    } catch (e) {
+      console.error(`[migrate] links_link_source_check self-heal could not run (#4613): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   if (pending.length === 0) {
     return { applied: 0, current };

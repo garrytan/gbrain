@@ -16,7 +16,7 @@ Two equivalent paths:
   guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
   containers plus a transaction-mode PgBouncer service (unit phase keeps
   `DATABASE_URL` unset; `--no-shard` for the legacy sequential flow). Stronger
-  than PR CI's 2-file Tier 1 set; closer to what nightly Tier 1 catches. Spins
+  than PR CI's four-file Tier 1 job; closer to what nightly Tier 1 catches. Spins
   up + tears down postgres automatically via `docker-compose.ci.yml`. Override
   the host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
 - `bun run ci:local:diff` runs only the E2E files matched by the diff selector
@@ -41,7 +41,10 @@ Three ways to actually gate on types:
 1. `bun run verify` — runs the shell guard checks (privacy, jsonb, source-id,
    progress-to-stdout, …) plus `bun run typecheck` in parallel
    (`scripts/run-verify-parallel.sh`). Use this mid-branch.
-2. `bun run typecheck` — `tsc --noEmit` standalone. Fast (~5s on this repo).
+2. `bun run typecheck` — standalone TypeScript checking with native incremental
+   analysis in ignored `node_modules/.cache/gbrain-typecheck.tsbuildinfo`. Cold
+   checks still analyze the whole project; repeated checks reuse compiler state
+   while retaining input invalidation and diagnostics. See [Testing](TESTING.md).
 3. `bun run ci:local` — the full local CI gate from Path A.
 
 The trap is: writing a new test, running `bun test test/foo.test.ts`,

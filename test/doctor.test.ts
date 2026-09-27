@@ -376,6 +376,8 @@ describe('doctor command', () => {
     const source = doctorSource();
     expect(source).toContain('jsonb_integrity');
     expect(source).toContain('markdown_body_completeness');
+    // 0.48.5.1: the truncated-page hint must not name a flag `gbrain sync` does not have.
+    expect(source).not.toContain('gbrain sync --force');
     expect(source).toContain('gbrain repair-jsonb');
   });
 

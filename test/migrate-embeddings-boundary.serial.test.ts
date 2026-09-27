@@ -26,6 +26,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import {
   configureGateway,
   resetGateway,
@@ -98,7 +99,7 @@ beforeAll(async () => {
   // 3 pages x 2 chunks each = 6 chunks.
   for (const slug of PAGES) {
     await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}` });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: `${slug} chunk zero`, chunk_source: 'compiled_truth', token_count: 4 },
       { chunk_index: 1, chunk_text: `${slug} chunk one`, chunk_source: 'compiled_truth', token_count: 4 },
     ]);

@@ -82,16 +82,29 @@ the default and what existing installs already run.
 
 ## Option 2: Remote, one command (fastest from a bearer token)
 
-If GBrain is running somewhere as an HTTP server (`gbrain serve --http`, see the
-[ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md)) and you have a bearer token,
-let `gbrain connect` generate the wire-up for you.
+If GBrain is running somewhere as an HTTP server and you have a bearer token,
+let `gbrain connect` generate the wire-up for you. On the brain host,
+`gbrain mcp expose` publishes the server on your Tailscale tailnet and prints
+`https://your-machine.your-tailnet.ts.net/mcp` (tailnet-only is enough for
+your own laptops; [remote MCP guide](../guides/remote-mcp.md)). ngrok stays an
+alternative ([ngrok-tunnel recipe](../../recipes/ngrok-tunnel.md)) — substitute
+its URL below.
+
+**Say to your agent:** *"use my brain over mcp"* — *"put my brain on tailscale"*.
 
 On the host (or anywhere `gbrain` is installed), mint a token and print the block:
 
 ```bash
 gbrain auth create "claude-code"
-gbrain connect https://YOUR-DOMAIN.ngrok.app/mcp --token gbrain_xxx
+gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx
 ```
+
+> **PGLite brains:** `gbrain auth create` opens the database, which fails with
+> `live_serve` while the expose-managed service holds it. Mint the token
+> **before** the service runs (ahead of `gbrain mcp expose`, or while the service
+> is stopped briefly), or provision through the running server instead —
+> `gbrain mcp grant … --admin-token-file ~/.gbrain/serve/admin-token` or the
+> `/admin` dashboard. Postgres brains mint fine while the server runs.
 
 `gbrain connect` prints a short, copy-paste block. Paste it into Claude Code — it
 runs the `claude mcp add` for you and tells the agent to call `get_brain_identity`
@@ -101,7 +114,7 @@ Already on the machine you want to wire up? Skip the copy-paste and let `connect
 do it directly, with a built-in token smoke-test:
 
 ```bash
-gbrain connect https://YOUR-DOMAIN.ngrok.app --token gbrain_xxx --install
+gbrain connect https://your-machine.your-tailnet.ts.net --token gbrain_xxx --install
 ```
 
 (`--install` runs `claude mcp add`, then verifies the token by calling
@@ -112,7 +125,7 @@ appended; pass an explicit `https://` scheme.)
 Pipe-friendly machine output (token redacted unless `--show-token`):
 
 ```bash
-gbrain connect https://YOUR-DOMAIN.ngrok.app/mcp --token gbrain_xxx --json
+gbrain connect https://your-machine.your-tailnet.ts.net/mcp --token gbrain_xxx --json
 ```
 
 ## Option 3: Remote, manual `claude mcp add`
@@ -121,12 +134,12 @@ Equivalent to what `gbrain connect` generates, if you'd rather run it yourself:
 
 ```bash
 claude mcp add gbrain -t http \
-  https://YOUR-DOMAIN.ngrok.app/mcp \
+  https://your-machine.your-tailnet.ts.net/mcp \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-Replace `YOUR-DOMAIN` with your ngrok domain and `YOUR_TOKEN` with a token from
-`gbrain auth create "claude-code"`.
+Replace the host with your MagicDNS name (or your ngrok domain) and
+`YOUR_TOKEN` with a token from `gbrain auth create "claude-code"`.
 
 > A `gbrain auth create` token is a long-lived, full-access secret. Keep it
 > private (it lands in `~/.claude.json`), and prefer a scoped/short-lived token

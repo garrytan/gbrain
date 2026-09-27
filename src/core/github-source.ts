@@ -1,3 +1,4 @@
+import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 /**
  * github-source — GitHub issues/PR sync for the `github` source kind.
  *
@@ -1160,6 +1161,7 @@ export async function runGitHubSync(
   opts: SyncOpts,
   fetchImpl?: FetchImpl,
 ): Promise<import('../commands/sync.ts').SyncResult> {
+  await assertUnmanagedCanonicalWriter(engine, 'GitHub source sync');
   // Credential source: a GitHub App (auto-minted hourly installation tokens)
   // wins when configured; otherwise cfg.tokenEnv is the single source of
   // truth (the default is GH_TOKEN; a custom --token-env that is unset fails
@@ -1484,13 +1486,16 @@ async function runExtractAndEmbed(
 
   if (!deps.opts.noExtract && totalChanges <= 100) {
     try {
-      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted } = await import('../commands/extract.ts');
+      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted, slugsSafeToStamp } = await import('../commands/extract.ts');
       const extractOpts = { sourceId: deps.sourceId };
-      await extractLinksForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
-      await extractTimelineForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
+      const linksResult = await extractLinksForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
+      const timelineResult = await extractTimelineForSlugs(deps.engine, deps.cfg.dir, pagesAffected, extractOpts);
+      // Stamp only the slugs both hooks actually read from disk; a page the
+      // extractor skipped stays stale for 'gbrain extract --stale'.
       await stampExtracted(
         deps.engine,
-        pagesAffected.map((slug) => ({ slug, source_id: deps.sourceId })),
+        slugsSafeToStamp(linksResult, timelineResult)
+          .map((slug) => ({ slug, source_id: deps.sourceId })),
       );
     } catch { /* extraction is best-effort */ }
   } else if (totalChanges > 100 && !deps.opts.noExtract) {

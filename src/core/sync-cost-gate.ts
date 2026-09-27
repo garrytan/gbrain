@@ -365,8 +365,13 @@ interface CostGateContext {
   autoSubmitEnabled: boolean;
 }
 
+/**
+ * #4684: under `--json` a proceed path never prints — it hands its status
+ * object back as `notice` so the caller nests it in the ONE terminal envelope
+ * (`cost_gate`). Human output and every 'stop' path print here unchanged.
+ */
 type CostGateOutcome =
-  | { action: 'proceed'; autoDeferEmbeds: boolean }
+  | { action: 'proceed'; autoDeferEmbeds: boolean; notice?: Record<string, unknown> }
   | { action: 'stop' };
 
 type ManualDrainReason = 'no_worker_surface' | 'auto_submit_disabled';
@@ -466,15 +471,14 @@ export async function runInlineCostGate(
         return { action: 'stop' };
       }
       if (jsonOut) {
-        console.log(JSON.stringify({
+        return { action: 'proceed', autoDeferEmbeds: false, notice: {
           status: 'manual_drain_required', mode, gate: 'manual_drain_required',
           reason: manualDrainReason, workerSurface: ctx.workerSurface.status, staleChars, staleCostUsd,
           capUsd: formatUsdLimit(capUsd), floorUsd: formatUsdLimit(floorUsd),
           model: embeddingModelName, manualCommands: commands,
-        }));
-      } else {
-        console.log(manualMsg);
+        } };
       }
+      console.log(manualMsg);
       return { action: 'proceed', autoDeferEmbeds: false };
     }
     if (dryRun) {
@@ -487,10 +491,9 @@ export async function runInlineCostGate(
       return { action: 'stop' };
     }
     if (jsonOut) {
-      console.log(JSON.stringify({ status: 'deferred', mode, gate: 'deferred_notice', staleChars, staleCostUsd, capUsd: formatUsdLimit(capUsd), floorUsd: formatUsdLimit(floorUsd), queuedBackfills, model: embeddingModelName }));
-    } else {
-      console.log(deferredMsg);
+      return { action: 'proceed', autoDeferEmbeds: false, notice: { status: 'deferred', mode, gate: 'deferred_notice', staleChars, staleCostUsd, capUsd: formatUsdLimit(capUsd), floorUsd: formatUsdLimit(floorUsd), queuedBackfills, model: embeddingModelName } };
     }
+    console.log(deferredMsg);
     return { action: 'proceed', autoDeferEmbeds: false };
   }
 
@@ -529,10 +532,9 @@ export async function runInlineCostGate(
   // cost isn't the constraint; don't defer).
   if (posture === 'tokenmax') {
     if (jsonOut) {
-      console.log(JSON.stringify({ status: 'proceeding', mode, gate: 'posture_tokenmax', newTokens: inline.tokens, estimateKind: inline.estimateKind, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName, hint: SPEND_HINT }));
-    } else {
-      console.log(`${previewMsg} spend.posture=tokenmax: proceeding (informational). ${SPEND_HINT}`);
+      return { action: 'proceed', autoDeferEmbeds: false, notice: { status: 'proceeding', mode, gate: 'posture_tokenmax', newTokens: inline.tokens, estimateKind: inline.estimateKind, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName, hint: SPEND_HINT } };
     }
+    console.log(`${previewMsg} spend.posture=tokenmax: proceeding (informational). ${SPEND_HINT}`);
     return { action: 'proceed', autoDeferEmbeds: false };
   }
 
@@ -567,45 +569,42 @@ export async function runInlineCostGate(
     if (manualDrainReason) {
       const commands = manualDrainCommands(sources);
       if (jsonOut) {
-        console.log(JSON.stringify({
+        return { action: 'proceed', autoDeferEmbeds: true, notice: {
           status: 'manual_drain_required', mode, gate: 'manual_drain_required',
           reason: manualDrainReason, workerSurface: ctx.workerSurface.status, newTokens: inline.tokens,
           estimateKind: inline.estimateKind, costUsd,
           floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName,
           manualCommands: commands, hint: SPEND_HINT,
-        }));
-      } else {
-        const refusal = manualDrainReason === 'no_worker_surface'
-          ? 'no persistent worker surface is available'
-          : 'automatic backfill submission is disabled by --no-auto-embed';
-        console.log(
-          `${previewMsg} Exceeds floor $${formatUsdLimit(floorUsd)} in a non-interactive ` +
-          `session — importing now without embeddings because ${refusal}. Manual drain required: ` +
-          `${commands.map((command) => `\`${command}\``).join(', ')}. ` +
-          `Pass --yes to embed inline.\n${SPEND_HINT}`,
-        );
+        } };
       }
+      const refusal = manualDrainReason === 'no_worker_surface'
+        ? 'no persistent worker surface is available'
+        : 'automatic backfill submission is disabled by --no-auto-embed';
+      console.log(
+        `${previewMsg} Exceeds floor $${formatUsdLimit(floorUsd)} in a non-interactive ` +
+        `session — importing now without embeddings because ${refusal}. Manual drain required: ` +
+        `${commands.map((command) => `\`${command}\``).join(', ')}. ` +
+        `Pass --yes to embed inline.\n${SPEND_HINT}`,
+      );
       return { action: 'proceed', autoDeferEmbeds: true };
     }
 
     // Worker-backed AUTO-DEFER. NEVER exit 2 (the wedged-cron fix).
     if (jsonOut) {
-      console.log(JSON.stringify({ status: 'auto_deferred', mode, gate: 'auto_deferred_embeds', newTokens: inline.tokens, estimateKind: inline.estimateKind, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName, hint: SPEND_HINT }));
-    } else {
-      console.log(
-        `${previewMsg} Exceeds floor $${formatUsdLimit(floorUsd)} in a non-interactive ` +
-        `session — importing now, deferring embeds to capped backfill jobs. ` +
-        `Drain: run the jobs worker or \`gbrain embed --stale\`. Pass --yes to embed inline.\n${SPEND_HINT}`,
-      );
+      return { action: 'proceed', autoDeferEmbeds: true, notice: { status: 'auto_deferred', mode, gate: 'auto_deferred_embeds', newTokens: inline.tokens, estimateKind: inline.estimateKind, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName, hint: SPEND_HINT } };
     }
+    console.log(
+      `${previewMsg} Exceeds floor $${formatUsdLimit(floorUsd)} in a non-interactive ` +
+      `session — importing now, deferring embeds to capped backfill jobs. ` +
+      `Drain: run the jobs worker or \`gbrain embed --stale\`. Pass --yes to embed inline.\n${SPEND_HINT}`,
+    );
     return { action: 'proceed', autoDeferEmbeds: true };
   }
 
   // Below floor → proceed without blocking (kills inline-cron noise).
   if (jsonOut) {
-    console.log(JSON.stringify({ status: 'below_floor', mode, gate: 'below_floor', newTokens: inline.tokens, estimateKind: inline.estimateKind, staleChars, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName }));
-  } else {
-    console.log(`${previewMsg} Below cost gate floor ($${formatUsdLimit(floorUsd)}), proceeding.`);
+    return { action: 'proceed', autoDeferEmbeds: false, notice: { status: 'below_floor', mode, gate: 'below_floor', newTokens: inline.tokens, estimateKind: inline.estimateKind, staleChars, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName } };
   }
+  console.log(`${previewMsg} Below cost gate floor ($${formatUsdLimit(floorUsd)}), proceeding.`);
   return { action: 'proceed', autoDeferEmbeds: false };
 }

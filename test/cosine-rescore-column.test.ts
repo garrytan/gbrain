@@ -1,3 +1,4 @@
+import { installFixtureChunks } from './helpers/page-projection.ts';
 /**
  * v0.36 (D9 / CDX-3) — getEmbeddingsByChunkIds column-parameter tests.
  *
@@ -60,7 +61,7 @@ beforeAll(async () => {
     { chunk_index: 0, chunk_text: 'first chunk text', chunk_source: 'compiled_truth' },
     { chunk_index: 1, chunk_text: 'second chunk text', chunk_source: 'compiled_truth' },
   ];
-  await engine.upsertChunks('test/cosine-rescore', chunks);
+  await installFixtureChunks(engine, 'test/cosine-rescore', chunks);
 
   // Read back chunk ids.
   const rows = await engine.executeRaw<{ id: number; chunk_index: number }>(

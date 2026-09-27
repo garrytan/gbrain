@@ -12,6 +12,9 @@
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
+// Type-only (erased at compile time — mode.ts stays a runtime dynamic import
+// at each call site below): the loaded snapshot shape for _searchModeInput.
+import type { ResolveSearchModeInput } from './mode.ts';
 import type {
   SearchResult,
   PageReadPolicy,
@@ -1102,6 +1105,19 @@ export interface HybridSearchOpts extends SearchOpts {
    * public contract.
    */
   _telemetryCacheStatus?: 'miss' | 'disabled';
+
+  /**
+   * INTERNAL (#4359) — the LOADED search-mode config snapshot (the return
+   * value of `loadSearchModeConfig`), threaded from `hybridSearchCached`
+   * into the inner `hybridSearch` so the cached path reads the config table
+   * once and both sides resolve from the SAME snapshot (two independent
+   * reads let a mid-request config change key the cache row from a stale
+   * snapshot). Only the LOADED snapshot is shared — each site still calls
+   * `resolveSearchMode` itself (the wrapper folds in cache-only knobs), so
+   * bare `hybridSearch` keeps resolving on its own for direct callers
+   * (`[CDX-5+6]`), which leave this undefined. Not part of the public contract.
+   */
+  _searchModeInput?: ResolveSearchModeInput;
 }
 
 /**
@@ -1254,8 +1270,9 @@ export async function hybridSearch(
   // because eval-replay and eval-longmemeval call bare hybridSearch — and
   // per-mode evals would not test production search if modes lived only in
   // the wrapper. See `[CDX-5+6]` in the plan.
+  // (#4359) hybridSearchCached threads its already-loaded snapshot; reuse it.
   const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
-  const modeInput = await loadSearchModeConfig(engine);
+  const modeInput = opts?._searchModeInput ?? await loadSearchModeConfig(engine);
   const resolvedMode = resolveSearchMode({
     // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
     // only passes this for trusted/local callers; remote callers leave it
@@ -2822,18 +2839,10 @@ export async function hybridSearchCached(
       // resolver bare hybridSearch's own `resolvedMode` uses (including 0 —
       // see mode.ts `resolveSearchMode`'s `pick()`), so mirroring it here
       // keeps hit/miss consistent for the common case without a second
-      // config round-trip. Caveat: this is a SEPARATE `resolveSearchMode`
-      // call from the one bare hybridSearch performs internally on a miss
-      // (hybrid.ts's inner `resolvedMode`, computed when `hybridSearch` is
-      // invoked below) — not literally the same object — so a `search.mode`
-      // / `search.searchLimit` config change landing between these two
-      // resolutions within one request could theoretically desync the
-      // stored row's actual size from what its own `knobsHash` (built from
-      // `resolvedForCache`) implies. Narrow and pre-existing (the double
-      // resolution itself predates this PR); tracked as #4359, not fixed
-      // here — closing it would mean threading one resolved snapshot into
-      // the inner `hybridSearch` call, a larger change than this PR's
-      // `|| 20` → `|| resolvedMode.searchLimit` substitution.
+      // config round-trip. This is still a SEPARATE `resolveSearchMode` call
+      // from the inner one (the wrapper folds in a `cache_enabled` perCall
+      // knob), but both now resolve from the SAME loaded snapshot — the miss
+      // path threads it via `_searchModeInput` (#4359).
       const limit = opts?.limit || resolvedForCache.searchLimit;
       const offset = opts?.offset || 0;
       const sliced = scopedResults.slice(offset, offset + limit);
@@ -2918,6 +2927,8 @@ export async function hybridSearchCached(
     // function) with the cache-consult outcome. 'hit' already returned above,
     // so only miss/disabled reach this call.
     _telemetryCacheStatus: cacheStatus === 'disabled' ? 'disabled' : 'miss',
+    // (#4359) one config read per call: thread the snapshot loaded above.
+    _searchModeInput: modeInputForCache,
     onMeta: (m) => {
       innerMetaBox.current = m;
       // Do NOT call userOnMeta here — we'll emit a merged meta below

@@ -124,8 +124,10 @@ host, then you install the private handoff inside your coding agent's environmen
 
 ### A1. On the host, grant memory access
 
-Start from the host's existing HTTPS MCP deployment. Preview or create a
-separate `memory-writer` client for each intended agent:
+Start from the host's existing HTTPS MCP deployment (on your own computer,
+`gbrain mcp expose` provides one; see [use your brain from anywhere over
+MCP](../guides/remote-mcp.md)). Preview or create a separate `memory-writer`
+client for each intended agent:
 
 ```bash
 gbrain mcp grant coding-example --harness codex --profile memory-writer \

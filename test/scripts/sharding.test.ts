@@ -277,3 +277,8 @@ describe("loadWeights", () => {
     }
   });
 });
+
+it('distributes a fully zero-weight corpus instead of concentrating it in shard 1', () => {
+  const files = ['a', 'b', 'c', 'd'];
+  expect(partition(files, new Map(files.map(f => [f, 0])), 4)).toEqual([['a'], ['b'], ['c'], ['d']]);
+});

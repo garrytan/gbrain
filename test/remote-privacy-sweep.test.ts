@@ -33,7 +33,10 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { withEnv } from './helpers/with-env.ts';
+import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -99,7 +102,7 @@ let brainDir: string;
 function localCtx(sourceId = 'default'): OperationContext {
   return {
     engine,
-    config: {},
+    config: { engine: 'pglite', embedding_disabled: true },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     remote: false,
@@ -120,7 +123,8 @@ type Shape = 'scalar' | 'federated';
  * shipped HTTP transport, which always resolves a scalar default.
  */
 async function sweepCall(name: string, params: Record<string, unknown>, shape: Shape) {
-  return dispatchToolCall(engine, name, params, {
+  return withEnv({ GBRAIN_HOME: home }, async () => {
+  const response = await dispatchToolCall(engine, name, params, {
     remote: true,
     transport: 'http',
     takesHoldersAllowList: ['world'],
@@ -130,12 +134,17 @@ async function sweepCall(name: string, params: Record<string, unknown>, shape: S
       ? {
           auth: {
             token: 'test-token',
-            clientId: 'test-client',
+            clientId: 'gbrain_cl_privacy_read',
+            principal: { kind: 'oauth_client', id: 'gbrain_cl_privacy_read' },
+            sourceId: 'default',
             scopes: ['read'],
             allowedSources: ['default', SRC2],
           },
         }
       : {}),
+  });
+  await disposePersistenceConsumer(engine);
+  return response;
   });
 }
 
@@ -196,6 +205,13 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
 // Per-(op × shape) overrides for ops whose behavior legitimately differs
 // with vs without an authenticated OAuth identity (the federated shape
 // carries ctx.auth; the scalar shape — like the stdio transport — doesn't).
+// These operations enforce durable write authority inside the shared dispatcher.
+// Other scope checks remain transport-owned and outside this privacy harness.
+const COORDINATED_WRITES = new Set(['put_page', 'capture', 'delete_page', 'restore_page', 'revert_version',
+  'remember', 'forget', 'add_tag', 'remove_tag', 'add_timeline_entry',
+  'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
+  'get_write_request', 'list_write_requests', 'cancel_write_request']);
+
 const EXPECTED_BY_SHAPE: Record<string, Partial<Record<Shape, Outcome>>> = {
   whoami: { scalar: 'error', federated: 'ok' },
   list_jobs: { scalar: 'error', federated: 'ok' },
@@ -313,6 +329,9 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   add_link: 'ok',
   remove_link: 'ok',
   add_timeline_entry: 'ok',
+  get_write_request: 'error',
+  list_write_requests: 'ok',
+  cancel_write_request: 'error',
   revert_version: 'error',
   put_raw_data: 'error',
   log_ingest: 'error',
@@ -365,6 +384,9 @@ const localOnlyOps = operations.filter(o => o.localOnly);
 
 beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), 'gbrain-privacy-sweep-'));
+  await withEnv({ GBRAIN_HOME: home }, async () => {
+  mkdirSync(join(home, '.gbrain'));
+  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', embedding_disabled: true }));
   src2Dir = mkdtempSync(join(tmpdir(), 'gbrain-privacy-sweep-src2-'));
   __setUsageLogPathForTests(join(home, 'usage.jsonl'));
   // Hermeticity is ENFORCED, not assumed: null BOTH gateway transports
@@ -391,6 +413,8 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  await registerLocalWriter(engine, 'stdio');
+  await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,scope,source_id,federated_read) VALUES('gbrain_cl_privacy_read','Privacy read fixture','read','default',$1)`, [['default', SRC2]]);
 
   // Takes are markdown-canonical — resolveTakesRepoDir reads the
   // `sync.repo_path` config key, so point it (and the default source's
@@ -538,9 +562,12 @@ type: person
 world source-2 body
 `,
   });
-});
+  await disposePersistenceConsumer(engine);
+  });
+}, 120_000);
 
 afterAll(async () => {
+  await disposePersistenceConsumer(engine);
   await engine.disconnect();
   __setUsageLogPathForTests(null);
   // Leave the process exactly as found: reset gateway config + transports
@@ -567,11 +594,18 @@ function assertNoPrivateSentinel(op: string, serialized: string) {
 }
 
 async function runCase(opName: string, shape: Shape) {
-  const params = PARAM_FACTORY[opName] ?? {};
+  const params = { ...(PARAM_FACTORY[opName] ?? {}) };
+  if (shape === 'scalar' && ['delete_page', 'restore_page'].includes(opName)) {
+    const snapshot = await engine.readPageSnapshot(String(params.slug), { sourceId: 'default', includeDeleted: true });
+    if (snapshot) params.expected_revision = snapshot.revision;
+  }
   const res = await sweepCall(opName, params, shape);
   const serialized = JSON.stringify(res);
   assertNoPrivateSentinel(opName, serialized);
-  const expected = EXPECTED_BY_SHAPE[opName]?.[shape] ?? EXPECTED_OUTCOME[opName];
+  // The federated fixture deliberately holds READ authority only. A read
+  // federation grant cannot authorize writes or receipt administration.
+  const readOnlyRefusal = shape === 'federated' && COORDINATED_WRITES.has(opName);
+  const expected = readOnlyRefusal ? 'error' : EXPECTED_BY_SHAPE[opName]?.[shape] ?? EXPECTED_OUTCOME[opName];
   const isError = res.isError === true;
   if (expected === 'data') {
     expect(isError).toBe(false);

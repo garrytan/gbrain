@@ -12,6 +12,7 @@ import { basename, join } from "node:path";
 import { isMergedArtifactPath, normalizeSf, parseLcovText } from "../../scripts/merge-lcov.ts";
 
 const REPO_ROOT = join(import.meta.dir, "..", "..");
+const HEAD_SHA = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd: REPO_ROOT }).stdout.toString().trim();
 
 interface RunResult {
   code: number;
@@ -218,7 +219,7 @@ describe("merge: malformed input handling", () => {
 });
 
 describe("merge: lane manifests", () => {
-  const GOOD_MANIFEST = { lane: "shard-1", sha: "deadbeef", lcovCount: 1, complete: true };
+  const GOOD_MANIFEST = { lane: "shard-1", sha: HEAD_SHA, lcovCount: 1, complete: true };
 
   it("complete expected lanes → not degraded; lanes.complete lists them", () => {
     const a = laneDir("man-ok", LANE_A, GOOD_MANIFEST);
@@ -264,9 +265,67 @@ describe("merge: lane manifests", () => {
   });
 
   it("non-shard lane may carry many lcov files without tripping the tripwire", () => {
-    const a = laneDir("man-serial", LANE_A, { lane: "serial", sha: "d", lcovCount: 12, complete: true });
+    const a = laneDir("man-serial", LANE_A, { lane: "serial", sha: HEAD_SHA, lcovCount: 2, complete: true });
+    mkdirSync(join(a, 'second'));
+    writeFileSync(join(a, 'second/lcov.info'), LANE_B);
     const out = outPaths("man-serial");
     runMerge(["--out-lcov", out.lcov, "--out-json", out.json, "--manifest-expect", "serial", a]);
+    expect(readSummary(out.json).degraded).toBe(false);
+  });
+
+  it('requires every serial shard and accepts their independent multi-file counts', () => {
+    const dirs = Array.from({ length: 4 }, (_, i) => {
+      const dir = laneDir(`serial-matrix-${i}`, LANE_A, { lane: `serial-${i + 1}`, sha: HEAD_SHA, lcovCount: 2, complete: true });
+      mkdirSync(join(dir, 'second'));
+      writeFileSync(join(dir, 'second/lcov.info'), LANE_B);
+      return dir;
+    });
+    const out = outPaths('serial-matrix');
+    const args = ['--out-lcov', out.lcov, '--out-json', out.json, '--manifest-expect', 'serial-1,serial-2,serial-3,serial-4'];
+    expect(runMerge([...args, ...dirs]).code).toBe(0);
+    expect(readSummary(out.json).degraded).toBe(false);
+    runMerge([...args, ...dirs.slice(0, 3)]);
+    expect(readSummary(out.json).degraded).toBe(true);
+  });
+
+  it.each([
+    ['missing count', { lcovCount: undefined }],
+    ['wrong count', { lcovCount: 2 }],
+    ['negative count', { lcovCount: -1 }],
+    ['fractional count', { lcovCount: 1.5 }],
+    ['wrong SHA', { sha: 'other-commit' }],
+    ['missing SHA', { sha: undefined }],
+  ])('%s cannot report complete coverage', (name, changes) => {
+    const a = laneDir(`metadata-${name}`, LANE_A, { ...GOOD_MANIFEST, lane: 'serial-1', ...changes });
+    const out = outPaths(`metadata-${name}`);
+    const result = runMerge(['--out-lcov', out.lcov, '--out-json', out.json, '--manifest-expect', 'serial-1', a]);
+    expect(result.code).toBe(0); // advisory degradation, never a test-result verdict
+    expect(readSummary(out.json).degraded).toBe(true);
+    expect(readSummary(out.json).lanes.complete).toEqual([]);
+  });
+
+  it('a missing LCOV file invalidates the lane count', () => {
+    const a = laneDir('missing-lcov', LANE_A, { ...GOOD_MANIFEST, lane: 'serial-1' });
+    rmSync(join(a, 'lcov.info'));
+    const out = outPaths('missing-lcov');
+    runMerge(['--out-lcov', out.lcov, '--out-json', out.json, '--manifest-expect', 'serial-1', a]);
+    expect(readSummary(out.json).degraded).toBe(true);
+  });
+
+  it('duplicate lane identities cannot satisfy the expected lane', () => {
+    const a = laneDir('duplicate-a', LANE_A, GOOD_MANIFEST);
+    const b = laneDir('duplicate-b', LANE_B, GOOD_MANIFEST);
+    const out = outPaths('duplicate');
+    const result = runMerge(['--out-lcov', out.lcov, '--out-json', out.json, '--manifest-expect', 'shard-1', a, b]);
+    expect(result.stderr).toContain('duplicate manifests');
+    expect(readSummary(out.json).degraded).toBe(true);
+    expect(readSummary(out.json).lanes.complete).toEqual([]);
+  });
+
+  it('--sha validates historical artifacts independently of the checkout', () => {
+    const a = laneDir('historical', LANE_A, { ...GOOD_MANIFEST, sha: 'historical-commit' });
+    const out = outPaths('historical');
+    runMerge(['--out-lcov', out.lcov, '--out-json', out.json, '--sha', 'historical-commit', '--manifest-expect', 'shard-1', a]);
     expect(readSummary(out.json).degraded).toBe(false);
   });
 });

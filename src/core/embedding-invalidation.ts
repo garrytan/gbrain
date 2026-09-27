@@ -4,8 +4,8 @@
  * (PGLite and Postgres accept the SQL identically).
  *
  * #4306 — embed_skip-aware stale-signature invalidation.
- * `engine.invalidateStaleSignatureEmbeddings` NULLs mismatched-signature
- * vectors on EVERY page, but every stale/backfill selector
+ * `engine.invalidateStaleSignatureEmbeddings` NULLs non-current vectors on
+ * mismatched-signature pages, but every stale/backfill selector
  * (buildStaleChunkWhere / listStaleChunks, both engines) excludes pages whose
  * frontmatter carries `embed_skip`. Invalidate-then-hide: vectors retained on
  * an embed_skip page (embedded BEFORE the marker appeared, e.g. the
@@ -13,8 +13,9 @@
  * could never be re-embedded — permanent, silent loss.
  * `invalidateStaleSignatureEmbeddingsGuarded` is the ONE invalidation entry
  * point for the migration and embed paths: identical semantics to the engine
- * method PLUS the same NOT-embed_skip predicate the selectors use, so the two
- * halves can never disagree again. Never NULL what nothing will re-embed.
+ * method PLUS the same NOT-embed_skip predicate the selectors use and a
+ * restamp for pages whose chunks are all current. Model, text hash, and
+ * vector width must match to preserve progress across interrupted drains.
  *
  * #4305 — chunk-model truth cross-check. `pages.embedding_signature` is
  * separate state that can disagree with the vectors it describes: a page
@@ -30,6 +31,23 @@ import {
   resolveActiveEmbeddingColumnFromEngine,
   quoteIdentifier,
 } from './search/embedding-column.ts';
+
+export function splitEmbeddingSignature(signature: string): { model: string; dims: number | null } {
+  const separator = signature.lastIndexOf(':');
+  const suffix = signature.slice(separator + 1);
+  const dims = Number(suffix);
+  if (separator <= 0 || !/^\d+$/.test(suffix) || !Number.isSafeInteger(dims) || dims <= 0 || dims > 2147483647) {
+    return { model: signature, dims: null };
+  }
+  return { model: signature.slice(0, separator), dims };
+}
+
+export function currentSpaceChunkPredicate(colId: string, modelParam: number, dimsParam: number): string {
+  return `COALESCE(cc.${colId} IS NOT NULL
+              AND cc.model = $${modelParam}
+              AND cc.embedded_text_hash = md5(cc.chunk_text)
+              AND vector_dims(cc.${colId}) = $${dimsParam}::int, false)`;
+}
 
 /**
  * `<provider:model>:<dims>` — the one-line shape of
@@ -131,7 +149,9 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
   opts: { signature: string; sourceId?: string; includeNullSignature?: boolean },
 ): Promise<number> {
   const colId = await activeColId(engine);
-  const params: unknown[] = [opts.signature];
+  const { model, dims } = splitEmbeddingSignature(opts.signature);
+  const params: unknown[] = [opts.signature, model, dims];
+  const currentChunk = currentSpaceChunkPredicate(colId, 2, 3);
   let srcClause = '';
   if (opts.sourceId !== undefined) {
     params.push(opts.sourceId);
@@ -149,9 +169,23 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
        FROM pages p
       WHERE cc.page_id = p.id
         AND cc.${colId} IS NOT NULL
+        AND NOT ${currentChunk}
         AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
         AND ${sigClause}${srcClause}
       RETURNING cc.page_id`,
+    params,
+  );
+  await engine.executeRaw(
+    `UPDATE pages p SET embedding_signature = $1
+      WHERE ${sigClause}${srcClause}
+        AND p.deleted_at IS NULL
+        AND p.text_projection_revision = p.knowledge_revision
+        AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM content_chunks cc
+           WHERE cc.page_id = p.id AND NOT ${currentChunk}
+        )`,
     params,
   );
   return (rows as unknown[]).length;

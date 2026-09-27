@@ -316,6 +316,9 @@ export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
   // enforceClientSlugFence themselves (their markdown mirror writes the
   // page file under the slug), the same guarantee as add_tag/add_timeline_entry.
   'capture',
+  // Own-principal receipt controls recheck original/current source + slug
+  // authority. They are not meta-op exemptions: degraded fences still deny.
+  'get_write_request', 'list_write_requests', 'cancel_write_request',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
 ]);
 
@@ -471,6 +474,56 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
     throw new OperationError('permission_denied', 'No readable source is granted for this request.');
   }
   return {};
+}
+
+/**
+ * Confine an explicitly named source id to the caller's resolved READ scope
+ * (#4433 wave-L posture; used by sources_status — the destructive
+ * sources_remove keys on `assertSourceInCallerWriteScope` below instead):
+ * EVERY untrusted caller (anything not strictly `remote === false`) may only
+ * name a source inside the canonical `sourceScopeOpts` ladder — federated
+ * grant > scalar bound source. An out-of-scope id answers `not_found`, exactly
+ * like a nonexistent source (anti-enumeration). The trusted local CLI passes
+ * unconditionally (full operator view). Returns void; throws otherwise.
+ */
+export function assertSourceInCallerScope(ctx: OperationContext, id: string): void {
+  if (ctx.remote === false) return;
+  const scope = sourceScopeOpts(ctx);
+  const allowed = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
+  if (allowed && !allowed.includes(id)) {
+    throw new OperationError('not_found', `Unknown source: ${id}`);
+  }
+}
+
+/**
+ * WRITE-authority twin of `assertSourceInCallerScope`, for the DESTRUCTIVE
+ * source ops (`sources_remove`). Federation (`ctx.auth.allowedSources`) is READ
+ * authority by contract (contract.ts: "source ids this OAuth client may READ
+ * from") and confers no removal right, so this helper deliberately does NOT
+ * consult the `sourceScopeOpts` ladder — a client bound to write `alpha` with
+ * `federated_read: [alpha, beta]` may read `beta` but never cascade-delete it.
+ *
+ * Rules, in order:
+ *  - trusted local CLI (`remote === false`) passes unconditionally;
+ *  - an untrusted caller that is BOUND — carries a write source
+ *    (`ctx.auth.sourceId`, falling back to `ctx.sourceId`; the same notion as
+ *    delete_page/restore_page's write gate) and/or a federated grant — may
+ *    name ONLY its write source; a bound caller with no write source (or the
+ *    `__all__` sentinel as its source) may name nothing;
+ *  - an UNBOUND untrusted caller (neither axis set — an operator-registered
+ *    client with no source binding) keeps full authority, unchanged.
+ * Out-of-authority ids answer `not_found`, byte-identical to a nonexistent
+ * id (anti-enumeration; the same shape the read helper uses, so a caller
+ * cannot tell "hidden" from "absent"). Returns void; throws otherwise.
+ */
+export function assertSourceInCallerWriteScope(ctx: OperationContext, id: string): void {
+  if (ctx.remote === false) return;
+  const writeSource = ctx.auth?.sourceId ?? ctx.sourceId;
+  const bound = writeSource !== undefined || ctx.auth?.allowedSources !== undefined;
+  if (!bound) return;
+  if (writeSource === undefined || writeSource === ALL_SOURCES || id !== writeSource) {
+    throw new OperationError('not_found', `Unknown source: ${id}`);
+  }
 }
 
 /** Holder permissions are independent of the operator's page-visibility opt-out. */

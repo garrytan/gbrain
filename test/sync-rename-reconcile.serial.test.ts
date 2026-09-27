@@ -126,6 +126,9 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
       type: 'person', title: 'Dana (stale)', compiled_truth: 'occupies the destination slug',
     }, { sourceId: 'default' });
 
+    const destination = (await engine.getPage('people/dana'))!;
+    expect(destination.text_projection_revision).not.toBe(destination.knowledge_revision);
+
     execSync('git mv people/carol.md people/dana.md', { cwd: repo, stdio: 'pipe' });
     execSync('git commit -m "rename carol to dana"', { cwd: repo, stdio: 'pipe' });
 
@@ -177,6 +180,7 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
     const carol = await engine.getPage('people/carol');
     expect(carol).not.toBeNull();
     expect(carol!.compiled_truth).toContain('Carol is a person.');
+    expect((await engine.getPage('people/dana'))!.compiled_truth).toBe('occupies the destination slug');
   });
 
   test('reconcile never deletes by slug guess: unrelated manual row survives', async () => {
@@ -291,23 +295,20 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
 
   test('#3479: an errorless unchanged-skip AT the new slug counts as materialized — the stale row reconciles without any write', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
-    const repo = mkRepo({ 'people/carol.md': personMd('Carol', 'Carol is a person.') });
+    const { importFromContent } = await import('../src/core/import-file.ts');
+    const md = personMd('Carol', 'Carol is a person.');
+    const repo = mkRepo({ 'people/carol.md': md });
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(await engine.getPage('people/carol')).not.toBeNull();
 
-    // The destination row pre-exists AND its content_hash matches what the
-    // renamed file would import to (forged via SQL to construct the shape;
-    // in reality equal hashes mean byte-identical parsed content). The
-    // import at the new path is then an errorless unchanged-skip at the NEW
-    // slug — the one destMaterialized path where NOTHING is written.
-    await engine.putPage('people/dana', {
-      type: 'person', title: 'Dana occupier', compiled_truth: 'occupier body, untouched by the skip',
-    }, { sourceId: 'default' });
-    await engine.executeRaw(
-      `UPDATE pages SET content_hash =
-         (SELECT content_hash FROM pages WHERE source_id = 'default' AND slug = 'people/carol')
-       WHERE source_id = 'default' AND slug = 'people/dana'`,
-    );
+    // Materialize matching canonical content and a verified projection at
+    // the destination. A fabricated matching hash on different, unsealed
+    // content cannot establish a safe unchanged-import fixture.
+    await importFromContent(engine, 'people/dana', md, {
+      sourceId: 'default', noEmbed: true, sourcePath: 'people/dana.md',
+    });
+    const before = (await engine.readPageSnapshot('people/dana', { sourceId: 'default' }))!;
+    expect(before.page.text_projection_revision).toBe(before.revision);
 
     execSync('git mv people/carol.md people/dana.md', { cwd: repo, stdio: 'pipe' });
     execSync('git commit -m "rename carol to dana"', { cwd: repo, stdio: 'pipe' });
@@ -318,9 +319,8 @@ describe('#3056: rename fallback reconciles the stale old row', () => {
     // The stale old row reconciled away even though the skip wrote nothing...
     expect(await engine.getPage('people/carol')).toBeNull();
     // ...and the destination row is genuinely untouched (the skip was real).
-    const dana = await engine.getPage('people/dana');
-    expect(dana).not.toBeNull();
-    expect(dana!.compiled_truth).toContain('occupier body');
+    const after = await engine.readPageSnapshot('people/dana', { sourceId: 'default' });
+    expect(after).toEqual(before);
     expect(await countPages()).toBe(1);
   });
 });
@@ -2502,7 +2502,7 @@ describe('#3583 review: GATE25 — the upgrade path for someone already wedged b
 describe('rename destination import: an errored skip must not checkpoint the rename as done', () => {
   test('a frontmatter slug-authority rejection at the destination is retried, never falsely checkpointed', async () => {
     const { performSync } = await import('../src/commands/sync.ts');
-    const repo = mkRepo({ 'people/alpha.md': personMd('Alpha', 'Alpha is a person.') });
+    const repo = mkRepo({ 'people/alpha.md': `${personMd('Alpha', 'Alpha is a person.')}\n` });
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(await engine.getPage('people/alpha')).not.toBeNull();
 
@@ -2517,11 +2517,13 @@ describe('rename destination import: an errored skip must not checkpoint the ren
     execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
     writeFileSync(join(repo, 'people/beta.md'), [
       '---', 'type: person', 'title: Alpha', 'slug: totally-different', '---',
-      '', 'Alpha is a person.',
+      '', 'Alpha is a person.', '',
     ].join('\n'));
     execSync('git add -A && git commit -m "rename alpha to beta, corrupted frontmatter"', {
       cwd: repo, stdio: 'pipe',
     });
+    expect(execSync('git diff --name-status -M HEAD~1 HEAD', { cwd: repo }).toString())
+      .toMatch(/^R\d+\tpeople\/alpha\.md\tpeople\/beta\.md\n$/);
 
     const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(first.status).toBe('blocked_by_failures');
@@ -2737,5 +2739,40 @@ describe('#4597: a fallback rename\'s own stale duplicate converges under increm
     const quiet = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(quiet.status).toBe('up_to_date');
     expect(await engine.getPage('party-notes')).toBeNull();
+  });
+});
+
+describe('#4588: a legacy row whose source_path names a pre-rename path self-heals on the next full sync', () => {
+  test('sync --full refreshes source_path on the unchanged-content skip instead of reconcile-deleting the live page', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alpha.md': personMd('Alpha', 'Alpha original body.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // Cheap rename alpha -> beta, then recreate the LEGACY bookkeeping a
+    // pre-GATE13 brain still carries: the live beta row naming the OLD path
+    // (which git history once committed, so the reconcile may delete it).
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "cheap rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'people/alpha.md'
+       WHERE source_id = 'default' AND slug = 'people/beta'`,
+    );
+
+    // Full sync: runImport sees people/beta.md unchanged (hash-equal skip),
+    // THEN the reconcile re-reads source_path. Pre-fix the skip wrote
+    // nothing, the reconcile read 'people/alpha.md' as "file removed" and
+    // soft-deleted the live page (the mass valve needs >20 pages to trip).
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS, full: true });
+    expect(result.status).toBe('first_sync');
+    const beta = await engine.getPage('people/beta');
+    expect(beta).not.toBeNull();
+    expect(beta!.compiled_truth).toContain('Alpha original body.');
+    const rows = await engine.executeRaw<{ source_path: string | null }>(
+      `SELECT source_path FROM pages
+        WHERE source_id = 'default' AND slug = 'people/beta' AND deleted_at IS NULL`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source_path).toBe('people/beta.md');
   });
 });

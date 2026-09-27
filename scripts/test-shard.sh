@@ -30,6 +30,7 @@
 # same assignment, so retries are reproducible.
 
 set -euo pipefail
+unset SHARD # Routing belongs to this wrapper, never to nested test runners.
 
 DRY_RUN_LIST=0
 if [ "${1:-}" = "--dry-run-list" ]; then
@@ -87,6 +88,7 @@ ALL_FILES=$(find test evals -name '*.test.ts' \
   -not -name '*.serial.test.ts' \
   -not -name 'eval-longmemeval-e2e.slow.test.ts' \
   -not -name 'entity-resolve-perf.slow.test.ts' \
+  -not -name 'entity-card-perf.slow.test.ts' \
   -not -name 'eval-brainbench-e2e.slow.test.ts' \
   -not -path 'test/e2e/*' | sort)
 

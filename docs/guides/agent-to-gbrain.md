@@ -88,7 +88,7 @@ This is THE onboarding-paths table. Other docs link here; none copy it.
 | Path | When to use | Credential kind | Print vs write | Serve location |
 |---|---|---|---|---|
 | `gbrain agent register <name> --harness <h>` | The packaged path: onboarding an agent harness (Claude Code, Codex, opencode, your OpenClaw) onto a shared brain. Presets (`daily-driver`, `coding-agent`), starter tool surface, 30-day token TTL, `--reissue` secret rotation. | Scoped OAuth client + a minted access token (source-scoped, expiring) | PRINTS the harness block (redacted unless `--show-token`); writes nothing to harness configs | Runs ON the brain host against a remote-reachable `gbrain serve --http`; `--url` or `--port` required (a live PGLite serve blocks it by design — stop the serve first; a serve too old to enforce scoped tokens is refused — upgrade it, or pass `--allow-old-serve` to accept the risk) |
-| `gbrain connect <mcp-url> --token <t>` | You already hold a bearer token and want ONE coding agent pointed at a running serve, from any machine. | Legacy bearer token (full-access unless minted with `--scopes`); `--oauth` variant for OAuth-capable connectors | Prints the add command by default; `--install` runs it | Any machine; targets a remote `gbrain serve --http` |
+| `gbrain connect <mcp-url> --token <t>` | You already hold a bearer token and want ONE coding agent pointed at a running serve, from any machine. | Legacy bearer token (full-access unless minted with `--scopes`); `--oauth` variant for OAuth-capable connectors. `/mcp` verifies both kinds; a client status flag of `needsAuth` from an unauthenticated probe is not a bearer failure — see [DEPLOY.md — Dual-mode auth](../mcp/DEPLOY.md#3-expose-the-server) | Prints the add command by default; `--install` runs it | Any machine; targets a remote `gbrain serve --http` |
 | `gbrain bootstrap harness` | Framework-spawned harnesses (`claude -p` / `codex exec` / `opencode run`) on the SAME box that hosts the brain; wires MCP registration + lifecycle hooks with receipts and mint-first token rotation. | Legacy bearer token, minted per run and rotated by receipt | WRITES managed config blocks (Claude Code user scope, codex TOML, opencode JSONC) + hooks | Local loopback serve on the same box (non-loopback URL requires an explicit supplied token) |
 | `gbrain auth register-client <name>` | The raw primitive: custom flows — PKCE/authorization-code clients, bound `submit_agent` clients, slug-prefix write fences, provisioning scripts that parse output. | Scoped OAuth client only (no token exchange, no TTL default beyond the server's) | Prints `client_id` + `client_secret` one time; you do all wiring | Credential is server-side state; run on the brain host |
 
@@ -160,13 +160,17 @@ The agent's host needs a worker that processes shell jobs:
 gbrain jobs submit shell --params '{...}' --follow
 
 # Persistent worker (Postgres only — PGLite uses --follow inline):
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work
+gbrain jobs work --allow-shell-jobs        # or: GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work
 ```
 
-`GBRAIN_ALLOW_SHELL_JOBS=1` is the worker-side opt-in. Without it, shell jobs
-sit in `waiting` indefinitely. Set it on the worker process env (or in your
-deploy unit / launchd plist), not per-submission — submitter env is a weak
-proxy for worker env.
+`--allow-shell-jobs` (equivalently `GBRAIN_ALLOW_SHELL_JOBS=1` exported on the
+worker; a `.env` in the worker's directory cannot set it) is the worker-side
+opt-in. The handler is always registered but guarded: an unflagged worker that
+claims a shell job dead-letters it immediately (`UnrecoverableError`, no
+retries) — a shell job that stays in `waiting` means no worker is running at
+all. Put the flag on the worker's command line (or the variable in its deploy
+unit / launchd plist), not per-submission — submitter env is a weak proxy for
+worker env.
 
 ## Decision table
 

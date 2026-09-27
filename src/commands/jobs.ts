@@ -435,9 +435,9 @@ HANDLER TYPES (built in)
   extract           Extract links + timeline entries; '{"mode":"all"}'
   backlinks         Check or fix back-links; '{"action":"fix"}'
   autopilot-cycle   One autopilot pass (sync+extract+embed+backlinks)
-  shell             Run a command or argv. Requires GBRAIN_ALLOW_SHELL_JOBS=1
-                    on the worker. Params: {cmd?, argv?, cwd, env?}.
-                    See: docs/guides/minions-shell-jobs.md
+  shell             Run a command or argv. Requires --allow-shell-jobs (or
+                    GBRAIN_ALLOW_SHELL_JOBS=1) on the worker. Params: {cmd?,
+                    argv?, cwd, env?}. See: docs/guides/minions-shell-jobs.md
 
 Detailed help: gbrain jobs {work|supervisor|submit|watch|prune} --help
 Other subcommands are fully described above.
@@ -456,10 +456,13 @@ const JOBS_SUBCOMMAND_HELP: Record<string, string> = {
 USAGE
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
                    [--health-interval MS] [--nice N]
-                   [--job-isolation inline|process]
+                   [--job-isolation inline|process] [--allow-shell-jobs]
 
 OPTIONS
   --queue Q            Queue to claim from (default: default)
+  --allow-shell-jobs   Enable the shell handler on this worker. Equivalent to
+                       exporting GBRAIN_ALLOW_SHELL_JOBS=1 from your shell; a
+                       .env in the working directory cannot set it.
   --job-isolation M    inline (default): handlers run in the worker process.
                        process: each claimed job runs in its own child
                        process — a stuck handler is group-SIGKILLed instead
@@ -811,18 +814,19 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       } catch { /* audit failures never block submission */ }
 
       // Starvation warning (DX polish). Fire for every non-`--follow` shell submit
-      // regardless of the submitter's own `GBRAIN_ALLOW_SHELL_JOBS` — the submitter
-      // env is a weak proxy for the worker env (they may run on different machines),
-      // so the warning remains useful any time the job might sit in 'waiting'.
+      // regardless of the submitter's own `GBRAIN_ALLOW_SHELL_JOBS` — submitter env
+      // is a weak proxy for worker env. Two outcomes: no worker → the job waits;
+      // an UNFLAGGED worker → the always-registered guarded handler dead-letters it.
       if (!follow && name === 'shell') {
         process.stderr.write(
-          `\n⚠  Shell jobs require GBRAIN_ALLOW_SHELL_JOBS=1 on the worker process.\n` +
-          `   Your job was queued (id=${job.id}) but will sit in 'waiting' until a\n` +
-          `   worker with the env flag starts. To run now:\n\n` +
+          `\n⚠  Shell jobs require the shell handler enabled on the worker process\n` +
+          `   (--allow-shell-jobs, or GBRAIN_ALLOW_SHELL_JOBS=1 exported from your shell).\n` +
+          `   Your job was queued (id=${job.id}). It waits until a worker starts; a worker\n` +
+          `   WITHOUT shell jobs enabled dead-letters it immediately (no retries). To run now:\n\n` +
           `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs submit shell \\\n` +
           `       --params '...' --follow\n\n` +
           `   Or start a persistent worker (Postgres only — PGLite uses --follow):\n\n` +
-          `     GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work\n\n`,
+          `     gbrain jobs work --allow-shell-jobs\n\n`,
         );
       }
 
@@ -1483,6 +1487,9 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       // exit. Deliberately absent from user-facing help. The CLI layer owns
       // engine.disconnect() + process.exit() (engine-ownership invariant).
       {
+        // --allow-shell-jobs (buildChildArgs pass-through): same re-assert as
+        // `work` — this child's preflight re-ran the cwd-.env quarantine.
+        if (hasFlag(args, '--allow-shell-jobs')) process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
         const config = loadConfig();
         if (config?.engine === 'pglite') {
           console.error('[run-child] process isolation requires the Postgres engine.');
@@ -1537,6 +1544,12 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         console.error('Use --follow for inline execution: gbrain jobs submit <name> --follow');
         process.exit(1);
       }
+
+      // --allow-shell-jobs (supervisor pass-through, see buildWorkerArgs): the
+      // startup cwd-.env quarantine drops GBRAIN_ALLOW_SHELL_JOBS when a .env
+      // in this worker's cwd assigns it, so the flag re-asserts the operator's
+      // opt-in AFTER preflight. Read sites keep checking the env var.
+      if (hasFlag(args, '--allow-shell-jobs')) process.env.GBRAIN_ALLOW_SHELL_JOBS = '1';
 
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const concurrency = resolveWorkerConcurrency(args);
@@ -1987,7 +2000,7 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         healthInterval = parsed;
       }
       const allowShellJobs = hasFlag(args, '--allow-shell-jobs') ||
-                             !!process.env.GBRAIN_ALLOW_SHELL_JOBS;
+                             process.env.GBRAIN_ALLOW_SHELL_JOBS === '1'; // same literal the shell handler checks
       const detach = hasFlag(args, '--detach');
       // Supervisor's --max-rss: explicit wins; absent → cgroup-aware auto-size
       // (issue #1678). The supervisor is the main production path, so the
@@ -2196,7 +2209,8 @@ export async function registerBuiltinHandlers(
     const autoEmbed = job.data.auto_embed_backfill !== false;
     let embedJobId: number | null = null;
     let embedSkipReason: string | null = null;
-    if (autoEmbed && sourceId && result.status !== 'up_to_date' && result.status !== 'dry_run') {
+    const { syncProducedEmbeddableContent } = await import('../core/sync-embed-backfill.ts');
+    if (autoEmbed && sourceId && result.status !== 'up_to_date' && result.status !== 'dry_run' && syncProducedEmbeddableContent(result)) {
       try {
         const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
         if (await isFederatedV2Enabled(engine)) {
@@ -2224,6 +2238,9 @@ export async function registerBuiltinHandlers(
       embedSkipReason = 'no_source_id';
     } else if (!autoEmbed) {
       embedSkipReason = 'auto_embed_disabled';
+    } else if (result.status !== 'up_to_date' && result.status !== 'dry_run') {
+      // #4786 x #2139: a sweep-only `synced` run wrote nothing to embed — a backfill here would only arm the cooldown.
+      embedSkipReason = 'no_new_content';
     }
 
     return { ...result, embed_job_id: embedJobId, embed_skip_reason: embedSkipReason };
@@ -2460,7 +2477,6 @@ export async function registerBuiltinHandlers(
       const r = await extractStaleFromDB(engine, {
         dryRun: !!job.data.dryRun,
         jsonMode: false,
-        includeFrontmatter: false,
         sourceIdFilter,
         catchUp: false,
       });
@@ -2526,8 +2542,10 @@ export async function registerBuiltinHandlers(
     const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
     if (!slug) throw new Error('facts-absorb job requires data.slug');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
-    const page = await engine.getPage(slug, { sourceId });
-    if (!page) return { skipped: 'page_missing', slug, sourceId };
+    const { readFactsBackstopJobPage } = await import('../core/persistence/effect-facts.ts');
+    const input = await readFactsBackstopJobPage(engine, job.data);
+    if ('skipped' in input) return { skipped: input.skipped, slug, sourceId };
+    const page = input.page;
     const { runFactsBackstop, coerceNotabilityFilter } = await import('../core/facts/backstop.ts');
     const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import', 'hook:writeback'] as const;
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
@@ -2784,9 +2802,21 @@ export async function registerBuiltinHandlers(
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
     });
 
-    // Stamp last_global_at only on a non-failed run so a failed pass stays stale
-    // and re-dispatches next tick (self-healing retry).
-    if (report.status === 'ok' || report.status === 'clean' || report.status === 'partial') {
+    if ((report.status === 'ok' || report.status === 'clean' || report.status === 'partial')
+      && !report.phases.some(phase => {
+        if (phase.status === 'fail') return true;
+        if (phase.phase !== 'synthesize' && phase.phase !== 'patterns') return false;
+        if (phase.details.reason === 'insufficient_cycle_budget') return true;
+        if (phase.phase === 'patterns') {
+          return typeof phase.details.child_outcome === 'string' && phase.details.child_outcome !== 'completed';
+        }
+        const synthesis = phase.details.synthesis as { non_completed_jobs?: number } | undefined;
+        const triage = phase.details.triage as { deferred?: number } | undefined;
+        return (synthesis?.non_completed_jobs ?? 0) > 0
+          || (triage?.deferred ?? 0) > 0
+          || (Array.isArray(phase.details.budget_deferred_transcripts) && phase.details.budget_deferred_transcripts.length > 0);
+      })
+      && report.reason !== 'aborted' && report.reason !== 'lock_stolen') {
       try {
         await engine.setConfig(LAST_GLOBAL_AT_KEY, new Date().toISOString());
       } catch (e) {
@@ -2801,17 +2831,17 @@ export async function registerBuiltinHandlers(
     };
   });
 
-  // Shell handler is always registered. Runtime env guard lives inside the
-  // handler so claimed jobs emit a clear rejection log on workers missing
-  // GBRAIN_ALLOW_SHELL_JOBS=1.
+  // Shell handler is always registered. Runtime guard lives inside the handler
+  // so claimed jobs emit a clear rejection log on workers started without
+  // --allow-shell-jobs (the flag sets GBRAIN_ALLOW_SHELL_JOBS=1 after preflight).
   {
     const { shellHandler } = await import('../core/minions/handlers/shell.ts');
     worker.register('shell', shellHandler);
     if (!quiet) {
       if (process.env.GBRAIN_ALLOW_SHELL_JOBS === '1') {
-        process.stderr.write('[minion worker] shell handler enabled (GBRAIN_ALLOW_SHELL_JOBS=1)\n');
+        process.stderr.write('[minion worker] shell handler enabled (--allow-shell-jobs / GBRAIN_ALLOW_SHELL_JOBS=1)\n');
       } else {
-        process.stderr.write('[minion worker] shell handler registered in guarded mode (set GBRAIN_ALLOW_SHELL_JOBS=1 to execute shell jobs)\n');
+        process.stderr.write('[minion worker] shell handler registered in guarded mode (start with `gbrain jobs work --allow-shell-jobs`, or export GBRAIN_ALLOW_SHELL_JOBS=1, to execute shell jobs)\n');
       }
     }
   }

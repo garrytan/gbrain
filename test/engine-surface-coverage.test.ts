@@ -48,9 +48,9 @@ const DIM = 1536;
  */
 const INTERFACE_METHODS: readonly string[] = [
   // Lifecycle
-  'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'withReservedConnection',
+  'connect', 'disconnect', 'reconnect', 'initSchema', 'transaction', 'transactionDirect', 'registerBeforeDisconnect', 'withReservedConnection',
   // Pages CRUD
-  'getPage', 'putPage', 'findDuplicatePage', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
+  'getPage', 'readPageSnapshot', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'deletePage', 'deletePages', 'resolveSlugsByPaths',
   'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages', 'listPages', 'resolveSlugs', 'getAllSlugs',
   'listAllPageRefs', 'listAllSources', 'updateSourceConfig', 'listPrefixSampledPages', 'listCorpusSample',
   // Search

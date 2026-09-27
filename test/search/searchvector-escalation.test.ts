@@ -19,6 +19,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
@@ -64,13 +65,13 @@ beforeAll(async () => {
     embedding: gradedEmb(0.99 - i * 0.0005, 10 + i),
     token_count: 3,
   }));
-  await engine.upsertChunks('notes/dense', denseChunks);
+  await installFixtureChunks(engine, 'notes/dense', denseChunks);
 
   // 15 sparse pages, one weaker chunk each — reachable only past the dense wall.
   for (let p = 0; p < 15; p++) {
     const slug = `notes/sparse-${String(p).padStart(2, '0')}`;
     await engine.putPage(slug, { type: 'note', title: `Sparse ${p}`, compiled_truth: 'sparse.' });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       {
         chunk_index: 0,
         chunk_text: `sparse ${p}`,
@@ -168,7 +169,7 @@ describe('searchVector escalation — fire-at-cap positive (HNSW lane)', () => {
         embedding: capEmb(0.9 - i * 0.0001),
         token_count: 3,
       }));
-      await capEngine.upsertChunks(slug, chunks);
+      await installFixtureChunks(capEngine, slug, chunks);
     }
   }, 120_000);
 
@@ -239,7 +240,7 @@ describe('searchVector escalation — exact-scan lane (>2000-dim column, cap key
     for (let p = 0; p < DEEP_PAGES; p++) {
       const slug = `deep/page-${String(p).padStart(4, '0')}`;
       await exactEngine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'deep.' });
-      await exactEngine.upsertChunks(slug, [
+      await installFixtureChunks(exactEngine, slug, [
         {
           chunk_index: 0,
           chunk_text: `deep ${p}`,

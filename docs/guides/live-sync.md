@@ -116,11 +116,17 @@ A dot-directory you deliberately keep content in (say `.decisions/`) can be
 waived back in with `--include-hidden '<glob>'` on `gbrain sync` — the glob
 names exactly which hidden paths to admit
 (`gbrain sync --include-hidden '.decisions/**'`); everything else hidden
-stays pruned, and vendored/generated exclusions are never waived. Two
-bounds: the flag scopes a single sync invocation (it cannot combine with
-`--all` — register the subdirectory as the source's `local_path` instead),
-and it does not reach a non-git directory's filesystem-walk import fallback
-(every git-tracked source, the normal case, is covered).
+stays pruned, and vendored/generated exclusions are never waived. The flag
+scopes a single sync invocation and cannot combine with `--all`; to make the
+waiver hold on every path — `sync --all`, autopilot, the dream cycle — persist
+it as the `sync.include_hidden` config key (same dialect as `sync.exclude`; a
+trailing `/` means the whole subtree). Unset admits nothing, and a per-call
+flag unions with the persisted list rather than replacing it. One remaining
+bound: neither form reaches a non-git directory's filesystem-walk import
+fallback (every git-tracked source, the normal case, is covered).
+
+**Say to your agent:** *"index my repo's .github folder on every sync"* — your
+agent runs `gbrain config set sync.include_hidden '.github/'`.
 
 Everything else is ordinary synced content — including `ops/` (the bundled
 daily-task-manager skill files its canonical page under `ops/tasks`).

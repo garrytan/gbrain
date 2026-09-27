@@ -205,6 +205,18 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
   });
 });
 
+// The register comment is the only place an operator learns how a PROTECTED
+// name gets submitted from the CLI. `jobs submit` sets allowProtectedSubmit
+// itself for protected names; there is no `--allow-protected` flag, and a
+// comment advertising one sends operators to a flag that exits "unknown".
+describe('protected-names register comment names the real trust mechanism', () => {
+  const src = readFileSync(join(import.meta.dir, '../src/core/minions/protected-names.ts'), 'utf8');
+  it('does not advertise the non-existent --allow-protected flag', () => {
+    expect(src).not.toContain('--allow-protected');
+    expect(src).toContain('allowProtectedSubmit');
+  });
+});
+
 // issue #3218 — the Minion handler must throw (not complete) when the drain
 // reports status='provider_failure', so the worker's ordinary failJob path
 // (attempt+backoff / dead-letter) retries the durable job instead of the

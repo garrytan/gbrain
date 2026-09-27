@@ -37,7 +37,9 @@ not know to backfill the structured timeline.
 3. Apply the diff (paste the new block in the indicated location).
 4. Update the version banner at the top of your fork (`# Based on gbrain v0.12.0`).
 5. Verify: ask the agent to write a test page and confirm the response includes
-   `auto_links: { created, removed, errors }`.
+   `auto_links: { created, removed, errors }`. (Local CLI writes only — MCP
+   writes, stdio included, return `auto_links: { skipped: "remote" }` and are
+   reconciled later by the serve maintenance sweep or `gbrain sweep --once`.)
 
 Total time: ~10 minutes for all four skills.
 
@@ -52,18 +54,25 @@ agent's mental model says it must call `gbrain link` after every `put_page`, whi
 is redundant and can cause double-add warnings.
 
 ```markdown
-### Phase 2.5: Structured Graph Updates (automatic)
+### Phase 2.5: Structured Graph Updates (auto-link)
 
-Every `put_page` call automatically extracts entity references and writes them
-to the graph (`links` table) with inferred relationship types. Stale links
-(refs no longer in the page text) are removed in the same call. This is
-"auto-link" reconciliation.
+"Auto-link" reconciliation extracts entity references from a page and writes
+them to the graph (`links` table) with inferred relationship types; stale
+links (refs no longer in the page text) are removed. WHO runs it depends on
+the write path:
 
-- No manual `add_link` calls needed for ordinary page writes.
+- **Trusted local writes** (`gbrain put`, `gbrain capture`,
+  `gbrain call put_page`) auto-link inline and return
+  `auto_links: { created, removed, errors }`.
+- **MCP callers (stdio AND HTTP)** return `auto_links: { skipped: "remote", hint }`
+  and `auto_timeline: { skipped: "remote" }`. Body wikilinks are saved as text;
+  edges are reconciled asynchronously by the serve's maintenance sweep
+  (at startup and on 10-minute idle ticks), or on demand with
+  `gbrain sweep --once` / `gbrain extract links --source db`. Use `add_link`
+  for relationships you need immediately. Untrusted body text can plant
+  ranking-boosting edges, which is why the inline path is local-only.
 - Inferred link types: `attended` (meeting -> person), `works_at`, `invested_in`,
   `founded`, `advises`, `source` (frontmatter), `mentions` (default).
-- The `put_page` MCP response includes `auto_links: { created, removed, errors }`
-  so the agent can verify outcomes.
 - To disable: `gbrain config set auto_link false`. Default is on.
 - Timeline entries with specific dates still need explicit `gbrain timeline-add`
   (or batch via `gbrain extract timeline --source db`).
@@ -74,7 +83,8 @@ on every brain write (Iron Law)" without qualification, append:
 
 ```markdown
 **v0.12.0 update:** Auto-link satisfies the Iron Law for entity-reference links
-on every `put_page`. The agent's Iron Law obligation is now: include the
+on every `put_page` (inline for trusted local writes; for MCP writes, once the
+serve maintenance sweep runs). The agent's Iron Law obligation is now: include the
 entity reference in the page content (e.g., `[Alice](people/alice)`); auto-link
 handles the structured row. Manual `add_link` calls are reserved for
 relationships you can't express in markdown content.
@@ -153,8 +163,11 @@ New (paste):
 **Note (v0.12.0):** Links between brain pages are auto-created on every
 `put_page` call (auto-link post-hook). Step 7 focuses on content
 cross-references (updating related pages' compiled truth with new signal
-from this enrichment), not on creating links. Verify via the `auto_links`
-field in the put_page response (`{ created, removed, errors }`).
+from this enrichment), not on creating links. On a trusted local write the
+put_page response carries `auto_links: { created, removed, errors }`; MCP
+writes (stdio and HTTP) return `auto_links: { skipped: "remote", hint }`
+instead — edges are reconciled by the serve maintenance sweep or
+`gbrain sweep --once`, and `add_link` covers an edge you need immediately.
 Timeline entries still need explicit `gbrain timeline-add` calls.
 ```
 
@@ -178,7 +191,9 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
 
 3. **Verify auto-link works:** ask the agent to write a test page that references
    `[Some Person](people/some-person)`. Confirm the put_page response includes
-   `auto_links: { created: 1, removed: 0, errors: 0 }`.
+   `auto_links: { created: 1, removed: 0, errors: 0 }`. (Local CLI write; an
+   MCP write returns `auto_links: { skipped: "remote" }` — run
+   `gbrain sweep --once`, then check the edge with `gbrain graph-query`.)
 
 4. **Verify graph traversal works:**
    ```bash
@@ -340,8 +355,10 @@ do not opt in are unaffected.
 
 To adopt, follow `skills/migrations/v0.14.0.md`. The short version:
 
-1. Set `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker process, then `gbrain jobs work`
-   (Postgres). On PGLite, every crontab invocation uses `--follow` for inline
+1. Start the worker with `gbrain jobs work --allow-shell-jobs` (equivalently,
+   export `GBRAIN_ALLOW_SHELL_JOBS=1` on the worker process; a `.env` in the
+   worker's directory cannot set it) (Postgres). On PGLite, every crontab
+   invocation uses `--follow` for inline
    execution; no persistent worker.
 2. Classify each of your host's cron entries: LLM-requiring (keep on gateway) vs
    deterministic (candidate for shell). Typical splits:

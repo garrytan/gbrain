@@ -63,6 +63,16 @@ export class OAuthConsentError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
 
+/** Global ceiling on the in-memory pending store; a full store rejects new requests rather than evicting live ones. */
+const MAX_PENDING_TOTAL = 1000;
+/**
+ * Per-client ceiling on requests still awaiting a decision. Without it a handful of callers could fill
+ * the global store on behalf of one self-registered client; with it, no single client_id can consume
+ * more than a sliver of the capacity every other client shares. Decided (approved/denied/failed) entries
+ * stay in the store until expiry but do not count: only the owner can move a request out of `pending`.
+ */
+const MAX_PENDING_PER_CLIENT = 10;
+
 export class OAuthGrants {
   private readonly pending = new Map<string, PendingAuthorization>();
   constructor(private readonly options: {
@@ -90,9 +100,20 @@ export class OAuthGrants {
     }
   }
 
-  async begin(clientId: string, params: AuthorizationParams): Promise<string> {
+  /** Synchronous: prune, then enforce the global and per-client ceilings. Callers must not await between this and the insert. */
+  private assertCapacity(clientId: string): void {
     this.prune();
-    if (this.pending.size >= 1000) throw new TooManyRequestsError('Too many pending requests. Try again shortly.');
+    if (this.pending.size >= MAX_PENDING_TOTAL) throw new TooManyRequestsError('Too many pending requests. Try again shortly.');
+    let awaiting = 0;
+    for (const pending of this.pending.values()) {
+      if (pending.status === 'pending' && pending.details.clientId === clientId && ++awaiting >= MAX_PENDING_PER_CLIENT) {
+        throw new TooManyRequestsError('Too many pending requests for this client. Complete or wait for an earlier request before starting another.');
+      }
+    }
+  }
+
+  async begin(clientId: string, params: AuthorizationParams): Promise<string> {
+    this.assertCapacity(clientId);
     if (!/^[A-Za-z0-9_-]{43}$/.test(params.codeChallenge)) throw new InvalidRequestError('S256 PKCE challenge required');
     const [row] = await this.options.sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId}`;
     assertActive(row);
@@ -102,9 +123,8 @@ export class OAuthGrants {
     if (!Array.isArray(row.redirect_uris) || !row.redirect_uris.some(uri => typeof uri === 'string' && redirectUriMatches(params.redirectUri, uri))) {
       throw new InvalidRequestError('Redirect URI does not match registered client');
     }
-    // No await between the capacity check and insert: concurrent DB reads cannot overfill the store.
-    this.prune();
-    if (this.pending.size >= 1000) throw new TooManyRequestsError('Too many pending requests. Try again shortly.');
+    // No await between the capacity check and insert: concurrent DB reads cannot overfill the store or a client's budget.
+    this.assertCapacity(clientId);
     const id = generateToken('');
     const details: OAuthConsentDetails = {
       id, clientId, clientName: typeof row.client_name === 'string' ? row.client_name : clientId,

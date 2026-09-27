@@ -191,11 +191,8 @@ echo "[ci-local] Smoke OK ($SMOKE_NO_ARGS files no-arg, 1 single-arg, ${SHARD_TO
 if [ "$NO_SHARD" = "1" ]; then
   if [ "$DIFF" = "1" ]; then
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
-bash scripts/check-jsonb-pattern.sh
-bash scripts/check-progress-to-stdout.sh
-bash scripts/check-trailing-newline.sh
-bash scripts/check-wasm-embedded.sh
-bun run typecheck
+bash scripts/check-bun-test-timeout.sh
+bun run verify
 echo "[runner] serial tests (DATABASE_URL unset)"
 env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
 echo "[runner] slow tests (DATABASE_URL unset)"
@@ -209,7 +206,7 @@ if [ -z "$SELECTED" ]; then
 else
   printf "%s\n" "$SELECTED" > /tmp/e2e-selected.txt
   DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
-  GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
+  GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \
   GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
   GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
   GBRAIN_TEST_DB=1 \
@@ -217,11 +214,8 @@ else
 fi'
   else
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
-bash scripts/check-jsonb-pattern.sh
-bash scripts/check-progress-to-stdout.sh
-bash scripts/check-trailing-newline.sh
-bash scripts/check-wasm-embedded.sh
-bun run typecheck
+bash scripts/check-bun-test-timeout.sh
+bun run verify
 echo "[runner] serial tests (DATABASE_URL unset)"
 env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
 echo "[runner] slow tests (DATABASE_URL unset)"
@@ -230,7 +224,7 @@ echo "[runner] unit (unsharded, DATABASE_URL unset)"
 env -u DATABASE_URL bash scripts/run-unit-shard.sh
 echo "[runner] e2e (unsharded)"
 DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
-GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
+GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \
 GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
 GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
 GBRAIN_TEST_DB=1 \
@@ -251,11 +245,8 @@ fi'
     DIFF_E2E_PREP='> /tmp/e2e-selected.txt'
   fi
   RUN_PHASES_CMD="echo \"[runner] guards + typecheck (run once before sharding)\"
-bash scripts/check-jsonb-pattern.sh
-bash scripts/check-progress-to-stdout.sh
-bash scripts/check-trailing-newline.sh
-bash scripts/check-wasm-embedded.sh
-bun run typecheck
+bash scripts/check-bun-test-timeout.sh
+bun run verify
 echo \"[runner] serial tests (DATABASE_URL unset)\"
 env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
 echo \"[runner] slow tests (DATABASE_URL unset)\"
@@ -291,7 +282,7 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
   if [ -s /tmp/e2e-selected.txt ]; then
     SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
-    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
+    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
     GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
     GBRAIN_TEST_DB=1 \\
@@ -299,7 +290,7 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
   else
     SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
-    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
+    GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
     GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
     GBRAIN_TEST_DB=1 \\

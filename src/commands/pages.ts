@@ -67,7 +67,8 @@ Subcommands:
                                     Mirror of the autopilot purge phase.
 
 Notes:
-  Soft-delete a page via the MCP \`delete_page\` op. Restore via \`restore_page\`.
+  Soft-delete a page via the MCP \`delete_page\` op (also removes its markdown file
+  from the source working tree). Restore via \`restore_page\` (re-creates the file).
   This command is the manual operator escape hatch — the autopilot cycle's
   purge phase already calls the same library function on every run.
 `);

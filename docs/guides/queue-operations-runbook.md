@@ -216,7 +216,7 @@ If the list is empty AND your submissions keep piling up, no worker is
 claiming. Start one:
 
 ```bash
-GBRAIN_ALLOW_SHELL_JOBS=1 gbrain jobs work --concurrency 4
+gbrain jobs work --concurrency 4 --allow-shell-jobs   # drop --allow-shell-jobs if you never submit shell jobs
 ```
 
 ## Reading the DB-probe verdicts (pool starved vs server unreachable)

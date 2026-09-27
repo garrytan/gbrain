@@ -18,6 +18,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
 import {
@@ -67,10 +68,10 @@ beforeAll(async () => {
     compiled_truth: 'Page B discusses dogs and their habits.',
   });
 
-  await engine.upsertChunks('docs/page-a', [
+  await installFixtureChunks(engine, 'docs/page-a', [
     { chunk_index: 0, chunk_text: 'cats behavior chunk A', chunk_source: 'compiled_truth' },
   ]);
-  await engine.upsertChunks('docs/page-b', [
+  await installFixtureChunks(engine, 'docs/page-b', [
     { chunk_index: 0, chunk_text: 'dogs habits chunk B', chunk_source: 'compiled_truth' },
   ]);
 
