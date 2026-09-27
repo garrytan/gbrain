@@ -8,8 +8,19 @@ import { runReadLatencyWorkload } from '../scripts/persistence/read-workload.ts'
 import { WriteTimingRecorder } from '../scripts/persistence/read-admission.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { childEnvironment } from '../scripts/persistence/validate.ts';
+import { samplePeakRss } from '../scripts/persistence/harness.ts';
 
 describe('read-load evidence', () => {
+  test('resident RSS telemetry tolerates only Bun memoryUsage failures without inventing a peak', () => {
+    const unavailable = () => { throw new Error('Failed to get memory usage'); };
+    expect(samplePeakRss(null, unavailable)).toBeNull();
+    expect(samplePeakRss(null, () => 512)).toBe(512);
+    expect(samplePeakRss(512, unavailable)).toBe(512);
+    expect(samplePeakRss(512, () => 256)).toBe(512);
+    expect(samplePeakRss(512, () => 1024)).toBe(1024);
+    expect(() => samplePeakRss(512, () => { throw new Error('unexpected sampler failure'); })).toThrow('unexpected sampler failure');
+  });
+
   test.each([false, true])('unavailable RSS stays explicit without invalidating real reads and writes (all=%s)', async all => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-read-rss-'));
     const original = process.memoryUsage;
