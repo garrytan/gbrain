@@ -435,6 +435,7 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
         stop_reason: 'end_turn',
         tokens,
         synth_mode_used: 'oneshot',
+        oneshot_skipped: true,
         written_refs: [],
       },
     };

@@ -751,4 +751,10 @@ export interface SubagentResult {
   written_refs?: Array<{ slug: string; status: 'complete' | 'failed' }>;
   /** #4216 — true when a retried oneshot job finalized from a prior invocation's ledger. */
   recovered?: boolean;
+  /**
+   * True when the oneshot model answered with the explicit skip contract
+   * ({"pages":[],"skipped":true}). A legitimate zero-write completion, so
+   * require_writes must not dead-letter it.
+   */
+  oneshot_skipped?: boolean;
 }

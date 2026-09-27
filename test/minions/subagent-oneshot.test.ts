@@ -346,6 +346,7 @@ describe('runSubagentOneshot', () => {
     const result = (outcome as { result: { result: string; written_refs?: unknown[] } }).result;
     expect(result.result).toContain('routine chatter');
     expect(result.written_refs).toEqual([]);
+    expect((result as { oneshot_skipped?: boolean }).oneshot_skipped).toBe(true);
   });
 
   test('pages:[] WITHOUT skip flag → empty_no_skip fallback', async () => {

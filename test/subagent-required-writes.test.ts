@@ -20,6 +20,29 @@ describe('required-write postcondition (#5098)', () => {
       .rejects.toThrow('required put_page write');
   });
 
+  test('an explicit oneshot skip is a legitimate zero-write completion', async () => {
+    // The oneshot contract offers {"pages":[],"skipped":true}. Dead-lettering
+    // it released the idempotency key, so every cycle re-paid for the same
+    // transcript and the verdict never stuck.
+    const skipped: SubagentResult = { ...result, synth_mode_used: 'oneshot', oneshot_skipped: true, written_refs: [] };
+    const actual = await finalizeWriteAccounting(ledger([]), 1, skipped, { requireWrites: true });
+    expect(actual.pages_attempted).toBe(0);
+    expect(actual.pages_written).toBe(0);
+    expect(actual.oneshot_skipped).toBe(true);
+  });
+
+  test('a skip marker without oneshot mode does not satisfy required writes', async () => {
+    const agentic: SubagentResult = { ...result, synth_mode_used: 'agentic', oneshot_skipped: true };
+    await expect(finalizeWriteAccounting(ledger([]), 1, agentic, { requireWrites: true }))
+      .rejects.toThrow('required put_page write');
+  });
+
+  test('a oneshot skip does not excuse attempted writes that all failed', async () => {
+    const skipped: SubagentResult = { ...result, synth_mode_used: 'oneshot', oneshot_skipped: true };
+    await expect(finalizeWriteAccounting(ledger([{ status: 'failed', error: 'boom' }]), 1, skipped, { requireWrites: true }))
+      .rejects.toThrow('all 1 put_page write(s) failed');
+  });
+
   test('an unsettled write cannot satisfy required writes', async () => {
     await expect(finalizeWriteAccounting(ledger([{ status: 'pending', error: null }]), 1, result, { requireWrites: true }))
       .rejects.toThrow('required put_page write');

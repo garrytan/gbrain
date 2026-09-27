@@ -291,7 +291,11 @@ export async function finalizeWriteAccounting(
       `all ${failed} put_page write(s) failed — job produced zero pages (first error: ${firstError})`,
     );
   }
-  if (opts.requireWrites && attempted === 0) {
+  // An explicit oneshot skip is the contract's legitimate zero-write answer.
+  // Dead-lettering it released the idempotency key and withheld the cooldown
+  // stamp, so every cycle re-paid for the same transcript.
+  const legitimateSkip = result.synth_mode_used === 'oneshot' && result.oneshot_skipped === true;
+  if (opts.requireWrites && attempted === 0 && !legitimateSkip) {
     throw new UnrecoverableError(
       result.stop_reason === 'end_turn'
         ? 'job produced zero required put_page writes — a clean model finish does not satisfy require_writes'
