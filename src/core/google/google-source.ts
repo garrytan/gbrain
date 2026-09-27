@@ -841,16 +841,41 @@ async function sweepGmail(
     const likelyCapped = ids.length >= FALLBACK_MAX_PAGES * 100;
     if (!likelyCapped) newHistoryId = anchorCandidate;
   }
+  // Resume threads an earlier aborted drain consumed from history but never
+  // landed; `unlanded` shrinks as threads land or are dropped (404/poison).
+  threadIds = [...new Set([...(state.gmail_pending_thread_ids ?? []), ...threadIds])];
+  const unlanded = new Set(threadIds);
+  // Bank drain progress. Holding the cursor across an aborted drain made every
+  // budget-limited run re-list the same window and re-import the threads it
+  // had already landed (one no-op receipt each) without ever reaching the end.
+  // Advancing is safe because every flagged thread not yet landed stays parked.
+  const checkpoint = async (): Promise<void> => {
+    if (newHistoryId) state.gmail_history_id = newHistoryId;
+    state.gmail_pending_thread_ids = [...unlanded];
+    await saveGoogleState(deps, state);
+  };
   let failed = 0;
+  let landedSinceCheckpoint = 0;
   for (const tid of threadIds) {
-    if (deps.opts.signal?.aborted) return false;
-    if (poisoned(tid)) continue;
+    if (deps.opts.signal?.aborted) {
+      await checkpoint();
+      return false;
+    }
+    if (poisoned(tid)) {
+      unlanded.delete(tid);
+      continue;
+    }
     try {
       const thread = await processThread(deps, gmail, tid, activePack, summary, countedSlugs);
+      unlanded.delete(tid);
       if (failCounts[tid]) delete failCounts[tid];
       const newest = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
       if (newest > (state.gmail_newest_ms ?? 0)) state.gmail_newest_ms = newest;
       progressTick(`thread ${tid}`);
+      if (failed === 0 && ++landedSinceCheckpoint >= BACKFILL_BATCH_THREADS) {
+        landedSinceCheckpoint = 0;
+        await checkpoint();
+      }
     } catch (e) {
       if (deps.managed) rethrowConnectorWriteError(e);
       if (e instanceof GoogleCursorExpiredError && e.status === 404) {
@@ -860,6 +885,7 @@ async function sweepGmail(
         // expired (~1 week of wedged deltas).
         deps.log(`[google] thread ${tid} vanished (404); skipping`);
         progressTick(`thread ${tid} gone`);
+        unlanded.delete(tid);
         continue;
       }
       // Same rate-limit carve-out as the backfill batch loop above: transient,
@@ -877,6 +903,11 @@ async function sweepGmail(
       if (rateLimited) break;
     }
   }
+  if (deps.opts.signal?.aborted) {
+    await checkpoint();
+    return false;
+  }
+  state.gmail_pending_thread_ids = [...unlanded];
   // The delta cursor advances only when every flagged thread landed —
   // a partial drain re-lists the same window next run (idempotent).
   if (failed === 0 && newHistoryId) {

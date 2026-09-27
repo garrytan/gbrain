@@ -59,6 +59,13 @@ export interface GoogleSourceState {
    * the backfill floor / delta cursor forever; entries clear on success.
    */
   gmail_fail_counts?: Record<string, number>;
+  /**
+   * Delta threads flagged by an already-consumed history window but not yet
+   * landed. An aborted delta drain (wall-clock budget) advances
+   * `gmail_history_id` and parks the remainder here, so the next run resumes
+   * the backlog instead of re-listing and re-importing the whole window.
+   */
+  gmail_pending_thread_ids?: string[];
   calendar_sync_token: string | null;
   /**
    * Calendar id `calendar_sync_token` was minted for. A token is only valid

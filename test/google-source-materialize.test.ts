@@ -103,6 +103,8 @@ interface FakeGoogle {
   threadFetches: number;
   tokenPosts: number;
   onThreadFetch?: () => void;
+  /** Real Gmail semantics: history.list from the latest historyId is empty. */
+  historyHonorsStart?: boolean;
 }
 
 function emptyFx(): FakeGoogle {
@@ -168,7 +170,8 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
       if (fx.historyExpired) return json({ error: { code: 404, message: 'Start history id is too old' } }, 404);
       return json({
         historyId: fx.historyResponseId,
-        history: fx.history.map((tids) => ({ messages: tids.map((tid) => ({ threadId: tid })) })),
+        history: (fx.historyHonorsStart && u.searchParams.get('startHistoryId') === fx.historyResponseId ? [] : fx.history)
+          .map((tids) => ({ messages: tids.map((tid) => ({ threadId: tid })) })),
       });
     }
 
@@ -743,6 +746,53 @@ describe('google-source materialize', () => {
         expect(state.gmail_backfill_done).toBe(true);
         expect(state.gmail_backfill_floor_ms).toBeNull();
         expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(6);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('aborted delta drain banks landed threads; the next run resumes only the remainder', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-delta-abort-'));
+    const fx = emptyFx();
+    fx.historyHonorsStart = true;
+    const vault = makeVault();
+    const tids = ['17aa00000000e001', '17aa00000000e002', '17aa00000000e003', '17aa00000000e004', '17aa00000000e005', '17aa00000000e006'];
+    for (let i = 0; i < 6; i++) {
+      fx.messages.push(
+        gmsg(`18c2f4a9b3d21e1${i + 1}`, tids[i], daysAgoMs(40 + i), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Delta topic ${i}` },
+          body: `Delta body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+        expect(readGoogleState(dir).gmail_history_id).toBe('1000');
+
+        // History flags all six threads; the wall-clock budget expires after two.
+        fx.history = [tids];
+        fx.historyResponseId = '1010';
+        const controller = new AbortController();
+        fx.onThreadFetch = () => {
+          if (fx.threadFetches >= 8) controller.abort();
+        };
+        const res1 = await sweep(dir, fx, vault, { signal: controller.signal }, 'gmail');
+        expect(res1.status).toBe('partial');
+        let state = readGoogleState(dir);
+        expect(state.gmail_history_id).toBe('1010');
+        expect(state.gmail_pending_thread_ids).toEqual(tids.slice(2));
+
+        // Resume: only the four unlanded threads are fetched, then the backlog clears.
+        fx.onThreadFetch = undefined;
+        const fetchesBefore = fx.threadFetches;
+        await sweep(dir, fx, vault, {}, 'gmail');
+        expect(fx.threadFetches - fetchesBefore).toBe(4);
+        state = readGoogleState(dir);
+        expect(state.gmail_history_id).toBe('1010');
+        expect(state.gmail_pending_thread_ids).toEqual([]);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
