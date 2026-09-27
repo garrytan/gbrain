@@ -35,6 +35,10 @@ Ingest meetings, articles, media, documents, and conversations into the brain.
 - Raw sources are preserved for provenance via `gbrain files upload-raw` with automatic size routing.
 - State sections are rewritten with current best understanding, never appended to.
 - Entity detection fires on every inbound message; notable entities get pages or updates.
+- Notability gate before any new entity page: existing pages are updated, and a NEW page is
+  created only for a notable entity and only with meaningful content from web search or
+  existing brain context — no stubs. A non-notable mention stays an inline reference on the
+  page that mentions it.
 
 > **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 

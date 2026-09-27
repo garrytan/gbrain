@@ -1,11 +1,12 @@
 ---
 name: idea-ingest
-version: 1.1.0
+version: 1.2.0
 upstream: idea-ingest@fc834ee
 description: |
   Ingest links, articles, tweets, and ideas into the brain. Fetch content, save
-  to brain with analysis, create author people page, and cross-link. Use when the
-  user shares a link or says "read this", "save this", "think about this".
+  to brain with analysis, credit the author (people page only when they pass the
+  notability gate), and cross-link. Use when the user shares a link or says
+  "read this", "save this", "think about this".
 triggers:
   - shares a link or URL
   - "read this"
@@ -36,7 +37,11 @@ writes_to:
 
 This skill guarantees:
 - Every ingested item has a brain page with genuine analysis (not just a summary)
-- The author gets a people page (MANDATORY for anyone whose thinking is worth ingesting)
+- The author is always credited: back-linked from an existing `people/` page (timeline update),
+  or inline on the ingested page (`**Author:** {Author}, {role}`) when no page exists. A NEW
+  `people/` page is created only when the author passes the notability gate AND you have at
+  least two independent, durable facts about them beyond this one item — never a stub
+  (`skills/_brain-filing-rules.md` §Notability Gate)
 - Cross-links created bidirectionally (source ↔ author, source ↔ mentioned entities)
 - Raw source preserved for provenance via `gbrain files upload-raw`
 - Every fact has an inline `[Source: ...]` citation
@@ -44,7 +49,8 @@ This skill guarantees:
 
 **Returns** (when invoked by another skill or sub-agent):
 - `page_path`: brain page path of the ingested item (e.g., `concepts/flywheel-effects`)
-- `author_path`: brain page path of the author (e.g., `people/alice-example`)
+- `author_path`: brain page path of the author (e.g., `people/alice-example`), or `null` when
+  the notability gate was skipped and the author was credited inline instead
 - `cross_links`: list of all cross-links created
 - `status`: `ingested` | `updated` | `fetch_failed`
 
@@ -59,11 +65,14 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 
 2. **Upload raw source.** Save the fetched content for provenance: `gbrain files upload-raw <file> --page <slug>`
 
-3. **Identify the author — MANDATORY people page.** Anyone whose thinking is worth ingesting is worth tracking.
-   - Search brain for existing author page
-   - If no page → CREATE ONE with compiled truth + timeline format
-   - If page exists → update timeline with this new publication
-   - Cross-link both directions
+3. **Identify the author — notability-gated.** Search brain for an existing author page first.
+   - If page exists → update timeline with this new publication, then cross-link both directions
+   - If no page → create one ONLY if the author passes the notability gate
+     (`skills/_brain-filing-rules.md` §Notability Gate, `skills/conventions/quality.md`) AND at
+     least two independent, durable facts about them exist beyond this one item. Create a FULL
+     page (not a stub) from enrichment — a single ingested item is not an entity worth a page.
+   - Otherwise credit the author inline on the ingested page (`**Author:** {Author}, {role}`) and
+     note the gap in the reply. When in doubt, DON'T create. A missing page can be created later.
 
 4. **Save to brain.** File by PRIMARY SUBJECT (read `skills/_brain-filing-rules.md`):
    - About a person → `people/`
@@ -115,7 +124,8 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 
 - Just summarizing without connecting to brain knowledge
 - Filing everything in `sources/` (sources is for raw data dumps only)
-- Skipping the author people page
+- Dropping the author credit entirely — neither a back-link on an existing author page nor an inline `**Author:**` line on the ingested page
+- Creating a `people/` page that fails the notability gate in `skills/_brain-filing-rules.md` or is a stub built from this one item
 - Not cross-linking to mentioned entities
 - Ingesting without checking brain first for existing coverage
 - Overwriting an existing brain page instead of merging new content into it
