@@ -154,6 +154,7 @@ export function installProcessWatchdog(opts: ProcessWatchdogOpts): WatchdogHandl
   const warn = opts.onWarn ?? defaultWarn;
   const { deadlineMs, graceMs } = clampWatchdogTimers(opts.deadlineMs, opts.graceMs ?? DEFAULT_GRACE_MS);
   // Sanitize label to a safe charset (defends the inline worker string + log lines).
+  // gbrain-allow-ascii-class: process label for logs
   const label = (opts.label ?? 'watchdog').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 40) || 'watchdog';
   const heartbeatMs = Math.max(0, Math.floor(opts.heartbeatMs ?? 0));
 
@@ -404,6 +405,7 @@ export function installLoopStallWatchdog(opts: LoopStallWatchdogOpts): WatchdogH
   const graceMs = Number.isFinite(rawGrace) ? Math.max(0, Math.floor(rawGrace)) : STALL_DEFAULT_GRACE_MS;
 
   // Sanitize label to a safe charset (defends the inline worker string + log lines).
+  // gbrain-allow-ascii-class: process label for logs
   const label = (opts.label ?? 'stall-watchdog').replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 40) || 'stall-watchdog';
 
   // Cadences must sit well below the stall threshold or every check would see

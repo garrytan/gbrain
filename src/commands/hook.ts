@@ -427,7 +427,7 @@ function sanitizeSessionId(id: unknown): string {
   // downstream argv consumer (the detached memorable spawn passes it as a
   // positional value) — hook stdin is untrusted input.
   const s =
-    typeof id === 'string' ? id.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^-+/, '').slice(0, 120) : '';
+    typeof id === 'string' ? id.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^-+/, '').slice(0, 120) : ''; // gbrain-allow-ascii-class: session id in filenames/argv
   return s && !/^\.+$/.test(s) ? s : 'unknown';
 }
 

@@ -55,6 +55,7 @@ const SEGMENT_HASH_LEN = 24;
  * covered structurally. Matches hook.ts's sanitizeSessionId charset.
  */
 function safeIdComponent(id: string): string {
+  // gbrain-allow-ascii-class: session id reaches filenames
   const s = String(id).replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 120);
   return s && !/^\.+$/.test(s) ? s : 'unknown';
 }

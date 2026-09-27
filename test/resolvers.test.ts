@@ -523,6 +523,23 @@ describe('x_handle_to_tweet resolver', () => {
     expect(r.value.tweet_id).toBe('123');
   });
 
+  // #21: tokens of every script count, so Cyrillic keywords pick their tweet.
+  test('Cyrillic keywords pick the matching tweet out of two', async () => {
+    process.env.X_API_BEARER_TOKEN = 'fake';
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      data: [
+        { id: '111', text: 'совсем другая тема сегодня', created_at: '2026-04-19T00:00:00Z' },
+        { id: '222', text: 'рассказываю про кириллические слаги', created_at: '2026-04-18T00:00:00Z' },
+      ],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const r = await xHandleToTweetResolver.resolve({
+      input: { handle: 'garrytan', keywords: 'кириллические слаги' },
+      context: makeCtx(),
+    });
+    expect(r.value.url).toBe('https://x.com/garrytan/status/222');
+    expect(r.confidence).toBeGreaterThanOrEqual(0.85);
+  });
+
   test('single weak-match → confidence in 0.5-0.8 review range', async () => {
     process.env.X_API_BEARER_TOKEN = 'fake';
     globalThis.fetch = (async () => new Response(JSON.stringify({

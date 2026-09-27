@@ -319,9 +319,10 @@ const STOP_WORDS = new Set([
 ]);
 
 function tokenize(s: string): string[] {
+  // Letters and digits of every script count as token characters (#21).
   return s
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ')
     .split(/\s+/)
     .filter(t => t.length > 2 && !STOP_WORDS.has(t));
 }

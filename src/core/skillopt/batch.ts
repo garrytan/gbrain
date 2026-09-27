@@ -279,6 +279,7 @@ export async function runFleet(opts: FleetOpts): Promise<FleetResult> {
 }
 
 function slugifyModel(model: string): string {
+  // gbrain-allow-ascii-class: model id
   return model.replace(/[^a-z0-9-]/gi, '-').toLowerCase();
 }
 

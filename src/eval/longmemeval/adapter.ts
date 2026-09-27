@@ -120,6 +120,7 @@ export function normalizeSessions(question: LongMemEvalQuestion): LongMemEvalSes
  * harness's resetTables).
  */
 export function sanitizeSessionIdForSlug(sessionId: string): string {
+  // gbrain-allow-ascii-class: benchmark session ids
   return sessionId.toLowerCase().replace(/[_.]/g, '-').replace(/[^a-z0-9-]/g, '-');
 }
 

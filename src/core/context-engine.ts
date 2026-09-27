@@ -776,6 +776,7 @@ export function formatCheckpointBlock(links: CheckpointLinkLite[], envelope: str
  */
 export function sanitizeEngineSessionId(raw: unknown): string | null {
   if (typeof raw !== 'string' || !raw) return null;
+  // gbrain-allow-ascii-class: session id reaches filenames
   const s = raw.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 120);
   return s && !/^\.+$/.test(s) ? s : null;
 }

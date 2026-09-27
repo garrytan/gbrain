@@ -111,6 +111,7 @@
     "check:pg-url-redaction": "bash scripts/check-pg-url-redaction.sh",
     "check:source-scope-onboard": "bash scripts/check-source-scope-onboard.sh",
     "check:getpage-scope": "node scripts/check-getpage-scoped-write.mjs",
+    "check:ascii-slug-class": "node scripts/check-ascii-slug-class.mjs",
     "postinstall": "bun run scripts/postinstall.ts",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin",

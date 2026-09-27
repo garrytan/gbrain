@@ -114,6 +114,7 @@ function sanitizeToolName(opName: string): string {
   // Prefix with brain_ and replace any non-conforming char. For the v0.15
   // allow-list, every op name is already a valid simple identifier, so this
   // is defense-in-depth.
+  // gbrain-allow-ascii-class: LLM tool names are ASCII
   const prefixed = `brain_${opName}`.replace(/[^a-zA-Z0-9_-]/g, '_');
   return prefixed.slice(0, 64);
 }

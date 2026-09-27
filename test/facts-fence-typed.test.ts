@@ -204,6 +204,14 @@ describe('v0.35.4 — metric normalization (D-ENG-4)', () => {
     expect(normalizeMetricLabel('Time-to-Hire')).toBe('timetohire');
   });
 
+  // #21: letters of every script survive (shared slug fold, ADR-0001).
+  test('non-Latin labels keep their letters; accents fold; й/ё stay', () => {
+    expect(normalizeMetricLabel('Выручка')).toBe('выручка');
+    expect(normalizeMetricLabel('Время найма (дней)')).toBe('время_найма_дней');
+    expect(normalizeMetricLabel('Объём заказов')).toBe('объём_заказов');
+    expect(normalizeMetricLabel('Café revenue')).toBe('cafe_revenue');
+  });
+
   test('empty / null / undefined → undefined (the "no metric set" signal)', () => {
     expect(normalizeMetricLabel(undefined)).toBeUndefined();
     expect(normalizeMetricLabel(null)).toBeUndefined();
