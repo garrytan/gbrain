@@ -162,6 +162,7 @@ export class PersistenceConsumer {
   }
   private report(error: unknown): void {
     if (this.stopping && error === this.abort.signal.reason) return;
+    if (process.env.GBRAIN_DEBUG_PERSISTENCE) console.error('[persistence] underlying error:', error);
     const code = (error as { code?: unknown })?.code;
     this.lastError = { code: typeof code === 'string' && (/^[A-Z0-9]{5}$/.test(code) || isWriteErrorCode(code)) ? code : 'storage_error', at: new Date().toISOString(),
       ...(this.lastPhaseError ? { phase: this.lastPhaseError } : {}) };
