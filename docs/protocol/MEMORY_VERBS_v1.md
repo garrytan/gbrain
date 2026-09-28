@@ -227,7 +227,7 @@ matched. **create_safety** (enum): `exists` (a page for this already exists)
 signal). The derivation of both is implementation-defined and may improve;
 the values are frozen.
 
-### remember(fact, provenance, ttl?, entity?, kind?, visibility?, request_id?) — write
+### remember(fact, provenance, ttl?, entity?, kind?, visibility?, confidence?, request_id?) — write
 
 Save ONE fact with mandatory attribution.
 
@@ -244,6 +244,12 @@ Save ONE fact with mandatory attribution.
 - `visibility`: `world` (DEFAULT — readable by every agent connected to this
   brain; required for the remote remember→recall round-trip) \| `private`
   (local CLI reads only). The init quickstart carries the consent line.
+- `confidence`: number in `[0, 1]`, DEFAULT `1.0`. Convention: `1.0` =
+  human-reviewed; machine-assessed facts carry a graded value `< 1` (matching
+  what extraction/critique emit). Out-of-range or non-numeric values are
+  rejected with `invalid_params` and a self-correcting suggestion. The value
+  rides decay (`confidence × exp(-age/halflife)`) and surfaces in recall
+  results.
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —

@@ -98,6 +98,11 @@ const remember: Operation = {
       description:
         'world (default): readable by every agent connected to this brain — required for the remote remember→recall round-trip. private: local CLI reads only.',
     },
+    confidence: {
+      type: 'number',
+      description:
+        'Confidence in the fact, 0..1 (default 1.0). Use 1.0 only for human-reviewed facts; machine-assessed facts carry graded <1.',
+    },
   },
   mutating: true,
   scope: 'write',
@@ -144,6 +149,18 @@ const remember: Operation = {
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
     }
+    let confidenceParam: number | undefined;
+    if (p.confidence !== undefined && p.confidence !== null) {
+      const c = Number(p.confidence);
+      if (!Number.isFinite(c) || c < 0 || c > 1) {
+        throw verbError(
+          'invalid_params',
+          `confidence "${p.confidence}" is not a number in [0,1].`,
+          'Pass a confidence between 0 and 1 (1.0 = human-reviewed; machine-assessed facts carry graded <1).',
+        );
+      }
+      confidenceParam = c;
+    }
     if (ctx.dryRun) {
       parseTtlParam(p.ttl); // Dry runs still validate without admitting intent.
       return {
@@ -156,7 +173,8 @@ const remember: Operation = {
 
     const { submitRememberMutation } = await import('./persistence/memory-mutations.ts');
     const { runMemoryWrite } = await import('./persistence/verb-errors.ts');
-    return runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility }));
+    return runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility,
+      ...(confidenceParam !== undefined ? { confidence: confidenceParam } : {}) }));
   },
   cliHints: { name: 'remember', positional: ['fact'] },
 };
