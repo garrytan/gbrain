@@ -278,12 +278,13 @@ export class ManagedConnectorSync {
   async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean }> {
     const slug = slugifyPath(sourcePath);
     const row = await this.submit('managed_connector_import', slug, sourcePath, { content });
+    if (!row) return { slug, chunks: 0, status: 'skipped', created: false };
     return { slug, chunks: Number(row.outcome?.chunks ?? 0), status: row.outcome?.noop ? 'skipped' : 'imported', created: row.outcome?.status === 'created' };
   }
   async delete(slug: string, sourcePath: string | null): Promise<boolean> {
     slug = slugifyPath(`${slug}.md`);
     const row = await this.submit('managed_connector_delete', slug, sourcePath, {});
-    return row.outcome?.noop !== true;
+    return row!.outcome?.noop !== true;
   }
   async saveState(state: unknown, fresh = false, newestContentAt?: string): Promise<void> {
     const next = [{ generation: Number((this.checkpoint[0] as { generation?: number } | undefined)?.generation ?? 0) + 1, state: structuredClone(state) }];
@@ -292,7 +293,21 @@ export class ManagedConnectorSync {
     this.checkpoint = next;
     this.receipts = [];
   }
-  private async submit(kind: ConnectorIntent['kind'], slug: string, sourcePath: string | null, extra: Partial<ConnectorIntent>): Promise<WriteRequest> {
+  // A re-walk (backfill, gap walk, re-anchor) re-lands unchanged content under a
+  // new checkpointBefore, so admitting it would mint a fresh terminal receipt per
+  // thread for a noop. Skip only when no receipt exists for this intent: replays
+  // and approved retries keep their normal path.
+  private async unchanged(slug: string, sourcePath: string | null, content: string | undefined, snapshot: PageSnapshot | null): Promise<boolean> {
+    if (!sourcePath || typeof content !== 'string' || !snapshot || snapshot.page.deleted_at != null ||
+        snapshot.page.source_path != null && snapshot.page.source_path !== sourcePath) return false;
+    try {
+      const { prepared } = await prepareConnectorContent(this.engine, slug, this.sourceId, sourcePath, content, this.noSchemaPack, snapshot);
+      return prepared?.noop === true && prepared.slug === slug && prepared.observedRevision === snapshot.revision;
+    } catch {
+      return false; // Publication reports the authoritative error.
+    }
+  }
+  private async submit(kind: ConnectorIntent['kind'], slug: string, sourcePath: string | null, extra: Partial<ConnectorIntent>): Promise<WriteRequest | null> {
     await this.recover(slug);
     const snapshot = await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId, includeDeleted: true });
     const file = kind === 'managed_connector_checkpoint' ? undefined : await connectorFileTarget(this.engine,
@@ -366,6 +381,7 @@ export class ManagedConnectorSync {
           'Repeat the same connector sync options; an admitted replacement keeps its existing request identity.');
       } finally { await lock?.release(); }
     } else if (!row) {
+      if (kind === 'managed_connector_import' && !prior.retry && await this.unchanged(slug, sourcePath, extra.content, snapshot)) return null;
       row = await this.engine.transaction(async tx => {
         await this.assertLease(tx);
         return admitWriteInTransaction(tx, prior.input);
@@ -376,6 +392,21 @@ export class ManagedConnectorSync {
     if (kind !== 'managed_connector_checkpoint') this.receipts.push(row.id);
     return row;
   }
+}
+
+/** Provider-free preparation shared by publication and the pre-admission unchanged check. */
+async function prepareConnectorContent(engine: BrainEngine, slug: string, sourceId: string, sourcePath: string, content: string,
+  noSchemaPack: boolean, snapshot: PageSnapshot | null): Promise<{ prepared: PreparedContentImport | undefined; result: Awaited<ReturnType<typeof importFromContent>> }> {
+  const activePack = noSchemaPack ? undefined : (await loadActivePackForEngine(engine, { remote: false, sourceId }).catch(() => null))?.manifest;
+  if (parseMarkdown(content, slug, { activePack }).slug !== slug) throw new OperationError('invalid_params', 'The connector content changes its page identity.');
+  let prepared: PreparedContentImport | undefined;
+  const result = await importFromContent(engine, slug, content, { sourceId, sourcePath,
+    filename: basename(sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack,
+    prepareFrontmatter: page => {
+      if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
+    },
+    prepare: async value => { prepared = value; return value.result; } });
+  return { prepared, result };
 }
 
 export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
@@ -435,15 +466,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       p.sourcePath.split('/').some(part => !part || part === '.' || part === '..') || p.sourcePath.includes('\\')) {
     throw new OperationError('invalid_params', 'The connector import path is invalid.');
   }
-  const activePack = p.noSchemaPack ? undefined : (await loadActivePackForEngine(engine, { remote: false, sourceId: row.source_id }).catch(() => null))?.manifest;
-  if (parseMarkdown(p.content, row.slug, { activePack }).slug !== row.slug) throw new OperationError('invalid_params', 'The connector content changes its page identity.');
-  let prepared: PreparedContentImport | undefined;
-  const result = await importFromContent(engine, row.slug, p.content, { sourceId: row.source_id, sourcePath: p.sourcePath,
-    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack,
-    prepareFrontmatter: page => {
-      if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
-    },
-    prepare: async value => { prepared = value; return value.result; } });
+  const { prepared, result } = await prepareConnectorContent(engine, row.slug, row.source_id, p.sourcePath, p.content, p.noSchemaPack, snapshot);
   if (!prepared || prepared.slug !== row.slug) throw new OperationError('revision_conflict', result.error ?? 'A different page owns this connector content.');
   const ready = prepared;
   if (ready.observedRevision !== (snapshot?.revision ?? null)) throw new OperationError('revision_conflict', 'The connector page changed during preparation.');

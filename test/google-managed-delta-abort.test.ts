@@ -68,14 +68,15 @@ test('managed gmail delta: an aborted drain banks per batch; resume drops no thr
     expect(await imports()).toHaveLength(27);
 
     // Resume: only the four parked threads are fetched; every thread lands and
-    // only the one landed-but-unbanked thread is imported a second time.
+    // the one landed-but-unbanked thread is re-landed unchanged, which admits
+    // no second receipt (bp-ry3r.1), so each thread holds exactly one.
     onThread = () => { fetches++; };
     fetches = 0;
     expect((await run()).status).not.toBe('partial');
     expect(fetches).toBe(4);
     const all = await imports();
     expect(new Set(all).size).toBe(30);
-    expect(all).toHaveLength(31);
+    expect(all).toHaveLength(30);
     const resumed = await state();
     expect(resumed?.gmail_history_id).toBe('1010');
     expect(resumed?.gmail_pending_thread_ids).toEqual([]);
