@@ -10,6 +10,40 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.0.0] - 2026-09-28
+
+**Bring selected Screenpipe meeting notes into your brain.**
+
+Export saved notes from completed meetings into a private staging directory,
+review them, and add the approved files to a chosen brain source. Each note
+retains its meeting timestamp, attendees, application, device label, and a link
+back to the local recording. The collector fetches only the meeting IDs you
+select and leaves existing files untouched when their contents differ.
+
+### To take advantage of v0.60.0.0
+
+Say to your agent: "Help me add selected Screenpipe meeting notes to my personal
+brain. Review the exported files and confirm the destination source first."
+The [Screenpipe recipe](recipes/screenpipe-meetings.md) walks through local
+authentication, preview, export, review, and source-scoped sync. It requires a
+GBrain source checkout and Screenpipe on the same machine.
+
+### What to watch
+
+This is an opt-in export of saved notes, not automatic recording ingestion.
+It does not copy raw transcripts or screen history. Changes and deletions in
+Screenpipe are not automatically reconciled with existing brain pages; review
+corrections manually. Nothing changes for existing installations until the
+recipe is used.
+
+### Itemized changes
+
+- Export only the completed meetings you select with `scripts/screenpipe-meetings.ts`,
+  retaining note provenance and refusing changed destination files.
+- Follow `recipes/screenpipe-meetings.md` to preview, review, and import notes into
+  your selected source. Clear proxy variables for this local-only command before
+  using it in a shell configured with an HTTP proxy.
+
 ## [0.59.0.0] - 2026-09-25
 
 **The LongMemEval reader now checks the evidence before giving its short answer.**
