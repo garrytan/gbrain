@@ -1321,6 +1321,111 @@ describe('google-source materialize', () => {
 
 // ── Secondary calendars (one calendar per source) ────────────────────────────
 
+describe('google-source gmail recent-first cursors', () => {
+  const sweepDays = (dir: string, fx: FakeGoogle, vault: FakeVault, days: number, opts: Partial<SyncOpts> = {}) =>
+    runGoogleSync(
+      engine,
+      'gsrc',
+      parseGoogleSourceConfig({ kind: 'google', g_account: 'a@example.com', g_services: 'gmail', g_history_days: days, g_dir: dir }, dir),
+      { sourceId: 'gsrc', noEmbed: true, noExtract: true, ...opts },
+      buildFetch(fx),
+      vault,
+    );
+  const tid = (p: string, i: number) => `17aa0000000${p}${String(i).padStart(4, '0')}`;
+  const msg = (p: string, i: number, ms: number) =>
+    gmsg(`18c2f4a9b3d${p}${String(i).padStart(4, '0')}`, tid(p, i), ms, {
+      headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Topic ${p} ${i}` },
+      body: `Body ${p} ${i}.`,
+    });
+  const lastSyncAt = async () =>
+    (await engine.executeRaw<{ last_sync_at: unknown }>(`SELECT last_sync_at FROM sources WHERE id = 'gsrc'`))[0].last_sync_at;
+
+  test('expired history: a gap larger than one bounded listing drains fully, resumes after an abort, and is never called fresh early', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-gap-'));
+    const fx = emptyFx();
+    fx.messages.push(msg('e', 0, daysAgoMs(20)));
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweepDays(dir, fx, vault, 90);
+        const stamped = await lastSyncAt();
+
+        // History expires while 30 messages arrive; one listing holds only 20
+        // ids (maxPages 20 x page 1), which the old bookmark fallback dropped.
+        fx.historyExpired = true;
+        fx.profileHistoryId = '2000';
+        fx.messagesPageSize = 1;
+        for (let i = 1; i <= 30; i++) fx.messages.push(msg('e', i, hoursAgoMs(31 - i)));
+        const controller = new AbortController();
+        const before = fx.threadFetches;
+        fx.onThreadFetch = () => { if (fx.threadFetches - before >= 10) controller.abort(); };
+        const r1 = await sweepDays(dir, fx, vault, 90, { signal: controller.signal });
+        expect(r1.status).toBe('partial');
+        let state = readGoogleState(dir);
+        expect(state.gmail_history_id).toBe('2000'); // re-anchored with the gap, atomically
+        expect(state.gmail_gap_floor_ms).not.toBeNull();
+        expect(await lastSyncAt()).toEqual(stamped); // gap open → not fresh
+
+        fx.onThreadFetch = undefined;
+        fx.historyExpired = false;
+        fx.historyHonorsStart = true;
+        fx.historyResponseId = '2000';
+        await sweepDays(dir, fx, vault, 90);
+        state = readGoogleState(dir);
+        expect(state.gmail_gap_floor_ms).toBeNull();
+        expect(state.gmail_gap_after_ms).toBeNull();
+        expect(await lastSyncAt()).not.toEqual(stamped);
+        const slugs = await slugsWhere(`slug LIKE 'emails/%'`);
+        expect(slugs.length).toBe(31); // every gap message landed; none skipped
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('history window: narrowing mid-backfill keeps the covered bound; widening again resumes below it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-window-'));
+    const fx = emptyFx();
+    for (let i = 0; i < 6; i++) fx.messages.push(msg('d', i, daysAgoMs(40 + 10 * i))); // 40..90 days
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        // Abort after two archive threads: floor sits at 50 days.
+        const controller = new AbortController();
+        fx.onThreadFetch = () => { if (fx.threadFetches >= 2) controller.abort(); };
+        await sweepDays(dir, fx, vault, 120, { signal: controller.signal });
+        expect(readGoogleState(dir).gmail_backfill_floor_ms).toBe(daysAgoMs(50));
+
+        // A 4-day scoped window: nothing to fetch, and the done bound records
+        // what was really covered (50 days), not the narrow 4-day cutoff.
+        fx.onThreadFetch = undefined;
+        const fetches = fx.threadFetches;
+        await sweepDays(dir, fx, vault, 4);
+        expect(fx.threadFetches).toBe(fetches);
+        let state = readGoogleState(dir);
+        expect(state.gmail_backfill_done).toBe(true);
+        expect(state.gmail_backfill_cutoff_ms).toBe(daysAgoMs(50));
+
+        // Back to 120 days: only the four unimported archive threads are fetched.
+        await sweepDays(dir, fx, vault, 120);
+        expect(fx.threadFetches - fetches).toBe(4);
+        state = readGoogleState(dir);
+        expect(state.gmail_backfill_done).toBe(true);
+        expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(6);
+
+        // Wider still: 200 days reopens below the covered 120-day bound.
+        fx.messages.push(msg('d', 9, daysAgoMs(150)));
+        await sweepDays(dir, fx, vault, 200);
+        expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(7);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('google-source secondary calendar', () => {
   test('a source with g_calendar_id sweeps THAT calendar, URL-encoded, and materializes its events', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-cal2-'));

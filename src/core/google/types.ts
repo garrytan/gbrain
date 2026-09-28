@@ -51,6 +51,19 @@ export interface GoogleSourceState {
    */
   gmail_backfill_floor_ms: number | null;
   gmail_backfill_done: boolean;
+  /**
+   * Lower bound (epoch ms) the completed backfill actually covered. A later,
+   * WIDER g_history_days reopens the backfill below it instead of silently
+   * leaving the extra history unimported; absent on legacy state (no reopen).
+   */
+  gmail_backfill_cutoff_ms?: number | null;
+  /**
+   * History-expired gap: `[gmail_gap_after_ms, gmail_gap_floor_ms)` predates
+   * the re-anchored historyId and is drained newest→oldest with the same
+   * resumable floor walk as the backfill. Both null when no gap is open.
+   */
+  gmail_gap_after_ms?: number | null;
+  gmail_gap_floor_ms?: number | null;
   /** Bookmark for the history-expired fallback: newest internalDate imported. */
   gmail_newest_ms: number | null;
   /**

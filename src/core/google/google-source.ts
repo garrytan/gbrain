@@ -14,7 +14,11 @@ import { withConnectorSync, rethrowConnectorWriteError, type ManagedConnectorSyn
  *  - contacts / calendar: syncToken committed only after that service's
  *    fully-successful sweep; 410 GONE drops the token and re-runs windowed.
  *  - gmail delta: history.list from gmail_history_id; 404 (expired, ~1 week)
- *    falls back to a bookmark-windowed messages.list, then re-anchors.
+ *    re-anchors and opens a gap window from the newest imported message,
+ *    drained newest→oldest by the same resumable floor walk as the backfill.
+ *  - gmail is RECENT-FIRST: delta and gap run before the historical backfill,
+ *    so a years-deep backfill never holds current mail back. Freshness means
+ *    current mail is complete, never that the backfill is.
  *  - gmail INITIAL BACKFILL is explicitly resumable (outside-voice F7a): the
  *    window is drained newest→oldest with a floor cursor persisted per
  *    batch, so a killed 50k-message backfill resumes at the floor instead of
@@ -661,11 +665,135 @@ function threadFailureMessage(tid: string, rateLimited: boolean, e: unknown): st
 }
 
 /**
- * Returns true when every gmail thread this run either imported or was
- * deliberately skipped (404-vanished, poison ledger). False = real failures
- * remain, and the caller must NOT stamp `last_sync_at` — a poison thread
- * silently wedging the pipeline while the staleness gate reads fresh is the
- * exact trust failure the gate exists to prevent.
+ * Current mail must be imported down to this far below the newest message
+ * before a sweep may call the source fresh. A new install's history anchor
+ * only replays changes AFTER it, so until the backfill's newest→oldest floor
+ * has passed this horizon the recent inbox is still missing.
+ */
+const GMAIL_RECENT_HORIZON_MS = 14 * 86_400_000;
+
+type WalkOutcome = 'done' | 'failed' | 'aborted';
+
+/**
+ * Drain `[lowerMs, state[floorKey])` newest→oldest, committing the floor per
+ * fully-successful batch so a killed walk resumes where it stopped (F7a).
+ * Shared by the historical backfill and the history-expired gap.
+ */
+async function walkGmailWindow(
+  deps: GoogleSyncDeps,
+  gmail: GmailClient,
+  state: GoogleSourceState,
+  floorKey: 'gmail_backfill_floor_ms' | 'gmail_gap_floor_ms',
+  lowerMs: number,
+  activePack: ActivePack,
+  summary: GoogleSyncSummary,
+  countedSlugs: Set<string>,
+  progressTick: (note: string) => void,
+  poisoned: (tid: string) => boolean,
+  failCounts: Record<string, number>,
+): Promise<WalkOutcome> {
+  let floorMs = state[floorKey] ?? Date.now() + 60_000;
+  while (floorMs > lowerMs) {
+    if (deps.opts.signal?.aborted) return 'aborted';
+    const q = `after:${Math.floor(lowerMs / 1000)} before:${Math.ceil(floorMs / 1000)}`;
+    // Page-BOUNDED listing (partialOk): a busy inbox can hold far more ids
+    // than the client's 500-page safety cap; an unbounded drain would
+    // throw before any thread processed and wedge the walk forever.
+    // The floor cursor makes partial listings safe — each iteration takes
+    // the newest ~2,000 messages in the window, processes them, drops the
+    // floor, and re-queries.
+    const ids = await gmail.listMessageIds(q, {
+      maxPages: 20,
+      partialOk: true,
+      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+    });
+    if (ids.length === 0) break;
+    // Newest-first listing → unique threads in newest-first order.
+    const threadIds = [...new Set(ids.map((m) => m.threadId))];
+    let processedAny = false;
+    let batchFailed = false;
+    let batchOldest = floorMs;
+    for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
+      if (deps.opts.signal?.aborted) break;
+      const batch = threadIds.slice(i, i + BACKFILL_BATCH_THREADS);
+      for (const tid of batch) {
+        if (deps.opts.signal?.aborted) break;
+        if (poisoned(tid)) continue;
+        try {
+          const thread = await processThread(deps, gmail, tid, activePack, summary, countedSlugs);
+          processedAny = true;
+          if (failCounts[tid]) delete failCounts[tid];
+          const newest = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
+          if (newest > 0 && newest < batchOldest) batchOldest = newest;
+          if (newest > (state.gmail_newest_ms ?? 0)) state.gmail_newest_ms = newest;
+          progressTick(`thread ${tid}`);
+        } catch (e) {
+          if (deps.managed) rethrowConnectorWriteError(e);
+          if (e instanceof GoogleCursorExpiredError && e.status === 404) {
+            // Thread deleted between listing and fetch — gone is gone.
+            // Skipping (not failing) keeps the cursor moving; --full
+            // reconcile removes any page it left behind.
+            deps.log(`[google] thread ${tid} vanished (404); skipping`);
+            progressTick(`thread ${tid} gone`);
+            continue;
+          }
+          // Rate-limited failures don't count toward the poison threshold
+          // (transient, self-clearing) — but they still fail the batch so
+          // the floor doesn't skip past a thread nothing has actually
+          // imported yet.
+          const rateLimited = isRateLimitFailure(e);
+          if (!rateLimited) failCounts[tid] = (failCounts[tid] ?? 0) + 1;
+          batchFailed = true;
+          summary.failedFiles++;
+          summary.status = 'partial';
+          deps.log(threadFailureMessage(tid, rateLimited, e));
+          // A rate limit is per-user, not per-thread: the rest of this batch
+          // would hit the same exhausted quota, and its work is never banked
+          // anyway (batchFailed already holds the floor), so defer it to the
+          // next run instead of burning the retry budget once per thread.
+          if (rateLimited) break;
+        }
+      }
+      // Monotone forward progress: the floor commits per FULLY-SUCCESSFUL
+      // batch. A batch with any failure must NOT advance the floor — a
+      // failed thread NEWER than a committed floor would fall outside the
+      // resume window (`before:floor`) forever, and the delta lane can't
+      // replay it either (its messages predate the history anchor).
+      if (batchFailed || deps.managed && deps.opts.signal?.aborted) break;
+      if (processedAny && batchOldest < floorMs) {
+        state[floorKey] = batchOldest;
+        await saveGoogleState(deps, state);
+      }
+    }
+    if (deps.opts.signal?.aborted) return 'aborted';
+    if (batchFailed) {
+      // Leave the floor at the last good batch; the next run re-lists from
+      // there and retries the failed thread first. Persist the fail ledger
+      // so repeated failures accumulate toward the poison threshold across
+      // runs, then report the failure — this run did NOT refresh the data.
+      if (!deps.managed) writeGoogleState(deps.cfg.dir, state);
+      return 'failed';
+    }
+    if (!processedAny || batchOldest >= floorMs) {
+      // Nothing moved the floor (all skipped/vanished or all
+      // same-timestamp): step below the oldest listed page to guarantee
+      // termination. Only reachable with zero failures.
+      state[floorKey] = Math.max(lowerMs - 1, floorMs - 86_400_000);
+      await saveGoogleState(deps, state);
+    }
+    floorMs = state[floorKey] ?? lowerMs;
+  }
+  return 'done';
+}
+
+/**
+ * Returns true when CURRENT mail is complete: the history delta drained,
+ * no history-expired gap remains, and the recent inbox is imported (backfill
+ * done or its floor past GMAIL_RECENT_HORIZON_MS). False = the caller must
+ * NOT stamp `last_sync_at` — a poison thread silently wedging current mail
+ * while the staleness gate reads fresh is the exact trust failure the gate
+ * exists to prevent. The deep historical backfill runs AFTER current mail
+ * and does not gate freshness; its failures still mark the run partial.
  */
 async function sweepGmail(
   deps: GoogleSyncDeps,
@@ -675,6 +803,7 @@ async function sweepGmail(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
   progressTick: (note: string) => void,
+  onCurrent?: () => Promise<void>,
 ): Promise<boolean> {
   const nowMs = Date.now();
   const cutoffMs = nowMs - deps.cfg.historyDays * 86_400_000;
@@ -692,154 +821,101 @@ async function sweepGmail(
     progressTick(`thread ${tid} skipped (poison)`);
     return true;
   };
+  const walk = (floorKey: 'gmail_backfill_floor_ms' | 'gmail_gap_floor_ms', lowerMs: number) =>
+    walkGmailWindow(deps, gmail, state, floorKey, lowerMs, activePack, summary, countedSlugs, progressTick, poisoned, failCounts);
 
-  // ── Initial (or resumed) backfill ──
-  if (!state.gmail_backfill_done) {
-    // Anchor the delta lane BEFORE importing anything: changes that land
-    // during the backfill are replayed by history.list afterwards.
-    if (!state.gmail_history_id) {
-      const profile = await gmail.getProfile({ ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
-      if (profile.emailAddress.toLowerCase() !== deps.cfg.account) {
-        deps.log(`[google] warning: token account ${profile.emailAddress} != source account ${deps.cfg.account}`);
-      }
-      state.gmail_history_id = profile.historyId;
-      await saveGoogleState(deps, state);
-    }
-    let floorMs = state.gmail_backfill_floor_ms ?? nowMs + 60_000;
-    for (;;) {
-      if (deps.opts.signal?.aborted) return false;
-      const q = `after:${Math.floor(cutoffMs / 1000)} before:${Math.ceil(floorMs / 1000)}`;
-      // Page-BOUNDED listing (partialOk): a busy inbox can hold far more ids
-      // than the client's 500-page safety cap; an unbounded drain would
-      // throw before any thread processed and wedge the backfill forever.
-      // The floor cursor makes partial listings safe — each iteration takes
-      // the newest ~2,000 messages in the window, processes them, drops the
-      // floor, and re-queries.
-      const ids = await gmail.listMessageIds(q, {
-        maxPages: 20,
-        partialOk: true,
-        ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
-      });
-      if (ids.length === 0) break;
-      // Newest-first listing → unique threads in newest-first order.
-      const threadIds = [...new Set(ids.map((m) => m.threadId))];
-      let processedAny = false;
-      let batchFailed = false;
-      let batchOldest = floorMs;
-      for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
-        if (deps.opts.signal?.aborted) break;
-        const batch = threadIds.slice(i, i + BACKFILL_BATCH_THREADS);
-        for (const tid of batch) {
-          if (deps.opts.signal?.aborted) break;
-          if (poisoned(tid)) continue;
-          try {
-            const thread = await processThread(deps, gmail, tid, activePack, summary, countedSlugs);
-            processedAny = true;
-            if (failCounts[tid]) delete failCounts[tid];
-            const newest = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
-            if (newest > 0 && newest < batchOldest) batchOldest = newest;
-            if (newest > (state.gmail_newest_ms ?? 0)) state.gmail_newest_ms = newest;
-            progressTick(`thread ${tid}`);
-          } catch (e) {
-            if (deps.managed) rethrowConnectorWriteError(e);
-            if (e instanceof GoogleCursorExpiredError && e.status === 404) {
-              // Thread deleted between listing and fetch — gone is gone.
-              // Skipping (not failing) keeps the cursor moving; --full
-              // reconcile removes any page it left behind.
-              deps.log(`[google] thread ${tid} vanished (404); skipping`);
-              progressTick(`thread ${tid} gone`);
-              continue;
-            }
-            // Rate-limited failures don't count toward the poison threshold
-            // (transient, self-clearing) — but they still fail the batch so
-            // the floor doesn't skip past a thread nothing has actually
-            // imported yet.
-            const rateLimited = isRateLimitFailure(e);
-            if (!rateLimited) failCounts[tid] = (failCounts[tid] ?? 0) + 1;
-            batchFailed = true;
-            summary.failedFiles++;
-            summary.status = 'partial';
-            deps.log(threadFailureMessage(tid, rateLimited, e));
-            // A rate limit is per-user, not per-thread: the rest of this batch
-            // would hit the same exhausted quota, and its work is never banked
-            // anyway (batchFailed already holds the floor), so defer it to the
-            // next run instead of burning the retry budget once per thread.
-            if (rateLimited) break;
-          }
-        }
-        // Monotone forward progress: the floor commits per FULLY-SUCCESSFUL
-        // batch. A batch with any failure must NOT advance the floor — a
-        // failed thread NEWER than a committed floor would fall outside the
-        // resume window (`before:floor`) forever, and the delta lane can't
-        // replay it either (its messages predate the history anchor).
-        if (batchFailed || deps.managed && deps.opts.signal?.aborted) break;
-        if (processedAny && batchOldest < floorMs) {
-          state.gmail_backfill_floor_ms = batchOldest;
-          await saveGoogleState(deps, state);
-        }
-      }
-      if (deps.opts.signal?.aborted) return false;
-      if (batchFailed) {
-        // Leave the floor at the last good batch; the next run re-lists from
-        // there and retries the failed thread first. Persist the fail ledger
-        // so repeated failures accumulate toward the poison threshold across
-        // runs, then report the failure — this run did NOT refresh the data.
-        if (!deps.managed) writeGoogleState(deps.cfg.dir, state);
-        return false;
-      }
-      if (!processedAny || batchOldest >= floorMs) {
-        // Nothing moved the floor (all skipped/vanished or all
-        // same-timestamp): step below the oldest listed page to guarantee
-        // termination. Only reachable with zero failures.
-        state.gmail_backfill_floor_ms = Math.max(cutoffMs - 1, floorMs - 86_400_000);
-        await saveGoogleState(deps, state);
-      }
-      floorMs = state.gmail_backfill_floor_ms ?? cutoffMs;
-      if (floorMs <= cutoffMs) break;
-    }
-    if (summary.failedFiles === 0) {
-      state.gmail_backfill_done = true;
-      state.gmail_backfill_floor_ms = null;
-      await saveGoogleState(deps, state);
-    } else {
-      // Failures stay in the window; the next run retries from the floor.
-      if (!deps.managed) writeGoogleState(deps.cfg.dir, state);
-      return false;
-    }
+  // A completed backfill whose covered bound is above a now-WIDER window
+  // reopens strictly below that bound (the floor's own `before:` semantics).
+  const covered = state.gmail_backfill_cutoff_ms;
+  if (state.gmail_backfill_done && covered != null && cutoffMs < covered - 86_400_000) {
+    deps.log(`[google] history window widened; resuming backfill below ${new Date(covered).toISOString()}`);
+    state.gmail_backfill_done = false;
+    state.gmail_backfill_floor_ms = covered;
+    await saveGoogleState(deps, state);
   }
 
-  // ── Delta lane ──
+  // Anchor the delta lane BEFORE importing anything: changes that land
+  // during the backfill are replayed by history.list.
+  if (!state.gmail_backfill_done && !state.gmail_history_id) {
+    const profile = await gmail.getProfile({ ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
+    if (profile.emailAddress.toLowerCase() !== deps.cfg.account) {
+      deps.log(`[google] warning: token account ${profile.emailAddress} != source account ${deps.cfg.account}`);
+    }
+    state.gmail_history_id = profile.historyId;
+    await saveGoogleState(deps, state);
+  }
   if (!state.gmail_history_id) return true;
-  let threadIds: string[];
+
+  // ── Current mail first: delta, then any history-expired gap ──
+  // Recent-first: a years-deep backfill must never hold current mail back.
+  const delta = await drainGmailDelta(deps, gmail, state, cutoffMs, activePack, summary, countedSlugs, progressTick, poisoned, failCounts);
+  if (delta === 'aborted') return false;
+  if (state.gmail_gap_floor_ms != null) {
+    const gap = await walk('gmail_gap_floor_ms', state.gmail_gap_after_ms ?? cutoffMs);
+    if (gap === 'aborted') return false;
+    if (gap === 'done') {
+      state.gmail_gap_after_ms = null;
+      state.gmail_gap_floor_ms = null;
+      await saveGoogleState(deps, state);
+    }
+  }
+  const isCurrent = (): boolean => {
+    if (delta !== 'done' || state.gmail_gap_floor_ms != null) return false;
+    if (state.gmail_backfill_done) return true;
+    const floor = state.gmail_backfill_floor_ms;
+    if (floor == null || state.gmail_newest_ms == null) return false;
+    return floor <= Math.max(cutoffMs, state.gmail_newest_ms - GMAIL_RECENT_HORIZON_MS);
+  };
+  // Stamp freshness BEFORE the backfill spends the rest of the budget: a
+  // managed sweep cannot write once its wall-clock signal aborts.
+  if (!state.gmail_backfill_done && isCurrent()) await onCurrent?.();
+
+  // ── Historical backfill (resumable, oldest mail last) ──
+  if (!state.gmail_backfill_done) {
+    const backfill = await walk('gmail_backfill_floor_ms', cutoffMs);
+    if (backfill === 'done') {
+      state.gmail_backfill_done = true;
+      state.gmail_backfill_cutoff_ms = Math.min(cutoffMs, state.gmail_backfill_floor_ms ?? cutoffMs);
+      state.gmail_backfill_floor_ms = null;
+      await saveGoogleState(deps, state);
+    }
+  }
+  return isCurrent();
+}
+
+async function drainGmailDelta(
+  deps: GoogleSyncDeps,
+  gmail: GmailClient,
+  state: GoogleSourceState,
+  cutoffMs: number,
+  activePack: ActivePack,
+  summary: GoogleSyncSummary,
+  countedSlugs: Set<string>,
+  progressTick: (note: string) => void,
+  poisoned: (tid: string) => boolean,
+  failCounts: Record<string, number>,
+): Promise<WalkOutcome> {
+  let threadIds: string[] = [];
   let newHistoryId: string | null = null;
   try {
-    ({ threadIds, newHistoryId } = await gmail.listHistoryThreadIds(state.gmail_history_id, {
+    ({ threadIds, newHistoryId } = await gmail.listHistoryThreadIds(state.gmail_history_id!, {
       ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
     }));
   } catch (e) {
     if (!(e instanceof GoogleCursorExpiredError)) throw e;
-    // History expired (~1 week idle): windowed fallback from the newest
-    // imported message. BOUNDED like the backfill (the same >cap population
-    // exists here) — and the fresh historyId is only re-anchored when the
-    // listing was COMPLETE; a capped partial listing keeps the fallback lane
-    // active (gmail_newest_ms advances per processed thread, converging).
-    deps.log('[google] historyId expired; falling back to bookmark window');
-    // Anchor BEFORE listing (mirrors the backfill's zero-gap ordering): a
-    // message arriving between these two calls is either in the listing
-    // (post-anchor arrival) or replayed by history.list from the anchor.
-    // Anchoring after the listing would silently drop that message forever.
+    // History expired (~1 week idle, or a long backfill): re-anchor NOW and
+    // open a gap from the newest imported message to the anchor. The gap is
+    // drained by the resumable floor walk, so a gap larger than one bounded
+    // listing is never skipped. Anchor and gap persist together: a message
+    // arriving after the anchor is replayed by history.list, one before it
+    // lies inside the gap.
+    deps.log('[google] historyId expired; re-anchoring and draining the gap by window');
     const profile = await gmail.getProfile({ ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
-    const anchorCandidate = profile.historyId;
-    const sinceSec = Math.floor(((state.gmail_newest_ms ?? cutoffMs) - 86_400_000) / 1000);
-    const FALLBACK_MAX_PAGES = 20;
-    const ids = await gmail.listMessageIds(`after:${sinceSec}`, {
-      maxPages: FALLBACK_MAX_PAGES,
-      partialOk: true,
-      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
-    });
-    threadIds = [...new Set(ids.map((m) => m.threadId))];
-    const likelyCapped = ids.length >= FALLBACK_MAX_PAGES * 100;
-    if (!likelyCapped) newHistoryId = anchorCandidate;
+    const after = (state.gmail_newest_ms ?? cutoffMs) - 86_400_000;
+    state.gmail_gap_after_ms = Math.min(state.gmail_gap_after_ms ?? after, after);
+    state.gmail_gap_floor_ms = Date.now() + 60_000;
+    state.gmail_history_id = profile.historyId;
+    await saveGoogleState(deps, state);
   }
   // Resume threads an earlier aborted drain consumed from history but never
   // landed; `unlanded` shrinks as threads land or are dropped (404/poison).
@@ -863,7 +939,7 @@ async function sweepGmail(
   for (const tid of threadIds) {
     if (deps.opts.signal?.aborted) {
       if (!deps.managed) await checkpoint();
-      return false;
+      return 'aborted';
     }
     if (poisoned(tid)) {
       unlanded.delete(tid);
@@ -909,7 +985,7 @@ async function sweepGmail(
   }
   if (deps.opts.signal?.aborted) {
     if (!deps.managed) await checkpoint();
-    return false;
+    return 'aborted';
   }
   state.gmail_pending_thread_ids = [...unlanded];
   // Unmanaged: the delta cursor advances only when every flagged thread
@@ -918,7 +994,7 @@ async function sweepGmail(
   if (failed === 0 && newHistoryId) {
     state.gmail_history_id = newHistoryId;
   }
-  return failed === 0;
+  return failed === 0 ? 'done' : 'failed';
 }
 
 // ── Full reconcile (deletes) ─────────────────────────────────────────────────
@@ -1178,7 +1254,13 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         // sweepGmail reports thread-level failures via its return value —
         // they exit through normal returns, not throws, and stamping
         // last_sync_at over them would blind the staleness gate (H1).
-        gmailSweepOk = await sweepGmail(deps, gmail, state, activePack, summary, countedSlugs, tick);
+        gmailSweepOk = await sweepGmail(deps, gmail, state, activePack, summary, countedSlugs, tick, async () => {
+          // Current mail is complete but the backfill is not: bank freshness
+          // now, while the managed lease can still write.
+          if (managed && summary.status !== 'partial' && !opts.signal?.aborted) {
+            await managed.saveState(state, true, new Date(state.gmail_newest_ms ?? Date.now()).toISOString());
+          }
+        });
         if (opts.full) await reconcileGmailDeletes(deps, gmail, summary);
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);
