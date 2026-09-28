@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { dataFrontmatter as matter } from '../../src/core/data-frontmatter.ts';
@@ -237,6 +238,21 @@ describe('capture — local install integration', () => {
     const page = await engine.getPage('inbox/from-file');
     expect(page).not.toBeNull();
     expect(page?.compiled_truth).toContain('body content here');
+  });
+
+  test('--file with a relative path stores a local, escaped absolute file URI', async () => {
+    const file = path.join(tmpRoot, 'note #1.md');
+    fs.writeFileSync(file, '# relative file\n\nbody content here');
+    const relative = path.relative(process.cwd(), file);
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      await runCapture(engine, ['--file', relative, '--slug', 'inbox/relative-file', '--quiet']);
+    } finally {
+      console.log = origLog;
+    }
+    const page = await engine.getPage('inbox/relative-file');
+    expect(page?.source_uri).toBe(pathToFileURL(file).href);
   });
 
   // #4655: EXPLICIT undeclared page types fail loud on the CLI surface too.
