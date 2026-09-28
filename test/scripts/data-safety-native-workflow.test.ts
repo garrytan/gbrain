@@ -208,4 +208,24 @@ describe('data-safety native CI coverage', () => {
       'bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts',
     ]);
   });
+
+  test('pull requests run a 2,500-write persistence soak while master keeps the full 10,000-write gate', () => {
+    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+      jobs: { invariants: { steps: Step[] } };
+    };
+    const step = persistence.jobs.invariants.steps.find(entry => entry.run?.includes('scripts/persistence/validate.ts'));
+    expect(step).toBeDefined();
+    expect(step!.env?.SOAK_OPERATIONS).toBe("${{ github.event_name == 'pull_request' && '2500' || '10000' }}");
+    for (const operations of ['2500', '10000']) {
+      const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+        bun() { printf '%s\\n' "$@"; }
+        ${step!.run!.replaceAll('${{ matrix.engine }}', 'pglite')}
+      `], { env: { PATH: process.env.PATH ?? '', SOAK_OPERATIONS: operations } });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString().trim().split('\n')).toEqual([
+        '--no-env-file', 'scripts/persistence/validate.ts', '--engine=pglite',
+        `--operations=${operations}`, '--manifest=.context/persistence-manifest.json',
+      ]);
+    }
+  });
 });

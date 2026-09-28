@@ -178,11 +178,15 @@ jobs:
         with:
           bun-version: ${{ matrix.bun }}
       - run: bun install --frozen-lockfile --ignore-scripts
-      - name: Execute 1000 schedules, eight SIGKILL boundaries and 10000 process-separated writes
+      # Pull requests run a 2,500-write soak; pushes to master and manual runs keep
+      # the full 10,000-write gate, whose PGLite run alone takes 15-28 minutes.
+      - name: Execute 1000 schedules, eight SIGKILL boundaries and the process-separated write soak
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
+          SOAK_OPERATIONS: ${{ github.event_name == 'pull_request' && '2500' || '10000' }}
         run: >-
           bun --no-env-file scripts/persistence/validate.ts --engine=${{ matrix.engine }}
+          --operations="$SOAK_OPERATIONS"
           --manifest=.context/persistence-manifest.json
       - name: Require all reconciliation crash boundaries before and after activation
         timeout-minutes: 12
