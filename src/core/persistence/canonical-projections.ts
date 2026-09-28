@@ -8,12 +8,54 @@ import { parseTimelineEntries } from '../link-extraction.ts';
 import { extractTimelineFromContent } from '../timeline-extract.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { OperationError } from '../ops/contract.ts';
+import { codeEndAt, indexOfOutsideCode, protectedRegions, scanMarkdownCode, type MarkdownCodeMap } from '../fence-scan.ts';
+
+const FENCE_MARKERS=[FACTS_FENCE_BEGIN,FACTS_FENCE_END,TAKES_FENCE_BEGIN,TAKES_FENCE_END];
+
+/** True when `marker` occurs more than once outside markdown code (`code` = that body's scan). */
+function repeatsOutsideCode(body:string,marker:string,code:MarkdownCodeMap):boolean {
+  const first=indexOfOutsideCode(body,marker,0,code);
+  return first!==-1 && indexOfOutsideCode(body,marker,first+marker.length,code)!==-1;
+}
+
+const FENCE_PAIRS=[{begin:FACTS_FENCE_BEGIN,end:FACTS_FENCE_END},{begin:TAKES_FENCE_BEGIN,end:TAKES_FENCE_END}];
+
+/**
+ * Rows held by fences that sit inside a code block. Readers treat such a fence
+ * as an example and project nothing from it, so a real fence wrapped in a code
+ * block would silently delete the rows it holds. Keys are `row_num:text`.
+ */
+function quotedFenceRows(fields:string[]):{facts:Set<string>,takes:Set<string>} {
+  const facts=new Set<string>(),takes=new Set<string>();
+  for(const field of fields) for(const region of protectedRegions(field,FENCE_PAIRS).regions) {
+    if(region.read) continue;
+    const text=field.slice(region.start,region.end);
+    if(region.pair===0) for(const f of parseFactsFence(text).facts) facts.add(`${f.rowNum}:${f.claim}`);
+    else for(const t of parseTakesFence(text).takes) takes.add(`${t.rowNum}:${t.claim}`);
+  }
+  return {facts,takes};
+}
+
+const QUOTED_FENCE_ERROR='A takes or facts fence sits inside a code block, so this write would remove the rows it holds. Move the fence out of the code block, or delete the fence to remove its rows.';
+
+/** True when some occurrence of a fence marker sits in markdown code (`code` = that body's scan). */
+function quotesMarker(body:string,code:MarkdownCodeMap):boolean {
+  for(const marker of FENCE_MARKERS) {
+    for(let at=body.indexOf(marker);at!==-1;at=body.indexOf(marker,at+marker.length)) if(codeEndAt(code,at)!==-1) return true;
+  }
+  return false;
+}
 
 /** Compile synchronous, provider-free projections before entering publication. */
 export function prepareCanonicalProjections(page: ParsedPage, slug: string, sourceId: string): (tx: BrainEngine) => Promise<void> {
   const fields=[page.compiled_truth,page.timeline ?? ''];
-  for(const field of fields) for(const marker of [FACTS_FENCE_BEGIN,FACTS_FENCE_END,TAKES_FENCE_BEGIN,TAKES_FENCE_END]) {
-    if(field.split(marker).length>2) throw new OperationError('invalid_params','Each canonical body section must contain at most one facts fence and one takes fence.');
+  let quoting=false;
+  for(const field of fields) {
+    // One code scan per field serves all four marker checks.
+    if(!FENCE_MARKERS.some(marker=>field.includes(marker))) continue;
+    const code=scanMarkdownCode(field);
+    if(FENCE_MARKERS.some(marker=>repeatsOutsideCode(field,marker,code))) throw new OperationError('invalid_params','Each canonical body section must contain at most one facts fence and one takes fence.');
+    quoting ||= quotesMarker(field,code);
   }
   const factSets=fields.map(parseFactsFence),takeSets=fields.map(parseTakesFence);
   if ([...factSets,...takeSets].some(set=>set.warnings.length)) throw new OperationError('invalid_params','A canonical facts or takes fence cannot be parsed losslessly.');
@@ -26,9 +68,21 @@ export function prepareCanonicalProjections(page: ParsedPage, slug: string, sour
   const safe=sanitizeRemoteBody(body);
   const timeline=new Map(extractTimelineFromContent(safe,slug).map(t=>[JSON.stringify([t.date,t.source,t.summary]),t]));
   for (const t of parseTimelineEntries(safe)) timeline.set(JSON.stringify([t.date,t.source??'markdown',t.summary]),{...t,source:t.source??'markdown',slug});
+  const quoted=quoting ? quotedFenceRows(fields) : {facts:new Set<string>(),takes:new Set<string>()};
   return async tx=>{
     const snapshot=await tx.readPageSnapshot(slug,{sourceId});
     if (!snapshot) return;
+    // Refuse rather than silently drop rows whose fence moved into a code block.
+    if (quoted.takes.size) {
+      const removed=await tx.executeRaw<{row_num:number,claim:string}>('SELECT row_num,claim FROM takes WHERE page_id=$1 AND NOT(row_num=ANY($2::integer[]))',[snapshot.page.id,takes.map(t=>t.rowNum)]);
+      if (removed.some(r=>quoted.takes.has(`${r.row_num}:${r.claim}`))) throw new OperationError('invalid_params',QUOTED_FENCE_ERROR);
+    }
+    if (quoted.facts.size) {
+      const kept=new Set(factRows.map(f=>`${f.row_num}:${f.fact}:${f.visibility}`));
+      const live=await tx.executeRaw<{row_num:number,fact:string,visibility:string}>(`SELECT row_num,fact,visibility FROM facts
+        WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL`,[sourceId,slug]);
+      if (live.some(r=>!kept.has(`${r.row_num}:${r.fact}:${r.visibility}`) && quoted.facts.has(`${r.row_num}:${r.fact}`))) throw new OperationError('invalid_params',QUOTED_FENCE_ERROR);
+    }
     // Fact IDs in permanent receipts remain meaningful when a canonical row is
     // removed/replaced. Expire and detach its row position instead of deleting it.
     const incoming=JSON.stringify(factRows.map(f=>({row_num:f.row_num,fact:f.fact,visibility:f.visibility})));

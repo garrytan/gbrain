@@ -221,6 +221,7 @@ import {
   stripStrikethrough,
   escapeFenceCell as safeFenceCell,
 } from './fence-shared.ts';
+import { indexOfOutsideCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
 
 function parseSinceCell(raw: string): { since?: string; until?: string } {
   const trimmed = raw.trim();
@@ -238,8 +239,7 @@ function parseSinceCell(raw: string): { since?: string; until?: string } {
  * Returns empty takes + empty warnings when no fence is present.
  */
 export function parseTakesFence(body: string): ParseResult {
-  const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
-  const endIdx   = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
+  const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   const warnings: string[] = [];
 
   if (beginIdx === -1 && endIdx === -1) {
@@ -249,7 +249,7 @@ export function parseTakesFence(body: string): ParseResult {
     // `<!-- gbrain:takes:begin -->` an author or agent writes from memory —
     // is a fence the author MEANT to write. Flag it instead of silently
     // parsing zero takes.
-    if (body.includes('gbrain:takes:begin')) {
+    if (indexOfOutsideCode(body, 'gbrain:takes:begin') !== -1) {
       warnings.push(
         'TAKES_FENCE_NEAR_MISS: found "gbrain:takes:begin" but not the exact ' +
         `marker "${TAKES_FENCE_BEGIN}" — use the three-dash comment form`,
@@ -505,15 +505,22 @@ export function upsertTakeRow(
   const newFence = renderTakesFence(allRows);
 
   // If fence already exists, replace it. Otherwise append a Takes section.
-  const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
-  const endIdx   = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
+  const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   let out: string;
   if (beginIdx !== -1 && endIdx !== -1) {
     out = body.slice(0, beginIdx) + newFence + body.slice(endIdx + TAKES_FENCE_END.length);
   } else {
-    // No fence yet — append a fresh Takes section at the end.
-    const sep = body.endsWith('\n') ? '\n' : '\n\n';
-    out = `${body}${sep}## Takes\n\n${newFence}\n`;
+    // No fence yet — append a fresh Takes section at the end, or above an
+    // unclosed code block that runs to EOF (it would render the fence as code).
+    const codeAt = unclosedCodeFenceStart(body);
+    if (codeAt === -1) {
+      const sep = body.endsWith('\n') ? '\n' : '\n\n';
+      out = `${body}${sep}## Takes\n\n${newFence}\n`;
+    } else {
+      const head = body.slice(0, codeAt);
+      const sep = head === '' || head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n';
+      out = `${head}${sep}## Takes\n\n${newFence}\n\n${body.slice(codeAt)}`;
+    }
   }
   return { body: out, rowNum: nextRowNum };
 }
@@ -556,8 +563,7 @@ export function supersedeRow(
   void oldClaim; // Reserved for future "show what changed" diff helper.
 
   const newFence = renderTakesFence(updatedTakes);
-  const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
-  const endIdx   = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
+  const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   if (beginIdx === -1 || endIdx === -1) {
     throw new Error('supersedeRow: fence markers missing in body (unexpected — parseTakesFence found rows)');
   }
@@ -569,16 +575,25 @@ export function supersedeRow(
  * Strip the fenced takes block from the body. Used by the chunker so takes
  * content lives ONLY in the takes table, not duplicated in page chunks
  * (Codex P0 #3 privacy fix). When no fence is present, returns body
- * unchanged.
+ * unchanged. An unpaired begin marker strips everything after it, like
+ * sanitizeRemoteBody.
  */
 export function stripTakesFence(body: string): string {
   // Pages without a compiled body (e.g. metadata-only rows from a read op)
   // have nothing to strip. Guard so the privacy strip is a safe no-op rather
   // than crashing on `undefined.indexOf`.
   if (typeof body !== 'string') return body;
-  const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
-  if (beginIdx === -1) return body;
-  const endIdx = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
-  if (endIdx === -1) return body;
-  return body.slice(0, beginIdx) + body.slice(endIdx + TAKES_FENCE_END.length);
+  // Privacy boundary: the same regions sanitizeRemoteBody hides, including a
+  // fence quoted in a code block and an ambiguous tail (see protectedRegions).
+  const { regions, truncatedAt } = protectedRegions(body, TAKES_PAIR);
+  if (regions.length === 0 && truncatedAt === -1) return body;
+  let out = '';
+  let cursor = 0;
+  for (const region of regions) {
+    out += body.slice(cursor, region.start);
+    cursor = region.end;
+  }
+  return out + (truncatedAt === -1 ? body.slice(cursor) : body.slice(cursor, truncatedAt));
 }
+
+const TAKES_PAIR = [{ begin: TAKES_FENCE_BEGIN, end: TAKES_FENCE_END }];

@@ -50,6 +50,7 @@ import {
   type ParsedTake,
   type ParseResult,
 } from './takes-fence.ts';
+import { locateOutsideCode } from './fence-scan.ts';
 import { withPageLock } from './page-lock.ts';
 import { resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
 import { sanitizeRecordedSourcePath, recordedPathFromFileUri } from './write-through.ts';
@@ -388,8 +389,7 @@ function assertFenceRoundTrips(parsed: ParseResult): void {
 
 function replaceFence(body: string, rows: ParsedTake[]): string {
   const newFence = renderTakesFence(rows);
-  const beginIdx = body.indexOf(TAKES_FENCE_BEGIN);
-  const endIdx = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
+  const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
   return body.slice(0, beginIdx) + newFence + body.slice(endIdx + TAKES_FENCE_END.length);
 }
 

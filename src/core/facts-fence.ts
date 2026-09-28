@@ -47,6 +47,7 @@ import {
   parseStringCell,
   escapeFenceCell,
 } from './fence-shared.ts';
+import { findLineOutsideFencedCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
 
 // HTML-comment fence markers — verbatim per spec. Same shape as the takes
 // fence markers so anyone who's seen one immediately recognizes the other.
@@ -168,8 +169,7 @@ function parseForgottenFromContext(context: string | undefined): boolean {
  * `FACTS_TABLE_MALFORMED` sync-failures entries.
  */
 export function parseFactsFence(body: string): FactsFenceParseResult {
-  const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
-  const endIdx   = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
+  const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   const warnings: string[] = [];
 
   if (beginIdx === -1 && endIdx === -1) return { facts: [], warnings };
@@ -519,19 +519,22 @@ export function upsertFactRow(
  * page.timeline, where extract_facts refuses to reconcile it
  * (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF append on any page that already
  * had a timeline froze the fence permanently. No sentinel → EOF append.
+ * An unclosed code block before that point would swallow the fence (it would
+ * render as code), so the fence goes above the block's opener instead.
  */
 export function replaceOrInsertFactsFence(body: string, fenceBlock: string): string {
-  const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
-  const endIdx   = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
+  const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   if (beginIdx !== -1 && endIdx !== -1) {
     return body.slice(0, beginIdx) + fenceBlock + body.slice(endIdx + FACTS_FENCE_END.length);
   }
   const section = `## Facts\n\n${fenceBlock}\n`;
   const sentinelAt = timelineSentinelOffset(body);
-  if (sentinelAt !== -1) {
-    const head = body.slice(0, sentinelAt);
+  const codeAt = unclosedCodeFenceStart(sentinelAt === -1 ? body : body.slice(0, sentinelAt));
+  const insertAt = codeAt !== -1 ? codeAt : sentinelAt;
+  if (insertAt !== -1) {
+    const head = body.slice(0, insertAt);
     const sep = head === '' ? '' : head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n';
-    return `${head}${sep}${section}\n${body.slice(sentinelAt)}`;
+    return `${head}${sep}${section}\n${body.slice(insertAt)}`;
   }
   const sep = body.endsWith('\n') ? '\n' : '\n\n';
   return `${body}${sep}${section}`;
@@ -559,28 +562,31 @@ function timelineSentinelOffset(body: string): number {
       if (lines[i].trim() === '---') { start = i + 1; break; }
     }
   }
-  let offset = 0;
-  for (let i = 0; i < start; i++) offset += lines[i].length + 1;
-  for (let i = start; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
+  const bodyLines = lines.slice(start);
+  // Same code rule as findTimelineSplitIndex: a sentinel quoted inside a
+  // closed fenced code block is not the page's sentinel.
+  const at = findLineOutsideFencedCode(bodyLines, (i) => {
+    const trimmed = bodyLines[i].trim();
     if (
       trimmed === '<!-- timeline -->' ||
       trimmed === '<!--timeline-->' ||
       /^---\s+timeline\s+---$/i.test(trimmed)
     ) {
-      return offset;
+      return true;
     }
-    if (trimmed === '---' && lines.slice(start, i).join('\n').trim().length > 0) {
-      for (let j = i + 1; j < lines.length; j++) {
-        const next = lines[j].trim();
+    if (trimmed === '---' && bodyLines.slice(0, i).join('\n').trim().length > 0) {
+      for (let j = i + 1; j < bodyLines.length; j++) {
+        const next = bodyLines[j].trim();
         if (next.length === 0) continue;
-        if (/^##\s+(timeline|history)\s*$/i.test(next)) return offset;
-        break;
+        return /^##\s+(timeline|history)\s*$/i.test(next);
       }
     }
-    offset += lines[i].length + 1;
-  }
-  return -1;
+    return false;
+  });
+  if (at === -1) return -1;
+  let offset = 0;
+  for (let i = 0; i < start + at; i++) offset += lines[i].length + 1;
+  return offset;
 }
 
 export interface StripFactsFenceOpts {
@@ -628,23 +634,27 @@ export function stripFactsFence(body: string, opts: StripFactsFenceOpts = {}): s
   // Pages without a compiled body have nothing to strip. Guard so the privacy
   // strip is a safe no-op rather than crashing on `undefined.indexOf`.
   if (typeof body !== 'string') return body;
-  const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
-  if (beginIdx === -1) return body;
-  const endIdx = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
-  if (endIdx === -1) return body;
-
-  // Whole-fence strip mode (chunker case).
-  if (!opts.keepVisibility || opts.keepVisibility.length === 0) {
-    return body.slice(0, beginIdx) + body.slice(endIdx + FACTS_FENCE_END.length);
+  // Privacy boundary: the same regions sanitizeRemoteBody hides, including a
+  // fence quoted in a code block and an ambiguous tail (see protectedRegions).
+  const { regions, truncatedAt } = protectedRegions(body, FACTS_PAIR);
+  if (regions.length === 0 && truncatedAt === -1) return body;
+  const keep = opts.keepVisibility && opts.keepVisibility.length > 0 ? new Set(opts.keepVisibility) : null;
+  let out = '';
+  let cursor = 0;
+  for (const region of regions) {
+    out += body.slice(cursor, region.start);
+    cursor = region.end;
+    // Whole-fence strip mode (chunker case) drops the block. Selective
+    // row-level mode (get_page case) parses, filters and renders it; the
+    // parser's lenient posture means malformed rows are silently dropped,
+    // which is the safe direction at a privacy boundary — when in doubt,
+    // strip rather than leak.
+    if (keep) {
+      const { facts } = parseFactsFence(body.slice(region.start, region.end));
+      out += renderFactsTable(facts.filter(f => keep.has(f.visibility)));
+    }
   }
-
-  // Selective row-level strip mode (get_page case). Parse, filter, render.
-  // The parser's lenient posture means malformed rows are silently dropped,
-  // which is the safe direction at a privacy boundary — when in doubt,
-  // strip rather than leak.
-  const { facts } = parseFactsFence(body);
-  const keep = new Set(opts.keepVisibility);
-  const kept = facts.filter(f => keep.has(f.visibility));
-  const replacement = renderFactsTable(kept);
-  return body.slice(0, beginIdx) + replacement + body.slice(endIdx + FACTS_FENCE_END.length);
+  return out + (truncatedAt === -1 ? body.slice(cursor) : body.slice(cursor, truncatedAt));
 }
+
+const FACTS_PAIR = [{ begin: FACTS_FENCE_BEGIN, end: FACTS_FENCE_END }];
