@@ -12,7 +12,7 @@ import { makeGitFixture } from './helpers/git-fixture.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { loadSyncFailures, acknowledgeFailures, autoSkipFailures } from '../src/core/sync-failure-ledger.ts';
+import { loadSyncFailures, acknowledgeFailures, autoSkipFailures, mirrorManagedSyncFailure, recordFailures } from '../src/core/sync-failure-ledger.ts';
 import { printSyncResult, runSync } from '../src/commands/sync.ts';
 import { buildSingleSyncJsonEnvelope } from '../src/core/sync-embed-backfill.ts';
 import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.ts';
@@ -113,6 +113,54 @@ test('failed managed receipt stays diagnostic across replay, restart, and explic
     expect(loadSyncFailures().filter(r => r.source_id === f.id)).toHaveLength(0);
     expect((await engine.getPage('bad', { sourceId: f.id }))?.compiled_truth).toContain('Repaired');
     expect(await engine.executeRaw('SELECT id,state,intent,error_code,error_message FROM persistence_requests WHERE source_id=$1 ORDER BY sequence LIMIT 2', [f.id])).toEqual(receipts);
+  }
+}), 120_000);
+
+test('an explicit successful retry clears only a legacy checkpoint failure for that source', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine, { 'note.md': 'Original stable observation.\n' });
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    recordFailures(f.id, [{ path: '<checkpoint>', error: 'recovery_required: checkout identity changed' },
+      { path: 'still-broken.md', error: 'A real file failure' }], f.head);
+    recordFailures(`${f.id}-other`, [{ path: '<checkpoint>', error: 'Another source still needs repair' }], f.head);
+    mirrorManagedSyncFailure({ source_id: f.id, path: '<checkpoint>', code: 'recovery_required', message: 'A cursor-backed failure remains',
+      target: f.head, cursor_key: 'modern-cursor', request_id: null, run_id: 'modern-run', observation_id: 'modern-observation', first_seen: new Date().toISOString(), attempts: 1 });
+    writeFileSync(join(f.root, 'note.md'), 'Repaired current observation.\n');
+    commit(f.root);
+
+    expect(await performManagedSync(engine, { sourceId: f.id, noPull: true, retryFailed: true, dryRun: true })).toMatchObject({ status: 'dry_run' });
+    expect(loadSyncFailures()).toEqual(expect.arrayContaining([expect.objectContaining({ source_id: f.id, path: '<checkpoint>' })]));
+    expect(await performManagedSync(engine, { sourceId: f.id, noPull: true, retryFailed: true })).toMatchObject({ status: 'synced' });
+    expect(loadSyncFailures()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source_id: f.id, path: '<checkpoint>', managed_cursor_key: 'modern-cursor' }),
+      expect.objectContaining({ source_id: `${f.id}-other`, path: '<checkpoint>' }),
+    ]));
+    expect(loadSyncFailures().filter(row => row.source_id === f.id && row.path === '<checkpoint>' && !row.managed_cursor_key)).toHaveLength(0);
+    expect(loadSyncFailures()).toEqual(expect.arrayContaining([expect.objectContaining({ source_id: f.id, path: 'still-broken.md' })]));
+  }
+}), 120_000);
+
+test('a failed retry retains a legacy checkpoint failure until the retry succeeds', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine, { 'note.md': 'Original stable observation.\n' });
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    recordFailures(f.id, [{ path: '<checkpoint>', error: 'recovery_required: checkout identity changed' }], f.head);
+    writeFileSync(join(f.root, 'broken.md'), '---\ntitle: [broken\n---\nBroken current observation.\n');
+    commit(f.root);
+
+    expect(await performManagedSync(engine, { sourceId: f.id, noPull: true, retryFailed: true })).toMatchObject({ status: 'blocked_by_failures' });
+    expect(loadSyncFailures().filter(row => row.source_id === f.id && row.path === '<checkpoint>' && !row.managed_cursor_key)).toHaveLength(1);
+  }
+}), 120_000);
+
+test('a no-change successful retry clears a legacy checkpoint failure', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine, { 'note.md': 'Stable source observation.\n' });
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    recordFailures(f.id, [{ path: '<checkpoint>', error: 'recovery_required: checkout identity changed' }], f.head);
+
+    expect(await performManagedSync(engine, { sourceId: f.id, noPull: true, retryFailed: true })).toMatchObject({ status: 'up_to_date' });
+    expect(loadSyncFailures().filter(row => row.source_id === f.id && row.path === '<checkpoint>' && !row.managed_cursor_key)).toHaveLength(0);
   }
 }), 120_000);
 

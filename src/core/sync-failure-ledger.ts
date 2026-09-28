@@ -651,6 +651,21 @@ export function clearFailures(sourceId: string, paths: string[]): void {
   });
 }
 
+/**
+ * Pre-managed-sync releases recorded checkout-level failures as a generic
+ * `<checkpoint>` row without a durable cursor key.  A later explicit managed
+ * retry has re-verified the whole source, but cannot otherwise associate that
+ * legacy row with its completed cursor.  Do not apply this to ordinary file
+ * rows or modern cursor-backed failures: those retain their exact retry gate.
+ */
+export function clearLegacyCheckpointFailuresAfterSuccessfulRetry(sourceId: string): void {
+  withLedgerLock(() => {
+    const entries = loadSyncFailures();
+    const kept = entries.filter(row => !(row.source_id === sourceId && row.path === '<checkpoint>' && !row.managed_cursor_key));
+    if (kept.length !== entries.length) _writeAll(kept);
+  });
+}
+
 export function mirrorManagedSyncFailure(failure: { source_id: string; path: string; code: string; message: string; target: string | null;
   cursor_key: string; request_id: string | null; run_id: string; observation_id: string; first_seen: string; attempts: number }): void {
   withLedgerLock(() => {
