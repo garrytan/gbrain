@@ -32,6 +32,7 @@ interface MigrateOpts {
   targetUrl?: string;
   targetPath?: string;
   force: boolean;
+  allowManaged: boolean;
 }
 
 function parseArgs(args: string[]): MigrateOpts {
@@ -54,6 +55,7 @@ function parseArgs(args: string[]): MigrateOpts {
     targetUrl: urlIdx !== -1 ? args[urlIdx + 1] : undefined,
     targetPath: pathIdx !== -1 ? args[pathIdx + 1] : undefined,
     force: args.includes('--force'),
+    allowManaged: args.includes('--allow-managed'),
   };
 }
 
@@ -778,10 +780,86 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
   return resume;
 }
 
+/**
+ * Managed-brain engine move: copy one coordination/auth table verbatim.
+ * Column-intersection tolerance mirrors copyMigrationSimpleTable (engine
+ * schema drift between same-version installs); jsonb/bytea values are
+ * normalized across the PGLite↔Postgres driver boundary. Returns the copied
+ * row count, or -1 when the table is absent on either side (skipped).
+ */
+async function copyManagedTableVerbatim(
+  source: BrainEngine,
+  target: BrainEngine,
+  table: string,
+  filter?: string,
+): Promise<number> {
+  const colsOf = async (engine: BrainEngine): Promise<Array<{ name: string; type: string }>> => {
+    try {
+      return await engine.executeRaw<{ column_name: string; data_type: string }>(
+        `SELECT column_name AS name, data_type AS type FROM information_schema.columns
+          WHERE table_schema = current_schema() AND table_name = $1`,
+        [table],
+      );
+    } catch {
+      return [];
+    }
+  };
+  const sourceCols = await colsOf(source);
+  if (sourceCols.length === 0) return -1;
+  const targetCols = new Map((await colsOf(target)).map((c) => [c.name, c.type]));
+  if (targetCols.size === 0) return -1;
+  const cols = sourceCols.filter((c) => targetCols.has(c.name));
+  const rows = await source.executeRaw<Record<string, unknown>>(
+    `SELECT ${cols.map((c) => `"${c.name}"`).join(', ')} FROM ${table}${filter ? ` WHERE ${filter}` : ''}`,
+  );
+  // Coordination tables are trigger-guarded: protocol-2 must be declared
+  // inside the same statement (is_local set_config dies with the tx).
+  // PERSISTENCE_PROTOCOL_PREDICATE pattern, inlined for DELETE and as an
+  // INSERT...SELECT WHERE for the row copies.
+  await target.executeRaw(`DELETE FROM ${table} WHERE set_config('gbrain.persistence_protocol','2',true)='2'`);
+  const selects = cols.map((c, i) => {
+    if (c.type === 'jsonb' || c.type === 'json') return `$${i + 1}::jsonb`;
+    if (c.type === 'bytea') return `$${i + 1}::bytea`;
+    return `$${i + 1}`;
+  }).join(', ');
+  const insertSql = `INSERT INTO ${table} (${cols.map((c) => `"${c.name}"`).join(', ')})
+    SELECT ${selects} WHERE set_config('gbrain.persistence_protocol','2',true)='2'`;
+  let copied = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      await target.executeRaw(insertSql, cols.map((c) => {
+        const v = row[c.name] ?? null;
+        if ((c.type === 'jsonb' || c.type === 'json') && typeof v !== 'string') return JSON.stringify(v);
+        if (c.type === 'bytea' && v instanceof Uint8Array) return Buffer.from(v);
+        return v;
+      }));
+      copied++;
+    } catch {
+      // Historical rows can predate the current trigger contract (e.g.
+      // recovery records written under an older schema). A verbatim engine
+      // move keeps the rows that validate and counts the rest as skipped
+      // rather than aborting the migration over audit history.
+      failed++;
+    }
+  }
+  return failed > 0 ? -failed : copied;
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
-  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
-  await assertLegacyEngineMigration(sourceEngine);
   const opts = parseArgs(args);
+  if (opts.allowManaged) {
+    // Opt-in managed-brain migration (same-host engine move). The source
+    // PGLite data-dir lock is already held exclusively by this process, so
+    // no live writer can race the copy; persistence topology, durable
+    // request history and bearer-auth state transfer verbatim below instead
+    // of being refused. Live lease/lock rows are deliberately NOT copied —
+    // the relaunched daemon re-registers on the target engine.
+    console.warn('[migrate] --allow-managed: copying persistence + access_tokens verbatim (managed-brain engine move).');
+  } else {
+    await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
+    await assertLegacyEngineMigration(sourceEngine);
+  }
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: gbrain init');
@@ -1066,6 +1144,28 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // is untouched by this — the newConfig flip below preserves it.
     console.log('Copying config rows...');
     configResult = await copyMigrationConfig(sourceEngine, targetEngine);
+
+    // Managed-brain engine move: content and auth copy verbatim, but writer
+    // COORDINATION state does not survive a verbatim copy — worktree roots,
+    // writer registrations and request history reference engine-local
+    // paths/sequences that cannot self-reconcile on the target (verified:
+    // refresh_roots storage_error loop). The target therefore arrives
+    // unmanaged (seed persistence_brain) and serve re-bootstraps persistence
+    // through its own activation path. Live leases excluded by construction.
+    if (opts.allowManaged) {
+      console.log('Copying managed-brain state (auth + withdrawals)...');
+      progress.start('migrate.copy_managed');
+      const counts: string[] = [];
+      const fmtCount = (n: number) => n === -1 ? 'skipped' : n < 0 ? `partial,${-n} skipped` : String(n);
+      for (const t of ['access_tokens', 'fact_withdrawals']) {
+        const n = await copyManagedTableVerbatim(sourceEngine, targetEngine, t);
+        counts.push(`${t}:${fmtCount(n)}`);
+        progress.tick(1);
+      }
+      progress.finish();
+      console.log(`  managed tables — ${counts.join(', ')}`);
+      console.warn('[migrate] writer coordination intentionally NOT copied — the target re-bootstraps persistence on first serve.');
+    }
 
     // Update local config. v0.37 fix wave: preserve existing file-plane
     // embedding/expansion/chat config across the engine migration; only
