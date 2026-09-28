@@ -99,6 +99,24 @@ describe('extractTimelineFromMeetings', () => {
     expect(timeline).toHaveLength(0);
   });
 
+  it('uses the coordinated writer capability when persistence is managed', async () => {
+    await seedEntity('people/alice-example', 'Alice Example');
+    await seedNote('meetings/managed-sync', {
+      title: 'Managed Sync',
+      legacyType: 'meeting',
+    });
+    await addAttended('meetings/managed-sync', 'people/alice-example');
+
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    try {
+      const result = await extractTimelineFromMeetings(engine, { gazetteer: new Map() });
+      expect(result).toMatchObject({ entries_created: 1, batch_errors: 0 });
+      expect(await engine.getTimeline('people/alice-example', { sourceId: 'default' })).toHaveLength(1);
+    } finally {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    }
+  });
+
   it('follows body mentions of an entity in another source only under link_resolution.cross_source', async () => {
     // Entity lives in 'default'; the meeting lives in 'team-b' and names the
     // entity in its body (no attended link). Same shape as a multi-source brain

@@ -16,6 +16,7 @@ import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
 import { isPrivatePage } from './search/private-visibility.ts';
+import { withCoordinatedWrite } from './persistence/context.ts';
 
 export interface ExtractTimelineFromMeetingsOpts {
   dryRun?: boolean;
@@ -141,7 +142,13 @@ export async function extractTimelineFromMeetings(
     if (batch.length === 0) return;
     if (!dryRun) {
       try {
-        entriesCreated += await engine.addTimelineEntriesBatch(batch);
+        // Managed brains fence timeline writes at the database boundary. This
+        // extractor is a derived-data maintenance writer, so publish its
+        // bounded batch through the same coordinator capability rather than
+        // bypassing the canonical source fence.
+        const sourceIds = [...new Set(batch.map(entry => entry.source_id ?? 'default'))];
+        entriesCreated += await engine.transaction(tx =>
+          withCoordinatedWrite(tx, sourceIds, () => tx.addTimelineEntriesBatch(batch)));
       } catch (e) {
         // #2057: do NOT swallow. A bare `catch {}` here hid a brain-wide
         // timeline-write failure (the run reported 0 entries with no error).
