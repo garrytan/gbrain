@@ -211,6 +211,7 @@ Test command tiers, each with a clear scope:
 | `bun run verify` | CI's authoritative pre-test gate set, fanned out by `scripts/run-verify-parallel.sh` through a bounded worker pool (default `detect_cpus`; override `GBRAIN_VERIFY_MAX_PARALLEL`) with the heavy checks ordered first (typecheck, the two compile-embed checks, admin build, fuzz bundles, guard self-tests, the PGLite-booting chronicle eval check, whole-tree greps). The battery includes the deterministic `check:eval-chronicle` eval gate; `check:eval-canary` is deliberately NOT in the battery (its test-file twin `test/eval-canary.test.ts` spawns the identical runner in the unit matrix, and CI's verify job and matrix always run together — the package script stays for on-demand runs, so `verify`-only local callers should know the canary rides the unit lane instead). The `CHECKS` array in that script is the single source of truth — CI literally calls `bun run verify` in a dedicated job. | ~50s (pool-bounded; longest check dominates) | Before pushing; before `/ship`. |
 | `bun run test:full` | `verify && bun run test && bun run test:slow && [smart e2e]`. Smart e2e runs only when `DATABASE_URL` is set and propagates its failure; otherwise it prints a skip notice to stderr. Use `ci:local` to provision the databases and require PgBouncer execution. | ~3-5min depending on slow + e2e | Pre-merge sanity, before opening a PR. |
 | `bun run ci:local` | Independent host gitleaks scans, then frozen dependencies, guards/typecheck, the complete serial and slow lanes, and four unit/E2E shards inside Docker. Each E2E shard has its own pgvector database; selected PgBouncer tests must execute against the transaction-mode pooler. Unit, serial, and slow lanes have database URL overrides unset. Any failed stage fails the command. Complete shard logs survive container teardown under `.context/ci-local-shards/`. `ci:local:diff` narrows E2E selection; `--no-shard` runs unit/E2E sequentially. Doc-only diffs still require successful gitleaks scans. | Depends on the full corpus | Full local gate before shipping. |
+| `bun run ci:ubicloud` | The `ci:local` lanes (gitleaks, guards/typecheck, serial, slow, unit, all E2E with required PgBouncer execution) fanned out across ephemeral Ubicloud VMs from one heaviest-first work queue; `ci:ubicloud:diff` narrows E2E like `ci:local:diff`. Needs `UBICLOUD_API_KEY` or `UBICLOUD_API_TOKEN`, no local Docker. See "Ubicloud fan-out" below. | ~5 min (floor: the longest single file) | Full gate before shipping when a Ubicloud token is available. |
 | `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
 | `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; one bun process per file for true module-registry isolation), run through a POOL of concurrent per-file processes — the isolation is per-process, not per-machine. Dispatch is heaviest-first (LPT) from the advisory `scripts/serial-weights.json` (seconds; mined from the `.context/serial-durations.txt` table each run banks; absent/corrupt weights fall back to discovery order, absent keys to the corpus p75 — scheduling only, never correctness; LPT order + the corrupt-weights fail-soft are pinned by `test/scripts/run-serial-pool.test.ts`). Pool defaults to `min(detect_cpus, 4)` then memory-adapts (same doctrine as the parallel runner); a small growth-guarded set of files (machine-global state or contention-critical timing — see the justified `EXCLUSIVE_FILES` list in `scripts/run-serial-tests.sh`, capped at 3 by `test/scripts/serial-files.test.ts`) runs on a sequential EXCLUSIVE lane after the pool. Per-test timeout 120s (pooled contention headroom); each pooled file is wall-clock-killed at 300s (`timeout -k`, exit-hang containment). `SHARD=N/M` partitions pooled files by duration; the three exclusive files run only on shard 1. Unset runs the complete corpus. Routing variables are cleared before tests start, so nested runners remain independent. Externally-killed files (exit 143/137 or a missing exit sentinel — sibling-workspace cleanup, memory jetsam) get ONE sequential rescue re-run, mirroring the parallel runner's doctrine: phantoms stay green with a rescue note, real failures stay red. Prints per-file PASS lines plus a top-10 slowest-files list. Knobs: `GBRAIN_SERIAL_POOL=N` (explicit pool width — bypasses the memory clamp; `1` restores fully-sequential), `GBRAIN_SERIAL_FILE_TIMEOUT`. | a few minutes for all ~220 files at pool=4 | Debugging quarantined files; CI's serial-tests job. |
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential within a shard; `SHARD=N/M` fans out against separate databases (ci-local runs 4 containers). Activates the PGLite snapshot like every other runner (per-file cold-path opt-outs where the test asserts the path TO post-initSchema state), exporting it as an ABSOLUTE path so CLI children spawned with varying cwd still find it. | ~5-10min | Pre-ship; nightly. |
@@ -242,6 +243,60 @@ admin bundle, in named volumes. Admin build dependencies, Vite's generated cache
 and build output stay inside container volumes instead of replacing host files
 or leaving root-owned directories behind. `ci:local --clean` removes these volumes
 too; build the admin app on the host when updating its committed bundle.
+
+### Ubicloud fan-out (`ci:ubicloud`)
+
+`scripts/ci-ubicloud.ts` runs the `ci:local` gate on ephemeral Ubicloud VMs
+instead of one Docker host. It packs the working tree once (tracked files,
+untracked files that are not ignored, and `.git`) and streams it to every VM, so
+uncommitted edits are tested. `scripts/ubicloud/ubi-runner.sh` creates and
+destroys the VMs; every VM is destroyed on exit, including Ctrl-C, and any
+`ubirun-*` VM older than 12 hours is garbage-collected by the next run.
+
+Each VM runs `scripts/ubicloud/setup-ci-vm.sh`: the pinned Bun from
+`docker-compose.ci.yml`, the runner container's test prerequisites plus Node,
+frozen dependencies, both PGLite snapshot fixtures, and one
+`pgvector/pgvector:pg16` server fronted by a transaction-mode PgBouncer per
+slot. Every slot's schema is bootstrapped with `setupLegacyEmbeddingDB()`, the
+same step nightly full-corpus E2E workers run, so no E2E file depends on which
+file reaches a database first. Setup takes 70-90 seconds, including VM boot.
+
+Scheduling is dynamic. Every unit, serial, slow and E2E file is one item in a
+global queue ordered by weight, heaviest first. Each idle slot on any VM takes
+the next item, so a slow VM or a mis-weighted file delays only the slot holding
+it. Light items leave in same-lane batches to amortize SSH round trips, and the
+batch target shrinks as the queue drains. Items of 60 seconds or more are the
+run's long poles, so they spread one per VM before any VM takes a second one.
+The first VM to finish setup runs the
+machine-level work first: gitleaks, `verify`, then the serial lane's
+machine-exclusive files one at a time with nothing else on that VM. After that
+it joins the pool. Items run through the `ci:local` wrappers
+(`scripts/ubicloud/ci-item.sh`): `run-unit-shard.sh`, `run-serial-tests.sh` and
+`run-slow-tests.sh` accept explicit file arguments for this purpose, and
+`run-e2e.sh` runs each E2E file against its slot's own server and pooler. The
+unit, serial and slow lanes run with database URLs unset. Tests run natively as
+a non-root user on Ubuntu 24.04, the same OS as the CI runners, instead of as
+root in the `oven/bun` container.
+
+Weights come from, in order: `.context/ci-ubicloud/weights.json` (merged after
+every run), the committed `scripts/ubicloud/weights.json` (refresh it with
+`--record-weights` on a green full run), then the lane weight files mined from
+GitHub CI. Unknown files get their lane's p75. Per-item logs, failure logs and
+`summary.json` land in `.context/ci-ubicloud/<run>/`. The exit status is non-zero
+when any item fails, an item never produces a result, or no VM becomes ready.
+An item whose SSH batch dies without a result is retried once on any slot, and a
+VM with three such infrastructure errors is retired.
+
+Defaults are ten `standard-16` VMs in `eu-central-h1` with 8 slots each, one
+per two vCPUs (`--vms`, `--size`, `--slots`, `--location`). `--lanes` runs a
+subset, `--keep` leaves the VMs up for debugging, and `--diff` follows
+`ci:local:diff` (a doc-only diff runs gitleaks alone). The corpus is roughly
+8,000 seconds of test compute at that density, so 80 slots finish everything
+but the longest files about two minutes after setup; more slots per VM add CPU
+contention that slows timing-sensitive files without shortening the run. Wall time is bounded
+by setup plus the longest single file,
+`test/reindex-markdown-persistence.slow.test.ts` (one test, about 230 seconds),
+so adding VMs past the default does not shorten a run.
 
 ### Native writer locks
 

@@ -226,6 +226,8 @@ files and ratchets the pre-existing list down.
 bun run ci:local         # full gate: gitleaks + guards/typecheck + 4-shard parallel unit + E2E
 bun run ci:local:diff    # gate with diff-aware E2E selector
 bun run ci:select-e2e    # print which E2E files the selector would run
+bun run ci:ubicloud      # the same gate fanned out across ephemeral Ubicloud VMs (~5 min)
+bun run ci:ubicloud:diff # Ubicloud gate with the diff-aware E2E selector
 ```
 
 `ci:local` spins up four pgvector services plus a transaction-mode PgBouncer via
@@ -234,6 +236,11 @@ sharded 4 ways in parallel, then tears down. Named volumes keep the install warm
 across runs. Requires Docker (Docker Desktop, OrbStack, or Colima) and `gitleaks`
 on host (`brew install gitleaks`). Override the postgres host port with
 `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
+
+`ci:ubicloud` needs no Docker or gitleaks locally, only `UBICLOUD_API_KEY` (or
+`UBICLOUD_API_TOKEN`) for a Ubicloud project. It tests the working tree,
+uncommitted edits included; see "Ubicloud fan-out" in
+[`docs/TESTING.md`](docs/TESTING.md).
 
 Fail-closed selector: an unmapped `src/` change runs ALL E2E files. Hand-tune
 narrower mappings via `scripts/e2e-test-map.ts`.

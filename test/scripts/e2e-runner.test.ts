@@ -258,7 +258,15 @@ printf '%s' '${output}'
       expect(() => process.kill(pid!, 0)).not.toThrow();
       child.kill(signal);
       expect(await child.exited).toBe(signal === 'SIGINT' ? 130 : 143);
-      expect(() => process.kill(pid!, 0)).toThrow();
+      // The SIGKILLed child is reparented and reaped asynchronously; on a
+      // loaded host it can still answer signal 0 just after the runner exits.
+      const reaped = async () => {
+        for (const deadline = Date.now() + 5000; Date.now() < deadline; await Bun.sleep(20)) {
+          try { process.kill(pid!, 0); } catch { return true; }
+        }
+        return false;
+      };
+      expect(await reaped()).toBe(true);
       expect(existsSync(join(coverage, 'lane-manifest.json'))).toBe(false);
       expect(existsSync(join(coverage, 'executed-files.txt'))).toBe(false);
     } finally {

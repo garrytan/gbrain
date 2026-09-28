@@ -54,6 +54,15 @@ import {
   loadCorpusQueries,
 } from '../helpers/bootstrap-corpus.ts';
 
+// The serve appends its own checkpoint-harvest/writeback heartbeats to the same
+// JSONL asynchronously, so the hook's entry is the newest non-serve line.
+const SERVE_HEARTBEAT_EVENTS = new Set<string>(['checkpoint-harvest', 'writeback']);
+async function lastHookHeartbeat() {
+  const entry = (await readHeartbeatTail(20)).reverse().find((e) => !SERVE_HEARTBEAT_EVENTS.has(e.event));
+  if (!entry) throw new Error('no hook heartbeat recorded');
+  return entry;
+}
+
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const TRANSCRIPT_FIXTURE = join(REPO_ROOT, 'test', 'fixtures', 'conversation-formats', 'claude-code.jsonl');
 
@@ -249,7 +258,7 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
     expect(code).toBe(0);
 
     const payload = out.get().trim();
-    const [hb] = await readHeartbeatTail(1);
+    const hb = await lastHookHeartbeat();
     expect(hb).toBeDefined();
     expect(hb.event).toBe('user-prompt');
     expect(hb.outcome).not.toBe('error');
@@ -359,7 +368,7 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
     });
     expect(bankCode).toBe(0);
     expect(bankOut.get()).toBe(''); // PreCompact emits nothing
-    const [bankHb] = await readHeartbeatTail(1);
+    const bankHb = await lastHookHeartbeat();
     expect(bankHb).toBeDefined();
     expect(bankHb.event).toBe('compact');
     expect(bankHb.outcome).toBe('ok'); // a degradation here means banking never reached the serve
@@ -381,7 +390,7 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
     const pack = packOut.get();
     expect(pack).toContain('Alice Example');
     expect(pack).toContain('people/alice-example');
-    const [packHb] = await readHeartbeatTail(1);
+    const packHb = await lastHookHeartbeat();
     expect(packHb).toBeDefined();
     expect(packHb.event).toBe('session-start');
     expect(packHb.outcome).not.toBe('error');
@@ -419,7 +428,7 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
     });
     expect(code).toBe(0);
     expect(out.get()).toBe('');
-    const [hb] = await readHeartbeatTail(1);
+    const hb = await lastHookHeartbeat();
     expect(hb.event).toBe('compact');
     expect(hb.outcome).toBe('ok'); // IPC round trip reached the serve
     expect(hb.segment).toBe('segment_banked');
@@ -452,7 +461,7 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
     expect(code).toBe(0);
     expect(out.get()).toBe(''); // fail-open: empty stdout, never an error blob
 
-    const [hb] = await readHeartbeatTail(1);
+    const hb = await lastHookHeartbeat();
     expect(hb).toBeDefined();
     expect(hb.event).toBe('user-prompt');
     expect(hb.outcome).toBe('degraded');
