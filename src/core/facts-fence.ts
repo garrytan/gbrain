@@ -691,7 +691,9 @@ export function stripFactsFence(body: string, opts: StripFactsFenceOpts = {}): s
 
 /**
  * Replace the facts fence with FACTS_FENCE_OMITTED (get_page omit_facts).
- * Returns the body unchanged when it holds no complete fence.
+ * Only a fence that starts and ends on its own lines is omitted, so the
+ * placeholder always stands alone on a line and put_page can find it without
+ * mistaking a quoted mention for it. Anything else is returned unchanged.
  */
 export function omitFactsFence<T extends string | null | undefined>(body: T): T {
   if (typeof body !== 'string') return body;
@@ -699,5 +701,8 @@ export function omitFactsFence<T extends string | null | undefined>(body: T): T 
   if (beginIdx === -1) return body;
   const endIdx = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
   if (endIdx === -1) return body;
-  return (body.slice(0, beginIdx) + FACTS_FENCE_OMITTED + body.slice(endIdx + FACTS_FENCE_END.length)) as T;
+  const after = endIdx + FACTS_FENCE_END.length;
+  const ownLines = (beginIdx === 0 || body[beginIdx - 1] === '\n') && (after === body.length || body[after] === '\n' || body[after] === '\r');
+  if (!ownLines) return body;
+  return (body.slice(0, beginIdx) + FACTS_FENCE_OMITTED + body.slice(after)) as T;
 }
