@@ -81,6 +81,17 @@ export function classifyResolution(
     // Operator action is to wait for the next prompt_version bump.
     return 'flag_for_review';
   }
+  // dream `take_contradictions` phase: a genuine contradiction between two
+  // DIFFERENT active takes is a real disagreement between two people's/
+  // sources' stated positions — it always needs a human, never an
+  // auto-applied fix (unlike intra_page/cross_slug's structural heuristics
+  // below, which can pick a real winner). Temporal verdicts (supersession/
+  // regression/evolution/negation_artifact) are handled by the branches
+  // above this one and are unaffected — a same-holder claim that changed
+  // over time still routes to temporal_supersede as usual.
+  if (pair.kind === 'active_takes' && verdict === 'contradiction') {
+    return 'manual_review';
+  }
   // verdict === 'contradiction' (or no_contradiction, which shouldn't reach
   // this fn — runner filters before calling pairToFinding) falls through to
   // the v1 mapping below.

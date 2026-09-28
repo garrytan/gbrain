@@ -26,7 +26,13 @@ export const PROMPT_VERSION = '2' as const;
 /** Truncation policy string baked into the cache key. */
 export const TRUNCATION_POLICY = '1500-chars-utf8-safe' as const;
 
-export type ContradictionKind = 'cross_slug_chunks' | 'intra_page_chunk_take';
+/**
+ * 'active_takes' (dream `take_contradictions` phase): a pair of DIFFERENT
+ * active takes — different holders and/or different pages — compared for
+ * genuine disagreement, independent of any user search query. Additive
+ * member; append-only per this file's own policy.
+ */
+export type ContradictionKind = 'cross_slug_chunks' | 'intra_page_chunk_take' | 'active_takes';
 
 /**
  * v0.34 / Lane A2: severity gains 'info' for the new non-error-class verdicts
@@ -159,6 +165,16 @@ export interface ContradictionFinding extends ContradictionPair {
   confidence: number;
   resolution_kind: ResolutionKind;
   resolution_command: string;
+  /**
+   * dream `take_contradictions` phase only (undefined for the two
+   * query-driven strategies, whose findings are one-shot). Tracks whether a
+   * human has disposed of this specific finding across nightly runs —
+   * `runPhaseTakeContradictions` carries forward any still-'open' finding
+   * into the next run's persisted report rather than silently dropping it
+   * when a later write to `eval_contradictions_runs` replaces the latest
+   * row (see take-contradictions.ts's reconciliation step).
+   */
+  status?: 'open' | 'resolved' | 'dismissed';
 }
 
 export interface PerQueryResult {

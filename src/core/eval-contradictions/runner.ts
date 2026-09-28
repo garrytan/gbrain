@@ -100,7 +100,7 @@ export class PreFlightBudgetError extends Error {
 }
 
 /** Build a pair key for judge_errors row identification. Stable per run. */
-function pairId(pair: ContradictionPair): string {
+export function pairId(pair: ContradictionPair): string {
   const a = pair.a.chunk_id ?? `take-${pair.a.take_id}`;
   const b = pair.b.chunk_id ?? `take-${pair.b.take_id}`;
   return `${pair.kind}:${pair.a.slug}#${a}:${pair.b.slug}#${b}`;
@@ -131,7 +131,7 @@ function searchResultToMember(r: SearchResult): PairMember {
  * A future enhancement could distinguish `takes.since_date` from
  * `pages.effective_date` here — for v1 they share the same page anchor.
  */
-function takeToMember(
+export function takeToMember(
   take: { id: number; row_num: number; page_slug: string; claim: string; holder: string },
   source_tier: ReturnType<typeof classifySlugTier>,
   effective_date: string | null,
@@ -222,7 +222,14 @@ async function generateIntraPagePairs(
  * - score-first: same as deterministic for v1 (A3 reduction; if we add
  *   triage-mode-specific behavior later it diverges here).
  */
-function sortPairs(
+/** Deterministic, sortable run id from a start timestamp. Shared by every
+ *  caller that persists into eval_contradictions_runs (one run_id column,
+ *  same format for all of them). */
+export function buildRunId(startedAtMs: number): string {
+  return new Date(startedAtMs).toISOString().replace(/[:.]/g, '-').replace(/-(?=\d{3}Z$)/, '.');
+}
+
+export function sortPairs(
   pairs: ContradictionPair[],
   sampling: 'deterministic' | 'score-first',
 ): ContradictionPair[] {
@@ -448,7 +455,7 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   });
   const breakdown = buildSourceTierBreakdown(allPairs);
   const hotPages = buildHotPages(allFindings);
-  const runId = new Date(startedAt).toISOString().replace(/[:.]/g, '-').replace(/-(?=\d{3}Z$)/, '.');
+  const runId = buildRunId(startedAt);
   const durationMs = Date.now() - startedAt;
 
   // #3889: a run where EVERY judge call errored has zero verdicts — its

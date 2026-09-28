@@ -128,8 +128,25 @@ import { truncateUtf8 } from '../text-safe.ts';
 export { truncateUtf8 };
 
 export interface JudgeInput {
-  /** The user's query for the search that retrieved both members. */
+  /**
+   * The user's query for the search that retrieved both members. For the
+   * `active_takes` pairing strategy (no real search query — pairs come from
+   * holder/topic clustering, not a search) callers pass a fixed descriptive
+   * string; `crossHolderDisagreementCounts: true` also drops the
+   * query-relevance framing from the prompt so that string is never treated
+   * as a real relevance filter.
+   */
   query: string;
+  /**
+   * dream `take_contradictions` phase only. Default false/undefined
+   * preserves the exact existing prompt byte-for-byte (protects the two
+   * query-driven strategies' cache and behavior). When true: (1) a genuine
+   * disagreement between two DIFFERENT named holders counts as a
+   * contradiction instead of being waved through as benign difference of
+   * opinion, and (2) the query-relevance-filtering bullets are dropped,
+   * since there is no real search query to be relevant to.
+   */
+  crossHolderDisagreementCounts?: boolean;
   /**
    * Statement A: slug + text + optional source-tier + holder (if take) +
    * optional effective_date (Lane A1). When effective_date is null/undefined
@@ -316,6 +333,8 @@ export function buildJudgePrompt(opts: {
     effective_date?: string | null;
   };
   maxPairChars: number;
+  /** See JudgeInput's field of the same name. Default false/undefined = byte-identical existing prompt. */
+  crossHolderDisagreementCounts?: boolean;
 }): string {
   const a = truncateUtf8(opts.a.text, opts.maxPairChars);
   const b = truncateUtf8(opts.b.text, opts.maxPairChars);
@@ -326,14 +345,23 @@ export function buildJudgePrompt(opts: {
   // when the page has no effective_date — judge classifies on text alone.
   const aDateTag = opts.a.effective_date ? `(from: ${opts.a.effective_date})` : '(date unknown)';
   const bDateTag = opts.b.effective_date ? `(from: ${opts.b.effective_date})` : '(date unknown)';
+  const crossHolder = opts.crossHolderDisagreementCounts === true;
+  const intro = crossHolder
+    ? [
+        'You are a contradiction judge for a personal knowledge brain. These two',
+        'statements were identified as independently-held claims on a related',
+        'topic. Decide whether they genuinely contradict each other.',
+      ]
+    : [
+        'You are a contradiction judge for a personal knowledge brain. The user',
+        'ran a search and got two results back. Decide whether the two statements',
+        "contradict each other in a way that would mislead someone trying to",
+        "answer the user's query.",
+      ];
   return [
-    'You are a contradiction judge for a personal knowledge brain. The user',
-    'ran a search and got two results back. Decide whether the two statements',
-    "contradict each other in a way that would mislead someone trying to",
-    "answer the user's query.",
+    ...intro,
     '',
-    `User's query: ${opts.query}`,
-    '',
+    ...(crossHolder ? [] : [`User's query: ${opts.query}`, '']),
     `Statement A ${aDateTag} (${aMeta}):`,
     a,
     '',
@@ -359,11 +387,23 @@ export function buildJudgePrompt(opts: {
     '  in time, where the dates do not explain the difference.',
     '- Use no_contradiction when the statements are compatible.',
     '',
-    '- Subjective opinions held at different times by the SAME holder may be',
-    '  a contradiction (a flip). Opinions held by DIFFERENT holders are not.',
-    '- Different aspects of the same entity are not contradictions.',
-    "- Incidental disagreements unrelated to the user's query do not count.",
-    '  Judge only on claims relevant to what the user asked.',
+    ...(crossHolder
+      ? [
+          '- A genuine disagreement between two DIFFERENT named holders on the',
+          '  same question IS a contradiction needing human review — do not wave',
+          '  it through as normal difference of opinion.',
+          '- Subjective opinions held at different times by the SAME holder may',
+          '  also be a contradiction (a flip).',
+          '- Different aspects of the same entity, or claims that are compatible',
+          '  refinements of each other rather than opposed, are not contradictions.',
+        ]
+      : [
+          '- Subjective opinions held at different times by the SAME holder may be',
+          '  a contradiction (a flip). Opinions held by DIFFERENT holders are not.',
+          '- Different aspects of the same entity are not contradictions.',
+          "- Incidental disagreements unrelated to the user's query do not count.",
+          '  Judge only on claims relevant to what the user asked.',
+        ]),
     '',
     'Reply with JSON ONLY:',
     '{',
@@ -410,6 +450,7 @@ export async function judgeContradiction(input: JudgeInput): Promise<JudgeOutput
     a: input.a,
     b: input.b,
     maxPairChars,
+    crossHolderDisagreementCounts: input.crossHolderDisagreementCounts,
   });
   const callFn = input.chatFn ?? chat;
   const result = await callFn({

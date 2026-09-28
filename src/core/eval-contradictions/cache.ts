@@ -34,6 +34,15 @@ export function buildCacheKey(opts: {
   textA: string;
   textB: string;
   modelId: string;
+  /**
+   * Discriminates a caller whose judge PROMPT differs from the standard
+   * query-driven one (e.g. take-contradictions.ts's `crossHolderDisagreementCounts`
+   * mode) so its verdicts never collide with — or get served to — a
+   * standard-prompt lookup for the identical text pair. No schema change:
+   * folds into the existing prompt_version column rather than adding one,
+   * so a cache row's key shape is unchanged for every caller that omits it.
+   */
+  promptVersion?: string;
 }): {
   chunk_a_hash: string;
   chunk_b_hash: string;
@@ -48,7 +57,7 @@ export function buildCacheKey(opts: {
     chunk_a_hash: first,
     chunk_b_hash: second,
     model_id: opts.modelId,
-    prompt_version: PROMPT_VERSION,
+    prompt_version: opts.promptVersion ?? PROMPT_VERSION,
     truncation_policy: TRUNCATION_POLICY,
   };
 }
@@ -85,6 +94,7 @@ export class JudgeCache {
   private modelId: string;
   private ttlSeconds: number;
   private disabled: boolean;
+  private promptVersion?: string;
 
   constructor(opts: {
     engine: BrainEngine;
@@ -93,11 +103,14 @@ export class JudgeCache {
     ttlSeconds?: number;
     /** If true, never read or write — every call is a miss. */
     disabled?: boolean;
+    /** See buildCacheKey's field of the same name. */
+    promptVersion?: string;
   }) {
     this.engine = opts.engine;
     this.modelId = opts.modelId;
     this.ttlSeconds = opts.ttlSeconds ?? 30 * 86400;
     this.disabled = !!opts.disabled;
+    this.promptVersion = opts.promptVersion;
   }
 
   async lookup(textA: string, textB: string): Promise<JudgeVerdict | null> {
@@ -105,7 +118,7 @@ export class JudgeCache {
       this.misses++;
       return null;
     }
-    const key = buildCacheKey({ textA, textB, modelId: this.modelId });
+    const key = buildCacheKey({ textA, textB, modelId: this.modelId, promptVersion: this.promptVersion });
     const raw = await this.engine.getContradictionCacheEntry(key);
     if (raw && isJudgeVerdict(raw)) {
       this.hits++;
@@ -117,7 +130,7 @@ export class JudgeCache {
 
   async store(textA: string, textB: string, verdict: JudgeVerdict): Promise<void> {
     if (this.disabled) return;
-    const key = buildCacheKey({ textA, textB, modelId: this.modelId });
+    const key = buildCacheKey({ textA, textB, modelId: this.modelId, promptVersion: this.promptVersion });
     await this.engine.putContradictionCacheEntry({
       ...key,
       verdict: verdict as unknown as Record<string, unknown>,

@@ -74,6 +74,13 @@ export type CyclePhase =
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
   | 'drift'
+  // Take-vs-take contradiction detection (default OFF;
+  // dream.take_contradictions.enabled). Reuses the eval-contradictions
+  // judge as a third pairing strategy (`active_takes`) over pairs of
+  // DIFFERENT active takes; persists into eval_contradictions_runs
+  // (no new table); report-only — a genuine contradiction always routes to
+  // manual_review, never auto-applied.
+  | 'take_contradictions'
   | 'embed' | 'orphans' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
@@ -163,6 +170,17 @@ export const ALL_PHASES: CyclePhase[] = [
   // the calibration trio (fresh take resolutions) and BEFORE embed so the
   // drift report page gets embedded same-cycle. Report-only in v1.
   'drift',
+  // Take-vs-take contradiction detection. Default OFF
+  // (dream.take_contradictions.enabled). Compares pairs of DIFFERENT active
+  // takes (different holders and/or pages) via the eval-contradictions
+  // judge as a third pairing strategy (`active_takes`); a genuine
+  // contradiction always routes to manual_review, never auto-applied.
+  // Placed after `drift` (same rationale: sees the calibration trio's fresh
+  // take resolutions) and before `embed` — it persists into
+  // eval_contradictions_runs, not a page, so it has no embedding need of
+  // its own, but keeping it in this slot matches every other take-adjacent
+  // phase's ordering. Report-only, like drift.
+  'take_contradictions',
   // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
   // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
   // Ordered AFTER calibration_profile (matches the runCycle dispatch
@@ -2725,6 +2743,43 @@ export async function runCycle(
             r.status === 'failed' ? 'fail' : 'skipped';
           return {
             phase: 'drift',
+            status,
+            duration_ms: 0,
+            summary: r.detail,
+            details: { ...(r.totals ?? {}) },
+          };
+        });
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    if (phases.includes('take_contradictions')) {
+      checkAborted(cycleSignal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'take_contradictions',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.take_contradictions');
+        const { runPhaseTakeContradictions } = await import('./cycle/take-contradictions.ts');
+        const { result, duration_ms } = await timePhase(async (): Promise<PhaseResult> => {
+          const r = await runPhaseTakeContradictions(engine, {
+            dryRun,
+            forceEnabled: opts.onceForPhase === 'take_contradictions',
+          });
+          const status: PhaseStatus =
+            r.status === 'complete' ? 'ok' :
+            r.status === 'partial' ? 'warn' :
+            r.status === 'failed' ? 'fail' : 'skipped';
+          return {
+            phase: 'take_contradictions',
             status,
             duration_ms: 0,
             summary: r.detail,

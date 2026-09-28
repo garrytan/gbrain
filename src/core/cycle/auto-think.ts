@@ -28,7 +28,7 @@ import { BudgetMeter } from './budget-meter.ts';
  * shape forces premature CyclePhase enum extension.
  */
 export interface DreamPhaseResult {
-  name: 'auto_think' | 'drift';
+  name: 'auto_think' | 'drift' | 'take_contradictions';
   status: 'complete' | 'partial' | 'failed' | 'skipped';
   detail: string;
   totals?: Record<string, number>;

@@ -433,7 +433,9 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // between conversation_facts_backfill and embed — both landed in this merge).
     // #2653: 23 phases (added `drift` between calibration_profile and
     // conversation_facts_backfill).
-    expect(hookCalls).toBe(23);
+    // take-vs-take contradiction detection: 24 phases (added
+    // `take_contradictions` immediately after `drift`).
+    expect(hookCalls).toBe(24);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -449,7 +451,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.41.11.0: 20 phases (+extract_atoms, +synthesize_concepts, +conversation_facts_backfill).
     // v0.41.39 (#1700) + v0.42.0.0: 22 phases (+enrich_thin, +skillopt).
     // #2653: 23 phases (+drift).
-    expect(report.phases.length).toBe(23);
+    // take-vs-take contradiction detection: 24 phases (+take_contradictions).
+    expect(report.phases.length).toBe(24);
   });
 });
 
