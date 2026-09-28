@@ -433,6 +433,12 @@ chunk, retained failure receipt, committed completion and released leases.
 unchanged. The E2E wrapper files ensure these optional PostgreSQL arms execute
 in the database lane rather than only passing their PGLite controls.
 
+The persistence invariant jobs run the complete `scripts/persistence/validate.ts`
+gate (10,000-write soak) on pushes to master and manual dispatches. Pull requests
+run the same schedules and crash boundaries with a 2,500-write soak; the full
+PGLite soak alone takes 15-28 minutes and would otherwise set every PR's wall
+time. `test/scripts/data-safety-native-workflow.test.ts` pins the split.
+
 For platform-only feedback, dispatch
 `gh workflow run test.yml --ref <branch> -f native_only=true`. This explicit manual option uses a separate concurrency
 group so it does not cancel an ongoing full persistence soak. Its
