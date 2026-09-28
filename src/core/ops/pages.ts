@@ -80,6 +80,7 @@ const get_page: Operation = {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
     include_content: { type: 'boolean', description: '#2225: include the canonical serialized `content` field (frontmatter + body + timeline sentinel) for lossless get→edit→put_page round-trips. Default false — it roughly duplicates compiled_truth + timeline, so read-only callers should not pay for it.' },
+    content_only: { type: 'boolean', description: 'With include_content: true, return only what a get→edit→put_page round trip needs — slug, type, title, revision, tags and `content` (plus resolved_slug / content_flag / deleted_at when present). compiled_truth, timeline and frontmatter are already inside `content`, so omitting them halves the payload for large pages. Ignored without include_content (default: false).' },
     include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
     include_timeline_entries: { type: 'boolean', description: '#5709: also return `timeline_entries`, the page\'s timeline rows (the same rows and filtering as get_timeline for this caller). Default false to keep the payload small.' },
     source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
@@ -90,6 +91,9 @@ const get_page: Operation = {
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
     const includeTimelineEntries = (p.include_timeline_entries as boolean) === true;
+    // Only meaningful with include_content: a round-trip reader needs `content`
+    // + `revision`, not the same text again as compiled_truth + timeline.
+    const contentOnly = includeContent && (p.content_only as boolean) === true;
     // #4329: honor a per-call source_id (pre-fix it was silently dropped).
     // resolveRequestedScope (inside federatedSearchScope) enforces the remote
     // caller's grant on the explicit value.
@@ -193,6 +197,25 @@ const get_page: Operation = {
     // Opt-in (include_content: true): get_page is the most-called read op, and
     // `content` roughly duplicates compiled_truth + timeline — always emitting
     // it would double every reader's payload for the round-trip minority.
+    if (contentOnly) {
+      // Everything a get→edit→put_page round trip needs, without the duplicate
+      // compiled_truth / timeline / frontmatter the full shape carries next to
+      // `content` (a 30 KB page otherwise comes back as ~62 KB).
+      const deletedAt = (visibleBody as { deleted_at?: unknown }).deleted_at;
+      return {
+        slug: visibleBody.slug,
+        type: visibleBody.type,
+        title: visibleBody.title,
+        revision: snapshot!.revision,
+        tags,
+        content: serializePageToMarkdown(visibleBody as Page, tags),
+        ...(includeTimelineEntries
+          ? { timeline_entries: await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) } : {}),
+        ...(deletedAt ? { deleted_at: deletedAt } : {}),
+        ...(resolved_slug ? { resolved_slug } : {}),
+        ...(content_flag ? { content_flag } : {}),
+      };
+    }
     return {
       ...visibleBody,
       revision: snapshot!.revision,
