@@ -79,7 +79,15 @@ export interface LiveHolder {
    * closing that residual gap would need new cross-platform identity
    * infrastructure this codebase does not have anywhere, including at
    * `pglite-lock.ts`'s own lock-acquisition path, and is out of scope for
-   * the doctor false-positive this field fixes.
+   * the doctor false-positive this field fixes. A pid/namespace match ALONE
+   * is also not sufficient: within one boot session a dead process's pid
+   * can be reused by a later, unrelated live process (including this
+   * doctor invocation itself), leaving a genuinely stale legacy lock that
+   * still blocks real database access — `pglite-lock.ts`'s own acquisition
+   * reap logic sees the recycled pid as alive and correctly refuses to
+   * reclaim it. `isSelf` additionally requires the lock's `acquired_at`
+   * (when present) not to predate this process's own start time, since a
+   * process cannot have acquired a lock before it existed.
    */
   isSelf: boolean;
 }
@@ -91,16 +99,28 @@ export interface LiveHolder {
  * reaping, or opening anything. Unreadable/absent lock → null (no live holder
  * provable — uninstall proceeds; a dead holder's stale lock dir is inert).
  *
- * `deps` is test-only injection for the namespace-evidence readers (default:
- * the real `/proc` readers from pglite-lock.ts); production callers never
- * pass it.
+ * `deps` is test-only injection for the namespace-evidence readers and our
+ * own process-start time (default: the real `/proc` readers from
+ * pglite-lock.ts and `Date.now() - process.uptime() * 1000`); production
+ * callers never pass it.
  */
 export function probeLivePgliteHolder(
   dataDir: string,
-  deps: { readPidNs: () => string | null; readBootId: () => string | null } = { readPidNs, readBootId },
+  deps: {
+    readPidNs: () => string | null;
+    readBootId: () => string | null;
+    processStartTime?: () => number;
+  } = { readPidNs, readBootId },
 ): LiveHolder | null {
   const lockPath = join(dataDir, '.gbrain-lock', 'lock');
-  let raw: { pid?: unknown; subcommand?: unknown; command?: unknown; pid_ns?: unknown; boot_id?: unknown };
+  let raw: {
+    pid?: unknown;
+    subcommand?: unknown;
+    command?: unknown;
+    pid_ns?: unknown;
+    boot_id?: unknown;
+    acquired_at?: unknown;
+  };
   try {
     raw = JSON.parse(readFileSync(lockPath, 'utf8')) as typeof raw;
   } catch {
@@ -139,7 +159,30 @@ export function probeLivePgliteHolder(
   const verifiedMatch = ourPidNs != null && lockPidNs != null && ourPidNs === lockPidNs
     && ourBootId != null && lockBootId != null && ourBootId === lockBootId;
   const namespaceMatches = process.platform !== 'linux' || verifiedMatch;
-  const isSelf = pid === process.pid && namespaceMatches;
+  // (#5481 review F6) A pid+namespace match alone is not proof this process
+  // itself acquired the lock: within one boot session a dead process's pid
+  // can be reused by a LATER, unrelated process (including doctor itself).
+  // A genuinely stale legacy lock left behind by the dead process can then
+  // block real database access — pglite-lock.ts's own acquisition-time
+  // legacy-migration reap logic sees `isProcessAlive(pid)` true (because
+  // the recycled pid now belongs to a live process) and correctly refuses
+  // to reap it, so the stale lock keeps blocking connections even though
+  // "self" never actually held it. We cannot ask pglite-lock.ts for its
+  // live in-process handle (this probe is read-only and never acquires
+  // anything), but every lock write stamps `acquired_at`, and a process
+  // cannot have acquired a lock before it existed: if the lock's
+  // `acquired_at` predates OUR OWN process start time, it is provably not
+  // ours, regardless of matching pid/namespace evidence, and this stays a
+  // reportable collision. A missing/unparseable `acquired_at` (a lock
+  // written by older code) is not treated as disqualifying — only a
+  // POSITIVE, verifiable "written before we existed" timestamp overrides a
+  // pid/namespace match.
+  const lockAcquiredAt = typeof raw.acquired_at === 'number' ? raw.acquired_at : null;
+  const ourProcessStartTime = (deps.processStartTime ?? (() => Date.now() - process.uptime() * 1000))();
+  const ACQUIRED_AT_TOLERANCE_MS = 1000;
+  const acquiredBeforeThisProcessStarted = lockAcquiredAt != null
+    && lockAcquiredAt < ourProcessStartTime - ACQUIRED_AT_TOLERANCE_MS;
+  const isSelf = pid === process.pid && namespaceMatches && !acquiredBeforeThisProcessStarted;
   return { pid, serve, isSelf };
 }
 

@@ -419,6 +419,45 @@ describe('probeLivePgliteHolder', () => {
     expect(probeLivePgliteHolder(dataDir)).toBeNull();
   });
 
+  // #5481 review F6: a pid+namespace match alone is not proof THIS process
+  // acquired the lock. Within one boot session a dead process's pid can be
+  // reused by a later, unrelated live process (including this doctor
+  // invocation) -- a genuinely stale legacy lock left behind by the dead
+  // process can still block real database access via pglite-lock.ts's own
+  // acquisition-time reap logic, which sees the recycled pid as alive and
+  // correctly refuses to reclaim it. `acquired_at` predating this process's
+  // own start time proves the lock cannot be ours, regardless of matching
+  // pid/namespace evidence.
+  test('lock acquired before THIS process started → not self even with matching pid and namespace evidence (stale legacy lock, recycled pid)', () => {
+    const dataDir = join(home, 'brain.pglite');
+    mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+    writeFileSync(
+      join(dataDir, '.gbrain-lock', 'lock'),
+      JSON.stringify({
+        pid: process.pid,
+        subcommand: 'serve',
+        pid_ns: readPidNs(),
+        boot_id: readBootId(),
+        acquired_at: 1000,
+      }),
+      'utf8',
+    );
+    const holder = probeLivePgliteHolder(dataDir);
+    expect(holder).toEqual({ pid: process.pid, serve: true, isSelf: false });
+  });
+
+  test('lock acquired AFTER this process started (or acquired_at absent) → matching pid/namespace still reads as self', () => {
+    const dataDir = join(home, 'brain.pglite');
+    mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
+    writeFileSync(
+      join(dataDir, '.gbrain-lock', 'lock'),
+      JSON.stringify({ pid: process.pid, subcommand: 'serve', pid_ns: readPidNs(), boot_id: readBootId(), acquired_at: Date.now() }),
+      'utf8',
+    );
+    const holder = probeLivePgliteHolder(dataDir);
+    expect(holder).toEqual({ pid: process.pid, serve: true, isSelf: true });
+  });
+
   // #5481 review F2: on Linux, when THIS process's own /proc markers are
   // unreadable (a hardened environment masking pid-namespace/boot-id), the
   // doctor's own self-lock (which it wrote under the same restriction, so it
