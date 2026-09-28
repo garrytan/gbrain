@@ -3029,6 +3029,39 @@ export class PGLiteEngine implements BrainEngine {
     return result;
   }
 
+  /**
+   * In-DB cosine similarity for the rescore fast path (see
+   * BrainEngine.getCosineScoresByChunkIds). Computes pgvector `<=>`
+   * (cosine distance) per chunk id and returns id -> cosine
+   * (1 - distance), so cosineReScore skips hydrating N 1024-dim vectors
+   * (~8KB text each) across the WASM boundary — the rescore stage's
+   * dominant cost. Same row filter as getEmbeddingsByChunkIds: non-null
+   * column + current text-projection revision.
+   */
+  async getCosineScoresByChunkIds(
+    ids: number[],
+    queryEmbedding: Float32Array,
+    column: ResolvedColumn,
+  ): Promise<Map<number, number>> {
+    if (ids.length === 0) return new Map();
+    if (!COLUMN_NAME_REGEX.test(column.name)) {
+      throw new EmbeddingColumnNotRegisteredError(column.name, []);
+    }
+    const quotedCol = quoteIdentifier(column.name);
+    const castSql = `$2${vectorCastSuffix(column)}`;
+    const vecStr = '[' + Array.from(queryEmbedding).join(',') + ']';
+    const { rows } = await this.db.query(
+      `SELECT cc.id, (cc.${quotedCol} <=> ${castSql}) AS cos_dist FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
+        WHERE cc.id = ANY($1::int[]) AND cc.${quotedCol} IS NOT NULL AND ${currentTextProjectionFilter('p')}`,
+      [ids, vecStr],
+    );
+    const result = new Map<number, number>();
+    for (const row of rows as Record<string, unknown>[]) {
+      result.set(row.id as number, 1 - Number(row.cos_dist));
+    }
+    return result;
+  }
+
   // v0.41.18.0 — lazy-cached resolveBulkRetryOpts result + batch-retry helper.
   // PGLite has no Postgres pooler so retries don't fire in production; the
   // wrap is for engine-parity tests (T7) and a DI-friendly seam via the
