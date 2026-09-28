@@ -8,6 +8,7 @@
  *   - the read has no fence rows; prose and timeline are intact
  *   - an edit put back with the placeholder keeps the stored fence byte for byte
  *   - a placeholder next to a fence, or with no stored fence, is refused
+ *   - a placeholder quoted inside prose is text, not a placeholder
  *   - without omit_facts the read is unchanged
  *
  * Hermetic in-memory PGLite.
@@ -121,6 +122,26 @@ describe('get_page omit_facts', () => {
     const withPlaceholder = (page.content as string).replace('Alice runs Acme.', `Alice runs Acme.\n\n${FACTS_FENCE_OMITTED}`);
     await expect(putPage.handler(localCtx(), { slug: 'people/alice-nofence', content: withPlaceholder, expected_revision: page.revision }))
       .rejects.toThrow(/no facts fence to restore/);
+  }, 30_000);
+
+  test('a placeholder quoted in prose is text: no restore, no refusal, and the real one still works', async () => {
+    const quoted = PAGE.replace('Alice runs Acme.', 'Alice runs Acme. Editors leave `' + FACTS_FENCE_OMITTED + '` where it stands.');
+    await putPage.handler(localCtx(), { slug: 'people/alice-quoted', content: quoted });
+    const full = await read('people/alice-quoted');
+    await putPage.handler(localCtx(), { slug: 'people/alice-quoted', content: full.content, expected_revision: full.revision });
+    const lean = await read('people/alice-quoted', { omit_facts: true });
+    const edited = (lean.content as string).replace('Alice runs Acme.', 'Alice runs Acme and Beta.');
+    await putPage.handler(localCtx(), { slug: 'people/alice-quoted', content: edited, expected_revision: lean.revision });
+    const after = (await read('people/alice-quoted')).content as string;
+    expect(after).toContain('Alice runs Acme and Beta. Editors leave `' + FACTS_FENCE_OMITTED + '` where it stands.');
+    expect(storedFence(after)).toBe(storedFence(full.content as string));
+
+    const plain = quoted.replace(`## Facts\n\n${FENCE}\n\n`, '');
+    await putPage.handler(localCtx(), { slug: 'people/alice-quoted-nofence', content: plain });
+    const page = await read('people/alice-quoted-nofence');
+    const reput = (page.content as string).replace('Alice runs Acme.', 'Alice runs Acme today.');
+    await putPage.handler(localCtx(), { slug: 'people/alice-quoted-nofence', content: reput, expected_revision: page.revision });
+    expect((await read('people/alice-quoted-nofence')).content as string).toContain('Alice runs Acme today.');
   }, 30_000);
 
   test('without omit_facts the read still carries the fence', async () => {
