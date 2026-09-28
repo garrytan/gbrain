@@ -74,6 +74,7 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
+import { sourceLanguageRule, CONCEPT_LABEL_RULE, isConceptLabel } from './source-language.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
@@ -236,9 +237,6 @@ interface ExtractedAtom {
   emotional_register?: string;
 }
 
-/** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
-const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
 /**
  * #4706 — locate a model-returned quote inside the text it was extracted from.
  *
@@ -327,10 +325,9 @@ shocking, inspiring, funny, sobering, practical, controversial)}.
 
 atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
 
-concepts are kebab-case English TOPIC labels used to cluster atoms into
-concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
-entity or brand names. Use the same label for the same topic across atoms;
-prefer a label you already used over coining a near-synonym.
+${sourceLanguageRule('the transcript')}
+
+${CONCEPT_LABEL_RULE}
 
 If the transcript has no extractable idea (metadata rows, status dumps,
 empty fields, boilerplate), output exactly [] — never invent an atom and
@@ -1601,7 +1598,7 @@ function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
       concepts: (() => {
         if (!Array.isArray(obj.concepts)) return undefined;
         const labels = obj.concepts
-          .filter((c): c is string => typeof c === 'string' && CONCEPT_LABEL_RE.test(c))
+          .filter((c): c is string => typeof c === 'string' && isConceptLabel(c))
           .slice(0, 3);
         return labels.length > 0 ? labels : undefined;
       })(),

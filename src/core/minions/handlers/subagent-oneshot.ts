@@ -49,6 +49,7 @@ import { isRetryableConnError } from '../../retry-matcher.ts';
 import { logSubagentHeartbeat } from './subagent-audit.ts';
 import { UnrecoverableError } from '../types.ts';
 import { extractPromptTooLongDetail } from './subagent.ts';
+import { SLUG_CHARS_RULE, SLUG_LANGUAGE_RULE } from '../../cycle/source-language.ts';
 import {
   persistMessage,
   persistToolExecComplete,
@@ -101,7 +102,7 @@ export const ONESHOT_SYSTEM = `You are a knowledge-synthesis engine. You have NO
 If nothing in the transcript meets the bar (Task D), respond with:
 {"pages": [], "skipped": true, "skip_reason": "<one line>"}
 
-Hard rules: at most ${MAX_PAGES_PER_RESPONSE} pages; slugs are lowercase, hyphen-separated, slash-delimited, no underscores, no file extensions; never invent wikilink targets that are not in LINK CANDIDATES or this response. Every field, especially body, must be a valid JSON string: escape quotes, backslashes, and line breaks; never place unescaped quotes or literal newlines inside a string.`;
+Hard rules: at most ${MAX_PAGES_PER_RESPONSE} pages; slugs use ${SLUG_CHARS_RULE}, hyphen-separated, slash-delimited, no underscores, no file extensions, and ${SLUG_LANGUAGE_RULE}; never invent wikilink targets that are not in LINK CANDIDATES or this response. Every field, especially body, must be a valid JSON string: escape quotes, backslashes, and line breaks; never place unescaped quotes or literal newlines inside a string.`;
 
 export interface OneshotPage {
   slug: string;

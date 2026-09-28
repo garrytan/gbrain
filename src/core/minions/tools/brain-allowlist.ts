@@ -31,6 +31,7 @@ import { normalizeOptionalParams, validateParams } from '../../../mcp/validate-p
 import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 import { putPageRejection } from './put-page-result.ts';
+import { SLUG_CHARS_RULE } from '../../cycle/source-language.ts';
 
 /**
  * v0.15 brain-tool allow-list. Review carefully when extending. Op names
@@ -158,7 +159,7 @@ function namespacedPutPageSchema(
         ...props.slug,
         description:
           `Page slug. MUST match one of these prefix globs: ${allowedSlugPrefixes.join(', ')}. ` +
-          `Slugs use lowercase alphanumeric segments separated by '/'. No leading slash, no '.md' extension, no underscores.`,
+          `Slugs use segments of ${SLUG_CHARS_RULE}, separated by '/'. No leading slash, no '.md' extension, no underscores.`,
       };
     } else {
       props.slug = {

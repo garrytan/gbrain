@@ -35,6 +35,7 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
+import { sourceLanguageRule } from './source-language.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
 // Canonical-miss policy — mirrors skillopt/preflight.ts's lookupPrice:
@@ -123,8 +124,10 @@ const SYNTH_PROMPT = `You write a 1-paragraph executive summary of a concept
 based on multiple atom-shaped insights that reference it.
 
 Output ONLY the summary paragraph (3-5 sentences). No headers, no JSON,
-no preamble. Write in plain English, present-tense voice. Synthesize what
-the atoms collectively SAY about the concept; don't enumerate the atoms.`;
+no preamble. Write in present-tense voice. Synthesize what the atoms
+collectively SAY about the concept; don't enumerate the atoms.
+
+${sourceLanguageRule('the atoms')}`;
 
 export async function runPhaseSynthesizeConcepts(
   engine: BrainEngine,

@@ -49,6 +49,29 @@ The search branch that matches meaning through embeddings. Language-agnostic.
 A page representing a person or an organization, under `people/` or
 `companies/`. Born from extraction out of text, not from syncing a file.
 
+**Atom**:
+One standalone idea extracted by the dream cycle from a transcript or a
+prose page (a meeting, an article, a note).
+_Avoid_: "fact", "note" — facts and notes are separate kinds of record.
+
+**Concept label**:
+A short topic name that the dream cycle assigns to an Atom. Atoms that share
+a label are gathered into one Concept. Written in the Исходный язык, and never
+the name of an Entity or a product: a technical topic gets a descriptive label
+("очереди-сообщений") even when the text uses the English term ("queue").
+_Avoid_: "tag" — tags are set by people and do not gather Atoms.
+
+**Concept**:
+A page that sums up every Atom sharing one Concept label. Its Slug and title
+come from the label.
+
+**Исходный язык**:
+The language of the text the dream cycle writes a page from: a transcript,
+or the Atoms and reflections being summed up. Decided by the language most of
+that text is written in. The page's prose follows it; names, product names,
+commands and technical terms stay exactly as the author wrote them.
+_Avoid_: "source language" — **Source** already means a set of pages.
+
 **Alias**:
 An alternative spelling that leads to the same Entity. The layer where
 different spellings of one name merge, without touching the Slug.
