@@ -299,6 +299,12 @@ describe('expand() failure-path accounting (#4121 extension — .failed pessimis
 
     expect(result).toContain('alt one'); // fallback recovered the expansion
     expect(tracker.snapshot().callsRecorded).toBe(2); // the failed attempt is NOT a free call
+    // #5585 ledger: one expand() operation = one call, two billed attempts.
+    expect(tracker.snapshot().models).toEqual([expect.objectContaining({
+      requested_model: 'synthetic-structured-litellm-2:my-proxied-model',
+      touchpoint: 'expansion', purpose: null, calls: 1, attempts: 2, failed_calls: 1,
+      input_tokens: expect.any(Number), cost_basis: 'estimated',
+    })]);
 
     const rows = readAudit().filter(r => r.event === 'record' || r.event === 'record_unpriced');
     const labels = rows.map(r => r.sub_label).sort();
@@ -324,6 +330,7 @@ describe('expand() failure-path accounting (#4121 extension — .failed pessimis
     });
 
     expect(result).toEqual(['original query']); // outer catch degrades, never throws
+    expect(tracker.snapshot().models).toEqual([expect.objectContaining({ touchpoint: 'expansion', calls: 1, attempts: 2, failed_calls: 1 })]);
     const rows = readAudit().filter(r => r.event === 'record' || r.event === 'record_unpriced');
     expect(rows.map(r => r.sub_label)).toEqual(['gateway.expand.failed', 'gateway.expand.failed']);
   });

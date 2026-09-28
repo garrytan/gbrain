@@ -290,6 +290,7 @@ test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-mod
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync
 test/skillopt/deadline-and-hermetic.test.ts	#4741 — hermetic-config docs make no platform-survives-logout claim	2	readFileSync
+test/skillopt/error-code-docs.test.ts	skillopt error-code table	3	readFileSync
 test/skillpack-check-report-only.test.ts	(file-level)	2	readFileSync
 test/skillpack-harness-bridge.test.ts	review-driven hardening (ship pre-landing findings)	5	readFileSync
 test/skillpack-harvest.test.ts	addToBundleManifest	1	readFileSync

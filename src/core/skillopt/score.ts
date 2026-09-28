@@ -9,7 +9,10 @@
  * `judge: llm` uses gateway.chat with the v0.40+ 4-strategy JSON repair
  * (parseModelJSON from cross-modal-eval). On parse failure the scorer
  * returns score=0 (pessimistic fallback) AND records the error string on
- * `ScoredRollout.judge_error` so the audit trail can surface it.
+ * `ScoredRollout.judge_error` so the audit trail can surface it
+ * (`llm_truncated` when the reply hit the output cap). Budget / runtime /
+ * SIGINT aborts are rethrown, never scored 0. Thinking judges get
+ * `skilloptOutputCap` headroom over the 200-token site cap.
  *
  * `judge: qrels` reuses src/core/search/eval.ts IR metrics. Score is
  * nDCG@k (more discriminating than P@k for the optimization signal).
@@ -17,7 +20,9 @@
 
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { ndcgAtK } from '../search/eval.ts';
-import type { Judge, RuleCheck, ScoredRollout, Trajectory } from './types.ts';
+import { isSkilloptMustAbort } from './must-abort.ts';
+import { skilloptOutputCap } from './output-cap.ts';
+import { SKILLOPT_PURPOSE, type Judge, type RuleCheck, type ScoredRollout, type Trajectory } from './types.ts';
 
 /** Score a trajectory against a judge. Returns a ScoredRollout. */
 export async function scoreTrajectory(
@@ -154,6 +159,8 @@ function tryJsonParse(s: string): unknown | null {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+export const JUDGE_SITE_MAX_TOKENS = 200;
+
 async function scoreLlm(
   trajectory: Trajectory,
   rubric: string,
@@ -167,12 +174,13 @@ async function scoreLlm(
       model: judgeModel,
       system: LLM_JUDGE_SYSTEM,
       messages: [{ role: 'user', content: userMsg }],
-      maxTokens: 200,
+      maxTokens: skilloptOutputCap(judgeModel, JUDGE_SITE_MAX_TOKENS),
       cacheSystem: true, // D11: judge system prompt is stable across calls.
+      purpose: SKILLOPT_PURPOSE.judge,
     });
     const parsed = parseJudgeJson(result.text);
     if (!parsed) {
-      return { trajectory, score: 0, judge_error: 'llm_parse_failed' };
+      return { trajectory, score: 0, judge_error: result.stopReason === 'length' ? 'llm_truncated' : 'llm_parse_failed' };
     }
     if (!('score' in parsed)) {
       return { trajectory, score: 0, judge_error: 'llm_parse_no_score_field' };
@@ -189,6 +197,7 @@ async function scoreLlm(
       ? { trajectory, score, rationale }
       : { trajectory, score };
   } catch (err) {
+    if (isSkilloptMustAbort(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     // Pessimistic fallback (D12 paper-faithful: judge failure = score 0,
     // not throw; the median-of-3 + epsilon gate handles a single error

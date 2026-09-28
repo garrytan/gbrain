@@ -41,7 +41,6 @@ test/e2e/db-guard.test.ts
 test/e2e/db-singleton-shared-recovery.test.ts
 test/e2e/doctor-silent-death-parity.test.ts
 test/e2e/dream-allow-list-pglite.test.ts
-test/e2e/dream-cycle-phase-order-pglite.test.ts
 test/e2e/dream-patterns-pglite.test.ts
 test/e2e/dream-synthesize-chunking.test.ts
 test/e2e/dream-synthesize-concurrency-postgres.test.ts
@@ -115,8 +114,6 @@ test/e2e/serve-http-meta.test.ts
 test/e2e/serve-http-takes-holders.test.ts
 test/e2e/serve-stdio-roundtrip.test.ts
 test/e2e/skill-brain-first.test.ts
-test/e2e/skillopt-loop.serial.test.ts
-test/e2e/skillopt-pglite.serial.test.ts
 test/e2e/skillpack-flow.test.ts
 test/e2e/skillpack-third-party.test.ts
 test/e2e/source-isolation-pglite.test.ts

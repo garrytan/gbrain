@@ -133,10 +133,11 @@ const run_skillopt: Operation = {
     batch_size: { type: 'number', description: 'Default 8' },
     lr: { type: 'number', description: 'Default 4' },
     max_cost_usd: { type: 'number', description: 'Default 5.00' },
+    reflect_max_tokens: { type: 'number', description: 'Optimizer output cap (positive integer, clamped to 256..32000). Default: skillopt.reflect_max_tokens config, else 32000 for thinking optimizers and 4096 otherwise.' },
     no_mutate: { type: 'boolean', description: 'Write proposed.md without replacing SKILL.md' },
     allow_mutate_bundled: { type: 'boolean', description: 'Required to mutate bundled skills' },
     held_out_path: { type: 'string', description: 'Path to a held-out test set (JSONL). REQUIRED (>=5 rows) to mutate a bundled skill in place — otherwise the run hard-refuses. Remote callers: must resolve within the skills directory.' },
-    dry_run: { type: 'boolean', description: 'Cost preview, no LLM calls' },
+    dry_run: { type: 'boolean', description: 'Preview: models plan, strict verdict and cost estimate, no LLM calls' },
     shared_skill: { type: 'boolean', description: 'Optimize an exact shared catalog revision in a private proposal workspace and publish the accepted body through put_skill.' },
     source_id: { type: 'string', description: 'Required with shared_skill: canonical source.' },
     source_incarnation: { type: 'string', description: 'Required with shared_skill: exact catalog source incarnation.' },
@@ -172,9 +173,16 @@ const run_skillopt: Operation = {
         throw new OperationError('permission_denied', `run_skillopt: skill '${skillName}' is not in skillopt.allowed_skills allowlist (default deny-all for remote callers)`);
       }
     }
+    const { clampRemoteReflectMaxTokens } = await import('../skillopt/output-cap.ts');
+    let reflectMaxTokens: number | undefined;
+    try {
+      reflectMaxTokens = clampRemoteReflectMaxTokens(p.reflect_max_tokens);
+    } catch (err) {
+      throw new OperationError('invalid_params', `run_skillopt: ${err instanceof Error ? err.message : String(err)}`);
+    }
     const { runSkillOpt } = await import('../skillopt/orchestrator.ts');
     const { autoDetectSkillsDirReadOnly } = await import('../repo-root.ts');
-    const { resolveModel } = await import('../model-config.ts');
+    const { resolveSkillOptModels, skillOptModelOpts } = await import('../skillopt/models-plan.ts');
     let sharedSkill: import('../skillopt/types.ts').SkillOptOpts['sharedSkill'];
     if (p.shared_skill === true) {
       for (const field of ['source_id', 'source_incarnation', 'pack_id', 'expected_revision', 'request_id']) {
@@ -191,9 +199,7 @@ const run_skillopt: Operation = {
     if (!skillsDir) {
       throw new OperationError('config_error', 'run_skillopt: skills directory not found');
     }
-    const optimizerModel = await resolveModel(ctx.engine, { tier: 'deep', fallback: 'anthropic:claude-opus-4-7' });
-    const targetModel = await resolveModel(ctx.engine, { tier: 'subagent', fallback: 'anthropic:claude-sonnet-4-6' });
-    const judgeModel = await resolveModel(ctx.engine, { tier: 'reasoning', fallback: 'anthropic:claude-sonnet-4-6' });
+    const models = await resolveSkillOptModels(ctx.engine);
     const skillName = p.skill_name as string;
     const benchmarkPath = (p.benchmark_path as string) ??
       `${skillsDir}/${skillName}/skillopt-benchmark.jsonl`;
@@ -240,9 +246,8 @@ const run_skillopt: Operation = {
       lr: (p.lr as number) ?? 4,
       lrSchedule: 'cosine',
       split: [4, 1, 5],
-      optimizerModel,
-      targetModel,
-      judgeModel,
+      ...skillOptModelOpts(models),
+      ...(reflectMaxTokens !== undefined ? { reflectMaxTokens } : {}),
       mode: 'patch',
       dryRun: (p.dry_run as boolean) === true,
       noMutate: (p.no_mutate as boolean) === true,

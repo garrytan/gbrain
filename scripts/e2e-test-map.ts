@@ -16,6 +16,22 @@
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
   "scripts/screenpipe-meetings.ts": ["test/e2e/screenpipe-meetings.test.ts"],
+  // SkillOpt orchestrator, outcome/resume, models plan + strict mode, spend ledger.
+  "src/core/skillopt/**": [
+    "test/e2e/skillopt-loop.serial.test.ts",
+    "test/e2e/skillopt-pglite.serial.test.ts",
+    "test/e2e/skillopt-outcome.serial.test.ts",
+    "test/e2e/skillopt-models-strict.serial.test.ts",
+    "test/e2e/skillopt-models-used.serial.test.ts",
+    "test/e2e/dream-cycle-phase-order-pglite.test.ts",
+  ],
+  "src/commands/skillopt.ts": [
+    "test/e2e/skillopt-loop.serial.test.ts",
+    "test/e2e/skillopt-pglite.serial.test.ts",
+    "test/e2e/skillopt-outcome.serial.test.ts",
+    "test/e2e/skillopt-models-strict.serial.test.ts",
+    "test/e2e/skillopt-models-used.serial.test.ts",
+  ],
   "src/core/company-brain/receipts.ts": ["test/e2e/company-brain-receipts.test.ts"],
   "src/core/company-brain/receipt-schema.ts": ["test/e2e/company-brain-receipts.test.ts"],
   "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
