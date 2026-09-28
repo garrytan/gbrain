@@ -29,7 +29,7 @@ gbrain doctor
 
 ### Itemized changes
 
-- `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`, comparing the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, so a pid match alone (which a shared-mount container could coincidentally reuse) is never trusted as proof of self-identity.
+- `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`. On Linux, it compares the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, requiring both to be readable and matching before trusting a pid match — a pid alone (which a shared-mount container could coincidentally reuse) is never sufficient there, and unreadable evidence on either side fails closed (still warns). Non-Linux platforms have no PID namespaces, so pid equality alone decides there, matching `pglite-lock.ts`'s own unmodified lock-acquisition trust model.
 - `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
 
