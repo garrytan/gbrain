@@ -7,9 +7,12 @@
  *                               tier defaults, the resolved value for each
  *                               (after consulting models.default + models.tier.*),
  *                               per-task overrides, alias map, and source-of-truth
- *                               column (default / config / env).
+ *                               column (default / config / env). An older
+ *                               Anthropic haiku/sonnet/opus id gets an
+ *                               advisory `[newer <family> available: <id>]`
+ *                               hint plus the config command.
  *
- *   `gbrain models doctor`    — opt-in probe. Fires a 1-token `gateway.chat()`
+ *   `gbrain models doctor`   — opt-in probe. Fires a 1-token `gateway.chat()`
  *                               call against each configured chat / expansion
  *                               model and reports reachability with the
  *                               provider's error string. Catches the bug class
@@ -31,12 +34,16 @@ import type { BrainEngine } from '../core/engine.ts';
 import {
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
-  resolveModel,
+  describeResolveOrigin,
+  resolveModelDetailed,
   resolveAlias,
   type ModelTier,
+  type ResolveModelOpts,
+  type ResolveSource,
 } from '../core/model-config.ts';
 import { resolveExtractAtomsModelWithSource } from '../core/cycle/extract-atoms.ts';
 import { maybeAttachVersionSuffixHint } from '../core/ai/base-url-probe.ts';
+import { newerAnthropicModel } from '../core/ai/anthropic-model-ids.ts';
 import type { AIGatewayConfig } from '../core/ai/types.ts';
 
 const TIERS: ModelTier[] = ['utility', 'reasoning', 'deep', 'subagent'];
@@ -102,42 +109,63 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
   { key: 'models.chat',                     tier: 'reasoning', description: 'Default `gateway.chat()` model' },
 ];
 
+interface NewerAvailable {
+  family: string;
+  model: string;
+  command: string;
+}
+
 interface ModelEntry {
   tier: ModelTier;
   resolved: string;
   source: string;  // "default" | "config: <key>" | "env: <VAR>"
+  newer_available?: NewerAvailable;
+}
+
+interface PerTaskEntry {
+  key: string;
+  tier: ModelTier;
+  resolved: string;
+  source: string;
+  description: string;
+  newer_available?: NewerAvailable;
 }
 
 interface ModelsReport {
   schema_version: 1;
   global_default: { value: string | null };
   tiers: Record<ModelTier, ModelEntry>;
-  per_task: Array<{ key: string; tier: ModelTier; resolved: string; source: string; description: string }>;
+  per_task: PerTaskEntry[];
   aliases: { defaults: Record<string, string>; user: Record<string, string> };
 }
 
-async function probeSource(
-  engine: BrainEngine,
-  route: Pick<PerTaskModelRoute, 'key' | 'tier' | 'deprecatedConfigKey' | 'envVar'>,
-): Promise<string | null> {
-  // For per-task probes, return the source the resolver USED (config / env /
-  // tier default / hardcoded). Keep this walk in the same order as
-  // resolveModel so dedicated task env vars and compatibility keys are
-  // attributed truthfully in `gbrain models` output.
-  const configVal = await engine.getConfig(route.key);
-  if (configVal && configVal.trim()) return `config: ${route.key}`;
-  if (route.deprecatedConfigKey) {
-    const deprecated = await engine.getConfig(route.deprecatedConfigKey);
-    if (deprecated && deprecated.trim()) return `config: ${route.deprecatedConfigKey}`;
-  }
-  const globalDefault = await engine.getConfig('models.default');
-  if (globalDefault && globalDefault.trim()) return 'config: models.default';
-  const tierKey = `models.tier.${route.tier}`;
-  const tierValue = await engine.getConfig(tierKey);
-  if (tierValue && tierValue.trim()) return `config: ${tierKey}`;
-  const envVar = route.envVar ?? 'GBRAIN_MODEL';
-  if (process.env[envVar] && process.env[envVar]!.trim()) return `env: ${envVar}`;
-  return null;
+/**
+ * Report label for the chain step `resolveModelDetailed` says won, so the
+ * attribution can never disagree with the resolved value. Built-in defaults
+ * render as `inheritedLabel` (`default` for tier rows, `tier.<tier>` for
+ * per-task rows).
+ */
+function sourceLabel(
+  source: ResolveSource,
+  opts: Pick<ResolveModelOpts, 'configKey' | 'deprecatedConfigKey' | 'envVar' | 'tier'>,
+  inheritedLabel: string,
+): string {
+  if (source === 'tier_default' || source === 'fallback') return inheritedLabel;
+  const origin = describeResolveOrigin(source, opts);
+  return source === 'env' ? `env: ${origin}` : `config: ${origin}`;
+}
+
+/**
+ * Advisory `[newer <family> available]` hint: set when `resolved` is an
+ * Anthropic haiku/sonnet/opus id older than the anthropic recipe's newest
+ * priced id in the same family. `configKey` is the key the paste-ready fix
+ * sets. Defaults are never changed by this.
+ */
+function newerAvailable(resolved: string, configKey: string): NewerAvailable | undefined {
+  const newer = newerAnthropicModel(resolved);
+  if (!newer) return undefined;
+  const model = `anthropic:${newer.id}`;
+  return { family: newer.family, model: newer.id, command: `gbrain config set ${configKey} ${model}` };
 }
 
 async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
@@ -145,23 +173,21 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
 
   const tiers = {} as Record<ModelTier, ModelEntry>;
   for (const t of TIERS) {
-    const tierOverride = await engine.getConfig(`models.tier.${t}`);
-    // What models.default beats tier — re-walk the chain to attribute properly.
-    let source: string;
-    if (globalDefault && globalDefault.trim()) {
-      source = 'config: models.default';
-    } else if (tierOverride && tierOverride.trim()) {
-      source = `config: models.tier.${t}`;
-    } else {
-      source = 'default';
-    }
-    const resolved = await resolveModel(engine, { tier: t, fallback: TIER_DEFAULTS[t] });
-    tiers[t] = { tier: t, resolved, source };
+    const detail = await resolveModelDetailed(engine, { tier: t, fallback: TIER_DEFAULTS[t] });
+    const newer = newerAvailable(detail.model, `models.tier.${t}`);
+    tiers[t] = {
+      tier: t,
+      resolved: detail.model,
+      source: sourceLabel(detail.source, { tier: t }, 'default'),
+      ...(newer ? { newer_available: newer } : {}),
+    };
   }
 
   const per_task: ModelsReport['per_task'] = [];
   for (const route of PER_TASK_KEYS) {
     const { key, tier, description, deprecatedConfigKey, envVar, overrideKey, narrowResolver } = route;
+    // Per-task rows carry the hint only when the row's OWN key supplied the
+    // model; inherited rows follow their tier row, which already reports it.
     // A caller with its own narrower resolution (doesn't honor models.tier.*
     // / models.default / env var) reports via that exact resolver, not the
     // generic resolveModel() chain — see PerTaskModelRoute.narrowResolver.
@@ -171,7 +197,8 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
       // reflects (previously a separate getConfig truthiness re-check).
       const { model: resolved, source: narrowSource } = await narrowResolver(engine);
       const source = narrowSource === 'config' ? `config: ${key}` : `tier.${tier} (caller-specific)`;
-      per_task.push({ key, tier, resolved, source, description });
+      const newer = narrowSource === 'config' ? newerAvailable(resolved, key) : undefined;
+      per_task.push({ key, tier, resolved, source, description, ...(newer ? { newer_available: newer } : {}) });
       continue;
     }
     // Explicit pre-read override (loadSynthConfig 2A parity): when set, it IS
@@ -179,19 +206,22 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
     const overrideValue = overrideKey ? await engine.getConfig(overrideKey) : null;
     if (overrideKey && overrideValue?.trim()) {
       const resolved = await resolveAlias(engine, overrideValue.trim());
-      per_task.push({ key, tier, resolved, source: `config: ${overrideKey}`, description });
+      const newer = newerAvailable(resolved, overrideKey);
+      per_task.push({ key, tier, resolved, source: `config: ${overrideKey}`, description, ...(newer ? { newer_available: newer } : {}) });
       continue;
     }
-    const resolved = await resolveModel(engine, {
-      configKey: key,
-      deprecatedConfigKey,
-      envVar,
+    const opts = { configKey: key, deprecatedConfigKey, envVar, tier };
+    const detail = await resolveModelDetailed(engine, { ...opts, fallback: TIER_DEFAULTS[tier] });
+    const ownKey = detail.source === 'config_key' || detail.source === 'deprecated_key';
+    const newer = ownKey ? newerAvailable(detail.model, key) : undefined;
+    per_task.push({
+      key,
       tier,
-      fallback: TIER_DEFAULTS[tier],
+      resolved: detail.model,
+      source: sourceLabel(detail.source, opts, `tier.${tier}`),
+      description,
+      ...(newer ? { newer_available: newer } : {}),
     });
-    const explicit = await probeSource(engine, route);
-    const source = explicit ?? `tier.${tier}`;
-    per_task.push({ key, tier, resolved, source, description });
   }
 
   // User-defined aliases (engine.getConfig is the source; we don't enumerate
@@ -211,12 +241,16 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
   };
 }
 
+function formatNewer(newer: NewerAvailable | undefined): string {
+  return newer ? ` [newer ${newer.family} available: ${newer.model}] (${newer.command})` : '';
+}
+
 function formatText(report: ModelsReport): string {
   const lines: string[] = [];
   lines.push('Tier routing:');
   for (const t of TIERS) {
     const e = report.tiers[t];
-    lines.push(`  tier.${t.padEnd(10)} ${e.resolved.padEnd(45)} [${e.source}]`);
+    lines.push(`  tier.${t.padEnd(10)} ${e.resolved.padEnd(45)} [${e.source}]${formatNewer(e.newer_available)}`);
   }
   lines.push('');
   lines.push('Global default:');
@@ -224,7 +258,7 @@ function formatText(report: ModelsReport): string {
   lines.push('');
   lines.push('Per-task overrides:');
   for (const t of report.per_task) {
-    lines.push(`  ${t.key.padEnd(34)} → ${t.resolved.padEnd(45)} [${t.source}]`);
+    lines.push(`  ${t.key.padEnd(34)} → ${t.resolved.padEnd(45)} [${t.source}]${formatNewer(t.newer_available)}`);
   }
   lines.push('');
   lines.push('Aliases:');

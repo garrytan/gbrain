@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.59.0.1] - 2026-09-26
+## [0.59.2.1] - 2026-09-28
 
 **`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
 
@@ -18,7 +18,7 @@ Now the check only warns about a genuinely different process holding the lock. D
 
 **Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
 
-## To take advantage of v0.59.0.1
+## To take advantage of v0.59.2.1
 
 Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
 
@@ -29,8 +29,100 @@ gbrain doctor
 
 ### Itemized changes
 
-- `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder whose pid is the running doctor process itself, instead of treating it as a foreign, non-serve collision.
+- `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`, comparing the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, so a pid match alone (which a shared-mount container could coincidentally reuse) is never trusted as proof of self-identity.
+- `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
+
+## [0.59.2.0] - 2026-09-28
+
+**When skill optimization gets nothing usable back from the optimizer model, it now says so instead of quietly reporting "no improvement", and every run tells you exactly which models it used and what they cost.**
+
+`gbrain skillopt` asks a large model to suggest edits to a skill, then tests them. With newer "thinking" models, those replies were often cut off at a small output limit, so no edits came back. The run still finished with a calm "no improvement", as if the skill were already as good as it gets, and it kept spending the rest of its budget. Now a cut-off, empty or unreadable reply is counted as an error. A run where no reply was ever usable ends `errored`, stops early instead of spending the rest of its budget, and prints the fix plus a paste-ready resume command. Before any money is spent, a short banner lists every model the run will call and where each choice came from. Afterwards the receipt lists every model that was actually called, with calls and cost.
+
+### How to use it
+
+```bash
+gbrain skillopt my-skill --dry-run                 # models banner + cost preview, zero model calls
+gbrain skillopt my-skill --reflect-max-tokens 16000
+gbrain config set skillopt.reflect_max_tokens 16000
+gbrain skillopt my-skill --models-strict           # refuse to run on models you did not choose explicitly
+gbrain models                                      # now flags when a newer Claude model is available
+```
+
+### What changes for you
+
+| Situation | Before | Now |
+|---|---|---|
+| Optimizer replies all cut off or unreadable | `no_improvement`, exit 1, budget spent | `errored`, exit 2, stops after 2 such steps, fix + resume command printed |
+| Which models ran | Not recorded | Banner before spend; `models_plan` and `models_used` on the receipt |
+| Budget abort or error mid-run | Resume re-ran or skipped steps | Resume continues at the exact step and retries unusable steps |
+| Nightly cycle skill that can never fit its cap | Tried and failed every night | `skipped_budget`, retried only after the config changes |
+
+### Things to watch
+
+- **Exit code 2 for unusable output.** Scripts that treated `no_improvement` (exit 1) as "nothing to do" will now see `errored` (exit 2) when the optimizer never produced a usable reply.
+- **Model flags resolve aliases.** `--optimizer-model`, `--target-model` and `--judge-model` values go through the same alias resolution as config keys, so a short alias resolves to its full model id.
+- **Thinking optimizers get a larger output cap** (32,000 tokens; other models keep 4,096). Each call reserves its full cap against `--max-cost-usd`. In the nightly cycle, a Claude 5 thinking optimizer can exceed the default $0.50 per-skill cap; that skill is recorded `skipped_budget` with the fix instead of running.
+- **Old checkpoints and queued jobs still work.** Checkpoints from earlier versions resume and report `models_used_scope: since_resume`. Background jobs queued before the upgrade resolve their model sources as `unknown`, which strict mode rejects.
+- **The cost cap applies per run segment.** A resumed run gets a fresh `--max-cost-usd` on top of what earlier segments spent.
+- **The `gbrain models` newer-model hint is advisory.** Built-in defaults do not change.
+
+### To take advantage of v0.59.2.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.59.2.0.md` the next time you interact with it.** No database migration runs; the note covers exit-code and nightly-cycle checks for anyone running skillopt from scripts or the dream cycle.
+3. **Verify the outcome:**
+   ```bash
+   gbrain skillopt --help        # lists --reflect-max-tokens and --models-strict
+   gbrain models                 # sources are attributed; newer-model hints appear where relevant
+   gbrain skillopt <skill> --dry-run
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+### Added
+
+- Optimizer output cap by model: 32,000 tokens for thinking optimizers, 4,096 otherwise. Set it with `--reflect-max-tokens`, `skillopt.reflect_max_tokens` or the MCP/job `reflect_max_tokens` param. Remote values are clamped to 256-32,000.
+- Error codes for every unusable optimizer reply (`reflect_truncated`, `reflect_empty_reply`, `reflect_no_parseable_edits`, `reflect_invalid_edits`, `reflect_context_too_small`, `reflect_context_overflow`, one-shot variants, `reservation_exceeds_cap`, and more). Each maps to a receipt `remediation[]` entry that links to the new error-code table in `docs/guides/skillopt.md`.
+- `resume_command` on errored, aborted and early-stopped receipts. It is rebuilt from the stored run spec plus the run's mode, cost cap, runtime cap and `--models-strict`. Output-cap failures double the reflect cap; an edits-contract failure puts a quoted `'<other-model>'` placeholder in place of the optimizer model.
+- Models banner and `models_plan`: optimizer, target, judge (including per-task judge overrides), expansion, chat, embedding and the reranker when enabled, each with where the choice came from. Printed before any spend, and recorded on the receipt and the `run_start` audit row.
+- Per-model spend ledger and `models_used` on receipts: requested and served model, purpose, attempts, calls, failures and cost per model. Merged across resume segments.
+- Strict mode (`--models-strict` / `skillopt.models_strict`) aborts before any spend when an active model came from `models.default`, a built-in default, a substitution or unknown provenance. It lists a copy-paste fix per touchpoint and applies to the CLI, MCP op, cycle, jobs, `--all`, fleets and both bootstrap modes. An unreadable setting counts as on.
+- `--dry-run` shows the models banner, strict verdict and cost preview with zero model calls.
+- `gbrain models` prints `[newer <family> available: <id>]` with the config command when a configured Claude model is older than the newest priced model of its family.
+
+### Changed
+
+- A run with no usable optimizer reply ends `errored` (`abort_detail: optimizer_output_unusable: <first error>`, exit 2). Two consecutive fully unusable steps stop the loop (`stop_reason: early_stop_unusable_output`). A run that accepted a candidate still reports `accepted`.
+- `--optimizer-model`, `--target-model` and `--judge-model` are resolved through one role resolver shared by the CLI, the `run_skillopt` MCP op, the cycle phase and background jobs. Background jobs re-resolve their models and re-run the strict check when they execute.
+- Preflight aborts before spend when a single call's reservation alone exceeds the cost cap, naming the role. The expected cost and the reservation are shown separately.
+- Nightly cycle: an errored run records `cycle.skillopt.last_error.<skill>` and is retried after 24 hours instead of banking `last_run`. A run that can never fit the per-skill cap is recorded `skipped_budget` and retried only when the models, caps, price overrides, benchmark or gbrain version change. Result rows carry `abort_reason`, `abort_detail`, `run_id` and `remediation`. Kept checkpoints older than 7 days are cleaned up.
+- Bootstrap modes run under the `--max-cost-usd` tracker. An optimizer with no pricing entry needs `pricing.overrides` or `--no-max-cost`.
+- `gbrain models` source labels come from the same resolver the runtime uses.
+
+### Fixed
+
+- Budget exhaustion, spend-policy refusals, the runtime deadline and SIGINT now abort the run with their real reason instead of being turned into a reflect error, a judge score of 0 or a skipped bootstrap row.
+- The judge and bootstrap calls get output headroom on thinking models (a floor of 8,192 tokens) and record `llm_truncated` / `truncated` instead of parsing a cut-off reply.
+- Resume correctness: checkpoints store a next-step cursor and a run spec. `--resume` refuses a changed benchmark, held-out set or split, and refuses widening from no-mutate to mutate. A resume retries the trailing unusable steps and never counts an interrupted step twice. It accepts a SKILL.md with uncommitted changes only when the file is exactly the run's own accepted text.
+- The skill body is sent whole when it fits the optimizer's context window. Otherwise it is truncated with an in-prompt disclosure and recorded as `skill_body_truncated` on the receipt.
+
+### For contributors
+
+- New modules: `src/core/skillopt/{output-cap,run-outcome,remediation,models-plan,must-abort,job,bootstrap-run}.ts`, `src/core/budget/{models-used,reservation-cost}.ts`, `src/core/ai/{budget-record,gateway-model-sources,anthropic-model-ids}.ts`. `reservationCostUsd` is shared by `BudgetTracker.reserve()` and preflight.
+- Error-code docs anchors are pinned by `test/skillopt/error-code-docs.test.ts`; the four model-resolution paths are pinned by a golden test.
 
 ## [0.59.0.0] - 2026-09-25
 

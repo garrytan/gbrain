@@ -20,7 +20,8 @@
  * which is cached (D11), so the effective cost ~1.3x not 3x.
  */
 
-import { runWithLimit, isMustAbortError } from '../worker-pool.ts';
+import { runWithLimit } from '../worker-pool.ts';
+import { isSkilloptMustAbort, SKILLOPT_RUNTIME_EXCEEDED } from './must-abort.ts';
 import { runRollout, type RolloutOpts } from './rollout.ts';
 import { scoreTrajectory } from './score.ts';
 import type { BenchmarkTask, GateInput, GateResult, ScoredRollout } from './types.ts';
@@ -58,8 +59,7 @@ export interface ValidateGateOpts extends Omit<GateInput, 'selSet'> {
   scoreFn?: typeof scoreTrajectory;
 }
 
-/** #4119 — the runtime-deadline breach error, shared with the orchestrator. */
-export const SKILLOPT_RUNTIME_EXCEEDED = 'skillopt_runtime_exceeded';
+export { SKILLOPT_RUNTIME_EXCEEDED };
 function isRuntimeExceeded(e: unknown): boolean {
   return e instanceof Error && e.message === SKILLOPT_RUNTIME_EXCEEDED;
 }
@@ -124,7 +124,7 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
     signal: opts.abortSignal,
   });
 
-  // MUST-ABORT errors (budget exhaustion / no-pricing) are NOT scoring noise —
+  // MUST-ABORT errors (budget exhaustion / no-pricing / spend-policy refusals) are NOT scoring noise —
   // swallowing them as score=0 turns a pricing/cap crash into a fake "0/N" run
   // (the bug the SkillOpt eval surfaced: a Haiku run with --max-cost hit
   // no_pricing on every rollout and the whole gate reported a vacuous 0). Surface
@@ -132,7 +132,7 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
   // #4119: a deadline breach is not scoring noise either — it must surface as
   // the orchestrator's runtime-exceeded abort, never a fake 0-score task.
   const aborter = settled.find(
-    (s) => s && !s.ok && (isMustAbortError(s.error) || isRuntimeExceeded(s.error)),
+    (s) => s && !s.ok && (isSkilloptMustAbort(s.error) || isRuntimeExceeded(s.error)),
   );
   if (aborter && !aborter.ok) throw aborter.error;
 

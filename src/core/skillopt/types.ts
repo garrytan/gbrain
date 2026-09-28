@@ -15,6 +15,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import type { ToolLoopStopReason } from '../ai/gateway.ts';
+import type { ModelUsageRow } from '../budget/models-used.ts';
+import type { ModelsPlanEntry, SkillOptModels, StrictVerdict } from './models-plan.ts';
 
 // ─── Benchmarks + judges ──────────────────────────────────────────────────
 
@@ -154,6 +156,24 @@ export interface SkillOptOpts {
   optimizerModel: string;
   targetModel: string;
   judgeModel: string;
+  /**
+   * Explicit optimizer output cap (`--reflect-max-tokens`, MCP / job
+   * `reflect_max_tokens`). Beats `skillopt.reflect_max_tokens` config, which
+   * beats `defaultMaxOutputTokens(optimizerModel)`; resolved once per run.
+   */
+  reflectMaxTokens?: number;
+  /**
+   * #5585: provenance of the three role models (from resolveSkillOptModels).
+   * Absent -> every role reports source `unknown` (fail-closed under strict).
+   */
+  models?: SkillOptModels;
+  /** #5585: `--models-strict`; OR'ed with the `skillopt.models_strict` config. */
+  modelsStrict?: boolean;
+  /**
+   * #5585: invocation banner already printed by a batch / cycle caller; the
+   * run prints only the plan rows that differ from it.
+   */
+  modelsBannerBaseline?: ModelsPlanEntry[];
 
   // Modes.
   mode: 'patch' | 'rewrite';
@@ -230,6 +250,31 @@ export interface RunReceipt {
   // reason + the underlying error message, mirrored from the audit trail.
   abort_reason?: 'budget_exhausted' | 'runtime_exceeded' | 'sigint' | 'error';
   abort_detail?: string;
+  /** #5584: why the loop stopped. */
+  stop_reason?: 'completed' | 'early_stop_unusable_output' | 'aborted';
+  /** #5584: optimizer-reply errors (reflect + one-shot), deduped, max 20 x 300 chars. */
+  reflect_errors?: string[];
+  /** #5584: malformed edits dropped from otherwise-usable optimizer replies. */
+  reflect_invalid_edits_dropped?: number;
+  /** #5584: set when the skill body had to be truncated to fit the optimizer window. */
+  skill_body_truncated?: { sent_chars: number; total_chars: number };
+  /** #5584: one entry per distinct error code in reflect_errors / abort_detail. */
+  remediation?: Array<{ code: string; fix: string; docs: string }>;
+  /** #5584: effective optimizer output cap and where it came from. */
+  reflect_max_tokens?: number;
+  reflect_max_tokens_source?: 'flag' | 'config' | 'default';
+  /** #5584: exact command that resumes this run (present when the checkpoint is retained). */
+  resume_command?: string;
+  /** #5585: every model the run called, one row per (requested, served, touchpoint, purpose). */
+  models_used?: ModelUsageRow[];
+  /** #5585: `since_resume` when an earlier segment's checkpoint predates ledger persistence. */
+  models_used_scope?: 'full_run' | 'since_resume';
+  /** #5585: spend banked by earlier segments of a resumed run; `final_cost_usd` is this segment. */
+  prior_segments_cost_usd?: number;
+  /** #5585: every touchpoint the run can call, with the source that chose its model. */
+  models_plan?: ModelsPlanEntry[];
+  /** #5585: strict-mode verdict over `models_plan` (computed even when strict mode is off). */
+  models_strict?: StrictVerdict;
   // Ablation provenance (cat31 replayability) — present when a non-default
   // ablation knob was set.
   reflect_mode?: 'both' | 'failure-only';
@@ -260,6 +305,13 @@ export const VALIDATION_RUNS_PER_TASK = 3;
  * source of truth for the D7 partition — used by every forward-pass site.
  */
 export const ROLLOUT_SUCCESS_THRESHOLD = 0.5;
+
+/** #5585: `purpose` stamped on skillopt's gateway calls, one BudgetTracker ledger row per role. */
+export const SKILLOPT_PURPOSE = {
+  optimizer: 'skillopt.optimizer',
+  target: 'skillopt.target',
+  judge: 'skillopt.judge',
+} as const;
 
 export interface GateInput {
   candidateSkillText: string;

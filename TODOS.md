@@ -1,5 +1,32 @@
 # TODOS
 
+## Skillopt honesty + model provenance wave follow-ups (filed 2026-09-28, #5584 / #5585 fix wave)
+
+- [ ] **P1 — TODO-D: validated Anthropic default-model migration.**
+  **What:** `TIER_DEFAULTS`, `DEFAULT_ALIASES` and the gateway's `DEFAULT_EXPANSION_MODEL` / `DEFAULT_CHAT_MODEL` still pin older Claude ids (`claude-sonnet-4-6`, `claude-opus-4-7`). `gbrain models` now prints an advisory `[newer <family> available]` hint, but no default moves. **Fix:** recipe-metadata recommended defaults (not "newest wins": `fable` and any preview id are never auto-selected), measured cost/latency/quality on a representative cycle + dream run before flipping, and an explicit output-cap policy for thinking models across small-cap callers (judges, classifiers, the cycle budget meter), since Claude 5 thinking needs headroom that explicit caller `maxTokens` does not grant today. Reuse `src/core/ai/anthropic-model-ids.ts` for version parsing. Ship with a CHANGELOG disclosure of the cost change. **Effort:** L. **Priority:** P1.
+- [ ] **P2 — TODO-A: adopt `buildModelsUsed` in eval / dream / cycle receipts.**
+  **What:** only skillopt receipts carry `models_used`; the BudgetTracker ledger (`snapshot().models`) already records every gateway operation for any tracked run. **Fix:** call `buildModelsUsed` from `src/core/budget/models-used.ts` in the eval, dream and cycle receipt writers so every paid run names the models it called (engine-internal expansion/embedding included), additive fields only. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — TODO-B: sweep literal Anthropic fallback pins + guard.**
+  **What:** call sites still hand-roll model literals instead of `TIER_DEFAULTS.<tier>` (e.g. `src/core/facts/extract.ts`, `src/core/brainstorm/orchestrator.ts`, `src/core/page-summary.ts`, `src/core/cross-modal-eval/runner.ts`). **Fix:** route them through the tier table and add a `scripts/check-*` guard with an allowlist (model-config, pricing, recipes, tests) so new literal pins fail CI. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — TODO-C: `claude-opus-5-5` recipe + verified pricing (#5563).**
+  **What:** the anthropic recipe and `src/core/model-pricing.ts` do not list `claude-opus-5-5`. **Fix:** add the recipe entry and canonical price only once the price is verified from the provider's published pricing; coordinate with #5563. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — TODO-E: guard chat consumers that ignore `stopReason === 'length'`.**
+  **What:** skillopt reflect/one-shot/judge/bootstrap now check the length stop; other `gateway.chat()` consumers that parse structured output can still silently parse a truncated reply. **Fix:** a guard script or test that flags chat call sites parsing output without checking `stopReason`, with an opt-out marker for free-text consumers. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — TODO-F: configurable optimizer context size for unregistered long-context models.**
+  **What:** skillopt sizes the skill-body budget from `resolveChatContextTokens(optimizer)`; an unregistered model falls back to 120,000 chars and may truncate a body its real window could hold. **Fix:** a validated override (config key or recipe metadata) for the optimizer's context window, shown on the banner and honored by the context-too-small check. **Effort:** S. **Priority:** P3.
+- [ ] **P1 — TODO-H: enforce the strict model plan at call time for rollout tool arguments.**
+  **What:** strict mode checks the models plan before spend. A rollout's search tool call can name an explicit `embedding_column`, which routes the query embedding through that column's provider without a plan check. **Fix:** carry the validated plan into the rollout tool context and refuse (or re-check) a column whose provider is not in the plan, or enforce provenance per gateway invocation under a strict run. **Effort:** M. **Priority:** P1.
+- [ ] **P2 — TODO-I: whole-run cost cap across resume segments.**
+  **What:** `--max-cost-usd` caps each run segment; a resumed run starts a fresh tracker, so N resumes can spend N x the cap (documented in the guide). **Fix:** seed the resumed tracker and preflight with `max(0, cap - prior_segments_cost_usd)`, and make the budget_exhausted remediation and resume command say "total run cap". Contract change: needs a CHANGELOG callout. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — TODO-J: `--resume` refuses a missing checkpoint and carries the brain.**
+  **What:** `--resume <id>` with a missing, GC'd or corrupt checkpoint silently starts a fresh full run under that id, and the printed resume command omits `--brain`, so pasting it from another directory can resume against a different brain. **Fix:** refuse with a structured `resume_checkpoint_missing` error; persist the resolved brain id in the run spec, validate it on resume and emit it in the command. **Effort:** S. **Priority:** P2.
+- [ ] **P3 — TODO-K: record the provider-reported served model in the spend ledger.**
+  **What:** chat ledger rows record the routed `provider:model` as the served model; the provider's `response.modelId` (already surfaced as `responseModel`) is not kept, so alias/proxy substitutions are invisible in `models_used`. **Fix:** add a separate `servedModelId` field from the response while keeping the routed id for pricing. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — TODO-L: background skillopt jobs coalesce onto an earlier errored run.**
+  **What:** `--background` submits with the fixed idempotency key `cli:skillopt:<skill>`; an `errored` run completes normally and keeps the key, so a retry with a raised cap returns the old job id. **Fix:** include the run parameters in the key (or free it on non-accepted outcomes) and report `coalesced` to the user. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — TODO-G: under-5-minute first skillopt run.**
+  **What:** the first-ever run still takes ~20 minutes (bootstrap, review, strengthen judges). **Fix:** ship a pre-reviewed sample benchmark for one bundled skill and add a validated `split` param to the `run_skillopt` MCP op so agents can run the 15-task starter (`1:1:1`) without the CLI. **Effort:** M. **Priority:** P3.
+
 
 ## Remote MCP over Tailscale follow-ups (filed 2026-09-17, follow-up from v0.51.3.0, `gbrain mcp expose` wave)
 

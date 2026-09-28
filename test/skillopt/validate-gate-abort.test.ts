@@ -27,6 +27,7 @@ import {
 import { ClaudeCliProcessError } from '../../src/core/ai/providers/claude-cli-language-model.ts';
 import type { BenchmarkTask, ScoredRollout, Trajectory } from '../../src/core/skillopt/types.ts';
 import type { RolloutOpts } from '../../src/core/skillopt/rollout.ts';
+import { invokeAI, withAIInvocationGuard } from '../../src/core/ai/invocation-guard.ts';
 
 const TASKS: BenchmarkTask[] = [
   { task_id: 't1', task: 'do a thing', judge: { kind: 'rule', checks: [{ op: 'contains', arg: 'x' }] } } as never,
@@ -60,6 +61,27 @@ describe('runValidationGate — must-abort errors surface', () => {
         rolloutFn: throwingRollout,
       }),
     ).rejects.toThrow(/no pricing entry/);
+  });
+
+  test('an AI spend-policy refusal on one task is re-thrown, not scored 0 beside a passing task', async () => {
+    const denied = new Error('spend policy refused this call');
+    await withAIInvocationGuard(async () => { throw denied; }, () =>
+      invokeAI({ operation: 'test', kind: 'chat', model: 'test:model' }, async () => 'unreached', () => null)).catch(() => {});
+    const mixedRollout = (async (o: RolloutOpts) => {
+      if ((o as { task?: BenchmarkTask }).task?.task_id === 't1') throw denied;
+      return okTrajectory('y');
+    }) as never;
+    await expect(
+      runValidationGate({
+        engine: {} as never,
+        candidateSkillText: 'skill',
+        selSet: TASKS,
+        bestScore: -1,
+        targetModel: 'anthropic:claude-haiku-4-5',
+        runsPerTask: 1,
+        rolloutFn: mixedRollout,
+      }),
+    ).rejects.toBe(denied);
   });
 
   test('scoreSkillOnTasks propagates the abort too (does not return a vacuous 0)', async () => {

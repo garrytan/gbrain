@@ -32,11 +32,8 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
 import { truncateUtf8 } from '../text-safe.ts';
-import {
-  BudgetTracker,
-  extractUsageFromError as _extractUsageFromError,
-  type BudgetKind,
-} from '../budget/budget-tracker.ts';
+import { BudgetTracker, type BudgetKind } from '../budget/budget-tracker.ts';
+import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -54,6 +51,7 @@ import {
 } from './recipes/openrouter.ts';
 import { resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
 import { snapshotConfigReader } from '../config-snapshot.ts';
+import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -567,12 +565,11 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
       fileCfg = null;
     }
   }
-  const newChat = needsFileCfg(chatDetailed.source)
-    ? resolveEffectiveChatModel(fileCfg, cfg.env ?? process.env).model
-    : chatDetailed.model;
-  const newExpansion = needsFileCfg(expansionDetailed.source)
-    ? resolveEffectiveExpansionModel(fileCfg, cfg.env ?? process.env).model
-    : expansionDetailed.model;
+  const env = cfg.env ?? process.env;
+  const chatEffective = needsFileCfg(chatDetailed.source) ? resolveEffectiveChatModel(fileCfg, env) : null;
+  const expansionEffective = needsFileCfg(expansionDetailed.source) ? resolveEffectiveExpansionModel(fileCfg, env) : null;
+  const newChat = chatEffective?.model ?? chatDetailed.model;
+  const newExpansion = expansionEffective?.model ?? expansionDetailed.model;
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to
@@ -582,6 +579,8 @@ export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
+  setGatewayModelSource('expansion', expansionFull, gatewayModelSource('expansion', expansionDetailed, expansionEffective));
+  setGatewayModelSource('chat', chatFull, gatewayModelSource('chat', chatDetailed, chatEffective));
   _modelCache.clear();
   _shrinkState.clear();
   return _config;
@@ -662,6 +661,7 @@ export function __setGatewayResetBaselineForTests(
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
   _config = null;
+  clearGatewayModelSources();
   stashGatewayAnthropicKeyFromEnv(undefined); // gateway-owned snapshot dies with the config
   _modelCache.clear();
   _shrinkState.clear();
@@ -1655,19 +1655,16 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
       // the worst case.
       const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
       const totalChars = truncated.reduce((s, t) => s + t.length, 0);
-      const inputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
-      try {
-        tracker.record({
-          modelId: `${recipe.id}:${modelId}`,
-          inputTokens,
-          outputTokens: 0,
-          embeddingDims: expected,
-          kind: 'embed',
-          label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
-        });
-      } catch {
-        // BudgetExhausted (TX1) — original throw (if any) wins.
-      }
+      recordOnTracker(tracker, {
+        modelId: `${recipe.id}:${modelId}`,
+        requestedModelId: resolveTarget,
+        inputTokens: Math.ceil(totalChars / Math.max(charsPerToken, 1)),
+        outputTokens: 0,
+        embeddingDims: expected,
+        kind: 'embed',
+        label: _embedThrew ? 'gateway.embed.failed' : 'gateway.embed',
+        estimated: true,
+      });
     }
   }
 }
@@ -2452,26 +2449,6 @@ function normalizeSdkUsage(usage: unknown): { inputTokens: number; outputTokens:
 }
 
 /**
- * #4121 — one fail-open record wrapper for every uninstrumented-path spend
- * site (expand + OCR): no-tracker is a no-op; BudgetExhausted from record()
- * (TX1) is swallowed exactly like chat()'s _recordBudget — the breach
- * surfaces on the NEXT reserve(), never here.
- */
-function recordSpendOnTracker(
-  tracker: ReturnType<typeof getCurrentBudgetTracker>,
-  modelId: string,
-  label: string,
-  tokens: { inputTokens: number; outputTokens: number },
-): void {
-  if (!tracker) return;
-  try {
-    tracker.record({ modelId, inputTokens: tokens.inputTokens, outputTokens: tokens.outputTokens, label });
-  } catch {
-    // BudgetExhausted (TX1) — surfaced via the next reserve().
-  }
-}
-
-/**
  * Expand a search query into up to 4 related queries.
  * Returns the original query PLUS expansions. On failure, returns just the original.
  * Caller is responsible for sanitizing the query (prompt-injection boundary stays in expansion.ts).
@@ -2505,31 +2482,27 @@ export async function expand(query: string): Promise<string[]> {
   // provider tokens; the viaText fallback then bills its own call, so one
   // expand() can legitimately produce TWO records). Fail-open (no tracker →
   // no-op) and swallow BudgetExhausted the same way chat()'s _recordBudget
-  // does — TX1 surfaces on the NEXT reserve(), not here.
+  // does — TX1 surfaces on the NEXT reserve(), not here. The fallback's
+  // record is an extra attempt of the same operation (countsAsCall: false).
   const tracker = getCurrentBudgetTracker();
-  const recordExpansion = (
-    modelLabel: string,
-    label: 'gateway.expand' | 'gateway.expand.failed',
-    tokens: { inputTokens: number; outputTokens: number },
-  ): void => recordSpendOnTracker(tracker, modelLabel, label, tokens);
-  const recordExpansionUsage = (modelLabel: string, usage: unknown): void =>
-    recordExpansion(modelLabel, 'gateway.expand', normalizeSdkUsage(usage));
   const estimatedPromptTokens = estimateChatInputTokens({
     messages: [{ content: expansionPrompt }],
   });
-  const recordExpansionFailure = (modelLabel: string, err: unknown): void =>
-    recordExpansion(
-      modelLabel,
-      'gateway.expand.failed',
-      _extractUsageFromError(err, {
-        inputTokens: estimatedPromptTokens,
-        outputTokens: EXPANSION_FAILED_PESSIMISTIC_OUTPUT_TOKENS,
-      }),
-    );
 
   try {
-    const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
+    const requestedModelId = getExpansionModel();
+    const { model, recipe, modelId } = await resolveExpansionProvider(requestedModelId);
     const modelLabel = `${recipe.id}:${modelId}`;
+    const recordExpansionUsage = (usage: unknown, countsAsCall: boolean): void =>
+      recordOnTracker(tracker, { modelId: modelLabel, requestedModelId, label: 'gateway.expand', countsAsCall, ...normalizeSdkUsage(usage) });
+    const recordExpansionFailure = (err: unknown, countsAsCall: boolean): void =>
+      recordOnTracker(tracker, {
+        modelId: modelLabel,
+        requestedModelId,
+        label: 'gateway.expand.failed',
+        countsAsCall,
+        ...failedCallUsage(err, { inputTokens: estimatedPromptTokens, outputTokens: EXPANSION_FAILED_PESSIMISTIC_OUTPUT_TOKENS }),
+      });
 
     let expansions: string[];
 
@@ -2537,7 +2510,7 @@ export async function expand(query: string): Promise<string[]> {
     // support is unknown: the AI SDK can't send a json_schema response_format
     // there, so generateObject would warn and silently degrade. generateText + a
     // tolerant parse recovers the queries instead. Fresh abortSignal per call.
-    const viaText = async (): Promise<string[]> => {
+    const viaText = async (countsAsCall = true): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
         textResult = await guardedGeneration(modelLabel, _generateTextTransport, {
@@ -2547,10 +2520,10 @@ export async function expand(query: string): Promise<string[]> {
         });
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
-        recordExpansionFailure(modelLabel, err); // failed call still billed upstream
+        recordExpansionFailure(err, countsAsCall); // failed call still billed upstream
         throw err; // outer catch degrades to [query]
       }
-      recordExpansionUsage(modelLabel, textResult.usage);
+      recordExpansionUsage(textResult.usage, countsAsCall);
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
@@ -2604,10 +2577,10 @@ export async function expand(query: string): Promise<string[]> {
         });
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
-        recordExpansionFailure(modelLabel, err);
+        recordExpansionFailure(err, true);
         throw err; // outer catch degrades to [query]
       }
-      recordExpansionUsage(modelLabel, result.usage);
+      recordExpansionUsage(result.usage, true);
       const parsed = ExpansionSchema.safeParse(result.object);
       expansions = parsed.success ? parsed.data.queries : [];
     } else if (recipeSupportsStructuredOutputs(recipe) && !_structuredOutputRejectedRecipes.has(recipe.id)) {
@@ -2627,18 +2600,18 @@ export async function expand(query: string): Promise<string[]> {
           abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
           prompt: expansionPrompt,
         });
-        recordExpansionUsage(modelLabel, result.usage);
+        recordExpansionUsage(result.usage, true);
         const parsed = ExpansionSchema.safeParse(result.object);
         expansions = parsed.success ? parsed.data.queries : [];
       } catch (err) {
         if (isAIInvocationPolicyError(err)) throw err;
         // The rejected structured attempt billed real tokens — record it
         // before the fallback bills its own call (two records, both true).
-        recordExpansionFailure(modelLabel, err);
+        recordExpansionFailure(err, true);
         // Adversarial F5: don't re-pay this attempt on every call — the
         // capability mis-declaration is stable for the process lifetime.
         _structuredOutputRejectedRecipes.add(recipe.id);
-        expansions = await viaText();
+        expansions = await viaText(false);
       }
     } else {
       // openai-compatible backend, structured-output support unknown: skip the
@@ -2709,8 +2682,8 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
   const estimatedOcrInputTokens =
     estimateChatInputTokens({ system: systemPrompt, messages: [{ content: 'Extract visible text only.' }] }) +
     OCR_IMAGE_INPUT_TOKEN_ESTIMATE;
-  const recordOcr = (label: 'gateway.ocr' | 'gateway.ocr.failed', tokens: { inputTokens: number; outputTokens: number }): void =>
-    recordSpendOnTracker(tracker, ocrModelId, label, tokens);
+  const recordOcr = (label: 'gateway.ocr' | 'gateway.ocr.failed', usage: { inputTokens: number; outputTokens: number }): void =>
+    recordOnTracker(tracker, { modelId: ocrModelId, requestedModelId: ocrModel, label, ...usage });
   let result: Awaited<ReturnType<GenerateTextFn>>;
   try {
     result = await guardedGeneration(ocrModelId, _generateTextTransport, {
@@ -2736,7 +2709,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
     });
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
-    recordOcr('gateway.ocr.failed', _extractUsageFromError(err, {
+    recordOcr('gateway.ocr.failed', failedCallUsage(err, {
       inputTokens: estimatedOcrInputTokens,
       outputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     }));
@@ -3144,6 +3117,8 @@ export interface ChatOpts {
    * validating it themselves (see `jsonSchemaOutput`).
    */
   responseSchema?: { name: string; description?: string; schema: Record<string, unknown> };
+  /** Caller purpose (`skillopt.judge`, …) stamped on the BudgetTracker ledger row. */
+  purpose?: string;
 }
 
 /**
@@ -3529,6 +3504,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
   const maxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
+  const chatRecord = { requestedModelId: modelStrEarly, purpose: opts.purpose, label: 'gateway.chat' };
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
   // runtime, or no_pricing (when cap is set). Pre-resolution model id is
@@ -3570,34 +3546,9 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       threw = err;
       throw err;
     } finally {
-      if (tracker) {
-        try {
-          if (res) {
-            tracker.record({
-              modelId: res.model ?? modelStrEarly,
-              inputTokens: res.usage.input_tokens,
-              outputTokens: res.usage.output_tokens,
-              label: 'gateway.chat',
-            });
-          } else {
-            const usage = _extractUsageFromError(threw, {
-              inputTokens: estimatedInputTokens,
-              outputTokens: maxOutputTokens,
-            });
-            tracker.record({
-              modelId: modelStrEarly,
-              inputTokens: usage.inputTokens,
-              outputTokens: usage.outputTokens,
-              label: 'gateway.chat',
-            });
-          }
-        } catch {
-          // record() can throw BudgetExhausted (TX1) — suppress here so the
-          // original error (if any) wins; the BudgetExhausted is surfaced
-          // on the NEXT call via reserve(). For test transport this branch
-          // is rare in practice.
-        }
-      }
+      recordOnTracker(tracker, res
+        ? { ...chatRecord, modelId: res.model ?? modelStrEarly, inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens }
+        : { ...chatRecord, modelId: modelStrEarly, ...failedCallUsage(threw, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }) });
     }
   }
 
@@ -3687,19 +3638,10 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   }
 
   let _budgetRecorded = false;
-  const _recordBudget = (modelLabel: string, inputTokens: number, outputTokens: number): void => {
-    if (!tracker || _budgetRecorded) return;
+  const _recordBudget = (usage: { inputTokens: number; outputTokens: number; failed?: boolean; estimated?: boolean }): void => {
+    if (_budgetRecorded) return;
     _budgetRecorded = true;
-    try {
-      tracker.record({
-        modelId: modelLabel,
-        inputTokens,
-        outputTokens,
-        label: 'gateway.chat',
-      });
-    } catch {
-      // BudgetExhausted (TX1) raised here; surface via next reserve()
-    }
+    recordOnTracker(tracker, { ...chatRecord, modelId: `${recipe.id}:${modelId}`, ...usage });
   };
 
   // The actual Anthropic system-prompt cache breakpoint. A bare string
@@ -3814,7 +3756,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const anthropicCache = providerMetadata?.anthropic ?? {};
 
     const { inputTokens: inTok, outputTokens: outTok } = normalizeSdkUsage(usage);
-    _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
+    _recordBudget({ inputTokens: inTok, outputTokens: outTok });
 
     const usageOut = {
       input_tokens: inTok,
@@ -3847,11 +3789,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (isAIInvocationPolicyError(err)) throw err;
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
-    const fallback = _extractUsageFromError(err, {
-      inputTokens: estimatedInputTokens,
-      outputTokens: maxOutputTokens,
-    });
-    _recordBudget(`${recipe.id}:${modelId}`, fallback.inputTokens, fallback.outputTokens);
+    _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`);
   }
 }
@@ -3909,6 +3847,8 @@ export interface ToolLoopOpts {
    * Silently ignored on recipes that declare no prompt caching.
    */
   cacheSystem?: boolean;
+  /** Forwarded to every `chat()` turn; see `ChatOpts.purpose`. */
+  purpose?: string;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -4057,6 +3997,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           ? (opts.abortSignal ? AbortSignal.any([opts.abortSignal, turnPermitSignal]) : turnPermitSignal)
           : opts.abortSignal,
         cacheSystem: opts.cacheSystem,
+        purpose: opts.purpose,
       });
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
@@ -4407,21 +4348,19 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   }
 
   let _rerankRecorded = false;
-  const _rerankRecord = (): void => {
-    if (!tracker || _rerankRecorded) return;
+  const _rerankRecord = (failed: boolean): void => {
+    if (_rerankRecorded) return;
     _rerankRecorded = true;
-    try {
-      const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
-      tracker.record({
-        modelId: modelStr,
-        inputTokens: Math.ceil(totalChars / 4),
-        outputTokens: 0,
-        kind: 'rerank',
-        label: 'gateway.rerank',
-      });
-    } catch {
-      // BudgetExhausted (TX1) suppressed; surfaces on next reserve().
-    }
+    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+    recordOnTracker(tracker, {
+      modelId: modelStr,
+      inputTokens: Math.ceil(totalChars / 4),
+      outputTokens: 0,
+      kind: 'rerank',
+      label: 'gateway.rerank',
+      estimated: true,
+      failed,
+    });
   };
   try {
     const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
@@ -4466,11 +4405,11 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
       index: typeof r.index === 'number' ? r.index : 0,
       relevanceScore: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
     }));
-    _rerankRecord();
+    _rerankRecord(false);
     return mapped;
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
-    _rerankRecord();
+    _rerankRecord(true);
     if (err instanceof RerankError) throw err;
     // AbortError on timeout — classify cleanly.
     if (err && typeof err === 'object' && (err as any).name === 'AbortError') {

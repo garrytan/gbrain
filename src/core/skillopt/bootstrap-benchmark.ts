@@ -17,6 +17,11 @@
  *     drops instead of zeroing the run; a task is kept only when >=2 valid rule
  *     checks survive (D6). The generated checks are weak DRAFTS the reviewer is
  *     expected to strengthen.
+ *
+ * Both size their calls with `skilloptOutputCap` (thinking optimizers get the
+ * 8192 floor), skip length-stopped output as `truncated` (routing rows are
+ * skipped; the from-skill reply's cut final line is dropped), and rethrow
+ * budget / runtime / SIGINT aborts before anything is written.
  */
 
 import { assertLegacySkillFilesystemWrite } from '../skillpack/writer-guard.ts';
@@ -25,7 +30,9 @@ import * as path from 'node:path';
 import { chat as gatewayChat } from '../ai/gateway.ts';
 import { errorFor } from '../errors.ts';
 import { atomicWrite } from './apply-edits.ts';
-import { BOOTSTRAP_PENDING_REVIEW, type RuleCheck } from './types.ts';
+import { isSkilloptMustAbort } from './must-abort.ts';
+import { skilloptOutputCap } from './output-cap.ts';
+import { BOOTSTRAP_PENDING_REVIEW, SKILLOPT_PURPOSE, type RuleCheck } from './types.ts';
 
 const BOOTSTRAP_SYSTEM = `You are SkillOpt's bootstrap-benchmark generator. Given a user intent that triggers a SKILL, generate 2-4 deterministic rule checks that would verify a successful execution.
 
@@ -122,9 +129,15 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
         model: optimizerModel,
         system: BOOTSTRAP_SYSTEM,
         messages: [{ role: 'user', content: userMsg }],
-        maxTokens: 500,
+        maxTokens: skilloptOutputCap(optimizerModel, 500),
         cacheSystem: true,
+        purpose: SKILLOPT_PURPOSE.optimizer,
       });
+      if (result.stopReason === 'length') {
+        skipped += 1;
+        process.stderr.write(`[skillopt] bootstrap row ${i + 1} skipped: truncated (reply hit max_tokens)\n`);
+        continue;
+      }
       const checks = parseChecksResponse(result.text);
       if (checks.length === 0) {
         skipped += 1;
@@ -136,6 +149,7 @@ export async function runBootstrap(opts: BootstrapOpts): Promise<BootstrapResult
         judge: { kind: 'rule', checks },
       }));
     } catch (err) {
+      if (isSkilloptMustAbort(err)) throw err;
       skipped += 1;
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[skillopt] bootstrap row ${i + 1} failed: ${msg}\n`);
@@ -235,11 +249,12 @@ export async function runBootstrapFromSkill(opts: BootstrapFromSkillOpts): Promi
     model: optimizerModel,
     system: BOOTSTRAP_FROM_SKILL_SYSTEM,
     messages: [{ role: 'user', content: userMsg }],
-    maxTokens: Math.min(8000, Math.max(4000, taskCount * 220)),
+    maxTokens: skilloptOutputCap(optimizerModel, Math.min(8000, Math.max(4000, taskCount * 220))),
     cacheSystem: true,
+    purpose: SKILLOPT_PURPOSE.optimizer,
   });
 
-  const { generated, skipped } = parseSkillBenchmarkJsonl(result.text, skillName);
+  const { generated, skipped } = parseSkillBenchmarkJsonl(result.text, skillName, result.stopReason === 'length');
 
   if (generated.length === 0) {
     throw errorFor({
@@ -272,15 +287,21 @@ export async function runBootstrapFromSkill(opts: BootstrapFromSkillOpts): Promi
  * the rest survive. A task is kept only when >=2 valid rule checks survive
  * validation (D6); otherwise the whole task is dropped and counted. task_ids are
  * assigned contiguously over KEPT tasks (<skillName>-001..NNN) so they're unique
- * and stable for loadBenchmark's duplicate-id check.
+ * and stable for loadBenchmark's duplicate-id check. A length-stopped reply's
+ * final line is cut by definition and is dropped as `truncated`.
  */
-function parseSkillBenchmarkJsonl(raw: string, skillName: string): { generated: string[]; skipped: number } {
+function parseSkillBenchmarkJsonl(raw: string, skillName: string, truncated: boolean): { generated: string[]; skipped: number } {
   const fence = raw.match(/```(?:json|jsonl)?\s*\n?([\s\S]*?)```/i);
   const body = fence ? fence[1]! : raw;
   const lines = body.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
 
   const generated: string[] = [];
   let skipped = 0;
+  if (truncated && lines.length > 0) {
+    lines.pop();
+    skipped += 1;
+    process.stderr.write(`[skillopt] bootstrap-from-skill reply hit max_tokens; final line skipped: truncated\n`);
+  }
   for (const line of lines) {
     let parsed: unknown;
     try {
