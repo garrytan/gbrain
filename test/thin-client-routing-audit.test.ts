@@ -170,6 +170,7 @@ describe('thin-client routing audit — scratch-DB additions (jobs partial dispa
       'utf8',
     );
     expect(src).toContain('engineOrNull: BrainEngine | null');
-    expect(src).toMatch(/if \(!engineOrNull && sub !== 'list' && sub !== 'get'\)/);
+    expect(src).toContain("const localSupervisorStatus = sub === 'supervisor' && args[1] === 'status';");
+    expect(src).toMatch(/if \(!engineOrNull && sub !== 'list' && sub !== 'get' && !localSupervisorStatus\)/);
   });
 });

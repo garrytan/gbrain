@@ -6,6 +6,7 @@ function makeEngineWithReconnect(counter: { calls: number }, events: string[]): 
   return {
     kind: 'postgres',
     executeRaw: async (sql: string) => {
+      if (sql.trim() === 'SELECT 1') return [];
       // Startup sees no unresolved legacy work; promotion recovery below is
       // still exercised by the scripted queue error, before the next claim.
       if (sql.includes('SELECT id, submission_authority FROM minion_jobs') &&

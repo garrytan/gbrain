@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { CRASH_BOUNDARIES, childEnvironment } from '../../scripts/persistence/validate.ts';
 import { assertConservation } from '../../scripts/persistence/harness.ts';
 import { configDir, type GBrainConfig } from '../../src/core/config.ts';

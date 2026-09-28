@@ -2938,6 +2938,17 @@ async function handleCliOnly(command: string, args: string[]) {
       }
       refuseThinClient('jobs', cfgJobs!.remote_mcp!.mcp_url);
     }
+    if (args[0] === 'supervisor' && args[1] === 'status') {
+      const { DEFAULT_PID_FILE } = await import('./core/minions/supervisor.ts');
+      const { readSupervisorPid } = await import('./core/minions/supervisor-pid.ts');
+      const pidFileIndex = args.indexOf('--pid-file');
+      const pidFile = pidFileIndex >= 0 ? args[pidFileIndex + 1] ?? DEFAULT_PID_FILE : DEFAULT_PID_FILE;
+      if (readSupervisorPid(pidFile).running) {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(null, args);
+        return;
+      }
+    }
   }
 
   // Autopilot status + uninstall are filesystem-only verdicts and MUST stay
@@ -2991,8 +3002,20 @@ async function handleCliOnly(command: string, args: string[]) {
   // TODOS 1050, out of scope). Kill switch: GBRAIN_SERVE_DEGRADED=0.
   let engine: BrainEngine;
   try {
-    engine = await connectEngine();
+    engine = await connectEngine({ probeOnly: command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status' });
   } catch (serveConnectError) {
+    if (command === 'jobs' && args[0] === 'child-readiness') {
+      const { writeChildReadinessFailure } = await import('./core/minions/child-readiness.ts');
+      process.exit(writeChildReadinessFailure(serveConnectError));
+    }
+    if (command === 'jobs' && args[0] === 'run-child') {
+      const { CHILD_ENV } = await import('./core/minions/job-isolation.ts');
+      const resultPath = process.env[CHILD_ENV.resultPath];
+      if (resultPath) {
+        const { writeChildBootstrapError } = await import('./core/minions/run-child.ts');
+        process.exit(writeChildBootstrapError(resultPath, serveConnectError));
+      }
+    }
     // Gate on the engine of the RESOLVED brain, not the host config —
     // connectEngine routes mounts FIRST, so a PGLite mount's failure on a
     // postgres host must NOT get a lazy reconnect proxy (the single-writer

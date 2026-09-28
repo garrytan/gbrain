@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { createServer as createTlsServer } from 'node:tls';
 import { readFileSync } from 'node:fs';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { waitFor } from '../helpers/wait-for.ts';
@@ -344,7 +344,7 @@ describe.skipIf(!url)('Postgres cancellation ownership', () => {
     expect(await ctx.engine.executeRaw('SELECT 42 AS answer')).toEqual([{ answer: 42 }]);
   }), 30000);
 
-  const drivers = { esm: postgres, commonjs: createRequire(import.meta.url)('../../node_modules/postgres/cjs/src/index.js') as typeof postgres };
+  const drivers = { esm: postgres, commonjs: createRequire(import.meta.url)('#postgres') as typeof postgres };
   for (const [name, driver] of Object.entries(drivers)) {
     test(`${name} releasing a lease during pool shutdown cannot grant its waiter`, async () => {
       assertSafeE2eDatabaseUrl(url!);

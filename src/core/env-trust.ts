@@ -178,6 +178,8 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   // --- root / registry redirect ------------------------------------------
   'GBRAIN_HOME',                     // relocates ~/.gbrain (config, .env, keys, registry)
   'GBRAIN_MOUNTS_PATH',              // brain mounts registry file
+  'GBRAIN_WORKER_STATUS_PATH',
+  'GBRAIN_WORKER_STATUS_TOKEN',
   'GBRAIN_DATABASE_URL',             // THE brain connection string: a cwd .env would retarget every hook, query and write at a planted database; the #427 value guard covers only the bare DATABASE_URL, and this key is "stated intent" everywhere it is read
   'GBRAIN_DIRECT_DATABASE_URL',      // direct-pool override (connection-manager.ts): retargets brain writes at a planted host; has no #427 value guard
   'GBRAIN_REMOTE_MCP_URL',           // `init --remote` default: where the thin client sends its MCP traffic and bearer token

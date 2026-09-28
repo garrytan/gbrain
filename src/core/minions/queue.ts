@@ -1989,6 +1989,38 @@ export class MinionQueue {
     return rowToMinionJob(rows[0]);
   }
 
+  async releaseConfigurationJob(
+    id: number,
+    lockToken: string,
+    signal: AbortSignal,
+  ): Promise<'released' | 'no_op' | 'unconfirmed'> {
+    if (signal.aborted) return 'unconfirmed';
+    let onAbort: () => void = () => {};
+    try {
+      const cancelled = new Promise<'unconfirmed'>(resolve => {
+        onAbort = () => resolve('unconfirmed');
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+      const release = this.engine.executeRaw<{ id: number }>(
+        `UPDATE minion_jobs SET
+          status = 'delayed',
+          error_text = 'worker_configuration_blocked',
+          delay_until = now() + interval '30 seconds',
+          started_at = NULL, timeout_at = NULL,
+          lock_token = NULL, lock_until = NULL, updated_at = now()
+         WHERE id = $1 AND status = 'active' AND lock_token = $2
+         RETURNING id`,
+        [id, lockToken],
+        { signal },
+      ).then(rows => signal.aborted ? 'unconfirmed' as const : rows.length > 0 ? 'released' as const : 'no_op' as const);
+      return await Promise.race([release, cancelled]);
+    } catch {
+      return 'unconfirmed';
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+  }
+
   /** Update job progress (token-fenced). */
   async updateProgress(id: number, lockToken: string, progress: unknown): Promise<boolean> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(

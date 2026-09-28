@@ -108,6 +108,14 @@ describe('maybeRunWorkerStartupRecovery', () => {
     ).resolves.toBeUndefined();
   });
 
+  test('verified readiness lets supervised workers recover orphaned queues on every start', async () => {
+    const { childId } = await seedOrphanQueue();
+    await maybeRunWorkerStartupRecovery(queue, { GBRAIN_SUPERVISED: '1' }, true);
+    const row = await childRow(childId);
+    expect(row.status).toBe('cancelled');
+    expect(row.error_text).toContain('worker startup recovery');
+  });
+
 });
 
 // Structural (separate suite so the behavioral tests above stay classified
@@ -119,7 +127,7 @@ describe('work-handler recovery placement (structural)', () => {
       join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
       'utf8',
     );
-    const callSite = 'await maybeRunWorkerStartupRecovery(queue);';
+    const callSite = 'await maybeRunWorkerStartupRecovery(queue, process.env, true);';
     const callIdx = jobsSource.indexOf(callSite);
     expect(callIdx).toBeGreaterThan(-1);
     // Exactly one call site — the work handler.
@@ -128,6 +136,9 @@ describe('work-handler recovery placement (structural)', () => {
     const ensureIdx = jobsSource.lastIndexOf('await queue.ensureSchema();', callIdx);
     expect(ensureIdx).toBeGreaterThan(-1);
     expect(callIdx - ensureIdx).toBeLessThan(400);
+    const readinessIdx = jobsSource.lastIndexOf('await checkWorkerStartup(', callIdx);
+    expect(readinessIdx).toBeGreaterThan(-1);
+    expect(readinessIdx).toBeLessThan(ensureIdx);
     // …and BEFORE the work loop's worker is even constructed.
     const workerIdx = jobsSource.indexOf('new MinionWorker(engine', callIdx);
     expect(workerIdx).toBeGreaterThan(callIdx);

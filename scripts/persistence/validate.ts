@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, loadavg, tmpdir, totalmem } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import { distribution, type HarnessConfig } from './harness.ts';
 import { keylessBrainEnv } from '../../test/helpers/provider-env.ts';

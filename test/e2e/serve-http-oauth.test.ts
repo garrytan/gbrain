@@ -228,7 +228,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   }
 
   async function withSql<T>(fn: (sql: any) => Promise<T>): Promise<T> {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       return await fn(sql);
@@ -268,7 +268,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   ] as const) {
     test(`MCP enforces the ${label} persisted resource audience`, async () => {
       const { access_token } = await mintToken('read');
-      const { default: postgres } = await import('postgres');
+      const { default: postgres } = await import('#postgres');
       const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL!, { max: 1 });
       try {
         await sql`UPDATE oauth_tokens SET resource = ${resource}
@@ -873,7 +873,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
     const publicToken = `gbrain_at_public_${Date.now()}`;
     const tokenHash = createHash('sha256').update(publicToken).digest('hex');
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Plain-array bind, NOT `sql.array([...])`: sql.array resolves its
@@ -914,7 +914,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     const suffix = Date.now().toString();
     const functionName = `e2e_fail_revoke_${suffix}`;
     const triggerName = `e2e_fail_revoke_trigger_${suffix}`;
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       await sql.unsafe(`
@@ -1129,7 +1129,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // and the row never appears.
 
   test('v0.26.3: /mcp request persists agent_name + params + error_message', async () => {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Wipe any prior log rows for our test client so we can assert exact counts.
@@ -1240,7 +1240,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // mints a token, and asserts the response's expires_in matches.
 
   test('v0.26.3: per-client token_ttl is honored on token mint', async () => {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Register a client + set a custom token_ttl (24 hours = 86400 seconds).
@@ -1351,7 +1351,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
   // auth lanes (oauth client + legacy api key).
 
   test('v0.26.3: agent_name resolves correctly for OAuth + legacy paths', async () => {
-    const postgres = (await import('postgres')).default;
+    const postgres = (await import('#postgres')).default;
     const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
     try {
       // Make an OAuth-authenticated request — agent_name should be the OAuth client_name.

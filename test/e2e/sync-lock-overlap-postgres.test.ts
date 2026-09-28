@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { makeGitFixture } from '../helpers/git-fixture.ts';
 

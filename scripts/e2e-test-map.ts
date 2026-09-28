@@ -159,6 +159,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
+    "test/e2e/worker-readiness-cli.test.ts",
+    "test/e2e/worker-configuration-release.test.ts",
     "test/e2e/delegated-grants-withdrawal.test.ts",
     "test/e2e/delegated-http-worker.test.ts",
     "test/e2e/minions-concurrency.test.ts",
@@ -221,6 +223,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/pool-budget.ts": ["test/e2e/persistence-runtime-matrix.test.ts"],
   "src/core/connection-manager.ts": ["test/e2e/persistence-runtime-matrix.test.ts", "test/e2e/pgbouncer-teardown.test.ts"],
   "src/core/postgres-engine.ts": [
+    "test/e2e/postgres-driver-install.test.ts",
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/fixture-reset-postgres.test.ts",
     "test/e2e/persistence-chaos.test.ts",
@@ -359,7 +362,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Autopilot linux install/uninstall lifecycle (PATH-shimmed crontab +
   // systemctl; the ubuntu CI runner's only behavioral pin on those arms).
-  "src/commands/autopilot.ts": ["test/e2e/autopilot-linux-lifecycle.serial.test.ts"],
+  "src/commands/autopilot.ts": ["test/e2e/autopilot-linux-lifecycle.serial.test.ts", "test/e2e/worker-readiness-cli.test.ts"],
   "src/commands/doctor.ts": ["test/e2e/doctor-progress.test.ts"],
   // Doctor check modules peeled from doctor.ts feed the same e2e surface.
   "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts"],

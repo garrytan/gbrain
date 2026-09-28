@@ -37,6 +37,7 @@ function makeEngine(counter: { reconnects: number }): BrainEngine {
     kind: 'postgres',
     reconnect: async () => { counter.reconnects += 1; },
     executeRaw: async (sql: string) => {
+      if (sql.trim() === 'SELECT 1') return [];
       // These reconnect fixtures contain no unresolved legacy work. Keep the
       // real startup authority check, and reject unrelated unexpected queries.
       if (sql.includes('SELECT id, submission_authority FROM minion_jobs') &&
