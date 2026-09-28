@@ -33,6 +33,10 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 // so they land in the retrieval surface (content_chunks + embeddings) where
 // source-boost's 1.3× 'concepts/' weighting can actually reach them.
 import { importFromContent } from '../import-file.ts';
+// managed-brain: concept writes go through the persistence coordinator
+// (same pattern as synthesize.ts / patterns.ts) so they don't trip the
+// assertUnmanagedCanonicalWriter guard that was introduced in v0.51.0.0.
+import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
 
@@ -131,6 +135,13 @@ export async function runPhaseSynthesizeConcepts(
   opts: SynthesizeConceptsOpts = {},
 ): Promise<PhaseResult> {
   const chat = opts._chat ?? gatewayChat;
+
+  // managed-brain: acquire the maintenance writer so concept pages route
+  // through the persistence coordinator rather than the legacy importFromContent
+  // writer — which assertUnmanagedCanonicalWriter blocks on managed brains.
+  // maintenancePreflight returns null on unmanaged brains, so unmanaged codepath
+  // is unchanged. Dry-run skips acquisition (no writes happen anyway).
+  const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default');
 
   // 1. Get atom pages (test seam OR DB query)
   let atoms = opts._atoms ?? [];
@@ -373,11 +384,23 @@ export async function runPhaseSynthesizeConcepts(
         { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
       );
       const conceptSlug = `concepts/${title}`;
-      await importFromContent(engine, conceptSlug, md, {
-        noEmbed: !isAvailable('embedding'),
-        // #4416: target the cycle's resolved source, not the 'default' literal.
-        sourceId: opts.sourceId,
-      });
+      if (maintenance) {
+        // managed-brain: go through the persistence coordinator. noEmbed is
+        // implicit (no provider set for maintenance writes; embed sweep covers
+        // it separately). expectedRevision null = create-or-replace is fine
+        // for concept pages, which are always synthesized output.
+        const snapshot = await engine.readPageSnapshot(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
+        await publishMaintenancePage(engine, maintenance, conceptSlug, md, {
+          expectedRevision: snapshot?.revision ?? null,
+          file: false, // database-only; no markdown file
+        });
+      } else {
+        await importFromContent(engine, conceptSlug, md, {
+          noEmbed: !isAvailable('embedding'),
+          // #4416: target the cycle's resolved source, not the 'default' literal.
+          sourceId: opts.sourceId,
+        });
+      }
       // #4589: bank concept<->member-atom provenance edges. The prompt forbids
       // enumerating atoms in the body and no frontmatter field maps to a link
       // verb, so without this every concept page lands with zero edges (graph
