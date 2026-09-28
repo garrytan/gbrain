@@ -236,7 +236,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         const failed = cursor.pending ? await getWriteRequest(engine, cursor.authority.writer.principal, cursor.pending.requestId) : null;
         const recorded = await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'run_id'=$2", [key, cursor.runId]);
         assertActive();
-        if ((failed && ['failed', 'conflict', 'cancelled'].includes(failed.state)) || (!failed && recorded.length)) {
+        if ((failed && ['failed', 'conflict', 'cancelled'].includes(failed.state)) || (recorded.length && (failed?.state === 'committed' || !failed))) {
           phase = 'discovery';
           discoveryTarget = syncGit(context.gitRoot, ['rev-parse', 'HEAD']).trim();
           const discovery = await discoverManagedSync(engine, opts, context);
