@@ -40,6 +40,7 @@ mock.module('../../src/core/embedding.ts', () => ({
   embedQuery: async () => new Float32Array(1536),
   embedBatch: async (texts: string[]) => texts.map(() => new Float32Array(1536)),
   embedMultimodal: async () => [],
+  getQueryInstruction: () => undefined,
   getEmbeddingModelName: () => 'text-embedding-3-large',
   getEmbeddingDimensions: () => 1536,
   EMBEDDING_MODEL: 'text-embedding-3-large',

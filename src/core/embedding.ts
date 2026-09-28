@@ -12,6 +12,7 @@ import {
   getEmbeddingModel as gatewayGetModel,
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
+export { getQueryInstruction } from './ai/gateway.ts';
 import { lookupEmbeddingPrice } from './embedding-pricing.ts';
 
 // v0.27.1: re-export multimodal embedding so callers can pull both text and

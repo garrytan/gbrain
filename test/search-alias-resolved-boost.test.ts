@@ -81,7 +81,7 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 29 (…; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold)', () => {
+  it('is 30 (…; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold)', () => {
     // mw2: 21→22 result-stamp/injection epoch (#1663 #3995 #3783 #4220).
     // #4352 follow-up: 22→23 private-visibility posture fold (xp=).
     // #4358 residual: 23→24 negative-offset cache-skip gap.
@@ -94,6 +94,6 @@ describe('KNOBS_HASH_VERSION', () => {
     // version-only invalidation.
     // 28→29: evb= expansion variant budget fold (ranker wave) — budget-weighted
     // variant fusion reorders rows for identical knobs; null hashes as legacy.
-    expect(KNOBS_HASH_VERSION).toBe(29);
+    expect(KNOBS_HASH_VERSION).toBe(30);
   });
 });

@@ -195,7 +195,7 @@ describe('mixed-case fixture — raw-id join + strict/lenient recall', () => {
     expect(rc.retrieval_config_hash).toBe(rows[0].retrieval_config_hash);
     expect(rc.knobs_hash).toMatch(/^[0-9a-f]{16}$/);
     baseKnobsHash = rc.knobs_hash;
-    expect(rc.knobs_hash_version).toBe(29);
+    expect(rc.knobs_hash_version).toBe(30);
     expect(rc.cache).toBeNull();
     expect(rc.cache_skipped).toBe('keyword_only');
     expect(rc.reranker_skipped_rows).toBe(0);

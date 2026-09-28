@@ -44,6 +44,28 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 
 **Existing brains need an explicit migration.** Removing an unsupported provider does not convert stored vectors, change their provenance, or authorize paid work. Inspect `gbrain migrate embeddings --status`, then preview a supported target with `--dry-run` and obtain approval before running it. See [the migration guide](../guides/embedding-migration.md).
 
+## Qwen3 query instructions
+
+Qwen3 Embedding search queries receive the model-recommended format:
+
+```text
+Instruct: Given a web search query, retrieve relevant passages that answer the query
+Query: <your query>
+```
+
+GBrain applies this only to query inputs for the `qwen3-embedding` family,
+including Ollama tags and hub-style `Qwen/Qwen3-Embedding-*` IDs. Documents stay
+raw, model IDs are sent unchanged, and configured Matryoshka dimensions continue
+to work. This applies across provider routes, not just Ollama. Other models are
+unaffected. Vector-only evaluation uses the same query path as retrieval.
+
+Set `GBRAIN_QUERY_INSTRUCT` before process startup to customize the task; an
+empty value disables formatting for endpoints that already template queries.
+The value is read from the gateway’s configured environment, so restart persistent
+processes after changing it. Search-knob identity includes the effective task.
+Existing Qwen document vectors need no rebuild for this query-only correction.
+Switching from another model still requires an embedding migration.
+
 ## If first import fails
 
 If `gbrain import` fails with `expected N dimensions, not M`, run `gbrain doctor`. The output will print the exact `gbrain config set ...` or `gbrain migrate embeddings` command to repair the mismatch. **You should not need to delete `~/.gbrain`.**

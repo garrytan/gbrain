@@ -158,6 +158,12 @@ const QWEN3_EMBEDDING_NATIVE_DIMS: Record<string, number> = {
   'qwen3-embedding-8b': 4096,
 };
 
+/** Shared family predicate for dimension passthrough and query formatting. */
+export function isQwen3EmbeddingModel(modelId: string): boolean {
+  const bareModelId = modelMatchKey(modelId).split('/').pop()!;
+  return bareModelId === 'qwen3-embedding' || bareModelId.startsWith('qwen3-embedding:') || bareModelId.startsWith('qwen3-embedding-');
+}
+
 export function dimsProviderOptions(
   implementation: Implementation,
   modelId: string,
@@ -297,7 +303,7 @@ export function dimsProviderOptions(
       // hyphenated hub form used by OpenRouter/HF-style routers
       // (`qwen/qwen3-embedding-8b` — org prefix stripped to
       // `qwen3-embedding-8b` above). Match both.
-      if (bareModelId === 'qwen3-embedding' || bareModelId.startsWith('qwen3-embedding:') || bareModelId.startsWith('qwen3-embedding-')) {
+      if (isQwen3EmbeddingModel(bareModelId)) {
         // Only send `dimensions` when it actually differs from the model's
         // native width. Fixed-dim OpenAI-compatible backends serving this
         // family (e.g. vLLM) reject the parameter outright with HTTP 400

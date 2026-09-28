@@ -858,7 +858,7 @@ export function attributeKnob<K extends keyof ModeBundle>(
  * reorder or add a knob without bumping a constant — a hash collision would
  * mean stale cache rows silently reading the wrong shape.
  */
-export const KNOBS_HASH_VERSION = 29;
+export const KNOBS_HASH_VERSION = 30;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -872,6 +872,8 @@ export const KNOBS_HASH_VERSION = 29;
  * don't know the column produce a stable hash for the default case.
  */
 export interface KnobsHashContext {
+  /** Effective query-only embedding instruction; undefined means unformatted. */
+  queryInstruction?: string;
   /** Resolved column name, e.g. 'embedding', 'embedding_voyage'. */
   embeddingColumn?: string;
   /** Resolved provider:model, e.g. 'voyage:voyage-3-large'. */
@@ -1137,6 +1139,8 @@ export function knobsHash(
     // re-orders the fused page, so a `lexical` write must never serve an
     // `always` lookup. A partial-knobs literal hashes as `always` — the deliberate pre-wave hash identity, NOT the bundle default (`lexical`).
     `mbg=${knobs.metadata_boost_gate ?? DEFAULT_METADATA_BOOST_GATE}`,
+    // Query formatting changes query vectors; never reuse another instruction’s results.
+    `qi=${JSON.stringify(ctx?.queryInstruction ?? null)}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

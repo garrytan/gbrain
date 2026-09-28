@@ -45,7 +45,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 29 (…; 24→25 keywordOrFallback knob kof= #3617; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256/#3695; 28→29 evb= expansion variant budget fold)', () => {
+  test('version is 30 (…; 24→25 keywordOrFallback knob kof= #3617; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256/#3695; 28→29 evb= expansion variant budget fold)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -100,7 +100,7 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // Phase E2 / Cat 13) — same unshipped epoch; null hashes as off.
     // v=29 ALSO carries mbg= (metadata boost gate, ranker wave Phase E3 /
     // Cat 13) — same unshipped epoch; a partial literal hashes as always.
-    expect(KNOBS_HASH_VERSION).toBe(29);
+    expect(KNOBS_HASH_VERSION).toBe(30);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

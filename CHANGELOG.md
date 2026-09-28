@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.59.3.1] - 2026-09-28
+
+**Qwen search queries receive their retrieval instruction.**
+
+Search with Qwen3 Embedding now sends the query instruction expected by the model. Stored documents remain unprefixed, so existing document embeddings do not need to be rebuilt. Other embedding models keep their existing behavior.
+
+### Itemized changes
+
+Query instructions honor configured defaults, per-call model overrides and an explicit empty opt-out. Cache identities include the effective instruction. Contributed by @paul-0320; this contribution extends the original provider support with cache and evaluation coverage.
+
 ## [0.59.3.0] - 2026-09-28
 
 **A broken worker installation now asks for repair instead of repeatedly interrupting your jobs.**
