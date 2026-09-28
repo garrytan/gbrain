@@ -20,6 +20,7 @@ import { __testing as synthesizeTesting } from '../../src/core/cycle/synthesize.
 import { __testing as patternsTesting } from '../../src/core/cycle/patterns.ts';
 import { __testing as allowlistTesting } from '../../src/core/minions/tools/brain-allowlist.ts';
 import { operations } from '../../src/core/operations.ts';
+import { ONESHOT_SYSTEM } from '../../src/core/minions/handlers/subagent-oneshot.ts';
 import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from '../helpers/extract-atoms-page-fixtures.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
@@ -27,6 +28,7 @@ import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
 const LANGUAGE_RULE = /in the language most of [\s\S]*? is written in/;
 const KEEP_TERMS_RULE = /names, product names, commands and technical terms exactly as/;
 const SCRIPT_NEUTRAL_SLUG = /lowercase letters of any script, digits and hyphens/;
+const SLUG_FOLLOWS_TITLE = /topic words of a slug are written in the language of the page title/;
 
 let engine: PGLiteEngine;
 
@@ -69,7 +71,15 @@ describe('#25 synthesize prompt (reflections, originals)', () => {
     expect(prompt).toMatch(LANGUAGE_RULE);
     expect(prompt).toMatch(KEEP_TERMS_RULE);
     expect(prompt).toMatch(SCRIPT_NEUTRAL_SLUG);
+    expect(prompt).toMatch(SLUG_FOLLOWS_TITLE);
     expect(prompt).not.toMatch(/alphanumeric/);
+  });
+
+  test('the oneshot system contract asks for slugs in the language of the page title', () => {
+    // oneshot is the default synthesize mode; with no language rule here a
+    // Russian page came back with an English slug in the manual dream run.
+    expect(ONESHOT_SYSTEM).toMatch(SLUG_FOLLOWS_TITLE);
+    expect(ONESHOT_SYSTEM).toMatch(SCRIPT_NEUTRAL_SLUG);
   });
 
   test('the rule is language-neutral, so an English transcript is not steered to Russian', () => {
@@ -97,6 +107,7 @@ describe('#25 patterns prompt', () => {
       [{ slug: 'wiki/personal/reflections/2026-09-27-тема', title: 'Тема', excerpt: 'Текст.' }] as never,
       2,
     );
+    expect(prompt).toMatch(SLUG_FOLLOWS_TITLE);
     expect(prompt).toMatch(LANGUAGE_RULE);
     expect(prompt).toMatch(KEEP_TERMS_RULE);
     expect(prompt).toMatch(SCRIPT_NEUTRAL_SLUG);

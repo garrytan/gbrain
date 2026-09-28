@@ -96,7 +96,7 @@ export interface PatternsPhaseOpts {
  * working.
  */
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
-import { sourceLanguageRule, SLUG_CHARS_RULE } from './source-language.ts';
+import { sourceLanguageRule, SLUG_CHARS_RULE, SLUG_LANGUAGE_RULE } from './source-language.ts';
 export { CYCLE_DEADLINE_RESERVE_MS };
 
 /**
@@ -574,7 +574,7 @@ OUTPUT POLICY
 - Only name a pattern if it appears in at least ${minEvidence} DISTINCT reflections.
 - Each pattern page MUST cite the reflections that constitute its evidence (use [[${sourceSlugPrefix}/...]] wikilinks).
 - Use \`search\` to check whether a similar pattern page already exists; if yes, update it (use the same slug). If no, create a new one.
-- Pattern slug format: \`${outputSlugPrefix}/<topic-slug>\` (${SLUG_CHARS_RULE}; no underscores, no extension, no date).
+- Pattern slug format: \`${outputSlugPrefix}/<topic-slug>\` (${SLUG_CHARS_RULE}; ${SLUG_LANGUAGE_RULE}; no underscores, no extension, no date).
 - A "pattern" is a recurring theme, anxiety, decision pattern, relationship dynamic, or self-knowledge motif. NOT a single insight. NOT a list of unrelated topics.
 - Language: ${sourceLanguageRule('the reflections')}
 

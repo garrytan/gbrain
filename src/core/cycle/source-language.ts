@@ -20,6 +20,13 @@ export function sourceLanguageRule(input: string): string {
 export const SLUG_CHARS_RULE = 'lowercase letters of any script, digits and hyphens';
 
 /**
+ * Allowing every script is not enough: without this, a model writing a
+ * Russian page still picked an English slug (seen on the oneshot synthesize
+ * path, which is the default).
+ */
+export const SLUG_LANGUAGE_RULE = 'the topic words of a slug are written in the language of the page title';
+
+/**
  * extract_atoms' Concept label rule. A label is the key atoms cluster on, so a
  * technical topic gets a descriptive label in the atoms' language even when
  * the text uses an English term ("очереди-сообщений", not "queue").
