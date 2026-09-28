@@ -721,8 +721,11 @@ function readSourceTextWithFallback(page: Page, chunks: ChunkInput[]): string {
  * the import path (#3885: stored `sources set-cr-mode` must apply on
  * capture/reindex, not just the Minion backfill) and the conversation-parser
  * body reader (#3911: relative raw_transcript resolves against the OWNING
- * source's local_path). Throws when the source id is unknown.
+ * source's local_path). Throws SourceRowNotFoundError when the source id is
+ * unknown, so callers can tell a missing row from a failed read.
  */
+export class SourceRowNotFoundError extends Error {}
+
 export async function loadSourceRow(engine: BrainEngine, sourceId: string): Promise<SourceRow> {
   const rows = await engine.executeRaw<SourceRow>(
     `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
@@ -730,8 +733,9 @@ export async function loadSourceRow(engine: BrainEngine, sourceId: string): Prom
      FROM sources WHERE id = $1`,
     [sourceId],
   );
-  if (rows.length === 0) {
-    throw new Error(`Source not found: ${sourceId}`);
+  // A missing result set (unit-test engine doubles) reads as no row.
+  if (!rows?.length) {
+    throw new SourceRowNotFoundError(`Source not found: ${sourceId}`);
   }
   return rows[0];
 }

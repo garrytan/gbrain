@@ -52,7 +52,7 @@ import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
 import { isUndefinedTableError, warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS_SCAN_HASH_KEY } from './utils.ts';
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
-import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-service.ts';
+import { computeCorpusGeneration, loadSourceRow, SourceRowNotFoundError } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
@@ -775,56 +775,53 @@ export async function importFromContent(
   //   and defers per-chunk synopsis to the Minion-driven sweep).
   // - Stored chunk_text stays canonical; only the embedding input is wrapped.
   // - Code chunks (chunk_source='fenced_code') bypass wrapping per D20-T4.
-  // Coordinated imports publish text now and embed through the durable outbox.
-  // Capture their wrapping convention before publication, even though no
-  // provider runs here. Plain legacy --no-embed imports retain their behavior.
-  const prepareEmbeddingContext = !opts.noEmbed || opts.prepare !== undefined;
-  let effectiveCRMode: 'none' | 'title' | 'per_chunk_synopsis' = 'none';
-  if (prepareEmbeddingContext) {
-    const searchInput = await loadSearchModeConfig(engine);
-    const knobs = resolveSearchMode(searchInput);
-    // #3885: load the REAL source row so a stored `gbrain sources
-    // set-cr-mode <id> <mode>` (and the mount trust flag) applies on the
-    // inline import path — capture + reindex --markdown — not just the
-    // Minion backfill. The prior hardcoded stub (contextual_retrieval_mode:
-    // null / trust_frontmatter_overrides: false) silently ignored the
-    // per-source override. Unknown source id / pre-sources-table brains
-    // keep the stub (host-trust defaults).
-    let sourceRow: {
-      id: string;
-      contextual_retrieval_mode?: string | null;
-      trust_frontmatter_overrides?: boolean;
-    } = {
-      id: sourceId ?? 'default',
-      contextual_retrieval_mode: null,
-      trust_frontmatter_overrides: false,
+  // Every markdown import records its wrapping convention with the canonical
+  // write, --no-embed included (#5621): later embed passes reproduce the stored
+  // mode, so an unstamped page would stay unwrapped. No provider runs here.
+  const searchInput = await loadSearchModeConfig(engine);
+  const knobs = resolveSearchMode(searchInput);
+  // #3885: load the REAL source row so a stored `gbrain sources
+  // set-cr-mode <id> <mode>` (and the mount trust flag) applies on the
+  // inline import path (capture + reindex --markdown), not just the
+  // Minion backfill. The prior hardcoded stub (contextual_retrieval_mode:
+  // null / trust_frontmatter_overrides: false) silently ignored the
+  // per-source override. Unknown source id / pre-sources-table brains
+  // keep the stub (host-trust defaults).
+  let sourceRow: {
+    id: string;
+    contextual_retrieval_mode?: string | null;
+    trust_frontmatter_overrides?: boolean;
+  } = {
+    id: sourceId ?? 'default',
+    contextual_retrieval_mode: null,
+    trust_frontmatter_overrides: false,
+  };
+  try {
+    const row = await loadSourceRow(engine, sourceId ?? 'default');
+    sourceRow = {
+      id: row.id,
+      contextual_retrieval_mode: row.contextual_retrieval_mode ?? null,
+      trust_frontmatter_overrides: row.trust_frontmatter_overrides === true,
     };
-    try {
-      const row = await loadSourceRow(engine, sourceId ?? 'default');
-      sourceRow = {
-        id: row.id,
-        contextual_retrieval_mode: row.contextual_retrieval_mode ?? null,
-        trust_frontmatter_overrides: row.trust_frontmatter_overrides === true,
-      };
-    } catch (error) {
-      // Accepted coordinated writes must retry a failed policy read; falling
-      // back here could commit a different source's wrapping convention.
-      if (opts.prepare) throw error;
-      // Source row missing ('default' not seeded on a fresh brain) — the
-      // stub stands, matching pre-#3885 behavior.
-    }
-    const resolution = resolveContextualRetrievalMode({
-      pageFrontmatter: parsed.frontmatter,
-      source: sourceRow,
-      globalMode: knobs.contextual_retrieval,
-      killSwitchDisabled: knobs.contextual_retrieval_disabled,
-    });
-    // Inline path: title-tier wrap is free. per_chunk_synopsis is too
-    // expensive for the inline import path; the page lands at the
-    // title tier on disk and the Minion-driven contextual reindex
-    // upgrades it later when the user accepts the cost prompt.
-    effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
+  } catch (error) {
+    // A failed policy read must fail the import: falling back here would
+    // stamp a different source's wrapping convention. Coordinated writes
+    // always retry; otherwise only a missing row ('default' not seeded on a
+    // fresh brain) or table keeps the stub, matching pre-#3885 behavior.
+    const missing = error instanceof SourceRowNotFoundError || isUndefinedTableError(error);
+    if (opts.prepare || !missing) throw error;
   }
+  const resolution = resolveContextualRetrievalMode({
+    pageFrontmatter: parsed.frontmatter,
+    source: sourceRow,
+    globalMode: knobs.contextual_retrieval,
+    killSwitchDisabled: knobs.contextual_retrieval_disabled,
+  });
+  // Inline path: title-tier wrap is free. per_chunk_synopsis is too
+  // expensive for the inline import path; the page lands at the
+  // title tier on disk and the Minion-driven contextual reindex
+  // upgrades it later when the user accepts the cost prompt.
+  const effectiveCRMode = resolution.mode === 'per_chunk_synopsis' ? 'title' : resolution.mode;
 
   const embedChunks = async () => {
     if (opts.noEmbed || chunks.length === 0) return;
@@ -850,7 +847,7 @@ export async function importFromContent(
   // Record the selected wrapper generation for inline or deferred embedding;
   // 'none' writes NULL. The separate embedding signature certifies vectors.
   const corpusGeneration =
-    effectiveCRMode === 'none' || !prepareEmbeddingContext
+    effectiveCRMode === 'none'
       ? null
       : computeCorpusGeneration({
           crMode: effectiveCRMode,
@@ -916,17 +913,16 @@ export async function importFromContent(
     // v0.40.3.0: stamp the contextual retrieval state columns alongside
     // the page write. updatePageContextualRetrievalState is a narrow
     // UPDATE that runs after putPage's INSERT/UPDATE so the row exists.
-    // Prepared imports bind this convention to the new canonical revision;
-    // their deferred embedder reproduces it and installs only under CAS.
+    // Deferred embedders reproduce it: the prepared outbox installs only
+    // under CAS, and --no-embed drains read it back. Every chunk row is
+    // replaced below, so no older vector survives under this stamp.
     // This stamp certifies no vector: embedding_signature stays deferred.
-    if (prepareEmbeddingContext) {
-      await tx.updatePageContextualRetrievalState(
-        slug,
-        sourceId ?? 'default',
-        effectiveCRMode,
-        corpusGeneration,
-      );
-    }
+    await tx.updatePageContextualRetrievalState(
+      slug,
+      sourceId ?? 'default',
+      effectiveCRMode,
+      corpusGeneration,
+    );
 
     // Tag reconciliation: ADD-ONLY (v0.41.37.0 #1621).
     //
