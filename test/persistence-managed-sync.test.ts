@@ -22,6 +22,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { loadSyncFailures, syncFailuresPath } from '../src/core/sync-failure-ledger.ts';
+import { recordManagedSyncFailure } from '../src/core/persistence/sync-failures.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-sync-'));
 const engines: BrainEngine[] = [];
@@ -399,3 +400,72 @@ test('continuous foreground arrivals cannot starve a bounded sync batch', async 
     }finally{stopping=true;clearInterval(timer);await Promise.all(admitted);await disposePersistenceConsumer(engine);}
   }
 }),120_000);
+
+test('retry-failed resets cursor when pending write is committed but failure record exists (processingOptions mismatch loop)', async () =>
+  withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+    for (const engine of engines) {
+      await disposePersistenceConsumer(engine);
+      // Two-file source: first file will be stuck as committed-but-not-advanced.
+      const f = await fixture(engine, {
+        'a.md': 'First observation committed during the original sync run.\n',
+        'b.md': 'Second observation never reached due to cursor wedge.\n',
+      });
+
+      // Run a partial sync (abort after the first page commits) with noExtract:false.
+      // This simulates the original operator CLI run that seeded the stuck cursor.
+      const abort = new AbortController();
+      const partial = await performManagedSync(engine,
+        { sourceId: f.id, noPull: true, noEmbed: true, noExtract: false,
+          signal: abort.signal,
+          onProgress: p => { if (p.phase === 'managed_sync.page_committed') abort.abort(); } });
+      // Partial means we stopped after committing one page, leaving the cursor unfinished.
+      expect(partial.status).toBe('partial');
+      expect(partial.filesImported).toBe(1);
+
+      // Confirm the cursor exists and is not done.
+      const [cursorRow] = await engine.executeRaw<{ completed_keys: [{ runId: string; done?: boolean; pending?: { requestId: string } }] }>(
+        "SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND COALESCE(completed_keys->0->>'done','false')<>'true'",
+        [f.id]);
+      expect(cursorRow).toBeDefined();
+      const cursorHeader = cursorRow.completed_keys[0];
+      const runId = cursorHeader.runId;
+
+      // Inject a recorded failure for this run (simulates the invalid_params error
+      // that occurs when autopilot re-runs with noExtract:true while cursor has noExtract:false).
+      await recordManagedSyncFailure(engine, {
+        source_id: f.id, source_incarnation: '',
+        path: 'a.md', code: 'invalid_params',
+        message: 'The unfinished sync has different or unknown processing options.',
+        request_id: cursorHeader.pending?.requestId ?? null,
+        run_id: runId, target: f.head,
+        cursor_key: (await engine.executeRaw<{ fingerprint: string }>(
+          "SELECT fingerprint FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'runId'=$1", [runId]))[0]?.fingerprint ?? '',
+        phase: 'resume', state: 'failed',
+        observation_id: `${runId}:1:resume:invalid_params`,
+      });
+
+      // Verify the pending write is committed (the write succeeded, cursor just wasn't advanced).
+      if (cursorHeader.pending?.requestId) {
+        const req = await engine.executeRaw<{ state: string }>(
+          'SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [cursorHeader.pending.requestId]);
+        expect(req[0]?.state).toBe('committed');
+      }
+
+      // Now re-run with --retry-failed and DIFFERENT processingOptions (noExtract:true).
+      // Before the fix this would loop forever: it would fail with invalid_params again
+      // because `failed.state === 'committed'` didn't trigger cursor replacement.
+      // After the fix it should reset the cursor and sync the remaining file.
+      const retried = await performManagedSync(engine,
+        { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, retryFailed: true });
+      // The cursor must have been reset and a fresh sync completed.
+      expect(['first_sync', 'synced']).toContain(retried.status);
+      expect(retried.added + retried.modified + (retried.filesImported ?? 0)).toBeGreaterThan(0);
+
+      // Failure record must be cleared after a successful sync.
+      const failures = await engine.executeRaw(
+        "SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND completed_keys->0->>'source_id'=$1", [f.id]);
+      expect(failures).toHaveLength(0);
+
+      await disposePersistenceConsumer(engine);
+    }
+  }), 120_000);
