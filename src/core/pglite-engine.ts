@@ -2492,20 +2492,23 @@ export class PGLiteEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
+    // Chunk 14 K1 (lexical perf): rank first, decorate after. The old
+    // shape computed the per-row decorations (message_id regexp CASEs, the
+    // stale correlated subquery) for EVERY index match before LIMIT; on an
+    // OR-fallback leg with hundreds of matches that dominates. `scored`
+    // carries only ordering inputs + raw decoration inputs; the decorations
+    // run in the final SELECT over the <=60-row pool. Row set, scores,
+    // order, and keyword_relaxed tags are unchanged (decorations are
+    // output-only). The strict->OR retry below is untouched.
     const keywordSql =
-      `WITH ranked AS (
+      `WITH scored AS (
          SELECT
-           p.slug, p.id as page_id, p.title, p.type, p.source_id,
-           p.effective_date, p.effective_date_source,
-           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
-           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
-             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
-           CASE WHEN p.updated_at < (
-             SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
-           ) THEN true ELSE false END AS stale
+           p.slug, p.source_id, p.id as page_id,
+           cc.id as chunk_id,
+           p.title, p.type, p.effective_date, p.effective_date_source,
+           p.frontmatter, p.updated_at,
+           cc.chunk_index, cc.chunk_text, cc.chunk_source,
+           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
          JOIN sources s ON s.id = p.source_id
@@ -2517,32 +2520,104 @@ export class PGLiteEngine implements BrainEngine {
          ORDER BY score DESC, page_id ASC, chunk_id ASC
          LIMIT $2
        ),
-       ${buildBestPerPagePoolCte('ranked')}
-       SELECT * FROM best_per_page
+       ${buildBestPerPagePoolCte('scored')}
+       SELECT
+         slug, page_id, title, type, source_id,
+         effective_date, effective_date_source,
+         CASE WHEN NULLIF(regexp_replace(frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           THEN frontmatter->>'message_id' END AS message_id, frontmatter->>'thread_id' AS thread_id,
+         CASE WHEN NULLIF(regexp_replace(frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           THEN NULLIF(frontmatter->>'subject', '') END AS source_subject,
+         chunk_id, chunk_index, chunk_text, chunk_source, score,
+         CASE WHEN updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = best_per_page.page_id
+         ) THEN true ELSE false END AS stale
+       FROM best_per_page
        ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $3 OFFSET $4`;
 
-    let { rows } = await this.db.query(keywordSql, params);
-    // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
-    // grain mean one non-co-occurring token zeroes keyword recall. When the
-    // strict query returns nothing, retry ONCE with OR-of-terms. Strict-AND
-    // results always win when non-empty (no change for working queries).
-    // Opt-in via SearchOpts.orFallback (Reviewer F1): only hybridSearch's
-    // recall arm relaxes; precision consumers (countMentions,
-    // link-extraction, eval) keep the strict-AND contract.
-    if (rows.length === 0 && opts?.orFallback) {
+const k3Sql =
+      `WITH or_scored AS (
+         SELECT
+           p.slug, p.source_id, p.id as page_id,
+           cc.id as chunk_id,
+           p.title, p.type, p.effective_date, p.effective_date_source,
+           p.frontmatter, p.updated_at,
+           cc.chunk_index, cc.chunk_text, cc.chunk_source,
+           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS or_score,
+           ts_rank(cc.search_vector, websearch_to_tsquery('${ftsLang}', $5)) * ${sourceFactorCase} AS strict_score,
+           (cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $5)) AS is_strict
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         JOIN sources s ON s.id = p.source_id
+         WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+           -- v0.27.1: hide image rows from default text-keyword search so
+           -- OCR text doesn't drown text-page hits. Image-similarity queries
+           -- run a separate vector path on embedding_image.
+           AND cc.modality = 'text'
+         ORDER BY or_score DESC, page_id ASC, chunk_id ASC
+       ),
+       strict_top AS (
+         SELECT slug, source_id, page_id, chunk_id, title, type, effective_date, effective_date_source,
+           frontmatter, updated_at, chunk_index, chunk_text, chunk_source,
+           strict_score AS score
+         FROM or_scored WHERE is_strict
+         ORDER BY strict_score DESC, page_id ASC, chunk_id ASC
+         LIMIT $2
+       ),
+       or_top AS (
+         SELECT slug, source_id, page_id, chunk_id, title, type, effective_date, effective_date_source,
+           frontmatter, updated_at, chunk_index, chunk_text, chunk_source,
+           or_score AS score
+         FROM or_scored
+         ORDER BY or_score DESC, page_id ASC, chunk_id ASC
+         LIMIT $2
+       ),
+       strict_exists AS (SELECT 1 FROM strict_top LIMIT 1),
+       combined AS (
+         SELECT *, false AS relaxed FROM strict_top
+         UNION ALL
+         SELECT *, true AS relaxed FROM or_top WHERE NOT EXISTS (SELECT 1 FROM strict_exists)
+       ),
+       ${buildBestPerPagePoolCte('combined')}
+       SELECT
+         slug, page_id, title, type, source_id,
+         effective_date, effective_date_source,
+         CASE WHEN NULLIF(regexp_replace(frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           THEN frontmatter->>'message_id' END AS message_id, frontmatter->>'thread_id' AS thread_id,
+         CASE WHEN NULLIF(regexp_replace(frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
+           THEN NULLIF(frontmatter->>'subject', '') END AS source_subject,
+         chunk_id, chunk_index, chunk_text, chunk_source, score, relaxed,
+         CASE WHEN updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = best_per_page.page_id
+         ) THEN true ELSE false END AS stale
+       FROM best_per_page
+       ORDER BY score DESC, page_id ASC, chunk_id ASC
+       LIMIT $3 OFFSET $4`;
+
+    // Chunk 14 K3 (lexical perf): when orFallback is on and an OR query
+    // exists, run a SINGLE statement that scores the OR superset once,
+    // flags strict matches, and returns strict rows if any else OR rows
+    // (tagged). This eliminates the strict-miss scan (pure overhead) and a
+    // round trip. Semantics match the old two-statement retry exactly.
+    // Without orFallback (or a single-term query), the plain strict template
+    // is unchanged.
+    if (opts?.orFallback) {
       const orQuery = buildOrFallbackWebsearchQuery(query);
       if (orQuery) {
-        const fallbackParams = [...params];
-        fallbackParams[0] = orQuery;
-        ({ rows } = await this.db.query(keywordSql, fallbackParams));
+        const k3Params: unknown[] = [orQuery, innerLimit, limit, offset, query];
+        const { rows: k3rows } = await this.db.query(k3Sql, k3Params);
         // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
         // fusion can demote them — an OR-of-common-terms match must not
         // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
-        return (rows as Record<string, unknown>[]).map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+        return (k3rows as Record<string, unknown>[]).map((r) => ({
+          ...rowToSearchResult(r),
+          ...(r.relaxed ? { keyword_relaxed: true as const } : {}),
+        }));
       }
     }
 
+    const { rows } = await this.db.query(keywordSql, params);
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
 
@@ -2623,48 +2698,33 @@ export class PGLiteEngine implements BrainEngine {
     // #3695 — chunk_id 0 + empty chunk_text never gains chunk authority);
     // and detail='low' filters only the REPRESENTATIVE — pages without a
     // compiled_truth chunk still surface (unlike the keyword arm's filter).
-    // Chunk 12 (lexical perf): result-preserving restructure — rank the
-    // page-grain candidates FIRST (top-N CTE), then attach the
-    // representative-chunk LATERAL and the `stale` subquery per output row.
-    // The LATERAL is 1:1 per page (LIMIT 1, ON true) and neither it nor
-    // `stale` influences ordering, so the row set, scores, and order are
-    // unchanged while rep lookups drop from #matched-pages to <= limit.
     const titlesSql =
-      `WITH top_pages AS (
-         SELECT
-           p.slug, p.id as page_id, p.title, p.type, p.source_id,
-           p.effective_date, p.effective_date_source,
-           p.updated_at AS page_updated_at,
-           ts_rank_cd(${titleVector}, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score
-         FROM pages p
-         JOIN sources s ON s.id = p.source_id
-         WHERE ${titleVector} @@ websearch_to_tsquery('${ftsLang}', $1)
-           ${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY score DESC, p.id ASC
-         LIMIT $2 OFFSET $3
-       )
-       SELECT
-         tp.slug, tp.page_id, tp.title, tp.type, tp.source_id,
-         tp.effective_date, tp.effective_date_source,
+      `SELECT
+         p.slug, p.id as page_id, p.title, p.type, p.source_id,
+         p.effective_date, p.effective_date_source,
          COALESCE(rep.id, 0) as chunk_id,
          COALESCE(rep.chunk_index, 0) as chunk_index,
          COALESCE(rep.chunk_text, '') as chunk_text,
          COALESCE(rep.chunk_source, 'compiled_truth') as chunk_source,
-         tp.score AS score,
-         CASE WHEN tp.page_updated_at < (
-           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = tp.page_id
+         ts_rank_cd(${titleVector}, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+         CASE WHEN p.updated_at < (
+           SELECT MAX(te.created_at) FROM timeline_entries te WHERE te.page_id = p.id
          ) THEN true ELSE false END AS stale
-       FROM top_pages tp
+       FROM pages p
+       JOIN sources s ON s.id = p.source_id
        LEFT JOIN LATERAL (
          SELECT cc.id, cc.chunk_index, cc.chunk_text, cc.chunk_source
          FROM content_chunks cc
-         WHERE cc.page_id = tp.page_id
+         WHERE cc.page_id = p.id
            AND cc.modality = 'text'
            ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
          ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
          LIMIT 1
        ) rep ON true
-       ORDER BY tp.score DESC, tp.page_id ASC`;
+       WHERE ${titleVector} @@ websearch_to_tsquery('${ftsLang}', $1)
+         ${extraFilter} ${hardExcludeClause} ${visibilityClause}
+       ORDER BY score DESC, p.id ASC
+       LIMIT $2 OFFSET $3`;
 
     let { rows } = await this.db.query(titlesSql, params);
     if (rows.length === 0) {
