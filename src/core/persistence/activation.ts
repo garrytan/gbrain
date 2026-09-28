@@ -18,7 +18,7 @@ export interface ActivationReport {
   drift_audit?: { sources: Array<Record<string, unknown>>; complete: boolean; snapshot_only: true };
   legacy_locks?: Awaited<ReturnType<typeof inspectLegacyWriterLocks>>;
 }
-interface SourceRoot { id: string; incarnation: string; root: string | null; connector: boolean; }
+interface SourceRoot { id: string; incarnation: string; root: string | null; connector: boolean; databaseOnly: boolean; }
 const quiescence = () => new OperationError('writer_not_quiesced', 'Managed activation requires all older writers and maintenance jobs to be stopped.',
   WRITER_INSPECTION_HINT);
 
@@ -26,14 +26,18 @@ async function configuredSources(engine: BrainEngine, lock = false): Promise<Sou
   const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; kind: string | null }>(
     `SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id${lock ? ' FOR UPDATE' : ''}`);
   const fallback = await engine.getConfig('sync.repo_path');
-  return sources.map(source => ({ id: source.id, incarnation: source.incarnation, connector: source.kind === 'google' || source.kind === 'github',
-    root: source.local_path || (source.id === 'default' ? fallback : null) }));
+  const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
+  return sources.map(source => {
+    const connector = source.kind === 'google' || source.kind === 'github';
+    return { id: source.id, incarnation: source.incarnation, connector, databaseOnly: !writeThrough && !connector,
+      root: source.local_path || (source.id === 'default' ? fallback : null) };
+  });
 }
 async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hostId: string | null, lock = false): Promise<WorktreeBinding[]> {
   const bindings: WorktreeBinding[] = [];
   for (const source of sources) {
     let binding = await getWorktreeBinding(engine, source.id, hostId);
-    if ((!source.root || source.connector) && !binding) continue;
+    if ((!source.root || source.connector || source.databaseOnly) && !binding) continue;
     if (binding && lock) {
       await engine.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [binding.worktree_id]);
       binding = await getWorktreeBinding(engine, source.id, hostId);
