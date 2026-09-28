@@ -437,7 +437,17 @@ describe('probeLivePgliteHolder', () => {
       }
     }
 
-    test('our own namespace markers unreadable + matching (null) stored markers → still self', () => {
+    // #5481 review F5: reverted the earlier both-unavailable-is-self fallback.
+    // Namespace evidence unreadable on BOTH sides (a restricted /proc that
+    // masks pid_ns/boot_id for a lock this process holds) cannot distinguish
+    // a genuine self-lock from a foreign lock under the SAME restriction, so
+    // it fails CLOSED (still warns) rather than risk a silent misclassification
+    // — matching pglite-lock.ts's own acquisition-time comparability guard,
+    // which likewise requires non-null matching before treating evidence as
+    // usable. This narrows self-detection to environments where namespace
+    // evidence is actually readable; a restricted-/proc doctor process will
+    // still see the original #5481 false positive about its own lock.
+    test('our own namespace markers unreadable + matching (null) stored markers → fails closed, still warns', () => {
       withLinuxPlatform(() => {
         const dataDir = join(home, 'brain.pglite');
         mkdirSync(join(dataDir, '.gbrain-lock'), { recursive: true });
@@ -447,7 +457,7 @@ describe('probeLivePgliteHolder', () => {
           'utf8',
         );
         const holder = probeLivePgliteHolder(dataDir, { readPidNs: () => null, readBootId: () => null });
-        expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: true });
+        expect(holder).toEqual({ pid: process.pid, serve: false, isSelf: false });
       });
     });
 

@@ -58,26 +58,28 @@ export interface LiveHolder {
    * guard `pglite-lock.ts` already applies at lock-acquisition time. Every
    * lock this codebase writes stamps both fields (`pglite-lock.ts`), so a
    * genuine self-lock always has matching evidence when THIS process can
-   * itself read `/proc`. Each marker (`pid_ns`, `boot_id`) must AGREE
-   * exactly (`===`) between the stored value and our own current reading —
-   * which means only two shapes count as agreement: both sides null (no
-   * evidence for that marker on either side, since a self-lock written under
-   * the SAME currently-restricted `/proc` would also have stored null), or
-   * both sides the same non-null string. Any ASYMMETRIC availability (one
-   * side null, the other not) is a disagreement, never a free pass: a live
-   * self-lock written by THIS process, whose readers currently succeed,
-   * would always have stored a matching non-null value, so a stored null
-   * next to our readable value means a DIFFERENT (foreign) environment wrote
-   * it — and a stored value next to our unreadable current value can never
-   * be verified as ours either. Both markers must independently agree; a
-   * single disagreeing marker is never excused by the other's state. This is
-   * a narrower guarantee than a fully
-   * verified cross-host identity check on non-Linux platforms specifically
-   * (a foreign holder reusing this process's pid on a non-Linux host — where
-   * no namespace evidence exists at all — would still read as self); closing
-   * that residual gap would need new cross-platform identity infrastructure
-   * this codebase does not have, out of scope for the doctor false-positive
-   * this field fixes.
+   * itself read `/proc`. On Linux, self requires POSITIVE VERIFIED
+   * agreement on BOTH markers — each of `pid_ns`/`boot_id` must be non-null
+   * on both the stored lock AND our own current reading, and equal — never
+   * an absence-based free pass. This mirrors `pglite-lock.ts`'s own
+   * lock-acquisition comparability guard exactly (it likewise requires
+   * non-null matching before treating evidence as usable, never accepting
+   * "both sides unreadable" as agreement), so a restricted-`/proc`
+   * environment (where our own markers, or the lock's stored ones, are
+   * unreadable) can NEVER verify self and fails CLOSED (still warns) rather
+   * than risk misclassifying a foreign holder under the same restriction as
+   * self. This means a doctor process whose own `/proc` markers are
+   * unreadable will still see the original #5481 false-positive warning
+   * about its own lock in that narrow case; only environments where
+   * namespace evidence is actually readable get the improved
+   * self-detection. This is a narrower guarantee than a fully verified
+   * cross-host identity check on non-Linux platforms specifically (a
+   * foreign holder reusing this process's pid on a non-Linux host — where
+   * no namespace evidence exists at all — would still read as self);
+   * closing that residual gap would need new cross-platform identity
+   * infrastructure this codebase does not have anywhere, including at
+   * `pglite-lock.ts`'s own lock-acquisition path, and is out of scope for
+   * the doctor false-positive this field fixes.
    */
   isSelf: boolean;
 }
@@ -117,20 +119,26 @@ export function probeLivePgliteHolder(
   const lockBootId = typeof raw.boot_id === 'string' ? raw.boot_id : null;
   const ourPidNs = deps.readPidNs();
   const ourBootId = deps.readBootId();
-  // (#5481 review F2/F3/F4) A marker "agrees" only in exactly two cases:
-  // BOTH sides unavailable (no evidence to compare at all — permitted, since
-  // a genuine self-lock written under the SAME currently-restricted `/proc`
-  // would have stored the same unreadable value), or BOTH sides available
-  // AND equal. Any ASYMMETRIC availability (one side null, the other not) is
-  // treated as disagreement, never a free pass: a live self-lock written by
-  // THIS process, whose readers currently succeed, would always have stored
-  // a matching non-null value — a stored null next to our readable value
-  // means the lock was written by a DIFFERENT environment (foreign), and
-  // conversely a stored value next to our unreadable current value can never
-  // be verified as ours. Both markers must independently agree; either
-  // disagreeing forces isSelf to false regardless of the other.
-  const namespaceMatches = process.platform !== 'linux'
-    || (ourPidNs === lockPidNs && ourBootId === lockBootId);
+  // (#5481 review F2/F3/F4/F5) On Linux, self requires POSITIVE VERIFIED
+  // evidence on BOTH markers — each of pid_ns and boot_id must be non-null
+  // on both the stored lock AND our own current reading, and equal. This
+  // mirrors pglite-lock.ts's own lock-acquisition comparability guard
+  // exactly (it likewise requires non-null matching before treating
+  // evidence as usable — see its `comparable` check), rather than an
+  // earlier, looser design here that also accepted "both sides unreadable"
+  // as agreement. That fallback was reverted: it could not distinguish a
+  // restricted-`/proc` SELF lock from a restricted-`/proc` FOREIGN lock (a
+  // different container/host whose own `/proc` is equally masked), so it
+  // failed OPEN exactly where verification is impossible. The doctor now
+  // fails CLOSED in that case — it keeps warning, matching this file's
+  // pre-#5481 behavior, rather than risk silently suppressing a real
+  // collision it cannot actually verify. (This means a doctor process
+  // running with its own `/proc` markers unreadable will still see the
+  // original false-positive warning about its own lock; only environments
+  // where namespace evidence is readable get the improved self-detection.)
+  const verifiedMatch = ourPidNs != null && lockPidNs != null && ourPidNs === lockPidNs
+    && ourBootId != null && lockBootId != null && ourBootId === lockBootId;
+  const namespaceMatches = process.platform !== 'linux' || verifiedMatch;
   const isSelf = pid === process.pid && namespaceMatches;
   return { pid, serve, isSelf };
 }
