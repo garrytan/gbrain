@@ -36,7 +36,7 @@
  *    GBRAIN_DIRECT_DATABASE_URL override, ddl()/bulk() share the read pool.
  */
 
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, endPoolBounded } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';

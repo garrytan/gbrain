@@ -1,4 +1,4 @@
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { applyPostgresForwardReferenceBootstrap } from './postgres-engine/forward-reference-bootstrap.ts';

@@ -13,7 +13,7 @@ import { PersistenceConsumer } from '../../src/core/persistence/consumer.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer, waitForWrite } from '../../src/core/persistence/service.ts';
 import { sha256 } from '../../src/core/persistence/digest.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import postgres from 'postgres';
+import postgres from '#postgres'
 
 const url = process.env.DATABASE_URL;
 describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
@@ -37,10 +37,20 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
     let cancellation: unknown;
     let stopping: Promise<void> | undefined;
     let consumer: PersistenceConsumer;
+    const reserve = engine.sql.reserve.bind(engine.sql);
+    engine.sql.reserve = async (options) => {
+      const owner = await reserve(options);
+      const unsafe = owner.unsafe.bind(owner);
+      owner.unsafe = ((...args: Parameters<typeof owner.unsafe>) => {
+        const pending = unsafe(...args);
+        queueMicrotask(() => { stopping = consumer.stop(); });
+        return pending;
+      }) as typeof owner.unsafe;
+      return owner;
+    };
     const proxy = new Proxy(engine, { get(target, key) {
       if (key === 'executeRaw') return (...args: Parameters<typeof engine.executeRaw>) => {
         const work = target.executeRaw(...args);
-        if (args[2]?.signal) queueMicrotask(() => { stopping = consumer.stop(); });
         return work.catch(error => { cancellation = error; throw error; });
       };
       const value = Reflect.get(target, key);
@@ -51,6 +61,34 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
     try {
       await consumer.tick(); await stopping;
       expect(cancellation).toMatchObject({ code: '57014', message: '57014: canceling statement due to user request' });
+      expect(errors).toEqual([]);
+      expect(consumer.status().last_error).toBeUndefined();
+      expect(await engine.executeRaw('SELECT 42 AS answer')).toEqual([{ answer: 42 }]);
+    } finally { await consumer.stop(); }
+  }), 30000);
+
+  test('stopping during reservation recognizes an earlier abort without reporting a storage failure', () => fixture(async ({ engine }, config) => {
+    await engine.executeRaw('SELECT 1');
+    const errors: unknown[] = [];
+    let cancellation: unknown;
+    let stopping: Promise<void> | undefined;
+    let consumer: PersistenceConsumer;
+    const reserve = engine.sql.reserve.bind(engine.sql);
+    engine.sql.reserve = async (options) => {
+      queueMicrotask(() => { stopping = consumer.stop(); });
+      return reserve(options);
+    };
+    const proxy = new Proxy(engine, { get(target, key) {
+      if (key === 'executeRaw') return (...args: Parameters<typeof engine.executeRaw>) =>
+        target.executeRaw(...args).catch(error => { cancellation = error; throw error; });
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    consumer = new PersistenceConsumer(proxy, { engine: 'postgres' }, async () => { throw new Error('unexpected preparation'); },
+      { hostId: config.hostId, onError: error => errors.push(error) });
+    try {
+      await consumer.tick(); await stopping;
+      expect(cancellation).toMatchObject({ name: 'AbortError' });
       expect(errors).toEqual([]);
       expect(consumer.status().last_error).toBeUndefined();
       expect(await engine.executeRaw('SELECT 42 AS answer')).toEqual([{ answer: 42 }]);

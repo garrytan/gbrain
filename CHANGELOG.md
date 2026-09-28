@@ -44,6 +44,61 @@ recipe is used.
   your selected source. Clear proxy variables for this local-only command before
   using it in a shell configured with an HTTP proxy.
 
+## [0.59.3.0] - 2026-09-28
+
+**A broken worker installation now asks for repair instead of repeatedly interrupting your jobs.**
+
+Background workers check that they and the programs they launch can safely talk to
+the database before taking work. If an installation is missing a required
+capability, processing stops with a repair instruction. Its supervisor stays
+available to report the problem rather than starting the same broken worker
+again. Temporary connection problems still retry normally.
+
+The database driver now ships with the application, so a global installation no
+longer depends on the package manager remembering to apply a separate patch.
+Workers also prefer their own installation when launching jobs, while checking
+any explicitly selected alternative before using it.
+
+If a configuration problem interrupts running work, the worker only returns a job
+to the queue after execution has stopped and its ownership is still valid. When
+that cannot be confirmed, the diagnostic says so: recovery may still consume a
+stall allowance, and side effects may need inspection before retrying. This does
+not impose memory limits on individual jobs or automatically replay failed work.
+
+| Situation | Behavior |
+| --- | --- |
+| Installation cannot safely run jobs | Processing is blocked; repair and explicitly restart the owner. |
+| Database connection is temporarily unavailable | Existing retry and backoff behavior remains active. |
+| Supervisor is alive but not processing | Status reports readiness, startup stage and next retry separately from process liveness. |
+| Shutdown or job release cannot be confirmed | Report the uncertainty; do not claim the job was safely returned. |
+
+### To take advantage of v0.59.3.0
+
+Run `gbrain upgrade`, verify the worker and any `GBRAIN_JOB_CHILD_CLI` override point
+to the intended installation, and restart the affected supervisor or autopilot
+service. Use `gbrain jobs supervisor status --json` or
+`gbrain autopilot --status --json` to inspect `processing_ready` and
+`processing_state`; `processing_stage` and `retry_at` explain a startup wait.
+A live process alone does not establish progress.
+The [worker recovery guide](docs/guides/minions-fix.md) covers each installation
+and service owner. Inspect already failed jobs individually before retrying them.
+An older supervisor keeps running upgraded workers until you restart it, but to roll a
+worker back below v0.59.3.0, stop its v0.59.3.0 owner first; otherwise the owner's
+120-second startup deadline keeps restarting the older worker.
+
+### Itemized changes
+
+- Bundle the cancellation-capable Postgres driver and share its runtime capability
+  check with doctor and startup readiness.
+- Preserve typed configuration failures through database probes and job-child
+  results; distinguish them from temporary connectivity failures.
+- Block both supervisor owners without a restart loop, retaining diagnostics and
+  explicit repair/restart recovery. Keep the existing soft and hard crash budgets.
+- Fence delayed job release on ownership and actual execution settlement; bound
+  shutdown work and report unconfirmed cleanup instead of silently consuming jobs.
+- Validate selected child compatibility, bound handshake output and deadlines,
+  and keep process-group cleanup active after a direct child exits.
+
 ## [0.59.2.0] - 2026-09-28
 
 **When skill optimization gets nothing usable back from the optimizer model, it now says so instead of quietly reporting "no improvement", and every run tells you exactly which models it used and what they cost.**

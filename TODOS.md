@@ -2160,7 +2160,9 @@ checklist. The independent follow-ups below remain open.
 - [ ] **P3 — isolation test-gap follow-ups (pre-landing review).** **What:**
   (a) spawned-CLI negative tests for `jobs run-child` bootstrap guards (PGLite
   → exit 13; missing job-id/env → exit 13) and for `jobs work` with
-  isolation on + an unresolvable child CLI (fail-fast exit 1) — both need a
+  isolation on + an unresolvable child CLI (configuration exit 16; the
+  incompatible-child case is already covered by
+  `test/e2e/worker-readiness-cli.test.ts`) — both need a
   real engine bootstrap so they live in the e2e lane; (b) a behavioral (not
   structural) test driving `withRefreshingLock` with a hung injected
   `handle.refresh` (signal aborted at timeout, no overlapping ticks); (c) a

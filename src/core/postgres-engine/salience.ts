@@ -4,7 +4,7 @@ import { pageReadFilter } from '../search/read-policy-sql.ts';
  * (containment sprint C15). Free functions over a NARROW deps surface —
  * never the whole engine class.
  */
-import type postgres from 'postgres';
+import type postgres from '#postgres'
 
 type PgSql = ReturnType<typeof postgres>;
 

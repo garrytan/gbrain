@@ -21,7 +21,7 @@ describe('buildSpawnInvocation', () => {
     const result = buildSpawnInvocation('/usr/bin/tini', '/bin/gbrain', ['jobs', 'work']);
     expect(result).toEqual({
       cmd: '/usr/bin/tini',
-      args: ['--', '/bin/gbrain', 'jobs', 'work'],
+      args: ['-s', '--', '/bin/gbrain', 'jobs', 'work'],
     });
   });
 
@@ -32,7 +32,7 @@ describe('buildSpawnInvocation', () => {
     });
     expect(buildSpawnInvocation('/usr/bin/tini', '/bin/gbrain', [])).toEqual({
       cmd: '/usr/bin/tini',
-      args: ['--', '/bin/gbrain'],
+      args: ['-s', '--', '/bin/gbrain'],
     });
   });
 });

@@ -11,7 +11,8 @@ bin/
 # Bun --compile temp artifacts. Each build emits a new hash-named .bun-build
 # file in cwd; glob catches all of them.
 *.bun-build
-.gstack/
+.gstack/*
+!.gstack/redact-allowlist
 supabase/.temp/
 .claude/skills/
 # admin/dist/ is the React SPA bundle. CLAUDE.md says it's committed for

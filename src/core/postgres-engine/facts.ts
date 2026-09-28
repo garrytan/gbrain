@@ -4,7 +4,7 @@
  * live postgres.js pool + the engine's cached facts.embedding cast probe.
  * Never the whole engine class.
  */
-import type postgres from 'postgres';
+import type postgres from '#postgres'
 
 type PgSql = ReturnType<typeof postgres>;
 

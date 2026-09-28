@@ -10,7 +10,9 @@ import { composablePostgresTransaction } from './page-state/transactions.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
 import { readRelationalFanout, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
-import postgres from 'postgres';
+import postgres from '#postgres'
+import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
+export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 import type {
   BrainEngine,
   BatchOpts,
@@ -5305,11 +5307,11 @@ export class PostgresEngine implements BrainEngine {
       let owner: postgres.TransactionSql | postgres.ReservedSql = conn as unknown as postgres.TransactionSql;
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
-        reserved = signal && typeof conn.reserve === 'function' ? await conn.reserve({ signal }) : undefined;
+        reserved = signal && typeof conn.reserve === 'function' ? await reserveWithCancellation(opts => conn.reserve(opts), signal) : undefined;
         if (reserved) conn = reserved;
         owner = reserved ?? conn as unknown as postgres.TransactionSql;
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-        if (signal && typeof owner.discard !== 'function') throw new Error('Postgres cancellation requires the pinned driver patch');
+        if (signal && !hasPostgresCancellationCapability(owner)) throw postgresCancellationUnavailable();
         pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], { cancelFence: !!signal });
         return await pending as unknown as T[];
       } finally {

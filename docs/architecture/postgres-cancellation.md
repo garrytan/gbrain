@@ -1,6 +1,6 @@
 # PostgreSQL cancellation ownership
 
-GBrain pins `postgres` to 3.4.9 and applies `patches/postgres@3.4.9.patch` through Bun's `patchedDependencies`. The patch covers the ESM and CommonJS entrypoints and their shared types. Keep both implementations equivalent, and verify a clean frozen-lockfile install after changing the patch. An edited `node_modules` directory is not a distributable fix.
+GBrain ships the exact `postgres` 3.4.9 source with `patches/postgres@3.4.9.patch` already applied under `vendor/postgres`. The package-private `#postgres` import resolves directly to those bytes, so global installs do not depend on Bun applying transitive `patchedDependencies`. The patch covers the ESM, CommonJS and workerd entrypoints and their shared types. Keep the implementations equivalent, run `bash vendor/update-postgres.sh --check`, and verify isolated package and compiled installations after changing the patch. See [driver provenance and update instructions](../../vendor/README.md). An edited `node_modules` directory is not a distributable fix.
 
 ## Dispatch and settlement
 
@@ -29,3 +29,11 @@ Direct PostgreSQL closes the cancellation connection after handling the request.
 `test/e2e/persistence-chaos.test.ts` exercises active, queued, delayed and failed cancellation; transaction siblings; stale ownership; atomic reservation settlement; reconnects; completed cursors; and real socket backpressure in both module formats. Its optional PgBouncer case requires `GBRAIN_PGBOUNCER_URL` and `GBRAIN_PGBOUNCER_DIRECT_URL`, uses a dedicated test database, and verifies another client can reuse the same server backend without receiving a late cancellation.
 
 Keep the response-mapping, actual-settlement and unchanged persistence latency checks alongside these protocol tests. Global `max_pipeline: 1`, serializer fallbacks and blind retries are not substitutes for ownership isolation.
+
+## Worker admission and configuration shutdown
+
+Workers check the actual driver lanes and selected child executable before admitting jobs. Final database/schema checks precede the worker's `ready` event. A supervised worker must publish readiness through its current owner channel; a missing or unwritable channel does not authorize claims. An unconfirmed startup remains subject to the owner's bounded startup timeout and existing transient crash budget, rather than disabling its watchdog indefinitely.
+
+A typed local configuration fault stops admission and starts one bounded drain. The queue releases only active claims whose lock token still matches and whose execution is confirmed stopped, without incrementing attempts or stalls. A completed handler outcome is not process-stop evidence: normal completion can still be recorded, but a failed completion write cannot authorize configuration release while descendants remain live.
+
+For isolated jobs, stop evidence comes from a confirmed no-execution spawn failure or direct-child exit plus supported Linux process-group checks. The bounded `/proc` snapshots cover known owned groups and observed descendants. Failed or unsupported scans, surviving members, unknown tini child groups and observed escapes remain unconfirmed. These checks do not contain arbitrary historical descendants that escaped before observation; other platforms retain lease-expiry fallback rather than claiming equivalent process-tree proof. See [release-unconfirmed recovery](../guides/minions-fix.md#release-unconfirmed).

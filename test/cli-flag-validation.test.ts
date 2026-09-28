@@ -226,6 +226,16 @@ describe('#2185 red-team regressions', () => {
     // the gate must not strip real consumers.
     expect(CLI_FLAG_REGISTRY['backfill']).toContain('--dry-run');
   });
+
+  test('the internal run-child argv builder does not legalise its flags for importers', () => {
+    // autopilot imports job-isolation.ts only to resolve the child CLI; the
+    // module's `jobs run-child --job-id N [--allow-shell-jobs]` literals are
+    // the worker-to-child argv, not autopilot flags.
+    expect(validateCommandFlags('autopilot', ['--status', '--allow-shell-jobs'])).toBe('--allow-shell-jobs');
+    expect(validateCommandFlags('autopilot', ['--status', '--job-id', '1'])).toBe('--job-id');
+    expect(validateCommandFlags('jobs', ['work', '--allow-shell-jobs'])).toBeNull();
+    expect(validateCommandFlags('jobs', ['run-child', '--job-id', '1', '--allow-shell-jobs'])).toBeNull();
+  });
 });
 
 describe('#2185 drift + freshness guards', () => {
