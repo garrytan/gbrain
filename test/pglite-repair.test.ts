@@ -58,7 +58,9 @@ function makeLayout(opts?: { segments?: string[]; postmasterPid?: boolean }): st
   for (const seg of opts?.segments ?? [xlogFileName(1, 3n, SEG_SIZE)]) {
     writeFileSync(join(dir, 'pg_wal', seg), Buffer.alloc(2048, 0xaa));
   }
-  if (opts?.postmasterPid) writeFileSync(join(dir, 'postmaster.pid'), '12345\n');
+  // Above Linux's pid_max, so never a live process: a low literal PID can be
+  // live on a busy test host and flip the stale-pid verdicts under test.
+  if (opts?.postmasterPid) writeFileSync(join(dir, 'postmaster.pid'), '99999999\n');
   return dir;
 }
 

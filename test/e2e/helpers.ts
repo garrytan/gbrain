@@ -129,6 +129,11 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
   // legacy-path performSync classify as first_sync forever. 42P01-tolerant
   // like the TRUNCATE loop above.
   try {
+    // A file that activated managed persistence and exited without
+    // deactivating leaves the writer guard armed, and its sources trigger
+    // rejects the reset below (writer_coordinator_required). Restore the
+    // schema default (disabled) first.
+    await conn.unsafe(`UPDATE persistence_brain SET enabled = false, activated_at = NULL WHERE singleton = 1`);
     await conn.unsafe(`DELETE FROM sources WHERE id <> 'default'`);
     // Only the sync-identity columns: local_path feeds writeSyncAnchor's
     // ownership guard (#3735) and last_commit/last_sync_at feed first_sync
