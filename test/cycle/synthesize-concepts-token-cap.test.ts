@@ -65,9 +65,11 @@ describe('synthesize_concepts wires the cap into the narrative call', () => {
   });
 
   /** Five atoms on one concept clears TIER_T2_MIN, which routes the group through chat(). */
-  const t2Atoms = () =>
+  // `prefix` varies group membership between runs: an unchanged group is not
+  // re-synthesized (member-fingerprint change detection).
+  const t2Atoms = (prefix = 'a') =>
     Array.from({ length: 5 }, (_, i) => ({
-      slug: `atoms/a${i}`,
+      slug: `atoms/${prefix}${i}`,
       concept_refs: ['concepts/x'],
       body: `body ${i}`,
       title: `A${i}`,
@@ -101,7 +103,7 @@ describe('synthesize_concepts wires the cap into the narrative call', () => {
     // pin would otherwise depend on which provider keys the runner has.
     await engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
     const plain: Array<number | undefined> = [];
-    await runPhaseSynthesizeConcepts(engine, { _atoms: t2Atoms(), _chat: capturingChat(plain) });
+    await runPhaseSynthesizeConcepts(engine, { _atoms: t2Atoms('b'), _chat: capturingChat(plain) });
     expect(plain.length).toBeGreaterThan(0);
     expect(new Set(plain)).toEqual(new Set([500]));
   });

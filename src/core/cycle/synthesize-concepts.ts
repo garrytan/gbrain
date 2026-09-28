@@ -19,7 +19,13 @@
 //   5. For T1/T2 groups: Sonnet call to produce a 1-paragraph narrative.
 //      For T3/T4: deterministic stub narrative.
 //   6. Write concept-typed pages with the synthesis mode made explicit.
+//      A group whose member fingerprint matches the page already on disk is
+//      NOT rewritten (no LLM call, no page version, no re-embed) unless it
+//      still carries a template narrative and budget remains to upgrade it.
+//      A budget-exhausted or failed LLM call never replaces an existing
+//      LLM narrative with a template stub.
 
+import { createHash } from 'node:crypto';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -37,6 +43,10 @@ import { serializeMarkdown } from '../markdown.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
+/** Operator override for the per-run LLM spend ceiling; mirrors `cycle.extract_atoms.budget_usd`. */
+export const CONCEPTS_BUDGET_CONFIG_KEY = 'cycle.synthesize_concepts.budget_usd';
+/** Bump to force every concept to re-synthesize once (e.g. after a prompt change). */
+const FINGERPRINT_VERSION = 1;
 // Canonical-miss policy — mirrors skillopt/preflight.ts's lookupPrice:
 // assume Sonnet-tier pricing for models absent from CANONICAL_PRICING.
 // Conservative and non-throwing; keeps the budget gate effective (and
@@ -76,6 +86,84 @@ const DEFAULT_SYNTH_MAX_OUTPUT_TOKENS = 500;
  */
 export function resolveSynthMaxOutputTokens(modelStr: string): number {
   return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_SYNTH_MAX_OUTPUT_TOKENS;
+}
+
+/**
+ * Per-run LLM budget. A configured value (including 0 = template narratives
+ * only) wins; unset or invalid falls back to DEFAULT_BUDGET_USD.
+ */
+export async function resolveConceptsBudgetUsd(engine: BrainEngine): Promise<number> {
+  try {
+    const raw = await engine.getConfig(CONCEPTS_BUDGET_CONFIG_KEY);
+    if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+  } catch {
+    // Config unavailable → default ceiling.
+  }
+  return DEFAULT_BUDGET_USD;
+}
+
+/**
+ * Change-detection key for a concept group: tier plus the sorted member atom
+ * slugs (duplicates kept, so it tracks mention_count exactly). Stamped into
+ * the page frontmatter as `member_fingerprint`.
+ */
+export function conceptMemberFingerprint(group: { tier: string; atomSlugs: string[] }): string {
+  const h = createHash('sha256');
+  h.update(`v${FINGERPRINT_VERSION}\n${group.tier}\n`);
+  for (const slug of [...group.atomSlugs].sort()) h.update(`${slug}\n`);
+  return h.digest('hex').slice(0, 32);
+}
+
+interface ExistingConceptState {
+  fingerprint: string | null;
+  mode: string | null;
+}
+
+/**
+ * One query for the fingerprint + synthesis mode of every concept page in the
+ * source. Fail-open: an unreadable map means "everything changed", which is
+ * the pre-change-detection behavior.
+ */
+async function loadExistingConceptState(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<Map<string, ExistingConceptState>> {
+  const state = new Map<string, ExistingConceptState>();
+  try {
+    const rows = await engine.executeRaw<{ slug: string; fingerprint: string | null; mode: string | null }>(
+      `SELECT slug,
+              frontmatter->>'member_fingerprint' AS fingerprint,
+              frontmatter->>'synthesis_mode' AS mode
+         FROM pages
+        WHERE source_id = $1
+          AND type = 'concept'
+          AND deleted_at IS NULL
+          AND slug LIKE 'concepts/%'`,
+      [sourceId],
+    );
+    for (const r of rows) state.set(r.slug, { fingerprint: r.fingerprint, mode: r.mode });
+  } catch {
+    // No pages table / query failed — treat every group as changed.
+  }
+  return state;
+}
+
+/** Live read of one concept page's synthesis mode. Fail-closed to "not LLM" (the pre-guard behavior). */
+async function pageHoldsLlmNarrative(engine: BrainEngine, slug: string, sourceId: string): Promise<boolean> {
+  try {
+    const rows = await engine.executeRaw<{ mode: string | null }>(
+      `SELECT frontmatter->>'synthesis_mode' AS mode
+         FROM pages
+        WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`,
+      [sourceId, slug],
+    );
+    return rows[0]?.mode === 'llm';
+  } catch {
+    return false;
+  }
 }
 
 export interface SynthesizeConceptsOpts {
@@ -225,8 +313,12 @@ export async function runPhaseSynthesizeConcepts(
 
   // 4. Per group: synthesize narrative (LLM for T1/T2, deterministic for T3+)
   let conceptsWritten = 0;
+  let conceptsUnchanged = 0;
+  let conceptsKeptExisting = 0;
+  let groupsProcessed = 0;
   let estimatedSpendUsd = 0;
-  const budgetCap = DEFAULT_BUDGET_USD;
+  const budgetCap = await resolveConceptsBudgetUsd(engine);
+  const existingState = await loadExistingConceptState(engine, opts.sourceId ?? 'default');
   const failures: Array<{ concept: string; error: string }> = [];
   // #4589 provenance-link problems. Kept OUT of `failures`: that list means
   // "the LLM call failed → template fallback" downstream (summary wording,
@@ -277,9 +369,28 @@ export async function runPhaseSynthesizeConcepts(
   const synthMaxOutputTokens = resolveSynthMaxOutputTokens(synthModel);
   for (const group of atomGroups) {
     tierCounts[group.tier]++;
+    const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
+    const conceptSlug = `concepts/${title}`;
+    const fingerprint = conceptMemberFingerprint(group);
+    const existing = existingState.get(conceptSlug);
+    const unchanged = existing?.fingerprint === fingerprint;
+    const existingIsLlm = existing?.mode === 'llm';
+    const llmTier = group.tier === 'T1' || group.tier === 'T2';
+
+    // Change detection. An unchanged group is revisited only to upgrade a
+    // template narrative to an LLM one while budget remains; otherwise the
+    // page on disk is already exactly what this run would write.
+    if (unchanged && (!llmTier || existingIsLlm || estimatedSpendUsd >= budgetCap)) {
+      conceptsUnchanged++;
+      groupsProcessed++;
+      opts.progress?.tick(1, `${groupsProcessed} concepts`);
+      await maybeYield();
+      continue;
+    }
+
     let narrative: string;
     let synthesisMode: ConceptSynthesisMode;
-    if (group.tier === 'T1' || group.tier === 'T2') {
+    if (llmTier) {
       if (estimatedSpendUsd >= budgetCap) {
         narrative = deterministicNarrative(group);
         synthesisMode = 'budget_fallback';
@@ -352,32 +463,54 @@ export async function runPhaseSynthesizeConcepts(
       narrative = deterministicNarrative(group);
       synthesisMode = 'deterministic_tier';
     }
-    synthesisModeCounts[synthesisMode]++;
 
-    if (!opts.dryRun) {
-      const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
-      // #2163: serialize to markdown and import via the canonical pipeline so
-      // the page is chunked (+ embedded when a provider is configured) —
-      // mirrors put_page's isAvailable('embedding') → noEmbed gate.
-      const md = serializeMarkdown(
-        {
-          tier: group.tier,
-          mention_count: group.atomTitles.length,
-          composite_score: group.atomTitles.length,
-          synthesis_mode: synthesisMode,
-          synthesized_at: new Date().toISOString(),
-          synthesized_by: 'synthesize_concepts-v0.41',
-        },
-        narrative,
-        '',
-        { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
-      );
-      const conceptSlug = `concepts/${title}`;
-      await importFromContent(engine, conceptSlug, md, {
-        noEmbed: !isAvailable('embedding'),
-        // #4416: target the cycle's resolved source, not the 'default' literal.
-        sourceId: opts.sourceId,
-      });
+    // Never downgrade: a template narrative (budget or error fallback) does
+    // not replace an existing LLM narrative, and a failed upgrade of an
+    // unchanged template page has nothing new to write. The fingerprint is
+    // left as-is, so the group is retried on the next run.
+    const templateFallback = synthesisMode === 'budget_fallback' || synthesisMode === 'error_fallback';
+    let keepExisting = templateFallback && (existingIsLlm || unchanged);
+    // The state map is a run-start snapshot. Overlapping runs (a nightly
+    // `dream` alongside autopilot maintenance) can upgrade this page after
+    // it was taken, so re-read the live mode before writing a template over it.
+    if (templateFallback && !keepExisting && existing && !opts.dryRun) {
+      keepExisting = await pageHoldsLlmNarrative(engine, conceptSlug, opts.sourceId ?? 'default');
+    }
+
+    if (keepExisting) {
+      conceptsKeptExisting++;
+    } else {
+      synthesisModeCounts[synthesisMode]++;
+      if (!opts.dryRun) {
+        // #2163: serialize to markdown and import via the canonical pipeline so
+        // the page is chunked (+ embedded when a provider is configured) —
+        // mirrors put_page's isAvailable('embedding') → noEmbed gate.
+        const md = serializeMarkdown(
+          {
+            tier: group.tier,
+            mention_count: group.atomTitles.length,
+            composite_score: group.atomTitles.length,
+            synthesis_mode: synthesisMode,
+            member_fingerprint: fingerprint,
+            synthesized_at: new Date().toISOString(),
+            synthesized_by: 'synthesize_concepts-v0.41',
+          },
+          narrative,
+          '',
+          { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
+        );
+        await importFromContent(engine, conceptSlug, md, {
+          noEmbed: !isAvailable('embedding'),
+          // #4416: target the cycle's resolved source, not the 'default' literal.
+          sourceId: opts.sourceId,
+        });
+      }
+      conceptsWritten++;
+    }
+
+    // Membership changed (or the page predates fingerprints): bank edges for
+    // the current members even when the narrative was kept.
+    if (!opts.dryRun && !unchanged) {
       // #4589: bank concept<->member-atom provenance edges. The prompt forbids
       // enumerating atoms in the body and no frontmatter field maps to a link
       // verb, so without this every concept page lands with zero edges (graph
@@ -410,9 +543,9 @@ export async function runPhaseSynthesizeConcepts(
         console.error(`[synthesize_concepts] provenance links failed for ${conceptSlug} (non-fatal): ${msg}`);
       }
     }
-    conceptsWritten++;
+    groupsProcessed++;
     // v0.41.19.0 (T4): one tick per concept group with running count.
-    opts.progress?.tick(1, `${conceptsWritten} concepts`);
+    opts.progress?.tick(1, `${groupsProcessed} concepts`);
 
     // v0.41.19.0 (T3): replaced bare per-iteration fire with throttled
     // helper. Same hook, same cycle-lock refresh effect, just at the
@@ -464,10 +597,14 @@ export async function runPhaseSynthesizeConcepts(
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
+      (conceptsUnchanged > 0 ? ` (${conceptsUnchanged} unchanged)` : '') +
+      (conceptsKeptExisting > 0 ? ` (${conceptsKeptExisting} kept existing narrative)` : '') +
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : ''),
     details: {
       concepts_written: conceptsWritten,
+      concepts_unchanged: conceptsUnchanged,
+      concepts_kept_existing: conceptsKeptExisting,
       tier_counts: tierCounts,
       synthesis_mode_counts: synthesisModeCounts,
       groups_found: atomGroups.length,
