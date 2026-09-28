@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.59.8.1] - 2026-09-28
+## [0.59.10.1] - 2026-09-28
 
 **`gbrain doctor` stopped warning about the lock doctor itself is holding.** `doctor` opens the brain's database to run its checks, and briefly holds the same PGLite lock file that a live `gbrain serve` process holds while it's running. One of doctor's own checks looks at that lock and warns whenever the holder isn't a `serve` process — so on a machine where you'd stopped `serve` and just ran `gbrain doctor`, it reported "a non-serve process holds the lock and hook IPC will fail" about itself, describing a collision that didn't exist.
 
@@ -18,7 +18,7 @@ Now the check only warns about a genuinely different process holding the lock. D
 
 **Say to your agent:** *"Run gbrain doctor and check whether the PGLite lock warning still shows up when serve is stopped"* — your agent runs `gbrain doctor`.
 
-## To take advantage of v0.59.8.1
+## To take advantage of v0.59.10.1
 
 Upgrade, then re-run doctor with serve stopped and confirm the warning is gone:
 
@@ -32,6 +32,103 @@ gbrain doctor
 - `src/core/bootstrap/uninstall.ts`: `probeLivePgliteHolder` now returns a namespace-aware `isSelf` field on `LiveHolder`. On Linux, it compares the lock's stored `pid_ns`/`boot_id` evidence against the running process's own via `pglite-lock.ts`'s exported readers, requiring both to be readable and matching before trusting a pid match — a pid alone (which a shared-mount container could coincidentally reuse) is never sufficient there, and unreadable evidence on either side fails closed (still warns). Non-Linux platforms have no PID namespaces, so pid equality alone decides there, matching `pglite-lock.ts`'s own unmodified lock-acquisition trust model. A pid+namespace match alone also does not decide: a lock whose `acquired_at` predates this process's own start time cannot be ours (we couldn't have acquired it before we existed) regardless of matching evidence, catching a stale legacy lock left behind by a dead process whose pid was later recycled.
 - `src/commands/doctor/bootstrap-checks.ts`: the `bootstrap_serve_lock` check now skips a lock holder only when `isSelf` is true, instead of treating any lock holder sharing the doctor's numeric pid as self.
 - Closes #5481.
+
+## [0.59.10.0] - 2026-09-28
+
+**Memory maintenance preserves what it cannot safely rebuild and tells you what remains unfinished.**
+
+Changing how your brain searches should not erase information it cannot recreate.
+GBrain now checks that saved material can be rebuilt before replacing its search
+data. Archived material stays untouched. If something blocks the work, the command
+explains what needs attention instead of reporting success with unfinished work.
+Retries also remember the spending already authorized, including requests whose
+outcome is uncertain after an interruption.
+
+Forgetting one fact no longer sends every page in its source through a rewrite.
+Only the affected pages are updated, with unrelated content, search data and local
+changes preserved. Interrupted work keeps its recorded intent and resumes within
+the same boundaries.
+
+Exports now describe one consistent point in time. They include all selected pages
+within the documented resource limits, refuse conflicting names and occupied
+output paths, and leave an explicit incomplete marker if publication fails.
+Use a fresh destination for another export. Exported Markdown is still not a full
+database backup.
+
+Gmail imports distinguish attachments present, inspected with none found, not
+inspected, and incompletely inspected. Unavailable messages and threads are
+reported separately. An optional historical repair inspects metadata without
+downloading attachments or replacing your edited message text. It does not mean
+the attachments have been read or indexed.
+
+| Operation | What changes |
+|---|---|
+| Embedding migration | Saved facts participate in repair and completion checks; blocked archived work is reported before spending. |
+| Forgetting | Publication and retry work stay limited to the affected pages. |
+| Export | Conflicts fail before output, and interruption cannot look like a complete export. |
+| Gmail repair | Source-scoped, bounded metadata inspection preserves edits and withdrawals. |
+| MCP search | Provider timeouts remain distinguishable from genuine misses; source-binding warnings do not widen access. |
+
+Older fact vectors with unknown model identity are not treated as compatible
+merely because their dimensions match. Repair is explicit, not an automatic paid
+side effect of upgrading. The reported Windows/Hermes clean-miss issue remains
+unresolved; these diagnostics are not a claimed fix for that environment.
+
+## To take advantage of v0.59.10.0
+
+Stop old writers and verify an engine-appropriate full backup before upgrading.
+Do not run mixed old and new workers during migration. Follow
+[the upgrade guide](skills/migrations/v0.59.10.0.md); Markdown export is not a backup
+substitute.
+
+If the automatic upgrade did not finish its schema work, run
+`gbrain apply-migrations --yes --no-autopilot-install` only after those precautions.
+Inspect `gbrain migrate embeddings --status` and preview a chosen target with
+`--dry-run` before approving any paid repair. New migrations require an explicit
+finite `--max-cost-usd` total. Retained-vector refusals require
+the supported recovery described in [embedding migration](docs/guides/embedding-migration.md),
+not an override or an automatic archive restore.
+
+`forget` can now refuse with `withdrawal_capacity` before changing memory when
+discovery exceeds its safety limits: 12,000 source pages, 40,000 chunks, 40,000
+facts, 64 MiB of combined text or 256 affected pages. Additional manifest,
+per-batch and scan-time limits apply. Follow
+[withdrawal recovery](docs/guides/concurrent-writes.md#withdrawal-recovery)
+for investigation; there is no unsafe override or unchanged-retry workaround.
+
+### Itemized changes
+
+- **Embedding safety:** prepare eligible projections before invalidation, retain
+  protected archived/deleted data, preserve source and lease fences, and verify
+  fresh page/fact convergence before completion. Schema v166 records fact-vector
+  model and exact-text identity; incompatible or unknown generations are withheld
+  from semantic comparison. Paid migration attempts require durable bounded
+  authorization, including retries and verification calls.
+- **Migration replay:** retain existing fact and query-cache vector types and
+  widths when rebuilding supported indexes, instead of assuming the current
+  extension's preferred type. Malformed existing columns refuse without
+  rewriting stored data.
+- **Withdrawal safety:** discover exact affected pages before mutation and
+  persist bounded targets atomically with withdrawal intent. Legacy effect
+  recovery preserves unrelated pages and genuine conflicts.
+- **Export safety:** use a coherent snapshot, bounded staging, global path
+  preflight and native no-replace publication. Existing files and unrelated
+  destination content are never silently overwritten.
+- **Attachment visibility:** retain bounded MIME inspection receipts and expose
+  `gbrain google attachments backfill --source <id>` for preview. Explicit
+  `--yes` authorizes a bounded metadata-only batch on an existing managed source.
+  Traversal completion is distinct from complete inspection.
+- **Search diagnostics:** preserve timeout classification through wrapped
+  provider errors and warn about unresolved stdio source binding without
+  changing grants or revealing private matches.
+
+### For contributors
+
+Recovery coverage runs in separate PGLite and PostgreSQL lanes without increasing
+timeouts. Fixture provenance is explicit, temporary Git repositories do not
+depend on the host identity, and the MCP transport matrix participates in
+diff-aware test selection. Release instructions now default to patch numbering
+and resolve collisions without an approval prompt.
 
 ## [0.59.8.0] - 2026-09-28
 

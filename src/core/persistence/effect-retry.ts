@@ -10,6 +10,7 @@ import { guardEffectSource } from './effect-recovery.ts';
 import { assertEmbeddingEffectEnabled, readEmbeddingEffectProjection, selectedEffectPage } from './effects.ts';
 import type { PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
+import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targets.ts';
 
 async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
   const rows = await engine.executeRaw<{ key: string; value: string }>(`SELECT key,value FROM config
@@ -56,20 +57,26 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
   return engine.transaction(async tx => {
     const [selected] = await tx.executeRaw<PersistenceEffect>("SELECT * FROM persistence_effects WHERE request_id=$1::uuid AND kind='embedding'", [request.id]);
     if (!selected) throw new OperationError('invalid_params', 'The embedding obligation is unavailable.');
+    if (selected.data.source_scan && selected.data.version === undefined) {
+      if (selected.worktree_id) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [selected.worktree_id]);
+      await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+    }
     await guardEffectSource(tx, selected, hostId);
     await authorizeStoredRequest(tx, request, true);
     const authority = await submissionAuthority({ engine: tx, remote: false, sourceId } as OperationContext,
       request.operation, sourceId, request.source_incarnation, request.slug);
     await authorizeWrite(tx, authority, request.operation, request.slug, true);
     if (request.state !== 'committed') throw new OperationError('write_pending', 'Only committed canonical requests have retryable embedding obligations.');
-    const [effect] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
-    if (!effect || effect.source_id !== sourceId || effect.source_incarnation !== request.source_incarnation || effect.recovery) {
+    const [stored] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
+    if (!stored || stored.source_id !== sourceId || stored.source_incarnation !== request.source_incarnation || stored.recovery) {
       throw new OperationError('source_changed', 'The effect source or recovery state changed.');
     }
+    const effect = await upgradeWithdrawalEffect(tx, stored, hostId, false);
     const snapshot = await selectedEffectPage(tx, effect);
-    const scanComplete = effect.data.source_scan === true && !snapshot;
-    if (!scanComplete && (!snapshot || snapshot.page.deleted_at || !effect.data.source_scan &&
-      (snapshot.revision !== effect.revision || snapshot.page.id !== effect.data.page_id))) {
+    const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
+    const scanComplete = scanning && !snapshot;
+    if (!scanComplete && (!snapshot || !scanning &&
+      (snapshot.page.deleted_at || snapshot.revision !== effect.revision || snapshot.page.id !== effect.data.page_id))) {
       throw new OperationError('revision_conflict', 'The original embedding obligation is superseded; inspect the current page instead.');
     }
     if (snapshot) {
@@ -87,8 +94,8 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     if (effect.execution_token !== null) throw new OperationError('write_claim_lost', 'A failed effect still has an execution claim; inspect it before retrying.');
     const signature = policy === 'mounted_database' && !scanComplete ? await mountedEmbeddingSignature(tx) : configuredSignature;
     if (!signature && !scanComplete) return { ...receipt, state: 'failed', action: 'blocked', reason: 'embedding_unconfigured', next_action: 'Configure embeddings, then inspect this request again.' };
-    const pending = scanComplete ? [] : (await readEmbeddingEffectProjection(tx, effect, snapshot!, hostId, signature!)).pending;
-    const complete = scanComplete || pending.length === 0 && !effect.data.source_scan;
+    const pending = scanComplete || snapshot?.page.deleted_at ? [] : (await readEmbeddingEffectProjection(tx, effect, snapshot!, hostId, signature!)).pending;
+    const complete = scanComplete || pending.length === 0 && !scanning;
     if (!complete) {
       await tx.executeRaw("SELECT key FROM config WHERE key='embedding_disabled' FOR SHARE");
       try { await assertEmbeddingEffectEnabled(tx, config); }
@@ -103,11 +110,11 @@ export async function retryEmbeddingEffect(engine: BrainEngine, sourceId: string
     if (dryRun) return { ...receipt, state: 'failed', action: complete ? 'would_reconcile' : 'would_retry',
       pending_chunks: pending.length, next_action: 'Run the same command without --dry-run to approve this bounded action.' };
     const [updated] = await tx.executeRaw<{ state: string }>(`UPDATE persistence_effects SET state=$4,
-      data=CASE WHEN $4='queued' THEN data||jsonb_build_object('embedding_attempt_base',attempts,'embedding_retry_base',attempts) ELSE data END,
+      data=CASE WHEN $4='queued' THEN $5::text::jsonb||jsonb_build_object('embedding_attempt_base',attempts,'embedding_retry_base',attempts) ELSE $5::text::jsonb END,
       error_code=NULL,claim_expires_at=NULL,next_attempt_at=now(),updated_at=now(),
       outcome=CASE WHEN $4='committed' THEN '{"embedding":"reconciled"}'::jsonb ELSE NULL END
       WHERE id=$1 AND state='failed' AND execution_token IS NULL AND recovery IS NULL AND attempts=$2 AND source_incarnation=$3::uuid RETURNING state`,
-    [effect.id, effect.attempts, effect.source_incarnation, complete ? 'committed' : 'queued']);
+    [effect.id, effect.attempts, effect.source_incarnation, complete ? 'committed' : 'queued', JSON.stringify(effect.data)]);
     if (!updated) throw new OperationError('write_claim_lost', 'The embedding obligation changed during retry approval.');
     return { ...receipt, state: updated.state, action: complete ? 'reconciled' : 'retry_queued', pending_chunks: pending.length,
       next_action: complete ? 'The existing vectors satisfy this obligation; no provider work was scheduled.' : 'The resident owner may spend up to five attempts only when its selected file configuration and the database policy permit embedding, under existing provider and job budgets. Repeating this command does not renew that allowance.' };

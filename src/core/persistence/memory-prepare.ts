@@ -37,12 +37,15 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const observedRevision = snapshot?.revision ?? null;
   await assertFactNotWithdrawn(engine, row.source_id, input);
   signal?.throwIfAborted();
-  const { embedding, degraded } = await prepareFactEmbedding(input.fact, signal);
+  const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
+  const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
+  const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal);
   signal?.throwIfAborted();
-  const decision = await decideSingleFact(engine, row.source_id, input, embedding);
+  const decision = await decideSingleFact(engine, row.source_id, input, embedding, embedding_model);
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input);
-    const current = await decideSingleFact(tx, row.source_id, input, embedding);
+    if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict();
+    const current = await decideSingleFact(tx, row.source_id, input, embedding, embedding_model);
     if (candidateState(current) !== candidateState(decision)) conflict();
   };
   if (decision.status === 'duplicate') {
@@ -52,7 +55,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validUntil = p.valid_until ? new Date(String(p.valid_until)) : null;
   const validFrom = new Date(String(p.valid_from));
   const fact: NewFact = { ...input, source: String(p.provenance).trim(), valid_from: validFrom, valid_until: validUntil,
-    confidence: 1, embedding };
+    confidence: 1, embedding, embedding_model };
   let page: PreparedMutation | undefined;
   let rowNum: number | undefined;
   if (p.fence === true && snapshot) {

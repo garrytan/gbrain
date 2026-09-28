@@ -80,6 +80,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
       await authorizeStoredRequest(tx, row, true);
       assertReconcilePins(artifact.preconditions, (await readReconcileState(tx, row.source_id, row.slug, artifact.preconditions.assessment_at)).pins);
       verifyReconcileBackup(reference, artifact);
+      await ready.validate(tx);
     },
     apply: async tx => {
       await ready.apply(tx);

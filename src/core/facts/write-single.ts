@@ -82,7 +82,7 @@ export async function writeSingleFact(
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
-  const { isAvailable, embedOne } = await import('../ai/gateway.ts');
+  const { isAvailable, embedOne, getEmbeddingModel } = await import('../ai/gateway.ts');
 
   const factText = input.fact.trim();
   const kind = input.kind ?? 'fact';
@@ -112,10 +112,12 @@ export async function writeSingleFact(
   // Embedding (NOT an LLM call): powers dedup + downstream recall. Fail-soft —
   // a missing/failing provider degrades dedup, never the write.
   let embedding: Float32Array | null = null;
+  let embeddingModel: string | null = null;
   let degradedDedup = false;
   if (isAvailable('embedding')) {
     try {
-      embedding = await embedOne(factText);
+      embeddingModel = getEmbeddingModel();
+      embedding = await embedOne(factText, { embeddingModel, inputType: 'document' });
     } catch {
       degradedDedup = true;
     }
@@ -128,6 +130,7 @@ export async function writeSingleFact(
   if (resolvedSlug && embedding) {
     const candidates = await engine.findCandidateDuplicates(sourceId, resolvedSlug, factText, {
       embedding,
+      embeddingModel,
       k: DEDUP_CANDIDATE_LIMIT,
     });
     let top: (typeof candidates)[number] | null = null;
@@ -166,6 +169,7 @@ export async function writeSingleFact(
     confidence: input.confidence ?? 1.0,
     valid_until: validUntil,
     embedding,
+    embedding_model: embedding ? embeddingModel : null,
   };
 
   // Fence-first write (markdown durability — same policy as the pipeline):
@@ -191,6 +195,7 @@ export async function writeSingleFact(
           validFrom: new Date(),
           validUntil,
           embedding,
+          embedding_model: embedding ? embeddingModel : null,
           sessionId: input.sessionId ?? null,
         },
       ],

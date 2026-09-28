@@ -72,6 +72,9 @@ const probeRows = await conn<{
   sources_archive_expires_at_exists: boolean;
   dream_verdicts_exists: boolean;
   dream_verdicts_expires_at_exists: boolean;
+  facts_exists: boolean;
+  facts_embedding_model_exists: boolean;
+  facts_embedded_text_hash_exists: boolean;
 }[]>`
   SELECT
     EXISTS (SELECT 1 FROM information_schema.tables
@@ -184,7 +187,13 @@ const probeRows = await conn<{
     EXISTS (SELECT 1 FROM information_schema.tables
             WHERE table_schema = current_schema() AND table_name = 'dream_verdicts') AS dream_verdicts_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'dream_verdicts' AND column_name = 'expires_at') AS dream_verdicts_expires_at_exists
+            WHERE table_schema = current_schema() AND table_name = 'dream_verdicts' AND column_name = 'expires_at') AS dream_verdicts_expires_at_exists,
+    EXISTS (SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'facts') AS facts_exists,
+    EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'facts' AND column_name = 'embedding_model') AS facts_embedding_model_exists,
+    EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'facts' AND column_name = 'embedded_text_hash') AS facts_embedded_text_hash_exists
 `;
 const probe = probeRows[0]!;
 
@@ -329,6 +338,8 @@ const needsMinionJobsAuthority = probeCr.minion_jobs_exists === true
 // as v121/v7; PGLite is unaffected (its blob carries no dream_verdicts).
 const needsDreamVerdictsExpiresAt = probe.dream_verdicts_exists
   && !probe.dream_verdicts_expires_at_exists;
+const needsFactEmbeddingIdentity = probe.facts_exists
+  && (!probe.facts_embedding_model_exists || !probe.facts_embedded_text_hash_exists);
 
 if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
     && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
@@ -344,9 +355,16 @@ if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
     && !needsTimelineEventPageId
     && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey
     && !needsMinionJobsPrivateQueue && !needsMinionJobsAuthority
-    && !needsDreamVerdictsExpiresAt) return;
+    && !needsDreamVerdictsExpiresAt && !needsFactEmbeddingIdentity) return;
 
 process.stderr.write('  Schema forward-reference gap detected, applying bootstrap\n');
+
+if (needsFactEmbeddingIdentity) {
+  await conn.unsafe(`
+    ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedding_model TEXT;
+    ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedded_text_hash TEXT;
+  `);
+}
 
 if (needsPagesBootstrap) {
   // Mirror schema-embedded.ts's `sources` shape so the subsequent

@@ -2189,9 +2189,7 @@ export async function buildChecks(
           } catch { /* table may be missing or fresh; treat as empty */ }
 
           if (totalChunks > 0) {
-            const fix = embeddedCount === 0
-              ? `No embeddings yet — drop the empty schema and re-init at the right dim:\n        gbrain init --force --pglite --embedding-model ${configuredModel} --embedding-dimensions ${configuredDims}`
-              : `Non-empty brain (${embeddedCount} embedded chunks). Migrate cleanly:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims}`;
+            const fix = `Existing brain (${totalChunks} chunks, ${embeddedCount} embedded). Keep a verified database backup and preview the brain-wide migration:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims} --dry-run\n      After reviewing the plan, replace --dry-run with --yes --max-cost-usd <approved-total>. Missing vectors do not mean the brain is empty. See docs/guides/embedding-migration.md#recovery.`;
 
             checks.push({
               name: 'embedding_provider',
@@ -2244,7 +2242,7 @@ export async function buildChecks(
         const { readContentChunksEmbeddingDim } = await import('../core/embedding-dim-check.ts');
         const colDim = await readContentChunksEmbeddingDim(engine);
         if (colDim.exists && colDim.dims !== null && colDim.dims !== actualDims) {
-          issues.push(`DB dimension mismatch: column is vector(${colDim.dims}) but provider returns ${actualDims}-dim. See docs/embedding-migrations.md for the manual ALTER recipe.`);
+          issues.push(`DB dimension mismatch: column is vector(${colDim.dims}) but provider returns ${actualDims}-dim. See docs/embedding-migrations.md for a verified backup, migration preview and explicitly authorized repair.`);
         }
       } catch { /* column or table missing — fresh brain, fine */ }
 

@@ -65,21 +65,51 @@ function registryWriteScenario(name: string, getEngine: () => BrainEngine) {
         for (const guarded of [false, true]) {
           for (const includeNullSignature of [false, true]) {
             await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: '# resumed' });
-            await engine.upsertChunks(slug, [0, 1].map((i) => ({
-              chunk_index: i, chunk_text: `resumed chunk ${i}`, chunk_source: 'compiled_truth',
+            const fixture = [0, 1].map((i) => ({
+              chunk_index: i, chunk_text: `resumed chunk ${i}`, chunk_source: 'compiled_truth' as const,
               embedding: VEC8, model: i === 0 ? 'voyage:voyage-3-large' : 'foreign:model',
-            })));
+            }));
+            if (guarded) await installFixtureChunks(engine, slug, fixture);
+            else await engine.upsertChunks(slug, fixture);
             if (!includeNullSignature) await engine.setPageEmbeddingSignature(slug, { signature: 'old:model:8' });
             const opts = { signature, includeNullSignature };
             const invalidated = guarded
               ? await invalidateStaleSignatureEmbeddingsGuarded(engine, opts)
               : await engine.invalidateStaleSignatureEmbeddings(opts);
             expect(invalidated).toBe(1);
-            // Inspect the raw write-side state before a retrieval projection is sealed.
             const chunks = await engine.getChunks(slug, { includeUnsealed: true });
             expect(chunks.map((chunk) => chunk.embedding_is_null)).toEqual([false, true]);
             await engine.deletePage(slug);
           }
+        }
+      } finally {
+        await engine.deletePage(slug);
+        await engine.setConfig('search_embedding_column', 'embedding_test8');
+      }
+    });
+    test(`${name}: guarded invalidation preserves unsealed ${column} registry chunks`, async () => {
+      const engine = getEngine();
+      const slug = `docs/registry-unsealed-${column}`;
+      await engine.setConfig('embedding_columns', REGISTRY_JSON);
+      await engine.setConfig('search_embedding_column', column);
+      try {
+        for (const includeNullSignature of [false, true]) {
+          await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: '# unsealed' });
+          await engine.upsertChunks(slug, [{ chunk_index: 0, chunk_text: 'Synthetic unsealed registry chunk',
+            chunk_source: 'compiled_truth', embedding: VEC8, model: 'foreign:model' }]);
+          if (!includeNullSignature) await engine.setPageEmbeddingSignature(slug, { signature: 'old:model:8' });
+          const snapshot = () => engine.executeRaw<{ page: Record<string, unknown>; chunk: Record<string, unknown> }>(`SELECT
+            to_jsonb(p) AS page,to_jsonb(cc) AS chunk FROM pages p JOIN content_chunks cc ON cc.page_id=p.id
+            WHERE p.slug=$1 AND p.source_id='default' ORDER BY cc.chunk_index`, [slug]);
+          const before = await snapshot();
+          expect(before).toHaveLength(1);
+          expect(before[0].page.text_projection_revision).toBeNull();
+          expect(before[0].chunk[column]).not.toBeNull();
+          expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, {
+            signature: 'voyage:voyage-3-large:8', includeNullSignature,
+          })).toBe(0);
+          expect(await snapshot()).toEqual(before);
+          await engine.deletePage(slug);
         }
       } finally {
         await engine.deletePage(slug);
@@ -315,6 +345,8 @@ function registryStaleScenario(name: string, getEngine: () => BrainEngine) {
 
   test(`${name}: signature invalidation NULLs the registry column (guarded + engine method)`, async () => {
     const engine = getEngine();
+    await installFixtureChunks(engine, SLUG, [{ chunk_index: 0, chunk_text: 'stale probe v2',
+      chunk_source: 'compiled_truth', embedding: VEC8_B, model: 'voyage:voyage-3-large' }]);
     // Guarded helper (the migration/embed entry point).
     await engine.setPageEmbeddingSignature(SLUG, { signature: 'sig-old' });
     const n = await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature: 'sig-new' });

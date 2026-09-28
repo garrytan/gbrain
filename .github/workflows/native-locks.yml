@@ -89,6 +89,8 @@ jobs:
           bun --no-env-file test --timeout=180000 test/persistence-git-publication.test.ts || status=1
           bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts || status=1
           bun --no-env-file test --timeout=180000 test/backup-portability-native.serial.test.ts || status=1
+          bun --no-env-file test --timeout=180000 test/export-publication-native.serial.test.ts || status=1
+          bun --no-env-file test --timeout=180000 test/native-export-publication.test.ts || status=1
           exit "$status"
       - name: Build the published CLI platforms and verify persistent writes
         if: matrix.target == 'linux-x64-glibc' || matrix.target == 'darwin-arm64'
@@ -204,5 +206,7 @@ jobs:
             bun install --frozen-lockfile --ignore-scripts
             bun scripts/native/verify.ts
             bun test --timeout=60000 test/native-lock.test.ts test/pglite-lock.test.ts test/local-ipc-path.test.ts
+            bun --no-env-file test --timeout=180000 test/native-export-publication.test.ts
+            bun --no-env-file test --timeout=180000 test/export-publication-native.serial.test.ts
             bun scripts/native/compiled-smoke.ts
           '

@@ -22,6 +22,7 @@ import { CredentialError } from '../creds/errors.ts';
 import type { GoogleAccessProvider } from './access.ts';
 import { apiEnableLink } from '../creds/providers/google.ts';
 import { parseRetryAfterMs } from '../github-source.ts';
+import { readBoundedHttpBody } from '../guarded-http.ts';
 import {
   bareAddress,
   DEFAULT_CALENDAR_ID,
@@ -32,6 +33,7 @@ import {
   type GmailThreadData,
 } from './types.ts';
 import { htmlToText, trimQuotedReply } from './google-render.ts';
+import { GMAIL_MIME_LIMITS, gmailPartHeader, inspectGmailAttachments, walkGmailMime, type GmailMimePart } from './attachment-receipts.ts';
 
 export type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -93,7 +95,7 @@ export class GoogleApiClient {
   async fetchJSON<T>(
     url: string,
     apiHint: ApiHint,
-    opts: { signal?: AbortSignal; retries?: number; rateLimitRetries?: number } = {},
+    opts: { signal?: AbortSignal; retries?: number; rateLimitRetries?: number; maxResponseBytes?: number } = {},
   ): Promise<T> {
     const retries = opts.retries ?? DEFAULT_RETRIES;
     // Rate-limit-class failures get their OWN (larger) retry budget — see
@@ -108,14 +110,18 @@ export class GoogleApiClient {
         headers: { authorization: `Bearer ${token}` },
         ...(opts.signal ? { signal: opts.signal } : {}),
       });
-      if (res.ok) return (await res.json()) as T;
+      const readJSON = () => opts.maxResponseBytes
+        ? readBoundedHttpBody(new Response(res.body), opts.maxResponseBytes, opts.signal ?? new AbortController().signal)
+          .then(bytes => JSON.parse(bytes.toString('utf8')))
+        : res.json();
+      if (res.ok) return (await readJSON()) as T;
 
       if (res.status === 401 && attempt < retries) {
         this.log('[google] HTTP 401; refreshing access token');
         await this.tokens.forceRefresh();
         continue;
       }
-      const body = (await res.json().catch(() => ({}))) as GoogleErrorBody;
+      const body = (await readJSON().catch(() => ({}))) as GoogleErrorBody;
       if (res.status === 403) {
         const reason = body.error?.errors?.[0]?.reason ?? '';
         const msg = body.error?.message ?? '';
@@ -194,21 +200,7 @@ export class GoogleCursorExpiredError extends Error {
 
 // ── Gmail ────────────────────────────────────────────────────────────────────
 
-interface RawGmailHeader {
-  name: string;
-  value: string;
-}
-
-interface RawGmailPart {
-  /** BARE media type ('text/calendar') — Gmail strips the Content-Type
-   *  parameters from this field; they live on `headers[]` (format=full). */
-  mimeType?: string;
-  filename?: string;
-  /** Per-part MIME headers (Content-Type with its params, Content-Disposition, …). */
-  headers?: RawGmailHeader[];
-  body?: { data?: string; size?: number };
-  parts?: RawGmailPart[];
-}
+type RawGmailPart = GmailMimePart;
 
 interface RawGmailMessage {
   id: string;
@@ -225,8 +217,7 @@ interface RawGmailThread {
 }
 
 function partHeader(part: RawGmailPart | undefined, name: string): string {
-  const h = part?.headers?.find((x) => x.name.toLowerCase() === name.toLowerCase());
-  return h?.value ?? '';
+  return gmailPartHeader(part, name);
 }
 
 function header(msg: RawGmailMessage, name: string): string {
@@ -247,21 +238,24 @@ function decodeB64Url(data: string): string {
 /** MIME walk: prefer text/plain, fall back to text/html (caller strips). */
 export function extractBody(part: RawGmailPart | undefined): { text: string; isHtml: boolean } {
   if (!part) return { text: '', isHtml: false };
-  const stack: RawGmailPart[] = [part];
   let html: string | null = null;
-  while (stack.length > 0) {
-    const p = stack.shift()!;
+  const attachmentPaths: string[] = [];
+  for (const { part: p, path } of walkGmailMime(part).parts) {
+    if (attachmentPaths.some(parent => path.startsWith(`${parent}.`))) continue;
+    if (p.filename || p.mimeType === 'message/rfc822' || /^attachment\b/i.test(partHeader(p, 'Content-Disposition'))) {
+      attachmentPaths.push(path);
+      continue;
+    }
     if (p.mimeType === 'text/plain' && p.body?.data) {
       return { text: decodeB64Url(p.body.data), isHtml: false };
     }
     if (p.mimeType === 'text/html' && p.body?.data && html === null) {
       html = decodeB64Url(p.body.data);
     }
-    if (p.parts) stack.push(...p.parts);
   }
   if (html !== null) return { text: html, isHtml: true };
   // Single-part messages sometimes carry data at the top level with no mimeType match.
-  if (part.body?.data) return { text: decodeB64Url(part.body.data), isHtml: false };
+  if (!part.mimeType && !part.filename && part.body?.data) return { text: decodeB64Url(part.body.data), isHtml: false };
   return { text: '', isHtml: false };
 }
 
@@ -282,10 +276,8 @@ export function extractBody(part: RawGmailPart | undefined): { text: string; isH
  */
 export function extractCalendarMethod(part: RawGmailPart | undefined): string | null {
   if (!part) return null;
-  const stack: RawGmailPart[] = [part];
-  while (stack.length > 0) {
-    const p = stack.shift()!;
-    const mime = (p.mimeType ?? '').toLowerCase();
+  for (const { part: p } of walkGmailMime(part).parts) {
+    const mime = typeof p.mimeType === 'string' ? p.mimeType.toLowerCase() : '';
     if (mime.startsWith('text/calendar') || mime === 'application/ics') {
       // Gmail's MessagePart.mimeType is the BARE media type; the `method=`
       // parameter lives in the part's own Content-Type header (format=full
@@ -303,7 +295,6 @@ export function extractCalendarMethod(part: RawGmailPart | undefined): string | 
     // mail, and short-circuiting '' here used to suppress the whole message
     // from loop detection. Keep scanning — a real text/calendar part
     // elsewhere in the tree still wins.
-    if (p.parts) stack.push(...p.parts);
   }
   return null;
 }
@@ -367,17 +358,33 @@ export class GmailClient extends GoogleApiClient {
   async getThread(
     threadId: string,
     account: string,
-    opts: { signal?: AbortSignal; bodyCapChars?: number } = {},
+    opts: { signal?: AbortSignal; bodyCapChars?: number; metadataOnly?: boolean } = {},
   ): Promise<GmailThreadData> {
+    let fields = '';
+    if (opts.metadataOnly) {
+      let payload = 'partId,mimeType';
+      for (let depth = GMAIL_MIME_LIMITS.depth; depth >= 0; depth--) {
+        payload = `partId,mimeType,filename,headers(name,value),body(attachmentId,size),parts(${payload})`;
+      }
+      fields = `&fields=${encodeURIComponent(`id,messages(id,internalDate,labelIds,payload(${payload}))`)}`;
+    }
     const raw = await this.fetchJSON<RawGmailThread>(
-      `${GMAIL_BASE}/users/me/threads/${encodeURIComponent(threadId)}?format=full`,
+      `${GMAIL_BASE}/users/me/threads/${encodeURIComponent(threadId)}?format=full${fields}`,
       'gmail',
-      opts,
+      opts.metadataOnly ? { ...opts, maxResponseBytes: 2 * 1024 * 1024 } : opts,
     );
     const cap = opts.bodyCapChars ?? 8_000;
-    const messages: GmailMessageMeta[] = (raw.messages ?? []).map((m) => {
+    if (opts.metadataOnly && (typeof raw.id !== 'string' || !raw.id || !Array.isArray(raw.messages) || !raw.messages.length ||
+      raw.messages.some(m => !m || typeof m.id !== 'string' || !/^[A-Za-z0-9]{1,128}$/.test(m.id)) ||
+      new Set(raw.messages.map(m => m.id)).size !== raw.messages.length)) {
+      throw new Error('Gmail returned malformed thread identities; historical metadata was preserved.');
+    }
+    const normalizedThreadId = typeof raw.id === 'string' && raw.id ? raw.id : threadId;
+    let receiptBudget: number = GMAIL_MIME_LIMITS.receiptBytes;
+    const messages: GmailMessageMeta[] = (raw.messages ?? []).map((m, index) => {
+      const messageId = typeof m.id === 'string' && m.id ? m.id : `missing:${threadId}:${index}`;
       const fromRaw = header(m, 'From');
-      const { text: rawText, isHtml } = extractBody(m.payload);
+      const { text: rawText, isHtml } = opts.metadataOnly ? { text: '', isHtml: false } : extractBody(m.payload);
       // Pre-truncate before conversion: only the first `cap` output chars
       // survive, so a multi-hundred-KB marketing email must not pay ~15
       // full-body regex passes in htmlToText inside the per-thread hot loop.
@@ -386,9 +393,11 @@ export class GmailClient extends GoogleApiClient {
       bodyText = trimQuotedReply(bodyText);
       if (bodyText.length > cap) bodyText = bodyText.slice(0, cap) + '\n[truncated]';
       const internalDateMs = Number(m.internalDate ?? 0);
+      const attachmentInspection = inspectGmailAttachments(m.payload, account, messageId, receiptBudget);
+      receiptBudget -= Buffer.byteLength(JSON.stringify(attachmentInspection));
       return {
-        id: m.id,
-        threadId: raw.id,
+        id: messageId,
+        threadId: normalizedThreadId,
         from: fromRaw,
         fromAddress: bareAddress(fromRaw),
         to: splitAddressList(header(m, 'To')),
@@ -400,10 +409,11 @@ export class GmailClient extends GoogleApiClient {
         listUnsubscribe: header(m, 'List-Unsubscribe') !== '',
         calendarMethod: extractCalendarMethod(m.payload),
         bodyText,
+        attachmentInspection,
       };
     });
     messages.sort((a, b) => a.internalDateMs - b.internalDateMs);
-    return { threadId: raw.id, account, messages };
+    return { threadId: normalizedThreadId, account, messages };
   }
 }
 

@@ -14,6 +14,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
@@ -2405,14 +2406,21 @@ describeBoth('Engine parity — facts TTL read-time validity (WP5)', () => {
     );
     // Embedding-branch pair (separate entity keeps the recency-branch counts clean).
     const emb = basisEmbedding(101);
+    const embeddingModel = 'test:ttl-validity';
     await eng.insertFact(
-      { fact: 'ttl embed lapsed', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', valid_until: past, embedding: emb },
+      { fact: 'ttl embed lapsed', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', valid_until: past, embedding: emb, embedding_model: embeddingModel },
       { source_id: SRC },
     );
     await eng.insertFact(
-      { fact: 'ttl embed live', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', embedding: emb },
+      { fact: 'ttl embed live', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', embedding: emb, embedding_model: embeddingModel },
       { source_id: SRC },
     );
+    const stored = await eng.listFactsByEntity(SRC, EMB_ENTITY, { activeOnly: false });
+    expect(stored).toHaveLength(2);
+    for (const row of stored) {
+      expect(row.embedding_model).toBe(embeddingModel);
+      expect(row.embedded_text_hash).toBe(createHash('md5').update(row.fact).digest('hex'));
+    }
     // Ontology-writer-style supersession: valid_until close + superseded_by,
     // expired_at stays NULL (--asof time-travel intact).
     const oldRow = await eng.insertFact(
@@ -2435,7 +2443,7 @@ describeBoth('Engine parity — facts TTL read-time validity (WP5)', () => {
       bySince: texts(await eng.listFactsSince(SRC, since, { entitySlug: ENTITY })),
       bySession: texts(await eng.listFactsBySession(SRC, SESSION)),
       dupRecency: texts(await eng.findCandidateDuplicates(SRC, ENTITY, 'ttl lapsed fact')),
-      dupEmbedding: texts(await eng.findCandidateDuplicates(SRC, EMB_ENTITY, 'ttl embed lapsed', { embedding: emb })),
+      dupEmbedding: texts(await eng.findCandidateDuplicates(SRC, EMB_ENTITY, 'ttl embed lapsed', { embedding: emb, embeddingModel })),
       history: texts(await eng.listFactsByEntity(SRC, ENTITY, { activeOnly: false })),
       supersessions: texts(await eng.listSupersessions(SRC)),
       health: {

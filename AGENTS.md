@@ -167,6 +167,11 @@ Ship via the `/ship` skill, not by hand. The full release + contributor process
 (CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
 [`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
+**Always use PATCH without asking**, including the initial release choice;
+override `/ship`'s MINOR/MAJOR prompts. Auto-allocate past collisions, sync all
+version stamps and the PR title, then report the number. This changes numbering
+only: scope, merge, deployment, paid-work and validation approvals still apply.
+
 ## Privacy
 
 Never commit real names of people, companies, or funds into public artifacts. See the

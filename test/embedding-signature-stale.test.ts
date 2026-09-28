@@ -20,6 +20,7 @@ import type { ChunkInput } from '../src/core/types.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from '../src/core/embedding-invalidation.ts';
 import { sealPageTextProjection } from '../src/core/page-state/projections.ts';
 import { stampIfPageProvenanceComplete } from '../src/core/embed-stale.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 let engine: PGLiteEngine;
 let colDim: number;
@@ -47,12 +48,14 @@ beforeEach(async () => {
  * Seed a page with one EMBEDDED chunk (non-null vector) and a given
  * embedding_signature (null → grandfathered legacy state).
  */
-async function seedEmbedded(slug: string, text: string, signature: string | null, sourceId?: string): Promise<void> {
+async function seedEmbedded(slug: string, text: string, signature: string | null, opts: { sourceId?: string; currentProjection?: boolean } = {}): Promise<void> {
+  const { sourceId } = opts;
   await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}` }, sourceId ? { sourceId } : undefined);
   const chunks: ChunkInput[] = [
     { chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth', token_count: 4, embedding: undefined },
   ];
-  await engine.upsertChunks(slug, chunks, sourceId ? { sourceId } : undefined);
+  if (opts.currentProjection) await installFixtureChunks(engine, slug, chunks, { sourceId });
+  else await engine.upsertChunks(slug, chunks, sourceId ? { sourceId } : undefined);
   // Flip the chunk to a non-null vector sized to the actual column dim.
   await engine.executeRaw(
     `UPDATE content_chunks
@@ -73,7 +76,7 @@ describe('embedding_signature stale semantics', () => {
         const signature = `${model}:${colDim}`;
         const slug = 'mixed-provenance';
         await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: '# mixed' });
-        await engine.upsertChunks(slug, Array.from({ length: 5 }, (_, i) => ({
+        await installFixtureChunks(engine, slug, Array.from({ length: 5 }, (_, i) => ({
           chunk_index: i, chunk_text: `chunk ${i}`, chunk_source: 'compiled_truth',
           embedding: new Float32Array(colDim).fill(0.1), model,
         })));
@@ -96,7 +99,7 @@ describe('embedding_signature stale semantics', () => {
   }
 
   test('matching model and text cannot preserve vectors of the wrong width (#5051)', async () => {
-    await seedEmbedded('wrong-width', 'text', 'old:model:1');
+    await seedEmbedded('wrong-width', 'text', 'old:model:1', { currentProjection: true });
     await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
     expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, {
       signature: `target:model:${colDim + 1}`,
@@ -129,7 +132,7 @@ describe('embedding_signature stale semantics', () => {
   });
 
   test('unparseable signatures never claim provenance or preserve unknown widths (#5051)', async () => {
-    await seedEmbedded('unknown-width', 'text', 'old:model:1');
+    await seedEmbedded('unknown-width', 'text', 'old:model:1', { currentProjection: true });
     await engine.executeRaw(`UPDATE content_chunks SET model = 'target:model', embedded_text_hash = md5(chunk_text)`);
     expect(await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature: 'target:model' })).toBe(1);
   });
@@ -174,7 +177,7 @@ describe('embedding_signature stale semantics', () => {
       `INSERT INTO sources (id, name, config) VALUES ('other', 'other', '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
     );
     await seedEmbedded('a', 'abcde', 'openai:old:1536'); // default
-    await seedEmbedded('b', 'fghij', 'openai:old:1536', 'other'); // other
+    await seedEmbedded('b', 'fghij', 'openai:old:1536', { sourceId: 'other' }); // other
     const n = await engine.invalidateStaleSignatureEmbeddings({ signature: 'voyage:new:1024', sourceId: 'default' });
     expect(n).toBe(1);
     expect(await engine.countStaleChunks({ sourceId: 'default' })).toBe(1);

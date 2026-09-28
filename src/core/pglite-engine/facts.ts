@@ -53,25 +53,25 @@ export async function insertFact(
                  source_id, entity_slug, fact, kind, visibility, notability, context,
                  valid_from, valid_until, source, source_session, confidence,
                  embedding, embedded_at,
-                 claim_metric, claim_value, claim_unit, claim_period
+                 claim_metric, claim_value, claim_unit, claim_period, embedding_model, embedded_text_hash
                ) VALUES (
                  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
                  NULL, NULL,
-                 $13, $14, $15, $16
+                 $13, $14, $15, $16, NULL, NULL
                ) RETURNING id`
             : `INSERT INTO facts (
                  source_id, entity_slug, fact, kind, visibility, notability, context,
                  valid_from, valid_until, source, source_session, confidence,
                  embedding, embedded_at,
-                 claim_metric, claim_value, claim_unit, claim_period
+                 claim_metric, claim_value, claim_unit, claim_period, embedding_model, embedded_text_hash
                ) VALUES (
                  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
                  $13::vector, $14,
-                 $15, $16, $17, $18
+                 $15, $16, $17, $18, $19, CASE WHEN $19::text IS NOT NULL THEN md5($3) END
                ) RETURNING id`,
           embedStr === null
             ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, claimMetric, claimValue, claimUnit, claimPeriod]
-            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, claimMetric, claimValue, claimUnit, claimPeriod],
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, claimMetric, claimValue, claimUnit, claimPeriod, input.embedding_model ?? null],
         );
         const newId = ins.rows[0].id;
         await tx.query(
@@ -90,25 +90,25 @@ export async function insertFact(
              source_id, entity_slug, fact, kind, visibility, notability, context,
              valid_from, valid_until, source, source_session, confidence,
              embedding, embedded_at,
-             claim_metric, claim_value, claim_unit, claim_period
+             claim_metric, claim_value, claim_unit, claim_period, embedding_model, embedded_text_hash
            ) VALUES (
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
              NULL, NULL,
-             $13, $14, $15, $16
+             $13, $14, $15, $16, NULL, NULL
            ) RETURNING id`
         : `INSERT INTO facts (
              source_id, entity_slug, fact, kind, visibility, notability, context,
              valid_from, valid_until, source, source_session, confidence,
              embedding, embedded_at,
-             claim_metric, claim_value, claim_unit, claim_period
+             claim_metric, claim_value, claim_unit, claim_period, embedding_model, embedded_text_hash
            ) VALUES (
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
              $13::vector, $14,
-             $15, $16, $17, $18
+             $15, $16, $17, $18, $19, CASE WHEN $19::text IS NOT NULL THEN md5($3) END
            ) RETURNING id`,
       embedStr === null
         ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, claimMetric, claimValue, claimUnit, claimPeriod]
-        : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, claimMetric, claimValue, claimUnit, claimPeriod],
+        : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, input.source, sourceSession, confidence, embedStr, embeddedAt, claimMetric, claimValue, claimUnit, claimPeriod, input.embedding_model ?? null],
     );
     return { id: ins.rows[0].id, status: 'inserted' };
   }
@@ -213,13 +213,13 @@ export async function insertFacts(
                  embedding, embedded_at,
                  row_num, source_markdown_slug,
                  claim_metric, claim_value, claim_unit, claim_period,
-                 event_type
+                 event_type, embedding_model, embedded_text_hash
                ) VALUES (
                  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
                  NULL, $14,
                  $15, $16,
                  $17, $18, $19, $20,
-                 $21
+                 $21, NULL, NULL
                )
                ON CONFLICT (source_id, source_markdown_slug, row_num)
                WHERE row_num IS NOT NULL
@@ -231,13 +231,13 @@ export async function insertFacts(
                  embedding, embedded_at,
                  row_num, source_markdown_slug,
                  claim_metric, claim_value, claim_unit, claim_period,
-                 event_type
+                 event_type, embedding_model, embedded_text_hash
                ) VALUES (
                  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
                  $14::vector, $15,
                  $16, $17,
                  $18, $19, $20, $21,
-                 $22
+                 $22, $23, CASE WHEN $23::text IS NOT NULL THEN md5($3) END
                )
                ON CONFLICT (source_id, source_markdown_slug, row_num)
                WHERE row_num IS NOT NULL
@@ -245,7 +245,7 @@ export async function insertFacts(
                RETURNING id`,
           embedStr === null
             ? [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, expiredAt, input.source, sourceSession, confidence, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType]
-            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, expiredAt, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType],
+            : [ctx.source_id, entitySlug, input.fact, kind, visibility, notability, context, validFrom, validUntil, expiredAt, input.source, sourceSession, confidence, embedStr, embeddedAt, input.row_num, input.source_markdown_slug, claimMetric, claimValue, claimUnit, claimPeriod, eventType, input.embedding_model ?? null],
         );
         if (ins.rows[0]) out.push(ins.rows[0].id);
         rowIds.push(ins.rows[0] ? Number(ins.rows[0].id) : null);
@@ -440,12 +440,13 @@ export async function findCandidateDuplicates(
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null },
   ): Promise<FactRow[]> {
     const k = Math.min(Math.max(opts?.k ?? 5, 1), 20);
     // Validity-lapsed rows are not dedup candidates: a re-stated fact after
     // its valid_until lapses re-inserts fresh (WP5 read-time TTL honesty).
     if (opts?.embedding) {
+      if (!opts.embeddingModel) return [];
       // Embedding-cosine ordered candidates within the entity bucket.
       const vec = toPgVectorLiteral(opts.embedding);
       const result = await deps.db.query<FactRowSqlShape>(
@@ -455,9 +456,12 @@ export async function findCandidateDuplicates(
            AND expired_at IS NULL
            AND (valid_until IS NULL OR valid_until > now())
            AND embedding IS NOT NULL
+           AND embedding_model=$5 AND embedded_text_hash=md5(fact)
+           AND vector_dims(embedding)=$6
+           AND source != ALL($7::text[])
          ORDER BY embedding <=> $3::vector
          LIMIT $4`,
-        [source_id, entitySlug, vec, k],
+        [source_id, entitySlug, vec, k, opts.embeddingModel, opts.embedding.length, [...AUDIT_ROW_SOURCES]],
       );
       return result.rows.map(rowToFact);
     }
@@ -532,7 +536,8 @@ export async function findTrajectory(deps: PgliteFactsDeps, opts: import('../eng
              claim_metric, claim_value, claim_unit, claim_period,
              event_type,
              fact, source_session, source_markdown_slug,
-             embedding
+             CASE WHEN embedding_model=(SELECT value FROM config WHERE key='embedding_model')
+               AND embedded_text_hash=md5(fact) THEN embedding END AS embedding
       FROM facts
       WHERE ${where.join(' AND ')}
       ORDER BY valid_from ASC, id ASC
@@ -712,6 +717,8 @@ interface FactRowSqlShape {
   source_session: string | null;
   confidence: number;
   embedding: string | number[] | Float32Array | null;
+  embedding_model?: string | null;
+  embedded_text_hash?: string | null;
   embedded_at: Date | string | null;
   created_at: Date | string;
 }
@@ -756,6 +763,8 @@ function rowToFact(row: FactRowSqlShape): FactRow {
     source_session: row.source_session,
     confidence: Number(row.confidence),
     embedding,
+    embedding_model: row.embedding_model ?? null,
+    embedded_text_hash: row.embedded_text_hash ?? null,
     embedded_at: toDate(row.embedded_at),
     created_at: toDate(row.created_at)!,
   };

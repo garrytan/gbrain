@@ -118,7 +118,7 @@ test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton —
 test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-helper,readFileSync
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — remote queue_health state→status regression	1	doctor-source-helper
 test/doctor.test.ts	BUG 4 — in-progress sync via live lock, not stale freshness	8	doctor-source-helper
-test/doctor.test.ts	doctor command	37	doctor-source-helper
+test/doctor.test.ts	doctor command	38	doctor-source-helper
 test/doctor.test.ts	issue #972 — link_resolution_opportunity check	8	doctor-source-helper
 test/doctor.test.ts	stub_guard_24h check (v0.34.5)	5	doctor-source-helper
 test/doctor.test.ts	supervisor crash classifier wiring (v0.35.x)	4	bun-file,doctor-source-helper
@@ -151,6 +151,7 @@ test/eval-synthesize-concepts-routing.test.ts	dispatch-layer source pins (routin
 test/eval-synthesize-concepts-routing.test.ts	subprocess smoke — end-to-end routing	1	readFileSync
 test/eval-takes-bootstrap.test.ts	corpus integrity	4	readFileSync
 test/exit-classification.test.ts	consumer wire-up — helper used by all 3 sites (no inline filters left)	5	doctor-source-helper,readFileSync
+test/export-publication.test.ts	(file-level)	6	readFileSync
 test/extract-atoms-drain-errors.test.ts	runExtractAtomsDrainForSource forwards typed per-item failures (#4730)	1	readFileSync
 test/extract-atoms-drain.test.ts	extract-atoms-drain Minion handler retries on provider_failure (issue #3218)	2	readFileSync
 test/extract-atoms-drain.test.ts	protected-names register comment names the real trust mechanism	1	readFileSync

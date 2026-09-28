@@ -147,7 +147,7 @@ async function withBrain(kind: Kind, fn: (fixture: {
 async function seedStore(engine: BrainEngine, table: Store) {
   if (table === 'facts') {
     await engine.executeRaw(
-      "INSERT INTO facts(source_id, entity_slug, fact, source, embedding) VALUES ('default', 'people/example', 'A synthetic durable fact.', 'manual', $1::vector)", [VECTOR_TEXT],
+      "INSERT INTO facts(source_id, entity_slug, fact, source, embedding, embedding_model, embedded_text_hash) VALUES ('default', 'people/example', 'A synthetic durable fact.', 'manual', $1::vector, $2, md5('A synthetic durable fact.'))", [VECTOR_TEXT, OLD],
     );
   } else if (table === 'query_cache') {
     await engine.executeRaw(
@@ -204,7 +204,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const facts = await seedStore(engine, 'facts');
         const takes = await seedStore(engine, 'takes');
         await seedStore(engine, 'query_cache');
-        expect((await engine.findCandidateDuplicates('default', 'people/example', 'Another fact', { embedding: VECTOR })).map(row => String(row.id))).toEqual([String(facts[0].id)]);
+        expect((await engine.findCandidateDuplicates('default', 'people/example', 'Another fact', { embedding: VECTOR, embeddingModel: OLD })).map(row => String(row.id))).toEqual([String(facts[0].id)]);
         await seedRaw(engine);
         await engine.executeRaw('UPDATE content_chunks SET embedding_image = $1::vector, embedding_multimodal = $1::vector', [VECTOR_TEXT]);
         const independent = await engine.executeRaw('SELECT embedding_image::text AS image, embedding_multimodal::text AS multimodal FROM content_chunks');
@@ -212,14 +212,14 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const plan = await planEmbeddingMigration(engine, { to: TARGET, dim: DIMS });
         expect(plan.from_model).toBe(OLD);
         const result = await applyEmbeddingMigration(engine, plan, {
-          persistConfig: async () => {
-            expect(await engine.getConfig('embedding_model')).toBe(TARGET);
-            expect(await snapshotStore(engine, 'facts')).toEqual(facts.map(row => ({ ...row, embedding: null })));
-            expect(await snapshotStore(engine, 'takes'))
+          persistConfig: async (_model, _dimensions, tx) => {
+            expect(await tx.getConfig('embedding_model')).toBe(TARGET);
+            expect(await snapshotStore(tx, 'facts')).toEqual(facts.map(row => ({ ...row, embedding: null })));
+            expect(await snapshotStore(tx, 'takes'))
               .toEqual(takes.map(row => ({ ...row, embedding: null, row: { ...row.row, embedded_at: null } })));
-            expect(await engine.executeRaw('SELECT id FROM query_cache')).toHaveLength(0);
-            expect((await readMigrationStatus(engine)).facts_pending).toBe(1);
-            expect(await engine.findCandidateDuplicates('default', 'people/example', 'Another fact', { embedding: VECTOR })).toHaveLength(0);
+            expect(await tx.executeRaw('SELECT id FROM query_cache')).toHaveLength(0);
+            expect((await readMigrationStatus(tx)).facts_pending).toBe(1);
+            expect(await tx.findCandidateDuplicates('default', 'people/example', 'Another fact', { embedding: VECTOR })).toHaveLength(0);
             throw new Error('fixture publication interruption');
           },
         });
@@ -228,7 +228,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         expect(await engine.executeRaw('SELECT embedding_image::text AS image, embedding_multimodal::text AS multimodal FROM content_chunks')).toEqual(independent);
         await reopen();
         const regenerated = JSON.stringify(new Array(DIMS).fill(0.25));
-        await engine.executeRaw('UPDATE facts SET embedding = $1::vector', [regenerated]);
+        await engine.executeRaw('UPDATE facts SET embedding = $1::vector, embedding_model=$2, embedded_text_hash=md5(fact)', [regenerated, TARGET]);
         await engine.executeRaw('UPDATE takes SET embedding = $1::vector, embedded_at = now()', [regenerated]);
         const regeneratedFacts = await snapshotStore(engine, 'facts');
         const regeneratedTakes = await snapshotStore(engine, 'takes');

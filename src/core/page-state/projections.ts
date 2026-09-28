@@ -66,10 +66,10 @@ async function indexingContext(engine: BrainEngine, snapshot: PageSnapshot, maxC
 
 /** A short guarded read binds the exact chunk set and title/body revision. */
 export async function readProjectionSnapshot(engine: BrainEngine, slug: string, sourceId: string,
-  opts: { allowUnsealed?: boolean; maxChunkTokens?: number } = {}): Promise<ProjectionSnapshot | null> {
+  opts: { allowUnsealed?: boolean; maxChunkTokens?: number; requireLiveSource?: boolean } = {}): Promise<ProjectionSnapshot | null> {
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId, slug }]);
-    const snapshot = await tx.readPageSnapshot(slug, { sourceId });
+    const snapshot = await tx.readPageSnapshot(slug, { sourceId, ...(opts.requireLiveSource && { requireLiveSource: true }) });
     if (!snapshot || (!opts.allowUnsealed && snapshot.page.text_projection_revision !== snapshot.revision)) return null;
     const context = await indexingContext(tx, snapshot, opts.maxChunkTokens);
     return { snapshot, chunks: await tx.getChunks(slug, { sourceId, includeUnsealed: true }), indexingContext: context.key,
@@ -138,8 +138,10 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId, slug }]);
     const current = await tx.readPageSnapshot(slug, { sourceId });
-    if (!current || current.revision !== snapshot.revision || current.sourceIncarnation !== snapshot.sourceIncarnation || current.page.id !== snapshot.page.id
+    if (!current || current.page.deleted_at || current.revision !== snapshot.revision || current.sourceIncarnation !== snapshot.sourceIncarnation || current.page.id !== snapshot.page.id
       || current.page.text_projection_revision !== current.revision) return false;
+    const [source] = await tx.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
+    if (!source || source.archived) return false;
     const context = await indexingContext(tx, current, prepared.maxChunkTokensOverride);
     if (context.key !== prepared.indexingContext) return false;
     const stored = await tx.getChunks(slug, { sourceId, includeUnsealed: true });

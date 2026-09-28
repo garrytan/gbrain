@@ -132,7 +132,7 @@ describe('migration across a stale-batch boundary', () => {
     embeddedTexts = [];
 
     const code = await runMigrate([
-      '--to', 'openai:text-embedding-3-small', '--yes', '--batch-size', '3',
+      '--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1', '--batch-size', '3',
     ]);
     // Pre-fix this was 1 ("Migration incomplete") even though all 6 chunks
     // were correctly embedded — the boundary page was never stamped.
@@ -159,7 +159,7 @@ describe('migration across a stale-batch boundary', () => {
   test('second run does ZERO work — the "never re-embedded twice" contract holds across a boundary', async () => {
     embeddedTexts = [];
     const code = await runMigrate([
-      '--to', 'openai:text-embedding-3-small', '--yes', '--batch-size', '3',
+      '--to', 'openai:text-embedding-3-small', '--yes', '--max-cost-usd', '1', '--batch-size', '3',
     ]);
     expect(code).toBe(0);
     // Pre-fix the unstamped boundary page was re-invalidated and PAID FOR again.

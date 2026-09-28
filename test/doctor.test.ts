@@ -15,6 +15,20 @@ import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
 afterEach(() => resetGateway());
 
 describe('doctor command', () => {
+  test('dimension recovery previews existing brains without recommending reinitialization', () => {
+    const source = doctorFileSource('doctor.ts');
+    const start = source.indexOf('if (totalChunks > 0)');
+    const end = source.indexOf('surfacedUnconfiguredDrift = true;', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const hint = source.slice(start, end);
+    expect(hint).toContain('--dry-run');
+    expect(hint).toContain('--yes --max-cost-usd <approved-total>');
+    expect(hint).toContain('docs/guides/embedding-migration.md#recovery');
+    expect(hint).not.toContain('init --force');
+    expect(source).not.toContain('manual ALTER recipe');
+  });
+
   test('doctor module exports runDoctor', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     expect(typeof runDoctor).toBe('function');

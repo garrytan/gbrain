@@ -1868,6 +1868,10 @@ BEGIN
     END IF;
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME IN ('facts','takes') AND TG_OP='UPDATE' THEN
+    IF TG_TABLE_NAME='facts' THEN
+      row_data := row_data - ARRAY['embedding_model','embedded_text_hash'];
+      old_data := old_data - ARRAY['embedding_model','embedded_text_hash'];
+    END IF;
     -- Embedding completion and retrieval telemetry are physical projections.
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NEW; END IF;

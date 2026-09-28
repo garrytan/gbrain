@@ -73,7 +73,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   if (snapshot?.page.deleted_at || (snapshot?.page.id ?? null) !== row.page_id || (snapshot?.revision ?? null) !== (p.expected_revision ?? null)) {
     throw new OperationError('revision_conflict', 'The fact entity changed after extraction admission.');
   }
-  const facts = (p.facts ?? []).map(thawFact);
+  const facts = (p.facts ?? []).map(fact => ({ ...thawFact(fact), embedding_model: fact.embedding ? p.embedding?.model ?? null : null }));
   if (!facts.length || facts.some(fact => fact.entity_slug !== null && fact.entity_slug !== row.slug || fact.entity_slug !== null && !snapshot)) {
     throw new OperationError('invalid_params', 'The prepared facts do not match their entity.');
   }
@@ -90,7 +90,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     const earlier = seen.get(key);
     if (earlier !== undefined) { entries.push({ fact, duplicateId: null, duplicateOf: earlier }); continue; }
     seen.set(key, entries.length);
-    const decision = await decideSingleFact(engine, row.source_id, fact, fact.embedding ?? null);
+    const decision = await decideSingleFact(engine, row.source_id, fact, fact.embedding ?? null, fact.embedding_model);
     if (decision.candidate) { entries.push({ fact, duplicateId: decision.candidate.id }); continue; }
     const rowNum = fact.entity_slug !== null ? nextRow++ : undefined;
     if (rowNum !== undefined) body = upsertFactRow(body, { rowNum, claim: fact.fact, kind: fact.kind, visibility: fact.visibility,
@@ -122,7 +122,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       for (const entry of entries) {
         await assertFactNotWithdrawn(tx, row.source_id, entry.fact);
         if (entry.duplicateOf !== undefined) continue;
-        const current = await decideSingleFact(tx, row.source_id, entry.fact, entry.fact.embedding ?? null);
+        const current = await decideSingleFact(tx, row.source_id, entry.fact, entry.fact.embedding ?? null, entry.fact.embedding_model);
         if ((current.candidate?.id ?? null) !== entry.duplicateId) throw new OperationError('revision_conflict', 'The fact deduplication state changed before publication.');
       }
     }, apply: async tx => {

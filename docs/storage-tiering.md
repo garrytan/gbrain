@@ -218,5 +218,77 @@ On the PGLite engine (gbrain's local-only embedded Postgres), the "DB" your db_o
 - **Backward compatible**: systems without `gbrain.yml` work unchanged.
 - **Progressive enhancement**: add configuration when needed.
 - **Database unchanged**: all data remains in Postgres regardless of tier.
-- **Existing workflows**: all existing `sync` and `export` behavior preserved.
+- **Export safety**: exports refuse collisions and occupied planned paths; use a fresh destination for each snapshot.
 - **Deprecated keys**: `git_tracked` / `supabase_only` still load with a once-per-process warning.
+
+## Safe export
+
+`gbrain export` produces a point-in-time Markdown snapshot, not a full database
+backup. It does not replace a verified PGLite/PostgreSQL backup or preserve all
+database state. The existing `<slug>.md` and `.raw/<name>.json` layout is unchanged.
+
+```sh
+gbrain export --source default --dir './exports/default-new'
+gbrain export --source=default --slug-prefix 'notes/' --dir './exports/notes-new'
+gbrain export --restore-only --source default --repo './brain' --dir './restore-new'
+```
+
+Normal export without `--source` includes every source, including archived sources;
+environment/dotfile defaults do not silently narrow it. An explicit source must be
+active and registered. Restore-only selects one source, uses its storage tiering
+configuration and checks the recorded file path before deciding a page is missing.
+An ambiguous repo requires an explicit source. Restore-only writes to `--dir`, not
+implicitly to `--repo`.
+
+Source selection, page enumeration, canonical withdrawal overlays, tags and raw
+sidecars share one repeatable-read transaction. A withdrawal committed before the
+snapshot is reflected. A later withdrawal does not rewrite an already-created
+historical export. Re-import is still subject to the current withdrawal ledger;
+do not restore an old database over committed withdrawal intent.
+
+All planned paths are staged privately before destination publication. Duplicate
+slugs across sources, same-source aliases, case/Unicode aliases, page/sidecar and
+file-prefix conflicts refuse without publishing files. Export sources separately
+into fresh directories rather than changing their slug layout. Existing empty
+destinations and unrelated files are preserved. An occupied planned file, sidecar
+or reserved `.gbrain-export-status` path refuses; export never overwrites or prunes
+unknown files and has no force option.
+
+Publication uses the first-party native addon for Linux glibc/musl, macOS and
+Windows on x64/arm64. Directory handles remain anchored, symlinks/reparse points
+are rejected, and native no-replace operations publish complete leaves. Missing
+addons or unsupported filesystem capabilities refuse rather than use an unsafe
+pathname fallback. Windows destinations must use absolute drive paths, not UNC
+or device namespaces. POSIX destinations must have no symlink ancestors; on macOS,
+use physical paths rather than the conventional `/tmp` or `/var` aliases.
+Use a directory controlled by the exporting operator; do not
+concurrently rename the destination or its parent directories. Native confinement
+is not a sandbox against another process running as the same operating-system user.
+
+The reserved status file starts with `GBRAIN EXPORT INCOMPLETE`. Its final line is
+`COMPLETE` only after data publication and flushes succeed. A nonzero exit means
+the current run did not produce a complete new export; an occupied-path refusal
+leaves an earlier completed export unchanged. A missing completion line or malformed
+status marks newly published output as incomplete: preserve it for inspection and
+retry into a **fresh** directory. Do not import a partial
+export. Interruption or I/O failure can leave complete individual files plus the
+incomplete marker; retry never deletes these or tries to guess ownership. Only a
+completed run prints `Exported N pages` (or `Restored N pages`).
+
+Enumeration uses 256-key batches, not OFFSET or a total-page cap. Private on-disk
+SQLite staging is bounded to 8 GiB, individual payloads/withdrawal ledgers to 32 MiB,
+and snapshot collection to ten minutes with a 60-second statement timeout. Reaching
+a bound is failure, not truncation or success. Use `--source`, `--type` or
+`--slug-prefix` to make smaller snapshots. These are fixed safety limits, not a
+promise about export duration or a paid-work budget. No model provider is called.
+
+The ten-minute collection limit includes time waiting for a remote database.
+Page reads are sequential, so network latency can make a large remote snapshot
+reach that limit even when its files fit the staging budget. Run the export near
+the database or select smaller scopes. Separately exported scopes each have their
+own snapshot time; together they are not one point-in-time database backup.
+
+Within each key batch, export reads one source's capacity-checked withdrawal ledger
+at a time and reuses it for that source's pages. It does not retain a whole-brain
+ledger cache. Bodies and timelines without literal fact-marker text skip SQL
+normalization; actual, malformed and orphan markers retain canonical fingerprinting.

@@ -505,6 +505,8 @@ export type FactInsertStatus = 'inserted' | 'duplicate' | 'superseded';
 
 /** A fact row read from the facts table. */
 export interface FactRow {
+  embedding_model?: string | null;
+  embedded_text_hash?: string | null;
   id: number;
   source_id: string;
   entity_slug: string | null;
@@ -535,6 +537,7 @@ export interface FactRow {
 
 /** Input for insertFact. source_id supplied via the ctx arg. */
 export interface NewFact {
+  embedding_model?: string | null;
   fact: string;
   kind?: FactKind;                     // default 'fact'
   entity_slug?: string | null;
@@ -2215,7 +2218,7 @@ export interface BrainEngine {
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null },
   ): Promise<FactRow[]>;
 
   /**

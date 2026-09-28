@@ -127,6 +127,7 @@ function facadeExpansion(p: string): string[] {
     return out;
   };
   if (rel === 'src/core/operations.ts') return collect(join(ROOT, 'src/core/ops'));
+  if (rel === 'src/commands/migrate-embeddings.ts') return [join(ROOT, 'src/core/embedding-migration-cli.ts')];
   if (rel === 'src/commands/mcp.ts') return [
     join(ROOT, 'src/commands/mcp-admin.ts'),
     join(ROOT, 'src/commands/mcp-admin-http.ts'),

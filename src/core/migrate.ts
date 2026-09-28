@@ -9,7 +9,7 @@ import { PAGE_STATE_SCHEMA_SQL, PAGE_VERSION_DELETION_SCHEMA_SQL } from './page-
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
 import { getFtsLanguage } from './fts-language.ts';
-import { hnswMaxDimsForType } from './vector-index.ts';
+import { hnswMaxDimsForType, readExistingEmbeddingShape } from './vector-index.ts';
 // runMigrations executes while an initialized engine is live. Keep its helper
 // modules in the static graph rather than importing them from async handlers.
 import {
@@ -2374,14 +2374,15 @@ export const MIGRATIONS: Migration[] = [
         useHalfvec = true;
       }
 
-      const columnType = useHalfvec ? 'halfvec' : 'vector';
+      const existingShape = await readExistingEmbeddingShape(engine, 'facts');
+      const columnType = existingShape?.type ?? (useHalfvec ? 'halfvec' : 'vector');
       const vecType = columnType.toUpperCase();
       // HNSW operator class must match the column type:
       //   VECTOR(n)  → vector_cosine_ops
       //   HALFVEC(n) → halfvec_cosine_ops
-      const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
       const hnswMaxDims = hnswMaxDimsForType(columnType);
-      const factsEmbeddingIndexSql = embeddingDim <= hnswMaxDims
+      const factsEmbeddingIndexSql = (existingShape?.dimensions ?? embeddingDim) <= hnswMaxDims
         ? `CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
           ON facts USING hnsw (embedding ${opclass})
           WHERE embedding IS NOT NULL AND expired_at IS NULL;`
@@ -2974,11 +2975,12 @@ export const MIGRATIONS: Migration[] = [
         useHalfvec = true;
       }
 
-      const columnType = useHalfvec ? 'halfvec' : 'vector';
+      const existingShape = await readExistingEmbeddingShape(engine, 'query_cache');
+      const columnType = existingShape?.type ?? (useHalfvec ? 'halfvec' : 'vector');
       const vecType = columnType.toUpperCase();
-      const opclass = useHalfvec ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
+      const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
       const hnswMaxDims = hnswMaxDimsForType(columnType);
-      const queryCacheEmbeddingIndexSql = embeddingDim <= hnswMaxDims
+      const queryCacheEmbeddingIndexSql = (existingShape?.dimensions ?? embeddingDim) <= hnswMaxDims
         ? `CREATE INDEX IF NOT EXISTS idx_query_cache_embedding_hnsw
           ON query_cache USING hnsw (embedding ${opclass})
           WHERE embedding IS NOT NULL;`
@@ -6659,6 +6661,12 @@ CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON minion_jobs
         ? PERSISTENCE_DATABASE_PENDING_INDEX_SQL.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')
         : PERSISTENCE_DATABASE_PENDING_INDEX_SQL);
     },
+  },
+  {
+    version: 166, name: 'fact_embedding_identity', idempotent: true,
+    sql: `ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedding_model TEXT;
+      ALTER TABLE facts ADD COLUMN IF NOT EXISTS embedded_text_hash TEXT;
+      ${MANAGED_WRITER_GUARD_SQL}`,
   },
 ];
 

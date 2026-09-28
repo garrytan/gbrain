@@ -63,6 +63,7 @@ import {
 import { LOOPS_EXTRACT_WINDOW_DAYS, loopExtractionEligibility } from './loops-extract.ts';
 
 export type { GoogleSourceConfig } from './types.ts';
+export { runGoogleAttachmentBackfill } from './attachment-backfill.ts';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -182,6 +183,7 @@ interface GoogleSyncSummary {
   embedded: number;
   pagesAffected: string[];
   threadsSeen: number;
+  attachmentInspection: Record<string, number>;
   /**
    * Why each in-window thread was or was not sent to the extractor, keyed by
    * the machine reason from loopExtractionEligibility. Counts only — no
@@ -511,6 +513,10 @@ async function processThread(
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
   const slug = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
+  for (const message of thread.messages) {
+    const state = message.attachmentInspection?.state ?? 'not_inspected';
+    summary.attachmentInspection[state] = (summary.attachmentInspection[state] ?? 0) + 1;
+  }
   await applyLoopDetection(deps, thread, slug);
   // LLM extraction candidates: trickle + the bounded recent window only —
   // the deep historical backfill is never extracted (spend honesty, F9).
@@ -1062,6 +1068,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     embedded: 0,
     pagesAffected: [],
     threadsSeen: 0,
+    attachmentInspection: {},
     extractEligibility: {},
     failedFiles: 0,
   };
@@ -1202,6 +1209,9 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     }
 
     const changed = summary.added + summary.modified + summary.deleted > 0;
+    if (activeServices.includes('gmail')) {
+      log(`[google] attachment inspection (this sweep only): ${Object.entries(summary.attachmentInspection).map(([state, count]) => `${state}=${count}`).join(' ') || 'no messages inspected'}; historical completeness is not established by incremental sync.`);
+    }
     return {
       status:
         summary.status === 'partial'

@@ -137,7 +137,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   } as Page, tags));
   const project = code || image ? undefined : prepareCanonicalProjections(ready.parsedPage!, row.slug, row.source_id);
   return { observedRevision: ready.observedRevision, noop: ready.noop && p.targetHash === sha256(rendered),
-    deferEmbedding: image || p.noEmbed, validate: checkPaths,
+    deferEmbedding: image || p.noEmbed, validate: async tx => { await checkPaths(tx); await ready.validate(tx); },
     file: { root, path, content: rendered, expectedBeforeHash: p.targetHash },
     apply: async tx => {
       await ready.apply(tx);

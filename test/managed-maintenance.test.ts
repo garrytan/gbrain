@@ -83,8 +83,8 @@ async function seed(engine: BrainEngine, sourceId: string, slug = 'people/exampl
 async function seedFacts(engine: BrainEngine, sourceId: string, slug: string, visibility = 'world') {
   const vector = `[${[1, ...Array(1535).fill(0)].join(',')}]`;
   for (let i = 0; i < 3; i++) {
-    await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding)
-      VALUES($1,$2,$3,'fact','test',$4,$5,$6::timestamptz,$7::vector)`,
+    await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding,embedding_model,embedded_text_hash)
+      VALUES($1,$2,$3,'fact','test',$4,$5,$6::timestamptz,$7::vector,'openai:text-embedding-3-large',md5($3))`,
     [sourceId, slug, `Example claim ${i}`, visibility, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
   }
 }
