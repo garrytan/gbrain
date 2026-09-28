@@ -20,13 +20,26 @@
  *     - epochs × 1 slow-update reflect call (if no improvement that epoch)
  *     - 1× final test eval on D_test
  *
+ * Expected cost is a heuristic. Separately, every run role's largest single
+ * call is priced exactly as `BudgetTracker.reserve()` will price it (shared
+ * `reservationCostUsd`, effective output caps: the reflect cap, the target's
+ * default output cap, `skilloptOutputCap` for each active judge, same
+ * pricing overrides, input counted as 0 so the check never over-refuses).
+ * When one call's reservation alone exceeds the cap the run can never make
+ * that call, so preflight refuses before any spend and names the role and
+ * the control that fixes it (`reservation_exceeds_cap`).
+ *
  * Prices come from the canonical pricing table (model-pricing.ts) via
  * canonicalLookup. For unknown providers `lookupPrice` returns a warn-only
  * Sonnet-tier fallback (preflight estimates, never gates) — the actual
  * fail-loud gate is BudgetTracker's TX2 contract at run time.
  */
 
+import { defaultMaxOutputTokens } from '../ai/gateway.ts';
+import { reservationCostUsd, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { canonicalLookup } from '../model-pricing.ts';
+import { skilloptOutputCap } from './output-cap.ts';
+import { JUDGE_SITE_MAX_TOKENS } from './score.ts';
 import { VALIDATION_RUNS_PER_TASK } from './types.ts';
 
 /** Conservative per-rollout token estimates (input + output). */
@@ -56,6 +69,51 @@ export interface PreflightOpts {
   heldOutSize?: number;
   /** When true, print the prompt to stderr + use Ctrl-C grace. Default false (non-TTY). */
   interactive?: boolean;
+  /** Effective optimizer output cap; default `defaultMaxOutputTokens(optimizerModel)`. */
+  reflectMaxTokens?: number;
+  /**
+   * Every judge model the run can call (default judge when active + task
+   * `judge.model` overrides). Empty = no LLM judge (rule/qrels benchmark).
+   * Default `[judgeModel]`.
+   */
+  judgeModels?: string[];
+  /** Operator `pricing.overrides`, the same map the run's BudgetTracker uses. */
+  pricingOverrides?: PricingOverrides;
+}
+
+export type ReservationRole = 'optimizer' | 'target' | 'judge';
+
+/** What one call of a role reserves up front (input counted as 0). */
+export interface CallReservation {
+  role: ReservationRole;
+  model: string;
+  max_output_tokens: number;
+  /** null = unpriced (left to the tracker's no_pricing contract at run time). */
+  reservation_usd: number | null;
+}
+
+const RESERVATION_CONTROL: Record<ReservationRole, string> = {
+  optimizer: 'lower --reflect-max-tokens / skillopt.reflect_max_tokens, or raise --max-cost-usd',
+  target: 'use a cheaper --target-model (models.tier.subagent), or raise --max-cost-usd',
+  judge: 'use a cheaper --judge-model (models.tier.reasoning) or task judge.model, or raise --max-cost-usd',
+};
+
+export function singleCallReservations(opts: PreflightOpts): CallReservation[] {
+  const reserve = (role: ReservationRole, model: string, maxOut: number): CallReservation =>
+    ({ role, model, max_output_tokens: maxOut, reservation_usd: reservationCostUsd(model, 'chat', 0, maxOut, opts.pricingOverrides) });
+  return [
+    reserve('optimizer', opts.optimizerModel, opts.reflectMaxTokens ?? defaultMaxOutputTokens(opts.optimizerModel)),
+    reserve('target', opts.targetModel, defaultMaxOutputTokens(opts.targetModel)),
+    ...(opts.judgeModels ?? [opts.judgeModel]).map((m) => reserve('judge', m, skilloptOutputCap(m, JUDGE_SITE_MAX_TOKENS))),
+  ];
+}
+
+function largestReservation(opts: PreflightOpts): CallReservation | undefined {
+  let best: CallReservation | undefined;
+  for (const r of singleCallReservations(opts)) {
+    if (r.reservation_usd !== null && (!best || r.reservation_usd > best.reservation_usd!)) best = r;
+  }
+  return best;
 }
 
 export interface PreflightEstimate {
@@ -71,6 +129,8 @@ export interface PreflightEstimate {
   per_model_cost_usd: Record<string, number>;
   /** True when est_cost_usd > maxCostUsd (caller should refuse or prompt). */
   exceeds_cap: boolean;
+  /** The priciest single call any role will reserve (separate from expected cost). */
+  largest_reservation?: CallReservation;
 }
 
 export interface PreflightResult {
@@ -79,6 +139,8 @@ export interface PreflightResult {
   proceed: boolean;
   /** Reason for abort, if proceed=false. */
   abort_reason?: string;
+  /** Machine code for the abort: one call can never fit the cap, or the expected total exceeds it. */
+  abort_code?: 'reservation_exceeds_cap' | 'cost_cap_exceeded';
 }
 
 export function estimateCost(opts: PreflightOpts): PreflightEstimate {
@@ -105,15 +167,20 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
     + heldOutRollouts; // F11 held-out gate (baseline+candidate per accepted step)
   const reflect_calls = totalSteps * reflectsPerStep
     + opts.epochs; // slow-update meta calls
-  const judge_calls = opts.selSize // baseline (1 per task; median-of-3 is in the rollout count already? — no, judge runs per rollout)
+  const judgeModels = opts.judgeModels ?? [opts.judgeModel];
+  const judgeCallsRaw = opts.selSize // baseline (1 per task; median-of-3 is in the rollout count already? — no, judge runs per rollout)
     + opts.selSize * VALIDATION_RUNS_PER_TASK * totalSteps // per-step validation
     + opts.testSize * 2 // final test judges (best + baseline)
     + heldOutRollouts; // F11 held-out judges (1 per held-out rollout)
+  const judge_calls = judgeModels.length > 0 ? judgeCallsRaw : 0;
 
-  // Cost per call type.
+  // Cost per call type. Judge calls price at the priciest judge the run can reach.
   const targetPrice = lookupPrice(opts.targetModel);
   const optimizerPrice = lookupPrice(opts.optimizerModel);
-  const judgePrice = lookupPrice(opts.judgeModel);
+  const judgePrice = judgeModels.map(lookupPrice).reduce(
+    (a, b) => (b.input + b.output > a.input + a.output ? b : a),
+    { input: 0, output: 0 },
+  );
 
   const rolloutCost = rollout_calls * (
     (ROLLOUT_INPUT_TOKENS * targetPrice.input) / 1_000_000
@@ -135,6 +202,7 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
 
   const total = rolloutCost + cachedReflectCost + cachedJudgeCost;
   void sel_runs_per_step;
+  const largest = largestReservation(opts);
 
   return {
     steps_per_epoch: stepsPerEpoch,
@@ -152,6 +220,7 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
     },
     // #3516: maxCostUsd === 0 means uncapped (--no-max-cost) — never refuse.
     exceeds_cap: opts.maxCostUsd > 0 && total > opts.maxCostUsd,
+    ...(largest ? { largest_reservation: largest } : {}),
   };
 }
 
@@ -167,6 +236,9 @@ export function formatPreflightReport(est: PreflightEstimate, opts: PreflightOpt
     `  Judges:     ${est.judge_calls.toLocaleString()} calls`,
     `  Tokens:     ~${(est.est_input_tokens / 1000).toFixed(0)}K in / ~${(est.est_output_tokens / 1000).toFixed(0)}K out`,
     `  Est. cost:  $${est.est_cost_usd.toFixed(2)} (cap: ${opts.maxCostUsd > 0 ? `$${opts.maxCostUsd.toFixed(2)}` : 'uncapped'})`,
+    est.largest_reservation
+      ? `  Per call:   largest single call reserves $${est.largest_reservation.reservation_usd!.toFixed(2)} (${est.largest_reservation.role} ${est.largest_reservation.model}, ${est.largest_reservation.max_output_tokens} output tokens)`
+      : '',
     est.exceeds_cap ? `  WARNING:    estimate exceeds --max-cost-usd cap.` : '',
   ].filter(Boolean).join('\n');
 }
@@ -179,10 +251,20 @@ export function formatPreflightReport(est: PreflightEstimate, opts: PreflightOpt
  */
 export function preflight(opts: PreflightOpts): PreflightResult {
   const estimate = estimateCost(opts);
+  const big = estimate.largest_reservation;
+  if (opts.maxCostUsd > 0 && big && big.reservation_usd! > opts.maxCostUsd) {
+    return {
+      estimate,
+      proceed: false,
+      abort_code: 'reservation_exceeds_cap',
+      abort_reason: `reservation_exceeds_cap: a single ${big.role} call reserves $${big.reservation_usd!.toFixed(2)} (${big.model}, ${big.max_output_tokens} output tokens), which exceeds the $${opts.maxCostUsd.toFixed(2)} cap on its own, so it can never run. Fix: ${RESERVATION_CONTROL[big.role]}.`,
+    };
+  }
   if (estimate.exceeds_cap) {
     return {
       estimate,
       proceed: false,
+      abort_code: 'cost_cap_exceeded',
       abort_reason: `estimated cost $${estimate.est_cost_usd.toFixed(2)} exceeds --max-cost-usd $${opts.maxCostUsd.toFixed(2)}. Raise the cap with --max-cost-usd ${Math.ceil(estimate.est_cost_usd)} or reduce --epochs/--batch-size.`,
     };
   }

@@ -35,10 +35,11 @@ symlinkSync(join(outsideDir, 'secret.jsonl'), join(realSkillsRoot, 'evil', 'esca
 mkdirSync(join(realSkillsRoot, 'test-skill'), { recursive: true });
 
 let runSkillOptCalls: unknown[] = [];
+let stubReceipt: Record<string, unknown> | null = null;
 mock.module('../../src/core/skillopt/orchestrator.ts', () => ({
   runSkillOpt: async (opts: unknown) => {
     runSkillOptCalls.push(opts);
-    return { outcome: 'stubbed-run', receipt: null, mutatedSkillFile: null, proposedPath: null };
+    return { outcome: 'stubbed-run', receipt: stubReceipt, mutatedSkillFile: null, proposedPath: null };
   },
 }));
 mock.module('../../src/core/repo-root.ts', () => ({
@@ -125,6 +126,18 @@ describe('run_skillopt remote allowlist (default deny-all)', () => {
     expect(runSkillOptCalls.length).toBe(1);
   });
 
+  test('the op result carries the receipt diagnostics (remediation, resume command) unchanged', async () => {
+    const remediation = [{ code: 'reflect_truncated', fix: 'raise the cap', docs: 'docs/guides/skillopt.md#reflect_truncated' }];
+    stubReceipt = { outcome: 'errored', remediation, resume_command: 'gbrain skillopt test-skill --resume r1' };
+    try {
+      const res = await run_skillopt.handler(ctxOf({ remote: false }), { skill_name: 'test-skill' }) as { receipt?: Record<string, unknown> };
+      expect(res.receipt?.remediation).toEqual(remediation);
+      expect(res.receipt?.resume_command).toBe('gbrain skillopt test-skill --resume r1');
+    } finally {
+      stubReceipt = null;
+    }
+  });
+
   test('local caller (remote === false) bypasses the allowlist entirely', async () => {
     const res = await run_skillopt.handler(ctxOf({ remote: false }), { skill_name: 'never-allowlisted' }) as { outcome?: string };
     expect(res.outcome).toBe('stubbed-run');
@@ -171,6 +184,27 @@ describe('run_skillopt remote path confinement', () => {
       benchmark_path: join(linkedSkillsDir, 'test-skill', 'skillopt-benchmark.jsonl'),
     }) as { outcome?: string };
     expect(res.outcome).toBe('stubbed-run');
+    expect(runSkillOptCalls.length).toBe(1);
+  });
+});
+
+describe('run_skillopt reflect_max_tokens (#5584)', () => {
+  beforeEach(async () => {
+    await engine.setConfig('skillopt.allowed_skills', JSON.stringify(['test-skill']));
+  });
+
+  test('remote caller: huge value clamped to 32000, tiny value raised to 256', async () => {
+    await run_skillopt.handler(ctxOf({ remote: true }), { skill_name: 'test-skill', reflect_max_tokens: 10_000_000 });
+    await run_skillopt.handler(ctxOf({ remote: true }), { skill_name: 'test-skill', reflect_max_tokens: 3 });
+    expect(runSkillOptCalls.map((c) => (c as { reflectMaxTokens?: number }).reflectMaxTokens)).toEqual([32000, 256]);
+  });
+
+  test('absent -> not passed (orchestrator resolves config/default); invalid -> invalid_params, no run', async () => {
+    await run_skillopt.handler(ctxOf({ remote: true }), { skill_name: 'test-skill' });
+    expect((runSkillOptCalls[0] as { reflectMaxTokens?: number }).reflectMaxTokens).toBeUndefined();
+    for (const bad of [-5, 1.5, 'lots']) {
+      await expectCode(run_skillopt.handler(ctxOf({ remote: true }), { skill_name: 'test-skill', reflect_max_tokens: bad }), 'invalid_params');
+    }
     expect(runSkillOptCalls.length).toBe(1);
   });
 });

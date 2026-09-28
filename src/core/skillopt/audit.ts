@@ -12,6 +12,8 @@
 
 import { createHash } from 'node:crypto';
 import { createAuditWriter, type AuditWriter } from '../audit/audit-writer.ts';
+import type { ModelUsageRow } from '../budget/models-used.ts';
+import type { ModelsPlanEntry } from './models-plan.ts';
 import type { EditOp } from './types.ts';
 
 /** Discriminated union of every event kind emitted to the audit trail. */
@@ -19,11 +21,13 @@ export type SkilloptEvent =
   | { kind: 'run_start'; run_id: string; skill: string; skill_sha8: string;
       benchmark_sha8: string; target_model: string; optimizer_model: string;
       judge_model: string; epochs: number; batch_size: number; lr: number;
-      lr_schedule: string; max_cost_usd: number; ts: string }
+      lr_schedule: string; max_cost_usd: number; models_plan?: ModelsPlanEntry[];
+      ts: string }
   | { kind: 'step'; run_id: string; skill: string; epoch: number; step: number;
       sel_score_median: number; sel_score_runs: number[]; accepted: boolean;
       edits_attempted: number; edits_applied: number; delta: number;
-      reason?: string; cumulative_cost_usd: number; ts: string }
+      reason?: string; cumulative_cost_usd: number; reflect_errors?: string[];
+      invalid_edits_dropped?: number; ts: string }
   | { kind: 'edit_rejected'; run_id: string; skill: string; epoch: number;
       step: number; edit_kind: EditOp['op']; rejection_reason: string;
       ts: string }
@@ -33,7 +37,9 @@ export type SkilloptEvent =
       'no_improvement' | 'aborted' | 'errored'; epochs_completed: number;
       total_steps: number; baseline_sel_score?: number; best_sel_score?: number;
       baseline_test_score?: number; test_score?: number; final_cost_usd: number;
-      ts: string }
+      stop_reason?: 'completed' | 'early_stop_unusable_output' | 'aborted';
+      abort_detail?: string; models_used?: ModelUsageRow[];
+      models_used_scope?: 'full_run' | 'since_resume'; ts: string }
   // #3516: 'error' is the truthful catch-all for unrecognized failures
   // (provider errors, no_pricing hard-fails, bugs). 'sigint' is reserved for
   // an actual SIGINT interrupt — pre-fix the catch-all logged every error as
