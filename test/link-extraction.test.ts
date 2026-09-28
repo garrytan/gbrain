@@ -1920,6 +1920,22 @@ describe('normalizeBasename — CJK + accent folding (#2367)', () => {
     expect(queryBasenameIndex(idx, 'Łukasz Example')).toEqual(['people/lukasz-example']);
   });
 
+  // A spaced separator ("Backlog - vault") keeps its hyphen AND gains one per
+  // space, so the key read "backlog---vault" while sync mints the slug tail
+  // "backlog-vault" (slugifySegment collapses hyphen runs). Every such wikilink
+  // missed the index in silence.
+  test('hyphen runs collapse like slugifySegment', () => {
+    expect(normalizeBasename('Backlog - vault')).toBe('backlog-vault');
+    expect(normalizeBasename('Implications - The Linchpin')).toBe('implications-the-linchpin');
+    expect(normalizeBasename('Releases -- v2')).toBe('releases-v2');
+    expect(normalizeBasename('- Draft -')).toBe('draft');
+  });
+
+  test('basename index: a spaced-dash display name hits its slug tail', () => {
+    const idx = buildBasenameIndex(['50-backlog/backlog-vault']);
+    expect(queryBasenameIndex(idx, 'Backlog - vault')).toEqual(['50-backlog/backlog-vault']);
+  });
+
   test('index side folds too, so a stroke-letter slug stays reachable', () => {
     // Symmetry: both sides run through normalizeBasename, so a page whose own
     // slug kept the stroke letter still answers to the ASCII display name.
