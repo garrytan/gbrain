@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.59.3.5] - 2026-09-28
+
+**Inspect large writer manifests without costly JSON nesting.**
+
+Writer inspection now hashes each complete file manifest before combining it with the rest of the writer state. Large manifests take less work to inspect, while changes to their actual contents still invalidate prepared administrative operations.
+
+### Itemized changes
+
+Hash the full JSONB manifest inside SQL rather than nesting it directly in the outer JSON aggregate. Preserve all topology fields and null behavior. Include synthetic integrity tests for both engines and an opt-in generated PostgreSQL benchmark.
+
 ## [0.59.3.0] - 2026-09-28
 
 **A broken worker installation now asks for repair instead of repeatedly interrupting your jobs.**

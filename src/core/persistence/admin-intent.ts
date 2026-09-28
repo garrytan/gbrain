@@ -4,6 +4,8 @@ import { sha256 } from './digest.ts';
 
 export const WRITER_INSPECTION_HINT = 'Inspect gbrain sources writer status --json on the selected brain host first to identify the designated owner and any recovery. Routine repair must not claim, activate, or transfer ownership. Ask the operator to review docs/architecture/topologies.md before a deliberate topology change.';
 
+// Hash the actual full manifest inside PostgreSQL before nesting it in JSONB.
+// This changes only short-lived inspection tokens, never stored provenance.
 export async function writerAdminState(engine: SqlEngine): Promise<string> {
   const [row] = await engine.executeRaw<{ state: string }>(`SELECT jsonb_build_object(
     'brain', (SELECT jsonb_build_object('id',brain_id,'enabled',enabled,
@@ -11,7 +13,7 @@ export async function writerAdminState(engine: SqlEngine): Promise<string> {
       'writer_protocol_floor',to_jsonb(persistence_brain)->'writer_protocol_floor') FROM persistence_brain WHERE singleton=1),
     'sources', (SELECT jsonb_agg(jsonb_build_array(id,incarnation,archived,local_path,config->>'kind') ORDER BY id) FROM sources),
     'fallback', (SELECT value FROM config WHERE key='sync.repo_path'),
-    'worktrees', (SELECT jsonb_agg(jsonb_build_array(id,owner_host_id,owner_epoch::text,topology_generation::text,state,manifest) ORDER BY id) FROM persistence_worktrees),
+    'worktrees', (SELECT jsonb_agg(jsonb_build_array(id,owner_host_id,owner_epoch::text,topology_generation::text,state,encode(sha256(convert_to(manifest::text,'UTF8')), 'hex')) ORDER BY id) FROM persistence_worktrees),
     'bindings', (SELECT jsonb_agg(jsonb_build_array(source_id,source_incarnation,worktree_id,relative_path,topology_generation::text) ORDER BY source_id) FROM persistence_source_bindings),
     'hosts', (SELECT jsonb_agg(jsonb_build_array(worktree_id,host_id,local_path,coordination_path) ORDER BY worktree_id,host_id) FROM persistence_host_bindings),
     'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id) FROM gbrain_cycle_locks)
