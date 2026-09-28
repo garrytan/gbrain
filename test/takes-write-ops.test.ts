@@ -122,6 +122,15 @@ describe('takes_add', () => {
     expect(parsed(res).row_num).toBe(2);
   });
 
+  test('rejects an invalid holder before it can poison the canonical takes fence', async () => {
+    const before = parseTakesFence(pageMd('people/alice-example')).takes.length;
+    const res = await dispatchToolCall(engine, 'takes_add', {
+      slug: 'people/alice-example', claim: 'Invalid holder must not be written', kind: 'bet', holder: 'Sawyer',
+    }, { ...LOCAL });
+    expect(parsed(res)).toMatchObject({ error: 'invalid_params' });
+    expect(parseTakesFence(pageMd('people/alice-example')).takes).toHaveLength(before);
+  });
+
   test('registered canonical root remains authoritative if legacy sync.repo_path is unset', async () => {
     await engine.unsetConfig('sync.repo_path');
     try {
