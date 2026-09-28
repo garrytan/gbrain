@@ -33,6 +33,7 @@ import { sealPageTextProjection } from '../page-state/projections.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
+import { restoreOmittedFacts } from './omitted-facts.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -307,6 +308,10 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       versionTags = tags;
     }
     content = serializePageToMarkdown(page, tags);
+  }
+  // get_page omit_facts: the stored facts fence goes back where the reader saw the placeholder.
+  if (row.operation === 'put_page' && typeof content === 'string') {
+    content = restoreOmittedFacts(content, snapshot && !snapshot.page.deleted_at ? serializePageToMarkdown(snapshot.page, snapshot.tags) : '');
   }
   if (row.authority.remote && row.operation !== 'remember' && !row.operation.startsWith('takes_') && typeof content==='string') {
     const parsed=parseMarkdown(content,row.slug,{ activePack });
