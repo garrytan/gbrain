@@ -233,6 +233,7 @@ test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	
 test/pglite-repair-command.serial.test.ts	gbrain pglite-repair — interactive confirm wiring (#4318 residual)	1	readFileSync
 test/pglite-wal-repair.serial.test.ts	WAL auto-repair — real-brain regression (#223/#1670/#2575)	6	readFileSync
 test/phantom-redirect-per-source-lock.test.ts	phantom-redirect lock contract	3	readFileSync
+test/postgres-driver-vendor.test.ts	vendored Postgres driver packaging	3	readFileSync
 test/postgres-engine-singleton-ownership.test.ts	postgres-engine / module-singleton ownership (#1471)	7	readFileSync
 test/postgres-engine.test.ts	postgres-engine / search date filtering	1	readFileSync
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	readFileSync
@@ -345,3 +346,5 @@ test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is pro
 test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	7	readFileSync
 test/voyage-response-cap.test.ts	v0.31.8 — voyage Content-Length pre-check + per-item cap	6	bun-file
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
+# unknown (detectors present, no attributable suite):
+# unknown	test/e2e/postgres-driver-install.test.ts

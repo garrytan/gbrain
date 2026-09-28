@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, cpus, loadavg, tmpdir, totalmem } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import { childEnvironment } from './validate.ts';
 import { summarizeReadRuns } from './read-metrics.ts';

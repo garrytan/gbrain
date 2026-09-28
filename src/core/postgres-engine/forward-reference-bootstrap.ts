@@ -19,7 +19,7 @@
 // file's source) and `test/e2e/postgres-bootstrap.test.ts` (live Postgres
 // convergence cases).
 
-import type postgres from 'postgres';
+import type postgres from '#postgres'
 import { GRANT_COLUMNS_SQL } from '../grants/schema.ts';
 
 /**

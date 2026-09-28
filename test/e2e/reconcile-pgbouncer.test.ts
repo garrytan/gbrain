@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../../src/core/markdown.ts';

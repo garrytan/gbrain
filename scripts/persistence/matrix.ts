@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import { spawnWorker } from './validate.ts';
 import type { RuntimeCase } from './matrix-cases.ts';

@@ -47,7 +47,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir, hostname } from 'os';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { loadOpCheckpoint, syncFingerprint } from '../../src/core/op-checkpoint.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';

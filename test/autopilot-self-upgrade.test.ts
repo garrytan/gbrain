@@ -34,7 +34,8 @@ describe('autopilot self-upgrade static-shape regressions', () => {
   });
   test('boot reconciles the breadcrumb and the tick attempts the channel', () => {
     expect(AUTOPILOT_SRC).toContain('reconcileSelfUpgradeAtBoot()');
-    expect(AUTOPILOT_SRC).toContain('attemptAutopilotSelfUpgrade(engine, engineType, lockPath)');
+    expect(AUTOPILOT_SRC).toContain('attemptAutopilotSelfUpgrade(engine, engineType, lockPath, () => !configurationBlocked())');
+    expect(AUTOPILOT_SRC).toMatch(/if \(!mayContinue\(\)\) return;[\s\S]*?execSync\('gbrain upgrade --swap-only'/);
   });
   test('apply path unlinks the lock before exit so the relaunched binary does not self-exit on a stale lock', () => {
     // The exit-for-relaunch block unlinks lockPath then process.exit(0).

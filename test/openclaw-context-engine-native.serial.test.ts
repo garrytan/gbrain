@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 

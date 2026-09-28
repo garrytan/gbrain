@@ -64,6 +64,16 @@ An agent seeing exit=2 can safely treat it as "one is already running";
 exit=4 as "restart me — the DB lock refresh failed"; exit=1 should page
 a human.
 
+A local configuration fault does not produce a supervisor exit code. When
+the worker finds that its installation or selected job child cannot run jobs
+safely (for example, a driver without the required cancellation support or an
+incompatible `GBRAIN_JOB_CHILD_CLI`), it exits with code 16. The supervisor then
+stays alive without respawning it, and `status --json` reports
+`processing_state: "configuration_blocked"` with a `reason_code`. Repair the
+installation, then explicitly restart the supervisor; see
+[Minions fix](minions-fix.md). A running supervisor is not proof of progress,
+so check `processing_ready` as well as `running`.
+
 ### Lowering scheduling priority (`--nice`)
 
 When the worker pool runs at full concurrency on a machine you also use
@@ -147,12 +157,17 @@ Sizing notes:
 - **Security note:** the child receives the job's lock token via env. It is
   a *fencing* token (split-brain protection), not a secret — same-user env
   already contains the database URL.
-- **Child CLI resolution:** the worker fail-fast validates the child CLI at
-  startup (compiled `gbrain` binary, bun-dev fallback, or the
-  `GBRAIN_JOB_CHILD_CLI` env override — the ops/test escape hatch). Three
-  consecutive child spawn/bootstrap failures self-exit the worker as
-  unhealthy (a deterministically broken child CLI) for process-manager
-  restart instead of burning attempts across the queue.
+- **Child CLI resolution:** the worker selects the child CLI in this order:
+  the `GBRAIN_JOB_CHILD_CLI` env override (the ops/test escape hatch), then
+  its own compiled executable or source entrypoint, then `gbrain` on PATH.
+  Before claiming any job it checks that the selected child exists and passes
+  a compatibility handshake. A missing, non-executable or incompatible child
+  is a configuration fault: the worker exits with code 16 and its supervisor
+  stays up, blocked, instead of respawning it (see
+  [Minions fix](minions-fix.md#configuration-blocked)). Three consecutive
+  transient child spawn/bootstrap failures still self-exit the worker as
+  unhealthy for process-manager restart instead of burning attempts across
+  the queue.
 
 ### Which supervisor when?
 
@@ -211,7 +226,7 @@ gbrain jobs supervisor start --detach --json
 
 # Check health (machine-parseable JSON, no log scraping)
 gbrain jobs supervisor status --json
-# → {"running":true,"supervisor_pid":1234,"last_start":"2026-04-23T15:30:22Z","crashes_24h":0, ...}
+# → {"running":true,"processing_ready":true,"processing_state":"ready","supervisor_pid":1234,"last_start":"2026-04-23T15:30:22Z","crashes_24h":0, ...}
 
 # Stop cleanly (SIGTERM + 35s drain + SIGKILL fallback)
 gbrain jobs supervisor stop
@@ -405,8 +420,8 @@ over relying on hard kills.
 ## Smoke test
 
 ```bash
-# Supervisor alive?
-gbrain jobs supervisor status --json | jq .running
+# Supervisor alive, and admitting work?
+gbrain jobs supervisor status --json | jq '{running, processing_ready, processing_state, reason_code}'
 
 # Aggregate queue health.
 gbrain jobs stats

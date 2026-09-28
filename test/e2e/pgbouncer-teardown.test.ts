@@ -28,7 +28,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { keylessBrainEnv } from '../helpers/provider-env.ts';
 import { fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';

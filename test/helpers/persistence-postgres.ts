@@ -1,4 +1,4 @@
-import postgres from 'postgres';
+import postgres from '#postgres'
 import { randomUUID } from 'node:crypto';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from './db-guard.ts';

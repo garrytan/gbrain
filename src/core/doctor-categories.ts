@@ -195,6 +195,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'db_repair_recurrence',
   'pglite_leftovers',
   'pgvector',
+  'postgres_cancellation_driver',
   'plugin_lane_collision',
   'pool_budget',
   'progressive_batch_audit_health',

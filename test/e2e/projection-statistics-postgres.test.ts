@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import postgres from 'postgres';
+import postgres from '#postgres'
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { currentTextProjectionFilter } from '../../src/core/search/safe-chunks.ts';
 import { PROJECTION_STATISTICS_SQL, verifyProjectionStatistics } from '../../src/core/search/projection-statistics.ts';

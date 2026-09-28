@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } from 'bun:test';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, chmodSync, mkdirSync, rmSync } from 'fs';
 import { spawn } from 'child_process';
 import { join } from 'path';
@@ -8,6 +8,7 @@ import { calculateBackoffMs, resolveHardStopMaxCrashes, MinionSupervisor, type S
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { maybeRunWorkerStartupRecovery } from '../src/commands/jobs.ts';
 
 const TEST_PID_FILE = '/tmp/gbrain-supervisor-test.pid';
 
@@ -516,7 +517,7 @@ describe('MinionSupervisor', () => {
   // Private-queue startup recovery hook (beforeSpawn seam into
   // ChildWorkerSupervisor). Constructed in-process with a real/throwing engine
   // — the hook never spawns anything, so no supervisor-runner fixture needed.
-  describe('reconcileOrphanedPrivateQueuesBeforeWorkerSpawn', () => {
+  describe('supervised recovery after worker readiness', () => {
     let engine: PGLiteEngine;
     let queue: MinionQueue;
     let queueSeq = 0;
@@ -537,14 +538,6 @@ describe('MinionSupervisor', () => {
       // ensureSchema requires (full resetPgliteState wipes it).
       await engine.executeRaw('DELETE FROM minion_jobs');
     });
-
-    function makeSupervisor(eng: BrainEngine, emissions: SupervisorEmission[]): MinionSupervisor {
-      return new MinionSupervisor(eng, {
-        cliPath: '/bin/false', // never spawned — the hook is called directly
-        json: true,
-        onEvent: (e) => emissions.push(e),
-      });
-    }
 
     /** Orphan fixture: waiting 'subagent' child, terminal owner, aged updated_at. */
     async function seedOrphanQueue(): Promise<number> {
@@ -572,52 +565,35 @@ describe('MinionSupervisor', () => {
       return child.id;
     }
 
-    it("cancels an orphaned queue and emits health_warn reason='private_queue_startup_recovery'", async () => {
+    it('cancels an orphaned queue after supervised readiness and reports the recovered counts', async () => {
       const childId = await seedOrphanQueue();
-      const emissions: SupervisorEmission[] = [];
-      const sup = makeSupervisor(engine, emissions);
+      const diagnostic = spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await maybeRunWorkerStartupRecovery(queue, { GBRAIN_SUPERVISED: '1' }, true);
 
-      await (sup as unknown as {
-        reconcileOrphanedPrivateQueuesBeforeWorkerSpawn: () => Promise<void>;
-      }).reconcileOrphanedPrivateQueuesBeforeWorkerSpawn();
-
-      const rows = await engine.executeRaw<{ status: string; error_text: string | null }>(
-        `SELECT status, error_text FROM minion_jobs WHERE id = $1`,
-        [childId],
-      );
-      expect(rows[0]!.status).toBe('cancelled');
-      expect(rows[0]!.error_text).toContain('supervisor startup recovery');
-
-      const warn = emissions.find(
-        (e) => e.event === 'health_warn' &&
-          (e as Record<string, unknown>).reason === 'private_queue_startup_recovery',
-      ) as Record<string, unknown> | undefined;
-      expect(warn).toBeDefined();
-      expect(warn!.cancelled_jobs).toBe(1);
-      expect(warn!.cancelled_queues).toBe(1);
+        const rows = await engine.executeRaw<{ status: string; error_text: string | null }>(
+          `SELECT status, error_text FROM minion_jobs WHERE id = $1`,
+          [childId],
+        );
+        expect(rows[0]!.status).toBe('cancelled');
+        expect(rows[0]!.error_text).toContain('worker startup recovery');
+        expect(diagnostic).toHaveBeenCalledWith('[gbrain jobs] private-queue startup recovery: cancelled 1 job(s) across 1 orphaned queue(s)');
+      } finally { diagnostic.mockRestore(); }
     });
 
-    it("resolves and emits health_warn reason='private_queue_startup_recovery_failed' when the engine throws", async () => {
+    it('resolves and reports startup recovery failure when the engine throws', async () => {
       const throwingEngine = {
         executeRaw: async () => {
           throw new Error('injected executeRaw failure');
         },
       } as unknown as BrainEngine;
-      const emissions: SupervisorEmission[] = [];
-      const sup = makeSupervisor(throwingEngine, emissions);
-
-      await expect(
-        (sup as unknown as {
-          reconcileOrphanedPrivateQueuesBeforeWorkerSpawn: () => Promise<void>;
-        }).reconcileOrphanedPrivateQueuesBeforeWorkerSpawn(),
-      ).resolves.toBeUndefined();
-
-      const warn = emissions.find(
-        (e) => e.event === 'health_warn' &&
-          (e as Record<string, unknown>).reason === 'private_queue_startup_recovery_failed',
-      ) as Record<string, unknown> | undefined;
-      expect(warn).toBeDefined();
-      expect(String(warn!.error)).toContain('injected executeRaw failure');
+      const diagnostic = spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await expect(
+          maybeRunWorkerStartupRecovery(new MinionQueue(throwingEngine), { GBRAIN_SUPERVISED: '1' }, true),
+        ).resolves.toBeUndefined();
+        expect(diagnostic).toHaveBeenCalledWith('[gbrain jobs] private-queue startup recovery failed: injected executeRaw failure');
+      } finally { diagnostic.mockRestore(); }
     });
 
   });
@@ -627,15 +603,13 @@ describe('MinionSupervisor', () => {
   // classifier's reference heuristic can't leak onto sibling suites).
   describe('recovery hook timeout bound (structural)', () => {
     it('the hook bounds recovery in a Promise.race with a 30_000ms timeout', () => {
-      // A hanging DB call here would otherwise block EVERY worker respawn
-      // (the beforeSpawn await is not isStopping-checked mid-flight).
       const supervisorSource = readFileSync(
-        join(import.meta.dir, '..', 'src', 'core', 'minions', 'supervisor.ts'),
+        join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'),
         'utf8',
       );
-      const hookStart = supervisorSource.indexOf('reconcileOrphanedPrivateQueuesBeforeWorkerSpawn');
+      const hookStart = supervisorSource.indexOf('export async function maybeRunWorkerStartupRecovery');
       expect(hookStart).toBeGreaterThan(-1);
-      const hookEnd = supervisorSource.indexOf('private async shutdown(');
+      const hookEnd = supervisorSource.indexOf('export async function runJobs(');
       expect(hookEnd).toBeGreaterThan(hookStart);
       const body = supervisorSource.slice(hookStart, hookEnd);
       expect(body).toContain('Promise.race');
