@@ -11,6 +11,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { setupLegacyEmbeddingDB, teardownDB, hasDatabase, getEngine } from './helpers.ts';
 import { runPhaseConsolidate } from '../../src/core/cycle/phases/consolidate.ts';
 
@@ -41,8 +42,8 @@ d('cycle consolidate phase (Postgres)', () => {
 
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, confidence, valid_from, embedding, embedded_at)
-         VALUES ('default', 'people/post-cons-alice', $1, 'fact', 'test', 0.9, $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, confidence, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'people/post-cons-alice', $1, 'fact', 'test', 0.9, $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`postgres consolidate fact ${i}`, oldDate(), unitVec()],
       );
     }
@@ -64,14 +65,17 @@ d('cycle consolidate phase (Postgres)', () => {
     // All 4 facts marked consolidated, NEVER deleted.
     const facts = await engine.executeRaw<{
       id: number; consolidated_at: Date | null; consolidated_into: number | null;
+      fact: string; embedding_model: string; embedded_text_hash: string;
     }>(
-      `SELECT id, consolidated_at, consolidated_into FROM facts
+      `SELECT id, consolidated_at, consolidated_into, fact, embedding_model, embedded_text_hash FROM facts
        WHERE entity_slug = 'people/post-cons-alice' ORDER BY id`,
     );
     expect(facts.length).toBe(4);
     for (const f of facts) {
       expect(f.consolidated_at).not.toBeNull();
       expect(f.consolidated_into).not.toBeNull();
+      expect(f.embedding_model).toBe('openai:text-embedding-3-large');
+      expect(f.embedded_text_hash).toBe(createHash('md5').update(f.fact).digest('hex'));
     }
   });
 
@@ -83,8 +87,8 @@ d('cycle consolidate phase (Postgres)', () => {
     const recent = new Date(Date.now() - 60 * 1000).toISOString();
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'cons-recent', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'cons-recent', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`recent fact ${i}`, recent, unitVec()],
       );
     }
@@ -104,8 +108,8 @@ d('cycle consolidate phase (Postgres)', () => {
     );
     for (let i = 0; i < 3; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'cons-dryrun-pg', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
+         VALUES ('default', 'cons-dryrun-pg', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
         [`dryrun fact ${i}`, oldDate(), unitVec()],
       );
     }

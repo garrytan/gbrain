@@ -379,9 +379,10 @@ four numeric segments are required first. Historical 3-segment versions
 DRIFT_STALE_PKG / DRIFT_UNEXPECTED, and refuses to proceed on
 DRIFT_UNEXPECTED. This is why the two must move together.
 
-**Auto-renumber when needed; never ask.** Use `/ship`'s queue-aware allocator,
-update all version stamps and the PR title, then report the number. This overrides
-its ALREADY_BUMPED rebump prompt, not scope, merge or deployment approvals.
+**Always use PATCH without asking**, including the initial release choice;
+override `/ship`'s MINOR/MAJOR prompts. Auto-allocate past collisions, sync all
+version stamps and the PR title, then report the number. This changes numbering
+only: scope, merge, deployment, paid-work and validation approvals still apply.
 CI rejects mismatched `VERSION`/`package.json` or versions not newer than master.
 
 ### Version consistency and conflict recovery

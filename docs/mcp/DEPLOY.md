@@ -71,6 +71,29 @@ No server, no tunnel, no token needed. Works on both PGLite and Postgres engines
 `--surface starter` sits between (~27 ops: the verbs plus the daily-driver set);
 omit the flag (default `full`) for every operation.
 
+#### Stdio source binding
+
+Do not inherit `GBRAIN_SOURCE=__all__` from a trusted CLI session into a
+stdio MCP server. It does not grant all-source access: the server keeps a
+fail-closed scope, so searches can return healthy empty results even when
+the trusted CLI finds pages. Startup stderr warns about this binding before
+the MCP handshake; it does not inspect or reveal private pages.
+
+In the MCP host's server environment, set `GBRAIN_SOURCE` to the intended
+registered source id, or remove it to use normal source resolution and its
+configured federation rules. Inspect registered ids with `gbrain sources list`
+on the brain host, then restart the MCP server and check a known world-visible
+page in the intended source. Removing the variable is not unrestricted access:
+dotfiles and other source-resolution settings still apply. No memory writes or
+index repair are needed to correct this environment binding.
+
+This differs from the per-call `source_id: "__all__"` argument, which searches
+only the caller's granted sources. MCP callers also exclude private pages by
+default; a private-only miss is not evidence of a broken index. For a concrete
+source binding that still misses a known visible page, retain the version,
+engine, schema pack, effective source/grants, and retrieval metadata for a
+sanitized reproduction rather than broadening permissions.
+
 ### Tailscale (recommended): `gbrain mcp expose`
 
 ```bash

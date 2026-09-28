@@ -71,7 +71,7 @@ import {
   emptyPhantomPassResult,
   type PhantomPassResult,
 } from './phantom-redirect.ts';
-import { embed, isAvailable } from '../ai/gateway.ts';
+import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
@@ -791,15 +791,18 @@ export async function runExtractFacts(
       if (isAvailable('embedding')) {
         try {
           const texts = toInsert.map(e => e.fact);
+          const embeddingModel = getEmbeddingModel();
+          const dimensions = getEmbeddingDimensions();
           // #1972: forward the abort signal so a cancelled cycle's in-flight
           // batch embed (a network call) is itself abortable, not just the loop.
-          const embeddings = await embed(texts, { abortSignal: opts.signal });
+          const embeddings = await embed(texts, { abortSignal: opts.signal, embeddingModel, dimensions, inputType: 'document' });
           if (embeddings.length !== toInsert.length || embeddings.some(vector =>
-            !vector?.length || !vector.every(Number.isFinite))) {
+            vector?.length !== dimensions || !vector.every(Number.isFinite))) {
             throw new Error('embedding provider returned an incomplete or invalid fact batch');
           }
           for (let i = 0; i < toInsert.length; i++) {
             toInsert[i].embedding = embeddings[i];
+            toInsert[i].embedding_model = embeddingModel;
           }
         } catch (err) {
           // Embedding failure is non-fatal — facts still get inserted, just

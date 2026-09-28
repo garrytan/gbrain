@@ -4364,7 +4364,9 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   };
   try {
     const transport: RerankTransport = _rerankTransport ?? ((u, init) => fetch(u, init));
-    const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr }, () => transport(url, {
+    const maxInputTokens = input.documents.reduce((sum, document) =>
+      sum + Buffer.byteLength(input.query, 'utf8') + Buffer.byteLength(document, 'utf8'), 0);
+    const resp = await invokeAI({ operation: 'gateway.rerank', kind: 'rerank', model: modelStr, maxInputTokens }, () => transport(url, {
       method: 'POST',
       headers,
       body,

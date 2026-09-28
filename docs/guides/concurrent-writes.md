@@ -303,6 +303,62 @@ files. An unconfigured remote is reported as a skipped push. Embeddings wait
 for an enabled, configured provider and install only if the page revision and
 its text projection still match.
 
+### Withdrawal recovery
+
+Withdrawal discovers exact, source- and visibility-scoped fact rows, recorded
+provenance and stale chunk evidence before changing the ledger. Unrelated page
+bytes, revisions, chunks and embedding signatures remain unchanged. Managed
+withdrawals retain a versioned target manifest for the mirror, Git and embedding
+workers; each worker checkpoints one affected page at a time.
+
+Stop older mutation workers before upgrading the owner and restarting work. Older
+binaries do not understand the target manifest and must not share the brain with
+the upgraded worker. This is a quiesced upgrade, not a mixed-version rollout.
+Take an engine-appropriate database backup first, not a Markdown export. Prefer
+forward recovery: restoring an older database can discard committed withdrawal
+intent or intervening edits and can make withdrawn content active again.
+
+Discovery has fixed safety limits: 12,000 source pages, 40,000 chunks, 40,000 fact
+rows, 64 MiB of combined text and 256 affected pages in a target manifest no larger
+than 1 MiB. It reads bodies in batches of 128 and refuses when its checked scan
+budget exceeds 10 seconds; an individual matching batch also has a 16,384-row/8 MiB input limit.
+Each body also has a 16,384-marker parsing limit, enforced during a linear scan.
+These are capacity limits, not a latency guarantee or permission to spend on
+providers. `withdrawal_capacity` or `withdrawal_provenance` refuses the attempt
+before ledger, expiry, revision or chunk changes. Matching malformed fences need
+canonical repair; capacity refusals need host-operator investigation and a
+separately reviewed repair, not an unchanged retry, source deletion or a forced
+cursor reset. There is no override that trades away complete discovery.
+
+Already queued source-wide effects are converted using the same bounded exact
+discovery and retain their individual progress cursors. An over-capacity or
+unverifiable legacy effect stays pending; its previously committed withdrawal
+is not undone. A retained physical publication recovers forward before new work.
+If its recorded file bytes no longer match, preserve the file and receipt and
+resolve the conflict on the owner; do not delete recovery records.
+
+If a sync cursor was already invalidated, keep its failure visible until the
+owner has checked the canonical content. Then explicitly re-enumerate with the
+same source and processing options:
+
+```bash
+gbrain sync --source example-source --no-pull --no-embed --no-extract --retry-failed
+```
+
+Use `--no-embed` and `--no-extract` here only if they were the original sync
+options; retain the original `--no-schema-pack` choice as well. Explicit retry
+retains old terminal receipts, refuses while work is still active and creates
+fresh guarded requests. It does not ignore revision conflicts. Inspect the
+result and the original withdrawal receipt, then verify that the fact is inactive
+and the affected canonical file shows the withdrawal before reporting recovery
+complete. A queued mirror, failed embedding effect or blocked sync is not a
+completed repair. These rules apply to both PGLite and PostgreSQL; they do not
+require connecting a second process to an already-owned PGLite store.
+
+**Say to your agent:** *"Inspect the withdrawal receipt and the failed sync on
+this source. Preserve my edits and the withdrawal, and ask before explicit
+recovery if the original processing options are unknown."*
+
 Before and after managed activation, eligible `put_page` and `capture` writes
 record durable facts-extraction intent. `facts_backstop.queued` means that
 intent committed with the page; the `facts-backstop` effect becomes

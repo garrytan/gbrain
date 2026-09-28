@@ -1137,7 +1137,9 @@ export async function embedQueryBounded(
   // deadline was mostly consumed by prior work (codex). Still bounded overall.
   const remaining = Math.max(MIN_QUERY_EMBED_BUDGET_MS, dl.deadlineAt - Date.now());
   const signal = AbortSignal.timeout(remaining);
-  const p = embedQuery(text, { ...(embedOpts ?? {}), abortSignal: signal });
+  const p = embedQuery(text, { ...(embedOpts ?? {}), abortSignal: signal }).catch(error => {
+    throw signal.aborted ? signal.reason : error;
+  });
   p.catch(() => { /* swallow the loser's late rejection */ });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {

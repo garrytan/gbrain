@@ -34,6 +34,24 @@ export function hnswMaxDimsForType(columnType: 'vector' | 'halfvec'): number {
   return columnType === 'halfvec' ? PGVECTOR_HNSW_HALFVEC_MAX_DIMS : PGVECTOR_HNSW_VECTOR_MAX_DIMS;
 }
 
+export async function readExistingEmbeddingShape(
+  engine: BrainEngine, table: 'facts' | 'query_cache',
+): Promise<{ type: 'vector' | 'halfvec'; dimensions: number } | null> {
+  const [column] = await engine.executeRaw<{ type: string | null; dimensions: number | null }>(
+    `SELECT t.typname AS type,a.atttypmod AS dimensions
+       FROM pg_class c
+       LEFT JOIN pg_attribute a ON a.attrelid=c.oid AND a.attname='embedding'
+         AND a.attnum>0 AND NOT a.attisdropped
+       LEFT JOIN pg_type t ON t.oid=a.atttypid
+      WHERE c.oid=to_regclass($1)`, [table]);
+  if (!column) return null;
+  if ((column.type !== 'vector' && column.type !== 'halfvec')
+    || typeof column.dimensions !== 'number' || !Number.isSafeInteger(column.dimensions) || column.dimensions <= 0) {
+    throw new Error(`Cannot replay ${table} migration: existing embedding column must be vector(n) or halfvec(n) with a positive dimension`);
+  }
+  return { type: column.type, dimensions: column.dimensions };
+}
+
 /** Whether pgvector can build an HNSW index for this exact column shape. */
 export function hnswIndexExpected(columnType: 'vector' | 'halfvec', dims: number): boolean {
   return dims <= hnswMaxDimsForType(columnType);

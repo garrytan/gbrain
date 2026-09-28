@@ -20,6 +20,7 @@ const repo = resolve(import.meta.dir, '../..');
 const nativeDir = join(repo, 'native/locks');
 export const buildInputs = [
   'native/locks/locks.c', 'native/locks/darwin-abi.h', 'native/locks/abi-check.c',
+  'native/locks/export-publication.h',
   'native/locks/windows-napi.h', 'native/locks/windows-ipc.h', 'native/locks/vendor/node-v22.15.0/node_api.h',
   'native/locks/vendor/node-v22.15.0/node_api_types.h',
   'native/locks/vendor/node-v22.15.0/js_native_api.h',

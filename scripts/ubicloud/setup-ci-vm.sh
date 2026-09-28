@@ -38,7 +38,7 @@ export DEBIAN_FRONTEND=noninteractive
 (
   sudo apt-get update -qq >/dev/null
   sudo apt-get install -y -qq --no-install-recommends \
-    docker.io git ca-certificates python3 procps postgresql-client jq nodejs >/dev/null
+    docker.io git ca-certificates python3 procps postgresql-client jq nodejs build-essential >/dev/null
 ) &
 apt_pid=$!
 

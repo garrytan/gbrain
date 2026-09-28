@@ -1,4 +1,5 @@
 import type { WriteRequest } from './model.ts';
+import type { WithdrawalTarget } from '../facts/withdrawal-discovery.ts';
 
 export type EffectKind = 'git' | 'embedding' | 'withdrawal-mirror' | 'facts-backstop';
 export interface EffectRecovery {
@@ -25,7 +26,7 @@ export interface PersistenceEffect {
   source_id: string;
   source_incarnation: string;
   worktree_id: string | null;
-  data: { slug?: string; page_id?: number; relative_path?: string; expected_hash?: string | null; after_slug?: string; source_id?: string; source_scan?: boolean; visibility?: 'private' | 'world'; embedding_attempt_base?: number; embedding_retry_base?: number };
+  data: { version?: 2; targets?: WithdrawalTarget[]; slug?: string; page_id?: number; relative_path?: string; expected_hash?: string | null; after_slug?: string; source_id?: string; source_scan?: boolean; visibility?: 'private' | 'world'; embedding_attempt_base?: number; embedding_retry_base?: number };
   state: 'queued' | 'running' | 'committed' | 'failed';
   execution_token: string | null;
   claim_expires_at: string | Date | null;

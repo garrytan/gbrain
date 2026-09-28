@@ -179,7 +179,7 @@ export async function healOversizedPageChunks(
 ): Promise<{ changed: boolean; splitCount: number; chunks: Chunk[] }> {
   const sourceId = opts.sourceId ?? 'default';
   const getOpts = { sourceId };
-  const prepared = await readProjectionSnapshot(engine, slug, sourceId, { maxChunkTokens: opts.maxTokens });
+  const prepared = await readProjectionSnapshot(engine, slug, sourceId, { maxChunkTokens: opts.maxTokens, requireLiveSource: true });
   if (!prepared) return { changed: false, splitCount: 0, chunks: [] };
   const existing = prepared.chunks;
   const healed = healOversizedChunks(existing, prepared.maxChunkTokens);

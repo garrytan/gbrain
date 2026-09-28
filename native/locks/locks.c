@@ -296,6 +296,8 @@ static napi_value close_lock(napi_env env, napi_callback_info info) {
   return result;
 }
 
+#include "export-publication.h"
+
 NAPI_MODULE_INIT() {
 #ifdef _WIN32
   /* Missing exports reject registration before any Node-API call. */
@@ -307,10 +309,20 @@ NAPI_MODULE_INIT() {
   if (napi_add_env_cleanup_hook(env, cleanup, state) != napi_ok) {
     free(state); return fail(env, "register cleanup", 0);
   }
+  export_state *publisher = calloc(1, sizeof(*publisher));
+  if (!publisher) return fail(env, "allocate export registry", 0);
+  publisher->references = 1;
+  if (napi_add_env_cleanup_hook(env, export_cleanup, publisher) != napi_ok) {
+    free(publisher); return fail(env, "register export cleanup", 0);
+  }
   const napi_property_descriptor properties[] = {
     {"openLock", NULL, open_lock, NULL, NULL, NULL, napi_default, state},
     {"tryLock", NULL, try_lock, NULL, NULL, NULL, napi_default, state},
     {"close", NULL, close_lock, NULL, NULL, NULL, napi_default, state},
+    {"beginExport", NULL, begin_export, NULL, NULL, NULL, napi_default, publisher},
+    {"publishExportFile", NULL, publish_export_file, NULL, NULL, NULL, napi_default, publisher},
+    {"completeExport", NULL, complete_export, NULL, NULL, NULL, napi_default, publisher},
+    {"closeExport", NULL, close_export, NULL, NULL, NULL, napi_default, publisher},
 #ifdef _WIN32
     {"openIpcMutex", NULL, open_ipc_mutex, NULL, NULL, NULL, napi_default, state},
     {"removeWindowsUnixSocket", NULL, remove_windows_unix_socket, NULL, NULL, NULL, napi_default, state},

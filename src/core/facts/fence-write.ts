@@ -75,6 +75,7 @@ export interface FenceTarget {
 
 /** Input fact prepared by runPipelineWithBody (post-dedup). */
 export interface FenceInputFact {
+  embedding_model?: string | null;
   fact: string;
   kind: NewFact['kind'];
   notability: NewFact['notability'];
@@ -512,6 +513,7 @@ export async function writeFactsToFence(
       const enriched = toInsert.map((row, i) => ({
         ...row,
         embedding:      facts[i].embedding,
+        embedding_model: facts[i].embedding_model,
         source_session: facts[i].sessionId,
       }));
 

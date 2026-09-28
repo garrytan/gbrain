@@ -15,12 +15,30 @@ extern void *calloc(size_t, size_t);
 extern void free(void *);
 extern int snprintf(char *, size_t, const char *, ...);
 extern void *memchr(const void *, int, size_t);
+extern void *memcpy(void *, const void *, size_t);
+extern size_t strlen(const char *);
+extern int strcmp(const char *, const char *);
+extern char *strchr(const char *, int);
 extern int open(const char *, int, ...);
+extern int openat(int, const char *, int, ...);
+extern int mkdirat(int, const char *, unsigned short);
+extern int linkat(int, const char *, int, const char *, int);
+extern int unlinkat(int, const char *, int);
+extern long read(int, void *, size_t);
+extern long write(int, const void *, size_t);
+extern int fsync(int);
+extern int ftruncate(int, int64_t);
+extern int64_t lseek(int, int64_t, int);
 extern int close(int);
 extern int flock(int, int);
 extern int *__error(void);
 #define errno (*__error())
 #define O_RDWR 0x0002
+#define O_RDONLY 0
+#define O_WRONLY 1
+#define O_EXCL 0x0800
+#define O_DIRECTORY 0x100000
+#define SEEK_SET 0
 #define O_NONBLOCK 0x0004
 #define O_NOFOLLOW 0x0100
 #define O_CREAT 0x0200
@@ -29,6 +47,10 @@ extern int *__error(void);
 #define LOCK_NB 4
 #define EINTR 4
 #define EINVAL 22
+#define ENOENT 2
+#define EIO 5
+#define ENOMEM 12
+#define EEXIST 17
 #define EAGAIN 35
 #define EWOULDBLOCK EAGAIN
 #define S_ISREG(mode) (((mode) & 0170000) == 0100000)
@@ -50,6 +72,8 @@ struct stat {
   int64_t reserved[2];
 };
 _Static_assert(sizeof(struct stat) == 144, "Darwin stat ABI size");
+_Static_assert(offsetof(struct stat, st_dev) == 0, "Darwin stat ABI device offset");
+_Static_assert(offsetof(struct stat, st_ino) == 8, "Darwin stat ABI inode offset");
 _Static_assert(offsetof(struct stat, st_mode) == 4, "Darwin stat ABI mode offset");
 #ifdef __x86_64__
 extern int fstat(int, struct stat *) __asm("_fstat$INODE64");

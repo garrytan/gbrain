@@ -21,7 +21,7 @@
  * gateway-down errors are absorbed into NULL-embedding rows.
  */
 
-import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
+import { chat, embedOne, isAvailable, getEmbeddingModel } from '../ai/gateway.ts';
 import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { ChatResult } from '../ai/gateway.ts';
@@ -648,9 +648,11 @@ export async function extractFactsFromTurnWithOutcome(
       : 'medium';
 
     let embedding: Float32Array | null = null;
+    let embeddingModel: string | null = null;
     try {
       if (input.embedding !== null) {
-        embedding = await embedOne(factText, { abortSignal: input.abortSignal,
+        embeddingModel = input.embedding?.model ?? getEmbeddingModel();
+        embedding = await embedOne(factText, { abortSignal: input.abortSignal, inputType: 'document', embeddingModel,
           ...(input.embedding ? { embeddingModel: input.embedding.model, dimensions: input.embedding.dimensions } : {}) });
       }
     } catch (err) {
@@ -689,6 +691,7 @@ export async function extractFactsFromTurnWithOutcome(
       confidence,
       notability,
       embedding,
+      embedding_model: embedding ? embeddingModel : null,
       claim_metric: claimMetric,
       claim_value:  claimValue,
       claim_unit:   claimUnit,

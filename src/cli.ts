@@ -43,6 +43,7 @@ import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from './core/cli-flag-registry.generated.ts';
+import { migrationCliArgumentError } from './core/embedding-migration-cli.ts';
 import { VERSION } from './version.ts';
 import { assertSupportedBun } from './core/runtime-version.ts';
 import { bigintToStringReplacer } from './core/utils.ts';
@@ -115,6 +116,7 @@ export const CLI_ONLY = new Set(['mcp', 'init', 'reinit-pglite', 'pglite-repair'
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
 const CLI_ONLY_SELF_HELP = new Set([
+  'export',
   'mcp',
   'upgrade', 'post-upgrade', 'check-update',
   // cathedral-6: agent ships per-subcommand help (run/logs/register) inside
@@ -263,6 +265,7 @@ const CLI_ONLY_SELF_HELP = new Set([
  * GBRAIN_HOME and requires exit 0 plus real help output.
  */
 const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, args: string[]) => unknown>> = {
+  export: async () => (await import('./commands/export.ts')).runExport as never,
   models: async () => (await import('./commands/models.ts')).runModels as never,
   watch: async () => (await import('./commands/watch.ts')).runWatch as never,
   skillopt: async () => (await import('./commands/skillopt.ts')).runSkillOptCommand as never,
@@ -603,13 +606,14 @@ async function main() {
   // short-circuit so `gbrain x --help` never errors; runs before any dispatch
   // or engine connect so the error is instant and side-effect-free.
   {
-    const unknown = validateCommandFlags(command, subArgs);
+    const migrationError = migrationCliArgumentError(command, subArgs, rawArgs);
+    const unknown = migrationError?.flag ?? validateCommandFlags(command, subArgs);
     if (unknown) {
       // Message contract shared with init.ts's in-handler check (which this
       // pre-dispatch validator now reaches first): lowercase 'unknown flag'
       // on stderr; --json callers get the structured error on stdout with
       // reason 'invalid_flag' (pinned by test/init-migrate-only.test.ts).
-      const message = `unknown flag ${unknown} for 'gbrain ${command}'`;
+      const message = migrationError?.message ?? `unknown flag ${unknown} for 'gbrain ${command}'`;
       // Both --json spellings get the structured envelope (--json=false opts out).
       if (subArgs.some(a => a === '--json' || (a.startsWith('--json=') && a !== '--json=false'))) {
         process.stdout.write(JSON.stringify({ status: 'error', reason: 'invalid_flag', message }) + '\n');
@@ -1425,6 +1429,7 @@ function flagValidationExempt(command: string, subArgs: string[]): boolean {
 /** Returns the first unknown flag (e.g. '--dry-run') or null when clean. */
 export function validateCommandFlags(command: string, subArgs: string[]): string | null {
   if (flagValidationExempt(command, subArgs)) return null;
+  if (command === 'retrieval-upgrade' || command === 'migrate' && subArgs[0] === 'embeddings') return migrationCliArgumentError(command, subArgs)?.flag ?? null;
   // Lane order MUST mirror dispatch order (CLI_ONLY first): commands that are
   // BOTH an op and a CLI_ONLY member (think, salience, anomalies) dispatch to
   // handleCliOnly, whose handlers parse flags the op contract doesn't declare
@@ -3884,8 +3889,8 @@ IMPORT/EXPORT
                                      See also: autopilot --install (continuous daemon).
   sync --all --missing-path skip     Classify sources whose local_path is absent
                                      on this machine as skipped, not failed
-  export [--dir ./out/]              Export to markdown
-  export --restore-only [--repo <p>] Restore missing supabase-only files
+  export [--source <id>] [--dir <p>] Coherent Markdown snapshot; fresh output, no overwrite
+  export --restore-only [--repo <p>] Restore missing db_only files; export --help for safe retry
         [--type T] [--slug-prefix S] With optional filters
 
 FILES

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -98,14 +99,34 @@ describe('resident managed fact-vector repair', () => {
   }));
 
   test('authenticated preview and bounded execution work without canonical mutations', () => inHome(async () => {
-    const canonical = async () => Array.from(await engine.executeRaw("SELECT to_jsonb(f)-ARRAY['embedding','embedded_at'] AS row FROM facts f ORDER BY id"));
+    const canonical = async () => Array.from(await engine.executeRaw("SELECT to_jsonb(f)-ARRAY['embedding','embedded_at','embedding_model','embedded_text_hash'] AS row FROM facts f ORDER BY id"));
     const before = await canonical();
+    const metadata = () => engine.executeRaw<{
+      source_id: string; fact: string; embedding_model: string | null;
+      embedded_text_hash: string | null; embedded_at: Date | null; has_embedding: boolean;
+    }>('SELECT source_id, fact, embedding_model, embedded_text_hash, embedded_at, embedding IS NOT NULL AS has_embedding FROM facts ORDER BY id');
+    for (const row of await metadata()) {
+      expect(row).toMatchObject({ embedding_model: null, embedded_text_hash: null, embedded_at: null, has_embedding: false });
+    }
     expect(await request({ sourceId })).toMatchObject({ dryRun: true, would_embed: 2, embedded: 0 });
     expect(calls).toBe(0);
     expect(await request({ sourceId, yes: true, maxCostUsd: 1, maxFacts: 1 })).toMatchObject({ embedded: 1, remaining: 1, failures: 0 });
     expect(await request({ sourceId, yes: true, maxCostUsd: 1 })).toMatchObject({ embedded: 1, remaining: 0, failures: 0 });
     expect(await request({ sourceId, yes: true, maxCostUsd: 1 })).toMatchObject({ embedded: 0, remaining: 0, failures: 0 });
     expect(await canonical()).toEqual(before);
+    const repaired = await metadata();
+    expect(repaired.filter(row => row.source_id === sourceId)).toHaveLength(2);
+    expect(repaired.filter(row => row.source_id === foreignSource)).toHaveLength(1);
+    for (const row of repaired) {
+      if (row.source_id === sourceId) {
+        expect(row.embedding_model).toBe('openai:text-embedding-3-small');
+        expect(row.embedded_text_hash).toBe(createHash('md5').update(row.fact).digest('hex'));
+        expect(row.embedded_at).not.toBeNull();
+        expect(row.has_embedding).toBe(true);
+      } else {
+        expect(row).toMatchObject({ embedding_model: null, embedded_text_hash: null, embedded_at: null, has_embedding: false });
+      }
+    }
     expect(await countEmbedded()).toBe(2);
     expect(calls).toBe(2);
     await expect(engine.executeRaw("UPDATE facts SET visibility='world' WHERE source_id=$1", [sourceId])).rejects.toThrow('writer_coordinator_required');

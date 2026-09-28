@@ -22,6 +22,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import type { ChunkInput } from '../src/core/types.ts';
@@ -71,7 +72,7 @@ async function seedEmbedded(slug: string, text: string, signature: string | null
   const chunks: ChunkInput[] = [
     { chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth', token_count: 4, embedding: undefined },
   ];
-  await engine.upsertChunks(slug, chunks);
+  await installFixtureChunks(engine, slug, chunks);
   await engine.executeRaw(
     `UPDATE content_chunks
         SET embedding = ('[' || array_to_string(array_fill(0.0::real, ARRAY[$1::int]), ',') || ']')::vector
@@ -424,7 +425,7 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
       type: 'note', title: slug, compiled_truth: `# ${slug}`,
       ...(opts.frontmatter ? { frontmatter: opts.frontmatter } : {}),
     });
-    await engine.upsertChunks(slug, [
+    await installFixtureChunks(engine, slug, [
       { chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth', token_count: 4, model: opts.model },
     ]);
     if (opts.embedded !== false) {

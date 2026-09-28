@@ -27,6 +27,8 @@ const suites = [
   'test/persistence-git-publication.test.ts',
   'test/persistence-sync-origin-native.serial.test.ts',
   'test/backup-portability-native.serial.test.ts',
+  'test/export-publication-native.serial.test.ts',
+  'test/native-export-publication.test.ts',
 ];
 
 describe('data-safety native CI coverage', () => {

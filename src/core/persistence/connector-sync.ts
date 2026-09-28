@@ -27,6 +27,7 @@ import { prepareFileTarget } from './page-prepare.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { LockStolenError, syncLockId, withRefreshingLock, type DbLockHandle } from '../db-lock.ts';
+import { ownedGoogleReceipts, prepareGoogleReceiptPatch, type GoogleReceipts } from './connector-google-receipts.ts';
 
 type ConnectorKind = 'google' | 'github';
 interface ConnectorLease { handle: DbLockHandle; signal: AbortSignal; }
@@ -41,7 +42,7 @@ interface ConnectorRetry {
   attempt: number;
 }
 interface ConnectorIntent extends Record<string, unknown> {
-  kind: 'managed_connector_import' | 'managed_connector_delete' | 'managed_connector_checkpoint';
+  kind: 'managed_connector_import' | 'managed_connector_delete' | 'managed_connector_checkpoint' | 'managed_connector_google_receipts';
   connector: ConnectorKind;
   configHash: string;
   sourceRoot: string | null;
@@ -49,6 +50,8 @@ interface ConnectorIntent extends Record<string, unknown> {
   expected_revision: string | null;
   sourcePath: string | null;
   content?: string;
+  googleReceipts?: GoogleReceipts;
+  googlePageId?: number;
   noEmbed: boolean;
   noSchemaPack: boolean;
   checkpointKey: string;
@@ -88,6 +91,10 @@ function connectorBindingRoot(sourceId: string, source: ConnectorSource, binding
 function stableId(value: unknown): string {
   const hash = digest(value);
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
+export function connectorCheckpointKey(sourceId: string, incarnation: string, connector: ConnectorKind, config: Record<string, unknown>): string {
+  return digest({ sourceId, incarnation, connector, config });
 }
 
 async function connectorFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>,
@@ -158,7 +165,7 @@ export class ManagedConnectorSync {
     private source: ConnectorSource, private authority: SyncAuthority, private binding: WorktreeBinding | null,
     private canonicalRoot: string | null, private noEmbed: boolean, private noSchemaPack: boolean, private retryFailed = false,
     private lease?: ConnectorLease) {
-    this.checkpointKey = digest({ sourceId, incarnation: source.incarnation, connector, config: source.config });
+    this.checkpointKey = connectorCheckpointKey(sourceId, source.incarnation, connector, source.config);
   }
   async assertLease(engine: BrainEngine): Promise<void> {
     if (!this.lease) return;
@@ -285,6 +292,11 @@ export class ManagedConnectorSync {
     const row = await this.submit('managed_connector_delete', slug, sourcePath, {});
     return row.outcome?.noop !== true;
   }
+  async patchGoogleReceipts(slug: string, receipts: GoogleReceipts, pageId: number): Promise<GoogleReceipts> {
+    if (this.connector !== 'google') throw new OperationError('invalid_params', 'Attachment repair requires a Google source.');
+    const row = await this.submit('managed_connector_google_receipts', slug, null, { googleReceipts: receipts, googlePageId: pageId, noEmbed: true });
+    return (row.intent as ConnectorIntent).googleReceipts!;
+  }
   async saveState(state: unknown, fresh = false, newestContentAt?: string): Promise<void> {
     const next = [{ generation: Number((this.checkpoint[0] as { generation?: number } | undefined)?.generation ?? 0) + 1, state: structuredClone(state) }];
     await this.submit('managed_connector_checkpoint', '__managed_connector_checkpoint__', null,
@@ -295,6 +307,11 @@ export class ManagedConnectorSync {
   private async submit(kind: ConnectorIntent['kind'], slug: string, sourcePath: string | null, extra: Partial<ConnectorIntent>): Promise<WriteRequest> {
     await this.recover(slug);
     const snapshot = await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId, includeDeleted: true });
+    if (kind === 'managed_connector_google_receipts') {
+      if (!snapshot || snapshot.page.id !== extra.googlePageId) throw new OperationError('page_identity_changed', 'The historical Gmail page was deleted or recreated.');
+      extra.googleReceipts = ownedGoogleReceipts(snapshot, this.source.config, extra.googleReceipts!);
+      sourcePath = snapshot!.page.source_path!;
+    }
     const file = kind === 'managed_connector_checkpoint' ? undefined : await connectorFileTarget(this.engine,
       { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug }, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
     if (file && sourcePath && resolve(file.path) !== resolve(this.canonicalRoot!, sourcePath)) {
@@ -380,7 +397,7 @@ export class ManagedConnectorSync {
 
 export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const p = row.intent as ConnectorIntent | null;
-  if (!p || !['managed_connector_import', 'managed_connector_delete', 'managed_connector_checkpoint'].includes(p.kind) ||
+  if (!p || !['managed_connector_import', 'managed_connector_delete', 'managed_connector_checkpoint', 'managed_connector_google_receipts'].includes(p.kind) ||
       p.syncAuthority.writer.remote || p.syncAuthority.remoteJob) throw new OperationError('permission_denied', 'Unsupported connector authority.');
   if (!row.worktree_id && (row.authority.databaseOnlyReason !== 'connector_database' || p.syncAuthority.writer.databaseOnlyReason !== 'connector_database') ||
       row.worktree_id && (row.authority.databaseOnlyReason !== undefined || p.syncAuthority.writer.databaseOnlyReason !== undefined)) {
@@ -431,6 +448,12 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
     } };
+  if (p.kind === 'managed_connector_google_receipts') {
+    if (p.connector !== 'google' || !p.googleReceipts) throw new OperationError('invalid_params', 'Invalid Google attachment receipt mutation.');
+    const [source] = await engine.executeRaw<ConnectorSource>('SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1', [row.source_id]);
+    const prepared = await prepareGoogleReceiptPatch(engine, row, snapshot, source.config, p.googleReceipts);
+    return { ...prepared, validate };
+  }
   if (!p.sourcePath || typeof p.content !== 'string' || slugifyPath(p.sourcePath) !== row.slug ||
       p.sourcePath.split('/').some(part => !part || part === '.' || part === '..') || p.sourcePath.includes('\\')) {
     throw new OperationError('invalid_params', 'The connector import path is invalid.');
@@ -452,7 +475,9 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   const page: Page = { ...(snapshot?.page ?? { id: 0, slug: row.slug, source_id: row.source_id, created_at: new Date(row.created_at), updated_at: new Date(row.created_at) }), ...ready.parsedPage };
   const file = await connectorFileTarget(engine, row, snapshot, serializePageToMarkdown(page, tags), p.sourcePath, p.canonicalRoot);
   if (file && (file.path !== p.filePath || file.expectedBeforeHash !== p.fileBeforeHash)) throw new OperationError('source_changed', 'The connector canonical file changed during preparation.');
-  return { observedRevision: ready.observedRevision, sourceExclusive: true, validate, file, noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
+  return { observedRevision: ready.observedRevision, sourceExclusive: true,
+    validate: async tx => { await validate(tx); await ready.validate(tx); },
+    file, noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
     await ready.apply(tx);
     if (!ready.noop) { await project(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
     return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
