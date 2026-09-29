@@ -505,6 +505,13 @@ consent gates around unattended remediation.
 
 ## Upgrade
 
+For v0.60.5.0 and later, confirm a database backup exists before upgrading,
+upgrade every process that writes to the brain, then follow the
+[v0.60.5.0 steps](skills/migrations/v0.60.5.0.md): one full `gbrain doctor`,
+then preview `gbrain repair` and apply only after the user agrees
+([repair guide](docs/guides/repair.md)). For v0.60.6.0, also follow the
+[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md).
+
 For v0.53.0.0, follow the
 [mechanical shared-skills migration](skills/migrations/v0.53.0.0.md) on the host,
 starting with `gbrain apply-migrations --dry-run --json`. Stop/exclude old writers,

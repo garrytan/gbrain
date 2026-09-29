@@ -19,12 +19,14 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
 
 /** One MVCC statement binds content, tags, identity and withdrawals to one revision. */
 export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
-  const params: unknown[] = [slug, opts?.resolveAlias === true];
-  const where = [`(p.slug=$1 OR ($2::boolean
-    ${opts?.preserveExactIdentity ? 'AND NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=p.source_id AND exact_page.slug=$1)' : ''}
-    AND EXISTS (SELECT 1 FROM slug_aliases a
+  const params: unknown[] = [slug];
+  // Alias resolution is part of the statement text, not a parameter, so a
+  // cached plan for an exact-slug read keeps using the slug index.
+  const where = [opts?.resolveAlias === true ? `(p.slug=$1 OR (
+    ${opts?.preserveExactIdentity ? 'NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=p.source_id AND exact_page.slug=$1) AND' : ''}
+    EXISTS (SELECT 1 FROM slug_aliases a
     WHERE a.alias_slug=$1 AND a.source_id=p.source_id AND a.canonical_slug=p.slug
-      AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id=a.source_id ${opts?.includeDeleted ? '' : 'AND NOT alias_source.archived'}))))`];
+      AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id=a.source_id ${opts?.includeDeleted ? '' : 'AND NOT alias_source.archived'}))))` : 'p.slug=$1'];
   if (opts?.sourceIds?.length) {
     params.push(opts.sourceIds);
     where.push(`p.source_id=ANY($${params.length}::text[])`);

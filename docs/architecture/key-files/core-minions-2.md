@@ -19,7 +19,7 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
 
 - `src/core/minions/transcript.ts` — renders `subagent_messages` + `subagent_tool_executions` to markdown. Tool rows splice under their owning assistant `tool_use` by `(message_idx, tool_use_id)` — raw provider tool ids may repeat across turns, so `tool_use_id` alone is not an identity; echoed `tool_result` blocks check ownership against the nearest preceding assistant turn's key. UTF-8-safe truncation; unknown block types fall through to fenced JSON.
 
-- `src/core/minions/types.ts` — `MinionJobInput` + `MinionJobStatus` + handler context types. `MinionJobInput.max_stalled` is optional; omitted values let the schema DEFAULT (5) kick in, provided values are clamped to `[1, 100]`. `SubagentHandlerData.require_writes` requires at least one settled successful page write, not merely a clean model finish.
+- `src/core/minions/types.ts` — `MinionJobInput` + `MinionJobStatus` + handler context types. `MinionJobInput.max_stalled` is optional; omitted values let the schema DEFAULT (5) kick in, provided values are clamped to `[1, 100]`. `SubagentHandlerData.require_writes` requires at least one settled successful page write, not merely a clean model finish, except the deliberate zero-write completions `isLegitimateZeroWrite` accepts (an explicit oneshot skip, or an `allow_clean_zero_writes` child with a completed tool execution).
 
 - `src/core/minions/wait-for-completion.ts` — poll-until-terminal helper for CLI callers. `TimeoutError` does NOT cancel the job; `AbortSignal` exits without throwing. Default `pollMs`: 1000 on Postgres, 250 on PGLite inline.
 

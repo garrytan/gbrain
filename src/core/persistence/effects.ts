@@ -27,6 +27,7 @@ import { isSourceDbOnlySlug } from './source-storage.ts';
 import { advanceEffectCursor, claimPersistenceEffect, completeEffect, failEffect, parkEffect, renewPersistenceEffectClaim, requeueEffect, retryEffect } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
 import { publishGitEffect } from './effect-git.ts';
+import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
 import { PARK_AFTER_FAILURES, type EffectRecovery, type PersistenceEffect } from './effect-model.ts';
 import { recoveryStagingFile } from './staging.ts';
@@ -112,11 +113,14 @@ async function mirrorPage(engine: BrainEngine, effect: PersistenceEffect, bindin
   await recoverEffectPublication(engine, effect, opts.hostId, opts);
 }
 
-async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding | null, opts: EffectWorkerOptions, attempt: EffectAttempt): Promise<void> {
+async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: WorktreeBinding | null, opts: EffectWorkerOptions,
+  attempt: EffectAttempt, hardened: boolean | undefined): Promise<void> {
   if (!binding?.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); return; }
-  const snapshot = await selectedEffectPage(engine, effect);
+  // Only a page walk reads snapshots; a single-file effect completes by its recorded hash.
+  const walk = targetedWithdrawalEffect(effect) || effect.data.source_scan;
+  const snapshot = walk ? await selectedEffectPage(engine, effect) : null;
   let path: string;
-  if (targetedWithdrawalEffect(effect) || effect.data.source_scan) {
+  if (walk) {
     if (!snapshot) { await completeEffect(engine, effect); return; }
     attempt.target = snapshot.page.slug;
     const file = await prepareFileTarget(engine, { ...effect, slug: snapshot.page.slug }, snapshot,
@@ -142,7 +146,7 @@ async function gitPage(engine: BrainEngine, effect: PersistenceEffect, binding: 
     await finishPage(engine, effect, snapshot, { git: 'skipped', reason: 'db_only' });
     return;
   }
-  const result = await publishGitEffect(binding.local_path, relative(binding.local_path, path).split(sep).join('/'), opts.signal);
+  const result = await publishGitEffect(binding.local_path, relative(binding.local_path, path).split(sep).join('/'), opts.signal, hardened);
   if (result.reason === 'durability_not_enabled') await completeEffect(engine, effect, result);
   else await finishPage(engine, effect, snapshot, result);
 }
@@ -316,13 +320,16 @@ async function parkEffectTarget(engine: BrainEngine, effect: PersistenceEffect, 
     ...(remaining.length ? { retry_slugs: remaining, target_failures: PARK_AFTER_FAILURES - 1 } : {}) }, code, 0);
 }
 
-/** Bounded, idempotent work. Recovery obtains kernel exclusion before a DB claim. */
-export async function runPersistenceEffects(engine: BrainEngine, config: GBrainConfig, opts: EffectWorkerOptions): Promise<void> {
+/**
+ * Bounded, idempotent work. Recovery obtains kernel exclusion before a DB claim.
+ * Resolves with the number of effects attempted, so a caller can keep draining.
+ */
+export async function runPersistenceEffects(engine: BrainEngine, config: GBrainConfig, opts: EffectWorkerOptions): Promise<number> {
   const limit = Math.max(1, Math.min(opts.limit ?? 2, 20));
   const recoveries = await selectEffectRecoveries(engine, opts.hostId, limit);
   let attempted = 0;
   for (const recovery of recoveries) {
-    if (opts.signal?.aborted) return;
+    if (opts.signal?.aborted) return attempted;
     const binding = await getWorktreeBinding(engine, recovery.source_id, opts.hostId);
     if (!binding) continue;
     const lock = await acquireWorktree(binding, 0, undefined, engine);
@@ -337,18 +344,20 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     } catch (error) { if (claimed) await recordFailure(engine, claimed, error); }
     finally { await lock.release(); }
   }
-  while (attempted++ < limit && !opts.signal?.aborted) {
-    const claimed = await claimPersistenceEffect(engine, opts.hostId);
-    if (!claimed) return;
+  const run = async (claimed: PersistenceEffect, binding: WorktreeBinding | null, hardened?: boolean) => {
     let effect = claimed;
     const attempt: EffectAttempt = {};
     let lock: Awaited<ReturnType<typeof acquireWorktree>> = null;
+    // A single-file git effect in a repository without the durability hook
+    // runs no git command and only records its outcome: acquiring the lock
+    // still proves the owned root, but it is not held while recording.
+    const recordOnly = effect.kind === 'git' && hardened === false && !targetedWithdrawalEffect(effect) && !effect.data.source_scan;
     try {
-      const binding = effect.worktree_id ? await getWorktreeBinding(engine, effect.source_id, opts.hostId) : null;
       if (effect.worktree_id && !['embedding', 'facts-backstop'].includes(effect.kind)) {
         if (!binding) throw new OperationError('owner_unavailable', 'The canonical effect owner is unavailable.');
         lock = await acquireWorktree(binding, 0, undefined, engine);
         if (!lock) throw new OperationError('writer_busy', 'The canonical worktree is busy.');
+        if (recordOnly) { await lock.release(); lock = null; }
       }
       await engine.transaction(async tx => {
         await guardEffectSource(tx, effect, opts.hostId);
@@ -359,10 +368,36 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
       });
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
       if (effect.kind === 'withdrawal-mirror') await mirrorPage(engine, effect, binding, opts, attempt);
-      else if (effect.kind === 'git') await gitPage(engine, effect, binding, opts, attempt);
+      else if (effect.kind === 'git') await gitPage(engine, effect, binding, opts, attempt, hardened);
       else if (effect.kind === 'facts-backstop') await dispatchFactsBackstopEffect(engine, effect, opts.hostId);
       else await embedPage(engine, config, effect, opts);
     } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
     finally { await lock?.release(); }
+  };
+  // A git effect first needs its durability probe (git child processes, one
+  // probe per root per run). The probe runs while the rest of the batch
+  // proceeds; git effects then run in claim order, never holding a worktree
+  // lock while they wait for it.
+  const probes = new Map<string, Promise<boolean>>();
+  const deferred: { effect: PersistenceEffect; binding: WorktreeBinding; hardened: Promise<boolean> }[] = [];
+  // A deferred effect that requeues itself (a page walk advancing its cursor,
+  // or work unblocked by an earlier effect) is claimable again after the flush.
+  for (;;) {
+    while (attempted < limit && !opts.signal?.aborted) {
+      const effect = await claimPersistenceEffect(engine, opts.hostId);
+      if (!effect) break;
+      attempted++;
+      let binding: WorktreeBinding | null = null;
+      try {
+        if (effect.worktree_id && !['embedding', 'facts-backstop'].includes(effect.kind)) binding = await getWorktreeBinding(engine, effect.source_id, opts.hostId);
+      } catch (error) { await recordFailure(engine, effect, error, opts.signal); continue; }
+      if (effect.kind === 'git' && binding?.local_path) {
+        const root = binding.local_path;
+        if (!probes.has(root)) probes.set(root, isDurabilityHardenedAsync(root));
+        deferred.push({ effect, binding, hardened: probes.get(root)! });
+      } else await run(effect, binding);
+    }
+    if (!deferred.length) return attempted;
+    for (const { effect, binding, hardened } of deferred.splice(0)) await run(effect, binding, await hardened);
   }
 }

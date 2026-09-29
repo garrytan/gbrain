@@ -1239,7 +1239,7 @@ await withEnv({ GBRAIN_HOME: undefined }, fn);
 await withEnv({ A: '1', B: '2', C: undefined }, fn);
 ```
 
-`withEnv` saves the prior value of every key it touches and restores via try/finally — including when the callback throws. **It is cross-test safe but NOT intra-file concurrent-safe.** `process.env` is process-global; two `test.concurrent()` calls in the same file both touching the same key will race. Files using `withEnv` stay outside the `test.concurrent()` codemod's eligibility filter.
+`withEnv` saves the prior value of every key it touches and restores via try/finally — including when the callback throws. An absent `TZ` is restored as the zone that was in effect, because Bun keeps the last explicitly set zone when `TZ` is deleted; a `TZ` override therefore never leaks into later files in the same process. **It is cross-test safe but NOT intra-file concurrent-safe.** `process.env` is process-global; two `test.concurrent()` calls in the same file both touching the same key will race. Files using `withEnv` stay outside the `test.concurrent()` codemod's eligibility filter.
 
 #### Speed + environment helpers (`test/helpers/`)
 

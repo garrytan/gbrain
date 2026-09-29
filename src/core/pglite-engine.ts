@@ -4,11 +4,12 @@ import { trackPgliteDatabase, PgliteClosingError, notifyPgliteOpened } from './p
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import { assertPageRevision } from './page-state/types.ts';
-import { lockPageKeys as acquirePageKeys } from './page-state/guards.ts';
+import { lockUnheldPageKeys, withHeldPageKeys, type HeldPageKeys } from './page-state/guards.ts';
 import { readPageSnapshot as readCanonicalPageSnapshot } from './page-state/snapshot.ts';
 import { createPageVersion } from './page-state/versions.ts';
 import { moveSlugBindings, recordRenameAlias } from './page-state/rename-alias.ts';
 import { composablePgliteTransaction } from './page-state/transactions.ts';
+import { dropRowTypeArrayParsers, PgliteStatementCache } from './pglite-statements.ts';
 import { GRANT_COLUMNS_SQL } from './grants/schema.ts';
 import type { PageReadScope } from './types.ts';
 import type { PageReadPolicy } from './types.ts';
@@ -719,10 +720,12 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   private _attachDatabase(database: PGLiteDB): PGLiteDB {
-    this._dbWork = trackPgliteDatabase(database);
+    this._statements = new PgliteStatementCache(database);
+    this._dbWork = trackPgliteDatabase(this._statements.attach(database, false));
     this._checkpointGuard = undefined;
     return this._dbWork.database;
   }
+  private _statements: PgliteStatementCache | null = null;
   // #2034: captured at connect() so reconnect() can restore the same data dir
   // after a drop, matching PostgresEngine's _savedConfig contract.
   private _savedConfig: EngineConfig | null = null;
@@ -762,7 +765,10 @@ export class PGLiteEngine implements BrainEngine {
     }
     this.vectorIterativeScan = undefined;
     const opening = this._connectInternal(config).then(async () => {
-      try { if (registerRoots) await registerManagedFilesystemEngine(this, config.database_path); }
+      try {
+        await dropRowTypeArrayParsers(this.db);
+        if (registerRoots) await registerManagedFilesystemEngine(this, config.database_path);
+      }
       catch (error) {
         try { await this._closeInternal(); }
         catch (closeError) {
@@ -1004,6 +1010,7 @@ export class PGLiteEngine implements BrainEngine {
       if (lock?.acquired) await releaseLock(lock);
       this._lock = null;
       this._dbWork = null;
+      this._statements = null;
     } finally {
       // A slow close keeps the watchdog armed until it actually settles. On a
       // failed close the lock is retained; callers must terminate the process.
@@ -1709,14 +1716,15 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    const run = (db = this.db) => db.transaction(async handle => {
-      const tx = composablePgliteTransaction(handle);
+    const run = (db = this.db) => withHeldPageKeys(this._pageTransaction ? this._heldPageKeys : null, held => db.transaction(async handle => {
+      const tx = composablePgliteTransaction(this._statements?.attach(handle, true) ?? handle);
       const txEngine = Object.create(this) as PGLiteEngine;
       Object.defineProperty(txEngine, '_chunkWritesInTransaction', { value: true });
       Object.defineProperty(txEngine, '_pageTransaction', { value: true });
+      Object.defineProperty(txEngine, '_heldPageKeys', { value: held });
       Object.defineProperty(txEngine, 'db', { get: () => tx });
       return fn(txEngine);
-    });
+    }));
     if (this._pageTransaction || !this._dbWork) return run();
     const guard = this._checkpointGuard ??= new PgliteCheckpointGuard();
     return this._dbWork.admit(db => guard.runOutermost(sql => db.query(sql), () => run(db)));
@@ -1737,8 +1745,9 @@ export class PGLiteEngine implements BrainEngine {
 
   async lockPageKeys(keys: readonly PageKey[]): Promise<void> {
     if (!this._pageTransaction) throw new Error('lockPageKeys requires engine.transaction()');
-    await acquirePageKeys(this, keys);
+    await lockUnheldPageKeys(this, this._heldPageKeys!, keys);
   }
+  private _heldPageKeys: HeldPageKeys | null = null;
 
   /**
    * v0.41.13 (#1309) — identity-based dedup pre-check.

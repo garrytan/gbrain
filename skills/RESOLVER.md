@@ -96,6 +96,8 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
+| Doctor `timeline_history` / `derived_visibility` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair`, apply one kind with `gbrain repair <kind> --apply` on the brain host after the user agrees. See `docs/guides/repair.md` |
+| A write or sync refused with `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity`, or doctor `parked_effects` | Relay the error's `suggestion` command; see `docs/guides/write-refusals.md` before running it |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |

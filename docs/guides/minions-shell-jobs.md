@@ -115,7 +115,9 @@ Note: `--follow` blocks the crontab slot until the job finishes. If 14 shell
 crons land at the same minute and each takes 30s, they serialize through
 crontab's spawning limits. Postgres + persistent worker scales better.
 
-### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL {#secrets}
+<a id="secrets"></a>
+
+### Calling `gbrain` itself from a shell job — use `inherit:` for DATABASE_URL
 
 A common pattern is submitting shell jobs that run `gbrain` CLI commands:
 
@@ -277,7 +279,9 @@ gbrain jobs list --status dead --json | jq '.[] | select(.name == "shell")'
 
 ---
 
-## Errors {#errors}
+<a id="errors"></a>
+
+## Errors
 
 | Error | What it means | Fix |
 |---|---|---|

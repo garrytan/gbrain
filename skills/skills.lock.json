@@ -1,5 +1,5 @@
 {
-  "RESOLVER.md": "d4a01e2475db5b7efe87d5a789947085c446d249fe90cdb87ff929117986f537",
+  "RESOLVER.md": "b9195259a8bd0a54d9c5ad2284446bd97a6ae4a23e280a94d6dcad666243dbb8",
   "_AGENT_README.md": "0b755aa945df0da0f27cb3323904f54b99b3dfaf8065033e6cf9108ac4be38bb",
   "_brain-filing-rules.json": "cf850df6a7425464c6d63b3ace71991cc93497fa0cc8cd21acd31883e17939c6",
   "_brain-filing-rules.md": "b8f6844fd7ab6fbe4a4e7a95e7089466b37d63127730040c766927f55b1ad138",
@@ -152,6 +152,7 @@
   "migrations/v0.59.10.0.md": "e0268a05ab184d5518f88747313e772629b2af91db59eacbba728f2ebd9db3cd",
   "migrations/v0.59.2.0.md": "b6d61af8ef48c154a26e8d427dd6f6570e99efb82b891728426046eea493247b",
   "migrations/v0.60.5.0.md": "0d3ee19359a2740de08ac9ec388ddc15e7c72d663afe33832e1e54170528acab",
+  "migrations/v0.60.6.0.md": "1cbfca2c899e1348acbd61f0baa4c8e723b5283ff868c710c74e116c0cb6726e",
   "migrations/v0.7.0.md": "97c2740445a10b1c5c7123c17dbd625fa27a94095b85d27c2b278da756c4c59a",
   "migrations/v0.8.0.md": "1919ff8b8f3680612ff888e7cfcc0d86ece5d5304ae19af4497bdf40b050561a",
   "migrations/v0.8.1.md": "fad7341cfb5e02545fb8a23221d12ab395fc3d8db15d1d8ee8a18844aea6563a",

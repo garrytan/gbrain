@@ -50,6 +50,8 @@ Repo: https://github.com/garrytan/gbrain
 
 - [docs/GBRAIN_VERIFY.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md): 7-check post-setup verification. Start here when something feels off.
 - [docs/guides/minions-fix.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-fix.md): Troubleshooting the Minions job queue.
+- [docs/guides/repair.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/repair.md): `gbrain repair timeline|visibility|safe-chunks`: dry run vs --apply, --source/--limit/--json, resume, capacity stop, thin-client refusal, what each kind fixes and costs.
+- [docs/guides/write-refusals.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/write-refusals.md): Refusal reasons (file_database_drift, ambiguous_source_path, physical_root_device_changed, cursor_processing_options_conflict, take_row_collision, invalid_source_uri, queue_capacity, parked effects) with the exact recovery command.
 - [docs/integrations/reliability-repair.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md): Data integrity recovery.
 
 ## Migrations
@@ -79,4 +81,5 @@ Repo: https://github.com/garrytan/gbrain
 - `gbrain doctor [--json] [--fast] [--fix]` - built-in health checks.
 - `gbrain orphans [--json]` - pages with zero inbound wikilinks.
 - `gbrain repair-jsonb [--dry-run]` - repair v0.12.0 double-encoded JSONB rows.
+- `gbrain repair [<kind>] [--apply]` - preview, then fix timeline, visibility and safe-chunk damage doctor reports.
 - `gbrain upgrade` runs post-upgrade + apply-migrations.

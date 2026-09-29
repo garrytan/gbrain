@@ -51,7 +51,7 @@ the same registry.
 gbrain init --pglite                                      # 2-second local brain
 claude mcp add gbrain -- gbrain serve --surface verbs     # the memory-verb surface
 gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me
-gbrain recall --entity people/me                          # …now ask your agent in a NEW session
+gbrain recall people/me                                   # …now ask your agent in a NEW session
 ```
 
 > Memories agents save are readable by every agent connected to this brain;

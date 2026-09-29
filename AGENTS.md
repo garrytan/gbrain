@@ -95,6 +95,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   `gbrain db-repair --yes` to apply safe fixes. All three are engine-free — they
   work while the database is down. Full loop:
   [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
+  Doctor residue (`timeline_history`, `derived_visibility`, unsealed pages):
+  preview `gbrain repair`, then `gbrain repair <kind> --apply` on the brain host
+  after the user agrees ([repair guide](./docs/guides/repair.md)). A refused
+  write names its reason and recovery command
+  ([write refusal reasons](./docs/guides/write-refusals.md)).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes --no-autopilot-install` (manual migration orchestration without service installation).

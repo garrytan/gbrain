@@ -39,10 +39,20 @@ afterAll(async () => {
   _resetPackCacheForTests();
 });
 
+// runUnifyTypes(apply) flips the active pack in ~/.gbrain/config.json. Each
+// test gets its own GBRAIN_HOME so that flip never reaches later test files
+// sharing the process (they would resolve gbrain-base-v2's vocabulary).
+let unifyHome: string;
 beforeEach(async () => {
   await resetPgliteState(engine);
   _resetPackCacheForTests();
+  unifyHome = mkdtempSync(join(tmpdir(), 'gbrain-unify-home-'));
 });
+afterEach(() => { rmSync(unifyHome, { recursive: true, force: true }); });
+
+function unify(input: Parameters<typeof runUnifyTypes>[1]) {
+  return withEnv({ GBRAIN_HOME: unifyHome }, () => runUnifyTypes(ctxOf(), input));
+}
 
 function ctxOf() {
   return {
@@ -67,14 +77,14 @@ describe('runUnifyTypes', () => {
   describe('preflight', () => {
     it('refuses target pack with no mapping_rules', async () => {
       // gbrain-base has no mapping_rules
-      await expect(runUnifyTypes(ctxOf(), {
+      await expect(unify({
         target_pack: 'gbrain-base',
         apply: false,
       })).rejects.toThrow(/mapping_rules/);
     });
 
     it('refuses unknown target pack', async () => {
-      await expect(runUnifyTypes(ctxOf(), {
+      await expect(unify({
         target_pack: 'nonexistent-pack',
         apply: false,
       })).rejects.toThrow();
@@ -84,7 +94,7 @@ describe('runUnifyTypes', () => {
   describe('dry-run', () => {
     it('returns shape with would_apply counts; no mutation', async () => {
       await seed('tweets/a', 'tweet-single');
-      const result = await runUnifyTypes(ctxOf(), {
+      const result = await unify({
         target_pack: 'gbrain-base-v2',
         apply: false,
       });
@@ -109,7 +119,7 @@ describe('runUnifyTypes', () => {
       await seed('wiki/concepts/redirect-1', 'concept-redirect',
         {},
         '[[wiki/concepts/canonical]] redirect body that is long enough to pass min char gates');
-      const result = await runUnifyTypes(ctxOf(), {
+      const result = await unify({
         target_pack: 'gbrain-base-v2',
         apply: true,
       });
@@ -141,7 +151,7 @@ describe('runUnifyTypes', () => {
 
     it('catch-all rule retypes unknown types to note with legacy_type', async () => {
       await seed('odd/x', 'some-weird-type');  // not in any explicit rule
-      const result = await runUnifyTypes(ctxOf(), {
+      const result = await unify({
         target_pack: 'gbrain-base-v2',
         apply: true,
       });
@@ -157,12 +167,12 @@ describe('runUnifyTypes', () => {
   describe('idempotency', () => {
     it('second apply run is mostly no-op', async () => {
       await seed('tweets/a', 'tweet-single');
-      const r1 = await runUnifyTypes(ctxOf(), {
+      const r1 = await unify({
         target_pack: 'gbrain-base-v2',
         apply: true,
       });
       expect(r1.per_phase.retype_explicit.applied).toBeGreaterThan(0);
-      const r2 = await runUnifyTypes(ctxOf(), {
+      const r2 = await unify({
         target_pack: 'gbrain-base-v2',
         apply: true,
       });
@@ -186,7 +196,7 @@ describe('#2184 conversation-shaped types survive v2 unify', () => {
     await seed('meetings/2026-04-03', 'meeting');
     await seed('conversations/imessage/alice-example', 'conversation');
     await seed('slack/general-2026-04-03', 'slack');
-    await runUnifyTypes(ctxOf(), {
+    await unify({
       target_pack: 'gbrain-base-v2',
       apply: true,
     });

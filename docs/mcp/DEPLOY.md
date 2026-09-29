@@ -721,6 +721,25 @@ plain-HTTP OAuth discovery on a private network you fully control: the SDK's
 own `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL=1` opt-in. Bearer auth works
 either way; OAuth clients may still refuse a non-HTTPS issuer.
 
+**A connector loops back to sign-in, or the token endpoint returns `invalid_target`**
+Every OAuth authorization, token, refresh and bearer check uses one resource:
+`<origin of --public-url>/mcp`. The bare origin is accepted as an alias. A
+requested resource that is anything else, such as an old tunnel hostname,
+`http` for an `https` server or a query string, gets `invalid_target` naming
+the accepted URL. A bearer token bound to another resource gets
+`invalid_token`, and a stored grant for a resource this server no longer
+serves gets `invalid_grant` on refresh. Point the client at the accepted URL
+or fix `--public-url`, then reconnect. ChatGPT specifics
+are in [CHATGPT.md](CHATGPT.md#troubleshooting).
+
+**A claude.ai connector can search but not save**
+The `/mcp` challenge hints `read write`, and each token is capped to the
+client's registered scope. A connector approved before v0.60.5.0 was
+approved with the old `read` hint and keeps a read-only grant. Remove and
+re-add the connector, and approve `write` on the consent screen. If the
+client is registered with `read` only, widen it first
+([ADMIN.md](ADMIN.md#inspect-clients-and-edit-access)).
+
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT
 `claude_desktop_config.json`. See [CLAUDE_DESKTOP.md](CLAUDE_DESKTOP.md).

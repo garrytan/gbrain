@@ -235,7 +235,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       outcome.persistence = { mode: files.length ? 'filesystem' : 'database', ...(files.length ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
       outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
       if (row.operation === 'put_page' && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id);
-      await queuePublicationEffects(tx, row, final?.revision, outcome, prepared);
+      await queuePublicationEffects(tx, row, final, outcome, prepared);
       await hooks.boundary?.('before_commit', row);
       const committed = await completeWrite(tx, current, 'committed', outcome);
       transactionBodyCompleted = true;

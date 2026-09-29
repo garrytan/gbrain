@@ -228,8 +228,21 @@ of indistinguishable from a stuck one), and `dead_jobs`/`degraded`. A run
 with any non-completed child does NOT stamp the cooldown, so the next
 nightly retries exactly the failed transcripts; a run whose EVERY child
 died fails the phase loudly. Synthesis children also fail (dead-letter)
-when every attempted page write failed — `completed` never means
-"zero pages written".
+when every attempted page write failed, or when they attempted no page
+write and stopped dirty, finished with prose instead of calling the write
+tool, or had only failed tool calls. A `completed` child with zero pages written is a
+deliberate answer: the model explicitly skipped the transcript
+(`{"pages":[],"skipped":true}`), or a patterns child ran its tools and found
+nothing new. It completes so the cooldown stamps instead of re-billing the
+same input.
+
+A dream key whose submissions died `dream.breaker.max_dead_submissions`
+times (default 3; `0` disables) within 24 hours is refused before the next
+submission, and `gbrain doctor` reports it as `dream_paid_loop`. Fix the
+cause first (a missing provider key, a quota, a failing transcript), then
+`gbrain dream reset-key --list` shows the refused keys and
+`gbrain dream reset-key '<key>'` re-enables one. Details in
+[spend controls](../operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions).
 
 Three more fields answer "what did that cost and did it land":
 

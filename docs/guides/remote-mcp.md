@@ -437,6 +437,7 @@ check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
 | `service: manual` (cloud sandbox, ephemeral container, no user bus) | There is no supervisor to keep the server alive. Run the printed foreground command, or the `nohup ~/.gbrain/serve/gbrain-serve.sh &` line, and re-run `--status`. On Linux without a user bus, `loginctl enable-linger $USER` may enable one. |
 | `thin_client` (exit 1) — "run on the brain host" | This install is a thin client; `expose` publishes the machine that holds the database. Run it there. |
 | Clients see `needsAuth` while tool calls succeed | Spec discovery, not a failed login — see [DEPLOY.md troubleshooting](../mcp/DEPLOY.md#troubleshooting). |
+| A connector (ChatGPT, claude.ai) keeps asking to reconnect, or OAuth returns `invalid_target` naming an accepted URL | The connector's MCP URL does not match the server's `/mcp` resource, which comes from the published URL (`expose` sets `--public-url` to your MagicDNS name). Use the accepted URL from the message, then reconnect once. Details in [CHATGPT.md troubleshooting](../mcp/CHATGPT.md#troubleshooting). |
 
 ## Security posture
 

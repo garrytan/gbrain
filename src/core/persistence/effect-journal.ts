@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { sha256 } from './digest.ts';
@@ -10,11 +11,12 @@ import { isFactsExtractionEnabled } from '../facts/extract.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
 import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 
-export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest, revision: string | undefined,
+/** `snapshot` is the publication's final read of the page, including deleted rows, in this transaction. */
+export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest, snapshot: PageSnapshot | null,
   outcome: Record<string, unknown>, prepared?: PreparedMutation): Promise<void> {
   if (prepared?.noop || prepared?.target === 'skill_bundle') return;
   await declarePersistenceProtocol(tx);
-  const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+  const revision = snapshot?.revision;
   const data = { slug: row.slug, page_id: snapshot?.page.id };
   const queue = async (kind: EffectKind, extra: Record<string, unknown> = {}) => tx.executeRaw(`INSERT INTO persistence_effects
     (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
