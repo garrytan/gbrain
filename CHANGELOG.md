@@ -10,6 +10,64 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.9.0] - 2026-09-29
+
+**You can now move a brain onto local Ollama embeddings with `gbrain migrate embeddings`.**
+
+Switching a brain to `ollama:nomic-embed-text` used to stop at the first check with a generic "Preflight embed against ollama:nomic-embed-text failed" message, even when Ollama was running and answering. The migration's spending guard refuses any request that doesn't declare how large its input can be, and the Ollama recipe never declared one, so every local embedding request was turned away before it was sent. That guard also covers the re-embed pass, so getting past the first check would not have helped.
+
+The Ollama recipe now declares a per-input limit for `nomic-embed-text`. The migration runs end to end, and local embeddings cost $0.
+
+| Situation | Before | Now |
+| --- | --- | --- |
+| `gbrain migrate embeddings --to ollama:nomic-embed-text` | Stopped at "Preflight embed ... failed", nothing changed | Runs, re-embeds locally, finishes with its smoke check |
+| Page chunk size on Ollama brains | 2000 tokens | 2000 tokens (unchanged) |
+
+### How to use it
+
+```bash
+ollama pull nomic-embed-text
+gbrain migrate embeddings --to ollama:nomic-embed-text --dry-run   # preview the plan
+gbrain migrate embeddings --to ollama:nomic-embed-text --yes --max-cost-usd 0
+gbrain migrate embeddings --status                                  # confirm 0 chunks missing
+```
+
+### Things to watch
+
+- **This changes your stored vectors.** Moving providers rebuilds the vector column at the new width and deletes the existing vectors, so semantic search is keyword-only until the re-embed finishes. Take a backup first.
+- **Only `nomic-embed-text` is covered.** Other Ollama embedding models (for example `mxbai-embed-large`, `bge-m3`) still declare no limit and are still turned away by the migration's guard. Their limits were not measured for this release.
+- **A failed preflight still hides its reason.** The message says only that the check failed. If it fails for another cause, run the same embed directly against Ollama to see the real error.
+
+### To take advantage of v0.60.9.0
+
+`gbrain upgrade` should do this automatically. Nothing in this release needs a migration.
+If you were blocked on moving to Ollama embeddings:
+
+1. **Confirm the version:**
+   ```bash
+   gbrain --version
+   ```
+2. **No agent action is needed.** There is no `skills/migrations` file for this release.
+3. **Retry the move and verify it:**
+   ```bash
+   gbrain migrate embeddings --to ollama:nomic-embed-text --dry-run
+   gbrain migrate embeddings --status
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+- `src/core/ai/recipes/ollama.ts`: the embedding touchpoint declares `max_input_tokens: { 'nomic-embed-text': 8192 }`. `gateway.embed` derives the `maxInputTokens` it hands the invocation guard from `max_batch_tokens` or `max_input_tokens[model] * inputs`; the recipe declares `no_batch_cap` and neither field, so the value was `undefined` and `authorizeMigrationBudget` refused every call ("no conservative input ceiling"), which `probeTargetProvider` reports as a generic preflight failure.
+- Chunk sizing is unchanged: `resolveMaxChunkTokens` returns `min(DEFAULT_MAX_CHUNK_TOKENS, floor(8192 * EMBED_INPUT_SAFETY))`, which is 2000.
+
+### For contributors
+
+- `test/ollama-recipe.test.ts` gains an embedding-ceiling suite: the recipe declares the limit, and `embed()` hands a positive `maxInputTokens` to the invocation guard for `ollama:nomic-embed-text`. Against the previous recipe the suite fails 2 of 5 tests.
+
 ## [0.60.6.0] - 2026-09-29
 
 **Forgetting works on big brains again, renames and edits keep everything attached to the page, search understands reworded relationship questions, and the nightly dream cycle stops spending past a budget or rewriting pages it didn't write.**
