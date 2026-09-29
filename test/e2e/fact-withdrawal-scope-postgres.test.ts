@@ -67,9 +67,9 @@ describePg('Postgres fact-withdrawal scope', () => {
       expect(performance.now() - stopwordStarted).toBeLessThan(5000);
       expect(stopwordResult.pages.map(page => page.slug)).toEqual(['notes/scale-2498']);
 
-      // Slow path: the claim's longest safe token ("realistic") is on every
-      // page, so the anchor prefilter keeps all of them and every body is
-      // normalized. This is the common-anchor ceiling, not the rare-anchor path.
+      // Common anchor: the claim's longest token ("realistic") is on every
+      // page, so a single-token prefilter would keep all of them; the
+      // all-token prefilter must still narrow discovery to the one page.
       const commonAnchorClaim = 'realistic page claim zz';
       await engine.executeRaw(`UPDATE pages SET compiled_truth=$3||chr(10)||repeat('realistic page padding ',200)
         WHERE source_id=$1 AND slug=$2`, [sourceId, 'notes/scale-2497', renderFactsTable([{ rowNum: 1,

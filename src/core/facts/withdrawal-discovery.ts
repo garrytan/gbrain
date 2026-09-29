@@ -8,7 +8,7 @@ export const WITHDRAWAL_LIMITS = { targets: 256, targetBytes: 1024 * 1024, scanM
 export interface WithdrawalTarget { slug: string; page_id: number; revision: string }
 /** `subject` is the ledger subject ('*' = every entity); `claim` is the fact text when the caller already holds it. */
 export interface WithdrawalClaim { visibility: string; fact_hash: string; subject?: string | null; claim?: string | null }
-interface KeyedClaim { visibility: string; fact_hash: string; subject: string; norm: string | null; anchor: string | null }
+interface KeyedClaim { visibility: string; fact_hash: string; subject: string; norm: string | null }
 
 const RECOVERY = 'See docs/guides/concurrent-writes.md#withdrawal-recovery.';
 
@@ -38,10 +38,11 @@ export function ambiguousFenceClaims(body: string): Array<{ claim: string; visib
 
 /**
  * Claim-keyed discovery. Every fence row, chunk row or whole chunk whose
- * fingerprint equals the claim contains the claim's normalized token run, so
- * pages and chunks are shortlisted in SQL by the claim's longest token and its
- * normalized text, streamed by keyset, then verified exactly. Work and the
- * target bound scale with the claim's affected set, never with source size.
+ * fingerprint equals the claim contains each of the claim's normalized tokens
+ * as a substring of its lowercased text (normalization only turns punctuation
+ * and whitespace into token boundaries), so pages and chunks are shortlisted
+ * in SQL by those tokens, streamed by keyset, then verified exactly. Work and
+ * the target bound scale with the claim's affected set, never with source size.
  */
 export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: string, claims: readonly WithdrawalClaim[]): Promise<WithdrawalTarget[]> {
   if (!claims.length) return [];
@@ -52,9 +53,9 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
         (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint(f.fact)=w.fact_hash LIMIT 1),
         (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint_v1(f.fact)=w.fact_hash LIMIT 1))) AS norm
       FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
-    ) SELECT w.*,(SELECT t FROM regexp_split_to_table(w.norm,' ') t WHERE t<>'' ORDER BY length(t) DESC,t LIMIT 1) AS anchor FROM w`,
+    ) SELECT * FROM w`,
   [sourceId, JSON.stringify(claims.map(c => ({ visibility: c.visibility, fact_hash: c.fact_hash, subject: c.subject ?? '*', claim: c.claim ?? null })))]);
-  const keys = JSON.stringify(keyed);
+  const keys = JSON.stringify(keyed.map(k => ({ ...k, tokens: k.norm ? k.norm.split(' ').filter(Boolean) : [] })));
   const subjects = keyed.some(k => k.subject === '*') ? null : [...new Set(keyed.map(k => k.subject))];
   const affected = new Set<number>();
   const provenance = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT p.id
@@ -77,14 +78,13 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     for (const row of matches) affected.add(row.id);
     if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
   };
-  const shortlist = (text: string) => `(k.anchor IS NULL OR strpos(lower(${text}),k.anchor)>0)
-    AND (COALESCE(k.norm,'')='' OR strpos(' '||gbrain_fact_normalize(${text})||' ',' '||k.norm||' ')>0)`;
+  const shortlist = (text: string) => `NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(k.tokens) t(v) WHERE strpos(lower(${text}),t.v)=0)`;
   for (let after = 0; ;) {
     if (performance.now() > deadline) refuse();
     const pages = await engine.executeRaw<{ id: number; slug: string; compiled_truth: string; timeline: string }>(`SELECT p.id,p.slug,p.compiled_truth,p.timeline FROM pages p
       WHERE p.source_id=$1 AND p.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
         AND (strpos(p.compiled_truth,'gbrain:facts:')>0 OR strpos(p.timeline,'gbrain:facts:')>0)
-        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,norm text,anchor text)
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,tokens jsonb)
           WHERE (k.subject='*' OR k.subject=p.slug) AND ((${shortlist('p.compiled_truth')}) OR (${shortlist('p.timeline')})))
       ORDER BY p.id LIMIT $4`, [sourceId, keys, after, WITHDRAWAL_LIMITS.batch, subjects]);
     await match(pages.flatMap(page => [page.compiled_truth, page.timeline].flatMap(body => [
@@ -99,7 +99,7 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
     const chunks = await engine.executeRaw<{ id: number; page_id: number; slug: string; chunk_text: string }>(`SELECT c.id,c.page_id,p.slug,c.chunk_text
       FROM content_chunks c JOIN pages p ON p.id=c.page_id
       WHERE p.source_id=$1 AND c.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))
-        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,norm text,anchor text)
+        AND EXISTS (SELECT 1 FROM jsonb_to_recordset($2::text::jsonb) k(subject text,tokens jsonb)
           WHERE (k.subject='*' OR k.subject=p.slug) AND ${shortlist('c.chunk_text')})
       ORDER BY c.id LIMIT $4`, [sourceId, keys, after, WITHDRAWAL_LIMITS.batch, subjects]);
     await match(chunks.flatMap(chunk => {

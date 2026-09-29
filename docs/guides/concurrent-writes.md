@@ -320,10 +320,11 @@ intent or intervening edits and can make withdrawn content active again.
 
 Discovery is keyed on the claim, its subject and its fingerprint, so its cost
 and limits follow the pages that carry the claim, not the size of the source.
-Every fence row or chunk whose fingerprint matches contains the claim's longest
-normalized token and its normalized text, so the database shortlists candidate
-pages and chunks on those two facts, and discovery streams the shortlist in
-batches of 128 and verifies each row exactly. A subject-scoped withdrawal reads
+Every fence row or chunk whose fingerprint matches contains each of the claim's
+normalized tokens in its lowercased text, because normalization only turns
+punctuation and whitespace into token boundaries. The database shortlists
+candidate pages and chunks that contain every token, and discovery streams the
+shortlist in batches of 128 and verifies each row exactly. A subject-scoped withdrawal reads
 only that entity's page plus the provenance of that entity's matching facts;
 a subjectless (`*`) withdrawal shortlists across the source. Recorded
 provenance uses the fact fingerprint index.
