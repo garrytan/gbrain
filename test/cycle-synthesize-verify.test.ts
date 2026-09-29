@@ -1,9 +1,10 @@
 /**
  * F1b/F4b — mechanical quote verify/repair on dream pages (eval write-path
  * fix wave). Pure repair-ladder cases + one PGLite write-back integration
- * block. The ladder invariant under test everywhere: NEVER fabricate — every
- * replacement is a verbatim transcript slice; ungroundable spans lose their
- * quote marks but keep their text.
+ * block. The invariants under test everywhere: NEVER fabricate — every
+ * replacement is a verbatim transcript slice inside one speaker turn — and
+ * NEVER keep an unsupported claim as page text: its unit leaves the body and
+ * is recorded in frontmatter `unverified_claims`.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
@@ -11,9 +12,11 @@ import {
   normForGrounding,
   extractQuoteSpans,
   groundQuote,
-  repairBody,
-  countUngroundedNumericClaims,
+  verifyBody,
+  groundSource,
+  unsupportedNumericClaims,
   verifyAndRepairDreamPages,
+  readVerifyEpoch,
 } from '../src/core/cycle/synthesize-verify.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -107,7 +110,7 @@ describe('groundQuote — the repair ladder', () => {
     }
   });
 
-  test('heavy paraphrase (low overlap) → none (caller strips)', () => {
+  test('heavy paraphrase (low overlap) → none (caller quarantines)', () => {
     const g = groundQuote('our fundamental product philosophy centers customer delight above metrics', t);
     expect(g.status).toBe('none');
   });
@@ -127,16 +130,16 @@ describe('groundQuote — the repair ladder', () => {
   });
 });
 
-describe('repairBody', () => {
+describe('verifyBody', () => {
   // The principle sentence carries an INTERIOR em-dash + curly apostrophe —
   // a page quote written with a hyphen + straight apostrophe is normalized-
   // equal but not byte-equal, which is exactly the rung-2 case. (Inner text
   // that is byte-identical is EXACT even when the surrounding quote-mark
   // style differs — quote fidelity is about the quoted content.)
   const transcript = 'user: We agreed the launch moves to March 14th because the audit slipped. Also: “the brain mustn’t invent quotes — ever.”';
-  const t = grounded(transcript);
+  const src = groundSource('/t/session.txt', transcript);
 
-  test('full ladder: exact kept, normalized repaired to verbatim, ungrounded stripped', () => {
+  test('full ladder: exact kept, normalized repaired to verbatim, ungrounded unit quarantined', () => {
     const body = [
       'Summary paragraph without quotes.',
       '',
@@ -146,62 +149,162 @@ describe('repairBody', () => {
       '',
       'Invented: "our destiny is to reinvent human memory for all mankind forever."',
     ].join('\n');
-    const r = repairBody(body, t);
+    const r = verifyBody(body, [src]);
     expect(r.quotes).toBe(3);
     expect(r.exact).toBe(1);            // launch-date quote is verbatim already
     expect(r.normalized).toBe(1);       // hyphen/apostrophe span repaired to the verbatim original
-    expect(r.stripped).toBe(1);         // invented span loses its marks
     expect(r.changed).toBe(true);
     // Replacement is the verbatim INNER slice (page keeps its own quote marks).
     expect(r.body).toContain('"the brain mustn’t invent quotes — ever."');
-    // Stripped span keeps its text, loses the quotation marks.
-    expect(r.body).toContain('Invented: our destiny is to reinvent human memory for all mankind forever.');
-    expect(r.body).not.toContain('"our destiny');
+    // The ungrounded unit is gone from the body, text and marks alike...
+    expect(r.body).not.toContain('our destiny');
+    expect(r.body).toBe([
+      'Summary paragraph without quotes.',
+      '',
+      'Decision: "We agreed the launch moves to March 14th because the audit slipped."',
+      '',
+      'Principle: "the brain mustn’t invent quotes — ever."',
+    ].join('\n'));
+    // ...and preserved verbatim for review, with the reason.
+    expect(r.quarantined).toEqual([{
+      text: 'Invented: "our destiny is to reinvent human memory for all mankind forever."',
+      reason: 'quote_not_in_source',
+      detail: 'our destiny is to reinvent human memory for all mankind forever.',
+    }]);
+    expect(r.failures.quote_not_in_source).toBe(1);
+    // Grounded quotes carry source-span + speaker provenance.
+    expect(r.provenance).toHaveLength(2);
+    for (const p of r.provenance) {
+      expect(p.source).toBe('/t/session.txt');
+      expect(p.speaker).toBe('user');
+      expect(normForGrounding(transcript.slice(p.span[0], p.span[1]))).toBe(normForGrounding(p.text));
+    }
   });
 
   test('clean body → changed=false, byte-identical', () => {
     const body = 'Decision: "We agreed the launch moves to March 14th because the audit slipped." Done.';
-    const r = repairBody(body, t);
+    const r = verifyBody(body, [src]);
     expect(r.changed).toBe(false);
     expect(r.body).toBe(body);
     expect(r.exact).toBe(1);
   });
+
+  test('only the failing sentence leaves a multi-sentence line; list items and table rows go whole', () => {
+    const body = [
+      'The launch moved. The user said "we will triple revenue by next spring for sure." The audit slipped.',
+      '- The user said "we will triple revenue by next spring for sure."',
+      '- Kept bullet.',
+      '| claim | "we will triple revenue by next spring for sure." |',
+    ].join('\n');
+    const r = verifyBody(body, [src]);
+    expect(r.body).toBe('The launch moved. The audit slipped.\n- Kept bullet.');
+    expect(r.quarantined).toHaveLength(3);
+  });
+
+  test('prior revision: only units absent from it are verified', () => {
+    const prior = 'Alice said "a line quoted from some entirely different source conversation".';
+    const body = `${prior}\n\nNew: "a fabricated line the child just added to the page."`;
+    const r = verifyBody(body, [src], { priorNorm: normForGrounding(prior) });
+    expect(r.body).toBe(prior);
+    expect(r.quarantined.map(q => q.reason)).toEqual(['quote_not_in_source']);
+  });
 });
 
-describe('repairBody — replacement hygiene (red-team regression)', () => {
+describe('speaker provenance (write-path audit C-6)', () => {
+  const transcript = [
+    'user (t1): I think the real insight is that memory systems fail at the',
+    'write path, not the read path — everyone measures retrieval.',
+    'user (t2): We decided to ship the “verify-at-write” pass in Q3, budget $250K.',
+    'assistant (t3): Noted. The team agreed the mechanical checker beats an LLM judge.',
+    'user (t4): Next we discuss hiring',
+  ].join('\n');
+  const src = groundSource('/t/2026-08-30-session.txt', transcript);
+
+  test('near match is trimmed to the matched tokens inside one turn', () => {
+    const g = groundQuote('the team decided the mechanical checker beats an LLM judge', src);
+    expect(g.status).toBe('near');
+    if (g.status === 'near') expect(g.replacement).toBe('The team agreed the mechanical checker beats an LLM judge');
+  });
+
+  test('a quote that spans two speaker turns is refused, never spliced', () => {
+    const g = groundQuote('beats an LLM judge. user (t4): Next we discuss hiring', src);
+    expect(g).toEqual({ status: 'none', reason: 'crosses_speakers' });
+    const r = verifyBody('Summary: "Noted. The team agreed the mechanical checker beats an LLM judge.\nuser (t4): Next we discuss hiring"', [src]);
+    expect(r.failures.quote_crosses_speakers + r.failures.quote_not_in_source).toBeGreaterThan(0);
+    expect(r.body).not.toContain('Next we discuss hiring');
+  });
+
+  test('a real quote attributed to the wrong speaker is quarantined; the right speaker is kept', () => {
+    const r = verifyBody([
+      'The user said "The team agreed the mechanical checker beats an LLM judge."',
+      'The assistant said "The team agreed the mechanical checker beats an LLM judge."',
+    ].join('\n'), [src]);
+    expect(r.body).toBe('The assistant said "The team agreed the mechanical checker beats an LLM judge."');
+    expect(r.quarantined).toEqual([expect.objectContaining({ reason: 'speaker_mismatch' })]);
+    expect(r.provenance[0].speaker).toBe('assistant');
+  });
+
+  test('named speakers: labels that open two or more lines count; prose labels do not', () => {
+    const named = groundSource('/t/named.txt', [
+      'Alice-example: we should price per seat, not per usage.',
+      'Bob-example: agreed, and the pilot costs $40K.',
+      'Note: this line is not a speaker.',
+      'Alice-example: then we sign the pilot next week.',
+      'Bob-example: fine.',
+    ].join('\n'));
+    expect(named.turns.map(t => t.speaker)).toEqual(['Alice-example', 'Bob-example', 'Alice-example', 'Bob-example']);
+    const r = verifyBody([
+      'Alice-example proposed "we should price per seat, not per usage."',
+      'Bob-example proposed "we should price per seat, not per usage."',
+      'The pilot costs $40K.',
+      'The pilot costs $45K.',
+    ].join('\n'), [named]);
+    expect(r.body).toBe('Alice-example proposed "we should price per seat, not per usage."\nThe pilot costs $40K.');
+    expect(r.quarantined.map(q => q.reason)).toEqual(['speaker_mismatch', 'number_not_in_source']);
+  });
+});
+
+describe('verifyBody — replacement hygiene (red-team regression)', () => {
   test('a multi-line transcript match splices as ONE line (quote marks stay in one paragraph)', () => {
     const transcript = 'user: We agreed the launch moves\nto March 14th because\nthe audit slipped.';
-    const t = grounded(transcript);
+    const src = groundSource('/t/s.txt', transcript);
     const body = 'Decision: "We agreed the launch moves to March 14th because the audit slipped."';
-    const r = repairBody(body, t);
+    const r = verifyBody(body, [src]);
     expect(r.normalized).toBe(1);
     expect(r.body).not.toContain('\n'); // no line break spliced inside the quote
     expect(r.body).toContain('"We agreed the launch moves to March 14th because the audit slipped."');
     // Re-verifying the repaired body is stable (the marks still pair).
-    const again = repairBody(r.body, t);
+    const again = verifyBody(r.body, [src]);
     expect(again.unbalanced).toBe(0);
-    expect(again.stripped).toBe(0);
+    expect(again.quarantined).toHaveLength(0);
   });
 });
 
-describe('countUngroundedNumericClaims (F4b, warn-only)', () => {
-  const t = grounded('user: ARR hit $2M in January 2026, churn 5%, headcount 12.');
+describe('numeric grounding', () => {
+  const src = groundSource('/t/2026-01-15-board.txt', 'user: ARR hit $2M in January 2026, churn 5%, headcount 12.');
 
   test('wikilinks and link targets are masked — dated slugs are not "claims" (red-team regression)', () => {
-    const body = 'See [[meetings/2026-08-30-board]] and [the note](wiki/personal/reflections/2026-08-31-topic-a1b2c3). ARR reached $2M.';
-    expect(countUngroundedNumericClaims(body, t)).toBe(0);
+    const r = verifyBody('See [[meetings/2026-08-30-board]] and [the note](wiki/personal/reflections/2026-08-31-topic-a1b2c3). ARR reached $2M.', [src]);
+    expect(r.quarantined).toHaveLength(0);
   });
 
-  test('grounded claims do not warn; invented ones do; fences skipped; deduped', () => {
+  test('grounded claims pass; invented ones are reported once each; fences skipped', () => {
     const body = [
       'ARR reached $2M with churn at 5%.',          // both grounded
       'Series B raised $50M at a $900M cap.',       // 2 invented
-      'Again: $50M.',                                // dup — counted once
+      'Again: $50M.',                                // same claim, its own unit
       '```',
       '$77M inside a fence never counts',
       '```',
     ].join('\n');
-    expect(countUngroundedNumericClaims(body, t)).toBe(2);
+    const r = verifyBody(body, [src]);
+    expect(r.quarantined.map(q => q.detail)).toEqual(['$50M; $900M', '$50M']);
+    expect(r.body).toBe(['ARR reached $2M with churn at 5%.', '```', '$77M inside a fence never counts', '```'].join('\n'));
+  });
+
+  test('values compare canonically: scaled amounts, separators, month-day dates, file-name dates', () => {
+    expect(unsupportedNumericClaims('ARR was $2,000,000 and $2 million; the board met on 2026-01-15 and January 15th.', [src])).toEqual([]);
+    expect(unsupportedNumericClaims('ARR was $2.5M on 2026-01-16.', [src])).toEqual(['$2.5M', '2026-01-16']);
   });
 });
 
@@ -217,13 +320,13 @@ describe('extractQuoteSpans — separator drift (ship-review regression: offsets
     }
   });
 
-  test('fabricated quote after a long separator is still stripped (the escape this fixes)', () => {
-    const t = grounded('user: routine chatter only, nothing else was said.');
+  test('fabricated quote after a long separator is still caught (the escape this fixes)', () => {
+    const src = groundSource('/t/s.txt', 'user: routine chatter only, nothing else was said.');
     const body = 'Intro.\n\n\nClaim: "we decided to acquire acme-example for nine hundred million."';
-    const r = repairBody(body, t);
+    const r = verifyBody(body, [src]);
     expect(r.quotes).toBe(1);
-    expect(r.stripped).toBe(1);
-    expect(r.body).toContain('Claim: we decided to acquire');
+    expect(r.quarantined).toHaveLength(1);
+    expect(r.body).toBe('Intro.');
   });
 
   test('interior curly-quoted phrase inside a straight-quoted span pairs per type — outer span extracted whole', () => {
@@ -293,33 +396,34 @@ describe('groundQuote — CPU bounds (performance-review regression)', () => {
 });
 
 describe('verifyAndRepairDreamPages — fail-open fault injection', () => {
-  const T = new Map([['/t/x.md', { content: 'user: something quotable that is long enough to be a span here.', hash6: 'aaaaaa' }]]);
+  const T = new Map([['/t/x.md', { content: 'user: something quotable that is long enough to be a span here.' }]]);
+  const since = new Date(0);
+  const page = (compiled_truth: string) => ({ slug: 'x', compiled_truth, timeline: '', frontmatter: {}, type: 'note', title: 'x', created_at: new Date() });
 
   test('page read-back miss → errors++, later refs still processed', async () => {
     const engine = {
-      getPage: async (slug: string) => slug.includes('missing') ? null : { compiled_truth: 'Body with "something quotable that is long enough to be a span here." ok', timeline: '', frontmatter: {}, type: 'note', title: 'x' },
+      getPage: async (slug: string) => slug.includes('missing') ? null : page('clean body, no quotes at all.'),
       getTags: async () => [],
     } as never;
     const stats = await verifyAndRepairDreamPages(engine, [
       { slug: 'wiki/personal/reflections/a-missing-aaaaaa', source_id: 'default', raw_source: '/t/x.md' },
       { slug: 'wiki/personal/reflections/b-ok-aaaaaa', source_id: 'default', raw_source: '/t/x.md' },
-    ], T);
+    ], T, { since });
     expect(stats.errors).toBe(1);
     expect(stats.pages_checked).toBe(1);
-    expect(stats.exact).toBe(1); // clean page: nothing repaired, no write-back attempted
-    expect(stats.pages_repaired).toBe(0);
+    expect(stats.pages_repaired).toBe(0); // clean page: nothing to write back
   });
 
   test('engine throw during page processing → errors++, loop continues (fail-open)', async () => {
     let calls = 0;
     const engine = {
-      getPage: async () => { calls++; if (calls === 1) throw new Error('boom'); return { compiled_truth: 'clean body, no quotes at all.', timeline: '', frontmatter: {}, type: 'note', title: 'x' }; },
+      getPage: async () => { calls++; if (calls === 1) throw new Error('boom'); return page('clean body, no quotes at all.'); },
       getTags: async () => [],
     } as never;
     const stats = await verifyAndRepairDreamPages(engine, [
       { slug: 'wiki/personal/reflections/a-throw-aaaaaa', source_id: 'default', raw_source: '/t/x.md' },
       { slug: 'wiki/personal/reflections/b-fine-aaaaaa', source_id: 'default', raw_source: '/t/x.md' },
-    ], T);
+    ], T, { since });
     expect(stats.errors).toBe(1);
     expect(stats.pages_checked).toBe(1);
   });
@@ -330,7 +434,7 @@ describe('verifyAndRepairDreamPages — fail-open fault injection', () => {
     const engine = { getPage: async () => null, getTags: async () => [] } as never;
     await expect(verifyAndRepairDreamPages(engine, [
       { slug: 'wiki/personal/reflections/a-aaaaaa', source_id: 'default', raw_source: '/t/x.md' },
-    ], T, { signal: ac.signal })).rejects.toThrow();
+    ], T, { since, signal: ac.signal })).rejects.toThrow();
   });
 });
 
@@ -345,53 +449,64 @@ describe('verifyAndRepairDreamPages — PGLite write-back integration', () => {
     try { await engine.disconnect(); } catch { /* best-effort */ }
   });
 
-  test('repairs the DB page via the canonical pipeline; scopes to hash-suffixed slugs; fail-open counters', async () => {
-    {
-      const transcript = 'user: The verdict was “ship the repair pass now — measure later.” That is the whole plan.';
-      const hash6 = 'abc123';
-      const slug = `wiki/personal/reflections/2026-08-31-repair-pass-${hash6}`;
-      const pageMd = [
-        '---',
-        'type: note',
-        '---',
-        'The user concluded: "ship the repair pass now - measure later." Strong conviction.',
-        '',
-        'Fabricated: "we will rewrite the entire engine in Rust next week for fun."',
-      ].join('\n');
-      await importFromContent(engine, slug, pageMd, { noEmbed: true, remote: false, sourceId: 'default' });
-      // A pre-existing people page the child touched — slug carries NO hash
-      // suffix → must be skipped, never rewritten.
-      await importFromContent(engine, 'wiki/people/alice-example', '---\ntype: person\n---\nAlice said "something from an entirely different source conversation".', { noEmbed: true, remote: false, sourceId: 'default' });
+  test('new pages verified whole; pre-existing pages verified on their new units only; records land in frontmatter', async () => {
+    const transcript = 'user: The verdict was “ship the repair pass now — measure later.” That is the whole plan.';
+    const OTHER_SOURCE = 'Alice said "something from an entirely different source conversation".';
+    // Pre-existing people page, written BEFORE the run's epoch.
+    await importFromContent(engine, 'wiki/people/alice-example', `---\ntype: person\n---\n${OTHER_SOURCE}`, { noEmbed: true, remote: false, sourceId: 'default' });
+    await new Promise(r => setTimeout(r, 5));
+    const since = await readVerifyEpoch(engine);
 
-      const stats = await verifyAndRepairDreamPages(
-        engine,
-        [
-          { slug, source_id: 'default', raw_source: '/t/session.md' },
-          { slug: 'wiki/people/alice-example', source_id: 'default', raw_source: '/t/session.md' },
-          { slug: 'wiki/personal/reflections/orphan-def456', source_id: 'default' },              // no raw_source
-        ],
-        new Map([['/t/session.md', { content: transcript, hash6 }]]),
-      );
+    // The run: a new hash-suffixed page, a new page WITHOUT a hash suffix
+    // (was skipped before this fix), and an edit to the pre-existing page.
+    const slug = 'wiki/personal/reflections/2026-08-31-repair-pass-abc123';
+    await importFromContent(engine, slug, [
+      '---', 'type: note', '---',
+      'The user concluded: "ship the repair pass now - measure later." Strong conviction.',
+      '',
+      'Fabricated: "we will rewrite the entire engine in Rust next week for fun."',
+    ].join('\n'), { noEmbed: true, remote: false, sourceId: 'default' });
+    await importFromContent(engine, 'wiki/people/bob-example', '---\ntype: person\n---\nBob-example said "we are closing a $5M round next month, guaranteed".', { noEmbed: true, remote: false, sourceId: 'default' });
+    await importFromContent(engine, 'wiki/people/alice-example', `---\ntype: person\n---\n${OTHER_SOURCE}\n\nThe user said "ship the repair pass now — measure later."\n\nThe user also said "we are shutting down the company next quarter".`, { noEmbed: true, remote: false, sourceId: 'default' });
 
-      expect(stats.pages_checked).toBe(1);
-      expect(stats.pages_repaired).toBe(1);
-      expect(stats.quotes_total).toBe(2);
-      expect(stats.normalized_fixed).toBe(1);   // straight → verbatim curly original
-      expect(stats.stripped).toBe(1);           // fabricated quote unquoted
-      expect(stats.skipped_preexisting).toBe(1);
-      expect(stats.skipped_no_transcript).toBe(1);
-      expect(stats.errors).toBe(0);
+    const stats = await verifyAndRepairDreamPages(engine, [
+      { slug, source_id: 'default', raw_source: '/t/session.md' },
+      { slug: 'wiki/people/bob-example', source_id: 'default', raw_source: '/t/session.md' },
+      { slug: 'wiki/people/alice-example', source_id: 'default', raw_source: '/t/session.md' },
+      { slug: 'wiki/personal/reflections/orphan-def456', source_id: 'default' },              // no raw_source
+    ], new Map([['/t/session.md', { content: transcript }]]), { since, checkedAt: '2026-08-31' });
 
-      const page = await engine.getPage(slug, { sourceId: 'default' });
-      expect(page).not.toBeNull();
-      const bodyText = `${page?.compiled_truth ?? ''}\n${page?.timeline ?? ''}`;
-      // Replacement is the verbatim inner slice; the page keeps its own marks.
-      expect(bodyText).toContain('"ship the repair pass now — measure later."');
-      expect(bodyText).toContain('Fabricated: we will rewrite the entire engine in Rust next week for fun.');
-      expect(bodyText).not.toContain('"we will rewrite');
-      // Untouched pre-existing page keeps its quote verbatim.
-      const alice = await engine.getPage('wiki/people/alice-example', { sourceId: 'default' });
-      expect(`${alice?.compiled_truth ?? ''}`).toContain('"something from an entirely different source conversation"');
-    }
+    expect(stats.pages_checked).toBe(3);
+    expect(stats.preexisting_diffed).toBe(1);
+    expect(stats.skipped_no_transcript).toBe(1);
+    expect(stats.normalized_fixed).toBe(1);    // straight → verbatim curly original
+    expect(stats.quarantined_claims).toBe(3);  // one per page
+    expect(stats.pages_with_quarantine).toBe(3);
+    expect(stats.errors).toBe(0);
+
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page!.compiled_truth).toBe('The user concluded: "ship the repair pass now — measure later." Strong conviction.');
+    expect((page!.frontmatter.unverified_claims as Array<{ text: string; reason: string; sources: string[] }>)).toEqual([
+      expect.objectContaining({ text: 'Fabricated: "we will rewrite the entire engine in Rust next week for fun."', reason: 'quote_not_in_source', sources: ['/t/session.md'] }),
+    ]);
+    const grounding = page!.frontmatter.grounding as { sources: string[]; quotes: Array<{ speaker: string; span: [number, number] }> };
+    expect(grounding.sources).toEqual(['/t/session.md']);
+    expect(grounding.quotes).toHaveLength(1);
+    expect(grounding.quotes[0].speaker).toBe('user');
+    expect(transcript.slice(...grounding.quotes[0].span)).toBe('ship the repair pass now — measure later.');
+
+    // New page without a hash suffix: verified whole; the only unit fails.
+    const bob = await engine.getPage('wiki/people/bob-example', { sourceId: 'default' });
+    expect(bob!.compiled_truth).not.toContain('$5M');
+
+    // Pre-existing page: the other-source quote is untouched, the grounded
+    // new quote is kept, the fabricated new quote is quarantined.
+    const alice = await engine.getPage('wiki/people/alice-example', { sourceId: 'default' });
+    expect(alice!.compiled_truth).toBe(`${OTHER_SOURCE}\n\nThe user said "ship the repair pass now — measure later."`);
+    expect((alice!.frontmatter.unverified_claims as unknown[])).toHaveLength(1);
+
+    // Quarantined text has no chunks: keyword search cannot reach it.
+    const hits = await engine.searchKeyword('rewrite entire engine Rust', { limit: 5 });
+    expect(hits.filter(h => h.slug === slug)).toHaveLength(0);
   }, 60_000);
 });

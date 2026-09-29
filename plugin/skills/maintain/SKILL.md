@@ -179,15 +179,20 @@ scores only) then `gbrain dream retriage --reconcile-queue`; `--force`
 re-judges everything from scratch. Retriage reads the SAME gate the cycle
 does, so a reconcile sweep never cancels a job the rescue admitted.
 
-**Quote verify/repair (post-write, zero LLM):** after slug collection and
+**Claim verification (post-write, zero LLM):** after slug collection and
 before the reverse-write, `dream.synthesize.quote_verify` (default on) checks
-every quoted span on the pages this phase just created against the transcript
-it came from. An exact match is kept; a span that differs only in whitespace,
-curly quotes, dashes, or case is replaced with the verbatim transcript slice;
-a near match is repaired the same way; anything that still can't be grounded
-keeps its TEXT but loses its quotation marks. Nothing is ever fabricated and
-no content is deleted. Numeric and date claims absent from the transcript are
-counted as warnings, not edits. Telemetry lands in
+every page this phase's children wrote against the transcripts that produced
+it. Pages created this run are checked whole; pages that already existed are
+checked only on the sentences this run added. An exact quote is kept; a quote
+that differs only in whitespace, curly quotes, dashes, or case, or a close
+paraphrase inside one speaker's turn, is replaced with the verbatim transcript
+slice. A sentence is quarantined when a quote grounds nowhere or only across
+two speakers, when it attributes a real quote to the wrong speaker, or when it
+states a number or date the transcript lacks. Quarantined sentences leave the
+page body (and the timeline, facts and links derived from it) and are kept
+verbatim in frontmatter `unverified_claims`, which `get_page` shows but search,
+recall and think do not read. Grounded quotes record their source span and
+speaker in `grounding.quotes`. Nothing is ever fabricated. Telemetry lands in
 `details.synthesis.quote_verify`; the config key is the incident off switch.
 
 **Patterns phase:** runs after `extract` (so the graph state is fresh).

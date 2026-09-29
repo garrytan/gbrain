@@ -68,7 +68,7 @@ Honest list. We name what would let a critic dismiss the numbers.
 - **The dev slice is inside the published 470.** Knob choices made on the 40 dev questions leak into the full-470 headline by construction; the 430-question decision set is the number a critic should read, and both are published side by side. Nothing is tuned on the frozen corpus beyond the pre-registered single mechanism per gap.
 - **Expansion variants are non-deterministic.** Haiku multi-query variants differ run to run, so budget cells are compared only on RECORDED variants (`--expansion-replay`), which makes the budget the sole difference between cells but means the replayed cells share one draw of the variant lottery.
 - **Reranker receipts depend on a hosted model.** `voyage:rerank-2.5` rows are reproducible only while that snapshot is served; the harness records the reranker model per run and fails a "reranker on" run that silently fell open.
-- **Paired bootstrap assumes question-level independence.** Multi-hop questions within the same conversation thread aren't independent; the bootstrap CI is slightly tighter than reality.
+- **Clusters are questions.** Rows are resampled by `question_id`. Questions that share a conversation thread are not independent, so the interval can be slightly tighter than reality.
 - **Single brain instance per benchmark.** The benchmark spins up an in-memory PGLite per question. This does not reproduce a long-running production brain's state; current semantic result-cache hit rates are zero because result reuse is disabled.
 
 ## 6. Per-question raw outputs
@@ -117,13 +117,34 @@ Additions to the watch-list require a CHANGELOG line.
 
 ## Statistical-significance discipline
 
-When `gbrain eval compare --md` reports a Δ between two modes, it computes:
+`gbrain eval compare` computes statistics only from per-query rows. A run
+contributes rows when its ledger record names its per-question output in
+`params.output` (`gbrain eval longmemeval --record --output <file>` writes
+both). The per-question file must sit inside the repository root; a path
+that escapes it (`..`, an outside absolute path, or a symlink) is refused and
+listed in `paired_unavailable`. For each pair of runs (every mode pair in a suite, or exactly
+`--baseline RUN_ID --candidate RUN_ID`), rows are joined on `question_id` and
+each per-query metric both rows carry (`recall_all@k`, `recall_any@k`,
+`qa_accuracy` from `judge_correct`) is compared with:
 
-- **Paired bootstrap** with 10,000 resamples per metric. Each resample draws _question-level_ pairs (same question, mode A vs mode B), so question-level variance is differenced out.
-- **Bonferroni correction** across the 12 comparisons (3 modes × 4 metrics). The reported p-value is the comparison's raw p-value × 12 (clamped at 1.0).
-- **95% confidence intervals** computed from the bootstrap distribution.
+- **Paired cluster bootstrap**, 10,000 resamples by default (`--draws`,
+  `--seed`, default seed 42). Clusters are questions, so question-level
+  variance is differenced out. The 95% confidence interval is the percentile
+  interval of the resampled mean difference.
+- **Two-sided sign-flip randomization p-value** over clusters: exact
+  enumeration at 16 or fewer clusters, otherwise Monte Carlo flips with the
+  (k+1)/(n+1) correction.
+- **Holm correction** across every comparison in the report.
 
-If the CI for a Δ includes 0 OR the Bonferroni-adjusted p-value exceeds 0.05, the difference is **not** statistically significant. The MD report says "not significant" verbatim.
+A difference is reported as significant only when the Holm p-value is at
+most 0.05 and the 95% CI excludes 0; otherwise the Markdown report says
+"not significant" verbatim. The statistics code
+(`src/core/eval/paired-bootstrap.ts`) is a port of the gbrain-evals
+situation-recall comparator, with a two-sided p-value.
+
+When no per-query rows are available, the report is labeled aggregate-only
+and no interval or p-value is computed. Aggregate `metrics` columns are
+shown as recorded and carry no significance claim.
 
 ## Glossary
 

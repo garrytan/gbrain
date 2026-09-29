@@ -23,6 +23,51 @@ touch `~/.gbrain` per the eval discipline — results land in
 `<repo>/.gbrain-evals/eval-results.jsonl`). Record the gate verdict + headline
 metrics here per run.
 
+## Grounding gate: repeated consolidation (2026-09-29, v0.59.18.0)
+
+Hermetic experiment for gbrain 10x plan amendment 7. Three real dream cycles
+(`runCycle` with `synthesize`, `extract`, `extract_facts`) on a fixed PGLite
+brain; each cycle adds one fixed transcript between two named speakers. The
+only stub is the gateway chat transport: a scripted triage verdict and a
+scripted synthesis child in agentic mode through the gateway tool loop (the
+one production mode whose children can write into existing pages; the default
+oneshot mode can only create new hash-suffixed pages). The child writes a new
+reflection page per cycle, rewrites the cycle-1 page in cycles 2 and 3, and
+appends to a human-authored person page in cycle 2. Active memory = live page
+`compiled_truth` + `timeline`, `timeline_entries`, and unexpired `facts`, with
+quotation marks ignored so an unquoted leftover still counts. $0, no network.
+
+```bash
+bun run scripts/repeated-consolidation-experiment.ts --per-cycle
+# master: copy test/helpers/repeated-consolidation.ts and the script into an
+# origin/master worktree (b80cad61e, v0.59.13.0) and run the same command.
+```
+
+| After cycle 3 | master `b80cad61e` | this branch |
+|---|---|---|
+| Invented claims active (of 17) | 17 | 2 |
+| Fabricated quotes active (of 6) | 6 | 0 |
+| Speaker-swapped quotes active (of 3) | 3 | 0 |
+| Invented numbers active (of 6) | 6 | 0 |
+| Unquoted inventions active (of 2) | 2 | 2 |
+| Source-supported claims kept (of 13) | 13 | 13 |
+| Human-authored person-page line intact | yes | yes |
+
+- Per cycle, invented claims active on master: 5 after cycle 1, 11 after
+  cycle 2, 17 after cycle 3 (they accumulate). Branch: 1, 1, 2 (the two
+  unquoted inventions, one per cycle that wrote one).
+- The 13 supported claims include four reformatted values (`$40,000` for
+  `$40K`, `$1.2 million` for `$1.2M`, `September 15th`, `October 20th`), so
+  the number check was exercised for false positives; none were lost.
+- A first branch run found a second leak: the verifier's write-back removed a
+  sentence from the page but left the timeline row the child's write had
+  projected from it. The write-back now re-projects timeline, facts, takes
+  and links in the same transaction.
+- Limits: the fixture was written alongside the checker, so this is a
+  regression pin, not a hallucination rate. Plain-prose inventions with no
+  quote or number are not mechanically checkable. The paid hallucination
+  benchmark is a separate, later measurement.
+
 ## Read-path wave (2026-09-28, v0.59.13.0)
 
 Page-grain fusion, identity tiers that keep the reranker order, soft auto
