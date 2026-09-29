@@ -131,6 +131,4 @@ export function titleAsQuerySubject(query: string, title: string): string[] | nu
   return tContent.length / qContent.size >= TITLE_SUBJECT_MIN_COVERAGE ? tTokens : null;
 }
 
-// Exported for unit tests.
-export const __test__ = { tokenizeTitle, contentTokens, containsTokenRun, STOPWORDS, MIN_CONTENT_TOKENS };
 export { containsTokenRun };

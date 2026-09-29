@@ -642,16 +642,9 @@ export function buildFactsAlterRecipe(
  * probe is a cheap SELECT but runs at the top of every fact-writing
  * call site; caching keeps the cost off the hot path. The cache
  * stores the engine's `kind + a synthetic instance marker` so a fresh
- * engine connection in the same process re-probes. Test seam below
- * clears the cache between cases.
+ * engine connection in the same process re-probes.
  */
 const _factsDimCheckCache = new WeakMap<BrainEngine, { ok: true } | { err: FactsEmbeddingDimMismatchError }>();
-
-/** Test seam: clear the per-process facts-dim cache. */
-export function _resetFactsDimCheckCacheForTest(): void {
-  // WeakMap has no clear() — but tests can pass fresh engine instances
-  // to get fresh probes. This noop helper documents the intent.
-}
 
 /**
  * Preflight check: throws FactsEmbeddingDimMismatchError when the

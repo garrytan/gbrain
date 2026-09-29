@@ -691,7 +691,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // ─── IRON RULE: --help short-circuits BEFORE any engine-bearing work ─
   // Tests pin this ordering so `gbrain dream --help --source whatever`
   // ALWAYS prints help and exits 0, never reaching the engine-null gate
-  // below. If you reorder this, dream-cli-flags.test.ts will fail.
+  // below. If you reorder this, test/dream.test.ts ("--help --source whatever") fails.
   if (opts.help) {
     printHelp();
     return;

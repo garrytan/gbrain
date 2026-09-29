@@ -173,7 +173,14 @@ else
   # phantom-redirect lives in test/ (its PGLite arm runs in the unit suite) but
   # its Postgres arm is only reachable through a DATABASE_URL-bearing lane —
   # the unit wrappers strip the URL (#3485), so this lane must carry it.
-  files=(test/e2e/*.test.ts test/phantom-redirect-engine-parity.test.ts)
+  # Key-gated live files no CI job provides keys for; run them by name (docs/TESTING.md).
+  live_key_only=" test/e2e/openrouter-anthropic-subagent-replay.live.test.ts test/e2e/openrouter-deepseek-subagent-replay.live.test.ts test/e2e/voyage-multimodal.test.ts test/e2e/voyage-rerank-live.test.ts "
+  files=()
+  for f in test/e2e/*.test.ts; do
+    case "$live_key_only" in *" $f "*) continue ;; esac
+    files+=("$f")
+  done
+  files+=(test/phantom-redirect-engine-parity.test.ts)
 fi
 
 # Weighted across isolated databases, sequential within each shard.

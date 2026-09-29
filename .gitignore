@@ -5,6 +5,8 @@ node_modules
 bin/
 .DS_Store
 *.log
+# Committed test-audit evidence (mutation-probe and measured-run logs).
+!docs/test-audit/**/*.log
 .env
 .env.*
 !.env.*.example

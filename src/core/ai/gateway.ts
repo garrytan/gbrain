@@ -1348,9 +1348,6 @@ export const perplexityCompatFetch = (async (input: RequestInfo | URL, init?: Re
  * line on every search, and today's keyless state is stderr-silent.
  */
 const _noKeyNoticed = new Set<string>();
-export function _resetRerankWarningsForTest(): void {
-  _noKeyNoticed.clear();
-}
 function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: number): void {
   try {
     if (_noKeyNoticed.has(modelStr)) return;

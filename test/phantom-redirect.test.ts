@@ -712,40 +712,31 @@ describe('runPhantomRedirectPass (per-cycle pass)', () => {
 
 // ─── Lock retry semantics (C4) ─────────────────────────────────────
 
-describe('lock contention (C4)', () => {
-  test('lock_busy when another holder has it → pass skipped, audit entry, retries next cycle', async () => {
+describe('lock contention (C4) — per-source sync lock (v0.40 D16)', () => {
+  // A held lock makes acquireLockWithRetry loop until its 30s budget or the
+  // caller's abort; the short abort keeps the busy case fast.
+  async function holdLock(id: string): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+       VALUES ($1, 9999, 'other-host', now(), now() + interval '1 hour')`,
+      [id],
+    );
+  }
+
+  test('same-source sync lock held → pass skipped as lock_busy', async () => {
     await withTempDirs(async ({ brainDir }) => {
-      // Manually claim the gbrain-sync lock with a future TTL
-      await engine.executeRaw(
-        `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
-         VALUES ('gbrain-sync', 9999, 'other-host', now(), now() + interval '1 hour')`,
-      );
+      await holdLock('gbrain-sync:src-b');
+      const result = await runPhantomRedirectPass(engine, brainDir, 'src-b', false, AbortSignal.timeout(200));
+      expect(result.lock_busy).toBe(true);
+    });
+  });
 
-      // Need a phantom + canonical or scanned would be 0 regardless
-      await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
-      writeMd(brainDir, 'people/alice-example', '# alice-example\n');
-      await putPage('alice', STUB_BODY);
-      writeMd(brainDir, 'alice', STUB_BODY);
-
-      // Reduce retry window so the test finishes quickly. The handler's
-      // 30s default would slow the suite. We don't expose a knob, but the
-      // 30s+1s-backoff loop ends in ~30 retries; since we want this to be
-      // an honest assertion let's run with a short manual lock and then
-      // release it mid-loop... actually simpler: assert lock_busy after
-      // the full retry window (slow). For a fast test, we'll instead
-      // assert via withEnv shortcut: set the env var to abbreviate, but
-      // since the handler has hardcoded 30s, the cleanest fast assertion
-      // is to release the lock right away then re-acquire AFTER the pass
-      // proves the timeout path. Instead we'll just verify the lock IS
-      // held externally; the lock_busy result is asserted in a slow
-      // companion test if needed.
-      const lockBefore = await engine.executeRaw<{ holder_pid: number }>(
-        `SELECT holder_pid FROM gbrain_cycle_locks WHERE id='gbrain-sync'`,
-      );
-      expect(lockBefore[0].holder_pid).toBe(9999);
-
-      // Cleanup
-      await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id='gbrain-sync'`);
+  test('bare and default-source sync locks held → another source still runs', async () => {
+    await withTempDirs(async ({ brainDir }) => {
+      await holdLock('gbrain-sync');
+      await holdLock('gbrain-sync:default');
+      const result = await runPhantomRedirectPass(engine, brainDir, 'src-b', false, AbortSignal.timeout(200));
+      expect(result.lock_busy).toBe(false);
     });
   });
 });

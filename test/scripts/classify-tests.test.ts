@@ -37,6 +37,18 @@ describe('classify-tests detectors', () => {
     expect(classifyFile('test/fake.test.ts', src).rows).toHaveLength(0);
   });
 
+  test('a dynamic import of src/ beside a non-repo read is behavioral', () => {
+    const src = [
+      "describe('init writes config', () => {",
+      "  test('reads its own config', async () => {",
+      "    const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));",
+      "    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');",
+      '  });',
+      '});',
+    ].join('\n');
+    expect(classifyFile('test/fake.test.ts', src).rows).toHaveLength(0);
+  });
+
   test('Bun.file reader on src/ is structural', () => {
     const src = [
       "const text = await Bun.file(new URL('../src/core/migrate.ts', import.meta.url)).text();",

@@ -1,0 +1,4 @@
+[
+  { "path": "src/test-helper.ts", "reason": "fixture: deliberate test-only helper" },
+  { "path": "src/tool.ts", "reason": "script-reachable" }
+]

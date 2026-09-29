@@ -602,15 +602,6 @@ export async function assessUnscopedDefaultWrite(
   return { warning: assessment.shouldGuard ? formatDefaultWriteWarning(assessment) : null, assessed: true };
 }
 
-/** The warning-only projection of assessUnscopedDefaultWrite. */
-export async function maybeWarnUnscopedDefaultWrite(
-  engine: BrainEngine,
-  tier: SourceTier,
-  mutating: boolean,
-): Promise<string | null> {
-  return (await assessUnscopedDefaultWrite(engine, tier, mutating)).warning;
-}
-
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {
   const rows = await engine.executeRaw<{ id: string }>(
     `SELECT id FROM sources WHERE id = $1 AND archived = false`,

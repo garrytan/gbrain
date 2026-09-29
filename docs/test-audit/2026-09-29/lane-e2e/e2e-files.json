@@ -1,0 +1,3581 @@
+[
+ {
+  "f": "test/e2e/anomalies-pglite.test.ts",
+  "loc": 105,
+  "ms": 2886,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/attendance-repair-postgres.test.ts",
+  "loc": 1,
+  "ms": 47886,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/attendance-retrieval-postgres.test.ts",
+  "loc": 1,
+  "ms": 49195,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/auth-permissions.test.ts",
+  "loc": 172,
+  "ms": 1084,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/auth-takes-holders-pglite.test.ts",
+  "loc": 269,
+  "ms": 1478,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/autopilot-cooldown-parity.test.ts",
+  "loc": 62,
+  "ms": 1649,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/autopilot-fanout-postgres.test.ts",
+  "loc": 358,
+  "ms": 1091,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/autopilot-linux-lifecycle.serial.test.ts",
+  "loc": 378,
+  "ms": 10888,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GOOGLE_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/backfill-perf-pglite.test.ts",
+  "loc": 60,
+  "ms": 10437,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/backup-coverage-parity.test.ts",
+  "loc": 75,
+  "ms": 2317,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/bootstrap-attach.serial.test.ts",
+  "loc": 390,
+  "ms": 5768,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-compiled-binary.serial.test.ts",
+  "loc": 186,
+  "ms": 5164,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-degraded-modes.serial.test.ts",
+  "loc": 309,
+  "ms": 5146,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GOOGLE_GENERATIVE_AI_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-harness-lifecycle.serial.test.ts",
+  "loc": 300,
+  "ms": 10390,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-hook-under-serve.serial.test.ts",
+  "loc": 473,
+  "ms": 14450,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-keyed-postgres.serial.test.ts",
+  "loc": 371,
+  "ms": 2967,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/bootstrap-lifecycle.serial.test.ts",
+  "loc": 497,
+  "ms": 8510,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-magic-moment.serial.test.ts",
+  "loc": 259,
+  "ms": 4771,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GOOGLE_GENERATIVE_AI_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-persistence.serial.test.ts",
+  "loc": 254,
+  "ms": 1365,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/bootstrap-real-claude.serial.test.ts",
+  "loc": 310,
+  "ms": 547,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/bootstrap-real-codex.serial.test.ts",
+  "loc": 673,
+  "ms": 680,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/brainstorm-resume.test.ts",
+  "loc": 478,
+  "ms": 2833,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/cache-gate-pglite.test.ts",
+  "loc": 262,
+  "ms": 2796,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/calibration-profile-write.test.ts",
+  "loc": 176,
+  "ms": 2241,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/capture-generation-regression.test.ts",
+  "loc": 165,
+  "ms": 2043,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/chronicle-event-projection-parity.test.ts",
+  "loc": 193,
+  "ms": 2214,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/chronicle-last-seen-postgres.test.ts",
+  "loc": 77,
+  "ms": 790,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/chunk-canonical-text-privacy.test.ts",
+  "loc": 204,
+  "ms": 2169,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/chunker-takes-strip.test.ts",
+  "loc": 106,
+  "ms": 1073,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/cjk-roundtrip.test.ts",
+  "loc": 119,
+  "ms": 1740,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/claude-plugin-install-real.serial.test.ts",
+  "loc": 194,
+  "ms": 523,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/claw-test.test.ts",
+  "loc": 439,
+  "ms": 82480,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/cli-source-scoping-pglite.test.ts",
+  "loc": 98,
+  "ms": 1931,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/client-grants.test.ts",
+  "loc": 176,
+  "ms": 2180,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/code-edges-jsonb-postgres.test.ts",
+  "loc": 148,
+  "ms": 807,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/code-edges-read-parity.test.ts",
+  "loc": 260,
+  "ms": 1811,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/code-indexing.test.ts",
+  "loc": 536,
+  "ms": 4269,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/code-intel-mcp-ops-pglite.test.ts",
+  "loc": 396,
+  "ms": 3382,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/codex-plugin-install-real.serial.test.ts",
+  "loc": 383,
+  "ms": 532,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/company-brain-receipts.test.ts",
+  "loc": 17,
+  "ms": 1058,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/compile-context-pglite.test.ts",
+  "loc": 329,
+  "ms": 2354,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/concurrent-embed-race.test.ts",
+  "loc": 203,
+  "ms": 1926,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/connect-bearer.test.ts",
+  "loc": 238,
+  "ms": 11278,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/connector-sync-handler-pglite.test.ts",
+  "loc": 84,
+  "ms": 1560,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/connectors-sync-pglite.test.ts",
+  "loc": 430,
+  "ms": 7247,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/contextual-retrieval-pglite.test.ts",
+  "loc": 303,
+  "ms": 3912,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/conversation-parser-pglite.test.ts",
+  "loc": 163,
+  "ms": 5083,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/cross-modal-eval.test.ts",
+  "loc": 241,
+  "ms": 427,
+  "pg": false,
+  "pglite": false,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GOOGLE_GENERATIVE_AI_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/cycle-consolidate-postgres.test.ts",
+  "loc": 129,
+  "ms": 736,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/cycle-recompute-emotional-weight-pglite.test.ts",
+  "loc": 111,
+  "ms": 2139,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/cycle.test.ts",
+  "loc": 228,
+  "ms": 2496,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/db-guard.test.ts",
+  "loc": 65,
+  "ms": 332,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/db-lock-acquisition-token.test.ts",
+  "loc": 46,
+  "ms": 710,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/db-singleton-shared-recovery.test.ts",
+  "loc": 136,
+  "ms": 385,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/deep-research-http.test.ts",
+  "loc": 111,
+  "ms": 2801,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/deep-research-source-id.test.ts",
+  "loc": 19,
+  "ms": 3558,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/delegated-grants-withdrawal.test.ts",
+  "loc": 114,
+  "ms": 1451,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/delegated-http-worker.test.ts",
+  "loc": 180,
+  "ms": 2872,
+  "pg": true,
+  "pglite": false,
+  "keys": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/doctor-connectors-pglite.test.ts",
+  "loc": 79,
+  "ms": 1973,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/doctor-progress.test.ts",
+  "loc": 141,
+  "ms": 8018,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/doctor-silent-death-parity.test.ts",
+  "loc": 194,
+  "ms": 3438,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/dream-allow-list-pglite.test.ts",
+  "loc": 159,
+  "ms": 3262,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/dream-cycle-phase-order-pglite.test.ts",
+  "loc": 254,
+  "ms": 3772,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/dream-patterns-pglite.test.ts",
+  "loc": 217,
+  "ms": 3699,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/dream-synthesize-chunking.test.ts",
+  "loc": 646,
+  "ms": 10544,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/dream-synthesize-concurrency-postgres.test.ts",
+  "loc": 116,
+  "ms": 12664,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/dream-synthesize-pglite.test.ts",
+  "loc": 1262,
+  "ms": 12146,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/dream-triage-postgres.test.ts",
+  "loc": 80,
+  "ms": 955,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/dream.test.ts",
+  "loc": 141,
+  "ms": 1853,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/embed-stale-pagination.test.ts",
+  "loc": 290,
+  "ms": 1031,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/embedding-column-pglite.test.ts",
+  "loc": 369,
+  "ms": 1805,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/embedding-column-postgres.test.ts",
+  "loc": 230,
+  "ms": 714,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/embedding-recovery-parity.test.ts",
+  "loc": 3,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/engine-content-privacy.test.ts",
+  "loc": 447,
+  "ms": 7684,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/engine-parity-cjk.test.ts",
+  "loc": 190,
+  "ms": 2482,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/engine-parity-salience.test.ts",
+  "loc": 347,
+  "ms": 6102,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/engine-parity.test.ts",
+  "loc": 2594,
+  "ms": 26264,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/enrich-pglite.test.ts",
+  "loc": 625,
+  "ms": 7536,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/eval-capture.test.ts",
+  "loc": 146,
+  "ms": 718,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/eval-contradictions-postgres.test.ts",
+  "loc": 331,
+  "ms": 881,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/eval-loop.test.ts",
+  "loc": 275,
+  "ms": 1952,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/eval-replay-column.test.ts",
+  "loc": 115,
+  "ms": 1436,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/eval-takes-quality.test.ts",
+  "loc": 217,
+  "ms": 663,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/export-snapshot-postgres.test.ts",
+  "loc": 3,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/extract-atoms-discovery-sql.test.ts",
+  "loc": 149,
+  "ms": 1002,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/extract-atoms-page-state.test.ts",
+  "loc": 160,
+  "ms": 2150,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/extract-timeline-attendance-postgres.test.ts",
+  "loc": 1,
+  "ms": 4675,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/extraction-review-postgres.test.ts",
+  "loc": 110,
+  "ms": 1362,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/fact-backfill-resident.test.ts",
+  "loc": 204,
+  "ms": 7921,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/fact-embedding-backfill-parity.test.ts",
+  "loc": 347,
+  "ms": 7052,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/fact-vector-repair-parity.test.ts",
+  "loc": 169,
+  "ms": 5977,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-context-injection-postgres.test.ts",
+  "loc": 71,
+  "ms": 929,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-cross-source-isolation.test.ts",
+  "loc": 55,
+  "ms": 687,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-fence-reconcile-postgres.test.ts",
+  "loc": 452,
+  "ms": 1367,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-forget.test.ts",
+  "loc": 53,
+  "ms": 1275,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-notability-roundtrip.test.ts",
+  "loc": 135,
+  "ms": 652,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-recall-event-time-postgres.test.ts",
+  "loc": 89,
+  "ms": 758,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-recall-render.test.ts",
+  "loc": 45,
+  "ms": 908,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-separation-postgres.test.ts",
+  "loc": 211,
+  "ms": 868,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/facts-worker-config.test.ts",
+  "loc": 11,
+  "ms": 2423,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/fixture-reset-postgres.test.ts",
+  "loc": 112,
+  "ms": 4246,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/fresh-install-pglite.test.ts",
+  "loc": 372,
+  "ms": 29181,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "GOOGLE_GENERATIVE_AI_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/frontmatter-migration.test.ts",
+  "loc": 195,
+  "ms": 3738,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/global-basename-pglite.test.ts",
+  "loc": 349,
+  "ms": 3967,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/google-attachments-postgres.test.ts",
+  "loc": 8,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/grandfather-projection-postgres.test.ts",
+  "loc": 259,
+  "ms": 4645,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/graph-quality.test.ts",
+  "loc": 389,
+  "ms": 4440,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/graph-signals-engine.test.ts",
+  "loc": 177,
+  "ms": 1793,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/graph-signals-eval.test.ts",
+  "loc": 302,
+  "ms": 5931,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/harness-access.test.ts",
+  "loc": 7,
+  "ms": 5967,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/health-parity-postgres.test.ts",
+  "loc": 165,
+  "ms": 2262,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/http-transport.test.ts",
+  "loc": 347,
+  "ms": 1378,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/import-credential-preflight.test.ts",
+  "loc": 74,
+  "ms": 2277,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GOOGLE_GENERATIVE_AI_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/ingestion-roundtrip.test.ts",
+  "loc": 334,
+  "ms": 4097,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/init-fresh-pglite.test.ts",
+  "loc": 377,
+  "ms": 35927,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/install-real-grok.serial.test.ts",
+  "loc": 489,
+  "ms": 542,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "GBRAIN_REAL_GROK_E",
+   "XAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/install-real-hermes.serial.test.ts",
+  "loc": 345,
+  "ms": 508,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "GBRAIN_REAL_HERMES_E"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/install-real-opencode.serial.test.ts",
+  "loc": 512,
+  "ms": 544,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GBRAIN_REAL_OPENCODE_E",
+   "GBRAIN_REAL_OPENCODE_PAID_E"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/integrity-batch.test.ts",
+  "loc": 169,
+  "ms": 836,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/job-isolation.test.ts",
+  "loc": 133,
+  "ms": 2089,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/jobs-agent-scope-postgres.test.ts",
+  "loc": 103,
+  "ms": 1120,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/jobs-watch-readsnapshot.test.ts",
+  "loc": 86,
+  "ms": 2072,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/jsonb-batch-poison-postgres.test.ts",
+  "loc": 186,
+  "ms": 1051,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/jsonb-roundtrip.test.ts",
+  "loc": 137,
+  "ms": 777,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/legacy-chunk-privacy.test.ts",
+  "loc": 399,
+  "ms": 7966,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/legacy-fact-extraction-dedup-postgres.test.ts",
+  "loc": 3,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/legacy-vector-compatibility-postgres.test.ts",
+  "loc": 3,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/link-source-check-repair-postgres.test.ts",
+  "loc": 131,
+  "ms": 968,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/list-all-sources-postgres.test.ts",
+  "loc": 193,
+  "ms": 724,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/list-pages-regression.test.ts",
+  "loc": 94,
+  "ms": 1733,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/managed-atom-compaction.test.ts",
+  "loc": 16,
+  "ms": 8574,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/managed-atom-regressions.test.ts",
+  "loc": 27,
+  "ms": 17589,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/managed-connector-fencing.test.ts",
+  "loc": 3,
+  "ms": 12497,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/managed-connector-recovery.test.ts",
+  "loc": 3,
+  "ms": 31154,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/managed-connector-retry.test.ts",
+  "loc": 3,
+  "ms": 69715,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/managed-connector-routing.test.ts",
+  "loc": 6,
+  "ms": 62805,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/managed-extract-atoms.test.ts",
+  "loc": 16,
+  "ms": 17096,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/managed-facts-backstop.test.ts",
+  "loc": 11,
+  "ms": 13715,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/managed-facts-compaction.test.ts",
+  "loc": 10,
+  "ms": 35825,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/managed-facts-embedding.test.ts",
+  "loc": 10,
+  "ms": 37909,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/managed-maintenance.test.ts",
+  "loc": 3,
+  "ms": 46505,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/managed-sync-failures.test.ts",
+  "loc": 3,
+  "ms": 31428,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/managed-synthesis-postprocess.test.ts",
+  "loc": 3,
+  "ms": 12231,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/mcp-budget-reservation-postgres.test.ts",
+  "loc": 77,
+  "ms": 804,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/mcp-search-transport-matrix.test.ts",
+  "loc": 406,
+  "ms": null,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/mcp.test.ts",
+  "loc": 70,
+  "ms": 1201,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/mechanical.test.ts",
+  "loc": 1600,
+  "ms": 60319,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/memory-safety-wave-postgres.test.ts",
+  "loc": 3,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/migrate-chain.test.ts",
+  "loc": 221,
+  "ms": 2978,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migrate-embeddings-postgres.test.ts",
+  "loc": 248,
+  "ms": 1883,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migrate-engine-pglite-to-postgres.test.ts",
+  "loc": 393,
+  "ms": 9641,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migrate-engine-sources-postgres.test.ts",
+  "loc": 44,
+  "ms": 2074,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-drop-invalid-concurrent-index.test.ts",
+  "loc": 121,
+  "ms": 1118,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-flow.test.ts",
+  "loc": 299,
+  "ms": 4277,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-preview-safety.test.ts",
+  "loc": 94,
+  "ms": 11358,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-v35-auto-rls.test.ts",
+  "loc": 264,
+  "ms": 1146,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-v35-event-trigger.test.ts",
+  "loc": 104,
+  "ms": 1053,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-v47-notability.test.ts",
+  "loc": 217,
+  "ms": 920,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-v50-ingest-log-source-id.test.ts",
+  "loc": 137,
+  "ms": 1063,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-vector-replay-postgres.test.ts",
+  "loc": 3,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/migration-wave-budget-crash.test.ts",
+  "loc": 47,
+  "ms": null,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-wave-healing-fence.test.ts",
+  "loc": 61,
+  "ms": null,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-wave-intermediate-retrieval.test.ts",
+  "loc": 83,
+  "ms": null,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-wave-phase-leases.test.ts",
+  "loc": 79,
+  "ms": null,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-wave-prepared-withdrawal.test.ts",
+  "loc": 71,
+  "ms": null,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/migration-wave-provider-outcomes.test.ts",
+  "loc": 83,
+  "ms": null,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/minions-authority-parity.test.ts",
+  "loc": 80,
+  "ms": 954,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/minions-budget-cathedral.test.ts",
+  "loc": 126,
+  "ms": 1820,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/minions-concurrency.test.ts",
+  "loc": 149,
+  "ms": 1456,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/minions-controller-bounce-only.test.ts",
+  "loc": 98,
+  "ms": 1873,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/minions-field-report-repro.test.ts",
+  "loc": 101,
+  "ms": 27667,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/minions-prefix-strip-smoke.test.ts",
+  "loc": 83,
+  "ms": 1753,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/minions-resilience.test.ts",
+  "loc": 405,
+  "ms": 12390,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/minions-self-fix-flow.test.ts",
+  "loc": 144,
+  "ms": 1661,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/minions-shell-pglite.test.ts",
+  "loc": 393,
+  "ms": 2274,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/minions-shell.test.ts",
+  "loc": 149,
+  "ms": 1161,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/mounts-routing-pglite.test.ts",
+  "loc": 291,
+  "ms": 44757,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/multi-source-bug-class.test.ts",
+  "loc": 344,
+  "ms": 3606,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/multi-source-emotional-weight-pglite.test.ts",
+  "loc": 114,
+  "ms": 1437,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/multi-source.test.ts",
+  "loc": 689,
+  "ms": 2870,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/multimodal-postgres.test.ts",
+  "loc": 342,
+  "ms": 2387,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/non-tty-output.serial.test.ts",
+  "loc": 61,
+  "ms": 7693,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/oauth-grant-transactions.test.ts",
+  "loc": 175,
+  "ms": 1412,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/onboard-full-flow.test.ts",
+  "loc": 181,
+  "ms": 2035,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/ontology-merge-parity.test.ts",
+  "loc": 279,
+  "ms": 2081,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/op-checkpoint-jsonb-parity.test.ts",
+  "loc": 82,
+  "ms": 703,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/openclaw-context-engine-plugin.test.ts",
+  "loc": 168,
+  "ms": 825,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/openclaw-plugin-load-real.test.ts",
+  "loc": 397,
+  "ms": 331,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/openclaw-reference-compat.test.ts",
+  "loc": 150,
+  "ms": 1168,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/openrouter-anthropic-subagent-replay.live.test.ts",
+  "loc": 168,
+  "ms": 1464,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/openrouter-deepseek-subagent-replay.live.test.ts",
+  "loc": 168,
+  "ms": 1913,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/orphan-reduction.test.ts",
+  "loc": 174,
+  "ms": 6818,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/persistence-admin-intent.test.ts",
+  "loc": 94,
+  "ms": 9254,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-chaos.test.ts",
+  "loc": 571,
+  "ms": 35877,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-embedding-effects.test.ts",
+  "loc": 6,
+  "ms": 94110,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/persistence-http-liveness.test.ts",
+  "loc": 408,
+  "ms": 53500,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-phase-liveness.test.ts",
+  "loc": 457,
+  "ms": 18258,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-publication-parity.test.ts",
+  "loc": 8,
+  "ms": 5530,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-recovery.test.ts",
+  "loc": 6,
+  "ms": 11255,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/persistence-runtime-matrix.test.ts",
+  "loc": 16,
+  "ms": 45396,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-skill-bundles-postgres.test.ts",
+  "loc": 27,
+  "ms": 21508,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-sync-company-parity.test.ts",
+  "loc": 8,
+  "ms": 13668,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-sync-options-parity.test.ts",
+  "loc": 8,
+  "ms": 123842,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/persistence-sync-origin-parity.test.ts",
+  "loc": 8,
+  "ms": 16895,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/pgbouncer-teardown.test.ts",
+  "loc": 159,
+  "ms": 2508,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/pglite-cli-exit.serial.test.ts",
+  "loc": 540,
+  "ms": 38745,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GOOGLE_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/phantom-redirect.test.ts",
+  "loc": 285,
+  "ms": 31881,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/postgres-bootstrap.test.ts",
+  "loc": 436,
+  "ms": 2462,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/postgres-driver-install.test.ts",
+  "loc": 84,
+  "ms": 306,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/postgres-engine-disconnect-idempotency.test.ts",
+  "loc": 133,
+  "ms": 459,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/postgres-jsonb.test.ts",
+  "loc": 174,
+  "ms": 713,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/postgres-reconnect-singleton.test.ts",
+  "loc": 98,
+  "ms": 400,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/projection-readiness-currency.test.ts",
+  "loc": 81,
+  "ms": 1345,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/projection-recovery-parity.test.ts",
+  "loc": 9,
+  "ms": 18230,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/projection-statistics-postgres.test.ts",
+  "loc": 79,
+  "ms": 585,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/propose-takes-jsonb-postgres.test.ts",
+  "loc": 138,
+  "ms": 930,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/purge-deleted-dryrun-postgres.test.ts",
+  "loc": 73,
+  "ms": 726,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/put-page-persistence-postgres.test.ts",
+  "loc": 215,
+  "ms": 13045,
+  "pg": true,
+  "pglite": false,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/qm-provisioning.test.ts",
+  "loc": 345,
+  "ms": 40319,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/quarantine-search-exclusion.test.ts",
+  "loc": 154,
+  "ms": 3283,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/read-enrichment-privacy.test.ts",
+  "loc": 435,
+  "ms": 6533,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/reconcile-crash-unactivated.test.ts",
+  "loc": 15,
+  "ms": 101348,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/reconcile-crash.test.ts",
+  "loc": 15,
+  "ms": 102209,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/reconcile-pgbouncer.test.ts",
+  "loc": 106,
+  "ms": 4541,
+  "pg": true,
+  "pglite": false,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/remote-privacy-journeys.test.ts",
+  "loc": 272,
+  "ms": 24236,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/restore-source-config-jsonb-postgres.test.ts",
+  "loc": 68,
+  "ms": 1076,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/salience-anomalies-source-isolation-pglite.test.ts",
+  "loc": 127,
+  "ms": 2123,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/salience-llm-routing.test.ts",
+  "loc": 186,
+  "ms": 320,
+  "pg": false,
+  "pglite": false,
+  "keys": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/salience-pglite.test.ts",
+  "loc": 138,
+  "ms": 3246,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/schema-cathedral.test.ts",
+  "loc": 176,
+  "ms": 4680,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/schema-drift.test.ts",
+  "loc": 316,
+  "ms": 6071,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/search-exclude.test.ts",
+  "loc": 236,
+  "ms": 2067,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/search-quality.test.ts",
+  "loc": 231,
+  "ms": 1862,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/search-query-contract-postgres.test.ts",
+  "loc": 64,
+  "ms": 2042,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/search-readiness-http.test.ts",
+  "loc": 197,
+  "ms": 12483,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/search-swamp.test.ts",
+  "loc": 149,
+  "ms": 1861,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/self-upgrade-binary-swap.test.ts",
+  "loc": 266,
+  "ms": 521,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/self-upgrade-marker.test.ts",
+  "loc": 125,
+  "ms": 4124,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/serve-http-consent.test.ts",
+  "loc": 219,
+  "ms": 6124,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/serve-http-ingest-webhook.test.ts",
+  "loc": 687,
+  "ms": 31742,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/serve-http-meta.test.ts",
+  "loc": 60,
+  "ms": 1141,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/serve-http-multi-agent.test.ts",
+  "loc": 830,
+  "ms": 22098,
+  "pg": true,
+  "pglite": false,
+  "keys": [
+   "GOOGLE_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/serve-http-oauth.test.ts",
+  "loc": 1735,
+  "ms": 23362,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/serve-http-source-grant.test.ts",
+  "loc": 305,
+  "ms": 4308,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/serve-http-surface-ceiling.test.ts",
+  "loc": 277,
+  "ms": 18357,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/serve-http-takes-holders.test.ts",
+  "loc": 189,
+  "ms": 3038,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/serve-stdio-roundtrip.test.ts",
+  "loc": 354,
+  "ms": 23374,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/shared-skills-rls.test.ts",
+  "loc": 42,
+  "ms": 2079,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/shared-skills-transports.test.ts",
+  "loc": 13,
+  "ms": 17308,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/skill-brain-first.test.ts",
+  "loc": 246,
+  "ms": 770,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skillopt-loop.serial.test.ts",
+  "loc": 989,
+  "ms": 4338,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skillopt-models-strict.serial.test.ts",
+  "loc": 390,
+  "ms": 2857,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skillopt-models-used.serial.test.ts",
+  "loc": 236,
+  "ms": 2212,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skillopt-outcome.serial.test.ts",
+  "loc": 443,
+  "ms": 3927,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skillopt-pglite.serial.test.ts",
+  "loc": 233,
+  "ms": 2111,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skillpack-flow.test.ts",
+  "loc": 419,
+  "ms": 12999,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skillpack-third-party.test.ts",
+  "loc": 243,
+  "ms": 7636,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/skills.test.ts",
+  "loc": 195,
+  "ms": 397,
+  "pg": true,
+  "pglite": false,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/source-boundary-mutation-postgres.test.ts",
+  "loc": 121,
+  "ms": 863,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/source-isolation-pglite.test.ts",
+  "loc": 287,
+  "ms": 4965,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/source-routing.test.ts",
+  "loc": 234,
+  "ms": 2030,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/sources-remote-mcp.test.ts",
+  "loc": 477,
+  "ms": 14567,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/status-pglite.test.ts",
+  "loc": 208,
+  "ms": 2406,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/storage-tiering.test.ts",
+  "loc": 273,
+  "ms": 1288,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/subagent-crash-replay-multi-provider.test.ts",
+  "loc": 540,
+  "ms": 3814,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/subagent-gateway-path.test.ts",
+  "loc": 726,
+  "ms": 3757,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/subagent-gateway-resume-reconciliation.test.ts",
+  "loc": 308,
+  "ms": 2598,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/symbol-resolver-pglite.test.ts",
+  "loc": 220,
+  "ms": 3079,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/sync-cjk-git.test.ts",
+  "loc": 95,
+  "ms": 750,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/sync-credential-preflight.test.ts",
+  "loc": 127,
+  "ms": 2970,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "GOOGLE_GENERATIVE_AI_API_KEY",
+   "OPENAI_API_KEY",
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/sync-delegation-under-serve.serial.test.ts",
+  "loc": 257,
+  "ms": 154568,
+  "pg": true,
+  "pglite": true,
+  "keys": [
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/sync-lock-overlap-postgres.test.ts",
+  "loc": 132,
+  "ms": 9872,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/sync-lock-recovery.test.ts",
+  "loc": 261,
+  "ms": 5313,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/sync-parallel.test.ts",
+  "loc": 283,
+  "ms": 9071,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/sync-reconcile-postgres.test.ts",
+  "loc": 169,
+  "ms": 2138,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/sync-sigkill-resume-postgres.test.ts",
+  "loc": 448,
+  "ms": 13332,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/sync-status-pglite.test.ts",
+  "loc": 322,
+  "ms": 1774,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/sync.test.ts",
+  "loc": 681,
+  "ms": 4601,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/synthesize-bigint-job-id-postgres.test.ts",
+  "loc": 80,
+  "ms": 1003,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/system-of-record-invariant.test.ts",
+  "loc": 466,
+  "ms": 4161,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/takes-postgres.test.ts",
+  "loc": 426,
+  "ms": 1112,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/takes-scorecard-parity.test.ts",
+  "loc": 202,
+  "ms": 2583,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/takes-weight-rounding-postgres.test.ts",
+  "loc": 137,
+  "ms": 818,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/takes-write-ops-postgres.test.ts",
+  "loc": 352,
+  "ms": 16358,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/thin-client.test.ts",
+  "loc": 457,
+  "ms": 14918,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/think-source-isolation-pglite.test.ts",
+  "loc": 141,
+  "ms": 2118,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/think-trajectory-pglite.test.ts",
+  "loc": 302,
+  "ms": 2485,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/transcripts-ingest-pglite.test.ts",
+  "loc": 843,
+  "ms": 7956,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/transcripts-writeback-fidelity.test.ts",
+  "loc": 126,
+  "ms": 4103,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/type-unification-full-flow.test.ts",
+  "loc": 265,
+  "ms": 3159,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/unsupported-embedding-identity-postgres.test.ts",
+  "loc": 9,
+  "ms": 49264,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/upgrade-bun-link-arc.serial.test.ts",
+  "loc": 443,
+  "ms": 10048,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/upgrade.test.ts",
+  "loc": 106,
+  "ms": 3798,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/upsert-chunks-registry-column.test.ts",
+  "loc": 587,
+  "ms": 3093,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/v030_1-integration-pglite.test.ts",
+  "loc": 222,
+  "ms": 26038,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/v0_28_5-fix-wave.test.ts",
+  "loc": 292,
+  "ms": 15254,
+  "pg": false,
+  "pglite": true,
+  "keys": [
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/v0_29-mcp-dispatch-pglite.test.ts",
+  "loc": 247,
+  "ms": 1709,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/v0_30_3-fix-wave.test.ts",
+  "loc": 201,
+  "ms": 13153,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/vector-candidate-safety-postgres.test.ts",
+  "loc": 188,
+  "ms": 26307,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/vector-ef-search-postgres.test.ts",
+  "loc": 78,
+  "ms": 4882,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/volunteer-context-postgres.test.ts",
+  "loc": 97,
+  "ms": 1025,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/voyage-multimodal.test.ts",
+  "loc": 44,
+  "ms": 270,
+  "pg": false,
+  "pglite": false,
+  "keys": [
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/voyage-rerank-live.test.ts",
+  "loc": 132,
+  "ms": 297,
+  "pg": false,
+  "pglite": false,
+  "keys": [
+   "VOYAGE_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "skip-only-in-e2e-lane"
+ },
+ {
+  "f": "test/e2e/whoknows.test.ts",
+  "loc": 236,
+  "ms": 2951,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/withdrawal-bounded-safety-postgres.test.ts",
+  "loc": 2,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/withdrawal-crash-postgres.test.ts",
+  "loc": 2,
+  "ms": null,
+  "pg": false,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg-wrapper",
+  "cat": "pg-wrapper"
+ },
+ {
+  "f": "test/e2e/worker-abort-recovery.test.ts",
+  "loc": 178,
+  "ms": 5266,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/worker-configuration-release.test.ts",
+  "loc": 201,
+  "ms": 33879,
+  "pg": true,
+  "pglite": false,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/worker-lock-renewal-starvation.test.ts",
+  "loc": 164,
+  "ms": 3648,
+  "pg": true,
+  "pglite": false,
+  "keys": [],
+  "spawn": false,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/worker-readiness-cli.test.ts",
+  "loc": 132,
+  "ms": 4058,
+  "pg": true,
+  "pglite": false,
+  "keys": [
+   "ANTHROPIC_API_KEY",
+   "OPENAI_API_KEY"
+  ],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ },
+ {
+  "f": "test/e2e/workspace-generic-compat.test.ts",
+  "loc": 154,
+  "ms": 835,
+  "pg": false,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "no-pg",
+  "cat": "pglite-or-pure (no Postgres)"
+ },
+ {
+  "f": "test/e2e/zombie-reaping.test.ts",
+  "loc": 240,
+  "ms": 9405,
+  "pg": true,
+  "pglite": true,
+  "keys": [],
+  "spawn": true,
+  "cls": "pg",
+  "cat": "pg"
+ }
+]

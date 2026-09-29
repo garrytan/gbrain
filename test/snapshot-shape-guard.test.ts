@@ -127,7 +127,7 @@ test('D5.13: the coverage-immune hash includes schema entry modules and imported
   expected.update('files:v3\n');
   for (const file of schemaInputs) {
     expected.update(`${file}\n`);
-    // test-reads-source-ok: independent raw-byte hash contract, including imported SQL/handlers.
+    // test-reads-source-ok[raw-bytes]: independent raw-byte hash contract, including imported SQL/handlers.
     expected.update(readFileSync(`src/core/${file}`));
     expected.update('\n--\n');
   }
@@ -141,7 +141,7 @@ test.each(schemaInputs)('editing imported snapshot input %s invalidates the cach
   const changedFs = {
     ...fsModule,
     readFileSync: (path: Parameters<typeof fsModule.readFileSync>[0]) => {
-      // test-reads-source-ok: emulate a changed source without mutating shared checkout files.
+      // test-reads-source-ok[raw-bytes]: emulate a changed source without mutating shared checkout files.
       const bytes = fsModule.readFileSync(path);
       return String(path).endsWith(`/src/core/${file}`)
         ? Buffer.concat([bytes, Buffer.from('\n// schema dependency changed\n')]) : bytes;
@@ -155,7 +155,7 @@ test('an unreadable imported schema dependency disables snapshot reuse', () => {
     ...fsModule,
     readFileSync: (path: Parameters<typeof fsModule.readFileSync>[0]) => {
       if (String(path).endsWith('/grants/schema.ts')) throw new Error('ENOENT');
-      // test-reads-source-ok: raw-byte hash failure-path regression.
+      // test-reads-source-ok[raw-bytes]: raw-byte hash failure-path regression.
       return fsModule.readFileSync(path);
     },
   } as typeof fsModule;

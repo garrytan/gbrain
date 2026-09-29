@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +34,18 @@ describe('frozen E2E matrix', () => {
     expect(prepareMatrix([...E2E_EXCLUSIONS, paths[0]], weights).include).toEqual([{ shard: 1, files: [paths[0]], empty: false }]);
     expect(prepareMatrix([], weights).include).toEqual([{ shard: 1, files: [], empty: true }]);
     expect(prepareMatrix([...E2E_EXCLUSIONS], weights).include[0].empty).toBe(true);
+  });
+  test('drops the persistence-validation.yml crash suites and names their owner', () => {
+    const notices: string[] = [];
+    const spy = spyOn(console, 'error').mockImplementation((line: string) => { notices.push(line); });
+    try {
+      expect(prepareMatrix(['test/e2e/reconcile-crash.test.ts', 'test/e2e/reconcile-crash-unactivated.test.ts', paths[0]], weights).include)
+        .toEqual([{ shard: 1, files: [paths[0]], empty: false }]);
+    } finally { spy.mockRestore(); }
+    expect(notices).toEqual([
+      'excluded: test/e2e/reconcile-crash.test.ts (owned by persistence-validation.yml)',
+      'excluded: test/e2e/reconcile-crash-unactivated.test.ts (owned by persistence-validation.yml)',
+    ]);
   });
   test('refuses invalid selections and duplicate paths', () => {
     for (const files of [[paths[0], paths[0]], ['../outside.test.ts'], ['test/e2e/../escape.test.ts'], ['test/e2e/$(touch marker).test.ts']]) expect(() => prepareMatrix(files, weights)).toThrow();

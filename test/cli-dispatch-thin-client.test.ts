@@ -17,7 +17,7 @@
  * GBRAIN_REMOTE_CLIENT_SECRET is stripped per-call — the helper doesn't do
  * it and an ambient secret would alter thin-client auth routing.
  *
- * The 9 refusedCommands spawns run ONCE through runCliBatch (width 2 — the
+ * The refusedCommands spawns run ONCE through runCliBatch (width 2 — the
  * machine-wide cap, see cli-spawn.ts) in the describe's beforeAll against a
  * single seeded thin-client home; the loop's tests assert on the cached
  * results. Sharing the home is safe because refusal happens at the dispatch
@@ -98,6 +98,20 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
     ['orphans'],
     ['integrity', 'check'],
     ['serve'],
+    // v0.32 audit REFUSE additions (no MCP route, or localOnly ops) and the
+    // v0.31.1-era refusals not covered above.
+    ['pages', 'purge-deleted'],
+    ['files', 'list'],
+    ['eval', 'export'],
+    ['code-def', 'fixture'],
+    ['code-refs', 'fixture'],
+    ['code-callers', 'fixture'],
+    ['code-callees', 'fixture'],
+    ['dream'],
+    ['transcripts', 'ingest'],
+    ['storage', 'status'],
+    ['takes', 'extract'],
+    ['sources', 'list'],
   ];
 
   // One shared seeded home for the batch (see file header for why sharing
@@ -239,6 +253,8 @@ describe('thin-client scratch-DB guard — jobs partial dispatch + config refusa
   test('`gbrain jobs list` never fabricates a scratch local engine', async () => {
     seedThinClientConfig(tmp, { engine: 'pglite' });
     const r = await run(['jobs', 'list']);
+    // Partial dispatch owns `jobs`: list/get route over MCP, never refused.
+    expect(r.stderr).not.toContain('not routable');
     expect(existsSync(join(tmp, '.gbrain', 'brain.pglite'))).toBe(false);
     expect(r.stdout + r.stderr).not.toContain('Schema version');
     expect(r.stdout + r.stderr).not.toContain('Setting up brain schema');

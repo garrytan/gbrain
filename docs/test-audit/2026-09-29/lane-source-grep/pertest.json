@@ -1,0 +1,3026 @@
+[
+[
+"test/admin-sse-eventsource.test.ts",
+"unit",
+1,
+1,
+"0",
+"179",
+"13",
+[
+"test('Live Activity EventSource sends admin session cookies through reverse proxies', () => {"
+]
+],
+[
+"test/agent-install-backup.serial.test.ts",
+"serial",
+14,
+3,
+"12",
+"81187",
+"446",
+[
+"test('a failed upgrade resumes its migration before reporting the existing brain ready', async () => {",
+"test('full backup restores DB-only facts/files, rebases sources, quarantines all unfinished jobs', async () =>",
+"test('interrupted publication preserves private recovery staging and refuses an incomplete destination', async"
+]
+],
+[
+"test/agent-install-follow-setup.serial.test.ts",
+"serial",
+4,
+1,
+"3",
+"44197",
+"88",
+[
+"test('adopted local brain stays memory-only pending approval and never acquires a new identity instruction', a"
+]
+],
+[
+"test/agent-register-guards.serial.test.ts",
+"serial",
+2,
+2,
+"0",
+"11667",
+"166",
+[
+"test('thin client is refused with a structured JSON failure before any engine work', async () => {",
+"test('duplicate name is refused with the existing client id + reissue hint; pglite live serve is refused pre-c"
+]
+],
+[
+"test/agent-register.test.ts",
+"unit",
+35,
+3,
+"6",
+"1904",
+"464",
+[
+"test('agent-register never acquires its own engine (withConfiguredSql / .connect are banned)', () => {",
+"test('registerScopedClient core is print-free and exit-free', () => {",
+"test('end-to-end: row, ttl, surface via rescope, audit row, verify round-trip', async () => {"
+]
+],
+[
+"test/ai/silent-drop-regression.test.ts",
+"unit",
+3,
+3,
+"0",
+"197",
+"62",
+[
+"test('ops surface put_page does not gate embedding on OPENAI_API_KEY alone', () => {",
+"test('hybrid.ts search does not gate vector path on OPENAI_API_KEY alone', () => {",
+"test('import-file.ts does NOT silently swallow embedding failures', () => {"
+]
+],
+[
+"test/ambient-writeback-lifecycle.serial.test.ts",
+"serial",
+1,
+1,
+"3",
+"17567",
+"322",
+[
+"test('the whole story', async () => {"
+]
+],
+[
+"test/apply-migrations.test.ts",
+"unit",
+28,
+3,
+"2",
+"282",
+"291",
+[
+"test('source contains process.exit(listExit) on list/dry-run and exit(0) up-to-date', async () => {",
+"test('runner loops result.phases and console.errors failed phase details', async () => {",
+"test('up-to-date branch exits 1 when schemaBehind (source shape)', async () => {"
+]
+],
+[
+"test/archived-source-scoping.test.ts",
+"unit",
+4,
+2,
+"2",
+"194",
+"128",
+[
+"test(`${file} carries ${patched} archived-filtered all-source selection(s)`, () => {",
+"test('src/core/source-resolver.ts tier-4 selects the archived column for active-over-archived tiering', () => "
+]
+],
+[
+"test/asymmetric-encoding-contract.test.ts",
+"unit",
+6,
+3,
+"1",
+"212",
+"134",
+[
+"test('src/core/search/hybrid.ts imports embedQuery from embedding.ts', () => {",
+"test('src/core/search/hybrid.ts calls embedQuery at the search-time query path', () => {",
+"test('src/core/embedding.ts re-exports both embed and embedQuery', () => {"
+]
+],
+[
+"test/auto-link-targeted-probe-2544.test.ts",
+"unit",
+6,
+1,
+"4",
+"6348",
+"151",
+[
+"test('probe binds the slug array with an explicit ::text[] cast (postgres.js parity)', () => {"
+]
+],
+[
+"test/autopilot-auto-drain-wiring.test.ts",
+"unit",
+8,
+8,
+"0",
+"155",
+"67",
+[
+"test('CODEX #2: idempotency key includes a UTC-day time slot (not static)', () => {",
+"test('CODEX #1: submits with allowProtectedSubmit', () => {",
+"test('CODEX #3: enumerates sources and counts backlog per source', () => {",
+"test('gates on pack NOT declaring extract_atoms (the silent-backlog condition)', () => {",
+"test('gates on the enabled flag and a daily spend cap (DECISION 3C)', () => {",
+"test('is Postgres-gated (PGLite has no worker surface)', () => {",
+"test('issue #3218: submits with max_attempts 3 (not 1) so a retry can backoff before dead-lettering', () => {",
+"test('CODEX impl #4: no maxWaiting (it coalesces by name+queue, not source)', () => {"
+]
+],
+[
+"test/autopilot-cycle-failure-classification.test.ts",
+"unit",
+5,
+5,
+"0",
+"168",
+"108",
+[
+"test(\"the inline-cycle path does NOT treat 'partial' as cycleOk=false\", () => {",
+"test(\"the 5-consecutive-error give-up is still wired (regression-safety)\", () => {",
+"test('the legacy `count > 20 ? \"warn\" : \"ok\"` ternary is gone', () => {",
+"test('the new threshold is ratio-based against total_pages', () => {",
+"test('the warn branch still exists (we narrowed, did not remove)', () => {"
+]
+],
+[
+"test/autopilot-fanout-wiring.test.ts",
+"unit",
+16,
+16,
+"2",
+"196",
+"263",
+[
+"test('imports dispatchPerSource from the fan-out helper', () => {",
+"test('imports resolveEffectiveFanoutMax (clamps to worker concurrency; PGLite base still 1)', () => {",
+"test('calls dispatchPerSource within the shouldFullCycle branch', () => {",
+"test('applies the 30-minute timeout floor only to full-cycle dispatch', () => {",
+"test('lastFullCycleAt advance-gate counts coalesced ticks (parity with pre-split dispatched)', () => {",
+"test('unavailable-path skips in the daemon loops are NDJSON events under --json, and sources-load is a static ",
+"test('fanout_summary reports coalesced separately from dispatched (honest surfaces)', () => {",
+"test('targeted-plan dispatch honors the honest-dispatch contract (red-team finding)', () => {",
+"test('freshness sync dispatch uses the parsed source config for pull policy', () => {",
+"test('freshness sync dispatch skips unavailable source paths before enqueueing', () => {",
+"test('#4399: freshness sync dispatch skips a syncEnabled:false source BEFORE queuing a job', () => {",
+"test('#4046: targeted dispatch scopes stable recommendation keys to the interval', () => {",
+"test('#2781: dispatchGlobalMaintenance gets the full-cycle floor, not the outer (non-full-cycle) timeoutMs', (",
+"test('updates lastFullCycleAt after dispatch or an all-fresh restart check', () => {",
+"test('#2781: full-cycle floor is derived from BOTH handler anchors, not a duplicated literal', () => {",
+"test('does NOT regress to the single-job dispatch on the full-cycle path', () => {"
+]
+],
+[
+"test/autopilot-install.test.ts",
+"unit",
+18,
+9,
+"4",
+"455",
+"504",
+[
+"test('wrapper sources ~/.zshenv before ~/.zshrc', async () => {",
+"test('wrapper exports ~/.bun/bin onto PATH before the exec', async () => {",
+"test('status detects the autopilot-run.sh wrapper line', async () => {",
+"test('wrapper sources zshrc AND bashrc independently (no || chain)', async () => {",
+"test('wrapper additively sources <gbrainDir>/env after the rc-file profiles, before PATH export/exec', () => {",
+"test('honors GBRAIN_HOME: sources <GBRAIN_HOME>/.gbrain/env, not a hardcoded ~/.gbrain', () => {",
+"test('behavior: real bash actually sets the var when the file is present, and no-ops (exit 0, var unset) when ",
+"test('runAutopilot checks isAvailable(\"chat\") and logs chatBootWarning before the daemon loop starts', async (",
+"test('launchd unloads before load, systemd try-restarts, cron/container explain the residual process', async ("
+]
+],
+[
+"test/autopilot-nightly-probe-wiring.test.ts",
+"unit",
+9,
+9,
+"0",
+"274",
+"91",
+[
+"test('imports runNightlyQualityProbe from the phase module', () => {",
+"test('uses the eng-D2 adapter module (not direct subprocess of eval-longmemeval/cross-modal)', () => {",
+"test('feature flag gate present: dual-plane read (DB row wins, file plane fallback)', () => {",
+"test('NO scheduler-side rate-limit check (D10 simplification)', () => {",
+"test('probe call wrapped in try/catch that does NOT bump consecutiveErrors', () => {",
+"test('DI shape: isEnabled / hasEmbeddingProvider / resolveMaxUsd / resolveRepoRoot / runLongMemEval / runCross",
+"test('resolveRepoRoot prefers the gbrain package root (committed fixture home), not the brain repoPath', () =>",
+"test('hasEmbeddingProvider reads from gateway.isAvailable(\"embedding\") (codex round-2 #12 \u2014 in-process, not su",
+"test('max_usd resolves dual-plane (default = 5 pinned by resolveProbeMaxUsd unit tests)', () => {"
+]
+],
+[
+"test/autopilot-parser-probe-wiring.test.ts",
+"unit",
+10,
+10,
+"0",
+"177",
+"77",
+[
+"test('invokes the phase module and the audit trail', () => {",
+"test('flag reads dual-plane: DB row (gbrain config set) wins, file plane fallback', () => {",
+"test('D10 mode-gate present: tokenmax brains run the probe by default', () => {",
+"test('fixtures resolve from the gbrain package root, NOT the brain repoPath', () => {",
+"test('missing fixtures skip quietly (no audit row, once-per-process stderr note)', () => {",
+"test('rate_limited outcomes are NOT audit-logged (flood guard)', () => {",
+"test('rate-limit gate delegates to the audit module, not inline event reads', () => {",
+"test('LLM-key gate reads gateway.isAvailable(\"chat\") in-process', () => {",
+"test('probe call wrapped in try/catch that does NOT bump consecutiveErrors', () => {",
+"test('DI shape: the exact 7 fields of the parser probe NightlyProbeDeps', () => {"
+]
+],
+[
+"test/autopilot-pause-marker.test.ts",
+"unit",
+13,
+1,
+"2",
+"234",
+"245",
+[
+"test('worker claim loop checks the marker BEFORE queue.claim (static wiring guard)', async () => {"
+]
+],
+[
+"test/autopilot-self-upgrade.test.ts",
+"unit",
+7,
+4,
+"1",
+"464",
+"44",
+[
+"test('supervisor-relaunch, NOT in-process re-exec (Bun has no execve) \u2014 no exec*-call', () => {",
+"test('the silent channel does swap-only, never a blocking full post-upgrade in the tick', () => {",
+"test('boot reconciles the breadcrumb and the tick attempts the channel', () => {",
+"test('apply path unlinks the lock before exit so the relaunched binary does not self-exit on a stale lock', ()"
+]
+],
+[
+"test/autopilot-shutdown-engine-close.test.ts",
+"unit",
+6,
+6,
+"0",
+"225",
+"81",
+[
+"it('registers an engine-close callback in the process-cleanup registry (SIGTERM path)', () => {",
+"it('closeEngine aborts the in-flight inline cycle then disconnects the engine', () => {",
+"it('the inline runCycle call carries the shutdown abort signal and is tracked as in-flight', () => {",
+"it('shutdown() awaits closeEngine() before process.exit (SIGINT + internal-stop path)', () => {",
+"it('exits non-zero when the daemon gives up after repeated failures (#2234)', () => {",
+"it('keeps operator stops and intentional relaunch stops clean', () => {"
+]
+],
+[
+"test/autopilot-supervisor-wiring.test.ts",
+"unit",
+7,
+7,
+"0",
+"168",
+"99",
+[
+"it('imports ChildWorkerSupervisor from the shared core', () => {",
+"it('does not retain the legacy inline spawn loop (`startWorker` + child.on)', () => {",
+"it(\"spawns the worker with an auto-sized --max-rss (issue #1678)\", () => {",
+"it('uses managed processing state and strips GBRAIN_SUPERVISED so the worker keeps stall detection', () => {",
+"it(\"constructs ChildWorkerSupervisor with maxCrashes: 5\", () => {",
+"it('routes onMaxCrashesExceeded to autopilot.shutdown (not process.exit directly)', () => {",
+"it('shutdown drains via supervisor.killChild + awaitChildExit (not workerProc.kill)', () => {"
+]
+],
+[
+"test/backlinks-job-default.test.ts",
+"unit",
+3,
+2,
+"0",
+"196",
+"47",
+[
+"test(\"default action is 'check' (explicit opt-in required for 'fix')\", () => {",
+"test('the inverted (fix-by-default) shape stays absent', () => {"
+]
+],
+[
+"test/backup-cli.serial.test.ts",
+"serial",
+19,
+1,
+"5",
+"420",
+"443",
+[
+"test('source-text contract pin: pglite-engine still throws the literal isLockError matches', () => {"
+]
+],
+[
+"test/backup-invalidation.serial.test.ts",
+"serial",
+12,
+3,
+"5",
+"3340",
+"309",
+[
+"test('a run whose rows were ALL skipped (no git repo) leaves the cache alone', async () => {",
+"test('recordRepoInReceipt (post-push success) calls invalidateBackupStatus()', () => {",
+"test('recordPendingRepo (pre-push proof-of-intent) does NOT invalidate \u2014 nothing was fixed yet', () => {"
+]
+],
+[
+"test/book-mirror.test.ts",
+"unit",
+9,
+9,
+"0",
+"1113",
+"142",
+[
+"it('book-mirror is in CLI_ONLY (does not get \"Unknown command\")', async () => {",
+"it('without DB, never reaches queue submission', async () => {",
+"it('exports runBookMirrorCmd', () => {",
+"it('documents the trust contract (codex HIGH-1 fix is in the file)', () => {",
+"it('uses read-only allowed_tools for subagent fan-out (codex HIGH-1)', () => {",
+"it('writes via operator-trust put_page (handler takes the operator-context shape)', () => {",
+"it('prints a cost-estimate confirmation before launching (P1)', () => {",
+"it('uses idempotency keys for child jobs (retry-friendly)', () => {",
+"it('handles partial-failure (continues + flags failed chapters)', () => {"
+]
+],
+[
+"test/brain-score-breakdown.test.ts",
+"unit",
+11,
+1,
+"1",
+"2153",
+"192",
+[
+"test('type includes dead_links + breakdown scores', async () => {"
+]
+],
+[
+"test/brainstorm-timeout.test.ts",
+"unit",
+14,
+2,
+"2",
+"185",
+"147",
+[
+"test('orchestrator.ts imports classifyBrainstormError + StructuredAgentError', async () => {",
+"test('commands/brainstorm.ts has the CLI formatter for StructuredAgentError', async () => {"
+]
+],
+[
+"test/canonical-writer-inventory.test.ts",
+"unit",
+2,
+1,
+"0",
+"297",
+"32",
+[
+"test('new canonical write callsites require a reviewed inventory and an enforcement boundary', () => {"
+]
+],
+[
+"test/chat-key-plane.test.ts",
+"unit",
+7,
+2,
+"2",
+"365",
+"86",
+[
+"test('autopilot no longer probes the DB plane for the chat key', () => {",
+"test('doctor context uses the same shared helper', () => {"
+]
+],
+[
+"test/check-update.test.ts",
+"unit",
+25,
+2,
+"1",
+"1682",
+"203",
+[
+"test('check-update is in CLI_ONLY set', async () => {",
+"test('--help prints usage and exits 0', async () => {"
+]
+],
+[
+"test/child-worker-supervisor.test.ts",
+"unit",
+21,
+11,
+"2",
+"3161",
+"1017",
+[
+"it('runs the maintenance hook before every crash respawn', async () => {",
+"it('code=0 worker exit does not count as crash; restarts immediately', async () => {",
+"it('code=0 after stable 5min+ run does not reset crashCount', async () => {",
+"it('budget exceeded triggers health_warn + budget_exceeded backoff', async () => {",
+"it('worker_spawned + worker_exited fire on every cycle with consistent shape', async () => {",
+"it('code=12 is labeled rss_watchdog and never increments crashCount', async () => {",
+"it('crossing the soft budget does NOT give up; it warns and keeps retrying to the hard ceiling', async () => {",
+"it('hardStopMaxCrashes=0 disables permanent give-up (retry-forever-with-backoff)', async () => {",
+"it('killChild gates on liveness, not .killed (Codex #1 regression)', () => {",
+"it('restartCurrentChild SIGKILLs the captured child, respawns, labels wedge_restart, leaves crashCount=0', asy",
+"it('settles the run loop instead of hanging, and counts each failure as a crash', async () => withEnv({ PATH: "
+]
+],
+[
+"test/chronicle-extract.test.ts",
+"unit",
+22,
+1,
+"4",
+"1588",
+"199",
+[
+"test('defaultJudge surfaces llm_unavailable (source contract, #2608)', async () => {"
+]
+],
+[
+"test/chunkers/code-bash.test.ts",
+"unit",
+5,
+0,
+"1",
+"697",
+"78",
+[]
+],
+[
+"test/claude-cli-recipe.test.ts",
+"unit",
+38,
+19,
+"38",
+"368",
+"1162",
+[
+"test('getRecipe returns chat + expansion Recipe with the documented models', async () => {",
+"test('parses <use_tools> block into LanguageModelV2 tool-call content', async () => {",
+"test('#4155: mints a fresh id per call \u2014 two identical envelopes yield distinct ids', async () => {",
+"test('#4155: prompt protocol no longer asks the model to invent an id (source-shape pin)', () => {",
+"test('parses multiple parallel tool calls in a single block', async () => {",
+"test('anchors on the real block when the tag is mentioned in prose first', async () => {",
+"test('a prose mention of the CLOSE tag before the real block does not drop the call', async () => {",
+"test('a literal <use_tools> tag inside a JSON string argument does not re-anchor the block', async () => {",
+"test('a literal </use_tools> tag inside a JSON string argument does not terminate the block early', async () =",
+"test('a malformed <use_tools> block is discarded as prose AND reported on stderr', async () => {",
+"test('synthesizes an id when the model omits it', async () => {",
+"test('returns text-only stop when tools are offered but model declines to call any', async () => {",
+"test('argv includes --disable-slash-commands + --system-prompt and cwd is the dedicated tmpdir', async () => {",
+"test('scrubs ANTHROPIC_* credentials and cloud-auth backend switches from the child env (subscription-only aut",
+"test('non-zero exit with a result envelope on stdout surfaces a typed API error', async () => {",
+"test('non-zero exit with non-JSON stdout falls back to the raw blob message', async () => {",
+"test('non-zero exit with a SUCCESS envelope falls back to the blob message with stderr', async () => {",
+"test('non-zero exit keeps the raw blob behind a --- raw --- marker (auth-looking stdout never classifies)', as",
+"test('exit 0 + is_error + api_error_status surfaces the same typed API error', async () => {"
+]
+],
+[
+"test/cli-cwd-dotenv-quarantine.test.ts",
+"unit",
+36,
+27,
+"1",
+"13818",
+"1091",
+[
+"test(`${label}: gbrain --version from the hostile dir runs no code and refuses (fail-closed)`, async () => {",
+"test('control: the same module exported from the shell (absolute path) IS loaded', async () => {",
+"test('fail-closed: a cwd .env assigning GBRAIN_GUARDRAILS_MODULE (operator also exported one) refuses to run \u2014",
+"test('control: an exported GBRAIN_GUARDRAILS_MODULE survives when the cwd .env assigns a DIFFERENT protected k",
+"test('the operator-owned $GBRAIN_HOME/.gbrain/.env IS honored as the home for GBRAIN_GUARDRAILS_MODULE', async",
+"test('a cwd .env cannot relocate GBRAIN_HOME to smuggle in its own .gbrain/.env: quarantined BEFORE the config",
+"test.skipIf(!GIT_BIN)('control: without preflight the planted git config runs the script and the TLS knob is l",
+"test.skipIf(!GIT_BIN)('with preflight: git never sees the injection, dropped keys are ABSENT (not \"\"), cwd + a",
+"test.skipIf(!GIT_BIN)(`forged marker (${label}) planted in the .env does not suppress the hop`, async () => {",
+"test.skipIf(!GIT_BIN)('harness self-check: a planted JSON marker really lands in process.env (no preflight)', ",
+"test.skipIf(!GIT_BIN)('depth 2: a hopped process that spawns gbrain again from the hostile cwd hops once more ",
+"test.skipIf(!GIT_BIN || !SCRIPT_BIN)('Ctrl-C with a controlling terminal but all three stdio non-tty: the wrap",
+"test(\"through cli.ts: SIGTERM to the wrapper \u2014 the wrapper outlives the child's graceful exit(0), relays 0, th",
+"test('SIGKILL on the wrapper: the re-run notices within seconds, exits (137) and removes the neutral dir the w",
+"test.skipIf(!GIT_BIN)('a planted HOME (HOME unset at spawn) is dropped AND the re-run gets the real home back ",
+"test.skipIf(!GIT_BIN)(\"an exported HOME shadowed by a .env assignment (key-presence false drop) comes back as ",
+"test.skipIf(!GIT_BIN)('the re-run preserves the dev-runtime execArgv (--smol) across the hop', async () => {",
+"test.skipIf(!GIT_BIN)(`a relative runtime path survives the hop: ${label} \u2192 loads in the parent AND the re-run",
+"test.skipIf(!GIT_BIN)('control: an absolute --preload path is passed through unchanged (still loads twice)', a",
+"test.skipIf(!GIT_BIN)('a relative TMPDIR planted by the .env is quarantined before the neutral dir is made; th",
+"test.skipIf(!GIT_BIN)('with preflight: XDG_CONFIG_HOME is quarantined and git from the original cwd does NOT r",
+"test('$GBRAIN_HOME/.gbrain as cwd: its .env is honored, no quarantine warning, exit 0', async () => {",
+"test('hostile variant: a checkout whose .env assigns GBRAIN_HOME to manufacture the collision is still quarant",
+"test('forged home: cwd = <hostile>/.gbrain whose .env assigns HOME (HOME + GBRAIN_HOME unset at spawn) \u2014 modul",
+"test('bun src/cli.ts from a dir whose bunfig.toml has a top-level preload: the preload RUNS (Bun, before gbrai",
+"test('a re-run whose original cwd vanished aborts with a clear error (exit 1)', async () => {",
+"test('a re-run with a live original cwd chdirs back and proceeds (exit 3)', async () => {"
+]
+],
+[
+"test/cli-force-exit-teardown-arming.test.ts",
+"unit",
+1,
+1,
+"0",
+"170",
+"55",
+[
+"test('no timer arming exists between op-dispatch setup and the try; the deadline arms inside finishCliTeardown"
+]
+],
+[
+"test/cli-stdout-delivery.test.ts",
+"unit",
+17,
+2,
+"1",
+"17469",
+"523",
+[
+"test('bounded tail drain (D2): a stalled-open reader cannot hang the exit past GBRAIN_STDOUT_DRAIN_DEADLINE_MS",
+"test('direct process.exit: a stalled-open reader cannot wedge the sync drain past GBRAIN_STDOUT_DRAIN_DEADLINE"
+]
+],
+[
+"test/cli.test.ts",
+"unit",
+24,
+18,
+"5",
+"8017",
+"324",
+[
+"test('imports operations from operations.ts', () => {",
+"test('builds cliOps map from operations', () => {",
+"test('CLI_ONLY set contains expected commands', () => {",
+"test('reindex is in CLI_ONLY (does not get \"Unknown command\")', () => {",
+"test('has formatResult function for CLI output', () => {",
+"test('every handleCliOnly top-level case label is reachable via CLI_ONLY', () => {",
+"test('cli.ts no longer uses a replacer-less stringify on the normalize path', () => {",
+"test('ask alias maps to query in source', () => {",
+"test('ask does NOT appear in --tools-json output', async () => {",
+"test('--version outputs version', async () => {",
+"test('unknown command prints error and exits 1', async () => {",
+"test('per-command --help prints usage without DB connection', async () => {",
+"test('upgrade --help prints usage without running upgrade', async () => {",
+"test('sync --help prints sync-specific usage block without running sync (v0.37 D.4)', async () => {",
+"test('doctor --help short-circuits CLI-only dispatch without diagnostics', async () => {",
+"test('init --help short-circuits CLI-only dispatch without writing config', async () => {",
+"test('--help prints global help', async () => {",
+"test('--tools-json outputs valid JSON with operations', async () => {"
+]
+],
+[
+"test/code-retrieval-harness.test.ts",
+"unit",
+26,
+1,
+"1",
+"200",
+"245",
+[
+"test('parses the v0.34 baseline questions.json', () => {"
+]
+],
+[
+"test/codex-plugin-manifest.test.ts",
+"unit",
+42,
+0,
+"0",
+"3181",
+"595",
+[]
+],
+[
+"test/company-brain-connect-cli.serial.test.ts",
+"serial",
+3,
+2,
+"3",
+"21474",
+"128",
+[
+"test('requires explicit destinations and does not reinterpret a false consent flag', () => {",
+"test('previews without consent, then verifies the full fictional source and keeps config/files unchanged', asy"
+]
+],
+[
+"test/company-brain-demo.test.ts",
+"unit",
+2,
+2,
+"2",
+"10506",
+"52",
+[
+"test('runs actual typed import and graph extraction with providers disabled', async () => {",
+"test('CLI produces one JSON result without a configured brain', () => {"
+]
+],
+[
+"test/company-brain-inspect-cli.test.ts",
+"unit",
+7,
+4,
+"3",
+"6980",
+"126",
+[
+"test('inspects without opening a configured unreachable database or changing source content', async () => {",
+"test('writes only an explicitly requested private plan and never overwrites it', async () => {",
+"test('help is database-free and thin clients refuse before inspection', async () => {",
+"test('unknown flags keep the same versioned JSON and usage exit contract', async () => {"
+]
+],
+[
+"test/company-brain-schema.test.ts",
+"unit",
+8,
+0,
+"9",
+"318",
+"111",
+[]
+],
+[
+"test/compile-view.test.ts",
+"unit",
+14,
+3,
+"4",
+"240",
+"310",
+[
+"test('module source contains no wall-clock (Date.now) \u2014 anchor is content-derived', () => {",
+"test('a truncated recency window keeps the NEWEST pages; boundary-timestamp rows drop deterministically', asyn",
+"test('duplicate slug across sources compiles the requested source body', async () => {"
+]
+],
+[
+"test/config.test.ts",
+"unit",
+20,
+1,
+"9",
+"161",
+"253",
+[
+"test('the local redactUrl duplicate stays deleted (redaction is single-homed)', () => {"
+]
+],
+[
+"test/connection-resilience.test.ts",
+"unit",
+25,
+3,
+"0",
+"190",
+"332",
+[
+"it('PostgresEngine.executeRaw is a single-statement passthrough (no try/catch on connection errors)', () => {",
+"it('PostgresEngine.reconnect() still exists for supervisor-driven recovery', () => {",
+"it('Supervisor still has the 3-strikes-then-reconnect path', () => {"
+]
+],
+[
+"test/context-engine-checkpoint.serial.test.ts",
+"serial",
+12,
+1,
+"12",
+"504",
+"534",
+[
+"it('F5/CK9 drift guard: hook.ts sanitizeSessionId, corpus-segments safeIdComponent, and sanitizeEngineSessionI"
+]
+],
+[
+"test/contextual-retrieval-service-pure.test.ts",
+"unit",
+25,
+1,
+"4",
+"511",
+"566",
+[
+"test('uses the shared default without starting paid synopsis generation', () => {"
+]
+],
+[
+"test/conversation-facts-type-allowlist-drift.test.ts",
+"unit",
+18,
+7,
+"3",
+"3769",
+"354",
+[
+"test('extract-conversation-facts.ts no longer hand-copies any type list; re-exports from the leaf', () => {",
+"test('doctor.ts: no longer imports ALLOWED_TYPES (all call sites peeled)', () => {",
+"test('doctor/checks/conversation-coverage.ts: the peeled coverage check derives from the leaf', () => {",
+"test('doctor/checks/search-eval.ts: the peeled backlog check derives from the leaf too', () => {",
+"test('jobs.ts: the extract-conversation-facts handler filters job.data.types against ALLOWED_TYPES', () => {",
+"test('jobs.ts: imports ALLOWED_TYPES + AllowedType from the leaf exactly once', () => {",
+"test('sources.ts: FACTS_BACKFILL_ALLOWED imports ALLOWED_TYPES from the leaf', () => {"
+]
+],
+[
+"test/cross-modal-eval-cli.test.ts",
+"unit",
+13,
+0,
+"3",
+"177",
+"195",
+[]
+],
+[
+"test/cycle-abort.test.ts",
+"unit",
+13,
+10,
+"5",
+"480",
+"251",
+[
+"test('runCycle bails on pre-aborted signal', async () => {",
+"test('runCycle bails mid-flight when signal fires between phases', async () => {",
+"test('handler registration passes signal to runCycle', async () => {",
+"test('worker.ts has force-eviction safety net after timeout', async () => {",
+"test('cycle.ts has checkAborted calls between phases', async () => {",
+"test('cycle.ts threads opts.signal into every long phase + guards the success stamp', async () => {",
+"test('every long phase core checks isAborted in its batch loop', async () => {",
+"test('cycle.ts forwards cycleSignal into the synthesize and patterns phase opts', async () => {",
+"test('synthesize threads its signal through judge, inline drain, and completion wait', async () => {",
+"test('patterns sibling threads the same signal through inline drain, wait, and reverse-write', async () => {"
+]
+],
+[
+"test/cycle-drain-renewal.test.ts",
+"unit",
+7,
+3,
+"1",
+"416",
+"126",
+[
+"test('the renewTimer interval is guarded and routes through runDrainRenewalTick', () => {",
+"test('the handler invocation carries its own chat phase (worker.ts #4218 parity)', () => {",
+"test('withRefreshingLock aborts a per-tick signal into handle.refresh and guards re-entrancy', () => {"
+]
+],
+[
+"test/cycle-pack-gating.test.ts",
+"unit",
+21,
+14,
+"1",
+"199",
+"207",
+[
+"test('cycle.ts source includes extract_atoms in NEEDS_LOCK_PHASES', () => {",
+"test('cycle.ts source includes synthesize_concepts in NEEDS_LOCK_PHASES', () => {",
+"test('cycle.ts dispatch for extract_atoms calls packDeclaresPhase', () => {",
+"test('cycle.ts dispatch for synthesize_concepts calls packDeclaresPhase', () => {",
+"test('packDeclaresPhase helper function exists in cycle.ts', () => {",
+"test('packDeclaresPhase reads phases from active pack manifest (NOT extends chain)', () => {",
+"test('packDeclaresPhase fail-open: returns false on catch (no thrown exceptions)', () => {",
+"test('only extract_atoms + synthesize_concepts dispatch sites reference packDeclaresPhase', () => {",
+"test('extract_facts dispatch does NOT consult packDeclaresPhase', () => {",
+"test('calibration_profile dispatch does NOT consult packDeclaresPhase', () => {",
+"test('extract_atoms not_in_active_pack skip carries the correct reason marker', () => {",
+"test('synthesize_concepts not_in_active_pack uses the same marker (semantic consistency)', () => {",
+"test('both skip summaries name the phases: key and a lens pack', () => {",
+"test('extract_atoms skip summary keeps the drain hint', () => {"
+]
+],
+[
+"test/cycle-patterns-deadline-budget.test.ts",
+"unit",
+15,
+7,
+"3",
+"1410",
+"173",
+[
+"test('job context exposes deadlineAtMs from the claim-time timeout_at stamp', () => {",
+"test('worker arms its abort timer from timeout_at when present (one absolute deadline)', () => {",
+"test('autopilot-cycle, global-maintenance AND phase-wrapper handlers thread deadlineAtMs into runCycle', () =>",
+"test('runCycle forwards deadlineAtMs to the patterns phase', () => {",
+"test('patterns submits + waits with the CLAMPED budgets, not raw config', () => {",
+"test('patterns cancels the child on wait timeout (child clock starts at ITS claim)', () => {",
+"test('patterns skips honestly when the remaining budget is too small', () => {"
+]
+],
+[
+"test/cycle-patterns.test.ts",
+"unit",
+16,
+15,
+"2",
+"400",
+"141",
+[
+"test('imports queue + waitForCompletion + types', () => {",
+"test('threads allowed_slug_prefixes from filing-rules JSON', () => {",
+"test('reads min_evidence + lookback_days config', () => {",
+"test('uses subagent_tool_executions for slug provenance (Codex #2 fix)', () => {",
+"test('gates on gateway provider reachability, not ANTHROPIC_API_KEY (PR #2279)', () => {",
+"test('skips when reflections below min_evidence', () => {",
+"test('reverse-writes pages to disk via serializeMarkdown', () => {",
+"test('runs after extract \u2014 queries fresh graph', () => {",
+"test('does NOT use raw_data table (Codex #3 fix)', () => {",
+"test('filters reflections by slug LIKE <source_slug_prefix>/%', () => {",
+"test('orders by updated_at DESC for recency-bias', () => {",
+"test('caps gather to 100 reflections (cost control)', () => {",
+"test('output slug prefix is config-driven, defaulting to <output_root>/personal/patterns', () => {",
+"test('source slug prefix defaults to <output_root>/personal/reflections', () => {",
+"test('adds a configured output_slug_prefix to the subagent write allow-list', () => {"
+]
+],
+[
+"test/cycle-phase-deadline-drift.test.ts",
+"unit",
+4,
+2,
+"4",
+"442",
+"73",
+[
+"test('SOURCE SHAPE: no re-hardcoded 30-minute literal; the derivation stays referenced', () => {",
+"test('SOURCE SHAPE: cycle.ts forwards deadlineAtMs to all THREE budgeted phases (patterns, propose_takes, synt"
+]
+],
+[
+"test/cycle/cycle-lock-ttl.test.ts",
+"unit",
+1,
+1,
+"0",
+"160",
+"29",
+[
+"test('LOCK_TTL_MINUTES === 5 in src/core/cycle.ts', () => {"
+]
+],
+[
+"test/cycle/nightly-probe-adapters.test.ts",
+"unit",
+7,
+5,
+"1",
+"217",
+"150",
+[
+"test('adapter argv shape includes --output explicitly (regression for codex finding)', () => {",
+"test('runLongMemEvalForProbe builds argv with --output for output path', () => {",
+"test('runLongMemEvalForProbe passes the live search config snapshot via RunOpts', () => {",
+"test('returns the documented shape: {exitCode, summary}', () => {",
+"test('CrossModalBatchSummary shape includes the 6 expected fields', () => {"
+]
+],
+[
+"test/cycle/regression-pr-wave-r1-r2-r4.test.ts",
+"unit",
+7,
+2,
+"3",
+"375",
+"150",
+[
+"test('R4 source-grep: src/cli.ts uses readFileSync(0, ...) not readFileSync(\"/dev/stdin\", ...)', () => {",
+"test('R4 behavior: parseOpArgs reads stdin when isTTY=false and no positional content provided', () => {"
+]
+],
+[
+"test/cycle/yield-during-phase-throttle.test.ts",
+"unit",
+3,
+1,
+"3",
+"2804",
+"114",
+[
+"test('yieldDuringPhase throw is non-fatal (logged, not propagated)', async () => {"
+]
+],
+[
+"test/destructive-guard.test.ts",
+"unit",
+41,
+16,
+"3",
+"7718",
+"806",
+[
+"test('counts pages correctly for a populated source', async () => {",
+"test('counts facts \u2014 a zero-page fact-holding source is data at risk, not \"safe to remove\"', async () => {",
+"test('a fact-only source requires --confirm-destructive (facts gate exactly like pages)', () => {",
+"test('listArchivedSources filters via the archived column, not JSONB', async () => {",
+"test('gbrain#4115 \u2014 an FK-blocked source is reported and skipped; the deletable one still purges', async () =>",
+"test('a soft-deleted referent alone BLOCKS the remove/purge pre-check with the retained-row guidance', async (",
+"test('assessDestructiveImpact folds the referent count; formatImpact shows it', async () => {",
+"test('purgeExpiredSources purges only the unreferenced expired source and reports the FK-held one as blocked',",
+"test('purge block is PHYSICAL: a soft-deleted client row still blocks (FK ignores deleted_at)', async () => {",
+"test('formatClientReferentsBlock lists clients + per-client revoke commands, split by liveness', () => {",
+"test('degrade ladder: missing oauth_clients table \u2192 [], missing deleted_at \u2192 all referents, other errors propa",
+"test('missing source_id column \u2192 [] (no column \u21d2 no FK \u21d2 no referents)', async () => {",
+"test('formatImpact renders the boxed preview with the source id and counts', () => {",
+"test('formatImpact renders the facts count (mirrors the page-count line)', () => {",
+"test('sources remove orders the row DELETE (in-tx) BEFORE external teardown (F1 structural pin)', () => {",
+"test('formatSoftDelete renders the post-archive guidance with restore command', () => {"
+]
+],
+[
+"test/detached-stderr.test.ts",
+"unit",
+5,
+2,
+"1",
+"181",
+"90",
+[
+"test('the detach spawn routes through spawnDetachedSupervisor', () => {",
+"test(\"no spawn in jobs.ts hands the detached child an 'inherit' stderr\", () => {"
+]
+],
+[
+"test/distribution-import-boundary.test.ts",
+"unit",
+2,
+1,
+"1",
+"175",
+"93",
+[
+"test('every src/core/distribution/*.ts file passes the import allowlist', () => {"
+]
+],
+[
+"test/docs-mcp-deploy.test.ts",
+"unit",
+9,
+6,
+"0",
+"251",
+"88",
+[
+"test('ALTERNATIVES.md distinguishes tailnet-only Serve from public Funnel', () => {",
+"test('troubleshooting covers \"needsAuth while tool calls succeed\"', () => {",
+"test('documents the owner request and the existing mint endpoint', () => {",
+"test('auth help points at the owner login flow without inventing a CLI command', () => {",
+"test('warns against consuming the single-use nonce during verification', () => {",
+"test('distinguishes login from client creation and states lifecycle limits', () => {"
+]
+],
+[
+"test/doctor-categories.test.ts",
+"unit",
+10,
+0,
+"1",
+"260",
+"192",
+[]
+],
+[
+"test/doctor-orphan-ratio.test.ts",
+"unit",
+11,
+4,
+"4",
+"11289",
+"267",
+[
+"test('returns informational ok on network failure (unconfigured config)', async () => {",
+"test('source greps: orphan_ratio check name appears in BOTH local doctor and remote doctor', () => {",
+"test('source greps: both surfaces reference the same fix command', () => {",
+"test('source greps: local hint is self-fix; thin-client hint points at operator', () => {"
+]
+],
+[
+"test/doctor-volunteer-channels.test.ts",
+"unit",
+9,
+1,
+"2",
+"343",
+"191",
+[
+"test('wiring pins: the check runs on BOTH doctor paths and serve registers the delivery callback (source greps"
+]
+],
+[
+"test/doctor.test.ts",
+"unit",
+107,
+64,
+"112",
+"8723",
+"2075",
+[
+"test('dimension recovery previews existing brains without recommending reinitialization', () => {",
+"test('CLI registers doctor command', async () => {",
+"test('frontmatter_integrity subcheck added in v0.22.4', async () => {",
+"test('subagent_capability distinguishes fallback wording for inherited tier source', async () => {",
+"test('reranker_health warns on repeated unknown rerank failures', async () => {",
+"test('#4648: reranker_health warns on >= 3 empty/malformed pass-throughs (named as pass-through)', async () =>",
+"test('#4648: two pass-throughs stay below the threshold \u2014 no pass-through warn', async () => {",
+"test('doctor --fast emits source-specific message when URL present', async () => {",
+"test('doctor source contains jsonb_integrity and markdown_body_completeness checks', async () => {",
+"test('jsonb_integrity check covers the four JSONB sites fixed in v0.12.1', async () => {",
+"test('skill conformance derives a valid host manifest when manifest.json is absent', async () => {",
+"test('doctor source contains facts_extraction_health check that iterates sources', async () => {",
+"test('RLS check scans ALL public tables (no hardcoded tablename IN list near the RLS block)', async () => {",
+"test('RLS check raises status=fail with quoted-identifier remediation SQL', async () => {",
+"test('RLS check skips on PGLite (no PostgREST, not applicable)', async () => {",
+"test('RLS check reads pg_description and recognizes the GBRAIN:RLS_EXEMPT escape hatch', async () => {",
+"test('rls_event_trigger check exists, scoped after schema_version, healthy on (O,A) only', async () => {",
+"test('graph_coverage hint uses canonical `gbrain extract all`, not removed verbs', async () => {",
+"test('takes_weight_grid: 0 takes \u2192 ok with \"No takes yet\"', async () => {",
+"test('takes_weight_grid: 100% on-grid \u2192 ok', async () => {",
+"test('takes_weight_grid: >10% off-grid \u2192 fail with fix hint', async () => {",
+"test('takes_weight_grid: 1-10% off-grid \u2192 warn', async () => {",
+"test('takes_weight_grid: takes table missing \u2192 warn (graceful)', async () => {",
+"test('local doctor source contains wedge detection alongside the existing stuck path', async () => {",
+"test('wedge detection is local to doctor \u2014 no statusForVersion import (D19 anti-regression)', async () => {",
+"test('multiple wedged versions chain force-retry calls with &&', async () => {",
+"test('remote doctor (doctorReportRemote) also emits the force-retry hint (D14)', async () => {",
+"test('last_sync_at IS NULL \u2192 fail with \"never been synced\"', async () => {",
+"test('last_sync_at > 72h ago \u2192 fail with day-rounded \"Nd ago\"', async () => {",
+"test('exact 72h boundary \u2192 warn (>72h strict; 72h source NOT yet fail)', async () => {",
+"test('24h < last_sync_at < 72h \u2192 warn with hour-rounded \"Nh ago\"', async () => {",
+"test('exact 24h boundary \u2192 ok (>24h strict)', async () => {",
+"test('last_sync_at <= 24h \u2192 ok with \"synced recently\"', async () => {",
+"test('future last_sync_at \u2192 warn (clock skew / corrupted timestamp)', async () => {",
+"test('mixed sources (one fail + one warn) \u2192 fail with both issues listed', async () => {",
+"test('executeRaw throws \u2192 outer-catch returns warn (doctor keeps running)', async () => {",
+"test('env-var override: GBRAIN_SYNC_FRESHNESS_FAIL_HOURS=6 \u2192 7h-stale fails', async () => {",
+"test('source.id embedded in messages even when source.name is set', async () => {",
+"test('case 1: stale + HEAD match + clean tree + chunker match + localOnly=true \u2192 ok', async () => {",
+"test('case 3: stale + HEAD mismatch + localOnly=true \u2192 warn (no short-circuit)', async () => {",
+"test('case 6: mixed 3 sources (1 unchanged + 1 synced 5min + 1 truly stale 5d) \u2192 fail, three-bucket invariant'",
+"test('doctor.ts uses summarizeCrashes \u2014 no ad-hoc worker_exited filter', async () => {",
+"test('doctor.ts warn threshold dropped from >3 to >=1', async () => {",
+"test('doctor.ts ok + warn messages include per-cause breakdown and clean_exits_24h', async () => {",
+"test('jobs.ts supervisor status uses summarizeCrashes \u2014 same wiring as doctor', async () => {",
+"test('doctor source defines the stub_guard_24h check', async () => {",
+"test('WARN threshold is >10 hits/24h', async () => {",
+"test('fix hint points operators at the audit log', async () => {",
+"test('check reads via the dual-week-aware reader (NOT supervisor-audit pattern)', async () => {",
+"test('zero hits emits no check (keeps doctor output clean on healthy brains)', async () => {",
+"test('explicit search.graph_signals=false overrides mode default', async () => {",
+"test('check is wired into runDoctor (source-grep)', async () => {",
+"test('skipped silently when flag is already enabled', async () => {",
+"test('\u22655 would-resolve AND \u226520% ratio \u2192 warn with paste-ready hint', async () => {",
+"test('check is wired into runDoctor AND doctorReportRemote (source-grep)', async () => {",
+"test('both checks are wired into buildChecks (source-grep)', async () => {",
+"test('stale source with NO live lock \u2192 fail (blocked/wedged is not masked)', async () => {",
+"test('stale source WITH a live (non-expired) lock \u2192 ok (sync in progress)', async () => {",
+"test('never-synced source WITH a live lock \u2192 ok (initial sync in progress)', async () => {",
+"test('never-synced source with NO lock \u2192 fail (unchanged behavior)', async () => {",
+"test('a lock held PAST the staleness ceiling is wedged, not in-progress \u2192 fail', async () => {",
+"test('F2: clone gone but content NEWER than last sync \u2192 warn (real work not masked)', async () => {",
+"test('F5: readable clone, HEAD moved \u2192 wall-clock even with old content', async () => {",
+"test('F6: three-bucket invariant holds across rescued + unchanged + stale', async () => {"
+]
+],
+[
+"test/dream-cli-flags.test.ts",
+"unit",
+28,
+28,
+"0",
+"163",
+"198",
+[
+"test('declares --input flag with file argument', () => {",
+"test('declares --date / --from / --to flags', () => {",
+"test('validates ISO date format', () => {",
+"test('--input + --date conflict detection', () => {",
+"test('--input implies --phase synthesize', () => {",
+"test('--from > --to range validation', () => {",
+"test('forwards synth fields to runCycle', () => {",
+"test('totals line includes synth + patterns counters', () => {",
+"test('help text documents dry-run synthesis semantics (Codex finding #8)', () => {",
+"test('help text documents local-day cycle timezone configuration (#4348)', () => {",
+"test('declares --source flag in argv parsing', () => {",
+"test('declares --source-id alias in argv parsing', () => {",
+"test('forwards resolved sourceId to runCycle', () => {",
+"test('imports resolveSourceId from canonical source-resolver helper', () => {",
+"test('uses the shared isResolverUserError predicate for the typed-error catch (T3 from eng review)', () => {",
+"test('documents --source in --help output', () => {",
+"test('preserves --help short-circuit ordering comment (IRON RULE)', () => {",
+"test('declares engine-null guard for --source', () => {",
+"test('declares archived-source guard', () => {",
+"test('declares --drain and --window flags', () => {",
+"test('--drain defaults to extract_atoms and rejects other phases', () => {",
+"test('drain routes through the shared helper with the resolved source (5A)', () => {",
+"test('drain reports remaining + exits non-zero when incomplete', () => {",
+"test('declares --once flag', () => {",
+"test('rejects bare --once with no --phase (exit 2)', () => {",
+"test('validates against phaseWasExplicit, captured before --input/--drain defaulting', () => {",
+"test('threads onceForPhase to runCycle, gated on opts.once', () => {",
+"test('documents --once in --help output', () => {"
+]
+],
+[
+"test/e2e/bootstrap-compiled-binary.serial.test.ts",
+"serial",
+4,
+2,
+"1",
+"-1",
+"186",
+[
+"test.skipIf(!built)('compiled `bootstrap render --minimal` in an empty cwd renders bundled templates', () => {",
+"test.skipIf(!built)('compiled `bootstrap status --json` parses with the full phase list', () => {"
+]
+],
+[
+"test/e2e/bootstrap-real-codex.serial.test.ts",
+"serial",
+5,
+5,
+"9",
+"-1",
+"673",
+[
+"test('rendered AGENTS.md + HEARTBEAT.md name context-pack (session start) and delta (heartbeat)', async () => ",
+"test('INSTALL: keyless init \u2192 interview \u2192 render \u2192 real `codex mcp add` \u2192 verify', async () => {",
+"test('SMOKE: real `codex exec` \u2192 gbrain MCP \u2192 brain \u2192 seeded fact', async () => {",
+"test('BOUNDARY: real `codex exec` session start \u2192 context_pack/delta over MCP', async () => {",
+"test('managed block + plain user statement \u2192 unprompted remember lands the fact', async () => {"
+]
+],
+[
+"test/e2e/compile-context-pglite.test.ts",
+"e2e",
+13,
+1,
+"6",
+"2354",
+"329",
+[
+"test('dup slug across sources: the source flag compiles the right page', async () => {"
+]
+],
+[
+"test/e2e/fresh-install-pglite.test.ts",
+"e2e",
+6,
+2,
+"19",
+"29181",
+"372",
+[
+"test('bare `init --pglite`: schema sized to the new-install default (voyage-4/1024)', async () => {",
+"test('init \u2192 seed page \u2192 embed: chunks have non-null embeddings, no dim mismatch', async () => {"
+]
+],
+[
+"test/e2e/install-real-hermes.serial.test.ts",
+"serial",
+4,
+3,
+"0",
+"-1",
+"345",
+[
+"test('version pin: hermes --version matches HERMES_VERSION when the CI pin is set', () => {",
+"test('INSTALL: keyless init \u2192 real `hermes mcp add` handshake \u2192 config carries server + env \u2192 mcp test passes'",
+"test('SMOKE: real hermes -z answers the seeded fact through the gbrain MCP server', async () => {"
+]
+],
+[
+"test/e2e/migration-flow.test.ts",
+"e2e",
+4,
+0,
+"2",
+"4277",
+"299",
+[]
+],
+[
+"test/e2e/persistence-http-liveness.test.ts",
+"e2e",
+7,
+4,
+"2",
+"53500",
+"408",
+[
+"test('private targets and changed source identity hide authenticated receipts immediately', async () => {",
+"test.skipIf(!oldBinary)('compatible old and new owners drain original UUIDs after quiesced handoffs', async ()",
+"test.skipIf(!oldBinary)(`${oldFirst ? 'old-to-new' : 'new-to-old'} owner handoff retains a real ${boundary} ro",
+"test('foreign and narrowed OAuth receipts remain opaque without granting helper access', async () => {"
+]
+],
+[
+"test/e2e/postgres-driver-install.test.ts",
+"e2e",
+1,
+1,
+"0",
+"306",
+"84",
+[
+"test.skipIf(!enabled)('packed, global, upgraded and compiled distributions use vendored cancellation bytes and"
+]
+],
+[
+"test/e2e/qm-provisioning.test.ts",
+"e2e",
+11,
+6,
+"0",
+"40319",
+"345",
+[
+"test(\"alice cannot write bob's namespace or an unbound prefix\", async () => {",
+"test('bob is fenced to HIS prefixes (not in eng)', async () => {",
+"test('reads stay source-granular: bob CAN read chan-eng pages (documented tradeoff)', async () => {",
+"test('the documented health check works on a read+write client (no admin scope)', async () => {",
+"test('POST /ingest is closed to bound clients \u2014 it bypasses the op layer entirely', async () => {",
+"test('/ingest still works for an unbound webhook client (deny is scoped to bound clients)', async () => {"
+]
+],
+[
+"test/e2e/remote-privacy-journeys.test.ts",
+"e2e",
+3,
+3,
+"8",
+"24236",
+"272",
+[
+"test('same-slug content readers and history retain public data and exclude private rows', async () => {",
+"test('fresh query metadata and stored-report containment survive the transport', async () => {",
+"test('page-visibility opt-out leaves historical Facts/Takes and report boundaries active', async () => {"
+]
+],
+[
+"test/e2e/skill-brain-first.test.ts",
+"e2e",
+12,
+0,
+"2",
+"770",
+"246",
+[]
+],
+[
+"test/e2e/upgrade-bun-link-arc.serial.test.ts",
+"serial",
+5,
+3,
+"3",
+"-1",
+"443",
+[
+"test('full arc: pull --ff-only THEN bun install; state + breadcrumb written; post-upgrade chained', async () =",
+"test('--swap-only: swap + verify + breadcrumb, but NO post-upgrade and NO features child', async () => {",
+"test('advances .gbrain/migrations/completed.jsonl for the pending migration, then no-ops on re-run', async () "
+]
+],
+[
+"test/embed-helper-migration.test.ts",
+"unit",
+8,
+8,
+"0",
+"275",
+"110",
+[
+"test('imports runSlidingPool from worker-pool helper', () => {",
+"test('calls runSlidingPool at least twice (embedAll + embedAllStale paths)', () => {",
+"test('pre-migration `let nextIdx = 0; async function worker()` shape is gone', () => {",
+"test('pre-migration `Promise.all(Array.from({ length: numWorkers }, () => worker()))` is gone', () => {",
+"test('preserves GBRAIN_EMBED_CONCURRENCY default of 20 (codex #13)', () => {",
+"test('runSlidingPool call sites pass `workers: CONCURRENCY`', () => {",
+"test('embedAllStale path still threads the cancellation signal into pool', () => {",
+"test('failureLabel projector uses page.slug (memory bound on large brains)', () => {"
+]
+],
+[
+"test/embedding-dim-check-facts.test.ts",
+"unit",
+21,
+3,
+"2",
+"190",
+"257",
+[
+"test('doctor check uses buildFactsAlterRecipe (NOT a hand-rolled ALTER string)', () => {",
+"test('insertFacts batch path uses cached castSuffix, NOT a hardcoded ::vector', () => {",
+"test('cached cast suffix has a test-only reset hook for unit cases', () => {"
+]
+],
+[
+"test/eval-brainbench-e2e.slow.test.ts",
+"slow",
+21,
+17,
+"2",
+"48539",
+"428",
+[
+"test('bundled defaults resolve outside the package working directory', () => {",
+"test('clean run: exit 0, --out is complete valid JSON with the glossary block', () => {",
+"test('--compare against own baseline: exit 0 PASS', () => {",
+"test('doctored main baseline (pretends fewer failures): exit 1 REGRESSION with named breach', () => {",
+"test('--allow-regression flips the same comparison to exit 0 and records the reason', () => {",
+"test('fixtures_hash mismatch without a committed baseline: exit 2 INCONCLUSIVE', () => {",
+"test('empty fixtures dir: exit 2', () => {",
+"test('suite filter matching zero fixtures: exit 2', () => {",
+"test('malformed fixture JSON: exit 2 with the validation error named', () => {",
+"test('usage error (unknown flag): exit 2 with usage', () => {",
+"test('seed failure (duplicate slug across seed pages in one source): exit 2, fixture named', () => {",
+"test('gate mode excludes holdout fixtures; --include-holdout scores them', async () => {",
+"test('doctored current vs base: exit 1 with breaches listed', () => {",
+"test('stdout parses as a full result doc with compare embedded', () => {",
+"test('no config + no keys: exit 2 with an actionable message, before any run', () => {",
+"test('renders verdict header + per-cell headline from the --out artifact', () => {",
+"test('a fixture with a real dollar amount + out-of-range year fails the scan (gold dir scanned too)', () => {"
+]
+],
+[
+"test/eval-capture-db-plane.serial.test.ts",
+"serial",
+9,
+3,
+"5",
+"562",
+"239",
+[
+"test('reuses the merge connectEngine already did \u2014 zero extra config reads', async () => {",
+"test('connectEngine still publishes its merge (the half the runtime test cannot reach)', async () => {",
+"test('connectMountEngine still marks its engine as a mount engine', async () => {"
+]
+],
+[
+"test/eval-contradictions/no-valid-until-write.test.ts",
+"unit",
+4,
+2,
+"0",
+"220",
+"184",
+[
+"test('no file under src/core/eval-contradictions/ writes facts.valid_until', () => {",
+"test('no src/commands/eval-suspected-contradictions* file writes facts.valid_until', () => {"
+]
+],
+[
+"test/eval-longmemeval-cli-smoke.test.ts",
+"unit",
+2,
+0,
+"0",
+"6505",
+"76",
+[]
+],
+[
+"test/eval-synthesize-concepts-routing.test.ts",
+"unit",
+6,
+3,
+"1",
+"864",
+"118",
+[
+"test('cli.ts carries the dedicated pre-engine branch', () => {",
+"test('eval.ts re-entry branch precedes the generic qrels flow', () => {",
+"test('eval synthesize-concepts --json exits 1 with the envelope, never the qrels error', () => {"
+]
+],
+[
+"test/exit-classification.test.ts",
+"unit",
+13,
+5,
+"1",
+"177",
+"131",
+[
+"it(`${site.label} uses a shared classifier helper (${site.helper})`, () => {",
+"it(`${site.label} calls ${site.helper} at least once`, () => {",
+"it('doctor.ts no longer has the inline `code !== 0 && code !== undefined` filter', () => {",
+"it('jobs.ts no longer has the inline filter', () => {",
+"it('child-worker-supervisor.ts uses helper to decide clean_exit vs crash branch', () => {"
+]
+],
+[
+"test/export-help.test.ts",
+"unit",
+1,
+1,
+"0",
+"-1",
+"24",
+[
+"test.each(['--help', '-h'])('actual export %s explains safe scope and recovery without a configured brain', he"
+]
+],
+[
+"test/extract-atoms-drain-errors.test.ts",
+"unit",
+16,
+1,
+"1",
+"175",
+"356",
+[
+"it('maps d.failures {source, error} \u2192 {source, reason} and returns them on the batch', () => {"
+]
+],
+[
+"test/extract-atoms-drain.test.ts",
+"unit",
+16,
+5,
+"2",
+"181",
+"281",
+[
+"it('runExtractAtomsDrainForSource uses cycleLockIdFor(opts.sourceId) + withRefreshingLock', () => {",
+"it('runBatch derives providerFailure from failures.length + zero processed items, not r.status', () => {",
+"it('does not advertise the non-existent --allow-protected flag', () => {",
+"it(\"throws when result.status === 'provider_failure' instead of returning it\", () => {",
+"it('still returns the deferred/skipped shape on LockUnavailableError (unchanged)', () => {"
+]
+],
+[
+"test/extract-conversation-facts-workers.test.ts",
+"unit",
+17,
+14,
+"1",
+"200",
+"172",
+[
+"test('imports runSlidingPool from worker-pool helper', () => {",
+"test('imports parseWorkers + resolveWorkersWithClamp from sync-concurrency', () => {",
+"test('imports withRefreshingLock + LockUnavailableError from db-lock', () => {",
+"test('imports assertFactsEmbeddingDimMatchesConfig (D15 preflight)', () => {",
+"test('runExtractConversationFactsCore calls resolveWorkersWithClamp', () => {",
+"test('preflight fires inside runExtractConversationFactsCore body, BEFORE work loop', () => {",
+"test('per-page work wrapped in withRefreshingLock (D2 + D12)', () => {",
+"test('LockUnavailableError caught + pages_lock_skipped incremented (D6)', () => {",
+"test('delete-orphans-first called BEFORE segment extraction (D11)', () => {",
+"test('exit 3 fires when lock-busy pages remain (codex #3)', () => {",
+"test('parsedArgs.workers threaded into core opts', () => {",
+"test('Minion job envelope includes workers (D9 round-trip)', () => {",
+"test('ExtractConversationFactsResult has pages_lock_skipped + orphan_facts_cleaned', () => {",
+"test('initial result object literal initializes both counters to 0', () => {"
+]
+],
+[
+"test/extract-include-frontmatter-config.serial.test.ts",
+"serial",
+8,
+1,
+"3",
+"1737",
+"167",
+[
+"test('call sites do not literalise false; the shared helpers resolve the default', () => {"
+]
+],
+[
+"test/extract-workers.test.ts",
+"unit",
+10,
+10,
+"0",
+"179",
+"95",
+[
+"test('imports runSlidingPool from worker-pool helper', () => {",
+"test('imports parseWorkers + resolveWorkersWithClamp', () => {",
+"test('ExtractOpts type carries optional workers field', () => {",
+"test('runExtractCore resolves workers via the PGLite-clamp wrapper', () => {",
+"test('CLI runExtract parses --workers via parseWorkers (loud-fail on invalid)', () => {",
+"test('all three inner loops accept the workers parameter', () => {",
+"test('all three inner loops call runSlidingPool', () => {",
+"test('legacy `for (let i = 0; i < files.length; i++)` per-file loops are gone', () => {",
+"test('extractForSlugs (the CLI/cycle path) is migrated to the pool', () => {",
+"test('CLI threads workers into runExtractCore call', () => {"
+]
+],
+[
+"test/facts-backstop-remedy-verb.test.ts",
+"unit",
+3,
+3,
+"0",
+"151",
+"45",
+[
+"test('warning does not name the nonexistent `gbrain sources update` verb', () => {",
+"test('warning names the real attach remedy (`gbrain sources add ... --path`)', () => {",
+"test('every `gbrain sources <verb>` the backstop recommends exists in the dispatcher', () => {"
+]
+],
+[
+"test/features.test.ts",
+"unit",
+12,
+5,
+"5",
+"223",
+"138",
+[
+"it('features registry pins the resolver-canonical name', () => {",
+"it('the x-to-brain recipe declares and uses only the canonical name', async () => {",
+"it('the resolver reads the same env var the recipe documents', () => {",
+"it('features is in CLI_ONLY set', async () => {",
+"it('help text mentions features', async () => {"
+]
+],
+[
+"test/fence-extraction.test.ts",
+"unit",
+18,
+1,
+"3",
+"6159",
+"276",
+[
+"test('import-file no longer routes fence extraction through marked (#2862)', async () => {"
+]
+],
+[
+"test/file-upload-fail-closed.test.ts",
+"unit",
+9,
+1,
+"2",
+"1162",
+"215",
+[
+"test('every files upsert merges metadata through FILES_METADATA_MERGE_SQL', () => {"
+]
+],
+[
+"test/files.test.ts",
+"unit",
+39,
+8,
+"5",
+"2301",
+"562",
+[
+"test('collectFiles skips node_modules', () => {",
+"test('no repo configured: exits 1 instead of lying success', async () => {",
+"test('missing --page for a git-storage file: exits 1', async () => {",
+"test('file argument resolving to \".\" exits 1 with a clear error, not a filesystem crash', async () => {",
+"test('file argument resolving to \"..\" exits 1 with a clear error, not a filesystem crash', async () => {",
+"test('rows banked under a source-owned working tree verify against that tree, not sync.repo_path', async () =>",
+"test('[GUARD] no storage-dependent path uses the permissive `if (config?.storage)` form', () => {",
+"test('[GUARD] verify never hardcodes its mismatch/missing counts', () => {"
+]
+],
+[
+"test/fix-wave-structural.test.ts",
+"unit",
+31,
+31,
+"0",
+"196",
+"408",
+[
+"test('hybrid.ts registers a bounded search-cache drainer', () => {",
+"test('serve-http.ts uses ADMIN_ASSETS manifest when admin/dist is not next to cwd', () => {",
+"test('src/admin-embedded.ts is auto-generated with file: imports', () => {",
+"test('build script + CI guard exist', () => {",
+"test('admin endpoint reads grantTypes / redirectUris / tokenEndpointAuthMethod from request body', () => {",
+"test('phaseASchema calls runMigrateOnlyCore (in-process) + is awaited', () => {",
+"test('apply-migrations skips pre-flight schema-version probe on PGLite', () => {",
+"test(\"cli.ts parseOpArgs handles --no-<key> as boolean negation\", () => {",
+"test('cli-force-exit.ts imports + drains the registry inside finishCliTeardown', () => {",
+"test('last-retrieved.ts still exports the bounded drain + registers a drainer', () => {",
+"test('all four sinks register a drainer', () => {",
+"test('finishCliTeardown positioning: registry drain appears BEFORE engine disconnect', () => {",
+"test('background-work.ts: Map registry, ordered drain, awaited abort, test seam', () => {",
+"test('#4136 scan surfaces unrecognized_headings on both output paths', () => {",
+"test('#4143 engine parity: BOTH engines call the disconnect drain', () => {",
+"test('#4284 caller timeout retains ownership while the actual close drains under its watchdog', () => {",
+"test('cli-force-exit.ts daemon guard excludes \"serve\"', () => {",
+"test('no bare awaited engine disconnects remain in cli.ts', () => {",
+"test('the pre-handler hard-deadline timer is gone (handler time is not teardown budget)', () => {",
+"test('all nine swept sites route through finishCliTeardown; one exit seam', () => {",
+"test('pglite-engine contains the Emscripten process.exitCode hijack', () => {",
+"test('pglite-engine.ts exports classifyPgliteInitError + buildPgliteInitErrorMessage', () => {",
+"test('pglite-engine.ts connect catch block routes through the classifier', () => {",
+"test('connect() catch wires the WAL auto-repair seam', () => {",
+"test('the repair-retry lambda stays inside the #2084 exitCode guard', () => {",
+"test('no bare PGlite.create outside the wrapped engine sites', () => {",
+"test('pglite-resetwal.ts carries the upstream attribution', () => {",
+"test('volunteer-events registers a background-work drainer (order 4)', () => {",
+"test(\"the dream cycle's purge phase invokes purgeStaleVolunteerEvents and reports the count\", () => {",
+"test('integrity.ts keys seen/progress by progressKey(source_id, slug) and persists source_id', () => {",
+"test('both `repoPath: src.local_path` sites in sync.ts wrap with msysToNativePath', () => {"
+]
+],
+[
+"test/helpers/agent-harness.unit.test.ts",
+"unit",
+46,
+0,
+"0",
+"448",
+"701",
+[]
+],
+[
+"test/hook-command.serial.test.ts",
+"serial",
+70,
+1,
+"6",
+"1772",
+"1518",
+[
+"test('hook \u2208 STARTUP_HOOK_SKIP_COMMANDS (source grep \u2014 maybeEmitUpdateMarker no-ops under NODE_ENV=test, so no"
+]
+],
+[
+"test/hook-push-spawn-env.test.ts",
+"unit",
+3,
+3,
+"0",
+"220",
+"45",
+[
+"test('the detached push child is spawned with the (quarantined) process.env, explicitly', () => {",
+"test('every detached spawn in hook.ts carries an explicit env option', () => {",
+"test('the git exec wrapper passes the (quarantined) process.env explicitly', () => {"
+]
+],
+[
+"test/integrations.test.ts",
+"unit",
+123,
+0,
+"3",
+"211",
+"860",
+[]
+],
+[
+"test/jobs-embed-background-parity.serial.test.ts",
+"serial",
+2,
+1,
+"4",
+"4632",
+"116",
+[
+"it('payload builder serializes catchUp/includeNullSignature/batchSize/priority; handler reads them', () => {"
+]
+],
+[
+"test/jobs-gateway-refresh-set.test.ts",
+"unit",
+5,
+4,
+"0",
+"173",
+"69",
+[
+"test('chronicle_extract is in the refresh set (the #3387 regression)', () => {",
+"test('chronicle_extract is registered via registerBuiltinJob, not bare worker.register', () => {",
+"test('every set entry has a registerBuiltinJob call site (no dead entries)', () => {",
+"test('every registerBuiltinJob name is in the set (no silently-unwrapped registrations)', () => {"
+]
+],
+[
+"test/jobs-list-get-json.serial.test.ts",
+"serial",
+7,
+1,
+"2",
+"1689",
+"154",
+[
+"test('cli.ts JOBS summary lines carry [--json] (source audit)', () => {"
+]
+],
+[
+"test/jobs-thin-client-date-rehydration.test.ts",
+"unit",
+5,
+2,
+"1",
+"372",
+"80",
+[
+"test('list branch rehydrates', () => {",
+"test('get branch rehydrates', () => {"
+]
+],
+[
+"test/jobs-worker-startup-recovery.test.ts",
+"unit",
+5,
+1,
+"3",
+"1668",
+"146",
+[
+"test('the work handler awaits recovery right after ensureSchema, before the worker spawns', () => {"
+]
+],
+[
+"test/lens-pack-manifests.test.ts",
+"unit",
+31,
+2,
+"2",
+"193",
+"276",
+[
+"test('declares atom page type (NEW to base)', () => {",
+"test('borrows atom from creator and learning from engineer', () => {"
+]
+],
+[
+"test/link-inference-pack.test.ts",
+"unit",
+12,
+0,
+"3",
+"270",
+"159",
+[]
+],
+[
+"test/link-source-check-repair.test.ts",
+"unit",
+13,
+1,
+"5",
+"3640",
+"255",
+[
+"test('LINK_SOURCE_KEBAB_RE matches migration v114, pglite-schema.ts and schema.sql verbatim', () => {"
+]
+],
+[
+"test/longmemeval-embed-cache.test.ts",
+"unit",
+21,
+1,
+"2",
+"644",
+"472",
+[
+"test('the module source carries no raw NUL bytes (the separators are the \\\\0 escape)', () => {"
+]
+],
+[
+"test/loops-extract-wiring.test.ts",
+"unit",
+8,
+3,
+"3",
+"348",
+"102",
+[
+"test(\"GATEWAY_REFRESH_JOB_NAMES contains 'loops_extract'\", () => {",
+"test(\"'loops_extract' is registered via registerBuiltinJob, never bare worker.register\", () => {",
+"test('gbrain-base-v2.yaml declares both verbs as link_types', () => {"
+]
+],
+[
+"test/migrate-embeddings-recovery-cli.serial.test.ts",
+"serial",
+4,
+3,
+"6",
+"-1",
+"235",
+[
+"test('the shared migration contract preserves supported pacing, globals and exact numeric values', () => {",
+"test.each(['apply_failed', 'probe_failed', 'incomplete', 'locked', 'refused', 'retarget_refused'] as const)('r",
+"test('both actual migration CLI routes reject unsupported or malformed controls before connection, planning, o"
+]
+],
+[
+"test/migrate-stdout-clean.test.ts",
+"unit",
+2,
+1,
+"2",
+"1788",
+"68",
+[
+"test('migrate.ts contains no console.log (all migration noise goes to stderr)', () => {"
+]
+],
+[
+"test/migrate.test.ts",
+"unit",
+171,
+19,
+"7",
+"8243",
+"2414",
+[
+"test(\"v20 seeds 'default' source inheriting sync config\", () => {",
+"test('v20 default source is federated=true (backward-compat)', () => {",
+"test('PGLite fresh-install schema reflects v36 columns', async () => {",
+"test('embedded schema (src/core/schema-embedded.ts) reflects v36 columns', async () => {",
+"test('v23 backfills files.page_id scoped to default source (Codex fix)', () => {",
+"test('migration v8 SQL contains idx_links_dedup_helper CREATE+DROP around the DELETE', () => {",
+"test('v14 handler source delegates invalid-remnant cleanup to the shared helper (#1178)', async () => {",
+"test('no DO $$ ... EXECUTE .DROP INDEX CONCURRENTLY. shape remains anywhere in migrate.ts', async () => {",
+"test('every known invalid-remnant site calls dropInvalidConcurrentIndex(engine, version, indexName)', async ()",
+"test('dropInvalidConcurrentIndex helper itself probes pg_index.indisvalid and issues a standalone DROP (no DO ",
+"test('v66 handler source delegates invalid-remnant cleanup to the shared helper (#1178)', async () => {",
+"test('dropInvalidConcurrentIndex helper itself probes pg_index.indisvalid and issues a standalone DROP (no DO ",
+"test('Math.max is robust to any array order (structural check)', () => {",
+"test('source contains the pre-flight check branch before plan execution', () => {",
+"test('structural: setSessionDefaults exists for back-compat; resolveSessionTimeouts is the source of truth', (",
+"test('runMigrationSQL uses withReservedConnection for transaction:false branch', () => {",
+"test('LATEST_VERSION caught up to 48', () => {",
+"test('LATEST_VERSION caught up to 51', () => {",
+"test('both source-scoped indexes exist after initSchema', async () => {"
+]
+],
+[
+"test/migration-in-process.serial.test.ts",
+"serial",
+8,
+3,
+"3",
+"9878",
+"183",
+[
+"test('no schema phase still execSyncs `gbrain init --migrate-only`', () => {",
+"test('every schema phase calls runMigrateOnlyCore + is awaited', () => {",
+"test('NO migration orchestrator anywhere spawns `gbrain init --migrate-only`', () => {"
+]
+],
+[
+"test/migration-resume.test.ts",
+"unit",
+15,
+6,
+"9",
+"257",
+"178",
+[
+"test('v0_13_0 does not import appendCompletedMigration', async () => {",
+"test('v0_13_1 does not import appendCompletedMigration', async () => {",
+"test('v0_12_0 does not import appendCompletedMigration', async () => {",
+"test('v0_12_2 does not import appendCompletedMigration', async () => {",
+"test('v0_11_0 does not import appendCompletedMigration', async () => {",
+"test('apply-migrations.ts runner writes the ledger', async () => {"
+]
+],
+[
+"test/migrations-v0_13_0.test.ts",
+"unit",
+7,
+5,
+"3",
+"239",
+"83",
+[
+"test('registered in the TS migration registry', async () => {",
+"test('source does NOT reference process.execPath (Bug 1 regression)', () => {",
+"test('source does NOT build commands from a GBRAIN constant (Bug 1 regression)', () => {",
+"test('phases use in-process schema + bare `gbrain` subprocess (v0.41.37.0 #1605)', () => {",
+"test('phase commands never reference `bun` or `.ts` paths (Bug 1 regression)', () => {"
+]
+],
+[
+"test/migrations-v0_14_0.test.ts",
+"unit",
+8,
+4,
+"4",
+"298",
+"108",
+[
+"test('v0_14_0 does NOT write the ledger directly', async () => {",
+"test('schema-embedded.ts has max_stalled DEFAULT 5', async () => {",
+"test('pglite-schema.ts has max_stalled DEFAULT 5', async () => {",
+"test('schema.sql has max_stalled DEFAULT 5', async () => {"
+]
+],
+[
+"test/migrations-v0_22_4.test.ts",
+"unit",
+9,
+4,
+"5",
+"254",
+"149",
+[
+"test('phaseASchema is a no-op (returns complete with the no-changes hint)', async () => {",
+"test('exports paths used for audit + pending-host-work outputs', async () => {",
+"test('dotted migration filename references \u2014 emit-todo entries point at v0.22.4.md', async () => {",
+"test('phaseCEmitTodo writes per-source entries with the right shape', async () => {"
+]
+],
+[
+"test/model-id.test.ts",
+"unit",
+27,
+2,
+"1",
+"172",
+"221",
+[
+"test('leading separator is not coerced even with a custom default provider', () => {",
+"test('hasAnthropicKey is defined exactly once (the shared helper), not re-copied', () => {"
+]
+],
+[
+"test/model-pricing.test.ts",
+"unit",
+30,
+0,
+"5",
+"196",
+"273",
+[]
+],
+[
+"test/models-doctor-embed.test.ts",
+"unit",
+3,
+3,
+"0",
+"202",
+"50",
+[
+"test(\"ProbeResult.touchpoint declares 'embedding_reachability' (codex #7)\", () => {",
+"test('probeEmbeddingReachability uses embed() with inputType query + abort signal (codex #6)', () => {",
+"test('runModels gates embedding reachability on config-probe ok (codex #8)', () => {"
+]
+],
+[
+"test/openclaw-plugin-manifest.test.ts",
+"unit",
+12,
+1,
+"1",
+"175",
+"156",
+[
+"it('declares the id required by OpenClaw plugin installs', () => {"
+]
+],
+[
+"test/operations-trust-boundary.test.ts",
+"unit",
+21,
+3,
+"6",
+"5111",
+"612",
+[
+"test('find_orphans / get_recent_salience / find_anomalies hide private pages from remote callers (read-leak cl",
+"test('export walk attributes the full canonical surface (guard against a vacuous pass)', async () => {",
+"test('every op contributed by a flagged module is localOnly or explicitly exempt', async () => {"
+]
+],
+[
+"test/persistence-activation.test.ts",
+"unit",
+6,
+1,
+"12",
+"6355",
+"136",
+[
+"test('actual CLI activation delegates through the verified owner while disk PGLite remains open', () => fixtur"
+]
+],
+[
+"test/persistence-file-import.test.ts",
+"unit",
+6,
+3,
+"14",
+"44494",
+"210",
+[
+"test('fresh public init imports a directory and a file, reads them, and refuses skill publication', async () =",
+"test('managed directory import writes through, routes the source, resumes idempotently and does not queue embe",
+"test('a committed import replays the durable cursor when checkpoint cleanup was interrupted', async () => with"
+]
+],
+[
+"test/persistence-image-import.serial.test.ts",
+"serial",
+3,
+0,
+"8",
+"3869",
+"106",
+[]
+],
+[
+"test/pglite-engine.test.ts",
+"unit",
+110,
+1,
+"4",
+"5336",
+"1541",
+[
+"test('pglite-engine.ts source contains the wrap with #223 hint and nested original error', async () => {"
+]
+],
+[
+"test/pglite-repair-command.serial.test.ts",
+"serial",
+14,
+1,
+"2",
+"3251",
+"500",
+[
+"test('uses the shared confirm-prompt helper, not a local reimplementation', () => {"
+]
+],
+[
+"test/pglite-wal-repair.serial.test.ts",
+"serial",
+6,
+3,
+"3",
+"10900",
+"200",
+[
+"test('gate negative: a REAL wasm-abort with the cooldown gate active refuses repair \u2014 no new backup, honest sk",
+"test('gate negative: symlinked data dir \u2014 Emscripten refuses the mount with a NAMED error, repair never fires'",
+"test('gate shape: the seam only runs for wasm-abort + persistent dataDir (structural pin)', () => {"
+]
+],
+[
+"test/phantom-redirect-per-source-lock.test.ts",
+"unit",
+3,
+2,
+"1",
+"189",
+"46",
+[
+"test('IRON-RULE: import line uses syncLockId, not bare SYNC_LOCK_ID', () => {",
+"test('IRON-RULE: acquireLockWithRetry call passes syncLockId(sourceId)', () => {"
+]
+],
+[
+"test/postgres-engine-singleton-ownership.test.ts",
+"unit",
+7,
+7,
+"0",
+"190",
+"159",
+[
+"test('db.connect() returns the ownership token (Promise<boolean>), not void', () => {",
+"test('db.connect() borrower path returns false; creator path returns true', () => {",
+"test('PostgresEngine tracks module-singleton ownership with a dedicated flag', () => {",
+"test('connect() stores the ownership token from db.connect() \u2014 no separate pre-sample (TOCTOU guard)', () => {",
+"test('disconnect() calls db.disconnect() ONLY when this engine owns the singleton', () => {",
+"test('db.disconnect() snapshots + nulls the singleton BEFORE awaiting end() (codex #6)', () => {",
+"test('reconnect() is connection-style aware: module-singleton path never tears down the shared pool (#1745)', "
+]
+],
+[
+"test/postgres-engine.test.ts",
+"unit",
+8,
+8,
+"0",
+"185",
+"167",
+[
+"test('no bare `SET statement_timeout` statement survives', () => {",
+"test('searchKeyword wraps its query in a transaction (via withScopedReadTransaction alwaysTransaction)', () =>",
+"test('searchVector wraps its query in a transaction (via withScopedReadTransaction alwaysTransaction)', () => ",
+"test('withScopedReadTransaction uses the composable transaction when needed', () => {",
+"test('both search methods use SET LOCAL for the timeout', () => {",
+"test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {",
+"test('neither search method clears the timeout with `SET statement_timeout = 0`', () => {",
+"test('search paths filter since/until on effective_date before import-time fallback', () => {"
+]
+],
+[
+"test/private-visibility.test.ts",
+"unit",
+26,
+1,
+"7",
+"1823",
+"384",
+[
+"test('entity-card composes privatePagesFilterFragment instead of hand-rolling the predicate', () => {"
+]
+],
+[
+"test/reconcile-owner-journey.serial.test.ts",
+"serial",
+1,
+1,
+"9",
+"128103",
+"282",
+[
+"test(`${transport} resident owner: preview, resolve, pending/restart/replay, and independent remember readback"
+]
+],
+[
+"test/redos-hardening.test.ts",
+"unit",
+14,
+3,
+"4",
+"178",
+"140",
+[
+"test('redos-guard does not import node:vm (freeze regression pin)', () => {",
+"test('SyncOpts carries noSchemaPack and it gates loadActivePack', () => {",
+"test('begin heartbeat fires before importFile (GBRAIN_SYNC_TRACE)', () => {"
+]
+],
+[
+"test/register-client-source-normalize.test.ts",
+"unit",
+16,
+1,
+"1",
+"165",
+"106",
+[
+"test('normalized source + federatedRead reach registerClientManual in the right positions', () => {"
+]
+],
+[
+"test/regression-strict-source-id.test.ts",
+"unit",
+9,
+6,
+"2",
+"247",
+"116",
+[
+"test('patterns.ts imports validateSourceId from utils.ts', () => {",
+"test('synthesize.ts imports validateSourceId from utils.ts', () => {",
+"test('patterns.ts calls validateSourceId before reverse-write join (defense ordering)', () => {",
+"test('synthesize.ts calls validateSourceId before reverse-write join', () => {",
+"test('utils.ts source text contains no `^[a-z0-9_-]+$` regex literal', () => {",
+"test('utils.ts re-exports assertValidSourceId from source-id.ts as validateSourceId', () => {"
+]
+],
+[
+"test/reindex-code-recovery.test.ts",
+"unit",
+8,
+1,
+"3",
+"1253",
+"114",
+[
+"test('reindex-code help documents --force', () => {"
+]
+],
+[
+"test/remediation-command-resolution.test.ts",
+"unit",
+3,
+0,
+"3",
+"648",
+"222",
+[]
+],
+[
+"test/remote-ping-status-field.test.ts",
+"unit",
+4,
+4,
+"0",
+"160",
+"53",
+[
+"test('no `.state` property reads on job objects remain', () => {",
+"test('poll loop reads job.status', () => {",
+"test('terminal-state check tests job.status', () => {",
+"test('unpack generics type the lifecycle field as status', () => {"
+]
+],
+[
+"test/reranker-default-seam.test.ts",
+"unit",
+3,
+1,
+"2",
+"156",
+"31",
+[
+"test('gateway imports DEFAULT_RERANKER_MODEL from defaults.ts \u2014 no local alias, no literal', () => {"
+]
+],
+[
+"test/resolve-ipc-binding.test.ts",
+"unit",
+9,
+5,
+"4",
+"258",
+"184",
+[
+"it('serve --http wires bindResolveIpcForServe with teardown', async () => {",
+"it('the stdio MCP path wires bindResolveIpcForServe with teardown', async () => {",
+"it('an exiting serve never blind-unlinks the socket pathname (#4896)', async () => {",
+"it('the pre-bind owner probe reads a connect timeout as unknown, never as a dead owner (#4896 follow-up)', asy",
+"it('bootstrap verify prefers a live serve socket over self-creating one', async () => {"
+]
+],
+[
+"test/retrieval-reflex-recipe-routing.test.ts",
+"unit",
+5,
+1,
+"1",
+"188",
+"78",
+[
+"it('the install pointer is gated on the hint file existing (source guard)', () => {"
+]
+],
+[
+"test/schema-bootstrap-coverage.test.ts",
+"unit",
+13,
+6,
+"5",
+"5701",
+"1273",
+[
+"test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing forward references', async () => ",
+"test('parseIndexColumnReferences catches v0.27 composite second-column case', () => {",
+"test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE or bootstrap (A2 static check)",
+"test('postgres bootstrap carries the private-queue and authority ALTERs and probes (PGLite symmetry)', async (",
+"test('every CREATE INDEX column in the Postgres SCHEMA_SQL blob is covered by CREATE TABLE or the Postgres boo",
+"test('postgres bootstrap carries the dream_verdicts.expires_at probe + ALTER (#4657 guard symmetry)', async ()"
+]
+],
+[
+"test/schema-cli-contract.test.ts",
+"unit",
+7,
+6,
+"0",
+"178",
+"93",
+[
+"test('every new verb routes through runSchema dispatch', () => {",
+"test('every new verb-handler reads parseFlags() for --json + --source', () => {",
+"test('parseFlags() returns the documented shape', () => {",
+"test('parseFlags accepts both --source and --source-id forms', () => {",
+"test('every new verb when --json passed produces a JSON envelope', () => {",
+"test('EXPERIMENTAL_VERBS set matches the documented D14 hybrid choice', () => {"
+]
+],
+[
+"test/schema-pack-best-effort.test.ts",
+"unit",
+7,
+0,
+"4",
+"192",
+"120",
+[]
+],
+[
+"test/schema-pack-unify-types-handler.test.ts",
+"unit",
+11,
+2,
+"5",
+"5535",
+"299",
+[
+"it('gbrain-base-v2 statically declares meeting + conversation (temporal, extractable)', () => {",
+"it('jobs.ts worker registration defaults apply to false, matching the handler contract', () => {"
+]
+],
+[
+"test/schema-pack/suggest.test.ts",
+"unit",
+7,
+1,
+"2",
+"194",
+"188",
+[
+"test('the 0.5 heuristic constant and the documented 0.6 floor stay in suggest.ts together', () => {"
+]
+],
+[
+"test/scripts/check-engine-dynamic-import.test.ts",
+"unit",
+23,
+1,
+"0",
+"5442",
+"356",
+[
+"it('resolves default inputs from the guard repository', () => {"
+]
+],
+[
+"test/scripts/classify-tests.test.ts",
+"unit",
+8,
+6,
+"0",
+"175",
+"119",
+[
+"test('repo-anchored readFileSync binding attributes the referencing suite', () => {",
+"test('tmpdir reads are behavioral, not structural', () => {",
+"test('Bun.file reader on src/ is structural', () => {",
+"test('doctor-source helper marks the suite structural', () => {",
+"test('detector outside any describe attributes to file-level pseudo-suite', () => {",
+"test('binding names with regex metachars ($) are escaped, not read as anchors', () => {"
+]
+],
+[
+"test/scripts/coverage-diff-gate.test.ts",
+"unit",
+18,
+14,
+"0",
+"593",
+"315",
+[
+"it(\"covered added lines \u2192 WOULD PASS, exit 0\", () => {",
+"it(\"uncovered added lines below 80% \u2192 WOULD FAIL with uncovered line numbers, exit 0\", () => {",
+"it(\"non-executable added lines are excluded from the denominator\", () => {",
+"it(\"pass \u2192 exit 0\", () => {",
+"it(\"fail \u2192 exit 1\", () => {",
+"it(\"a changed file with no coverage record is ONE violation, not a physical-line count\", () => {",
+"it(\"zero gate-scoped changes \u2192 explicit PASS, exit 0\", () => {",
+"it(\"classify EMPTY / DOC_ONLY \u2192 gate not applicable, exit 0 even with uncovered diff\", () => {",
+"it(\"exempt files are reported with their tag but never gated\", () => {",
+"it(\"only-exempt changes \u2192 no gate-scoped changes, tags still reported\", () => {",
+"it(\"a working-tree-only exemption entry does NOT exempt (list resolves from origin/master)\", () => {",
+"it(\"degraded summary \u2192 DEGRADED banner, report-only even when enforcing\", () => {",
+"it(\"[coverage-exempt:] trailer \u2192 loud bypass, exit 0 even when enforcing\", () => {",
+"it(\"missing summary JSON \u2192 exit 2\", () => {"
+]
+],
+[
+"test/scripts/merge-lcov.test.ts",
+"unit",
+26,
+14,
+"0",
+"1846",
+"471",
+[
+"it(\"sums per-line hits, unions lines, regenerates counters\", () => {",
+"it(\"merges absolute, repo-relative, and foreign-checkout-prefix SF paths into one record\", () => {",
+"it(\"skips a malformed lcov file whole and marks degraded, keeping the good lane\", () => {",
+"it(\"parseLcovText unit: unknown record types warn and are skipped without malforming\", () => {",
+"it(\"missing manifest for an expected lane \u2192 degraded\", () => {",
+"it(\"shard manifest with lcovCount != 1 \u2192 degraded (xargs-batching tripwire)\", () => {",
+"it('requires all four nightly E2E identities with their independent multi-process LCOV counts', () => {",
+"it('duplicate lane identities cannot satisfy the expected lane', () => {",
+"it(\"totals/dirs/files count src/ only; out-lcov keeps every record\", () => {",
+"it(\"neverLoaded inventories real src files absent from the data \u2014 count + sorted list, no percentage\", () => {",
+"it(\"skips lcov.info under a coverage-merged path segment without degrading\", () => {",
+"it(\"skips a direct lcov.info FILE input under a coverage-merged segment\", () => {",
+"it(\"missing required args \u2192 exit 2\", () => {",
+"it(\"nonexistent input path warns and marks degraded, never aborts\", () => {"
+]
+],
+[
+"test/scripts/run-unit-shard.test.ts",
+"unit",
+11,
+0,
+"0",
+"1221",
+"213",
+[]
+],
+[
+"test/scripts/typecheck-incremental.test.ts",
+"unit",
+4,
+0,
+"0",
+"8637",
+"128",
+[]
+],
+[
+"test/search/graph-signals-wire-integration.test.ts",
+"unit",
+3,
+1,
+"3",
+"2405",
+"107",
+[
+"test('hybrid.ts postFusionOpts literal threads graphSignalsEnabled from resolvedMode', async () => {"
+]
+],
+[
+"test/search/knobs-hash-reranker.test.ts",
+"unit",
+25,
+2,
+"3",
+"221",
+"328",
+[
+"test('parts[] order in source: reranker fields appear AFTER the existing 9', async () => {",
+"test('v=3 additions: col= and prov= appear AFTER the reranker block', async () => {"
+]
+],
+[
+"test/serve-http-admin-route-guard.test.ts",
+"unit",
+4,
+2,
+"0",
+"177",
+"265",
+[
+"test('anti-vacuity floor: the extractor still sees the known admin surface', () => {",
+"test('allowlist is not stale: every entry matches its declared unguarded occurrences', () => {"
+]
+],
+[
+"test/serve-http-github-webhook.test.ts",
+"unit",
+9,
+1,
+"1",
+"623",
+"114",
+[
+"test('legacy-only match ACKs 202 ignored before any job submission', () => {"
+]
+],
+[
+"test/serve-http-mcp-transport-cleanup.test.ts",
+"unit",
+2,
+2,
+"0",
+"186",
+"56",
+[
+"test('res.on(close) cleanup sits between transport construction and handleRequest', () => {",
+"test('cleanup registers before server.connect (early-disconnect safety)', () => {"
+]
+],
+[
+"test/serve-http-metrics.test.ts",
+"unit",
+9,
+3,
+"1",
+"255",
+"160",
+[
+"test('an unauthenticated scrape gets 401, not the exposition', async () => {",
+"test('tracking middleware is mounted before the first route registration', () => {",
+"test('GET /metrics is gated behind requireAdmin', () => {"
+]
+],
+[
+"test/serve-service.test.ts",
+"unit",
+35,
+17,
+"2",
+"242",
+"657",
+[
+"test('reads the token at run time, sources env with set -a, prefixes PATH, cd $HOME, execs serve', () => {",
+"test('bakes GBRAIN_HOME, the bun+cli.ts form, --enable-dcr, and single-quote-escapes hostile paths', () => {",
+"test('an empty runtime dir produces no PATH prefix', () => {",
+"test('plist: label, RunAtLoad, KeepAlive, ThrottleInterval 30, log paths, XML escaping', () => {",
+"test('unit: network-online, Restart=always, RestartSec=10, start-limit, append: logs, quoting', () => {",
+"test('unit: systemd specifiers are escaped \u2014 % \u2192 %% in ExecStart and both append: paths, $ \u2192 $$ in ExecStart',",
+"test('creates dir 0700 + file 0600 with 64 hex chars; reuses a valid token; regenerates a malformed one', () =",
+"test('linux-systemd: writes wrapper 0755 + unit 0644, daemon-reload, enable, restart, enable-linger (non-fatal",
+"test('linux-systemd: enable failure surfaces as error; restart failure too; linger not attempted', async () =>",
+"test('macos: the uid defaults to the running process; an OLD launchctl that does not know bootstrap/bootout fa",
+"test('reads the token at RUN time, exports the env file, bakes GBRAIN_HOME, cd $HOME, execs the baked program ",
+"test('missing token file \u2192 exit 1 with the re-run hint and the CLI is never executed; baked CLI gone \u2192 PATH fa",
+"test('daemon-reload failure is a note (install continues); uninstall notes a disable failure, tolerates a miss",
+"test('resolveServeGbrainCommand honors a compiled argv[1]; runtimeDir \".\" adds no PATH prefix; log paths hang ",
+"test('renderServeSystemdUnit quotes a wrapper path carrying a double quote and a backslash exactly', () => {",
+"test('a silent supervisor failure reports the exit status (null when killed); stdout is used when stderr is em",
+"test('every supervisor subprocess carries a timeout: 60s for bootstrap/bootout/enable/restart/disable, 15s for"
+]
+],
+[
+"test/serve-stdin-eof-drain.test.ts",
+"unit",
+8,
+1,
+"4",
+"724",
+"192",
+[
+"test('serve.ts has no static import of serve-sync-runner', () => {"
+]
+],
+[
+"test/shared-skills-init.serial.test.ts",
+"serial",
+4,
+1,
+"5",
+"33390",
+"104",
+[
+"test('compiled CLI creates the same useful pack without runtime checkout assets', async () => {"
+]
+],
+[
+"test/shared-skills-proposal-cli.test.ts",
+"unit",
+1,
+0,
+"1",
+"11097",
+"43",
+[]
+],
+[
+"test/shared-skills-restore.serial.test.ts",
+"serial",
+10,
+1,
+"21",
+"26315",
+"323",
+[
+"test('explicit recovery CLI preserves brain identity but revokes old service authority', async () => {"
+]
+],
+[
+"test/shared-skills-setup.serial.test.ts",
+"serial",
+16,
+0,
+"6",
+"706",
+"214",
+[]
+],
+[
+"test/skillopt/deadline-and-hermetic.test.ts",
+"unit",
+9,
+1,
+"3",
+"315",
+"143",
+[
+"test('the provider doc comment does not promise it either', () => {"
+]
+],
+[
+"test/skillpack-copy.test.ts",
+"unit",
+19,
+0,
+"1",
+"210",
+"325",
+[]
+],
+[
+"test/skillpack-install.test.ts",
+"unit",
+32,
+0,
+"2",
+"301",
+"670",
+[]
+],
+[
+"test/skillpack-reference-harness.test.ts",
+"unit",
+15,
+0,
+"1",
+"326",
+"260",
+[]
+],
+[
+"test/skillpack-scaffold-harness.test.ts",
+"unit",
+22,
+13,
+"0",
+"29543",
+"435",
+[
+"test('defaults: coding-agent persona into HOME/.claude/skills; state under GBRAIN_HOME; idempotent re-run', ()",
+"test('codex/opencode without a dest exit 2 naming the observation-run gap', () => {",
+"test('unknown persona exits 2 listing the valid choices', () => {",
+"test('--skill testing is refused with the recorded lane-exclusion reason [OV5]', () => {",
+"test('--stub with the publish gate off exits 2 with the exact enable command [D3B preflight]', () => {",
+"test('unknown --harness value exits 2 naming the valid set', () => {",
+"test('removes only ledger-owned files and updates state', () => {",
+"test('all-additions selection refuses with a clear error; --stub and --dest are refused', () => {",
+"test('skillpack status renders the installed-bridges section', () => {",
+"test('stub preflight gate 2: an unservable slug is refused with the skills_dir hint', () => {",
+"test('reference --harness: positional slug lens + apply guard requires a single skill', () => {",
+"test('active shared brain installs a live source-bound router only after follow approval and cleanly opts out'",
+"test('stub preflight honors the DB config plane (gbrain config set, no config.json key)', () => {"
+]
+],
+[
+"test/skillpack-scaffold.test.ts",
+"unit",
+14,
+0,
+"1",
+"223",
+"296",
+[]
+],
+[
+"test/snapshot-shape-guard.test.ts",
+"unit",
+11,
+0,
+"2",
+"433",
+"163",
+[]
+],
+[
+"test/sources-webhook.test.ts",
+"unit",
+12,
+2,
+"1",
+"187",
+"148",
+[
+"test('GitHub sig format is sha256=<64 hex chars>', () => {",
+"test('opts into extraction before the pushed commit is consumed', () => {"
+]
+],
+[
+"test/spend-off-switch.test.ts",
+"unit",
+5,
+3,
+"1",
+"614",
+"53",
+[
+"test('reindex-code: --max-cost off proceeds past the confirmation gate', async () => {",
+"test('onboard: --max-usd off lifts the --auto missing-cap refusal', async () => {",
+"test('enrich: uncapped path maps the Infinity sentinel to no BudgetTracker ceiling', async () => {"
+]
+],
+[
+"test/supervisor-configuration-blocked.test.ts",
+"unit",
+21,
+4,
+"7",
+"7874",
+"628",
+[
+"test.skipIf(process.platform === 'win32')('without tini, killing the owner process group also kills its manage",
+"test('unwritable managed status fails publication before admission and follows ordinary bounded retry', async ",
+"test('an old worker resumed by the timeout signal cannot publish ready or admit during the kill grace', async ",
+"test.skipIf(process.platform === 'win32')(`${kind} survives Restart=always, retains singleton and recovers onl"
+]
+],
+[
+"test/supervisor.test.ts",
+"unit",
+23,
+2,
+"7",
+"4562",
+"632",
+[
+"it('auto-sizes --max-rss when no explicit cap is given', async () => {",
+"it('the hook bounds recovery in a Promise.race with a 30_000ms timeout', () => {"
+]
+],
+[
+"test/sync-failures.test.ts",
+"unit",
+65,
+8,
+"58",
+"281",
+"682",
+[
+"test('doctor source contains sync_failures check', async () => {",
+"test('both doctor surfaces use the shared decideSyncFailureSeverity', async () => {",
+"test('runSync parses --skip-failed and --retry-failed flags', async () => {",
+"test('runSync acks pre-existing unacked failures up-front when --skip-failed is set', async () => {",
+"test('performSync gates the bookmark through the shared failure ledger', async () => {",
+"test('performFullSync routes failures through the same shared gate', async () => {",
+"test('runImport returns RunImportResult and records via the ledger', async () => {",
+"test('both blocked gates name the files and hint at frontmatter validate', async () => {"
+]
+],
+[
+"test/sync-include-hidden.test.ts",
+"unit",
+7,
+1,
+"2",
+"490",
+"128",
+[
+"test('the hoisted syncOpts literal carries includeHidden', () => {"
+]
+],
+[
+"test/sync.test.ts",
+"unit",
+85,
+1,
+"25",
+"8892",
+"1277",
+[
+"test('src/commands/sync.ts does not wrap the add/modify loop in engine.transaction()', async () => {"
+]
+],
+[
+"test/thin-client-routing-audit.test.ts",
+"unit",
+13,
+13,
+"0",
+"163",
+"176",
+[
+"test('THIN_CLIENT_REFUSED_COMMANDS set declaration is intact', () => {",
+"test(`'${command}' is in THIN_CLIENT_REFUSED_COMMANDS`, () => {",
+"test(`'${command}' has a hint in THIN_CLIENT_REFUSE_HINTS`, () => {",
+"test('every v0.31.1-era REFUSED command is still in the set (no accidental removals)', () => {",
+"test('src/commands/recall.ts imports callRemoteTool + isThinClient', () => {",
+"test('src/commands/recall.ts: recall routing branch calls callRemoteTool with op=\"recall\"', () => {",
+"test('src/commands/recall.ts: forget routing branch calls callRemoteTool with op=\"forget\"', () => {",
+"test('src/commands/jobs.ts: list/get routing branches call callRemoteTool', () => {",
+"test('cli.ts dispatches thin-client jobs list/get engine-free (runJobs(null, ...))', () => {",
+"test('cli.ts refuses non-routable jobs subcommands on thin clients via refuseThinClient', () => {",
+"test(\"'config' is in THIN_CLIENT_REFUSED_COMMANDS with a hint\", () => {",
+"test(\"'jobs' is NOT in THIN_CLIENT_REFUSED_COMMANDS (partial dispatch owns it)\", () => {",
+"test('jobs.ts guards the null-engine path to list/get only', () => {"
+]
+],
+[
+"test/think-embed-question-wiring.serial.test.ts",
+"serial",
+2,
+1,
+"3",
+"640",
+"86",
+[
+"test('ops/search.ts CRAG runThink call passes embedQuestion', () => {"
+]
+],
+[
+"test/timing-safe.test.ts",
+"unit",
+6,
+1,
+"1",
+"229",
+"52",
+[
+"test('IRON-RULE: serve-http.ts imports safeHexEqual from timing-safe.ts (not redefined)', () => {"
+]
+],
+[
+"test/transcript-adapters.test.ts",
+"unit",
+54,
+18,
+"13",
+"483",
+"1104",
+[
+"test('harness sessions get per-day format+hash12 slugs', () => {",
+"test('identity is HASHED, never a prefix \u2014 same-prefix ids cannot collide', () => {",
+"test('unknown format names every detector tried', () => {",
+"test('yields one session with diagnostics on the fixture', async () => {",
+"test('zero-turn file explains itself (drift signal shape)', async () => {",
+"test('oversized rollout degrades to head+tail instead of throwing, keeping session_meta', async () => {",
+"test('user turns from event_msg, assistant from output_text; injected preambles never leak', async () => {",
+"test('messages only; model_change/custom/compaction skipped; timestamps kept', async () => {",
+"test('yields sessions in start order; tool rows and empty content skipped; epoch \u2192 ISO', async () => {",
+"test('user/assistant text only; system, reasoning, tools, synthetic user never leak', async () => {",
+"test('missing summary.json (in-progress session / partial rsync) imports with file-mtime provenance; no drift,",
+"test(\"created_at 'yesterday' is never parsed into a fabricated timestamp\", async () => {",
+"test('a summary-less session outside a UUID dir gets a stable path-hash id, not the literal \"chat_history\"', a",
+"test('user rows whose text sits under an unknown field are MALFORMED, not typed: expectedEmpty=false, driftFil",
+"test('redaction runs on grok text the same as every other format', async () => {",
+"test('empty (system-only) session explains itself and is not host-format drift', async () => {",
+"test('canonical path via current_node; branches, tool nodes, and system-only convs never leak', async () => {",
+"test('no raw NUL bytes in src/core/transcripts (git would flag binary, guards would skip)', () => {"
+]
+],
+[
+"test/transcription-injection.test.ts",
+"unit",
+2,
+1,
+"1",
+"194",
+"65",
+[
+"test('source uses execFileSync arg-arrays, never shell execSync', () => {"
+]
+],
+[
+"test/upgrade-skill-publish-prompt-race.test.ts",
+"unit",
+3,
+3,
+"0",
+"158",
+"62",
+[
+"test('the close listener is guarded by an `answered` flag, not unconditional', () => {",
+"test('resolveAns for the answer is called strictly before rl.close() in the question callback', () => {",
+"test('the [Y/n] default-yes contract is preserved: an empty (Enter-only) answer resolves true', () => {"
+]
+],
+[
+"test/upgrade.serial.test.ts",
+"serial",
+28,
+17,
+"5",
+"3210",
+"404",
+[
+"test('--help prints usage and exits 0', async () => {",
+"test('-h also prints usage', async () => {",
+"test('checks node_modules before binary', () => {",
+"test('checks binary before clawhub', () => {",
+"test('uses clawhub --version, not which clawhub', () => {",
+"test('has timeout on upgrade execSync calls', () => {",
+"test('return type includes bun-link variant (v0.28.5 cluster D)', () => {",
+"test('does not reference npm in case labels or messages', () => {",
+"test('bun-link signal walks .git/config for garrytan/gbrain match', () => {",
+"test('detectBunLink does not gate on isSymbolicLink (bun resolves argv[1])', () => {",
+"test('detectBunLink returns repoRoot, not a string literal', () => {",
+"test('bun-link upgrade uses execFileSync for shell-injection safety', () => {",
+"test('bun global upgrade passes cwd to bun update', () => {",
+"test('classifyBunInstall checks repository.url AND src/cli.ts marker', () => {",
+"test('squatter recovery message names both source-clone AND release-binary paths', () => {",
+"test('--help prints usage', async () => {",
+"test('mismatch exits nonzero, keeps the pending-upgrade cache, and records verify-target', async () => {"
+]
+],
+[
+"test/v0_37_fix_wave.serial.test.ts",
+"serial",
+19,
+6,
+"18",
+"591",
+"325",
+[
+"test('A.1: getPGLiteSchema() default-args produce a vector(1024) column', async () => {",
+"test('A.2: getPostgresSchema() default-args produce a vector(1024) column', async () => {",
+"test('A.2: getPostgresSchema() with explicit args still routes the override', async () => {",
+"test('CDX2-12: sync is in CLI_ONLY_SELF_HELP', async () => {",
+"test('reinit-pglite is registered in CLI_ONLY + CLI_ONLY_SELF_HELP', () => {",
+"test('embeddingMismatchMessage PGLite branch recommends `gbrain reinit-pglite`', async () => {"
+]
+],
+[
+"test/v0_37_gap_fill.serial.test.ts",
+"serial",
+17,
+5,
+"10",
+"5408",
+"574",
+[
+"test('schema=1536 + gateway=Voyage/1024 \u2192 runEmbedCore throws EmbeddingDimMismatchError before transport fires",
+"test('source-text grep: both sync.ts catch sites detect EmbeddingDimMismatchError', () => {",
+"test('source-text grep: tip mentions --no-embed at the hint site', () => {",
+"test('source-text grep: loadRecommendationContext is provider-aware via the shared helper', () => {",
+"test('refuses on non-PGLite engine', async () => {"
+]
+],
+[
+"test/voyage-response-cap.test.ts",
+"unit",
+6,
+6,
+"0",
+"239",
+"98",
+[
+"test('MAX_VOYAGE_RESPONSE_BYTES constant is declared at 256 MB (D2 sizing)', async () => {",
+"test('Layer 1: Content-Length pre-check fires BEFORE resp.clone().json() (D10 OOM defense)', async () => {",
+"test('Layer 1 throws on Content-Length over the cap (not silent return)', async () => {",
+"test('Layer 2: per-embedding base64 cap fires inside the json.data iteration', async () => {",
+"test('inbound try/catch rethrows VoyageResponseTooLargeError (Codex P3 follow-up)', async () => {",
+"test('comment thread documents both layers + the cap-sizing decision', async () => {"
+]
+],
+[
+"test/worker-lock-renewal-shape.test.ts",
+"unit",
+18,
+0,
+"1",
+"522",
+"263",
+[]
+],
+[
+"test/worker-supervised-db-probe.test.ts",
+"unit",
+5,
+1,
+"2",
+"1885",
+"185",
+[
+"it('structural: DB probe is NOT gated on !isSupervisedChild; stall detection IS', () => {"
+]
+]
+]

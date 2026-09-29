@@ -16,10 +16,6 @@ import { operationsByName } from '../src/core/operations.ts';
 describe('query op — embedding_column param (D15)', () => {
   const queryOp = operationsByName.query;
 
-  test('exists', () => {
-    expect(queryOp).toBeDefined();
-  });
-
   test('declares embedding_column in params allowlist', () => {
     expect(queryOp.params.embedding_column).toBeDefined();
     expect(queryOp.params.embedding_column.type).toBe('string');
@@ -40,10 +36,6 @@ describe('query op — embedding_column param (D15)', () => {
 
 describe('search op — does NOT declare embedding_column (CDX-9)', () => {
   const searchOp = operationsByName.search;
-
-  test('exists', () => {
-    expect(searchOp).toBeDefined();
-  });
 
   test('does NOT include embedding_column in params (search is keyword-only)', () => {
     // Adding embedding_column to the keyword-only `search` op would

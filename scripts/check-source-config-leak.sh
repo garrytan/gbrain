@@ -12,6 +12,44 @@
 #
 # Failure mode is loose-positive on purpose — false positives cost one
 # 30-second comment-or-fix; false negatives leak production secrets.
+#
+# This grep is a tripwire, not the contract. The behavioral contract is
+# test/source-config-secret-surfaces.test.ts (plus the backup and admin API
+# assertions named below): each surface is fed a stored webhook_secret and
+# must never print it.
+#
+# Secret-bearing keys (SECRET_KEYS in src/core/source-config-redact.ts):
+# webhook_secret only. Every other key the codebase reads is a pointer, not a
+# credential: gh_token_env / g_token_env name an env var, gh_app_pem_path
+# names a key file, g_token_command names a mint command, g_account is an
+# account pointer (tokens live in the credential vault), and remote_url is
+# rejected at registration when it embeds credentials (parseRemoteUrl).
+#
+# Audited surfaces (source-config security audit):
+#   LEAKED, fixed with redactSourceConfig():
+#     - sources_add op result, printed by `gbrain call sources_add` when a
+#       path is attached to an existing path-less source (src/core/ops/sources.ts)
+#     - managed `gbrain sources add` receipt, its replay, and the retained
+#       persistence_topology_changes outcome (src/core/persistence/source-lifecycle.ts)
+#   Clean (explicit field projections; covered by behavioral tests):
+#     - sources list / list --json / status / status --json / webhook show /
+#       current --json / archived / archived --json / remove --dry-run
+#     - parse warnings for re-wrapped configs (src/core/sources-load.ts)
+#     - remote MCP sources_list, sources_status, get_status_snapshot, run_doctor
+#     - local doctor --json
+#     - admin API GET /admin/api/sources (test/e2e/serve-http-oauth.test.ts)
+#     - backup metadata, restore reconnect lines and restore-receipt.json
+#       (test/agent-install-backup.serial.test.ts)
+#     - audit JSONL / log files under GBRAIN_HOME (none carry source config)
+#   Intentional one-time reveals, each printing the new secret exactly once:
+#     - `sources webhook set` and `sources webhook rotate` (src/commands/sources.ts)
+#   Documented sensitive state (kept): the full-database backup archive
+#     (classification 'sensitive-full-database-state') and the private 0600
+#     restore inventory .gbrain/restore-detached.json, which retains detached
+#     source configs so the operator can reconnect them.
+#   Internal readers that never serialize config (predicates only): sync,
+#     autopilot, source resolver, destructive guard, webhook HMAC check,
+#     connectors, minion authority (hashed into a digest), company brain.
 
 set -euo pipefail
 

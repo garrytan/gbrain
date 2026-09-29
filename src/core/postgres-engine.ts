@@ -4366,11 +4366,6 @@ export class PostgresEngine implements BrainEngine {
    */
   private _factsEmbeddingCastSuffix: '::vector' | '::halfvec' | null = null;
 
-  /** Test seam: clear the cached cast suffix so tests can re-probe. */
-  __resetFactsEmbeddingCastCacheForTest(): void {
-    this._factsEmbeddingCastSuffix = null;
-  }
-
   private async resolveFactsEmbeddingCast(): Promise<'::vector' | '::halfvec'> {
     if (this._factsEmbeddingCastSuffix !== null) return this._factsEmbeddingCastSuffix;
     const sql = this.sql;

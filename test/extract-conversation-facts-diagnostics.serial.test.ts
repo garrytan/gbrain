@@ -2,29 +2,38 @@ import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from '
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { __setChatTransportForTests, __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import * as concurrency from '../src/core/sync-concurrency.ts';
-import { runExtractConversationFacts, runExtractConversationFactsCore } from '../src/commands/extract-conversation-facts.ts';
+import { extractConversationFactsLockId, runExtractConversationFacts, runExtractConversationFactsCore } from '../src/commands/extract-conversation-facts.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { runPhaseConversationFactsBackfill } from '../src/core/cycle/conversation-facts-backfill.ts';
 
 let engine: PGLiteEngine;
 let calls = 0;
 let active = 0;
 let maxActive = 0;
+let chatText = '{"facts":[]}';
+let embedVectors = false;
+let onChat: (() => Promise<void>) | null = null;
+const GATEWAY = { chat_model: 'anthropic:claude-sonnet-4-6', embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: { ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: 'sk-test' } };
 const body = "{'source': 'microphone', 'attribution': 'me'}: hello\n{'name': 'alice-example', 'attribution': 'them', 'source': 'speaker'}: hi";
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: { ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: 'sk-test' } });
+  configureGateway(GATEWAY);
   __setChatTransportForTests(async () => {
     calls++;
+    if (onChat) await onChat();
     active++;
     maxActive = Math.max(maxActive, active);
     await Bun.sleep(100);
     active--;
-    return { text: '{"facts":[]}', blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'stub', providerId: 'stub' };
+    return { text: chatText, blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'stub', providerId: 'stub' };
   });
-  __setEmbedTransportForTests((async () => { throw new Error('unexpected embedding call'); }) as never);
+  __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+    if (!embedVectors) throw new Error('unexpected embedding call');
+    return { embeddings: values.map(() => Array.from({ length: 1536 }, () => 0.1)) };
+  }) as never);
 });
 
 afterAll(async () => {
@@ -38,7 +47,11 @@ beforeEach(async () => {
   calls = 0;
   active = 0;
   maxActive = 0;
+  chatText = '{"facts":[]}';
+  embedVectors = false;
+  onChat = null;
   await engine.executeRaw('TRUNCATE facts, pages, op_checkpoints, extract_rollup_7d CASCADE');
+  await engine.executeRaw('DELETE FROM gbrain_cycle_locks');
   await engine.setConfig('facts.extraction_enabled', 'true');
   await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
   await engine.setConfig('cycle.conversation_facts_backfill.enabled', 'true');
@@ -129,5 +142,111 @@ describe('#5364 diagnostics across workers, sources, CLI, and cycle', () => {
     const second = await runPhaseConversationFactsBackfill(engine, {});
     expect(second.details).toMatchObject({ pages_processed: 0, pages_skipped: 2, pages_skipped_unparsed: 2, pages_skipped_insufficient_turns: 0, pages_skipped_completed: 6, pages_skipped_non_extractable: 2, pages_marked_non_extractable: 0 });
     expect(calls).toBe(6);
+  });
+
+  // The dimension preflight and the Minion job path only run for Postgres
+  // engines; this view reports that kind over the same PGLite database.
+  function asPostgres(e: PGLiteEngine): BrainEngine {
+    return new Proxy(e, { get: (t, k) => (k === 'kind' ? 'postgres' : Reflect.get(t, k, t)) }) as unknown as BrainEngine;
+  }
+
+  test('a page locked by another worker is skipped and counted; the CLI exits 3; release lets it run', async () => {
+    const slug = 'conversations/object-1';
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+       VALUES ($1, 99999, 'other-host', NOW(), NOW() + INTERVAL '10 minutes')`,
+      [extractConversationFactsLockId('speaker-a', slug)],
+    );
+    const held = await runExtractConversationFactsCore(engine, { sourceId: 'speaker-a', types: ['conversation'], sleepMs: 0 });
+    expect(held).toMatchObject({ pages_lock_skipped: 1, pages_processed: 2 });
+    expect(calls).toBe(2);
+    // Page locks are per source: the same slug in another source is free.
+    const otherSource = await runExtractConversationFactsCore(engine, { sourceId: 'speaker-b', types: ['conversation'], sleepMs: 0 });
+    expect(otherSource).toMatchObject({ pages_lock_skipped: 0, pages_processed: 3 });
+    calls = 2;
+
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const exit = spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`exit:${code}`); }) as never);
+    try {
+      await expect(runExtractConversationFacts(engine, ['--source-id', 'speaker-a', '--types', 'conversation', '--sleep', '0'])).rejects.toThrow('exit:3');
+      expect(log.mock.calls.map(call => call.join(' ')).join('\n')).toContain('Skipped 1 page(s) held by another worker');
+    } finally {
+      exit.mockRestore();
+      log.mockRestore();
+    }
+    expect(calls).toBe(2);
+
+    await engine.executeRaw('DELETE FROM gbrain_cycle_locks');
+    // While a page is being extracted its lock expires within minutes, so a
+    // crashed worker's page is reclaimable quickly (D12).
+    let ttlSeconds: number | null = null;
+    onChat = async () => {
+      const [row] = await engine.executeRaw<{ s: number }>(
+        `SELECT EXTRACT(EPOCH FROM (ttl_expires_at - NOW()))::float AS s FROM gbrain_cycle_locks WHERE id = $1`,
+        [extractConversationFactsLockId('speaker-a', slug)],
+      );
+      ttlSeconds = row?.s ?? null;
+    };
+    const released = await runExtractConversationFactsCore(engine, { sourceId: 'speaker-a', types: ['conversation'], sleepMs: 0 });
+    expect(released).toMatchObject({ pages_lock_skipped: 0, pages_processed: 1 });
+    expect(calls).toBe(3);
+    expect(ttlSeconds).not.toBeNull();
+    expect(ttlSeconds!).toBeGreaterThan(30);
+    expect(ttlSeconds!).toBeLessThanOrEqual(10 * 60);
+  });
+
+  test('replay deletes a prior partial run\'s facts before extracting, keeping the new ones (D11)', async () => {
+    chatText = JSON.stringify({ facts: [{ fact: 'alice-example said hi', kind: 'event', entity: 'people/alice-example', confidence: 1, notability: 'high' }] });
+    embedVectors = true;
+    const slug = 'conversations/object-1';
+    await engine.executeRaw(
+      `INSERT INTO facts (source_id, fact, kind, source, source_session, source_markdown_slug, visibility, notability, confidence)
+       VALUES ('speaker-a', 'stale partial-run fact', 'event', 'cli:extract-conversation-facts', $1, $2, 'private', 'high', 1)`,
+      [`cli:extract-conversation-facts:${slug}`, slug],
+    );
+    const result = await runExtractConversationFactsCore(engine, { sourceId: 'speaker-a', slug, sleepMs: 0 });
+    expect(result.orphan_facts_cleaned).toBe(1);
+    expect(result.facts_inserted).toBeGreaterThan(0);
+    const rows = await engine.executeRaw<{ fact: string }>(
+      `SELECT fact FROM facts WHERE source_id = 'speaker-a' AND source_markdown_slug = $1 AND source = 'cli:extract-conversation-facts'`,
+      [slug],
+    );
+    expect(rows.map(r => r.fact)).not.toContain('stale partial-run fact');
+    expect(rows).toHaveLength(result.facts_inserted);
+  });
+
+  test('embedding-width drift fails the run before any page is attempted (D15 preflight)', async () => {
+    configureGateway({ ...GATEWAY, embedding_dimensions: 1024 });
+    const err = spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      await expect(runExtractConversationFactsCore(asPostgres(engine), { sourceId: 'speaker-a', types: ['conversation'], sleepMs: 0 })).rejects.toThrow(/halfvec\(1536\).*1024/);
+      const stderr = err.mock.calls.map(c => String(c[0])).join('');
+      expect(stderr).not.toContain('conversations/');
+      expect(calls).toBe(0);
+    } finally {
+      err.mockRestore();
+      configureGateway(GATEWAY);
+    }
+  });
+
+  test('--workers reaches the worker resolver and the --background job envelope', async () => {
+    const resolve = spyOn(concurrency, 'resolveWorkersWithClamp');
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await runExtractConversationFacts(engine, ['--source-id', 'speaker-a', '--types', 'conversation', '--sleep', '0', '--workers', '5']);
+      expect(resolve.mock.calls[0]?.[1]).toBe(5);
+    } finally {
+      log.mockRestore();
+      resolve.mockRestore();
+    }
+    const out = spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      await runExtractConversationFacts(asPostgres(engine), ['--background', '--source-id', 'speaker-a', '--workers', '20']);
+    } finally {
+      out.mockRestore();
+    }
+    const [job] = await engine.executeRaw<{ data: any }>(`SELECT data FROM minion_jobs WHERE name = 'extract-conversation-facts' ORDER BY id DESC LIMIT 1`);
+    const data = typeof job!.data === 'string' ? JSON.parse(job!.data) : job!.data;
+    expect(data.workers).toBe(20);
   });
 });

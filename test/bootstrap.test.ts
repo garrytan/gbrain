@@ -406,4 +406,42 @@ describe('PGLiteEngine#applyForwardReferenceBootstrap', () => {
     }
   }, 30000);
 
+  test('compounded pre-v34 brain (v0.20 + v0.26.3 + v0.27 + v39-v41 gaps) walks forward to LATEST', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      const dropped: Array<[string, string]> = [
+        ['content_chunks', 'parent_symbol_path'], ['content_chunks', 'doc_comment'],
+        ['content_chunks', 'symbol_name_qualified'], ['content_chunks', 'search_vector'],
+        ['mcp_request_log', 'agent_name'], ['mcp_request_log', 'params'], ['mcp_request_log', 'error_message'],
+        ['subagent_messages', 'provider_id'],
+        ['content_chunks', 'embedding_image'], ['content_chunks', 'modality'],
+        ['pages', 'emotional_weight'], ['pages', 'effective_date'], ['pages', 'effective_date_source'],
+        ['pages', 'import_filename'], ['pages', 'salience_touched_at'],
+      ];
+      await (engine as any).db.exec(`
+        DROP INDEX IF EXISTS idx_chunks_search_vector;
+        DROP INDEX IF EXISTS idx_chunks_symbol_qualified;
+        DROP TRIGGER IF EXISTS chunk_search_vector_trigger ON content_chunks;
+        DROP FUNCTION IF EXISTS update_chunk_search_vector;
+        DROP INDEX IF EXISTS idx_mcp_log_agent_time;
+        DROP INDEX IF EXISTS idx_subagent_messages_provider;
+        DROP INDEX IF EXISTS idx_chunks_embedding_image;
+        ${dropped.map(([table, column]) => `ALTER TABLE ${table} DROP COLUMN IF EXISTS ${column} CASCADE;`).join('\n        ')}
+        UPDATE config SET value = '13' WHERE key = 'version';
+      `);
+
+      await engine.initSchema();
+
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+      const present = await engine.executeRaw<{ table_name: string; column_name: string }>(
+        `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'`,
+      );
+      const have = new Set(present.map(r => `${r.table_name}.${r.column_name}`));
+      expect(dropped.map(([table, column]) => `${table}.${column}`).filter(c => !have.has(c))).toEqual([]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
 });

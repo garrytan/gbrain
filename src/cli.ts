@@ -1025,11 +1025,6 @@ interface CachedIdentity {
 const IDENTITY_TTL_MS = 60_000;
 const identityCache = new Map<string, CachedIdentity>();
 
-/** Test-only escape hatch — clears the in-memory cache between test runs. */
-export function _clearIdentityCacheForTest(): void {
-  identityCache.clear();
-}
-
 export function bannerSuppressed(cliOpts: CliOptions): boolean {
   if (cliOpts.quiet) return true;
   if (process.env.GBRAIN_NO_BANNER === '1') return true;

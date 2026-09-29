@@ -85,9 +85,8 @@ skills/                   Fat markdown skills for AI agents
 test/                     Unit tests (bun test, no DB required)
 test/e2e/                 E2E tests (requires DATABASE_URL, real Postgres+pgvector)
   fixtures/               Miniature realistic brain corpus (16 files)
-  helpers.ts              DB lifecycle, fixture import, timing
+  helpers.ts              DB lifecycle, fixture import, diagnostics
   mechanical.test.ts      All operations against real DB
-  mcp.test.ts             MCP tool generation verification
   skills.test.ts          Tier 2 skill tests (requires OpenClaw + API keys)
 docs/                     Architecture docs
 ```
@@ -214,11 +213,21 @@ Vacuous-assertion shapes to avoid (they recur):
 - asserting a substring that would also appear in the broken output —
   assert parsed structure instead.
 
-Relatedly: a test whose only assertion is a regex over `readFileSync`'d
-source text pins spelling, not behavior. New tests that read `src/` text
-need a `test-reads-source-ok: <why>` comment (or a behavioral assertion
-alongside); `test/test-reads-source-smell.test.ts` enforces this for new
-files and ratchets the pre-existing list down.
+Before adding a test, answer the four questions in the
+[authoring gate](docs/TESTING.md#authoring-gate); before deleting one, follow
+[Retiring a test](docs/TESTING.md#retiring-a-test) and record its evidence
+table in the PR body.
+
+Relatedly: a test whose only assertion is a regex over source text pins
+spelling, not behavior. A test that reads `src/` text (`readFileSync`,
+`readFile` or `Bun.file` on a `src/` path, directly or through a path
+constant) needs a tagged marker on or just above the read:
+`// test-reads-source-ok[<category>]: <why>`, with the category one of
+`prompt-byte`, `trust-boundary`, `generated-artifact`, `structural` or
+`raw-bytes`. `test/test-reads-source-smell.test.ts` enforces this and ratchets
+pre-existing files by their exact count of unjustified read sites. It counts
+read sites only, so new assertions over an existing source binding still need
+the authoring gate. See [Source reads in tests](docs/TESTING.md#source-reads-in-tests).
 
 ### Local CI gate (recommended before pushing)
 

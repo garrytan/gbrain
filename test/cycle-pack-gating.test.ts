@@ -1,207 +1,133 @@
 // v0.41 T9 R-GATE — orchestrator-level pack gate for lens-pack phases.
 //
-// IRON-RULE regression pinning:
-//   1. ALL_PHASES includes 'extract_atoms' (after extract_facts) and
-//      'synthesize_concepts' (after patterns).
-//   2. PHASE_SCOPE declares extract_atoms='source', synthesize_concepts='global'.
-//   3. NEEDS_LOCK_PHASES includes both (they mutate DB via put_page).
-//   4. cycle.ts dispatch contains the packDeclaresPhase gate for both
-//      new phases (source-shape assertion — pins the not_in_active_pack
-//      semantics against future drift).
-//   5. Pre-existing 17 core phases ALWAYS run regardless of active pack —
-//      only the 2 new lens-pack phases are gated (source-shape regression).
-//   6. borrow_from does NOT borrow phases — gbrain-everything explicitly
-//      re-declares creator's phases per D4-B (verified in T4 test;
-//      cross-referenced here as a pinning hint via source grep).
-//
-// Why static-source assertions in addition to runtime tests: cycle.ts is a
-// ~1700-line orchestrator and the dispatch logic for these new phases
-// follows a load-bearing pattern (`if (phases.includes(X)) { ... if
-// (!await packDeclaresPhase(engine, X)) skipped else dispatch }`). Static
-// source pinning catches refactors that accidentally drop the gate while
-// still passing happy-path runtime tests.
+// Contracts, all asserted through runCycle on an in-memory PGLite brain:
+//   1. ALL_PHASES orders extract_atoms after extract_facts and
+//      synthesize_concepts after patterns; PHASE_SCOPE covers every phase.
+//   2. Under a pack that does not declare them, extract_atoms and
+//      synthesize_concepts report status 'skipped', reason
+//      'not_in_active_pack', with an actionable summary (#2117).
+//   3. Under a pack that declares them (gbrain-creator), the gate opens:
+//      the phase is dispatched instead of pack-skipped.
+//   3b. Phases are local to the declaring manifest (D4-B): a user pack
+//      that extends gbrain-creator without re-declaring them stays gated.
+//   4. Pack gating is additive: across a full cycle on the default pack,
+//      ONLY those two phases are pack-skipped.
+//   5. Both phases take the cycle lock (they write pages), so a live
+//      holder turns the cycle into cycle_already_running.
 
-import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { ALL_PHASES, PHASE_SCOPE, type CyclePhase } from '../src/core/cycle.ts';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { ALL_PHASES, PHASE_SCOPE, runCycle, type CyclePhase } from '../src/core/cycle.ts';
+import { withEnv, emptyHome } from './helpers/with-env.ts';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const cycleTsSrc = readFileSync(
-  join(here, '..', 'src', 'core', 'cycle.ts'),
-  'utf-8',
-);
+const PACK_GATED: ReadonlyArray<CyclePhase> = ['extract_atoms', 'synthesize_concepts'];
 
-const NEW_PHASES: ReadonlyArray<CyclePhase> = ['extract_atoms', 'synthesize_concepts'];
+let engine: PGLiteEngine;
+let brainDir: string;
+let gbrainHome: string;
+
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+  brainDir = mkdtempSync(join(tmpdir(), 'gbrain-pack-gate-'));
+}, 60_000);
+
+afterAll(async () => {
+  await engine.disconnect();
+  rmSync(brainDir, { recursive: true, force: true });
+});
+
+beforeEach(async () => {
+  gbrainHome = emptyHome();
+  await engine.executeRaw('DELETE FROM gbrain_cycle_locks');
+});
+
+function cycleUnderPack(pack: string | undefined, opts: Parameters<typeof runCycle>[1]) {
+  return withEnv(
+    { GBRAIN_HOME: gbrainHome, GBRAIN_SCHEMA_PACK: pack, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined },
+    () => runCycle(engine, opts),
+  );
+}
 
 describe('v0.41 T9 R-GATE: ALL_PHASES + PHASE_SCOPE contract', () => {
-  test('ALL_PHASES contains extract_atoms', () => {
-    expect(ALL_PHASES).toContain('extract_atoms');
+  test('extract_atoms runs after extract_facts; synthesize_concepts after patterns', () => {
+    expect(ALL_PHASES.indexOf('extract_facts')).toBeGreaterThan(-1);
+    expect(ALL_PHASES.indexOf('extract_atoms')).toBeGreaterThan(ALL_PHASES.indexOf('extract_facts'));
+    expect(ALL_PHASES.indexOf('patterns')).toBeGreaterThan(-1);
+    expect(ALL_PHASES.indexOf('synthesize_concepts')).toBeGreaterThan(ALL_PHASES.indexOf('patterns'));
   });
 
-  test('ALL_PHASES contains synthesize_concepts', () => {
-    expect(ALL_PHASES).toContain('synthesize_concepts');
-  });
-
-  test('extract_atoms is positioned AFTER extract_facts (semantic ordering)', () => {
-    const extractFactsIdx = ALL_PHASES.indexOf('extract_facts');
-    const extractAtomsIdx = ALL_PHASES.indexOf('extract_atoms');
-    expect(extractFactsIdx).toBeGreaterThan(-1);
-    expect(extractAtomsIdx).toBeGreaterThan(extractFactsIdx);
-  });
-
-  test('synthesize_concepts is positioned AFTER patterns (graph-fresh semantics)', () => {
-    const patternsIdx = ALL_PHASES.indexOf('patterns');
-    const synthIdx = ALL_PHASES.indexOf('synthesize_concepts');
-    expect(patternsIdx).toBeGreaterThan(-1);
-    expect(synthIdx).toBeGreaterThan(patternsIdx);
-  });
-
-  test('PHASE_SCOPE declares extract_atoms as source-scoped', () => {
+  test('PHASE_SCOPE: extract_atoms is source-scoped, synthesize_concepts global, every phase mapped', () => {
     expect(PHASE_SCOPE.extract_atoms).toBe('source');
-  });
-
-  test('PHASE_SCOPE declares synthesize_concepts as global-scoped', () => {
     expect(PHASE_SCOPE.synthesize_concepts).toBe('global');
+    for (const p of ALL_PHASES) expect(PHASE_SCOPE[p]).toBeDefined();
   });
+});
 
-  test('every ALL_PHASES entry has a PHASE_SCOPE entry (exhaustive map)', () => {
-    for (const p of ALL_PHASES) {
-      expect(PHASE_SCOPE[p]).toBeDefined();
+describe('v0.41 T9 R-GATE: dispatch consults the active pack', () => {
+  test('a pack without the phases skips both with an actionable not_in_active_pack summary', async () => {
+    const report = await cycleUnderPack('gbrain-base', { brainDir, phases: [...PACK_GATED], dryRun: true });
+    for (const phase of PACK_GATED) {
+      const r = report.phases.find(p => p.phase === phase);
+      expect(r?.status).toBe('skipped');
+      expect(r?.details?.reason).toBe('not_in_active_pack');
+      expect(r?.summary).toContain('phases:');
+      expect(r?.summary).toContain('gbrain-creator');
     }
-  });
-});
+    const atoms = report.phases.find(p => p.phase === 'extract_atoms');
+    expect(atoms?.summary).toContain('gbrain dream --phase extract_atoms --drain');
+  }, 60_000);
 
-describe('v0.41 T9 R-GATE: NEEDS_LOCK_PHASES contract (source-shape)', () => {
-  // NEEDS_LOCK_PHASES isn't exported; static-source assertion pins the
-  // contract that both new phases acquire the cycle lock since they
-  // mutate DB state (put_page atom/concept pages).
-  test('cycle.ts source includes extract_atoms in NEEDS_LOCK_PHASES', () => {
-    // Find the NEEDS_LOCK_PHASES block and assert both phases appear in it.
-    const blockStart = cycleTsSrc.indexOf('NEEDS_LOCK_PHASES');
-    expect(blockStart).toBeGreaterThan(-1);
-    const blockEnd = cycleTsSrc.indexOf(']);', blockStart);
-    expect(blockEnd).toBeGreaterThan(blockStart);
-    const block = cycleTsSrc.slice(blockStart, blockEnd);
-    expect(block).toContain("'extract_atoms'");
-  });
-
-  test('cycle.ts source includes synthesize_concepts in NEEDS_LOCK_PHASES', () => {
-    const blockStart = cycleTsSrc.indexOf('NEEDS_LOCK_PHASES');
-    const blockEnd = cycleTsSrc.indexOf(']);', blockStart);
-    const block = cycleTsSrc.slice(blockStart, blockEnd);
-    expect(block).toContain("'synthesize_concepts'");
-  });
-});
-
-describe('v0.41 T9 R-GATE: orchestrator dispatch wires the pack-gate', () => {
-  // Source-shape regression: the dispatch for each new phase MUST
-  // consult packDeclaresPhase(engine, '<phase>') before invoking the
-  // phase. Future refactors that accidentally drop the gate would still
-  // pass happy-path runtime tests; this assertion catches the drop.
-  test('cycle.ts dispatch for extract_atoms calls packDeclaresPhase', () => {
-    expect(cycleTsSrc).toContain("packDeclaresPhase(engine, 'extract_atoms')");
-  });
-
-  test('cycle.ts dispatch for synthesize_concepts calls packDeclaresPhase', () => {
-    expect(cycleTsSrc).toContain("packDeclaresPhase(engine, 'synthesize_concepts')");
-  });
-
-  test('packDeclaresPhase helper function exists in cycle.ts', () => {
-    expect(cycleTsSrc).toContain('async function packDeclaresPhase(');
-  });
-
-  test('packDeclaresPhase reads phases from active pack manifest (NOT extends chain)', () => {
-    // Source-pin: the helper reads `resolved.manifest.phases` — D4-B
-    // says phases are local to the declaring manifest. Future drift
-    // that adds extends-chain merging would silently change semantics
-    // for users who extend gbrain-creator expecting inheritance; this
-    // assertion catches it.
-    expect(cycleTsSrc).toContain('resolved.manifest.phases');
-  });
-
-  test('packDeclaresPhase fail-open: returns false on catch (no thrown exceptions)', () => {
-    // Source-pin: the helper's try/catch returns false on any error
-    // (registry not initialized, pack not found, malformed manifest).
-    // Skipping > crashing for an orchestrator gate.
-    const helperStart = cycleTsSrc.indexOf('async function packDeclaresPhase(');
-    expect(helperStart).toBeGreaterThan(-1);
-    const helperEnd = cycleTsSrc.indexOf('\n}\n', helperStart);
-    const helperBody = cycleTsSrc.slice(helperStart, helperEnd);
-    expect(helperBody).toContain('catch');
-    expect(helperBody).toContain('return false');
-  });
-});
-
-describe('v0.41 T9 R-GATE: pre-existing 17 core phases always run', () => {
-  // The IRON RULE that the wave depends on: pack-gating is ADDITIVE,
-  // not subtractive. A user on gbrain-base (which declares phases:[])
-  // must still see all 17 pre-existing phases run as before. The static
-  // assertion: only the 2 new lens-pack phases reference packDeclaresPhase
-  // in the dispatch.
-  test('only extract_atoms + synthesize_concepts dispatch sites reference packDeclaresPhase', () => {
-    const matches = cycleTsSrc.match(/packDeclaresPhase\(engine, '[^']+'\)/g) ?? [];
-    const phaseNames = matches.map((m) => {
-      const inner = /packDeclaresPhase\(engine, '([^']+)'\)/.exec(m);
-      return inner ? inner[1] : '';
-    });
-    // Should be EXACTLY two phases gated.
-    expect(phaseNames.sort()).toEqual(['extract_atoms', 'synthesize_concepts']);
-  });
-
-  test('extract_facts dispatch does NOT consult packDeclaresPhase', () => {
-    // Pre-existing phase; must always run on every pack. Window scoped
-    // to the SINGLE dispatch block — find the next `// ──` comment
-    // marker (the next phase dispatch header) and stop there.
-    const blockStart = cycleTsSrc.indexOf("if (phases.includes('extract_facts'))");
-    expect(blockStart).toBeGreaterThan(-1);
-    const blockEnd = cycleTsSrc.indexOf('// ──', blockStart + 10);
-    expect(blockEnd).toBeGreaterThan(blockStart);
-    const block = cycleTsSrc.slice(blockStart, blockEnd);
-    expect(block).not.toContain('packDeclaresPhase');
-  });
-
-  test('calibration_profile dispatch does NOT consult packDeclaresPhase', () => {
-    // Pre-existing v0.36.1.0 phase; always-on.
-    const cpBlockStart = cycleTsSrc.indexOf("phases.includes('calibration_profile')");
-    expect(cpBlockStart).toBeGreaterThan(-1);
-    // Window of 1500 chars covers the dispatch.
-    const block = cycleTsSrc.slice(cpBlockStart, cpBlockStart + 1500);
-    expect(block).not.toContain('packDeclaresPhase');
-  });
-});
-
-describe('v0.41 T9 R-GATE: dispatch result envelope', () => {
-  test('extract_atoms not_in_active_pack skip carries the correct reason marker', () => {
-    expect(cycleTsSrc).toContain("reason: 'not_in_active_pack'");
-  });
-
-  test('synthesize_concepts not_in_active_pack uses the same marker (semantic consistency)', () => {
-    // Both phases should use identical reason marker — doctor can match
-    // a single string across both pack-gated skip events.
-    const occurrences = (cycleTsSrc.match(/reason: 'not_in_active_pack'/g) ?? []).length;
-    expect(occurrences).toBe(2);
-  });
-});
-
-// #2117 — the pack-gated skip summaries must tell the operator HOW to opt
-// in: declare the phase in the active pack's `phases:` list or activate a
-// lens pack that ships it (gbrain-creator / gbrain-everything). Source-shape
-// pin, matching this file's style.
-describe('#2117: pack-gated skip summaries are actionable', () => {
-  test('both skip summaries name the phases: key and a lens pack', () => {
-    const summaries = cycleTsSrc.match(
-      /summary: '(?:extract_atoms|synthesize_concepts): active pack[^']*'/g,
-    ) ?? [];
-    expect(summaries.length).toBe(2);
-    for (const s of summaries) {
-      expect(s).toContain('phases:');
-      expect(s).toContain('gbrain-creator');
+  test('a pack that declares the phases (gbrain-creator) opens the gate', async () => {
+    const report = await cycleUnderPack('gbrain-creator', { brainDir, phases: [...PACK_GATED], dryRun: true });
+    for (const phase of PACK_GATED) {
+      const r = report.phases.find(p => p.phase === phase);
+      expect(r).toBeDefined();
+      expect(r?.details?.reason).not.toBe('not_in_active_pack');
     }
-  });
+  }, 60_000);
 
-  test('extract_atoms skip summary keeps the drain hint', () => {
-    expect(cycleTsSrc).toContain('gbrain dream --phase extract_atoms --drain');
-  });
+  test('phases are not inherited through extends (D4-B): a child of gbrain-creator stays gated', async () => {
+    const packDir = join(gbrainHome, '.gbrain', 'schema-packs', 'creator-child-example');
+    mkdirSync(packDir, { recursive: true });
+    writeFileSync(join(packDir, 'pack.yaml'), [
+      'api_version: gbrain-schema-pack-v1',
+      'name: creator-child-example',
+      'version: 1.0.0',
+      'description: test pack extending gbrain-creator without declaring phases',
+      'gbrain_min_version: 0.41.0',
+      'extends: gbrain-creator',
+      'page_types: []',
+      '',
+    ].join('\n'));
+    const report = await cycleUnderPack('creator-child-example', { brainDir, phases: ['extract_atoms'], dryRun: true });
+    expect(report.phases.find(p => p.phase === 'extract_atoms')?.details?.reason).toBe('not_in_active_pack');
+  }, 60_000);
+
+  test('pack gating is additive: a full default-pack cycle pack-skips only the two lens phases', async () => {
+    const report = await cycleUnderPack(undefined, { brainDir, dryRun: true });
+    const packSkipped = report.phases
+      .filter(p => p.details?.reason === 'not_in_active_pack')
+      .map(p => p.phase)
+      .sort();
+    expect(packSkipped).toEqual([...PACK_GATED].sort());
+  }, 120_000);
+});
+
+describe('v0.41 T9 R-GATE: lens phases take the cycle lock', () => {
+  for (const phase of PACK_GATED) {
+    test(`${phase} alone waits behind a live cycle-lock holder`, async () => {
+      await engine.executeRaw(
+        `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at)
+         VALUES ('gbrain-cycle', 99999, 'other-host', NOW(), NOW() + INTERVAL '1 hour')`,
+      );
+      const report = await cycleUnderPack('gbrain-base', { brainDir, phases: [phase], dryRun: true });
+      expect(report.status).toBe('skipped');
+      expect(report.reason).toBe('cycle_already_running');
+    }, 60_000);
+  }
 });

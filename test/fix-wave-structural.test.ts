@@ -129,15 +129,6 @@ describe('v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL en
   });
 });
 
-describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => {
-  test("cli.ts parseOpArgs handles --no-<key> as boolean negation", () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
-    expect(src).toMatch(/arg\.startsWith\(['"]--no-['"]\)/);
-    expect(src).toMatch(/positiveDef\?\.type\s*===\s*'boolean'/);
-    expect(src).toMatch(/params\[positiveKey\]\s*=\s*false/);
-  });
-});
-
 describe('v0.42.20.0 — background-work registry drains every sink before disconnect', () => {
   // Supersedes the v0.41.8.0 #1247/#1269/#1290 per-call last-retrieved drain:
   // last-retrieved is one of four registry sinks. #2084 moved the registry
@@ -302,15 +293,6 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
 });
 
 describe('v0.41.8.0 #1340 — PGLite WASM init classifier', () => {
-  test('pglite-engine.ts exports classifyPgliteInitError + buildPgliteInitErrorMessage', () => {
-    const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
-    expect(src).toMatch(/export function classifyPgliteInitError/);
-    expect(src).toMatch(/export function buildPgliteInitErrorMessage/);
-    // Per Codex finding #9: regex tightened to $$bunfs OR ENOENT+pglite.data
-    expect(src).toMatch(/\$\$bunfs/);
-    expect(src).toMatch(/ENOENT/);
-  });
-
   test('pglite-engine.ts connect catch block routes through the classifier', () => {
     const src = readFileSync('src/core/pglite-engine.ts', 'utf8');
     expect(src).toMatch(/classifyPgliteInitError\(original\)/);
