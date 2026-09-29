@@ -17,9 +17,9 @@ const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/work
   jobs: {
     native: { steps: Step[]; strategy: { matrix: { target: string[]; bun: string[] } } };
     'windows-backup-console': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
-      strategy: { 'fail-fast': boolean; matrix: { include: { runner: string; bun: string }[] } } };
+      strategy: { 'fail-fast': boolean; matrix: { runner: string[]; bun: string[]; exclude: string } } };
     'windows-backup-dotnet': { steps: Step[]; 'runs-on': string; 'timeout-minutes': number;
-      strategy: { 'fail-fast': boolean; matrix: { include: { runner: string; bun: string }[] } } };
+      strategy: { 'fail-fast': boolean; matrix: { runner: string[]; bun: string[]; exclude: string } } };
   };
 };
 const suites = [
@@ -37,8 +37,8 @@ describe('data-safety native CI coverage', () => {
     expect(job['runs-on']).toBe('${{ matrix.runner }}');
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
-    expect(job.strategy.matrix.include).toEqual(['windows-2022', 'windows-11-arm'].flatMap(runner =>
-      ['1.3.11', '1.3.13', '1.4.2'].map(bun => ({ runner, bun }))));
+    expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
+    expect(job.strategy.matrix.bun).toEqual(['1.3.11', '1.3.13', '1.4.2']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare native hidden-window launch behavior');
     expect(step).toBeDefined();
@@ -72,8 +72,8 @@ describe('data-safety native CI coverage', () => {
     expect(job['runs-on']).toBe('${{ matrix.runner }}');
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
-    expect(job.strategy.matrix.include).toEqual(['windows-2022', 'windows-11-arm'].flatMap(runner =>
-      ['1.3.11', '1.3.13', '1.4.2'].map(bun => ({ runner, bun }))));
+    expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
+    expect(job.strategy.matrix.bun).toEqual(['1.3.11', '1.3.13', '1.4.2']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs');
     expect(step).toBeDefined();
