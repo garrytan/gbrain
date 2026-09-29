@@ -82,6 +82,7 @@ import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedA
 import { OperationError } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { AtomPageStateError, completeAtomReceipts, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -105,13 +106,6 @@ export const MAX_DETERMINISTIC_FAILURES = 3;
  */
 const TRANSIENT_EXTRACT_ERROR_RE =
   /timeout|timed out|\b429\b|rate.?limit|\b5\d\d\b|ECONN|ETIMEDOUT|EPIPE|ENOTFOUND|fetch failed|\bnetwork\b|socket|overloaded/i;
-
-// v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
-const ATOM_TYPES = [
-  'insight', 'anecdote', 'quote', 'framework', 'statistic',
-  'story_angle', 'strategy_angle', 'strategy', 'endorsement',
-  'critique', 'collection',
-] as const;
 
 // v0.41.2.1 (D2): brain-page discovery constants.
 //
@@ -319,7 +313,7 @@ quote, or short essay angle. Each atom must:
   - Have a clear point (not just descriptive)
   - Be specific (not a generic platitude)
 
-Output a JSON array of atoms (0-3 per transcript, never more than 3).
+Output a JSON object with an "atoms" array (0-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
 source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
 (1-3 topic labels), virality_score (0-100), emotional_register (one of:
@@ -333,10 +327,10 @@ entity or brand names. Use the same label for the same topic across atoms;
 prefer a label you already used over coining a near-synonym.
 
 If the transcript has no extractable idea (metadata rows, status dumps,
-empty fields, boilerplate), output exactly [] — never invent an atom and
+empty fields, boilerplate), output exactly {"atoms":[]} — never invent an atom and
 never explain in prose.
 
-Output ONLY the JSON array, no prose.`;
+Output ONLY the JSON object, no prose. Use null for unavailable optional metadata.`;
 
 /**
  * v0.41.2.1 (D2) — single-SQL discovery + idempotency filter for brain
@@ -1097,6 +1091,7 @@ export async function runPhaseExtractAtoms(
           },
         ],
         maxTokens: maxOutputTokens,
+        responseSchema: ATOMS_RESPONSE_SCHEMA,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
