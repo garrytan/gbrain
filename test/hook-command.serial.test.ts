@@ -679,6 +679,45 @@ describe('session-end', () => {
     expect(readFileSync(join(corpusDir, 'sess-dup.txt'), 'utf8')).toContain('resumed pass content');
   });
 
+  // #5413: a claude-cli scratch session (gbrain's own LLM call) must never
+  // reach the dream corpus — path fingerprint OR payload cwd both refuse.
+  test('claude-cli self-transcript is skipped, not written to the corpus (#5413)', async () => {
+    const projRoot = join(tmp, 'projects');
+    const scratch = join(tmp, 'gbrain-claude-cli-cwd-4242');
+    mkdirSync(scratch, { recursive: true });
+    // The scratch session's rollout lives under the slugified scratch cwd.
+    const transcript = seedTranscript(join(projRoot, '-tmp-gbrain-claude-cli-cwd-4242'), 's.jsonl', [
+      userLine('extract facts from this page'),
+      assistantLine('{"facts": []}'),
+    ]);
+    expect(
+      await runHook(['session-end'], {
+        stdin: JSON.stringify({ session_id: 'sess-self', transcript_path: transcript, cwd: scratch }),
+        transcriptRoot: projRoot,
+      }),
+    ).toBe(0);
+    const corpusDir = join(home(), 'transcripts', 'corpus');
+    expect(existsSync(join(corpusDir, 'sess-self.txt'))).toBe(false);
+    const hb = await lastHeartbeat();
+    expect(hb?.outcome).toBe('ok');
+    expect(hb?.segment).toBe('self_transcript');
+  });
+
+  test('claude-cli scratch cwd alone refuses the corpus write even with a clean path (#5413)', async () => {
+    const projRoot = join(tmp, 'projects');
+    const transcript = seedTranscript(join(projRoot, 'p1'), 's.jsonl', [userLine('ordinary looking turn')]);
+    const scratch = join(tmp, 'gbrain-claude-cli-cwd-7777');
+    mkdirSync(scratch, { recursive: true });
+    expect(
+      await runHook(['session-end'], {
+        stdin: JSON.stringify({ session_id: 'sess-self2', transcript_path: transcript, cwd: scratch }),
+        transcriptRoot: projRoot,
+      }),
+    ).toBe(0);
+    expect(existsSync(join(home(), 'transcripts', 'corpus', 'sess-self2.txt'))).toBe(false);
+    expect((await lastHeartbeat())?.segment).toBe('self_transcript');
+  });
+
   test('resumed session rewrite drops the stale .ingested/.in-progress sidecars so the sweep re-ingests', async () => {
     const projRoot = join(tmp, 'projects');
     const ws = join(tmp, 'ws');

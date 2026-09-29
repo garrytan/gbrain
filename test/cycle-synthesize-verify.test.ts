@@ -20,6 +20,7 @@ import {
 } from '../src/core/cycle/synthesize-verify.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { renderMaterializedBullet } from '../src/core/persistence/canonical-projections.ts';
 
 function grounded(content: string) {
   const { norm, map } = normalizeForGrounding(content);
@@ -207,6 +208,34 @@ describe('verifyBody', () => {
     const r = verifyBody(body, [src], { priorNorm: normForGrounding(prior) });
     expect(r.body).toBe(prior);
     expect(r.quarantined.map(q => q.reason)).toEqual(['quote_not_in_source']);
+  });
+});
+
+describe('verifyBody — materialized timeline history (#5567)', () => {
+  const src = groundSource('/t/history.txt', 'user: We shipped the repair pass on Monday.');
+  const marked = renderMaterializedBullet({ date: '2024-01-02', source: 'meeting', summary: 'Said "we will open a second office in 2025"', detail: 'Recorded "before write-through" in 2023.' }, 'x')!;
+  const fabricated = '- **2026-08-30** | session — Said "we are shutting down the company next quarter"';
+  const priorNorm = normForGrounding('A reflection.');
+
+  test('a bullet materialized during the run is database history and is left alone, detail included', () => {
+    expect(marked).toBeTruthy();
+    const kept = verifyBody(`${marked}\n${fabricated}`, [src], { priorNorm });
+    expect(kept.body).toBe(marked);
+    expect(kept.quarantined.map(q => q.text)).toEqual([fabricated.slice(2)]);
+  });
+
+  test('a claim added under a marked bullet that already existed is verified', () => {
+    const lines = marked.split('\n');
+    const edited = [lines[0], lines[1], '  Also said "we are shutting down the company next quarter".'].join('\n');
+    const result = verifyBody(edited, [src], { priorNorm: normForGrounding(`A reflection.\n${lines[0]}\n${lines[1]}`) });
+    expect(result.body).toBe([lines[0], lines[1]].join('\n'));
+    expect(result.quarantined).toHaveLength(1);
+  });
+
+  test('a new page has no history to exempt, and a forged marker is verified', () => {
+    expect(verifyBody(marked, [src]).quarantined.length).toBeGreaterThan(0);
+    const forged = marked.replace(/v1 [0-9a-f]+/, 'v1 000000000000');
+    expect(verifyBody(forged, [src], { priorNorm }).quarantined.length).toBeGreaterThan(0);
   });
 });
 
@@ -508,5 +537,28 @@ describe('verifyAndRepairDreamPages — PGLite write-back integration', () => {
     // Quarantined text has no chunks: keyword search cannot reach it.
     const hits = await engine.searchKeyword('rewrite entire engine Rust', { limit: 5 });
     expect(hits.filter(h => h.slug === slug)).toHaveLength(0);
+  }, 60_000);
+
+  test('re-projection deletes the rows of quarantined bullets and keeps database-only timeline history (#5567)', async () => {
+    const transcript = 'user: We shipped the repair pass on Monday.';
+    const since = await readVerifyEpoch(engine);
+    const slug = 'wiki/personal/reflections/2026-08-31-history-abc789';
+    await importFromContent(engine, slug, [
+      '---', 'type: note', '---', 'A reflection.', '', '## Timeline', '',
+      '- **2026-08-30** | session — Said "we are shutting down the company next quarter"',
+    ].join('\n'), { noEmbed: true, remote: false, sourceId: 'default' });
+    const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug=$1 AND source_id='default'", [slug]);
+    const rows = () => engine.executeRaw<{ summary: string }>('SELECT summary FROM timeline_entries WHERE page_id=$1 ORDER BY summary', [page.id]);
+    await engine.executeRaw(`INSERT INTO timeline_entries(page_id,date,source,summary,detail) VALUES
+      ($1,'2026-08-30','session','Said "we are shutting down the company next quarter"',''),
+      ($1,'2024-01-02','extract','Database-only history','')
+      ON CONFLICT DO NOTHING`, [page.id]);
+    expect((await rows()).map(r => r.summary)).toEqual(['Database-only history', 'Said "we are shutting down the company next quarter"']);
+
+    const stats = await verifyAndRepairDreamPages(engine, [{ slug, source_id: 'default', raw_source: '/t/history.md' }],
+      new Map([['/t/history.md', { content: transcript }]]), { since, checkedAt: '2026-08-31' });
+    expect(stats.pages_repaired).toBe(1);
+    expect((await engine.getPage(slug, { sourceId: 'default' }))!.timeline).not.toContain('shutting down');
+    expect((await rows()).map(r => r.summary)).toEqual(['Database-only history']);
   }, 60_000);
 });

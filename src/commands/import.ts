@@ -33,6 +33,8 @@ import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { importManagedFile } from '../core/persistence/import-mutations.ts';
+import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
+import { getEmbeddingModel } from '../core/ai/gateway.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -157,6 +159,14 @@ export function shouldLogIngest(
   return counts.imported > 0 || counts.errors > 0 || counts.chunksCreated > 0;
 }
 
+/** Embedding cost of the chunks a safe-chunk re-seal left without vectors; null when the model has no known price. */
+function resealEmbeddingUsd(chars: number): number | null {
+  try {
+    const price = lookupEmbeddingPrice(getEmbeddingModel());
+    return price.kind === 'known' ? estimateCostFromChars(chars, price.pricePerMTok) : null;
+  } catch { return null; }
+}
+
 /** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
 export interface RunImportResult {
   imported: number;
@@ -168,6 +178,8 @@ export interface RunImportResult {
   malformedSkipped?: number;
   /** Aggregated alias/undeclared explicit-type warnings (schema.type_warnings). */
   type_warnings?: Array<{ kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string; count: number }>;
+  /** #5050: unchanged pages re-sealed at the safe-chunk fence, and the embedding work that left. */
+  resealed?: { pages: number; pending_chunks: number; embedding_usd: number | null };
 }
 
 export async function runImport(
@@ -590,6 +602,7 @@ export async function runImport(
   let lastCheckpointMs = Date.now();
   let lastCheckpointSize = completed.size;
   let chunksCreated = 0;
+  const resealed = { pages: 0, pendingChunks: 0, pendingChars: 0 };
   const importedSlugs: string[] = [];
   const errorCounts: Record<string, number> = {};
   const errorSamples: Record<string, string> = {};
@@ -657,6 +670,11 @@ export async function runImport(
         succeededPaths.push(importRelPath); // #3839
       } else {
         skipped++;
+        if ('resealed' in result && result.resealed) {
+          resealed.pages++;
+          resealed.pendingChunks += result.resealed.pendingChunks;
+          resealed.pendingChars += result.resealed.pendingChars;
+        }
         if (result.skip_reason === 'malformed_path') {
           // Informational skip (bracket/control-char filename): never a
           // failure-ledger row, and stable across runs — checkpoint as done.
@@ -1073,6 +1091,9 @@ export async function runImport(
   else if (existsSync(checkpointPath)) info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+  const resealSummary = resealed.pages > 0
+    ? { pages: resealed.pages, pending_chunks: resealed.pendingChunks, embedding_usd: resealEmbeddingUsd(resealed.pendingChars) }
+    : null;
   if (jsonOutput) {
     // `skipped` includes every per-file failure importFile RETURNS (invalid
     // frontmatter, oversize, symlink, slug mismatch) as well as content-hash
@@ -1084,6 +1105,7 @@ export async function runImport(
     console.log(JSON.stringify({
       status: errors > 0 ? 'partial' : 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
+      ...(resealSummary ? { resealed: resealSummary } : {}),
       total_files: allFiles.length,
       unchanged: skipped - failures.length - malformedFileSkips,
       malformed_skipped: malformedFileSkips,
@@ -1096,11 +1118,16 @@ export async function runImport(
     slog(`  ${imported} pages imported`);
     slog(`  ${skipped} pages skipped (${skipped - failures.length - malformedFileSkips} unchanged, ${errors} errors, ${malformedFileSkips} malformed filenames)`);
     slog(`  ${chunksCreated} chunks created`);
+    if (resealSummary) {
+      slog(`  ${resealSummary.pages} unchanged page(s) re-sealed for remote search; ${resealSummary.pending_chunks} chunk(s) need embedding`
+        + `${resealSummary.embedding_usd === null ? '' : ` (~$${resealSummary.embedding_usd.toFixed(4)})`}${noEmbed ? ' — run gbrain embed --stale' : ''}`);
+    }
   }
 
   if (imported > 0 && !opts.managedBookmark) await refreshProjectionStatistics(engine);
   return {
     imported, skipped, errors, chunksCreated, failures,
+    ...(resealSummary ? { resealed: resealSummary } : {}),
     ...(totalMalformed > 0 ? { malformedSkipped: totalMalformed } : {}),
     ...(typeWarningCounts.size > 0 && typeWarningsEnabled
       ? { type_warnings: [...typeWarningCounts.values()] }

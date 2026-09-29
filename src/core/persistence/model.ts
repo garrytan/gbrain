@@ -97,11 +97,17 @@ export interface JournalLimits {
   principalTerminalBytes: number; brainTerminalBytes: number;
   brainRecoveryBytes: number; worktreeRecoveryBytes: number;
 }
+/**
+ * Cumulative defaults are sized so one principal admitting 600 writes a day
+ * (the reported autopilot workload) runs at least one year: lifetime IDs last
+ * about 417 days; receipt bytes hold a 30-day window of 16 KiB reservations
+ * plus about 4 KiB retained per compacted receipt for about 590 days.
+ */
 export const DEFAULT_JOURNAL_LIMITS: Readonly<JournalLimits> = Object.freeze({
   principalOutstanding: 100, brainOutstanding: 1000,
   principalIntentBytes: 32 * 1024 ** 2, brainIntentBytes: 256 * 1024 ** 2,
-  principalLifetimeIds: 100_000, brainLifetimeIds: 1_000_000,
-  principalTerminalBytes: 128 * 1024 ** 2, brainTerminalBytes: 1024 ** 3,
+  principalLifetimeIds: 250_000, brainLifetimeIds: 1_000_000,
+  principalTerminalBytes: 1536 * 1024 ** 2, brainTerminalBytes: 8 * 1024 ** 3,
   brainRecoveryBytes: 1024 ** 3, worktreeRecoveryBytes: 256 * 1024 ** 2,
 });
 export type SqlEngine = Pick<BrainEngine, 'executeRaw'>;

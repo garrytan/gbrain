@@ -51,6 +51,7 @@ import {
   dcrRegistrationContext,
   DEFAULT_DCR_TTL_MIN_SECONDS,
 } from '../core/oauth-provider.ts';
+import { canonicalOAuthResource } from '../core/oauth-grants.ts';
 import { hasScope, operationScopesAllowed, scopesSupportedForDiscovery } from '../core/scope.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult } from '../mcp/dispatch.ts';
@@ -970,6 +971,34 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     dcrTtlMaxSeconds = dcrTtlMinSeconds;
   }
 
+  // The issuer URL goes into discovery metadata + token iss claims. It MUST
+  // match the URL clients actually hit, or strict OAuth clients reject tokens
+  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
+  // reverse proxies / tunnels; default to localhost for dev.
+  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
+
+  // MCP authorization spec (2025-06-18 draft §5.1) and RFC 9728 require the
+  // protected resource server to return its discovery metadata URL in the
+  // WWW-Authenticate header on 401 responses:
+  //
+  //   WWW-Authenticate: Bearer resource_metadata="<URL>"
+  //
+  // Clients (claude.ai, Cursor, every other MCP-aware OAuth client) use that
+  // URL to find the authorization-server discovery doc + token endpoint
+  // without the user having to paste those URLs manually. Pre-fix the header
+  // shipped `Bearer error="invalid_token", ...` with no resource_metadata
+  // parameter, so MCP clients couldn't begin the OAuth flow from a fresh
+  // 401 — they would silently fail to connect with a generic "couldn't
+  // reach the MCP server" error.
+  // RFC 9728 / MCP auth spec: the protected-resource metadata describes the
+  // resource the client connects to (/mcp), not the authorization-server root.
+  // Without resourceServerUrl the SDK falls back to issuerUrl, advertising
+  // `resource: "https://host/"` and 404ing the path-based PRM URL
+  // (/.well-known/oauth-protected-resource/mcp) that clients derive from the
+  // connector URL (#4893). The 401 challenge's resource_metadata URL is
+  // derived from the same value so the two can never drift apart.
+  const mcpResourceUrl = new URL('/mcp', issuerUrl);
+  const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
   const oauthProvider = new GBrainOAuthProvider({
     sql,
     transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
@@ -978,6 +1007,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     allowClientCredentialsDcr: enableDcrInsecure === true,
     dcrTtlMinSeconds,
     dcrTtlMaxSeconds,
+    resourceUrl: mcpResourceUrl,
   });
 
   // #1353: loud stderr security WARN when DCR is enabled. DCR is an
@@ -1145,41 +1175,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
   // ---------------------------------------------------------------------------
-  // The issuer URL goes into discovery metadata + token iss claims. It MUST
-  // match the URL clients actually hit, or strict OAuth clients reject tokens
-  // (RFC 8414 §3.3). Honor --public-url for production deployments behind
-  // reverse proxies / tunnels; default to localhost for dev.
-  const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
-
-  // MCP authorization spec (2025-06-18 draft §5.1) and RFC 9728 require the
-  // protected resource server to return its discovery metadata URL in the
-  // WWW-Authenticate header on 401 responses:
-  //
-  //   WWW-Authenticate: Bearer resource_metadata="<URL>"
-  //
-  // Clients (claude.ai, Cursor, every other MCP-aware OAuth client) use that
-  // URL to find the authorization-server discovery doc + token endpoint
-  // without the user having to paste those URLs manually. Pre-fix the header
-  // shipped `Bearer error="invalid_token", ...` with no resource_metadata
-  // parameter, so MCP clients couldn't begin the OAuth flow from a fresh
-  // 401 — they would silently fail to connect with a generic "couldn't
-  // reach the MCP server" error.
-  // RFC 9728 / MCP auth spec: the protected-resource metadata describes the
-  // resource the client connects to (/mcp), not the authorization-server root.
-  // Without resourceServerUrl the SDK falls back to issuerUrl, advertising
-  // `resource: "https://host/"` and 404ing the path-based PRM URL
-  // (/.well-known/oauth-protected-resource/mcp) that clients derive from the
-  // connector URL (#4893). The 401 challenge's resource_metadata URL is
-  // derived from the same value so the two can never drift apart.
-  const mcpResourceUrl = new URL('/mcp', issuerUrl);
-  const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
   // The SDK validates expiry/scopes but leaves audience enforcement to us.
-  // Legacy grants without a resource retain their existing compatibility.
+  // Legacy grants without a resource retain their existing compatibility; an
+  // origin-bound token minted before #5222 passes the same canonicalizer.
   const resourceVerifier = {
     async verifyAccessToken(token: string) {
       const auth = await oauthProvider.verifyAccessToken(token);
-      if (auth.resource && auth.resource.toString() !== mcpResourceUrl.toString()) {
-        throw new InvalidTokenError('Token is bound to a different resource');
+      if (auth.resource) {
+        try {
+          canonicalOAuthResource(auth.resource, mcpResourceUrl);
+        } catch {
+          throw new InvalidTokenError('Token is bound to a different resource');
+        }
       }
       return auth;
     },
@@ -2017,8 +2024,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
+  // #5277: hint every scope a connector may need. Clients that request exactly
+  // the hinted scope and never step up (claude.ai connectors) otherwise stay
+  // read-only; grantScopes still caps each grant to the client row's scope.
   app.post('/mcp', withBearerScopeHint(
-    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read'],
+    requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
   ), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;

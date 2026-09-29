@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.59.20.1] - 2026-09-29
+## [0.60.5.1] - 2026-09-29
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.59.20.1
+## To take advantage of v0.60.5.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,123 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+
+## [0.60.5.0] - 2026-09-29
+
+**Your brain stops deleting history it can't see, managed brains stop wedging themselves, and background loops stop spending money and connections on nothing.**
+
+This release rolls up a long list of quiet failures. The worst one: saving a page used to delete any timeline entry that lived only in the database, with no bullet in the page itself. That is fixed, those entries are now written back into their pages, and remote agents can no longer read atoms or concepts extracted from private pages.
+
+Managed brains had several ways to get permanently stuck: a file with no `type:` line, a source inside a Git subfolder, a Mac that got a new disk number after a reboot, a sync started by hand that autopilot could not finish, a `capture --file` path, a page stored only in the database, or simply running out of write room after a few weeks. Each of those now recovers on its own or tells you the exact command to run.
+
+Dream stops paying for the same transcripts every cycle, and after three failures in a day it stops trying a failing input until you reset it. An idle `gbrain serve` stops holding Postgres connections open, big local imports stop freezing, index rebuilds keep vectors that are still correct, and claude.ai and ChatGPT connectors can finish connecting.
+
+**Back up first, and upgrade every writer.** Any gbrain process still on an older version keeps deleting database-only timeline history each time it republishes a page. That includes `gbrain serve`, autopilot and job workers, session hooks and every global CLI install. This release cannot restore entries that were already deleted; recovering them needs a database backup taken before the loss. A Markdown export does not include these entries.
+
+| Situation | Before | After |
+| --- | --- | --- |
+| Page with database-only timeline entries is saved | Entries deleted | Entries kept and written back as marked bullets |
+| Remote read of an atom from a private page | Returned | Hidden |
+| File with no `type:` line, managed write | Refused forever | Written |
+| Source in a Git subfolder after the first write-through | Sync failed forever | Syncs |
+| Busy managed brain after a few weeks | Every write refused | Defaults last a year at 600 writes a day |
+| One Git backup target keeps failing | Every later page stalled | Set aside after five failures; the rest commit |
+| Synthesis model skips a transcript | Failed, re-billed next cycle | Completes |
+| Dream input that died 3 times in 24 hours | Retried and paid for every cycle | Refused until reset |
+| Idle `serve` behind transaction-mode PgBouncer | 7 connections held | 1 |
+| PGLite import of 40 KB pages, one process | Froze at page 1,183 | 3,000 pages, WAL stayed under 269 MB |
+| Rebuild of an unchanged title-mode page | Every vector erased | Every vector kept |
+| ChatGPT connector sending the site root | Endless reconnect loop | Connects |
+
+### To take advantage of v0.60.5.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Back up the database itself before upgrading:** `pg_dump` for Postgres, or a copy of the PGLite data directory made while gbrain is stopped.
+2. **Upgrade every machine that writes to the brain** and restart `gbrain serve`, autopilot, job supervisors and session hooks, so no older writer keeps running.
+3. **Run the orchestrator manually if schema work did not finish.** Migrations 170 to 173 add one column and three indexes.
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+4. **Your agent reads `skills/migrations/v0.60.5.0.md` the next time you interact with it.** It runs one full doctor pass, relays the new warnings and walks you through the repairs below. Show the preview before applying anything.
+   ```bash
+   gbrain doctor --json
+   gbrain repair
+   gbrain repair timeline --apply
+   gbrain repair visibility --apply
+   gbrain repair safe-chunks --apply
+   ```
+5. **Reconnect remote connectors if they misbehaved.** Remove and re-add a claude.ai connector stuck read-only; reconnect a looping ChatGPT connector.
+6. **Verify the outcome:**
+   ```bash
+   gbrain --version
+   gbrain repair --json
+   gbrain dream reset-key --list
+   gbrain sources writer status
+   ```
+7. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+Health scores may dip after upgrading because doctor now counts things it used to miss: database-only timeline entries, derived pages without an explicit visibility, and code pages below the safe-chunk index version. The repairs clear them. Do not set `search.remote_private_pages` to get derived pages back remotely; that exposes every private page.
+
+### Itemized changes
+
+#### Data loss and privacy
+
+- **Page writes keep database-only history (#5567).** Every coordinated write (`put_page`, managed sync, import, reconcile, connector sync, company import) passes its prior snapshot and a writer class into canonical projection. A write deletes only timeline rows whose bullet it can see in the prior or new body; deletes and detail refreshes act only on the row id, tuple and detail pinned at preparation. Takes follow the same rule, and a new takes row that reuses the number of a database-only take refuses with the new `take_row_collision` write error instead of overwriting it.
+- **Database-only history is written back.** Writers that render from the database (`put_page`, reconcile under an approved body decision, connector refresh) write bullet-less rows into the page's timeline, each preceded by `<!-- gbrain:materialized v1 <hash> -->`. A row is rendered only when rendering and re-extracting returns exactly its tuple and detail; backlink receipts and empty or delimiter-bearing sources stay in the database. Managed sync and import never rewrite your file to add bullets, and company imports stay immutable. Deleting a marked bullet with the current revision deletes its entry. Both timeline extractors skip marker lines, search text drops them, and remote `get_page` keeps them so edits round-trip.
+- **Derived pages are private unless their origin is public (#5525).** Remote reads treat a missing `visibility` as private on atoms and synthesized concepts. Atom extraction stamps visibility from the origin page (private for transcripts and private pages), concept synthesis stamps the strictest visibility among its inputs, and making an origin page private later hides its atoms and concepts at read time.
+- **New `gbrain repair timeline|visibility|safe-chunks [--apply] [--source] [--limit] [--json]`**, plus `gbrain repair` to preview every kind. Dry run by default, resumable, writes through revision-bound `put_page` and re-decides each item just before writing. It stops before 90% of a journal capacity cap and prints the `gbrain config set` value that lets it finish. The visibility repair never loosens a page. Thin clients refuse with "run on the brain host".
+- New doctor checks `timeline_history` (bounded scan, exact or lower bound) and `derived_visibility` (exact).
+
+#### Managed-mode wedges
+
+- **Write guard (#5521, #5635).** A file without an explicit `type:` keeps the stored type, and titles compare trimmed. A real drift refuses with `detail: file_database_drift` and a filled `gbrain sources reconcile` command.
+- **Git-subfolder sources (#5610, #5398).** New pages record `source_path` in the form of the source's slug-root mode, and the first such write pins an inferred mode. Sync accepts the older Git-root form when the rest of the path names the page, repairs it on the next import, and refuses a path that could name two files with `ambiguous_source_path`. Every reader of the stored path decodes it by mode.
+- **Device renumbering after a macOS reboot (#5604).** When only the device id changed and the owner token, brain, worktree, root, inode and a non-zero birth time match, the write path re-stamps ownership under the checkout lock. Anything else refuses with `physical_root_device_changed` and filled self-transfer commands. Verified with a simulated device change, not a real Mac.
+- **Sync cursor options (#5632).** The CLI, delegated sync, `sync` jobs and the dream cycle pass only the options they set; a flagless resume adopts the saved cursor's options, and a conflicting flag refuses with `cursor_processing_options_conflict` and the resume command.
+- **`capture --file` (#5622, #5603).** A file inside the source is recorded by its source-relative location only when its bytes match and sync would give it the capture slug; anything else records `cli-file`, and no home-directory path is stored. Legacy relative or host-only `file://` values read as absent. An unresolvable absolute file URI refuses with the new `invalid_source_uri` error. Error code change contributed by @quqi1599 (#5554); relative and special-character file cases contributed by @javieraldape (#5670).
+- **db_only pages no longer block migrations (#5538).** Pages under a declared `storage.db_only` directory publish database-only when their file is absent, pass the v0.13.1 grandfather step and skip the Git backup. Contributed by @andreineacsu (#5544).
+- **Failing Git targets park (#5612).** A Git or withdrawal target that fails five times in a row is set aside; contention, dependency waits, shutdown and transient database errors never count. `gbrain sources writer retry-effects <source> --request-id <id> [--dry-run]` previews parked targets and grants one more attempt each. New doctor check `parked_effects`.
+- **Managed `extract --stale` works (#5609).** Links, the page's canonical timeline rows (insert-only) and the freshness stamp publish in one revision-bound coordinated transaction per page; pages edited mid-run stay stale. The `extract.stale` recommendation is withheld when a source's schema pack cannot load.
+
+#### Capacity and migrations
+
+- **Write capacity lasts much longer (#5470, mitigation).** `persistence.limits.*` and the new `persistence.receipt_retention_days` (default 30) are registered config keys, and malformed values are refused at set time. Defaults rise to 250,000 lifetime IDs and 1.5 GiB receipt bytes per principal and 8 GiB per brain. Compaction skips receipts with unfinished effects before its limit. The `persistence_capacity` doctor check warns at 80%, and `queue_capacity` refusals name the key and a value sized for another year. A very write-heavy connector still needs explicit limits.
+- Migration 170 adds a partial index for parked effects. Migration 171 adds nullable `content_chunks.embedding_input_hash`. Migration 172 adds a partial index of pages below the safe-chunk fence (concurrent on Postgres). Migration 173 adds a partial index on dead subagent jobs' finish time.
+
+#### Paid loops and connectors
+
+- **Legitimate zero-write answers complete (#5590, #5193, #5540).** An explicit oneshot skip completes the synthesis job and is banked in the ledger, so the cooldown applies. Contributed by @mariopenterman (#5592). The patterns phase opts in to completing a clean finish that ran at least one tool and wrote nothing. Contributed by @Masashi-Ono0611 (#5542). Every write failing, a dirty stop, a prose-only finish and a run whose only tools failed still dead-letter.
+- **Dream stops feeding on itself (#5413, #5471).** The session-end hook skips gbrain's own `claude-cli` sessions (contributed by @furuchanchan, #5468); synthesis discovery and the sweep skip identified self-captures; discovery skips the reflections, originals, patterns and summary directories by resolved path. `--unsafe-bypass-dream-guard` turns the path rule off.
+- **Paid-loop breaker.** A dream synthesize or patterns key whose submissions died `dream.breaker.max_dead_submissions` times (default 3, 0 disables) in 24 hours is refused before submission. `gbrain dream reset-key <key>` and `--list` manage it, and the `dream_paid_loop` doctor check reports looping keys. Only dead jobs count, so legitimate zero-write completions never trip it. A growing transcript gets a new key each cycle and is not caught. Released idempotency keys are now recorded correctly, and the synthesize daily cap counts released dead rows.
+- **claude.ai write access (#5277).** The `/mcp` challenge suggests `read write`; grants stay capped to the registered scope. Contributed by @howardpark (#5283).
+- **ChatGPT reconnect loop (#5222).** Authorize, code exchange, refresh and bearer verification share one resource derived from `--public-url`. The server origin aliases to `/mcp`; any other resource gets `invalid_target` naming the accepted URL. Legacy grants keep working.
+- **Funnel (#5599).** `gbrain mcp expose --funnel` accepts the capability forms current Tailscale reports.
+
+#### Search correctness
+
+- **Rebuilds keep unchanged vectors (#5553).** Each vector records a hash of exactly what it was built from, written with the vector. Preserving rebuilds (queued rebuilds, the oversize heal, connector and code rebuilds) keep a vector only when the stored hash matches. On a contextual page a legacy vector without a hash is re-embedded once; non-contextual pages keep them as before. In synopsis mode a body edit clears synopsis chunks and keeps title-tier chunks.
+- **Withheld pages come back (#5050, #5247).** Re-importing unchanged content below the safe-chunk fence re-seals it without a page write; coordinated imports queue a projection job. `gbrain import` and `gbrain sync --full` report re-sealed pages, chunks still needing embeddings and the estimated cost. `gbrain repair safe-chunks` costs no request IDs or receipt bytes. Doctor and remote `safe_index_pending` count every page kind and fire on partial results. On managed brains, post-upgrade prints the safe-chunk count instead of attempting a markdown reindex.
+- **`recall --grep` filters before the limit (#5607).** Adapted from #5619 by @furuchanchan.
+
+#### Runtime
+
+- **Idle serve releases connections (#5370).** An idle tick runs one probe that mirrors every worker's selection and backs off from 250 ms to a 5 s cap; a same-process write wakes it at once. On Postgres pools of three or more, idle probes share one reserved connection and the rest close through the existing idle timeout.
+- **PGLite checkpoint guard (#5449, #5284).** Before an outermost write transaction, gbrain runs a `CHECKPOINT` once WAL since the last checkpoint passes half the automatic distance. A failed probe warns once and proceeds; a failed checkpoint refuses before BEGIN with a hint to run `gbrain pglite-repair --dry-run`. Verified on a 0.8 GB harness store, not a real 3 GB store.
+- **Hot memory is sent once per session (#5591).** Facts already injected earlier in the session are left out of later prompts. Contributed by @mariopenterman (#5593).
+
+### For contributors
+
+- `prepareCanonicalProjections` is async and takes `(engine, page, slug, sourceId, prior, writer)`; `ProjectionWriter` is `editing | preserving | file | immutable`. `compileCanonicalProjections` is the validation-only entry, and `canonicalTimelineRows` exposes the coordinator's timeline projection to `extract --stale`. New modules: `src/core/timeline-marker.ts`, `src/core/repair/*`, `src/core/embedding-input-hash.ts`, `src/core/persistence/source-storage.ts`, `src/core/cycle/dream-breaker.ts`, `scripts/pglite-checkpoint-harness/`.
+- New write errors: `take_row_collision`, `invalid_source_uri`.
+- New dual-engine suites: `canonical-projection-history`, `derived-page-visibility`, `timeline-materialize`, `derived-visibility-repair`, `repair-command`, `safe-chunk-reseal`, `projection-embedding-input-hash`, `recall-grep-local-cli`, `persistence-capacity`, `persistence-effect-parking`, `extract-stale-managed`, `persistence-git-subdir-origin`, `persistence-guard-digest`, `persistence-physical-root-device`, `persistence-sync-cursor-options`, `capture-file-source-path`, `oauth-resource-canonical`, `persistence-consumer-idle`, `pglite-checkpoint-guard`, `dream-breaker`, `cycle-synthesize-breaker`, with Postgres arms in `test/e2e/`.
+- Intentional contract changes in existing tests: `serve-http-oauth` read-only discovery requests `read write` (the token stays `read`); `cycle-write-path-mini-eval` asserts that a declining child completes; `write-through` and `put-page-persistence` pin Git-root mode; `persistence-cli-delegation` expects `local_file`.
 
 ## [0.59.20.0] - 2026-09-29
 

@@ -26,8 +26,10 @@ import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { atomicWriteFileSync } from './atomic-write.ts';
 import type { BrainEngine } from './engine.ts';
-import { serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
+import { isRelativeFileUri, serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
 import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
+import { readSlugRootMode, resolveSlugRootMode, type SlugRootMode } from './sync-anchor.ts';
+import { resolveSlugForPath } from './sync.ts';
 import {
   isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
   type PushLogOutcome,
@@ -145,8 +147,8 @@ export function sanitizeRecordedSourcePath(raw: string | null | undefined): stri
  * to the slug path.
  */
 export function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot: string): string | null {
-  if (!sourceUri || !sourceUri.startsWith('file://')) return null;
-  let abs = sourceUri.slice('file://'.length);
+  if (!sourceUri || !sourceUri.startsWith('file://') || isRelativeFileUri(sourceUri)) return null;
+  let abs = sourceUri.slice('file://'.length).replace(/^localhost(?=\/)/i, '');
   if (!abs) return null;
   // Percent-decode only when it looks encoded — the CLI stores raw paths, so a
   // literal '%' in a filename must not be mangled.
@@ -227,18 +229,19 @@ export type PageWriteTarget =
 
 /**
  * Scanner-convention `pages.source_path` for a file under `scanRoot` (the
- * root a sync of this source walks). Mirrors sync's #774 rule — a scan root
- * INSIDE a git repo records GIT-ROOT-relative paths (scoped sync), a git-root
- * or non-git root records root-relative — and must stay the exact inverse of
- * `resolveSourceLocalFilePath` (markdown.ts): delete-reconcile keys on this
- * form, so a local_path-relative bind for a subdirectory-scoped source would
- * read as stale and sweep the page while its file is still on disk.
+ * root a sync of this source walks). Mirrors sync's origin rule — a scan root
+ * INSIDE a git repo records GIT-ROOT-relative paths under `git-root` slug mode
+ * (#774) and scan-root-relative paths under `source-root` mode (#4342, #5610);
+ * a git-root or non-git root records root-relative — and must stay the exact
+ * inverse of `resolveSourceLocalFilePath` (markdown.ts): delete-reconcile keys
+ * on this form, so a bind in the other form reads as stale or as a different
+ * origin while its file is still on disk.
  */
-export function scannerSourcePath(scanRoot: string, filePath: string): string {
+export function scannerSourcePath(scanRoot: string, filePath: string, slugRootMode: SlugRootMode = 'git-root'): string {
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- scanRoot is the operator-written sources.local_path / sync.repo_path config root; canonicalizing it here mints no fs read/write path
   const absRoot = resolve(scanRoot);
   let cursor = absRoot;
-  while (true) {
+  while (slugRootMode === 'git-root') {
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- cursor only walks UP (dirname) from the operator-config root joined with the literal '.git' segment; existsSync boolean probe, no content ever read or served
     if (existsSync(join(cursor, '.git'))) {
       // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- filePath was proven inside writeRoot by isWriteTargetContained before the sole call site (resolvePageWriteTarget); output is an in-memory source_path string, not an fs operand
@@ -250,6 +253,15 @@ export function scannerSourcePath(scanRoot: string, filePath: string): string {
   }
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: containment-checked filePath relative to the operator-config root, string minting only
   return relative(absRoot, resolve(filePath)).replaceAll('\\', '/');
+}
+
+/** The slug-root mode sync records origins in for this scan root: the pin, or the mode the first sync would pin. */
+export async function scannerSlugRootMode(engine: BrainEngine, sourceId: string, scanRoot: string): Promise<SlugRootMode> {
+  const pinned = await readSlugRootMode(engine, sourceId) ?? (sourceId === 'default' ? await readSlugRootMode(engine, undefined) : null);
+  if (pinned) return pinned;
+  const scope = scannerSourcePath(scanRoot, scanRoot);
+  if (!scope) return 'git-root';
+  return resolveSlugRootMode(engine, { sourceId, explicitGitRoot: false, slugPrefix: resolveSlugForPath(`${scope}/x.md`).slice(0, -2), dryRun: true });
 }
 
 /**
@@ -328,7 +340,7 @@ export async function resolvePageWriteTarget(
     }
     filePath = recordedPath
       // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
-      ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath, slug) ?? join(sourceLocalPath, `${slug}.md`)
+      ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath, slug, await scannerSlugRootMode(engine, sourceId, sourceLocalPath)) ?? join(sourceLocalPath, `${slug}.md`)
       : join(sourceLocalPath, recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
     writeRoot = sourceLocalPath;
     scanRoot = sourceLocalPath;
@@ -367,7 +379,7 @@ export async function resolvePageWriteTarget(
     return { ok: false, skipped: 'path_escapes_source_root' };
   }
 
-  return { ok: true, filePath, writeRoot, sourcePathToBind: scannerSourcePath(scanRoot, filePath) };
+  return { ok: true, filePath, writeRoot, sourcePathToBind: scannerSourcePath(scanRoot, filePath, await scannerSlugRootMode(engine, sourceId, scanRoot)) };
 }
 
 /**

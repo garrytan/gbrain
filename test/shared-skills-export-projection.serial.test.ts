@@ -31,7 +31,8 @@ async function fixture(run: (ctx: OperationContext, root: string) => Promise<voi
       await engine.putPage('notes/example', { type: 'note', title: 'Example', compiled_truth: body, timeline: '', frontmatter: { visibility: 'private' } }, { sourceId: 'default' });
       const page = (await engine.getPage('notes/example', { sourceId: 'default' }))!;
       const parsed = parseMarkdown(serializePageToMarkdown(page, []), 'notes/example.md');
-      await engine.transaction(tx => prepareCanonicalProjections(parsed, page.slug, 'default')(tx));
+      const project = await prepareCanonicalProjections(engine, parsed, page.slug, 'default', null, 'editing');
+      await engine.transaction(tx => project(tx));
       await run({ engine, config: { engine: databaseUrl ? 'postgres' : 'pglite', mcp: { publish_skills: false } }, sourceId: 'default', remote: false, dryRun: false,
         logger: { info() {}, warn() {}, error() {} } }, join(home, 'content'));
     } finally { await close(); rmSync(home, { recursive: true, force: true }); }
@@ -102,7 +103,8 @@ test('an incomplete resolution cannot invent a resolver during export validation
     resolvedAt: '2026-01-01', resolvedQuality: 'correct', resolvedEvidence: 'Synthetic evidence without attribution' }]).trim();
   await ctx.engine.putPage('notes/incomplete', { type: 'note', title: 'Incomplete', compiled_truth: incomplete, timeline: '', frontmatter: {} }, { sourceId: 'default' });
   const page = (await ctx.engine.getPage('notes/incomplete', { sourceId: 'default' }))!;
-  await ctx.engine.transaction(tx => prepareCanonicalProjections(parseMarkdown(serializePageToMarkdown(page, []), 'notes/incomplete.md'), page.slug, 'default')(tx));
+  const project = await prepareCanonicalProjections(ctx.engine, parseMarkdown(serializePageToMarkdown(page, []), 'notes/incomplete.md'), page.slug, 'default', null, 'editing');
+  await ctx.engine.transaction(tx => project(tx));
   const before = await ctx.engine.executeRaw('SELECT * FROM takes ORDER BY id');
   const result = await exportDatabaseContent(ctx, { sourceId: 'default', root, confirmQuiesced: true, backup: 'operator_verified' });
   expect(result.status).toBe('conflict');

@@ -1,7 +1,7 @@
 import { dataFrontmatter as matter, FrontmatterLanguageError } from './data-frontmatter.ts';
 import { safeLoad as yamlSafeLoad } from 'js-yaml';
 import type { Page, PageType } from './types.ts';
-import { slugifyPath } from './sync.ts';
+import { resolveSlugForPath, slugifyPath } from './sync.ts';
 
 export type ParseValidationCode =
   | 'MISSING_OPEN'
@@ -914,7 +914,7 @@ function inferTitle(filePath?: string): string {
   // Extract filename without extension, convert dashes/underscores to spaces
   const parts = filePath.split('/');
   const filename = parts[parts.length - 1]?.replace(/\.md$/i, '') || 'Untitled';
-  return filename.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  return filename.replace(/[-_]/g, ' ').trim().replace(/\b\w/g, c => c.toUpperCase()) || 'Untitled';
 }
 
 function inferSlug(filePath?: string): string {
@@ -1018,7 +1018,10 @@ export function resolvePageFilePath(
  * `sources.local_path` points at a subdirectory. A direct join duplicates the
  * scope (`.../public/changelog/public/changelog/...`). Find the same Git root
  * sync uses without spawning a subprocess, then remove that exact scope.
- * Non-Git vaults and Git-root local paths keep the direct path. Historical
+ * Non-Git vaults and Git-root local paths keep the direct path. Under
+ * `slugRootMode: 'source-root'` the stored path is already source-relative, so
+ * the scope is removed only from the legacy Git-root form write-through minted
+ * from the slug (its scope-stripped path names `pageSlug`, #5610). Historical
  * rows may carry a basename-relative `source_path`; when the direct path is
  * absent and the caller provides the page slug, resolve that spelling under
  * the slug's directory before reporting the file as missing.
@@ -1051,6 +1054,7 @@ export function resolveSourceLocalFilePath(
   localPath: string,
   rawSourcePath: string | null | undefined,
   pageSlug?: string | null,
+  slugRootMode?: 'git-root' | 'source-root',
 ): string | null {
   if (!rawSourcePath) return null;
   const value = rawSourcePath.trim();
@@ -1067,7 +1071,9 @@ export function resolveSourceLocalFilePath(
     if (existsSync(join(cursor, '.git'))) {
       const scope = splitLocalPathSegments(relative(cursor, absoluteLocalPath));
       sourceScopeSegments = scope;
-      if (scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index])) {
+      const scoped = scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index]);
+      if (scoped && (slugRootMode !== 'source-root'
+        || !!pageSlug && resolveSlugForPath(sourceSegments.slice(scope.length).join('/')) === pageSlug)) {
         resolvedSegments = sourceSegments.slice(scope.length);
       }
       break;
@@ -1082,7 +1088,7 @@ export function resolveSourceLocalFilePath(
   const slugDirSegments = safeSlugDirSegments(pageSlug);
   if (sourceSegments.length === 1 && slugDirSegments && slugDirSegments.length > 0) {
     const scopedSlugDir =
-      sourceScopeSegments.length > 0 &&
+      slugRootMode !== 'source-root' && sourceScopeSegments.length > 0 &&
       sourceScopeSegments.every((segment, index) => segment === slugDirSegments[index])
         ? slugDirSegments.slice(sourceScopeSegments.length)
         : slugDirSegments;
@@ -1091,4 +1097,13 @@ export function resolveSourceLocalFilePath(
   }
 
   return directPath;
+}
+
+/**
+ * A `file://` URI whose authority is neither empty, `localhost` nor a Windows
+ * drive (`file://C:/...`): the relative path an older file capture stored
+ * as typed (#5622), or a host-only alias. It names no local file, so readers treat it as absent.
+ */
+export function isRelativeFileUri(sourceUri: string | null | undefined): boolean {
+  return typeof sourceUri === 'string' && /^file:\/\/(?!\/|localhost\/|[A-Za-z]:[\\/])/i.test(sourceUri);
 }

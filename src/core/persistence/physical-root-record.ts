@@ -116,9 +116,41 @@ export function assertPhysicalRootStamp(directory: string, reservation: Physical
   if (!value || value.version !== 1 || value.token !== reservation.token || value.brainId !== reservation.brainId || value.worktreeId !== reservation.worktreeId
     || value.root !== reservation.root || value.inode !== info.ino.toString() || value.birth !== info.birthtimeNs.toString()) throw physicalRootError();
   if (value.device !== info.dev.toString()) {
-    if (typeof value.device === 'string' && /^\d+$/.test(value.device)) throw physicalRootError('The filesystem device identifier changed while the other checkout identity fields still match. Inspect writer status and use deliberate self-transfer to re-stamp this same root.');
+    if (typeof value.device === 'string' && /^\d+$/.test(value.device)) {
+      const error = physicalRootError('The filesystem device identifier changed while the other checkout identity fields still match. Inspect writer status and use deliberate self-transfer to re-stamp this same root.');
+      error.detail = 'physical_root_device_changed';
+      throw error;
+    }
     throw physicalRootError();
   }
+}
+/**
+ * #5604: macOS may give the same checkout a new st_dev after a reboot. The
+ * owner token binds the stamp, so a change is device-only when the stamp still
+ * names this reservation, root, inode and a non-zero birth time. Filesystems
+ * that report no birth time (some Linux mounts) keep the refusal.
+ */
+export function physicalRootDeviceChange(stamp: PhysicalRootStamp, reservation: Pick<PhysicalRootReservation, 'token' | 'brainId' | 'worktreeId' | 'root'>,
+  info: { dev: bigint; ino: bigint; birthtimeNs: bigint }): { from: string; to: string } | null {
+  if (stamp.token !== reservation.token || stamp.brainId !== reservation.brainId || stamp.worktreeId !== reservation.worktreeId
+    || stamp.root !== reservation.root || stamp.inode !== info.ino.toString() || stamp.birth !== info.birthtimeNs.toString()
+    || info.birthtimeNs === 0n || stamp.device === info.dev.toString()) return null;
+  return { from: stamp.device, to: info.dev.toString() };
+}
+function replacePrivate(path: string, value: unknown): void {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  let created = false;
+  try {
+    created = createPrivate(temporary, value);
+    if (!created || digest(readPrivate(temporary)) !== digest(value)) throw physicalRootError('The re-stamped ownership record contains unexpected bytes.');
+    renameSync(temporary, path); created = false; flushDirectory(dirname(path));
+  } finally { if (created) try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
+}
+/** Caller holds the outside-root native lock and verified database ownership; only the device fields change. */
+export function restampPhysicalRootDevice(root: string, reservation: PhysicalRootReservation, stamp: PhysicalRootStamp, change: { from: string; to: string }): void {
+  if (reservation.initialDevice === change.from) replacePrivate(physicalRootReservationPath(root), { ...reservation, initialDevice: change.to });
+  replacePrivate(join(root, PHYSICAL_ROOT_MARKER), { ...stamp, device: change.to });
+  assertPhysicalRootStamp(root, readPhysicalRootReservation(root)!);
 }
 /** Explicit verified transfer may adopt a copied stamp of this same logical worktree. */
 export function adoptTransferredRootStamp(directory: string, reservation: PhysicalRootReservation, temporaryToken: string = randomUUID()): void {

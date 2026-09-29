@@ -9,7 +9,7 @@ import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { recordedPathFromFileUri } from '../write-through.ts';
+import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
 import { localHostId } from './identity.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { digest, requireUuid, sha256, stableJson } from './digest.ts';
@@ -39,8 +39,9 @@ export async function reconcilePolicyDigest(engine: BrainEngine, sourceId: strin
 export function staleReconcile(what: string): never {
   throw new OperationError('source_changed', `Reconciliation preview is stale: ${what}.`, 'Generate a fresh preview; submit a corrected intent with a new request ID.');
 }
-function recordedReconcilePath(root: string, page: { slug: string; source_path?: string | null; source_uri?: string | null }): string | null {
-  const path = resolveSourceLocalFilePath(root, page.source_path, page.slug);
+function recordedReconcilePath(root: string, page: { slug: string; source_path?: string | null; source_uri?: string | null },
+  mode: 'git-root' | 'source-root'): string | null {
+  const path = resolveSourceLocalFilePath(root, page.source_path, page.slug, mode);
   if (path) return path;
   const recorded = recordedPathFromFileUri(page.source_uri, root);
   return recorded ? join(root, recorded) : null;
@@ -58,7 +59,8 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
     content_hash,source_path,source_kind,source_uri,ingested_via,ingested_at,knowledge_revision,deleted_at FROM pages WHERE id=$1 AND source_id=$2`, [snapshot.page.id, sourceId]);
   const root = realpathSync(join(binding.local_path, binding.relative_path));
   const recorded = recordedPathFromFileUri(snapshot.page.source_uri, root);
-  const path = recordedReconcilePath(root, snapshot.page);
+  const mode = await scannerSlugRootMode(engine, sourceId, root);
+  const path = recordedReconcilePath(root, snapshot.page, mode);
   if (!path || !isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The page has no unambiguous confined recorded Markdown origin.');
   let size: number;
   try {
@@ -82,7 +84,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
     'Review the recorded source paths before retrying this exact-page reconciliation.');
   const canonicalPath = realpathSync(path);
   for (const candidate of candidates) {
-    const candidatePath = recordedReconcilePath(root, candidate);
+    const candidatePath = recordedReconcilePath(root, candidate, mode);
     if (!candidatePath || !isWriteTargetContained(candidatePath, root)) continue;
     let canonicalCandidate: string;
     try { canonicalCandidate = realpathSync(candidatePath); }

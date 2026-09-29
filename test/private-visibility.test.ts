@@ -63,7 +63,7 @@ describe('buildVisibilityClause (#4352)', () => {
 
   test('excludePrivate: adds the COALESCE predicate', () => {
     const clause = buildVisibilityClause('p', 's', { excludePrivate: true });
-    expect(clause).toContain(`COALESCE(p.frontmatter->>'visibility', 'world') <> 'private'`);
+    expect(clause).toContain(`COALESCE(p.frontmatter->>'visibility', CASE WHEN (p.type = 'atom' OR (p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL)) THEN 'private' ELSE 'world' END) <> 'private'`);
   });
 });
 

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { claimWorktree, prepareWriterTransfer } from '../src/core/persistence/ownership.ts';
@@ -18,6 +18,8 @@ import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 import { parseFactsFence, upsertFactRow } from '../src/core/facts-fence.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { installPageProjection, readProjectionSnapshot } from '../src/core/page-state/projections.ts';
+import { durableGitRepo } from './helpers/git-publication.ts';
+import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 
 let engine: PGLiteEngine;
 const roots: string[] = [];
@@ -29,28 +31,29 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await engine.disconnect(); for (const root of roots) rmSync(root, { recursive: true, force: true }); });
 
-async function fixture(body = 'Before') {
+async function fixture(body = 'Before', slug = 'page') {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-effects-')); roots.push(root);
   const sourceId = `effects-${randomUUID()}`;
   await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
   const binding = await claimWorktree(engine, sourceId, root, hostId);
-  await engine.putPage('page', page(body), { sourceId });
-  const snapshot = (await engine.readPageSnapshot('page', { sourceId }))!;
-  const file = join(root, 'page.md'); writeFileSync(file, serializePageToMarkdown(snapshot.page, snapshot.tags));
+  await engine.putPage(slug, page(body), { sourceId });
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const file = join(root, `${slug}.md`); mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, serializePageToMarkdown(snapshot.page, snapshot.tags));
   const ctx: OperationContext = { engine, config, remote: false, dryRun: false, sourceId, logger: { info() {}, warn() {}, error() {} } };
-  const authority = await submissionAuthority(ctx, 'put_page', sourceId, binding.source_incarnation, 'page');
-  return { root, file, sourceId, binding, snapshot, authority };
+  const authority = await submissionAuthority(ctx, 'put_page', sourceId, binding.source_incarnation, slug);
+  return { root, file, sourceId, binding, snapshot, authority, slug };
 }
 async function admit(f: Awaited<ReturnType<typeof fixture>>) {
   return admitWrite(engine, { principal: f.authority.principal, authority: f.authority, operation: 'put_page', sourceId: f.sourceId,
-    sourceIncarnation: f.binding.source_incarnation, slug: 'page', pageId: f.snapshot.page.id, requestId: randomUUID(),
+    sourceIncarnation: f.binding.source_incarnation, slug: f.slug, pageId: f.snapshot.page.id, requestId: randomUUID(),
     callerIntent: { content: 'After' }, intent: { content: 'After' }, worktreeId: f.binding.worktree_id, topologyGeneration: f.binding.topology_generation });
 }
 async function withdraw(f: Awaited<ReturnType<typeof fixture>>, opts: { subjectless?: boolean } = {}) {
   const row = await admit(f);
   // Withdrawals are entity-scoped; a subjectless fact withdraws source-wide.
   const [fact] = await engine.executeRaw<{ id: number }>(`INSERT INTO facts(source_id,entity_slug,fact,source,visibility)
-    VALUES($1,$2,'Withdraw this claim','test conversation','world') RETURNING id`, [f.sourceId, opts.subjectless ? null : 'page']);
+    VALUES($1,$2,'Withdraw this claim','test conversation','world') RETURNING id`, [f.sourceId, opts.subjectless ? null : f.slug]);
   await engine.transaction(async tx => {
     await recordFactWithdrawal(tx, Number(fact.id), f.sourceId, false, { requestId: row.id });
     await completeWrite(tx, row, 'committed', { status: 'forgotten' });
@@ -145,6 +148,72 @@ test('missing withdrawal files materialize and advance mirror and Git scans with
   const [git] = await engine.executeRaw<{ data: { after_slug: string }; error_code: string | null }>("SELECT data,error_code FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [row.id]);
   expect(git.data.after_slug).toBe('page'); expect(git.error_code).toBeNull(); expect(existsSync(f.file)).toBe(false);
   expect((await getWriteRequestById(engine, row.id))!.state).toBe('committed');
+});
+
+test('withdrawal redacts a present db_only cache file and keeps it out of a durable Git worktree', async () => {
+  const f = await fixture(body(), 'conversations/page');
+  writeFileSync(join(f.root, 'gbrain.yml'), 'storage:\n  db_only:\n    - conversations/\n');
+  writeFileSync(join(f.root, '.gitignore'), 'conversations/\n');
+  durableGitRepo(f.root, ['.gitignore', 'gbrain.yml']);
+  const row = await withdraw(f); await onlyEffects(row.id);
+  await runPersistenceEffects(engine, config, { hostId, limit: 10 });
+  expect(parseFactsFence(readFileSync(f.file, 'utf8')).facts.filter(fact => fact.active)).toHaveLength(0);
+  expect(await engine.executeRaw("SELECT kind,state,error_code FROM persistence_effects WHERE request_id=$1::uuid AND kind<>'embedding' ORDER BY kind", [row.id])).toEqual([
+    { kind: 'git', state: 'committed', error_code: null },
+    { kind: 'withdrawal-mirror', state: 'committed', error_code: null }]);
+  expect(git(f.root, ['log', '--name-only', '--pretty=format:'])).not.toContain('conversations');
+});
+
+test('a withdrawal Git scan parks a failing target after five failures and still commits the rest (#5612)', async () => {
+  const f = await fixture(body(), 'aa/page');
+  await engine.putPage('page', page(body()), { sourceId: f.sourceId });
+  const later = (await engine.readPageSnapshot('page', { sourceId: f.sourceId }))!;
+  writeFileSync(join(f.root, 'page.md'), serializePageToMarkdown(later.page, later.tags));
+  writeFileSync(join(f.root, '.gitignore'), 'aa/\n');
+  durableGitRepo(f.root, ['.gitignore', 'page.md']);
+  const row = await withdraw(f, { subjectless: true }); await onlyEffects(row.id);
+  await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour' WHERE request_id=$1::uuid AND kind<>'withdrawal-mirror'", [row.id]);
+  await runPersistenceEffects(engine, config, { hostId, limit: 3 });
+  const effect = async () => (await engine.executeRaw<{ state: string; error_code: string | null; data: Record<string, unknown> }>(
+    "SELECT state,error_code,data FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [row.id]))[0];
+  for (let attempt = 0; attempt < 7; attempt++) {
+    await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE request_id=$1::uuid AND kind='git'", [row.id]);
+    await runPersistenceEffects(engine, config, { hostId, limit: 1 });
+  }
+  expect(await effect()).toMatchObject({ state: 'failed', error_code: 'targets_parked', data: { after_slug: 'page',
+    parked: [{ slug: 'aa/page', error_code: 'git_target_unsafe' }] } });
+  expect(git(f.root, ['log', '-1', '--name-only', '--pretty=format:'])).toBe('page.md');
+  expect(await publicEffectsForRequest(engine, row.id)).toContainEqual({ kind: 'git', state: 'failed', reason: 'targets_parked' });
+});
+
+test('a parked withdrawal mirror target retries through physical publication without rewinding (#5612)', async () => {
+  const f = await fixture(body());
+  await engine.putPage('z-later', page(body()), { sourceId: f.sourceId });
+  const later = (await engine.readPageSnapshot('z-later', { sourceId: f.sourceId }))!;
+  const laterFile = join(f.root, 'z-later.md'); writeFileSync(laterFile, serializePageToMarkdown(later.page, later.tags));
+  const row = await withdraw(f, { subjectless: true }); await onlyEffects(row.id);
+  const mirror = async () => (await engine.executeRaw<{ id: number; state: string; error_code: string | null; data: Record<string, unknown> }>(
+    "SELECT id,state,error_code,data FROM persistence_effects WHERE request_id=$1::uuid AND kind='withdrawal-mirror'", [row.id]))[0];
+  const attempt = async () => {
+    await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=CASE WHEN kind='withdrawal-mirror' THEN now() ELSE now()+interval '1 hour' END WHERE request_id=$1::uuid", [row.id]);
+    await runPersistenceEffects(engine, config, { hostId, limit: 1 });
+  };
+  await engine.setConfig('persistence.limits.worktree_recovery_bytes', '1');
+  try { for (let i = 0; i < 11; i++) await attempt(); }
+  finally { await engine.executeRaw("DELETE FROM config WHERE key='persistence.limits.worktree_recovery_bytes'"); }
+  expect(await mirror()).toMatchObject({ state: 'failed', error_code: 'targets_parked', data: { parked: [
+    { slug: 'page', error_code: 'request_too_large' }, { slug: 'z-later', error_code: 'request_too_large' }] } });
+  const [effect] = await engine.executeRaw<{ id: number; data: Record<string, unknown> }>('SELECT id,data FROM persistence_effects WHERE id=$1', [(await mirror()).id]);
+  const { parked: _parked, ...data } = effect.data;
+  await engine.transaction(async tx => {
+    await declarePersistenceProtocol(tx);
+    await tx.executeRaw("UPDATE persistence_effects SET state='queued',error_code=NULL,data=$2::text::jsonb WHERE id=$1",
+      [effect.id, JSON.stringify({ ...data, retry_slugs: ['page', 'z-later'], target_failures: 4, retried: 1 })]);
+  });
+  for (let i = 0; i < 3; i++) await attempt();
+  expect(await mirror()).toMatchObject({ state: 'committed', error_code: null, data: { after_slug: 'z-later' } });
+  expect((await mirror()).data.retry_slugs).toBeUndefined();
+  for (const file of [f.file, laterFile]) expect(parseFactsFence(readFileSync(file, 'utf8')).facts.filter(fact => fact.active)).toHaveLength(0);
 });
 
 test('configured recovery capacity refuses file mutation without undoing withdrawal', async () => {

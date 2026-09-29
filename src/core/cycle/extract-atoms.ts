@@ -79,6 +79,7 @@ import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
+import { effectiveVisibility } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { AtomPageStateError, completeAtomReceipts, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
@@ -1083,6 +1084,8 @@ export async function runPhaseExtractAtoms(
     const promptContent = truncateUtf8(item.content, maxInputChars);
     try {
       const origin: AtomOrigin | null = managed ? await readAtomOrigin(engine, managed, item) : null;
+      const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
+        : { kind: 'page', page: await engine.getPage(item.slug, { sourceId }) });
       if (!opts.dryRun && managed && origin && await resumeManagedAtoms(engine, managed, origin)) {
         duplicatesSkipped++;
         continue;
@@ -1240,7 +1243,7 @@ export async function runPhaseExtractAtoms(
               ...originFrontmatter,
               // Provisional until the whole item's atoms persist (see above).
               source_hash: `pending:${hash16}`,
-              ...(origin ? { visibility: origin.visibility, managed_extraction: true } : {}),
+              visibility, ...(origin ? { managed_extraction: true } : {}),
               ...quoteFields,
               ...(atom.lesson && { lesson: atom.lesson }),
               ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),

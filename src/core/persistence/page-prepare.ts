@@ -10,7 +10,7 @@ import { parseMarkdown, serializePageToMarkdown, resolveSourceLocalFilePath } fr
 import { OperationError } from '../ops/contract.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { recordedPathFromFileUri, scannerSourcePath } from '../write-through.ts';
+import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite } from './authority.ts';
@@ -21,18 +21,22 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
-import { prepareCanonicalProjections } from './canonical-projections.ts';
+import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { preparePageAdvisories, remoteLinkHint, pageNoopAdvisories } from './page-advisories.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { nativeFileTarget } from './native-file-target.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
+import { readSlugRootMode } from '../sync-anchor.ts';
 
 const PURGE_RESIDUALS = 'Brain-repo git history, synced working-tree copies, exports, compiled context files and slug-keyed derived rows (takes, open loops, file records) may still hold the content — rotate the credential and rewrite or regenerate those copies.';
 
+/** The parser trims titles, so a stored title differing only in surrounding whitespace is not drift (#5635). */
 function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) {
-  return { type: page.type, title: page.title, compiled_truth: page.compiled_truth, timeline: page.timeline ?? '',
+  return { type: page.type, title: page.title.trim(), compiled_truth: page.compiled_truth, timeline: page.timeline ?? '',
     frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() };
 }
 interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
@@ -62,17 +66,23 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   return stamp;
 }
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
-  content: string | null, hostId?: string, options: { allowMissing?: boolean } = {}): Promise<PreparedMutation['file']> {
+  content: string | null, hostId?: string, options: { allowMissing?: boolean; capture?: { path: string; hash: string } } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
   const binding = await getWorktreeBinding(engine, row.source_id, hostId);
   if (!binding?.local_path) throw new OperationError('owner_unavailable', 'The canonical worktree is unavailable on this host.');
   const root = join(binding.local_path, binding.relative_path);
-  const capturedPath = recordedPathFromFileUri(snapshot?.page.source_uri, root);
-  const path = nativeFileTarget(root, resolveSourceLocalFilePath(root, snapshot?.page.source_path, row.slug)
+  // #5622: a new page captured from a file inside the source is published to that file.
+  const capturedPath = !snapshot && options.capture ? options.capture.path : recordedPathFromFileUri(snapshot?.page.source_uri, root);
+  const mode = snapshot?.page.source_path ? await scannerSlugRootMode(engine, row.source_id, root) : undefined;
+  const path = nativeFileTarget(root, resolveSourceLocalFilePath(root, snapshot?.page.source_path, row.slug, mode)
     ?? (capturedPath ? join(root, capturedPath) : join(root, `${row.slug}.md`)));
   if (!isWriteTargetContained(path, root)) throw new OperationError('source_changed', 'The canonical file target is outside its registered source.');
   const before = existsSync(path) ? readFileSync(path) : null;
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
+    // A declared db_only page has no canonical file by design and publishes to
+    // the database only. gbrain.yml is consulted only here, where the write
+    // would otherwise refuse, so an invalid config can only change the refusal.
+    if (isSourceDbOnlySlug(root, row.slug, 'refuse')) return undefined;
     throw new OperationError('source_changed', 'The canonical file was removed outside coordinated publication.',
       'Import the local deletion or recover the canonical file before editing this page.');
   }
@@ -81,17 +91,32 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   if (before && snapshot) {
     const parsed = parseMarkdown(before.toString('utf8'), row.slug);
     const expected = canonical(snapshot.page, snapshot.tags);
-    const actual = canonical({ ...parsed, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
+    // #1035 parity (#5521): a file without an explicit `type:` keeps the stored type on import.
+    const type = parsed.typeExplicit ? parsed.type : snapshot.page.type;
+    const actual = canonical({ ...parsed, type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
       parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals) }, parsed.tags);
     // Withdrawal overlays intentionally precede physical mirroring. The ledger
     // is applied by the import preparation and cannot be undone by this check.
     if (digest(actual) !== digest(expected)) {
-      throw new OperationError('source_changed', 'The canonical file contains an uncoordinated local edit.', 'Import or recover the local edit before replacing this page.');
+      const error = new OperationError('source_changed', 'The canonical file contains an uncoordinated local edit.',
+        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`);
+      error.detail = 'file_database_drift';
+      throw error;
     }
-  } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)) {
+  } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)
+    && !(options.capture && sha256(before) === options.capture.hash)) {
     throw new OperationError('source_changed', 'An unindexed file already occupies the canonical page path.', 'Import the file before replacing it.');
   }
   return { path, root, content, expectedBeforeHash: before ? sha256(before) : null };
+}
+
+/**
+ * Receipt reason for a page write that publishes no file. Invariant: for a
+ * bound row, prepareFileTarget returns no target only for a live declared
+ * db_only page whose file is absent; every other case returns a target or throws.
+ */
+export function databaseOnlyPublication(row: Pick<WriteRequest, 'worktree_id'>, file: PreparedMutation['file']): Pick<PreparedMutation, 'databaseOnlyReason'> {
+  return row.worktree_id && !file ? { databaseOnlyReason: 'db_only' } : {};
 }
 
 /** Providers and parsing run before the OS lock and before any publication transaction. */
@@ -123,7 +148,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     // Tombstones still own their recorded artifact. Purge always attempts its
     // removal before the guarded hard-delete and receipt commit; failure rolls
     // back to the prior row, and replay survives the eventual absence of that row.
-    return { observedRevision, noop, file: await prepareFileTarget(engine, row, snapshot, null, undefined, { allowMissing: purge }), apply: async tx => {
+    const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { allowMissing: purge });
+    return { observedRevision, noop, file, ...databaseOnlyPublication(row, file), apply: async tx => {
       if (purge) {
         await tx.deletePage(row.slug, source);
         return { status: 'purged', slug: row.slug, source_id: row.source_id, residuals: PURGE_RESIDUALS };
@@ -163,13 +189,24 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     if (compiled_truth!==parsed.compiled_truth || timeline!==(parsed.timeline??'')) content=serializePageToMarkdown({
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
   }
+  const projected = !(row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
+  const writer = row.operation === 'put_page' && p.kind !== 'managed_maintenance_page'
+    && (preparedIntent !== undefined || typeof p.expected_revision === 'string') ? 'editing' : 'preserving';
+  // #5567: database-only timeline rows are written back into the page before
+  // the no-op check, digest, rendering and chunking see the body.
+  if (projected && snapshot && typeof content === 'string') {
+    const parsed = parseMarkdown(content,row.slug);
+    const { timeline, materialized } = await materializeTimeline(engine,parsed,row.slug,snapshot,writer);
+    if (materialized) content = serializePageToMarkdown({...snapshot.page,...parsed,timeline,type:parsed.typeExplicit ? parsed.type : snapshot.page.type},parsed.tags);
+  }
   // Detect an exact canonical no-op before ingestion can invoke any provider.
   // Revision/identity checks above still apply to stale identical replacements.
   if (snapshot && (snapshot.page.deleted_at != null) === targetDeleted && typeof content === 'string') {
     const incoming = parseMarkdown(content,row.slug);
     const tags = versionTags ?? [...new Set([...snapshot.tags,...incoming.tags])].sort();
     if (digest(canonical(snapshot.page,snapshot.tags)) === digest(canonical(incoming,tags))) {
-      return {observedRevision,noop:true,file:await prepareFileTarget(engine,row,snapshot,targetDeleted ? null : serializePageToMarkdown(snapshot.page,snapshot.tags)),
+      const file=await prepareFileTarget(engine,row,snapshot,targetDeleted ? null : serializePageToMarkdown(snapshot.page,snapshot.tags));
+      return {observedRevision,noop:true,file,...databaseOnlyPublication(row,file),
         apply:async()=>({...pageNoopAdvisories(row),status:'skipped',slug:row.slug,source_id:row.source_id,noop:true,chunks:0,chunk_skip_reason:'write_skipped',
           ...(row.operation==='capture'?{channel:'capture',content_hash:p.capture_hash}:{})})};
     }
@@ -211,21 +248,31 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const rendered = serializePageToMarkdown(renderedPage, tags);
   const logicalNoop = snapshot !== null && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(ready.parsedPage, tags));
   const noop = logicalNoop && (snapshot?.page.deleted_at != null) === targetDeleted;
-  const project = row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity') ? undefined
-    : prepareCanonicalProjections(ready.parsedPage,row.slug,row.source_id);
+  const project = projected ? await prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer) : undefined;
   const ordinaryPage = ['put_page','capture','restore_page','revert_version'].includes(row.operation);
   const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage);
   const links = !noop && !targetDeleted && ordinaryPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
     ? await prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id) : undefined;
-  const file = await prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered);
-  const sourcePath = file ? scannerSourcePath(file.root, file.path) : undefined;
-  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, validate: ready.validate, apply: async tx => {
+  const capture = row.operation === 'capture' && typeof p.capture_path === 'string' && typeof p.capture_file_hash === 'string'
+    ? { path: p.capture_path, hash: p.capture_file_hash } : undefined;
+  const file = await prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture });
+  const mintMode = file && !snapshot?.page.source_path ? await scannerSlugRootMode(engine, row.source_id, file.root) : undefined;
+  const sourcePath = file && mintMode ? scannerSourcePath(file.root, file.path, mintMode) : undefined;
+  // An inferred mode is pinned with the first origin it mints, so later pages cannot flip the inference (#5610).
+  const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
+  return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnlyPublication(row, file), validate: ready.validate, apply: async tx => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     if (!noop) {
       await ready.apply(tx);
       // Mandatory metadata shares publication rollback; exact no-ops never heal it.
       if (sourcePath && !snapshot?.page.source_path) await tx.executeRaw(`UPDATE pages SET source_path = $1
         WHERE source_id=$2 AND slug=$3 AND source_path IS NULL`, [sourcePath, row.source_id, row.slug]);
+      if (pinMode) {
+        const [pinned] = await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
+          THEN jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($2::text)) ELSE config END WHERE id=$1 RETURNING config->>'slug_root_mode' AS mode`,
+        [row.source_id, pinMode]);
+        if (pinned?.mode !== pinMode) throw new OperationError('revision_conflict', 'The source slug-root mode changed during preparation.');
+      }
       if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
         WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at]);
       if (row.operation === 'restore_page') await tx.restorePage(row.slug, source);

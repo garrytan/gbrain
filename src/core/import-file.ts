@@ -13,7 +13,8 @@ import { prepareMarkdownChunks } from './markdown-chunks.ts';
 import { prepareCodeChunks, installCodeChunkEdges } from './code-chunks.ts';
 import { detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
-import { installPageEmbeddings, installPageProjection, preparePageProjection, readProjectionSnapshot, sealPageTextProjection, type ProjectionSnapshot } from './page-state/projections.ts';
+import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
+  sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
@@ -46,7 +47,6 @@ import {
   buildContextualPrefix,
   modeRequiresSynopsis,
   modeRequiresWrapper,
-  sanitizeTitle,
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
@@ -139,6 +139,8 @@ export interface ImportResult {
   flagged?: boolean;
   /** Which flag tier fired, when `flagged`. */
   flag_reason?: 'markup_heavy' | 'oversized';
+  /** #5050: unchanged content below the safe-chunk fence was re-sealed; chunks left to embed. */
+  resealed?: { pendingChunks: number; pendingChars: number };
   /**
    * Machine-readable skip class for status='skipped' rows that must NOT be
    * treated as failures. 'malformed_path' = the FILENAME contains bracket or
@@ -686,13 +688,18 @@ export async function importFromContent(
   // Rebuild stale projections without granting --force-rechunk's external-ID dedup override.
   const needsProjectionRebuild = !opts.prepare && existing && existing.text_projection_revision !== existing.knowledge_revision;
   if (existing?.content_hash === hash && !existing.deleted_at && !opts.forceRechunk && !needsProjectionRebuild && (!opts.prepare || sameCanonicalImport(existingSnapshot, parsedPage))) {
+    // #5050: unchanged content chunked before the safe-chunk fence is re-sealed
+    // projection-only; the canonical write stays a no-op.
+    const reseal = await projectionBelowSafeFence(engine, existing.id);
     if (opts.prepare) {
       const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
       return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
-        noop: true, result, validate: async () => {}, apply: async () => {} });
+        noop: true, result, validate: async () => {},
+        apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
     }
     await persistUnchanged();
-    return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
+    const resealed = reseal ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
+    return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}) };
   }
 
   // #3694 one-time reconcile: a row written by the PRE-fix putPage formula
@@ -710,7 +717,8 @@ export async function importFromContent(
     });
     if (existing.content_hash === legacyHash) {
       await persistUnchanged(true);
-      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
+      const resealed = await projectionBelowSafeFence(engine, existing.id) ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
+      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}) };
     }
   }
 
@@ -825,10 +833,9 @@ export async function importFromContent(
 
   const embedChunks = async () => {
     if (opts.noEmbed || chunks.length === 0) return;
-    const safeTitle = sanitizeTitle(parsed.title);
     const prefix =
       modeRequiresWrapper(effectiveCRMode) && !modeRequiresSynopsis(effectiveCRMode)
-        ? buildContextualPrefix(safeTitle, null)
+        ? buildContextualPrefix(parsed.title, null)
         : null;
     const wrappedTexts = prefix
       ? chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source))
@@ -970,7 +977,9 @@ export async function importFromContent(
     // included a private sibling fragment. Replace every derived row atomically.
     await tx.deleteChunks(slug, txOpts);
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks, txOpts);
+      const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
+        { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
+      await tx.upsertChunks(slug, chunks, embeddingColumn ? { ...txOpts, embeddingColumn } : txOpts);
       // v0.41.31: stamp embedding provenance when this import actually
       // embedded (not --no-embed), so a later model/dims swap is detectable
       // as stale via embed --stale. The deferred/backfill + per-slug embed
@@ -1425,12 +1434,17 @@ export async function importCodeFile(
   const parsedPage: ParsedPage = { type: 'code', title, compiled_truth: storageContent, timeline: '',
     frontmatter: { ...existing?.frontmatter, language: lang, file: relativePath }, tags: ['code', lang] };
   if (!opts.force && existing?.content_hash === hash && !existing.deleted_at && existing.text_projection_revision === existing.knowledge_revision) {
+    // #5247: an unchanged code page chunked before the safe-chunk fence is
+    // re-sealed projection-only, as markdown is.
+    const reseal = await projectionBelowSafeFence(engine, existing.id);
     if (opts.prepare) {
       const result: ImportResult = { slug, status: 'skipped', chunks: 0 };
-      return opts.prepare({ slug, parsedPage, observedRevision: existing.knowledge_revision ?? null, noop: true, result, validate: async () => {}, apply: async () => {} });
+      return opts.prepare({ slug, parsedPage, observedRevision: existing.knowledge_revision ?? null, noop: true, result, validate: async () => {},
+        apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
     }
     await engine.transaction(tx => assertImportBase(tx, slug, sourceId ?? 'default', existing));
-    return { slug, status: 'skipped', chunks: 0 };
+    const resealed = reseal ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
+    return { slug, status: 'skipped', chunks: 0, ...(resealed ? { resealed } : {}) };
   }
   if (existing?.content_hash === hash && !existing.deleted_at && opts.noEmbed) {
     const snapshot = await readProjectionSnapshot(engine, slug, txOpts.sourceId, { allowUnsealed: true });
@@ -1526,7 +1540,9 @@ export async function importCodeFile(
 
     await tx.deleteChunks(slug, txOpts);
     if (chunks.length > 0) {
-      await tx.upsertChunks(slug, chunks, txOpts);
+      const embeddingColumn = await stampEmbeddingInputs(tx, chunks, new Set(needsEmbedIndexes),
+        { title, tier: 'none', corpusGeneration: null });
+      await tx.upsertChunks(slug, chunks, embeddingColumn ? { ...txOpts, embeddingColumn } : txOpts);
       // v0.41.31: stamp embedding provenance ONLY when every chunk was
       // freshly embedded with the current model this call (no reuse-by-hash
       // carrying old-model vectors). Mixed pages stay unstamped rather than

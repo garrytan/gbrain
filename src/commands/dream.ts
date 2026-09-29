@@ -375,6 +375,7 @@ async function resolveBrainDir(
 function printHelp() {
   console.log(`Usage: gbrain dream [options]
        gbrain dream retriage [flags]   (see: gbrain dream retriage --help)
+       gbrain dream reset-key <key> | --list   (see: gbrain dream reset-key --help)
 
 Run one brain maintenance cycle. Eight phases:
   lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
@@ -666,6 +667,11 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   if (args[0] === 'retriage') {
     const { runDreamRetriage } = await import('./dream-retriage.ts');
     await runDreamRetriage(engine, args.slice(1));
+    return;
+  }
+  if (args[0] === 'reset-key') {
+    const { runDreamResetKey } = await import('./dream-reset-key.ts');
+    await runDreamResetKey(engine, args.slice(1));
     return;
   }
   // Fail-loud guard (structured-review r3 P1): the CLI flag registry unions

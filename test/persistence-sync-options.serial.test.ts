@@ -588,9 +588,9 @@ async function syncState(engine: BrainEngine, sourceId: string) {
 
 type SyncBarrier = 'discovery' | 'discovery-commit' | 'foreground' | 'freeze' | 'freeze-commit' | 'request-lookup' | 'admission-commit';
 function matchesSyncBarrier(boundary: SyncBarrier, sql: string, params: unknown[] | undefined, transactional: boolean): boolean {
-  if (boundary === 'discovery') return sql.startsWith('SELECT source_path FROM pages WHERE source_id=');
+  if (boundary === 'discovery') return sql.startsWith('SELECT slug,source_path FROM pages WHERE source_id=');
   if (boundary === 'foreground') return sql.includes("NOT(COALESCE(intent->>'kind','') LIKE 'managed_sync_%') LIMIT 1");
-  if (boundary === 'freeze') return sql.startsWith('SELECT id,source_path FROM pages WHERE source_id=') && !transactional;
+  if (boundary === 'freeze') return sql.startsWith('SELECT id,slug,source_path FROM pages WHERE source_id=') && !transactional;
   if (boundary === 'request-lookup') return sql.startsWith('SELECT') && sql.includes('FROM persistence_requests') && sql.includes('request_id=') && !transactional;
   if (boundary === 'admission-commit') return sql.includes('UPDATE persistence_counters SET outstanding_count=outstanding_count+1');
   return transactional && sql === 'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2' && params?.[0] === 'managed-sync';
@@ -696,7 +696,7 @@ for (const boundary of ['retry-discovery', 'retry-commit', 'missing-manifest', '
   let observed = false;
   engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
     const rows = await execute.call(this, sql, params);
-    if (!observed && (boundary === 'retry-discovery' ? sql.startsWith('SELECT source_path FROM pages WHERE source_id=')
+    if (!observed && (boundary === 'retry-discovery' ? sql.startsWith('SELECT slug,source_path FROM pages WHERE source_id=')
       : boundary === 'completed-cleanup' ? sql.startsWith('DELETE FROM op_checkpoints WHERE op=$1')
       : this !== engine && sql === 'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2' && params?.[0] === 'managed-sync')) {
       observed = true; abort.abort();

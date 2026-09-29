@@ -522,6 +522,13 @@ over provider work. Losing the claim cancels that invocation; the final
 installation still verifies its token. Caller cancellation, per-provider
 timeouts and budget admission remain effective without a whole-page deadline.
 
+The same command handles parked Git and withdrawal work. A target that fails five
+consecutive times is parked: its scan moves on, the effect never reports
+complete, and `gbrain doctor` (`parked_effects`) names the page with the exact
+command. Fix the cause, preview with `--dry-run`, then run it without
+`--dry-run` to authorize one more attempt per parked target. A target that fails
+again parks again; each invocation authorizes one attempt.
+
 Direct `--brain <mount>` retry uses only the selected database's validated active
 column and recorded model provenance for inspection and explicit queue approval.
 Unknown or inconsistent provenance refuses the action; the host brain's model

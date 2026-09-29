@@ -152,7 +152,7 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   if (writeThrough && binding) {
     if (binding.state !== 'active' || !binding.owner_host_id) throw new OperationError('owner_unavailable', 'The canonical fact writer is unavailable; extraction has not started.');
     if (binding.owner_host_id === localHostId()) {
-      const lock = await acquireWorktree(binding);
+      const lock = await acquireWorktree(binding, 0, undefined, engine);
       if (!lock) throw new OperationError('writer_lock_unavailable', 'The canonical fact writer is busy; extraction has not started.');
       await lock.release();
     }

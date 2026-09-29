@@ -13,7 +13,7 @@ import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { authorizeStoredRequest } from './authority.ts';
-import { prepareCanonicalProjections } from './canonical-projections.ts';
+import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { digest, sha256 } from './digest.ts';
 import { mergeReconcile, reconcileCanonical, type ReconcileDecision } from './reconcile-merge.ts';
@@ -39,6 +39,10 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   for (const key of ['compiled_truth', 'timeline'] as const) {
     result[key] = preservePrivateFacts(preserveProtectedTakes(result[key], state.snapshot.page[key] ?? ''), state.snapshot.page[key] ?? '');
   }
+  // #5567: reconcile renders from the merged database state; an operator-approved
+  // body decision edits the file side, every other merge preserves history.
+  const writer = decisions.some(d => d.path === '/timeline' || d.path === '/compiled_truth') ? 'editing' : 'preserving';
+  result.timeline = (await materializeTimeline(engine, result, state.pins.slug, state.snapshot, writer)).timeline;
   const content = serializePageToMarkdown({ ...state.snapshot.page, ...result }, result.tags);
   let ready: PreparedContentImport | undefined;
   const imported = await importFromContent(engine, state.pins.slug, content, {
@@ -50,7 +54,7 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   if (!ready || ready.slug !== state.pins.slug) throw new OperationError('invalid_params', imported.error ?? 'Reconciliation cannot change page identity or deduplicate to another page.');
   if (ready.observedRevision !== state.snapshot.revision) staleReconcile('revision changed during policy assessment');
   const resolved = reconcileCanonical(ready.parsedPage, [...new Set([...state.snapshot.tags, ...ready.parsedPage.tags])]);
-  const project = prepareCanonicalProjections(resolved, state.pins.slug, state.pins.source_id);
+  const project = await prepareCanonicalProjections(engine, resolved, state.pins.slug, state.pins.source_id, state.snapshot, writer);
   return { ...merged, result: resolved, ready, project };
 }
 

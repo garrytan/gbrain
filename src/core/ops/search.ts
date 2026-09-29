@@ -72,28 +72,38 @@ function searchOutput(ctx: OperationContext, results: SearchResult[], meta: Reco
 }
 
 /**
- * #5004: does the caller's read scope still hold markdown pages below the
- * safe-chunk index version? Every remote chunk read withholds them (the
- * `requireSafeChunks` predicate in each engine leg) until
- * `gbrain reindex --markdown` seals them, so an empty remote result on such
- * a brain is a policy gap, not a clean miss. Same scope precedence as
- * sourceScopeOpts (federated array > scalar > brain-wide); indexed LIMIT 1
- * probe, portable SQL on both engines, fail-open.
+ * #5004/#5247: does the caller's read scope still hold pages of any kind
+ * below the safe-chunk index version? Every remote chunk read withholds them
+ * (the `requireSafeChunks` predicate in each engine leg) until they are
+ * re-sealed (`gbrain repair safe-chunks`, or an unchanged re-import), so a
+ * remote result on such a brain may be incomplete, not a clean or complete
+ * answer. Same scope precedence as sourceScopeOpts (federated array > scalar
+ * > brain-wide); LIMIT 1 probe, portable SQL on both engines, fail-open.
  *
  * The predicate is the plain range `chunker_version < N` (the column is
  * SMALLINT NOT NULL, so it is the same set as `NOT safeChunksFilter`), NOT
- * the COALESCE form the read legs use: only the range is sargable, and this
- * runs on every empty remote result — on a fully sealed brain the COALESCE
- * form walked every markdown page.
+ * the COALESCE form the read legs use: only the range matches the partial
+ * `pages_safe_chunk_pending_idx`, which holds unsealed pages only, and this
+ * runs on every remote result.
  */
-async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope, excludePrivate: boolean): Promise<boolean> {
+async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope, excludePrivate: boolean,
+  filters: { types?: string[]; excludeSlugPrefixes: string[] }): Promise<boolean> {
   if (scope.sourceIds?.length === 0) return false;
   const params: unknown[] = [];
-  const policy = pageReadFilter('p', { ...scope, excludePrivate }, params, true);
+  // The same page filters the search itself applied: a withheld page it could never return is not a gap.
+  const clauses = [pageReadFilter('p', { ...scope, excludePrivate }, params, true)];
+  if (filters.types) {
+    params.push(filters.types);
+    clauses.push(`p.type = ANY($${params.length}::text[])`);
+  }
+  for (const prefix of filters.excludeSlugPrefixes) {
+    params.push(prefix);
+    clauses.push(`LEFT(p.slug, LENGTH($${params.length}::text)) <> $${params.length}`);
+  }
   try {
     const rows = await ctx.engine.executeRaw(
       `SELECT 1 FROM pages p
-       WHERE p.page_kind = 'markdown' AND ${policy}
+       WHERE ${clauses.join(' AND ')}
          AND p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION} LIMIT 1`,
       params,
     );
@@ -113,8 +123,9 @@ async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope
  *
  * #5004: this is the ONE producer of the channel (keyword-only path included,
  * which never runs hybridSearch), so the safe-chunk fence is disclosed here:
- * an empty result for a remote caller whose scope still holds unsealed pages
- * gets `safe_index_pending` appended. The withholding itself is unchanged.
+ * a result for a remote caller whose scope still holds unsealed pages gets
+ * `safe_index_pending` appended, whether it came back empty or partial. The
+ * withholding itself is unchanged.
  */
 async function buildRetrievalResponseMeta(
   ctx: OperationContext,
@@ -130,13 +141,14 @@ async function buildRetrievalResponseMeta(
       'synonym-phrased matches this keyword-leaning search can miss.'
     : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const safeIndexPending = results.length === 0 && ctx.remote !== false
-    && await hasUnsealedPagesInScope(ctx, scope, excludePrivate);
+  const excludeSlugPrefixes = resolveHardExcludes();
+  const safeIndexPending = ctx.remote !== false
+    && await hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes });
   const readiness = await probeProjectionReadiness(ctx.engine, {
     ...scope,
     excludePrivate,
     types: opts.types,
-    excludeSlugPrefixes: resolveHardExcludes(),
+    excludeSlugPrefixes,
   });
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });

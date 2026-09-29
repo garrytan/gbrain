@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js';
 import type { AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { InvalidClientError, InvalidGrantError, InvalidRequestError, ServerError, TooManyRequestsError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidClientError, InvalidGrantError, InvalidRequestError, InvalidTargetError, ServerError, TooManyRequestsError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { SqlQuery } from './sql-query.ts';
 import { generateToken, hashToken } from './utils.ts';
 import { hasScope, parseScopeString } from './scope.ts';
@@ -23,6 +23,33 @@ function assertActive(row: ClientRow | undefined): asserts row is ClientRow {
 function grantScopes(row: ClientRow, requested?: string[]): string[] {
   const allowed = parseScopeString(row.scope as string | undefined);
   return (requested?.length ? requested : allowed).filter(scope => hasScope(allowed, scope));
+}
+
+/**
+ * #5222 — the one RFC 8707 resource canonicalizer, shared by /authorize, code
+ * exchange, refresh and bearer verification. `canonical` is the server's /mcp
+ * resource, derived from the configured public URL and never from `Host` or
+ * forwarded headers. The issuer origin is an alias of it (some clients send
+ * the origin root even after reading the protected-resource metadata). URL
+ * parsing normalizes scheme and host case and default ports; a trailing
+ * slash is ignored. Anything else is `invalid_target`, naming the accepted
+ * resource so the client fails loudly instead of looping on a token /mcp
+ * will refuse.
+ */
+export function canonicalOAuthResource(requested: URL | string, canonical: URL): URL {
+  const accepted = `use ${canonical.toString()} (or its origin ${canonical.origin})`;
+  let url: URL;
+  try {
+    url = new URL(requested.toString());
+  } catch {
+    throw new InvalidTargetError(`Invalid resource; ${accepted}`);
+  }
+  const path = url.pathname.replace(/\/+$/, '');
+  if (url.origin === canonical.origin && !url.username && !url.password && !url.search && !url.hash
+    && (path === '' || path === canonical.pathname.replace(/\/+$/, ''))) {
+    return new URL(canonical.toString());
+  }
+  throw new InvalidTargetError(`Resource ${url.toString()} is not served here; ${accepted}`);
 }
 
 /** Compare policy, not a mutable reference or only the display name. */
@@ -81,7 +108,14 @@ export class OAuthGrants {
     tokenTtl: number;
     refreshTtl: number;
     now?: () => number;
+    /** #5222: the canonical /mcp resource; unset keeps exact-match resource semantics. */
+    resourceUrl?: URL;
   }) {}
+
+  private canonicalResource(requested: URL | undefined): URL | undefined {
+    if (!requested || !this.options.resourceUrl) return requested;
+    return canonicalOAuthResource(requested, this.options.resourceUrl);
+  }
 
   private now(): number { return (this.options.now ?? Date.now)(); }
   private async locked<T>(clientId: string, fn: (sql: SqlQuery, row: ClientRow) => Promise<T>): Promise<T> {
@@ -113,6 +147,7 @@ export class OAuthGrants {
   }
 
   async begin(clientId: string, params: AuthorizationParams): Promise<string> {
+    const resource = this.canonicalResource(params.resource);
     this.assertCapacity(clientId);
     if (!/^[A-Za-z0-9_-]{43}$/.test(params.codeChallenge)) throw new InvalidRequestError('S256 PKCE challenge required');
     const [row] = await this.options.sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId}`;
@@ -136,10 +171,10 @@ export class OAuthGrants {
       delegatedTools: Array.isArray(row.bound_tools) ? [...row.bound_tools] as string[] : null,
       delegatedSlugPrefixes: Array.isArray(row.delegated_slug_prefixes) ? [...row.delegated_slug_prefixes] as string[] : null,
       delegatedNamespace: typeof row.delegated_namespace === 'string' ? row.delegated_namespace : null,
-      resource: params.resource?.toString() ?? null, expiresAt: this.now() + 10 * 60_000,
+      resource: resource?.toString() ?? null, expiresAt: this.now() + 10 * 60_000,
     };
     this.pending.set(id, {
-      details, params: { ...params, scopes: [...details.scopes], resource: params.resource ? new URL(params.resource) : undefined },
+      details, params: { ...params, scopes: [...details.scopes], resource },
       policy: policyDigest(row), status: 'pending',
     });
     return id;
@@ -194,6 +229,7 @@ export class OAuthGrants {
   }
 
   async exchangeCode(clientId: string, code: string, verifier?: string, redirectUri?: string, resource?: URL, secretHash?: string): Promise<OAuthTokens> {
+    const requested = this.canonicalResource(resource);
     return this.locked(clientId, async (sql, client) => {
       this.assertCredentialPolicy(client, secretHash);
       const [row] = await sql`SELECT * FROM oauth_codes WHERE code_hash = ${hashToken(code)} AND client_id = ${clientId} FOR UPDATE`;
@@ -204,7 +240,7 @@ export class OAuthGrants {
         || createHash('sha256').update(verifier).digest('base64url') !== row.code_challenge) {
         throw new InvalidGrantError('Invalid S256 PKCE verifier');
       }
-      const target = this.resource(row.resource, resource);
+      const target = this.resource(row.resource, requested);
       const scopes = this.currentScopes(client, row.scopes as string[]);
       await sql`DELETE FROM oauth_codes WHERE code_hash = ${hashToken(code)} AND client_id = ${clientId}`;
       return this.issue(sql, client, scopes, target, true);
@@ -212,6 +248,7 @@ export class OAuthGrants {
   }
 
   async refresh(clientId: string, token: string, requested?: string[], resource?: URL, secretHash?: string): Promise<OAuthTokens> {
+    const requestedResource = this.canonicalResource(resource);
     return this.locked(clientId, async (sql, client) => {
       this.assertCredentialPolicy(client, secretHash);
       const [row] = await sql`SELECT * FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId} FOR UPDATE`;
@@ -221,7 +258,7 @@ export class OAuthGrants {
       if (requested?.some(scope => !hasScope(original, scope))) throw new InvalidGrantError('Requested scope exceeds refresh token grant');
       if (requested?.some(scope => !hasScope(parseScopeString(client.scope as string | undefined), scope))) throw new InvalidGrantError('Requested scope exceeds current client grant');
       const scopes = this.currentScopes(client, requested ?? original);
-      const target = this.resource(row.resource, resource);
+      const target = this.resource(row.resource, requestedResource);
       await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND token_type = 'refresh' AND client_id = ${clientId}`;
       return this.issue(sql, client, scopes, target, true);
     });
@@ -238,10 +275,17 @@ export class OAuthGrants {
     if (secretHash && expires > 0 && expires <= Math.floor(this.now() / 1000)) throw new InvalidClientError('Client credentials expired');
   }
 
+  /** `requested` is already canonical; a stored origin-bound grant from before #5222 canonicalizes the same way. */
   private resource(stored: unknown, requested?: URL): URL | undefined {
     if (typeof stored === 'string' && stored) {
-      if (requested && requested.toString() !== stored) throw new InvalidGrantError('Requested resource exceeds the approved grant');
-      return new URL(stored);
+      let approved: URL;
+      try {
+        approved = this.canonicalResource(new URL(stored))!;
+      } catch {
+        throw new InvalidGrantError('The approved grant is bound to a resource this server does not serve; reconnect the client');
+      }
+      if (requested && requested.toString() !== approved.toString()) throw new InvalidGrantError('Requested resource exceeds the approved grant');
+      return approved;
     }
     return requested; // pre-resource grants remain valid on upgrade
   }

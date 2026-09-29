@@ -25,6 +25,7 @@ export const SYNTHETIC_CHECK_NAMES = [
   'missing_embeddings',
   'dead_links',
   'orphan_pages',
+  'links_extraction_lag',
 ] as const;
 
 /**

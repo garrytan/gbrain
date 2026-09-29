@@ -2210,6 +2210,7 @@ export async function registerBuiltinHandlers(
   const quiet = opts?.quiet === true;
   worker.register('sync', async (job) => {
     const { performSync } = await import('./sync.ts');
+    const { explicitSyncProcessing } = await import('../core/persistence/sync-authority.ts');
     const repoPath = typeof job.data.repoPath === 'string' ? job.data.repoPath : undefined;
     const noPull = !resolveJobPull(job.data);
     // noEmbed defaults to true (embed is a separate job — submit `embed --stale`
@@ -2264,6 +2265,7 @@ export async function registerBuiltinHandlers(
     try {
       result = await performSync(engine, {
         repoPath, sourceId, noPull, noEmbed, noExtract, signal: job.signal,
+        explicitProcessing: explicitSyncProcessing(job.data),
         concurrency: concurrencyOverride,
         ...(githubItem ? { githubItem } : {}),
       });
