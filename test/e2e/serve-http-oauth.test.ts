@@ -16,7 +16,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { auth, extractWWWAuthenticateParams, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
+import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const skip = !hasDatabase();
@@ -578,12 +578,21 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
 
   test('admin source access APIs enumerate sources and rescope an OAuth client', async () => {
     const cookie = await adminCookie();
+    const webhookSecret = `whsec-sentinel-${crypto.randomUUID()}`;
+    await getEngine().executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('admin-hooked', 'admin-hooked', $1::text::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+      [JSON.stringify({ federated: true, github_repo: 'acme-example/brain', webhook_secret: webhookSecret })],
+    );
     const sourcesRes = await fetch(`${BASE}/admin/api/sources`, {
       headers: { Cookie: cookie },
     });
     expect(sourcesRes.ok).toBe(true);
-    const sources = await sourcesRes.json() as Array<{ id: string; name: string; federated: boolean }>;
+    const sourcesBody = await sourcesRes.text();
+    const sources = JSON.parse(sourcesBody) as Array<{ id: string; name: string; federated: boolean }>;
     expect(sources.some(source => source.id === 'default')).toBe(true);
+    expect(sources.some(source => source.id === 'admin-hooked')).toBe(true);
+    expect(sourcesBody).not.toContain(webhookSecret);
 
     const rescopeRes = await fetch(`${BASE}/admin/api/rescope-client`, {
       method: 'POST',

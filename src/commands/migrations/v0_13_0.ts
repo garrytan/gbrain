@@ -159,10 +159,3 @@ export const v0_13_0: Migration = {
   },
   orchestrator,
 };
-
-/** Exported for unit tests. */
-export const __testing = {
-  phaseASchema,
-  phaseBBackfill,
-  phaseCVerify,
-};

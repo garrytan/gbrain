@@ -198,76 +198,13 @@ describe('CLI integration', () => {
 // --- Recipe file validation ---
 
 describe('twilio-voice-brain recipe', () => {
-  test('recipe file parses correctly', () => {
+  test('declares the Twilio and OpenAI secrets, each with an https console URL', () => {
     const { readFileSync } = require('fs');
-    const content = readFileSync(
-      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
-      'utf-8'
-    );
-    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
-    expect(recipe).not.toBeNull();
-    expect(recipe!.frontmatter.id).toBe('twilio-voice-brain');
-    expect(recipe!.frontmatter.category).toBe('sense');
-    expect(recipe!.frontmatter.secrets.length).toBeGreaterThan(0);
-    expect(recipe!.frontmatter.health_checks.length).toBeGreaterThan(0);
-    // Body should not be corrupted (contains --- horizontal rules)
-    expect(recipe!.body.length).toBeGreaterThan(100);
-  });
-
-  test('recipe has required secrets with where URLs', () => {
-    const { readFileSync } = require('fs');
-    const content = readFileSync(
-      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
-      'utf-8'
-    );
-    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
-    expect(recipe).not.toBeNull();
-    for (const secret of recipe!.frontmatter.secrets) {
-      expect(secret.name).toBeTruthy();
-      expect(secret.where).toBeTruthy();
-      expect(secret.where).toContain('https://');
-    }
-  });
-
-  test('recipe has all required secrets', () => {
-    const { readFileSync } = require('fs');
-    const content = readFileSync(
-      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
-      'utf-8'
-    );
-    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
+    const recipe = parseRecipe(readFileSync(resolve(RECIPES_DIR, 'twilio-voice-brain.md'), 'utf-8'), 'twilio-voice-brain.md');
     expect(recipe).not.toBeNull();
     const secretNames = recipe!.frontmatter.secrets.map((s: any) => s.name);
-    expect(secretNames).toContain('TWILIO_ACCOUNT_SID');
-    expect(secretNames).toContain('TWILIO_AUTH_TOKEN');
-    expect(secretNames).toContain('OPENAI_API_KEY');
-  });
-
-  test('recipe version is valid semver', () => {
-    const { readFileSync } = require('fs');
-    const content = readFileSync(
-      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
-      'utf-8'
-    );
-    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
-    expect(recipe).not.toBeNull();
-    expect(recipe!.frontmatter.version).toMatch(/^\d+\.\d+\.\d+$/);
-  });
-
-  test('recipe requires resolve to existing recipe files', () => {
-    const { readFileSync, existsSync } = require('fs');
-    const { resolve } = require('path');
-    const content = readFileSync(
-      new URL('../recipes/twilio-voice-brain.md', import.meta.url),
-      'utf-8'
-    );
-    const recipe = parseRecipe(content, 'twilio-voice-brain.md');
-    expect(recipe).not.toBeNull();
-    const recipesDir = RECIPES_DIR;
-    for (const dep of recipe!.frontmatter.requires) {
-      const depPath = resolve(recipesDir, `${dep}.md`);
-      expect(existsSync(depPath)).toBe(true);
-    }
+    expect(secretNames).toEqual(expect.arrayContaining(['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'OPENAI_API_KEY']));
+    for (const secret of recipe!.frontmatter.secrets) expect(secret.where).toContain('https://');
   });
 });
 
@@ -312,8 +249,24 @@ describe('all recipes', () => {
     for (const file of files) {
       const content = readFileSync(resolve(recipesDir, file), 'utf-8');
       const recipe = parseRecipe(content, file);
-      expect(recipe).not.toBeNull();
-      expect(recipe!.frontmatter.id).toBeTruthy();
+      expect(recipe, file).not.toBeNull();
+      expect(recipe!.frontmatter.id, file).toBeTruthy();
+    }
+  });
+
+  test('every recipe has a semver version, named secrets that say where to get them, and requires that resolve', () => {
+    const { readFileSync, readdirSync, existsSync } = require('fs');
+    const files = readdirSync(RECIPES_DIR).filter((f: string) => f.endsWith('.md'));
+    for (const file of files) {
+      const recipe = parseRecipe(readFileSync(resolve(RECIPES_DIR, file), 'utf-8'), file)!;
+      expect(recipe.frontmatter.version, file).toMatch(/^\d+\.\d+\.\d+$/);
+      for (const secret of recipe.frontmatter.secrets) {
+        expect(secret.name, file).toBeTruthy();
+        expect(secret.where, `${file} ${secret.name}`).toBeTruthy();
+      }
+      for (const dep of recipe.frontmatter.requires) {
+        expect(existsSync(resolve(RECIPES_DIR, `${dep}.md`)), `${file} requires ${dep}`).toBe(true);
+      }
     }
   });
 

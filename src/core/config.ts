@@ -1412,8 +1412,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // personal brains and never auto-enables anything.
   'brain.audience',
   // Conversation parser LLM fallback. Deliberately register the exact key,
-  // not a conversation_parser.* prefix: fallback is the only live opt-in
-  // consumer, while the polish scaffold remains unwired.
+  // not a conversation_parser.* prefix: fallback is the only opt-in consumer.
   'conversation_parser.llm_fallback_enabled',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir',

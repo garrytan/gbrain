@@ -71,8 +71,16 @@ describe('nightly E2E scheduling', () => {
       expect(result.status, result.stderr).toBe(0);
       return result.stdout.trim().split('\n').filter(Boolean);
     };
-    const corpus = [...readdirSync(join(repo, 'test/e2e')).filter(file => file.endsWith('.test.ts')).map(file => `test/e2e/${file}`), 'test/phantom-redirect-engine-parity.test.ts'].sort();
+    const liveKeyOnly = [
+      'test/e2e/openrouter-anthropic-subagent-replay.live.test.ts',
+      'test/e2e/openrouter-deepseek-subagent-replay.live.test.ts',
+      'test/e2e/voyage-multimodal.test.ts',
+      'test/e2e/voyage-rerank-live.test.ts',
+    ];
+    const corpus = [...readdirSync(join(repo, 'test/e2e')).filter(file => file.endsWith('.test.ts')).map(file => `test/e2e/${file}`).filter(file => !liveKeyOnly.includes(file)), 'test/phantom-redirect-engine-parity.test.ts'].sort();
     expect(discover('').sort()).toEqual(corpus);
+    const byName = spawnSync('bash', ['scripts/run-e2e.sh', '--dry-run-list', ...liveKeyOnly], { cwd: repo, encoding: 'utf8', env: { ...process.env, SHARD: '', COVERAGE_DIR: '' } });
+    expect(byName.stdout.trim().split('\n')).toEqual(liveKeyOnly);
     const partitions = [1, 2, 3, 4].map(n => discover(`${n}/4`));
     expect(partitions.every(files => files.length > 0)).toBe(true);
     expect(partitions.flat().sort()).toEqual(corpus);

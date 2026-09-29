@@ -77,7 +77,8 @@ function windowAt(lines: string[], i: number, span = 4): string {
 
 function isRepoAnchored(win: string): boolean {
   if (TMP_ANCHORS.test(win)) return false;
-  return REPO_ANCHORS.some((r) => r.test(win));
+  const code = win.replace(/\bimport\s*\(\s*(['"`])[^'"`]*\1\s*\)/g, '');
+  return REPO_ANCHORS.some((r) => r.test(code));
 }
 
 export function classifyFile(relPath: string, content: string): FileResult {

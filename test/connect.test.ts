@@ -769,7 +769,7 @@ describe('AGENT_IDS', () => {
 describe('LEARN_INSTRUCTION names only real MCP tools', () => {
   // The self-orientation block is pasted into a connected agent verbatim. Every
   // tool it names MUST be MCP-exposed, or the agent calls an "unknown tool".
-  // The exposed set is pinned end-to-end by test/e2e/serve-stdio-roundtrip.ts.
+  // The exposed set is pinned end-to-end by test/serve-stdio-roundtrip.test.ts.
   test('every named tool is a real op, and capture (now an MCP op, gap-closure wave) is on the starter surface', async () => {
     expect(LEARN_INSTRUCTION).toContain('put_page');
     expect(LEARN_INSTRUCTION).toContain('capture');

@@ -14,7 +14,7 @@ import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import {
   hasDatabase, setupDB, setupLegacyEmbeddingDB, teardownDB, getEngine, getConn,
-  importFixtures, importFixture, time, dumpDBState, FIXTURES_PATH,
+  importFixtures, importFixture, dumpDBState, FIXTURES_PATH,
 } from './helpers.ts';
 import { operationsByName, operations } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
@@ -1561,40 +1561,4 @@ describeE2E('E2E: Parallel Import', () => {
     expect(stats.page_count).toBe(seqPageCount);
     expect(stats.chunk_count).toBe(seqChunkCount);
   }, 60_000);
-});
-
-// ─────────────────────────────────────────────────────────────────
-// Performance Baselines
-// ─────────────────────────────────────────────────────────────────
-
-describeE2E('E2E: Performance Baselines', () => {
-  beforeAll(async () => {
-    await setupDB();
-  }, 30_000);
-  afterAll(teardownDB);
-
-  test('import + search + link performance', async () => {
-    const [_, importMs] = await time(importFixtures);
-
-    const searchTimes: number[] = [];
-    for (const q of ['NovaMind', 'hybrid search', 'Stanford', 'investor', 'compiled truth']) {
-      const [__, ms] = await time(() => callOp('search', { query: q }));
-      searchTimes.push(ms);
-    }
-
-    const [___, linkMs] = await time(async () => {
-      await callOp('add_link', { from: 'people/sarah-chen', to: 'companies/novamind' });
-      await callOp('get_backlinks', { slug: 'companies/novamind' });
-    });
-
-    searchTimes.sort((a, b) => a - b);
-    const p50 = searchTimes[Math.floor(searchTimes.length * 0.5)];
-    const p99 = searchTimes[searchTimes.length - 1];
-
-    console.log('\n  Performance Baselines:');
-    console.log(`    Import 13 fixtures: ${importMs.toFixed(0)}ms`);
-    console.log(`    Search p50: ${p50.toFixed(0)}ms`);
-    console.log(`    Search p99: ${p99.toFixed(0)}ms`);
-    console.log(`    Link + backlink: ${linkMs.toFixed(0)}ms`);
-  }, 30_000);
 });

@@ -1373,7 +1373,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
 
   console.log(`Webhook configured for source "${id}":`);
   if (githubRepo) console.log(`  github_repo:    ${githubRepo}`);
-  console.log(`  webhook_secret: ${secret}`);
+  console.log('  webhook_secret: (shown once below)');
   console.log('');
   console.log('--- Paste this into GitHub repo settings → Webhooks → Add webhook ---');
   console.log('  Payload URL:  <your gbrain serve --http URL>/webhooks/github');

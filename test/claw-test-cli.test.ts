@@ -5,7 +5,7 @@
  * agent registry resolution, and friction-report path. They do NOT spawn
  * real gbrain commands (no built binary in CI yet); the canonical scripted
  * E2E that walks `gbrain init → import → query → extract → verify` lives
- * in test/e2e/claw-test.test.ts and gates on a built binary.
+ * in test/claw-test.slow.test.ts and gates on a built binary.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -603,7 +603,7 @@ describe('spawnWithCapture — stdin EOF (no payload)', () => {
 // wipes the registry and bun caches the command module, so the test would
 // have to re-register the runners itself and would pass even if the command
 // module dropped its registrations. The HONEST integration check lives in
-// test/e2e/claw-test.test.ts ("--list-agents reports both built-in runners"),
+// test/claw-test.slow.test.ts ("--list-agents reports both built-in runners"),
 // which spawns the real CLI and asserts both runner lines.
 
 describe('OpencodeRunner detection (reliable on box without opencode)', () => {

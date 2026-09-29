@@ -160,7 +160,7 @@ detail on demand.)
 | publishing the brain's MCP server to other devices and agents (`gbrain mcp expose`, Tailscale default, Grok Bot / Muse hosted path) | `docs/guides/remote-mcp.md` + `docs/mcp/DEPLOY.md` + the `remote-mcp` skill |
 | memory verbs / MCP tool surface (`--surface`) / conformance | `docs/protocol/MEMORY_VERBS_v1.md` + the `verbs*`/`surface.ts`/`protocol.ts` entries in `KEY_FILES.md` |
 | the CLI surface (commands + flags) | `gbrain --help` / `gbrain --tools-json`, plus the relevant `KEY_FILES.md` entry |
-| running or writing tests | `docs/TESTING.md` |
+| running, writing or retiring tests | `docs/TESTING.md` ([authoring gate](docs/TESTING.md#authoring-gate), [retiring](docs/TESTING.md#retiring-a-test)) |
 | bulk-command progress wiring | `docs/progress-events.md` |
 | eval methodology / metrics | `docs/eval/` |
 | brains vs sources / topology | `docs/architecture/brains-and-sources.md`, `topologies.md` |
@@ -172,9 +172,7 @@ detail on demand.)
 
 The per-file index (`## Key files`), the thin-client routing seam, and the testing
 discipline used to live inline here. They moved to the docs above so this file
-stays small enough to load every session. Nothing was lost — the pre-move content
-is in git, and the docs carry every load-bearing invariant (compressed to
-current-state).
+stays small enough to load every session.
 
 ## Maintaining CLAUDE.md and the reference docs
 

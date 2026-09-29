@@ -1,93 +1,121 @@
-// v0.39 T6 — CLI contract pinning test.
+// v0.39 T6 — schema CLI contract, driven through runSchema.
 //
-// Every schema CLI verb supports --json output and (where source-scoping
-// makes sense) --source <id>. Pin in CI so future verbs can't drift.
-// The structural check is a source grep against src/commands/schema.ts:
-// every verb-handler function MUST consult parseFlags() (which yields
-// {json, source, positional}). The grep is intentionally simple — a verb
-// that wants to opt OUT of the contract must do so explicitly and
-// document why.
+// Every v0.39+ schema verb prints a `schema_version: 1` JSON envelope under
+// --json; the experimental-tier verbs tag that envelope `tier:
+// 'experimental'`; the engine-backed verbs honor --source, --source-id and
+// their `=` forms. Each case runs the real dispatcher against a temporary
+// GBRAIN_HOME with a file-backed PGLite brain.
 
-import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { describe, test, expect, spyOn, beforeAll, afterAll } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { runSchema } from '../src/commands/schema.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { withEnv } from './helpers/with-env.ts';
 
-const SCHEMA_TS = readFileSync('src/commands/schema.ts', 'utf-8');
+let home: string;
 
-// Verbs that take any input (not the bare router cases).
-// `active`/`list`/`show`/`validate`/`use` are legacy v0.38 — they don't
-// follow the parseFlags() contract; opt-out documented.
-const LEGACY_OPT_OUT = new Set(['active', 'list', 'show', 'validate', 'use']);
+beforeAll(async () => {
+  home = mkdtempSync(join(tmpdir(), 'gbrain-schema-contract-'));
+  const brain = join(home, '.gbrain');
+  mkdirSync(brain, { recursive: true });
+  const databasePath = join(brain, 'brain.pglite');
+  writeFileSync(join(brain, 'config.json'), JSON.stringify({ engine: 'pglite', database_path: databasePath }));
+  const engine = new PGLiteEngine();
+  await engine.connect({ engine: 'pglite', database_path: databasePath });
+  try {
+    await engine.initSchema();
+    for (const slug of ['projects/alpha', 'projects/beta', 'projects/gamma']) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Fixture page.' });
+    }
+  } finally {
+    await engine.disconnect();
+  }
+}, 60_000);
 
-const NEW_VERBS = [
-  'detect', 'suggest', 'review-candidates',
-  'init', 'fork', 'edit', 'diff', 'graph', 'lint', 'explain', 'review-orphans',
-  'downgrade', 'usage',
-];
+afterAll(() => { rmSync(home, { recursive: true, force: true }); });
+
+async function runJson(args: string[]): Promise<{ json: Record<string, unknown>; exitCode: number | undefined }> {
+  const lines: string[] = [];
+  let exitCode: number | undefined;
+  const log = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+  const err = spyOn(console, 'error').mockImplementation(() => {});
+  const exit = spyOn(process, 'exit').mockImplementation(((code?: number) => { exitCode = code; throw new Error('__exit__'); }) as never);
+  try {
+    await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined }, () => runSchema(args));
+  } catch (e) {
+    if ((e as Error).message !== '__exit__') throw e;
+  } finally {
+    log.mockRestore(); err.mockRestore(); exit.mockRestore();
+  }
+  const out = lines.join('\n');
+  expect(out.trimStart().startsWith('{'), `${args.join(' ')} printed non-JSON:\n${out}`).toBe(true);
+  return { json: JSON.parse(out), exitCode };
+}
 
 describe('v0.39 T6 — schema CLI contract', () => {
-  test('every new verb routes through runSchema dispatch', () => {
-    for (const v of NEW_VERBS) {
-      expect(SCHEMA_TS).toContain(`case '${v}':`);
+  const cases: Array<{ args: string[]; experimental: boolean }> = [
+    { args: ['detect'], experimental: false },
+    { args: ['suggest'], experimental: false },
+    { args: ['review-candidates'], experimental: false },
+    { args: ['init', 'contract-pack'], experimental: true },
+    { args: ['fork', 'gbrain-base', 'contract-fork'], experimental: true },
+    { args: ['edit', 'contract-fork'], experimental: true },
+    { args: ['diff', 'gbrain-base', 'contract-fork'], experimental: true },
+    { args: ['graph'], experimental: true },
+    { args: ['lint'], experimental: false },
+    { args: ['explain', 'writing'], experimental: true },
+    { args: ['review-orphans'], experimental: false },
+    { args: ['downgrade', '--to', 'gbrain-base'], experimental: false },
+    { args: ['usage'], experimental: false },
+  ];
+
+  test('every v0.39+ verb prints a schema_version 1 JSON envelope, tagged experimental exactly for the experimental tier', async () => {
+    for (const { args, experimental } of cases) {
+      const { json, exitCode } = await runJson([...args, '--json']);
+      expect(exitCode ?? 0, args.join(' ')).toBe(0);
+      expect(json.schema_version, args.join(' ')).toBe(1);
+      expect(json.tier, args.join(' ')).toBe(experimental ? 'experimental' : undefined);
     }
-  });
+  }, 60_000);
 
-  test('every new verb-handler reads parseFlags() for --json + --source', () => {
-    // The handler function name pattern is run<PascalCase>Cmd. Each must
-    // call parseFlags. Source-grep is sufficient: if a future verb forgets
-    // parseFlags, this test fails.
-    const handlerNames = NEW_VERBS.map((v) => {
-      const pascal = v.split('-').map((p) => p[0].toUpperCase() + p.slice(1)).join('');
-      return `run${pascal}Cmd`;
-    });
-    for (const h of handlerNames) {
-      // Each handler must exist as a function declaration.
-      expect(SCHEMA_TS).toContain(`async function ${h}(`);
-      // And must contain a parseFlags() call (the contract gate).
-      const handlerStart = SCHEMA_TS.indexOf(`async function ${h}(`);
-      const handlerEnd = SCHEMA_TS.indexOf('async function ', handlerStart + 1);
-      const handlerBody = SCHEMA_TS.slice(handlerStart, handlerEnd > 0 ? handlerEnd : undefined);
-      expect(handlerBody).toContain('parseFlags(');
+  test('engine-backed verbs scope to --source, --source-id and their = forms', async () => {
+    expect((await runJson(['detect', '--json'])).json.total_pages).toBe(3);
+    for (const flag of [['--source', 'contract-empty'], ['--source-id', 'contract-empty'], ['--source=contract-empty'], ['--source-id=contract-empty']]) {
+      expect((await runJson(['detect', '--json', ...flag])).json.total_pages, flag.join(' ')).toBe(0);
     }
-  });
-
-  test('parseFlags() returns the documented shape', () => {
-    expect(SCHEMA_TS).toContain('function parseFlags(args: string[]): ParsedFlags');
-    expect(SCHEMA_TS).toContain('interface ParsedFlags');
-    expect(SCHEMA_TS).toContain('json: boolean');
-    expect(SCHEMA_TS).toContain('source: string | undefined');
-    expect(SCHEMA_TS).toContain('positional: string[]');
-  });
-
-  test('parseFlags accepts both --source and --source-id forms', () => {
-    expect(SCHEMA_TS).toContain("'--source'");
-    expect(SCHEMA_TS).toContain("'--source-id'");
-  });
-
-  test('every new verb when --json passed produces a JSON envelope', () => {
-    // schema_version: 1 is the contract for every JSON output.
-    // Source-grep: count occurrences of `schema_version: 1` near JSON output sites.
-    const matches = SCHEMA_TS.match(/schema_version:\s*1/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(NEW_VERBS.length - 2);
-    // ^ allow up to 2 verbs to skip the envelope where it's degenerate
-    //   (e.g. edit just prints a path; usage prints aggregate).
-  });
-
-  test('legacy v0.38 verbs are explicitly NOT in NEW_VERBS', () => {
-    // Regression guard: do not silently let a legacy verb opt-in without
-    // also updating LEGACY_OPT_OUT documentation.
-    for (const v of NEW_VERBS) {
-      expect(LEGACY_OPT_OUT.has(v)).toBe(false);
+    for (const verb of ['suggest', 'review-candidates', 'review-orphans']) {
+      expect((await runJson([verb, '--json', '--source-id', 'contract-empty'])).json.source_id, verb).toBe('contract-empty');
     }
-  });
+  }, 60_000);
 
-  test('EXPERIMENTAL_VERBS set matches the documented D14 hybrid choice', () => {
-    expect(SCHEMA_TS).toContain('init');
-    expect(SCHEMA_TS).toContain('fork');
-    expect(SCHEMA_TS).toContain('edit');
-    expect(SCHEMA_TS).toContain('diff');
-    expect(SCHEMA_TS).toContain('graph');
-    expect(SCHEMA_TS).toContain('explain');
-    expect(SCHEMA_TS).toContain('EXPERIMENTAL_VERBS');
-    // ^ the marker constant must be present so T23 telemetry can read it.
+  test('schema usage reports and tags exactly the D14 experimental verbs', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-schema-usage-'));
+    try {
+      const ts = new Date().toISOString();
+      writeFileSync(join(auditDir, 'schema-events-fixture.jsonl'), ['init', 'explain', 'lint', 'detect']
+        .map(verb => JSON.stringify({ ts, verb, outcome: 'success' })).join('\n') + '\n');
+      const lines: string[] = [];
+      const spy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
+      try {
+        await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, async () => {
+          await runSchema(['usage', '--json']);
+          const json = JSON.parse(lines.join('\n'));
+          expect([...json.experimental_verbs].sort()).toEqual(['diff', 'edit', 'explain', 'fork', 'graph', 'init']);
+          lines.length = 0;
+          await runSchema(['usage']);
+        });
+      } finally {
+        spy.mockRestore();
+      }
+      const row = (verb: string) => lines.find(l => l.trim().startsWith(verb + ' ')) ?? '';
+      expect(row('init')).toContain('(experimental)');
+      expect(row('explain')).toContain('(experimental)');
+      expect(row('lint')).not.toContain('(experimental)');
+      expect(row('detect')).not.toContain('(experimental)');
+    } finally {
+      rmSync(auditDir, { recursive: true, force: true });
+    }
   });
 });

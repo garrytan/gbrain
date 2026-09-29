@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { seedPglite, seedPgliteFromFile, _internal } from '../src/core/claw-test/seed-pglite.ts';
@@ -86,8 +86,7 @@ describe('seedPglite', () => {
   test('creates parent directories when needed', async () => {
     const dbPath = join(tmp, 'nested', 'deeper', 'brain.pglite');
     await seedPglite({ dbPath, sql: 'CREATE TABLE x(y int);' });
-    // No throw means the dir was created.
-    expect(true).toBe(true);
+    expect(existsSync(dbPath)).toBe(true);
   }, 30_000);
 
   test('empty SQL is a no-op (just creates the .pglite)', async () => {

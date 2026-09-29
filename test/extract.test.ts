@@ -3,7 +3,6 @@ import {
   extractMarkdownLinks,
   extractLinksFromFile,
   extractTimelineFromContent,
-  walkMarkdownFiles,
 } from '../src/commands/extract.ts';
 
 describe('extractMarkdownLinks', () => {
@@ -345,12 +344,6 @@ Real claim. [Source: memo, 2025-01-02]`;
     const entries = extractTimelineFromContent(content, 'companies/acme-example');
     expect(entries).toHaveLength(1);
     expect(entries[0].summary).toBe('Landed the enterprise pilot with acme-example.');
-  });
-});
-
-describe('walkMarkdownFiles', () => {
-  it('is a function', () => {
-    expect(typeof walkMarkdownFiles).toBe('function');
   });
 });
 

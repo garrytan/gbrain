@@ -12,7 +12,6 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
 import { readSnapshot } from '../../src/commands/jobs-watch.ts';
 import { logLeasePressure } from '../../src/core/minions/lease-pressure-audit.ts';
-import { setOwnerBudget } from '../../src/core/minions/budget-tracker.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -65,7 +64,12 @@ describe('v0.41 jobs-watch readSnapshot E2E', () => {
     );
     // One budget-bearing owner with cents.
     const budgetOwner = await queue.add('subagent', {}, {}, { allowProtectedSubmit: true });
-    await setOwnerBudget(engine, budgetOwner.id, 5.0);
+    await engine.executeRaw(
+      `UPDATE minion_jobs
+          SET budget_remaining_cents = 500, budget_owner_job_id = $1, budget_root_owner_id = $1
+        WHERE id = $1`,
+      [budgetOwner.id],
+    );
 
     const s = await readSnapshot(engine);
     // Queue health: 4 waiting from queue.add, +1 budget owner = 5 waiting.

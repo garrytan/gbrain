@@ -96,8 +96,10 @@ describe('engine: stale-page extraction methods', () => {
   });
 
   test('markPagesExtractedBatch: empty input is a no-op', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
     await engine.markPagesExtractedBatch([], new Date().toISOString());
-    expect(true).toBe(true); // no throw
+    expect(await stampOf('people/alice')).toBeNull();
+    expect(await engine.countStalePagesForExtraction()).toBe(1);
   });
 });
 

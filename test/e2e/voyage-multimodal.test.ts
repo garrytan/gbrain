@@ -5,6 +5,10 @@
 // Pairs with the Phase 1 bun --compile probe (which exercises decode but
 // not the network call) — this hits Voyage for real and asserts a
 // 1024-dim vector comes back with sane shape.
+//
+// No CI job provides VOYAGE_API_KEY, so scripts/run-e2e.sh leaves this file
+// out of its default glob. Run it by name (the runner keeps provider keys):
+//   VOYAGE_API_KEY=... bash scripts/run-e2e.sh test/e2e/voyage-multimodal.test.ts
 
 import { describe, expect, test, beforeAll, afterEach } from 'bun:test';
 import { configureGateway, embedMultimodal, resetGateway } from '../../src/core/ai/gateway.ts';

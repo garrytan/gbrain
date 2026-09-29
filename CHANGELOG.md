@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.59.18.1] - 2026-09-29
+## [0.59.20.1] - 2026-09-29
 
 **Dream synthesize on an OpenRouter model no longer dies to a rate limit it never saw.** OpenRouter sometimes reports "you're being rate-limited, try again shortly" as a normal-looking HTTP 200 response with an error message buried inside the body, instead of a real HTTP 429. Every retry mechanism in gbrain (and in the underlying AI library) decides whether to retry by looking at the HTTP status code, so a 200-with-hidden-error looked like success failing to parse, not like a rate limit, and nothing retried. If you pointed a dream phase at a busy OpenRouter model, a burst of calls could trip the shared limit and the whole phase would fail outright instead of backing off and trying again.
 
@@ -18,7 +18,7 @@ Now gbrain reads that hidden error and turns the response into a real 429 (or 5x
 
 **Say to your agent:** *"Re-run dream synthesize and check it survives an OpenRouter rate limit"* — your agent runs `gbrain dream --phase synthesize --once`.
 
-## To take advantage of v0.59.18.1
+## To take advantage of v0.59.20.1
 
 Upgrade, then re-run the phase that was failing:
 
@@ -31,6 +31,68 @@ gbrain dream --phase synthesize --once
 
 - `src/core/ai/recipes/openrouter.ts`: the OpenRouter compat-fetch shim now detects an HTTP-200 response body shaped like `{error:{code,metadata?}}` and rewrites the response's status to match (429, or the reported 5xx), so the AI SDK's own retry logic and gbrain's rate-limit classification both see the real condition. An existing `Retry-After` header is preserved; a `retry_after` value inside the error body is promoted to one when the response didn't already carry it. Every other response shape (a real success, a 4xx, an unparseable body) passes through unchanged.
 - Closes #5473.
+
+## [0.59.20.0] - 2026-09-29
+
+**Two commands could print a source's webhook secret, and hundreds of tests in gbrain's own suite guarded nothing: they stayed green with the code broken, or tested code the product never runs. Both are fixed.**
+
+Security first. If you attached a folder to an existing source that already had a GitHub webhook secret, `gbrain call sources_add` and `gbrain sources add --path` printed the whole source record, secret included, and the second one also kept that record in the database's change history. Both now hide the secret. Setting or rotating a webhook still shows the new secret exactly once, because you need to paste it into GitHub.
+
+The rest of the release is a cleanup of gbrain's own test suite, done the careful way: every test we removed was first shown to stay green while the code it claimed to guard was deliberately broken, and every hole that turned up got a real test before anything was deleted. About 5,000 lines of tests that could not fail and about 4,700 lines of code nothing ever ran are gone. Along the way the new tests caught a real bug: a sync interrupted twice in quick succession left its lock behind for 30 minutes. That is fixed too.
+
+### What changes for you
+
+| Situation | Before | Now |
+| --- | --- | --- |
+| `gbrain call sources_add` attaching a path to a source with a webhook secret | Printed the secret | Secret hidden |
+| `gbrain sources add --path` (managed) in the same case | Printed the secret and kept it in the change history | Hidden in the output, the replay and the stored record |
+| `gbrain sources webhook set` | Printed the new secret twice | Printed once, in the paste block |
+| A sync killed by two signals at once (for example `gbrain sync \| head` then Ctrl-C) | Lock stayed for 30 minutes | Lock released before exit |
+| Guides naming commands or flags that do not exist | Nothing noticed | A test fails; 13 stale guides fixed |
+
+### How to use it
+
+Nothing to configure. If you rely on attaching paths to webhook sources, re-run the command; the output no longer carries the secret. To see a webhook secret, rotate it: `gbrain sources webhook rotate <source>`.
+
+### Things to watch
+
+- Full-database backups still contain source configs, secrets included, by design: restoring a brain needs them. Treat backup archives as sensitive, as `gbrain backup` already warns.
+- `gbrain config set auto_chronicle true` has done nothing since v0.51.0.0, and `gbrain onboard --history` always returns empty. We did not delete the code behind them; both are filed as P1 follow-ups.
+
+### What we caught and fixed before merging
+
+The plan went through CEO, developer-experience and engineering reviews with two independent AI reviewers each. They stopped us from deleting code that user docs still promise (the inbox folder, the greenfield importer and the `gbrain/ingestion` daemon stay until that is a product decision), from treating the webhook rotate reveal and full backups as leaks, and from replacing weak tests with new checks that still could not fail.
+
+### Itemized changes
+
+**Security**
+- `src/core/ops/sources.ts`, `src/core/persistence/source-lifecycle.ts`: attach-path receipts go through `redactSourceConfig()`; the retained `persistence_topology_changes` record and its replay are redacted too. `src/commands/sources.ts`: `webhook set` prints the secret once.
+- New `test/source-config-secret-surfaces.test.ts` covers every surface that serializes source config (sources CLI human/`--json`, remote MCP `sources_list`/`sources_status`/`get_status_snapshot`/`run_doctor`, `doctor --json`, admin `GET /admin/api/sources`, backup metadata, restore receipts, `GBRAIN_HOME` logs) and pins the create/rotate one-time reveals. `scripts/check-source-config-leak.sh` header lists the audited surfaces.
+
+**Bug fix**
+- `src/core/process-cleanup.ts`: later signals await the in-flight cleanup pass (`cleanupPass ??= runCleanupCallbacks()`), so a second signal no longer exits before the sync lock row is deleted. Unit and real-process E2E regressions.
+
+**Coverage holes filled** (each new test fails on a targeted mutation; the old tests passed it)
+- `gbrain features` shipped output, supervisor health reconnect (all five arms), embed default concurrency on both pools, experimental schema verbs, `check-resolvable` fix shapes, image OCR opt-in through `importImageFile` (seam `_maybeOcrGatedForTests` removed), `postgres-engine.ts` routed to its singleton E2E owners, a real-process SIGPIPE lock-release test (50/50 under load), embed pool abort, singleton lifecycle races, backfill registry.
+
+**Tests removed** (evidence per test in `docs/test-audit/2026-09-29/` and the PR)
+- 42 test files and ~130 individual cases: source-text pins that passed with behavior broken or failed on renames, doc phrase pins, copied-function tests, `typeof` export probes, tautologies, byte-identical duplicates, `expect(true)` placeholders, a stale MCP E2E that re-implemented the tool mapping, and duplicate E2E runs (attendance PGLite arms, `reconcile-crash` now owned on PRs by `persistence-validation.yml`).
+- 15 source-grep test files rewritten as behavior tests; one table-driven `test/doc-claims.test.ts` replaces one-off doc pins.
+
+**Dead code removed** (no runtime caller; per-module disposition in the PR)
+- 24 modules across the misc, calibration and minions clusters, including the never-wired minions budget tracker, self-fix and lease-cap controller, calibration E3/E5/E7/E8 surfaces, `upgrade-checkpoint` and `brain-pack-lint`; test-only seams such as `_resetRerankWarningsForTest` (was reachable from the `gbrain/ai/gateway` export). The `take_nudge_log` migration stays. Ingestion, progressive-batch, chronicle backstop, onboard impact capture and archive-crawler config are held.
+
+**Guards and docs for contributors**
+- `scripts/check-orphan-modules.mjs`: the test-only count ceiling becomes a named `PERMITTED_TEST_ONLY` list with reasons; new or stale entries fail with a remedy.
+- New `bun run check:test-placeholders` (AST scan for no-op `expect(true)` assertions) in `verify`.
+- `test/test-reads-source-smell.test.ts` now sees `join(...)`, `Bun.file`, `readFile` and path-constant reads, requires a category tag on `test-reads-source-ok` markers, and ratchets unjustified read sites per file.
+- Docs-CLI truth check: `gbrain <verb> --flag` in `docs/guides`, `docs/migrations` and `skills` must resolve against the real CLI (`<!-- gbrain-cli: historical -->` marker for history).
+- `docs/TESTING.md`: authoring gate (4 questions), "Retiring a test" with an evidence template, lane-move pilot table, live-key E2E run commands, `reconcile-crash` ownership.
+
+**CI lanes**
+- 20 PGLite-only `test/e2e` files moved to the unit (10), serial (7) and slow (3) lanes; the Ubicloud E2E lane drops ~300 s and the moved files now run on every PR. Key-gated OpenRouter/Voyage live files leave the default `run-e2e.sh` list (by-name runs still work).
+
+**Contributor note:** deleted and moved tests are listed in the PR; `check:test-placeholders`, the stricter source-read policy and the orphan permitted list are new `verify`/unit rules, and each failure message names the fix and a `docs/TESTING.md` anchor.
 
 ## [0.59.18.0] - 2026-09-29
 

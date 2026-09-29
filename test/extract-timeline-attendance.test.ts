@@ -6,11 +6,12 @@ import { prepareAutomaticLinks } from '../src/core/persistence/links-preparation
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { resetPgliteState, resetPgliteStateNarrow } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { testBackends } from './helpers/test-backends.ts';
 
 const person = 'people/alice-example';
 const meeting = 'meetings/planning';
 
-for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]) {
+for (const kind of testBackends()) {
   describe(`meeting timeline attendance roles (${kind})`, () => {
     let engine: BrainEngine;
     let close: (() => Promise<void>) | undefined;

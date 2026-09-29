@@ -120,33 +120,4 @@ describe('enrichment-service', () => {
       expect(entities.some(e => e.name.includes('\f'))).toBe(false);
     });
   });
-
-  describe('enrichEntity (mock)', () => {
-    test('module exports enrichEntity function', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      expect(typeof mod.enrichEntity).toBe('function');
-    });
-
-    test('module exports enrichEntities for batch processing', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      expect(typeof mod.enrichEntities).toBe('function');
-    });
-
-    test('module exports extractAndEnrich for text processing', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      expect(typeof mod.extractAndEnrich).toBe('function');
-    });
-  });
-
-  describe('tier auto-escalation logic', () => {
-    // We test the tier suggestion indirectly through the public interface
-    // The actual suggestTier function is private, but its behavior is
-    // observable through enrichEntity's return value (needs engine mock for full test)
-    test('enrichment result includes tier fields', async () => {
-      const mod = await import('../src/core/enrichment-service.ts');
-      // Verify the EnrichmentResult type shape is correct by checking exports
-      expect(mod.enrichEntity).toBeDefined();
-      // Full tier escalation testing requires engine mock (covered in E2E)
-    });
-  });
 });

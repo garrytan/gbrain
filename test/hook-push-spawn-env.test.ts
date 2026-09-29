@@ -10,7 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// test-reads-source-ok: the property under test is a source SHAPE — every detached/exec spawn in hook.ts must pass `env: process.env` so the cwd-.env quarantine reaches the child; a runtime probe cannot enumerate spawn sites, only grepping the source can.
+// test-reads-source-ok[trust-boundary]: the property under test is a source SHAPE — every detached/exec spawn in hook.ts must pass `env: process.env` so the cwd-.env quarantine reaches the child; a runtime probe cannot enumerate spawn sites, only grepping the source can.
 const SRC = readFileSync(join(import.meta.dir, '../src/commands/hook.ts'), 'utf8');
 
 function spawnDetachedPushBody(): string {

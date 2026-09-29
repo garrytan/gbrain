@@ -15,7 +15,6 @@ import { describe, test, expect } from 'bun:test';
 import {
   parseSchemaPackManifest,
   AGGREGATOR_KINDS,
-  type AggregatorKind,
   type CalibrationDomain,
   type SchemaPackManifest,
 } from '../src/core/schema-pack/manifest-v1.ts';
@@ -37,14 +36,6 @@ describe('v0.41 T3: AggregatorKind closed registry', () => {
       'count_based',
       'cluster_summary',
     ]);
-  });
-
-  test('AggregatorKind type union covers exactly the enum values', () => {
-    // Compile-time + runtime test: every AGGREGATOR_KINDS value is a valid AggregatorKind
-    for (const k of AGGREGATOR_KINDS) {
-      const typed: AggregatorKind = k;
-      expect(typeof typed).toBe('string');
-    }
   });
 });
 

@@ -1939,15 +1939,6 @@ async function maybeOcr(
   return { text, successful };
 }
 
-/** #3973: body of maybeOcr past the opt-in check; exported for budget tests. */
-export async function _maybeOcrGatedForTests(
-  engine: BrainEngine,
-  imgBuf: Buffer,
-  mime: string,
-): Promise<string> {
-  return maybeOcrGated(engine, imgBuf, mime);
-}
-
 async function maybeOcrGated(
   engine: BrainEngine,
   imgBuf: Buffer,

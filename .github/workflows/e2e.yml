@@ -263,7 +263,7 @@ jobs:
         # (test/e2e/helpers.ts) as the other DB-backed files on this line.
         # Also added to the E2E_EXCLUSIONS in scripts/e2e-matrix.ts so a PR
         # touching sync.ts doesn't run it a second time there.
-        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts
+        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           # #3485 preload guard: this job intentionally tests against a DB.
